@@ -38,18 +38,6 @@ const INCREMENTS: [f64; 7] = [0., 1., 2., 3., 5., 10., 20.];
 const DAYS: [f64; 7] = [1., 2., 3., 5., 7., 10., 14.];
 
 /// `data/variants.json`: each variant's key, name and what sets it apart.
-fn variants() -> Vec<(String, String, String)> {
-    let text = include_str!("../../../../../crates/kchess-domain/data/variants.json");
-    serde_json::from_str::<Vec<Value>>(text)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|entry| {
-            let field = |key: &str| entry[key].as_str().unwrap_or_default().to_string();
-            (field("key"), field("label"), field("hint"))
-        })
-        .collect()
-}
-
 fn time_rule(name: &str, minutes: f64, increment: f64, extra: Option<bool>) -> Value {
     let mut args = vec![json!(minutes), json!(increment)];
     args.extend(extra.map(|value| json!(value)));
@@ -125,9 +113,9 @@ impl OnlinePage {
         });
         let variant_select = cx.new(|cx| {
             SelectState::new(
-                variants()
-                    .into_iter()
-                    .map(|(key, label, _)| Choice::new(key, label))
+                crate::game::variants()
+                    .iter()
+                    .map(|text| Choice::new(text.key.clone(), text.label.clone()))
                     .collect(),
                 None,
                 window,
@@ -373,11 +361,10 @@ impl OnlinePage {
             .as_str()
             .unwrap_or_default()
             .to_string();
-        let all = variants();
-        let (variant_label, variant_hint) = all
+        let (variant_label, variant_hint) = crate::game::variants()
             .iter()
-            .find(|(key, _, _)| *key == form.variant)
-            .map(|(_, label, hint)| (label.clone(), hint.clone()))
+            .find(|text| text.key == form.variant)
+            .map(|text| (text.label.clone(), text.hint.clone()))
             .unwrap_or_default();
         let estimated = time_rule("totalSeconds", form.minutes, form.increment, None)
             .as_f64()
@@ -686,10 +673,10 @@ impl OnlinePage {
             .filter(|status| !status.is_empty())
             .unwrap_or("Looking for an opponent…")
             .to_string();
-        let label = variants()
-            .into_iter()
-            .find(|(key, _, _)| *key == online.form.variant)
-            .map(|(_, label, _)| label);
+        let label = crate::game::variants()
+            .iter()
+            .find(|text| text.key == online.form.variant)
+            .map(|text| text.label.clone());
         h_flex().justify_center().pt(px(40.)).child(
             widgets::card(palette)
                 .w(px(420.))
@@ -795,21 +782,8 @@ impl Render for OnlinePage {
 
 #[cfg(test)]
 mod tests {
-    use super::{summary, variants};
+    use super::summary;
     use crate::online::Form;
-
-    #[test]
-    fn every_variant_has_a_name_and_a_hint() {
-        let all = variants();
-        assert!(
-            all.iter()
-                .any(|(key, label, _)| key == "standard" && label == "Standard")
-        );
-        assert!(
-            all.iter()
-                .all(|(_, label, hint)| !label.is_empty() && !hint.is_empty())
-        );
-    }
 
     #[test]
     fn the_summary_names_the_game() {

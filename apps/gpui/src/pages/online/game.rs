@@ -593,12 +593,7 @@ impl OnlinePage {
             .to_string();
         let reviewing = playing && !can_play(online) && unsupported.is_empty();
         let variant = setup["variant"].as_str().unwrap_or("standard");
-        let variant_name = (variant != "standard").then(|| {
-            super::variants()
-                .into_iter()
-                .find(|(key, _, _)| key == variant)
-                .map_or(variant.to_string(), |(_, label, _)| label)
-        });
+        let variant_name = (variant != "standard").then(|| crate::game::variant_label(variant));
         let rated = model["onlineGameRated"] == json!(true);
         let status = model["onlineStatus"]
             .as_str()

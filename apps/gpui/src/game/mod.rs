@@ -140,3 +140,50 @@ mod setup_tests {
         assert_eq!(variant("1r5r/2k5/8/8/8/8/2K5/1R5R w - - 0 1"), "standard");
     }
 }
+
+/// A variant's Lichess key, its name and its one-line hint (`data/variants.json`).
+#[derive(serde::Deserialize, Clone, Debug)]
+pub struct VariantText {
+    pub key: String,
+    pub label: String,
+    pub hint: String,
+}
+
+/// Every variant KChess plays, standard first, in the order the variant pickers list them.
+pub fn variants() -> &'static [VariantText] {
+    static VARIANTS: std::sync::OnceLock<Vec<VariantText>> = std::sync::OnceLock::new();
+    VARIANTS.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "../../../../crates/kchess-domain/data/variants.json"
+        ))
+        .unwrap_or_default()
+    })
+}
+
+/// A variant's name ("King of the Hill") from its key ("kingOfTheHill"); the key itself for one
+/// KChess does not know.
+pub fn variant_label(key: &str) -> String {
+    variants()
+        .iter()
+        .find(|text| text.key == key)
+        .map_or_else(|| key.to_string(), |text| text.label.clone())
+}
+
+#[cfg(test)]
+mod variant_tests {
+    #[test]
+    fn every_variant_has_a_name_and_a_hint() {
+        let all = super::variants();
+        assert_eq!(
+            all.first().map(|text| text.label.as_str()),
+            Some("Standard")
+        );
+        assert!(
+            all.iter()
+                .all(|text| !text.label.is_empty() && !text.hint.is_empty())
+        );
+        assert_eq!(super::variant_label("kingOfTheHill"), "King of the Hill");
+        assert_eq!(super::variant_label("racingKings"), "Racing Kings");
+        assert_eq!(super::variant_label("fromPosition"), "fromPosition");
+    }
+}

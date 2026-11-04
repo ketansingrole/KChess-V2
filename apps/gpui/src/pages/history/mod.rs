@@ -861,10 +861,7 @@ impl HistoryPage {
                 let variant = game["setup"]["variant"].as_str().unwrap_or("standard");
                 let mut kind = time_label(text(&game, "timeControl"));
                 if variant != "standard" {
-                    let mut letters = variant.chars();
-                    if let Some(first) = letters.next() {
-                        kind.push_str(&format!(" · {}{}", first.to_uppercase(), letters.as_str()));
-                    }
+                    kind.push_str(&format!(" · {}", crate::game::variant_label(variant)));
                 }
                 let players = v_flex()
                     .min_w_0()

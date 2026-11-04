@@ -63,20 +63,7 @@ enum ClockLayout {
     Vertical,
 }
 
-/// The variants, with their names and hints (`data/variants.json`).
-#[derive(serde::Deserialize, Clone)]
-struct VariantText {
-    key: String,
-    label: String,
-    hint: String,
-}
-
-fn variants() -> Vec<VariantText> {
-    serde_json::from_str(include_str!(
-        "../../../../crates/kchess-domain/data/variants.json"
-    ))
-    .unwrap_or_default()
-}
+use crate::game::variants;
 
 pub struct LocalPage {
     /// Either player's spoken moves.
@@ -1373,10 +1360,7 @@ impl LocalPage {
                 (self.setup()["fen"].as_str() != Some(STANDARD_FEN))
                     .then(|| "From position".to_string())
             } else {
-                variants()
-                    .into_iter()
-                    .find(|text| text.key == variant)
-                    .map(|text| text.label)
+                Some(crate::game::variant_label(variant))
             }
         };
         let clock_label = self.game.state["clock"].as_object().map(|clock| {
@@ -1842,9 +1826,9 @@ impl Render for NewGame {
         let palette = *cx.global::<Palette>();
         let variant = self.variant_key(cx);
         let hint = variants()
-            .into_iter()
+            .iter()
             .find(|text| text.key == variant)
-            .map(|text| text.hint);
+            .map(|text| text.hint.clone());
         let setup = self.setup(cx);
         let no_clock = self
             .clock
