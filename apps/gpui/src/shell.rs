@@ -46,6 +46,9 @@ const SIDEBAR_WIDTH: Pixels = px(256.);
 /// How long the sidebar's width eases when it opens or closes.
 const SIDEBAR_EASE: Duration = Duration::from_millis(200);
 const SIDEBAR_RAIL: Pixels = px(64.);
+/// Below this window width the sidebar shows as its rail, leaving the page the room; its toggle
+/// opens it there for the moment without changing what wider windows show.
+const NARROW_WINDOW: Pixels = px(800.);
 
 fn sidebar_width(open: bool) -> Pixels {
     if open { SIDEBAR_WIDTH } else { SIDEBAR_RAIL }
@@ -85,7 +88,7 @@ fn title_bar(id: &'static str) -> Stateful<Div> {
 pub(crate) fn nav() -> [(Page, &'static str, Icon); 16] {
     [
         (Page::Dashboard, "Home", icon("house")),
-        (Page::Computer, "Play with computer", icon("monitor")),
+        (Page::Computer, "Play with computer", icon("bot")),
         (Page::Local, "Over the board", icon("swords")),
         (Page::Puzzles, "Puzzles", icon("puzzle")),
         (Page::Practice, "Practice", icon("graduation-cap")),
@@ -107,6 +110,45 @@ pub(crate) fn nav() -> [(Page, &'static str, Icon); 16] {
 /// own games and boards, Lichess.
 pub(crate) const NAV_GROUPS: [usize; 5] = [1, 2, 3, 4, 6];
 
+/// The heading over each of `NAV_GROUPS` in the open sidebar; Home stands alone.
+const NAV_HEADINGS: [Option<&str>; 5] = [
+    None,
+    Some("Play"),
+    Some("Train"),
+    Some("Review"),
+    Some("Lichess"),
+];
+
+/// A page's name under its group's heading, where the heading already says it: "Computer" under
+/// Play, "Play" under Lichess. The rail's tooltips, the palette and screen readers keep the full name.
+fn nav_label(page: Page, label: &'static str) -> &'static str {
+    match page {
+        Page::Computer => "Computer",
+        Page::Online => "Play",
+        Page::Insights => "Insights",
+        _ => label,
+    }
+}
+
+#[cfg(test)]
+mod nav_tests {
+    use super::{NAV_GROUPS, nav, nav_label};
+
+    /// Shortened under their headings, the open sidebar's rows still name one page each.
+    #[test]
+    fn open_rows_name_one_page_each() {
+        let mut shown: Vec<&str> = nav()
+            .into_iter()
+            .map(|(page, label, _)| nav_label(page, label))
+            .collect();
+        shown.sort_unstable();
+        let count = shown.len();
+        shown.dedup();
+        assert_eq!(shown.len(), count, "two rows read the same");
+        assert_eq!(NAV_GROUPS.iter().sum::<usize>(), nav().len());
+    }
+}
+
 /// A row of the sidebar's navigation: 32px tall, an 18px icon 8px from its label.
 fn nav_item(label: &'static str, glyph: Icon) -> SidebarMenuItem {
     SidebarMenuItem::new(label)
@@ -116,24 +158,32 @@ fn nav_item(label: &'static str, glyph: Icon) -> SidebarMenuItem {
         .gap_x(px(8.))
 }
 
-/// What the sidebar lists: menus, with a heading between them while Settings is open.
+/// What the sidebar lists: menus, each under its group's heading (on the rail, a short rule
+/// instead), with a heading between them while Settings is open.
 #[derive(Clone)]
 enum NavBlock {
-    Menu(Box<SidebarMenu>),
+    /// A group: its heading, its rows, and which of its rows carries the Lichess game's mark.
+    Menu(
+        Option<&'static str>,
+        Box<SidebarMenu>,
+        Option<(usize, GameMark)>,
+    ),
     Heading(&'static str, bool),
 }
 
 impl Collapsible for NavBlock {
     fn is_collapsed(&self) -> bool {
         match self {
-            NavBlock::Menu(menu) => menu.is_collapsed(),
+            NavBlock::Menu(_, menu, _) => menu.is_collapsed(),
             NavBlock::Heading(_, collapsed) => *collapsed,
         }
     }
 
     fn collapsed(self, collapsed: bool) -> Self {
         match self {
-            NavBlock::Menu(menu) => NavBlock::Menu(Box::new(menu.collapsed(collapsed))),
+            NavBlock::Menu(heading, menu, mark) => {
+                NavBlock::Menu(heading, Box::new(menu.collapsed(collapsed)), mark)
+            }
             NavBlock::Heading(label, _) => NavBlock::Heading(label, collapsed),
         }
     }
@@ -147,7 +197,49 @@ impl SidebarItem for NavBlock {
         cx: &mut App,
     ) -> impl IntoElement {
         match self {
-            NavBlock::Menu(menu) => menu.render(id, window, cx).into_any_element(),
+            NavBlock::Menu(None, menu, _) => menu.render(id, window, cx).into_any_element(),
+            NavBlock::Menu(Some(heading), menu, mark) => {
+                let collapsed = menu.is_collapsed();
+                let palette = cx.global::<Palette>();
+                let (dimmed, border) = (palette.dimmed, palette.border);
+                v_flex()
+                    // Midway between the groups: the row above ends 7px below its icon and the
+                    // sidebar's 4px gap follows, so the rule keeps 4px to the rows it heads.
+                    .when(collapsed, |group| {
+                        group.child(div().h(px(1.)).w(px(16.)).mx_auto().mb(px(4.)).bg(border))
+                    })
+                    .when(!collapsed, |group| {
+                        group.child(
+                            div()
+                                .px(px(6.))
+                                .text_size(px(12.))
+                                .line_height(px(20.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(dimmed)
+                                .child(heading),
+                        )
+                    })
+                    .child(menu.render(id, window, cx))
+                    // On the rail the row has no room beside its icon: the mark sits on the
+                    // icon's top right corner, cut out of it by a ring of the sidebar's color,
+                    // below the rule and 32px down per row before it.
+                    .when_some(mark.filter(|_| collapsed), |group, (row, mark)| {
+                        group.relative().child(
+                            div()
+                                .id("sidebar-game-mark")
+                                .test_support()
+                                .absolute()
+                                .top(px(5. + 32. * row as f32 + 3.))
+                                .left(px(18.))
+                                .size(px(12.))
+                                .rounded_full()
+                                .border_2()
+                                .border_color(cx.theme().tokens.sidebar)
+                                .bg(game_color(mark, cx)),
+                        )
+                    })
+                    .into_any_element()
+            }
             // A collapsed sidebar shows icons only.
             NavBlock::Heading(_, true) => div().into_any_element(),
             // On the rows' icon column, nearer its own rows than the row above.
@@ -194,7 +286,7 @@ impl SidebarInputs {
     fn of(workspace: &Workspace, cx: &App) -> SidebarInputs {
         let accounts = crate::accounts::handle(cx).read(cx);
         SidebarInputs {
-            open: workspace.sidebar_open,
+            open: workspace.shown(),
             width_from: workspace.sidebar_width_from,
             current: workspace.pages.current(),
             section: workspace
@@ -235,7 +327,7 @@ impl TopbarInputs {
     fn of(workspace: &Workspace, cx: &App) -> TopbarInputs {
         let updates = cx.global::<crate::updates::UpdatesHandle>().0.read(cx);
         TopbarInputs {
-            sidebar_open: workspace.sidebar_open,
+            sidebar_open: workspace.shown(),
             online: crate::network::online(cx),
             working: working(cx),
             update: UpdateInputs {
@@ -407,7 +499,7 @@ pub fn new_analysis(window: &mut Window, cx: &mut App) {
 pub fn sidebar_open(cx: &App) -> bool {
     cx.try_global::<Navigator>()
         .and_then(|navigator| navigator.0.upgrade())
-        .is_none_or(|workspace| workspace.read(cx).sidebar_open)
+        .is_none_or(|workspace| workspace.read(cx).shown())
 }
 
 pub fn toggle_sidebar(_: &mut Window, cx: &mut App) {
@@ -659,7 +751,12 @@ struct SwipeFeedback {
 }
 
 pub struct Workspace {
+    /// Whether the sidebar is open in a window wider than `NARROW_WINDOW`, as kept.
     sidebar_open: bool,
+    /// Whether the window is narrower than `NARROW_WINDOW`.
+    narrow: bool,
+    /// Whether the sidebar was opened while the window is narrow.
+    narrow_open: bool,
     /// The width the sidebar's last open or close started from.
     sidebar_width_from: Pixels,
     /// When the sidebar last opened or closed: it is drawn in the shell, not as its `Part`,
@@ -755,6 +852,8 @@ impl Workspace {
         let sidebar_open = crate::prefs::get(cx, SIDEBAR_OPEN, true);
         let mut workspace = Workspace {
             sidebar_open,
+            narrow: false,
+            narrow_open: false,
             sidebar_width_from: sidebar_width(sidebar_open),
             sidebar_toggled: None,
             sidebar: Part::keyed(
@@ -769,7 +868,7 @@ impl Workspace {
             ),
             toggle: Part::keyed(
                 |this, _, cx| this.render_sidebar_toggle(cx).into_any_element(),
-                |this, _| this.sidebar_open,
+                |this, _| this.shown(),
                 cx,
             ),
             history: crate::swipe::History::default(),
@@ -1058,45 +1157,43 @@ impl Workspace {
     }
 
     /// The pages, or while Settings is open its categories with a way back (`navItems`).
-    fn nav_blocks(&self, cx: &mut Context<Self>) -> Vec<NavBlock> {
+    fn nav_blocks(&self, open: bool, cx: &mut Context<Self>) -> Vec<NavBlock> {
         let current = self.pages.current();
         if current != Page::Settings {
             let mut pages = nav().into_iter();
             return NAV_GROUPS
                 .into_iter()
-                .map(|size| {
-                    NavBlock::Menu(Box::new(SidebarMenu::new().gap_0().children(
-                        pages.by_ref().take(size).map(|(page, label, glyph)| {
-                            let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
-                            nav_item(label, glyph)
-                                .active(current == page)
-                                .when_some(marked, |item, mark| {
-                                    item.suffix(move |_, cx| {
-                                        let theme = cx.theme();
-                                        let color = if mark == GameMark::Turn {
-                                            theme.primary
-                                        } else {
-                                            theme.muted_foreground
-                                        };
-                                        div().size(px(8.)).rounded_full().bg(color).when(
-                                            mark == GameMark::Turn,
-                                            |dot| {
-                                                dot.shadow(vec![BoxShadow {
-                                                    color: color.opacity(0.25),
-                                                    offset: point(px(0.), px(0.)),
-                                                    blur_radius: px(0.),
-                                                    spread_radius: px(3.),
-                                                    inset: false,
-                                                }])
-                                            },
-                                        )
+                .zip(NAV_HEADINGS)
+                .map(|(size, heading)| {
+                    let group: Vec<_> = pages.by_ref().take(size).collect();
+                    let mark = group
+                        .iter()
+                        .position(|(page, _, _)| *page == Page::Online)
+                        .and_then(|row| Some((row, game_mark(cx)?)));
+                    NavBlock::Menu(
+                        heading,
+                        Box::new(SidebarMenu::new().gap_0().children(group.into_iter().map(
+                            |(page, label, glyph)| {
+                                let marked =
+                                    (page == Page::Online).then(|| game_mark(cx)).flatten();
+                                let shown = if open { nav_label(page, label) } else { label };
+                                nav_item(shown, glyph)
+                                    .accessibility_label(label)
+                                    .active(current == page)
+                                    .when_some(marked, |item, mark| {
+                                        item.accessibility_label(match mark {
+                                            GameMark::Turn => format!("{label}, your move"),
+                                            GameMark::Live => format!("{label}, game in progress"),
+                                        })
+                                        .suffix(move |_, cx| game_dot(mark, cx))
                                     })
-                                })
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.choose(page, window, cx)
-                                }))
-                        }),
-                    )))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.choose(page, window, cx)
+                                    }))
+                            },
+                        ))),
+                        mark,
+                    )
                 })
                 .collect();
         }
@@ -1106,42 +1203,76 @@ impl Workspace {
             .map_or(Section::Appearance, |page| page.read(cx).section());
         let back = self.back;
         vec![
-            NavBlock::Menu(Box::new(SidebarMenu::new().child(
-                nav_item("Back", icon("arrow-left")).on_click(
-                    cx.listener(move |this, _, window, cx| this.choose(back, window, cx)),
+            NavBlock::Menu(
+                None,
+                Box::new(
+                    SidebarMenu::new().child(nav_item("Back", icon("arrow-left")).on_click(
+                        cx.listener(move |this, _, window, cx| this.choose(back, window, cx)),
+                    )),
                 ),
-            ))),
+                None,
+            ),
             NavBlock::Heading("Settings", false),
-            NavBlock::Menu(Box::new(SidebarMenu::new().gap_0().children(
-                sections().into_iter().map(|(section, label, glyph)| {
-                    nav_item(label, glyph).active(shown == section).on_click(
-                        cx.listener(move |this, _, _, cx| this.choose_section(section, cx)),
-                    )
-                }),
-            ))),
+            NavBlock::Menu(
+                None,
+                Box::new(
+                    SidebarMenu::new()
+                        .gap_0()
+                        .children(sections().into_iter().map(|(section, label, glyph)| {
+                            nav_item(label, glyph).active(shown == section).on_click(
+                                cx.listener(move |this, _, _, cx| this.choose_section(section, cx)),
+                            )
+                        })),
+                ),
+                None,
+            ),
         ]
     }
 
+    /// Whether the sidebar is open as shown: in a narrow window, only while opened there.
+    fn shown(&self) -> bool {
+        if self.narrow {
+            self.narrow_open
+        } else {
+            self.sidebar_open
+        }
+    }
+
     fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
-        self.sidebar_width_from = sidebar_width(self.sidebar_open);
-        self.sidebar_open = !self.sidebar_open;
+        self.sidebar_width_from = sidebar_width(self.shown());
+        if self.narrow {
+            self.narrow_open = !self.narrow_open;
+        } else {
+            self.sidebar_open = !self.sidebar_open;
+            crate::prefs::set(cx, SIDEBAR_OPEN, self.sidebar_open);
+        }
         self.sidebar_toggled = Some(std::time::Instant::now());
-        crate::prefs::set(cx, SIDEBAR_OPEN, self.sidebar_open);
         cx.notify();
+    }
+
+    /// Follow the window across `NARROW_WINDOW`: the rail below it, and above it the sidebar as
+    /// kept. A resize changes the width at once, without the toggle's easing.
+    fn fit_window(&mut self, window: &Window) {
+        let narrow = window.viewport_size().width < NARROW_WINDOW;
+        if narrow != self.narrow {
+            self.narrow = narrow;
+            self.narrow_open = false;
+            self.sidebar_width_from = sidebar_width(self.shown());
+        }
     }
 
     /// `USidebar` with `collapsible="icon"`: the header row the toggle floats over, the pages,
     /// and the footer, divided by lines (`divide-y`); 256px open, a 64px rail of icons collapsed,
     /// its width easing between the two in 200ms.
     fn render_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let open = self.sidebar_open;
+        let open = self.shown();
         let width = sidebar_width(open);
         let border = cx.theme().sidebar_border;
         // macOS keeps the rail's edge out of the header row, where it would cut through the
         // traffic lights (`.is-mac .kchess-sidebar-container::after`).
         let mac = cfg!(target_os = "macos");
         let blocks: Vec<AnyElement> = self
-            .nav_blocks(cx)
+            .nav_blocks(open, cx)
             .into_iter()
             .enumerate()
             .map(|(ix, block)| {
@@ -1178,8 +1309,8 @@ impl Workspace {
                             .min_h_0()
                             .overflow_y_scroll()
                             .px_4()
-                            .py_3()
-                            .gap_2()
+                            .py_2()
+                            .gap_1()
                             .children(blocks),
                     )
                     .child(
@@ -1238,7 +1369,7 @@ impl Workspace {
             return self.render_sidebar(window, cx).into_any_element();
         }
         let mut style = StyleRefinement::default();
-        style.size.width = Some(sidebar_width(self.sidebar_open).into());
+        style.size.width = Some(sidebar_width(self.shown()).into());
         style.size.height = Some(relative(1.).into());
         style.flex_shrink = Some(0.);
         self.sidebar.clone().cached(style).into_any_element()
@@ -1248,7 +1379,7 @@ impl Workspace {
     /// whether the sidebar is open or a rail, beside the macOS traffic lights (which ignore the
     /// interface size, so its offset does too), else at the window's edge.
     fn render_sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let label = if self.sidebar_open {
+        let label = if self.shown() {
             "Hide sidebar"
         } else {
             "Show sidebar"
@@ -1266,7 +1397,7 @@ impl Workspace {
                     .accessibility_label(label)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
             ))
-            .when(self.sidebar_open, |wrap| {
+            .when(self.shown(), |wrap| {
                 wrap.child(
                     title_bar("sidebar-name")
                         .flex()
@@ -1318,7 +1449,7 @@ impl Workspace {
                     .flex_1()
                     .flex_basis(px(0.))
                     .min_w(px(40.))
-                    .when(cfg!(target_os = "macos") && !self.sidebar_open, |left| {
+                    .when(cfg!(target_os = "macos") && !self.shown(), |left| {
                         left.child(div().flex_none().w(spacer))
                     }),
             )
@@ -1381,6 +1512,30 @@ fn working(cx: &App) -> bool {
 enum GameMark {
     Turn,
     Live,
+}
+
+/// The Lichess game's mark: the primary color on your move, else muted.
+fn game_color(mark: GameMark, cx: &App) -> Hsla {
+    let theme = cx.theme();
+    if mark == GameMark::Turn {
+        theme.primary
+    } else {
+        theme.muted_foreground
+    }
+}
+
+/// The mark beside Play on Lichess: an 8px dot, in a soft round halo on your move. (A box
+/// shadow's spread ignores the corners and drew the halo square.)
+fn game_dot(mark: GameMark, cx: &App) -> Div {
+    let color = game_color(mark, cx);
+    div()
+        .size(px(14.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .when(mark == GameMark::Turn, |halo| halo.bg(color.opacity(0.25)))
+        .child(div().size(px(8.)).rounded_full().bg(color))
 }
 
 fn game_mark(cx: &App) -> Option<GameMark> {
@@ -1685,6 +1840,7 @@ fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.fit_window(window);
         // Zen mode on a game page leaves the board and its panel (`.app-shell.zen aside`).
         let zen = cx
             .global::<SettingsHandle>()
@@ -1736,7 +1892,7 @@ impl Render for Workspace {
                 shell.child(
                     self.toggle
                         .clone()
-                        .cached(toggle_style(self.sidebar_open, window)),
+                        .cached(toggle_style(self.shown(), window)),
                 )
             })
     }

@@ -145,7 +145,7 @@ fn places(cx: &App) -> Vec<Command> {
         (
             Page::Computer,
             "Play with computer",
-            icon("monitor"),
+            icon("bot"),
             "stockfish bot ai engine vs",
         ),
         (

@@ -51,6 +51,30 @@ fn every_sidebar_page_opens(cx: &mut gpui_kit::TestAppContext) {
     }
 }
 
+/// The sidebar marks your move in a Lichess game beside Play; collapsed to its rail it had no room
+/// for the mark and dropped it, so a correspondence move went unseen there.
+#[gpui_kit::test]
+fn the_rail_still_marks_your_move(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.with_window(|window, cx| {
+        crate::online::handle(cx).update(cx, |online, cx| {
+            online.ongoing = vec![serde_json::json!({
+                "gameId": "corr1",
+                "speed": "correspondence",
+                "isMyTurn": true,
+            })];
+            cx.notify();
+        });
+        crate::shell::toggle_sidebar(window, cx);
+    });
+    let mark = app.find("sidebar-game-mark").bounds();
+    let play = app.find("4-0").bounds();
+    assert!(
+        play.contains(&mark.origin) && play.contains(&mark.bottom_right()),
+        "the mark {mark:?} sits on Play on Lichess {play:?}"
+    );
+}
+
 /// Windows gives a press on a drag area to the title bar, so a button left over one never hears
 /// its click: the top bar's Restart to update did nothing there.
 #[gpui_kit::test]
@@ -137,6 +161,36 @@ fn the_sidebar_collapses_and_is_kept_collapsed(cx: &mut gpui_kit::TestAppContext
     app.click("sidebar-toggle");
     assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
     let mut app = app.restart();
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
+}
+
+/// A narrow window gives the page the room: the sidebar shows as its rail there, opens for the
+/// moment from its toggle, and a wider window shows it as kept.
+#[gpui_kit::test]
+fn a_narrow_window_shows_the_rail(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{px, size};
+    let mut app = Harness::start(cx);
+    let resize = |app: &mut Harness, width: f32| {
+        app.cx
+            .simulate_window_resize(app.window, size(px(width), px(900.)));
+        for _ in 0..5 {
+            app.tick();
+        }
+    };
+    resize(&mut app, 760.);
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
+    app.click("sidebar-toggle");
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Hide sidebar"));
+    resize(&mut app, 1320.);
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Hide sidebar"));
+    resize(&mut app, 760.);
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
+    // Closing it on a wide window is kept; opening it on a narrow one was not.
+    resize(&mut app, 1320.);
+    app.click("sidebar-toggle");
+    resize(&mut app, 760.);
+    app.click("sidebar-toggle");
+    resize(&mut app, 1320.);
     assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
 }
 

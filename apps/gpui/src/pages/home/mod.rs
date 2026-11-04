@@ -398,7 +398,7 @@ impl Render for HomePage {
             "home-play"
         })
         .primary()
-        .icon(icon(if unfinished { "play" } else { "monitor" }))
+        .icon(icon(if unfinished { "play" } else { "bot" }))
         .label(if unfinished {
             "Continue"
         } else {
