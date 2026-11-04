@@ -400,13 +400,30 @@ fn explore_request(words: &[String]) -> Result<(&'static str, String), String> {
     Ok((kind, fen))
 }
 
+/// The core's advice names the app's Settings; here the same fix is a command or an option.
+fn for_the_cli(cause: &str) -> String {
+    const LOGIN: &str = "with `kchess-cli login`";
+    [
+        ("Reconnect in Settings", format!("Reconnect {LOGIN}")),
+        ("Reconnect it in Settings", format!("Reconnect it {LOGIN}")),
+        ("Connect it in Settings", format!("Connect it {LOGIN}")),
+        ("account in Settings", format!("account {LOGIN}")),
+        (
+            "Choose an engine in Settings",
+            "Pass --engine <path>".to_string(),
+        ),
+    ]
+    .iter()
+    .fold(cause.to_string(), |text, (app, cli)| text.replace(app, cli))
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     match run(&argv).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(cause) => {
-            eprintln!("[cli] Command failed: {cause}");
+            eprintln!("[cli] Command failed: {}", for_the_cli(&cause));
             ExitCode::FAILURE
         }
     }
@@ -415,6 +432,23 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_advice_names_the_cli_fix() {
+        assert_eq!(
+            for_the_cli("Connect a Lichess account in Settings to use the opening explorer."),
+            "Connect a Lichess account with `kchess-cli login` to use the opening explorer."
+        );
+        assert_eq!(
+            for_the_cli("@ann's Lichess login is unavailable. Reconnect it in Settings."),
+            "@ann's Lichess login is unavailable. Reconnect it with `kchess-cli login`."
+        );
+        assert_eq!(
+            for_the_cli("Stockfish could not be found. Choose an engine in Settings."),
+            "Stockfish could not be found. Pass --engine <path>."
+        );
+        assert_eq!(for_the_cli("Move 2 is not legal."), "Move 2 is not legal.");
+    }
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
