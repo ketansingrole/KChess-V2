@@ -152,6 +152,16 @@ Installers come from `.github/workflows/release.yml` as a draft GitHub Release, 
 `YEAR.MONTH.COUNTER`. Release steps, the Snap Store listing, signing and the app updater are in
 [docs/releasing.md](docs/releasing.md); the checklist is in [AGENTS.md](AGENTS.md).
 
+### Landing page
+
+`site/` is the landing page: plain HTML and CSS, no build step. `.github/workflows/site.yml`
+publishes it to GitHub Pages when it changes on main and whenever a release is published. The job
+fills `{{version}}` with the latest published release, after checking that release has every
+installer the page links to, and copies the app icon beside the page. The screenshots in
+`site/screenshots/` come from `KCHESS_SCREENSHOTS=<dir> KCHESS_E2E_LICHESS=https://lichess.org
+cargo test -p kchess-gpui e2e::screens::every_screen_with_content -- --ignored` (`content-dark`),
+cropped above the sidebar's Development build badge.
+
 ## Features
 
 - Dashboard with public Lichess profile ratings, rating history when Lichess provides it, and recent games.

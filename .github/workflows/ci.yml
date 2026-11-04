@@ -48,7 +48,7 @@ jobs:
       - id: docs
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          DOCS: '^(docs/|(AGENTS|ARCHITECTURE|CONTRIBUTING|CORE_FRONTENDS|GUARDRAILS|README|RUST_MIGRATION|SECURITY)\.md$)'
+          DOCS: '^(docs/|site/|(AGENTS|ARCHITECTURE|CONTRIBUTING|CORE_FRONTENDS|GUARDRAILS|README|RUST_MIGRATION|SECURITY)\.md$)'
         run: |
           if files="$(git diff --name-only "$BASE" HEAD)" && [ -z "$(echo "$files" | grep -vE "$DOCS")" ]; then
             code=false
