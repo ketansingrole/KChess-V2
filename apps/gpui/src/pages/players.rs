@@ -826,7 +826,7 @@ impl PlayersPage {
         })
     }
 
-    fn username(&self) -> Option<String> {
+    pub(crate) fn username(&self) -> Option<String> {
         self.profile
             .as_ref()
             .and_then(|profile| profile["username"].as_str().map(str::to_string))

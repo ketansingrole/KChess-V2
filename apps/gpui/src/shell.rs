@@ -1722,7 +1722,8 @@ fn dev_build_badge(_open: bool, _cx: &App) -> Option<AnyElement> {
 }
 
 /// The sidebar's account button: Connect Lichess while no account plays online, else the account
-/// menu (`userMenuItems`): which account plays, connecting another, Settings and logging out.
+/// menu: which account plays (with several), its profile, managing and connecting accounts, and
+/// logging out.
 fn account_button(expanded: bool, cx: &App) -> AnyElement {
     let handle = crate::accounts::handle(cx);
     let accounts = handle.read(cx);
@@ -1770,11 +1771,9 @@ fn account_button(expanded: bool, cx: &App) -> AnyElement {
                         )
                 }),
         )
-        .accessibility_label(if expanded {
-            format!("{label} account menu")
-        } else {
-            "Account menu".into()
-        })
+        .accessibility_label(format!("{label} account menu"))
+        // On the rail the icon stands alone: name the account as the footer's other buttons do.
+        .when(!expanded, |button| button.tooltip(label.clone()))
         // Above the button, centred on it and as wide (at least 192px), 8px clear.
         .dropdown_menu_with_anchor(Anchor::BottomCenter, move |menu, _, _| {
             let menu = menu.min_w(if expanded {
@@ -1792,16 +1791,12 @@ fn account_button(expanded: bool, cx: &App) -> AnyElement {
                     let _ = target.update(cx, |accounts, cx| run(accounts, window, cx));
                 }
             };
+            // Several accounts: which one plays, then the account's pages, then signing out.
+            // One account: the trigger already names it, so the menu opens on its pages.
             let several = connected.len() > 1;
-            let mut menu = menu.item(
-                PopupMenuItem::label(if several {
-                    "Play as".into()
-                } else {
-                    label.clone()
-                })
-                .icon(icon("user")),
-            );
+            let mut menu = menu;
             if several {
+                menu = menu.label("Play as");
                 for name in &connected {
                     let (name, target) = (name.clone(), target.clone());
                     menu = menu.item(
@@ -1813,23 +1808,31 @@ fn account_button(expanded: bool, cx: &App) -> AnyElement {
                             }),
                     );
                 }
+                menu = menu.separator();
             }
+            let profile = active.clone();
             let mut menu = menu
-                .separator()
+                .item(
+                    PopupMenuItem::new("Profile")
+                        .icon(icon("user"))
+                        .on_click(move |_, window, cx| open_player(&profile, window, cx)),
+                )
+                // The Settings button sits right above this one; the menu goes to its accounts.
+                .item(
+                    PopupMenuItem::new("Manage accounts")
+                        .icon(icon("users"))
+                        .on_click(|_, window, cx| open_settings(Section::Accounts, window, cx)),
+                )
                 .item(
                     PopupMenuItem::new(if connected.is_empty() {
                         "Connect Lichess account"
                     } else {
                         "Connect another account"
                     })
-                    .icon(icon("link"))
+                    .icon(icon("user-plus"))
                     .on_click(act(|accounts, window, cx| accounts.connect(window, cx))),
                 )
-                .item(
-                    PopupMenuItem::new("Settings")
-                        .icon(icon("settings-2"))
-                        .on_click(|_, window, cx| open(Page::Settings, window, cx)),
-                )
+                .separator()
                 .item(
                     PopupMenuItem::new(if several {
                         format!("Log out @{active}")
