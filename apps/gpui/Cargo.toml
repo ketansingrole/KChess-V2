@@ -23,7 +23,9 @@ kchess-service = { path = "../../crates/kchess-service" }
 kchess-domain = { path = "../../crates/kchess-domain" }
 kchess-games = { path = "../../crates/kchess-games" }
 kchess-contracts = { path = "../../crates/kchess-contracts" }
-gpui-kit = "0.8"
+# Pinned: a newer gpui-kit requires a newer gpui-pre than the patched copy in vendor/gpui-pre
+# (Cargo.toml [patch.crates-io]); rebase that patch before moving it.
+gpui-kit = "=0.8.0"
 serde.workspace = true
 serde_json.workspace = true
 shakmaty.workspace = true
@@ -81,7 +83,7 @@ embed-resource = "3"
 
 [dev-dependencies]
 # Headless windows for the rendering regressions (`#[gpui_kit::test]`).
-gpui-kit = { version = "0.8", features = ["test-support"] }
+gpui-kit = { version = "=0.8.0", features = ["test-support"] }
 # A fresh profile per end-to-end test (`src/e2e`).
 tempfile = "3"
 

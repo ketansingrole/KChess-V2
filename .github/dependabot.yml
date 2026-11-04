@@ -6,6 +6,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # gpui-kit is pinned to the gpui-pre patched in vendor/ (apps/gpui/Cargo.toml); it moves by hand.
+    ignore:
+      - dependency-name: gpui-kit
+      - dependency-name: gpui-pre*
+      - dependency-name: gpui-fast*
     groups:
       crates:
         patterns: ['*']
