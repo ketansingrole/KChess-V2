@@ -85,7 +85,7 @@ fn title_bar(id: &'static str) -> Stateful<Div> {
 pub(crate) fn nav() -> [(Page, &'static str, Icon); 16] {
     [
         (Page::Dashboard, "Home", icon("house")),
-        (Page::Computer, "Play with computer", icon("monitor")),
+        (Page::Computer, "Play with computer", icon("bot")),
         (Page::Local, "Over the board", icon("swords")),
         (Page::Puzzles, "Puzzles", icon("puzzle")),
         (Page::Practice, "Practice", icon("graduation-cap")),
@@ -107,6 +107,45 @@ pub(crate) fn nav() -> [(Page, &'static str, Icon); 16] {
 /// own games and boards, Lichess.
 pub(crate) const NAV_GROUPS: [usize; 5] = [1, 2, 3, 4, 6];
 
+/// The heading over each of `NAV_GROUPS` in the open sidebar; Home stands alone.
+const NAV_HEADINGS: [Option<&str>; 5] = [
+    None,
+    Some("Play"),
+    Some("Train"),
+    Some("Review"),
+    Some("Lichess"),
+];
+
+/// A page's name under its group's heading, where the heading already says it: "Computer" under
+/// Play, "Play" under Lichess. The rail's tooltips, the palette and screen readers keep the full name.
+fn nav_label(page: Page, label: &'static str) -> &'static str {
+    match page {
+        Page::Computer => "Computer",
+        Page::Online => "Play",
+        Page::Insights => "Insights",
+        _ => label,
+    }
+}
+
+#[cfg(test)]
+mod nav_tests {
+    use super::{NAV_GROUPS, nav, nav_label};
+
+    /// Shortened under their headings, the open sidebar's rows still name one page each.
+    #[test]
+    fn open_rows_name_one_page_each() {
+        let mut shown: Vec<&str> = nav()
+            .into_iter()
+            .map(|(page, label, _)| nav_label(page, label))
+            .collect();
+        shown.sort_unstable();
+        let count = shown.len();
+        shown.dedup();
+        assert_eq!(shown.len(), count, "two rows read the same");
+        assert_eq!(NAV_GROUPS.iter().sum::<usize>(), nav().len());
+    }
+}
+
 /// A row of the sidebar's navigation: 32px tall, an 18px icon 8px from its label.
 fn nav_item(label: &'static str, glyph: Icon) -> SidebarMenuItem {
     SidebarMenuItem::new(label)
@@ -116,24 +155,27 @@ fn nav_item(label: &'static str, glyph: Icon) -> SidebarMenuItem {
         .gap_x(px(8.))
 }
 
-/// What the sidebar lists: menus, with a heading between them while Settings is open.
+/// What the sidebar lists: menus, each under its group's heading (on the rail, a short rule
+/// instead), with a heading between them while Settings is open.
 #[derive(Clone)]
 enum NavBlock {
-    Menu(Box<SidebarMenu>),
+    Menu(Option<&'static str>, Box<SidebarMenu>),
     Heading(&'static str, bool),
 }
 
 impl Collapsible for NavBlock {
     fn is_collapsed(&self) -> bool {
         match self {
-            NavBlock::Menu(menu) => menu.is_collapsed(),
+            NavBlock::Menu(_, menu) => menu.is_collapsed(),
             NavBlock::Heading(_, collapsed) => *collapsed,
         }
     }
 
     fn collapsed(self, collapsed: bool) -> Self {
         match self {
-            NavBlock::Menu(menu) => NavBlock::Menu(Box::new(menu.collapsed(collapsed))),
+            NavBlock::Menu(heading, menu) => {
+                NavBlock::Menu(heading, Box::new(menu.collapsed(collapsed)))
+            }
             NavBlock::Heading(label, _) => NavBlock::Heading(label, collapsed),
         }
     }
@@ -147,7 +189,29 @@ impl SidebarItem for NavBlock {
         cx: &mut App,
     ) -> impl IntoElement {
         match self {
-            NavBlock::Menu(menu) => menu.render(id, window, cx).into_any_element(),
+            NavBlock::Menu(None, menu) => menu.render(id, window, cx).into_any_element(),
+            NavBlock::Menu(Some(heading), menu) => {
+                let collapsed = menu.is_collapsed();
+                let palette = cx.global::<Palette>();
+                let (dimmed, border) = (palette.dimmed, palette.border);
+                v_flex()
+                    .when(collapsed, |group| {
+                        group.child(div().h(px(1.)).w(px(16.)).mx_auto().my(px(4.)).bg(border))
+                    })
+                    .when(!collapsed, |group| {
+                        group.child(
+                            div()
+                                .px(px(6.))
+                                .text_size(px(12.))
+                                .line_height(px(24.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(dimmed)
+                                .child(heading),
+                        )
+                    })
+                    .child(menu.render(id, window, cx))
+                    .into_any_element()
+            }
             // A collapsed sidebar shows icons only.
             NavBlock::Heading(_, true) => div().into_any_element(),
             // On the rows' icon column, nearer its own rows than the row above.
@@ -1058,45 +1122,52 @@ impl Workspace {
     }
 
     /// The pages, or while Settings is open its categories with a way back (`navItems`).
-    fn nav_blocks(&self, cx: &mut Context<Self>) -> Vec<NavBlock> {
+    fn nav_blocks(&self, open: bool, cx: &mut Context<Self>) -> Vec<NavBlock> {
         let current = self.pages.current();
         if current != Page::Settings {
             let mut pages = nav().into_iter();
             return NAV_GROUPS
                 .into_iter()
-                .map(|size| {
-                    NavBlock::Menu(Box::new(SidebarMenu::new().gap_0().children(
-                        pages.by_ref().take(size).map(|(page, label, glyph)| {
-                            let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
-                            nav_item(label, glyph)
-                                .active(current == page)
-                                .when_some(marked, |item, mark| {
-                                    item.suffix(move |_, cx| {
-                                        let theme = cx.theme();
-                                        let color = if mark == GameMark::Turn {
-                                            theme.primary
-                                        } else {
-                                            theme.muted_foreground
-                                        };
-                                        div().size(px(8.)).rounded_full().bg(color).when(
-                                            mark == GameMark::Turn,
-                                            |dot| {
-                                                dot.shadow(vec![BoxShadow {
-                                                    color: color.opacity(0.25),
-                                                    offset: point(px(0.), px(0.)),
-                                                    blur_radius: px(0.),
-                                                    spread_radius: px(3.),
-                                                    inset: false,
-                                                }])
-                                            },
-                                        )
+                .zip(NAV_HEADINGS)
+                .map(|(size, heading)| {
+                    NavBlock::Menu(
+                        heading,
+                        Box::new(SidebarMenu::new().gap_0().children(
+                            pages.by_ref().take(size).map(|(page, label, glyph)| {
+                                let marked =
+                                    (page == Page::Online).then(|| game_mark(cx)).flatten();
+                                let shown = if open { nav_label(page, label) } else { label };
+                                nav_item(shown, glyph)
+                                    .accessibility_label(label)
+                                    .active(current == page)
+                                    .when_some(marked, |item, mark| {
+                                        item.suffix(move |_, cx| {
+                                            let theme = cx.theme();
+                                            let color = if mark == GameMark::Turn {
+                                                theme.primary
+                                            } else {
+                                                theme.muted_foreground
+                                            };
+                                            div().size(px(8.)).rounded_full().bg(color).when(
+                                                mark == GameMark::Turn,
+                                                |dot| {
+                                                    dot.shadow(vec![BoxShadow {
+                                                        color: color.opacity(0.25),
+                                                        offset: point(px(0.), px(0.)),
+                                                        blur_radius: px(0.),
+                                                        spread_radius: px(3.),
+                                                        inset: false,
+                                                    }])
+                                                },
+                                            )
+                                        })
                                     })
-                                })
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.choose(page, window, cx)
-                                }))
-                        }),
-                    )))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.choose(page, window, cx)
+                                    }))
+                            }),
+                        )),
+                    )
                 })
                 .collect();
         }
@@ -1106,19 +1177,27 @@ impl Workspace {
             .map_or(Section::Appearance, |page| page.read(cx).section());
         let back = self.back;
         vec![
-            NavBlock::Menu(Box::new(SidebarMenu::new().child(
-                nav_item("Back", icon("arrow-left")).on_click(
-                    cx.listener(move |this, _, window, cx| this.choose(back, window, cx)),
+            NavBlock::Menu(
+                None,
+                Box::new(
+                    SidebarMenu::new().child(nav_item("Back", icon("arrow-left")).on_click(
+                        cx.listener(move |this, _, window, cx| this.choose(back, window, cx)),
+                    )),
                 ),
-            ))),
+            ),
             NavBlock::Heading("Settings", false),
-            NavBlock::Menu(Box::new(SidebarMenu::new().gap_0().children(
-                sections().into_iter().map(|(section, label, glyph)| {
-                    nav_item(label, glyph).active(shown == section).on_click(
-                        cx.listener(move |this, _, _, cx| this.choose_section(section, cx)),
-                    )
-                }),
-            ))),
+            NavBlock::Menu(
+                None,
+                Box::new(
+                    SidebarMenu::new()
+                        .gap_0()
+                        .children(sections().into_iter().map(|(section, label, glyph)| {
+                            nav_item(label, glyph).active(shown == section).on_click(
+                                cx.listener(move |this, _, _, cx| this.choose_section(section, cx)),
+                            )
+                        })),
+                ),
+            ),
         ]
     }
 
@@ -1141,7 +1220,7 @@ impl Workspace {
         // traffic lights (`.is-mac .kchess-sidebar-container::after`).
         let mac = cfg!(target_os = "macos");
         let blocks: Vec<AnyElement> = self
-            .nav_blocks(cx)
+            .nav_blocks(open, cx)
             .into_iter()
             .enumerate()
             .map(|(ix, block)| {

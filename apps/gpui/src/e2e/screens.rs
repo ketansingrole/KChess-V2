@@ -127,7 +127,7 @@ fn the_timeline() {
 /// years of history, in both appearances, wide and narrow:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::home -- --ignored` writes
 /// `<dir>/home/<state>-<appearance>-<width>.png`; `KCHESS_HOME_STATES` and `KCHESS_HOME_SIZES`
-/// narrow it down.
+/// narrow it down, and `KCHESS_HOME_RAIL=1` shoots it with the sidebar collapsed to its rail.
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn home() {
@@ -136,6 +136,7 @@ fn home() {
     std::fs::create_dir_all(&out).expect("the screenshot folder");
     super::environment();
     let only = std::env::var("KCHESS_HOME_STATES").unwrap_or_default();
+    let rail = std::env::var_os("KCHESS_HOME_RAIL").is_some();
     for state in ["new", "finished", "played", "lichess"] {
         if !only.is_empty() && !only.split(',').any(|wanted| wanted == state) {
             continue;
@@ -154,15 +155,19 @@ fn home() {
                     connect_showcase(&mut cx, window, profile.path(), "Rattiestword5");
                 }
                 cx.update_window(window, |_, window, cx| {
-                    crate::shell::open(Page::Dashboard, window, cx)
+                    crate::shell::open(Page::Dashboard, window, cx);
+                    if rail {
+                        crate::shell::toggle_sidebar(window, cx);
+                    }
                 })
                 .expect("the window");
                 for _ in 0..6 {
                     settle(&mut cx, window);
                 }
+                let suffix = if rail { "-rail" } else { "" };
                 cx.capture_screenshot(window)
                     .expect("a screenshot")
-                    .save(out.join(format!("{state}-{name}-{width}.png")))
+                    .save(out.join(format!("{state}-{name}-{width}{suffix}.png")))
                     .expect("the screenshot saves");
                 let quit = cx.update(crate::core::quit);
                 cx.foreground_executor().block_test(quit);
