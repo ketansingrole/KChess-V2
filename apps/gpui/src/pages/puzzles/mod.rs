@@ -1503,13 +1503,7 @@ impl PuzzlesPage {
 /// The puzzle id a lichess.org/training link names (`lichess.org/training/FPFg0`); `None` for
 /// anything else, a theme's or the daily puzzle's page included.
 pub fn puzzle_link(text: &str) -> Option<String> {
-    let text = text.trim();
-    let rest = text
-        .strip_prefix("https://")
-        .or_else(|| text.strip_prefix("http://"))
-        .unwrap_or(text);
-    let rest = rest.strip_prefix("www.").unwrap_or(rest);
-    let path = rest.strip_prefix("lichess.org/training/")?;
+    let path = crate::game::lichess_path(text)?.strip_prefix("training/")?;
     let id = path.split(['?', '#']).next().unwrap_or_default();
     let id = id.strip_suffix('/').unwrap_or(id);
     let theme = |key: &str| key == "daily" || themes().iter().any(|theme| theme.key == key);

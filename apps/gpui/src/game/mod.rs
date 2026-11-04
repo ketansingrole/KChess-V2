@@ -280,6 +280,18 @@ pub struct GameLink {
     pub ply: Option<usize>,
 }
 
+/// What follows `lichess.org/` in a link, with or without its scheme and `www.`.
+pub fn lichess_path(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let rest = text
+        .strip_prefix("https://")
+        .or_else(|| text.strip_prefix("http://"))
+        .unwrap_or(text);
+    rest.strip_prefix("www.")
+        .unwrap_or(rest)
+        .strip_prefix("lichess.org/")
+}
+
 /// `USERNAME`: what Lichess accepts as a name.
 pub fn is_username(name: &str) -> bool {
     (2..=30).contains(&name.len())
@@ -291,13 +303,7 @@ pub fn is_username(name: &str) -> bool {
 /// The player a lichess.org profile link names (`lichess.org/@/DrNykterstein`, with `/all`,
 /// `/perf/blitz` and the like after it).
 pub fn profile_link(text: &str) -> Option<String> {
-    let text = text.trim();
-    let rest = text
-        .strip_prefix("https://")
-        .or_else(|| text.strip_prefix("http://"))
-        .unwrap_or(text);
-    let rest = rest.strip_prefix("www.").unwrap_or(rest);
-    let path = rest.strip_prefix("lichess.org/@/")?;
+    let path = lichess_path(text)?.strip_prefix("@/")?;
     let name = path.split(['/', '?', '#']).next().unwrap_or_default();
     is_username(name).then(|| name.to_string())
 }
@@ -309,13 +315,7 @@ pub fn game_link(text: &str) -> Option<GameLink> {
         "analysis", "training", "practice", "insights", "streamer", "learning", "tutorial",
         "settings", "features",
     ];
-    let text = text.trim();
-    let rest = text
-        .strip_prefix("https://")
-        .or_else(|| text.strip_prefix("http://"))
-        .unwrap_or(text);
-    let rest = rest.strip_prefix("www.").unwrap_or(rest);
-    let rest = rest.strip_prefix("lichess.org/")?;
+    let rest = lichess_path(text)?;
     let (path, anchor) = rest.split_once('#').unwrap_or((rest, ""));
     let path = path.split('?').next().unwrap_or_default();
     let mut parts = path.split('/').filter(|part| !part.is_empty());
