@@ -24,6 +24,40 @@ fn past_the_opening(cx: &mut gpui_kit::TestAppContext) -> (Harness, Handle) {
     (app, lichess)
 }
 
+#[gpui_kit::test]
+fn a_game_lichess_keeps_from_apps_is_offered_to_watch(cx: &mut gpui_kit::TestAppContext) {
+    // A game started on another device that the Board API cannot play once opened Play on
+    // Lichess on "Connection interrupted" with Lichess's 400 and a Reconnect that never worked.
+    let (app, lichess) = Harness::signed_in(cx, true);
+    {
+        // From the next launch on, the game is one Lichess keeps from apps.
+        let mut session = lichess.lock();
+        session.elsewhere = true;
+        session.board_streams = 0;
+    }
+    let mut app = app.restart();
+    app.online();
+    app.open("Play on Lichess");
+    {
+        use gpui_kit::test::TestWindowExt as _;
+        app.wait_for("the game to be listed to watch", |window, _| {
+            window
+                .try_find(("ongoing-play", 0usize))
+                .is_some_and(|button| button.label() == Some("Watch"))
+        });
+    }
+    assert!(
+        !app.shows("online-abort"),
+        "the game is not taken to the board"
+    );
+    assert_eq!(lichess.lock().board_streams, 0);
+    app.click(("ongoing-play", 0usize));
+    assert_eq!(
+        app.cx.update(|cx| crate::shell::current_page(cx)),
+        Some(crate::pages::Page::Watch)
+    );
+}
+
 fn writes(lichess: &Handle) -> Vec<String> {
     lichess.lock().writes.clone()
 }

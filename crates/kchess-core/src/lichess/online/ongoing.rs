@@ -59,7 +59,14 @@ pub(crate) fn ongoing_game(game: &Value, account: &str) -> OngoingGame {
         speed: game["speed"].as_str().unwrap_or("").to_string(),
         rated: game["rated"].as_bool().unwrap_or(false),
         tournament_id: game["tournamentId"].as_str().map(str::to_string),
+        playable: board_playable(game),
     }
+}
+
+/// Whether the Board API can play a game Lichess describes (`compat.board`). Lichess refuses it
+/// some games started on another device or app; an absent flag is taken as playable.
+pub(crate) fn board_playable(game: &Value) -> bool {
+    game["compat"]["board"] != Value::Bool(false)
 }
 
 pub(crate) fn js_value_text(value: &Value) -> String {

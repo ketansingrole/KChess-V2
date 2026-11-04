@@ -465,6 +465,11 @@ impl OnlineSession {
         if kind == "gameStart" {
             let game_id = event["game"]["gameId"].as_str().unwrap_or("").to_string();
             self.challenge_became_game(&game_id);
+            // A game the Board API cannot play stays where it was started; it is listed only.
+            if !super::ongoing::board_playable(&event["game"]) {
+                self.ongoing_changed();
+                return;
+            }
             let correspondence = event["game"]["speed"].as_str() == Some("correspondence");
             let (live, live_correspondence) = {
                 let st = self.st();

@@ -122,6 +122,7 @@ impl OnlineSession {
                 this.on_challenge(&for_account, &event);
             } else if kind == "gameStart"
                 && event["game"]["speed"].as_str() != Some("correspondence")
+                && crate::lichess::online::ongoing::board_playable(&event["game"])
             {
                 let game_id = event["game"]["gameId"].as_str().unwrap_or("").to_string();
                 let this = this.clone();

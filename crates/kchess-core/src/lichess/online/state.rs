@@ -113,6 +113,9 @@ pub struct OngoingGame {
     pub rated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tournament_id: Option<String>,
+    /// Whether the Board API can play it (`compat.board`): Lichess refuses it some games
+    /// started elsewhere, which can only be watched here.
+    pub playable: bool,
 }
 
 /// A private chat line of the live game (`ChatLine`).

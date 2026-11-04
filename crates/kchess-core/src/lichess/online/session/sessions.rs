@@ -343,10 +343,14 @@ impl OnlineSession {
             let Some(now_playing) = playing.get("nowPlaying").and_then(Value::as_array) else {
                 return Err(core("Lichess returned an invalid ongoing-game response."));
             };
-            // Correspondence games last for days: they open only when the player picks one.
+            // Correspondence games last for days: they open only when the player picks one. A
+            // game the Board API cannot play stays where it was started.
             let id = now_playing
                 .iter()
-                .find(|game| game["speed"].as_str() != Some("correspondence"))
+                .find(|game| {
+                    game["speed"].as_str() != Some("correspondence")
+                        && crate::lichess::online::ongoing::board_playable(game)
+                })
                 .and_then(|game| game["gameId"].as_str())
                 .map(str::to_string);
             if attempt != self.st().resume_attempt {

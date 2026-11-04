@@ -420,7 +420,11 @@ impl OnlinePage {
                         game["account"].as_str().unwrap_or_default()
                     ));
                 }
-                let mut turn = if mine {
+                // Lichess lets apps play only some games; the others are watched here.
+                let playable = game["playable"] != json!(false);
+                let mut turn = if !playable {
+                    "Played elsewhere".to_string()
+                } else if mine {
                     "Your move".to_string()
                 } else {
                     "Waiting for opponent".to_string()
@@ -479,10 +483,20 @@ impl OnlinePage {
                     .child(
                         Button::new(("ongoing-play", index))
                             .xsmall()
-                            .when(mine, |button| button.primary())
-                            .when(!mine, |button| button.outline())
-                            .label(if open_now { "Open" } else { "Play" })
+                            .when(mine && playable, |button| button.primary())
+                            .when(!mine || !playable, |button| button.outline())
+                            .label(if !playable {
+                                "Watch"
+                            } else if open_now {
+                                "Open"
+                            } else {
+                                "Play"
+                            })
                             .on_click(move |_, window, cx| {
+                                if !playable {
+                                    crate::shell::watch_game(&id, window, cx);
+                                    return;
+                                }
                                 if !open_now {
                                     let (account, id) = (account.clone(), id.clone());
                                     crate::online::handle(cx)

@@ -831,8 +831,10 @@ impl OnlineState {
     fn receive(&mut self, event: &CoreEvent, cx: &mut Context<Self>) {
         match event.name.as_str() {
             "online:event" => {
+                // Not for a game the Board API cannot play, such as one started on another device.
                 let starts = event.payload["type"] == json!("gameStart")
-                    && event.payload["game"]["speed"] != json!("correspondence");
+                    && event.payload["game"]["speed"] != json!("correspondence")
+                    && event.payload["game"]["compat"]["board"] != json!(false);
                 self.transition("onlineGameEvent", vec![event.payload.clone()], None, cx);
                 // A pairing or an accepted challenge takes you to the board, as Lichess does.
                 if starts {

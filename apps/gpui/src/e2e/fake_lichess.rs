@@ -34,6 +34,11 @@ pub struct Session {
     pub revoked: bool,
     /// A game is under way: reported on the event stream and in `account/playing`.
     pub game: bool,
+    /// The game was started where the Board API cannot play it (`compat.board` false): its
+    /// board stream answers 400, as Lichess does.
+    pub elsewhere: bool,
+    /// How many times the app opened the game's board stream.
+    pub board_streams: usize,
     pub moves: Vec<String>,
     /// Lichess's `status`, once the game has ended; `started` until then.
     pub finished: Option<&'static str>,
@@ -305,20 +310,20 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             let session = session.lock();
             let playing: Vec<Value> = session
                 .game
-                .then(summary)
+                .then(|| summary(session.elsewhere))
                 .filter(|_| session.finished.is_none())
                 .into_iter()
                 .collect();
             reply(&mut out, &json!({ "nowPlaying": playing }))
         }
         ("GET", "/api/stream/event") => {
-            let start = {
+            let (start, elsewhere) = {
                 let mut session = session.lock();
                 session.streams += 1;
                 session.listening += 1;
-                session.game
+                (session.game, session.elsewhere)
             };
-            let first = start.then(|| json!({ "type": "gameStart", "game": summary() }));
+            let first = start.then(|| json!({ "type": "gameStart", "game": summary(elsewhere) }));
             let listening = session.clone();
             let open = move || !session.lock().revoked;
             // Until the app hangs up (a keep-alive fails to send) or the login is revoked.
@@ -327,10 +332,17 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             ended
         }
         ("GET", p) if p == stream_path => {
-            let (first, seen) = {
-                let session = session.lock();
-                (full(&session), session.version)
+            let (first, seen, elsewhere) = {
+                let mut session = session.lock();
+                session.board_streams += 1;
+                (full(&session), session.version, session.elsewhere)
             };
+            if elsewhere {
+                return refuse(
+                    &mut out,
+                    &json!({ "error": "This game cannot be played with the Board API." }),
+                );
+            }
             let mut seen = seen;
             stream(
                 &mut out,
@@ -403,6 +415,16 @@ fn reply(out: &mut TcpStream, body: &Value) -> std::io::Result<()> {
     write!(
         out,
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )?;
+    answered(out)
+}
+
+fn refuse(out: &mut TcpStream, body: &Value) -> std::io::Result<()> {
+    let body = body.to_string();
+    write!(
+        out,
+        "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )?;
     answered(out)
@@ -500,7 +522,7 @@ fn account(username: &str) -> Value {
     })
 }
 
-fn summary() -> Value {
+fn summary(elsewhere: bool) -> Value {
     json!({
         "gameId": GAME,
         "fullId": format!("{GAME}abcd"),
@@ -516,7 +538,7 @@ fn summary() -> Value {
         "source": "lobby",
         "speed": "rapid",
         "variant": { "key": "standard", "name": "Standard" },
-        "compat": { "bot": false, "board": true }
+        "compat": { "bot": false, "board": !elsewhere }
     })
 }
 

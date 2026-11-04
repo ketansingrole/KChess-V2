@@ -766,6 +766,13 @@ pub struct OngoingGame {
     pub speed: String,
     pub rated: bool,
     pub tournament_id: Option<String>,
+    /// Whether the Board API can play it (`compat.board`); a game it cannot is watched instead.
+    #[serde(default = "playable_by_default")]
+    pub playable: bool,
+}
+
+fn playable_by_default() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
