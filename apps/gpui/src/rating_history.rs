@@ -43,6 +43,8 @@ pub struct RatingHistory {
     official: Value,
     fallback: Value,
     mode: String,
+    /// The speed is chosen here, not by the cards beside the chart (Home's).
+    mode_picker: bool,
     range: &'static str,
     chart: Entity<LineChart>,
     mode_select: Entity<SelectState<Vec<Choice>>>,
@@ -177,6 +179,7 @@ impl RatingHistory {
             official: Value::Null,
             fallback: Value::Null,
             mode: "blitz".into(),
+            mode_picker: true,
             range: "All",
             chart: cx.new(|_| LineChart::new(px(240.), |rating| format!("{}", rating.round()))),
             mode_select,
@@ -193,6 +196,12 @@ impl RatingHistory {
             state.set_selected_value(&SharedString::from(mode.to_string()), window, cx)
         });
         self.draw(cx);
+    }
+
+    /// Leave choosing the speed to the page: the heading names it instead.
+    pub fn without_mode_picker(mut self) -> Self {
+        self.mode_picker = false;
+        self
     }
 
     /// The mode on the chart.
@@ -316,7 +325,20 @@ impl Render for RatingHistory {
                     .gap(px(8.))
                     .child(
                         v_flex()
-                            .child(widgets::heading("Rating history", &palette))
+                            .child(widgets::heading(
+                                if self.mode_picker {
+                                    "Rating history".to_string()
+                                } else {
+                                    format!(
+                                        "{} rating history",
+                                        MODES
+                                            .iter()
+                                            .find(|(value, _)| *value == self.mode)
+                                            .map_or("", |(_, label)| label)
+                                    )
+                                },
+                                &palette,
+                            ))
                             .children(change.map(|change| {
                                 h_flex()
                                     .gap(px(4.))
@@ -343,20 +365,22 @@ impl Render for RatingHistory {
                     .child(
                         h_flex()
                             .gap(px(8.))
-                            .child(
-                                div()
-                                    .w(fit_select(
-                                        MODES
-                                            .iter()
-                                            .find(|(value, _)| *value == self.mode)
-                                            .map_or("", |(_, label)| label),
-                                    ))
-                                    .child(
-                                        Select::new(&self.mode_select)
-                                            .small()
-                                            .accessibility_label("Speed"),
-                                    ),
-                            )
+                            .when(self.mode_picker, |selects| {
+                                selects.child(
+                                    div()
+                                        .w(fit_select(
+                                            MODES
+                                                .iter()
+                                                .find(|(value, _)| *value == self.mode)
+                                                .map_or("", |(_, label)| label),
+                                        ))
+                                        .child(
+                                            Select::new(&self.mode_select)
+                                                .small()
+                                                .accessibility_label("Speed"),
+                                        ),
+                                )
+                            })
                             .child(
                                 div().w(fit_select(self.range)).child(
                                     Select::new(&self.range_select)

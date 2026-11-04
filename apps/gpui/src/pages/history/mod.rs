@@ -61,7 +61,7 @@ fn filter_of(outcome: &str) -> Option<Filter> {
 }
 
 /// `archivedOutcome`, shared with the Electron app.
-fn outcome(game: &Value) -> String {
+pub(crate) fn outcome(game: &Value) -> String {
     rules("archivedOutcome", std::slice::from_ref(game))
         .ok()
         .and_then(|outcome| outcome.as_str().map(str::to_string))
@@ -131,7 +131,7 @@ fn time_label(control: &str) -> String {
 }
 
 /// Who the game was against: the engine for computer games, both names at the board.
-fn opponent(game: &Value) -> String {
+pub(crate) fn opponent(game: &Value) -> String {
     match player_side(game) {
         Some(Color::White) => text(game, "black").to_string(),
         Some(Color::Black) => text(game, "white").to_string(),

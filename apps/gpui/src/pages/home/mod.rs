@@ -51,7 +51,7 @@ impl Focusable for HomePage {
 
 /// An unfinished computer game as Home names it: the opponent, and where the game stands.
 struct Unfinished {
-    /// "Club Player · ~1600".
+    /// "Stockfish · Club Player · ~1600".
     opponent: String,
     /// "Move 3 · You play White · Your move".
     state: String,
@@ -80,7 +80,7 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
         .and_then(|label| label.as_str().map(str::to_string))
         .unwrap_or_default();
     Some(Unfinished {
-        opponent: level,
+        opponent: format!("Stockfish · {level}"),
         state: format!(
             "Move {} · You play {side} · {}",
             moves / 2 + 1,
@@ -261,7 +261,11 @@ impl Render for HomePage {
             )
             .into_any_element(),
         ];
-        let tiles = h_flex().flex_wrap().gap(px(12.)).children(tiles);
+        // Two rows of two.
+        let mut tiles = tiles.into_iter();
+        let tiles = v_flex()
+            .gap(px(12.))
+            .children((0..2).map(|_| h_flex().gap(px(12.)).children(tiles.by_ref().take(2))));
 
         let mut games: Vec<Value> = cx
             .global::<PlayedHandle>()
@@ -357,17 +361,18 @@ impl Render for HomePage {
                 div()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(palette.highlighted)
-                    .truncate()
                     .child(title)
             }))
             .children(detail.map(|detail| {
                 div()
                     .text_size(px(13.))
                     .text_color(palette.text_muted)
-                    .truncate()
                     .child(detail)
             }));
-        let actions = h_flex().gap(px(8.)).child(primary).children(review);
+        let actions = h_flex()
+            .gap(px(8.))
+            .child(div().flex_1().child(primary.w_full()))
+            .children(review);
         // The board you left (or last played), what it is, and what to do with it.
         let now = widgets::card(&palette).p(px(16.)).flex_none();
         let now = if stacked {
@@ -434,39 +439,33 @@ impl Render for HomePage {
                     .mx(px(-8.))
                     .children(games.into_iter().enumerate().map(|(index, game)| {
                         let id = game["id"].as_str().unwrap_or_default().to_string();
-                        let computer = game["source"] == "computer";
                         h_flex()
                             .id(("home-game", index))
                             .role(Role::Button)
                             .keyboard_focus(palette.primary)
                             .aria_label(names(&game))
-                            .h(px(36.))
                             .gap(px(12.))
                             .px(px(8.))
+                            .py(px(6.))
                             .rounded(radii::MD)
                             .text_size(px(13.))
                             .cursor_pointer()
                             .hover(|row| row.bg(palette.accented))
                             .on_click(move |_, window, cx| crate::shell::open_game(&id, window, cx))
-                            .child(
-                                div().w(px(20.)).flex_none().child(
-                                    if computer {
-                                        icon("monitor")
-                                    } else {
-                                        icon("users-round")
-                                    }
-                                    .size(px(16.))
-                                    .text_color(palette.text_muted),
+                            .child(div().w(px(52.)).flex_none().child(
+                                crate::pages::history::badge(
+                                    &crate::pages::history::outcome(&game),
+                                    Some(px(52.)),
+                                    &palette,
                                 ),
-                            )
-                            .child(div().flex_1().min_w_0().truncate().child(names(&game)))
+                            ))
                             .child(
                                 div()
-                                    .w(px(56.))
-                                    .flex_none()
-                                    .text_right()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
                                     .font_weight(FontWeight::MEDIUM)
-                                    .child(result_text(game["result"].as_str().unwrap_or("*"))),
+                                    .child(crate::pages::history::opponent(&game)),
                             )
                             .child(
                                 div()

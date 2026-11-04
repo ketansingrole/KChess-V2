@@ -39,6 +39,7 @@ impl LichessActivity {
                     window,
                     cx,
                 )
+                .without_mode_picker()
             }),
             overview: Value::Null,
             recent: Vec::new(),
@@ -185,42 +186,41 @@ impl Render for LichessActivity {
         let busy = crate::accounts::handle(cx).read(cx).busy;
         let online = crate::network::online(cx);
         let sync_account = self.account.clone();
-        let header = h_flex()
+        let account_line = h_flex()
             .flex_wrap()
-            .items_center()
+            .items_baseline()
+            .gap_x(px(10.))
+            .gap_y(px(2.))
+            .text_size(px(13.))
+            .text_color(palette.text_muted)
+            .child(format!("@{}", self.account))
+            .when(games > 0., |line| {
+                line.child(format!("{} games", grouped(games))).child(
+                    h_flex()
+                        .id("home-record")
+                        .test_support()
+                        .gap(px(8.))
+                        .child(tally(count("win"), "W", palette.win))
+                        .child(tally(count("loss"), "L", palette.loss))
+                        .child(tally(count("draw"), "D", palette.text)),
+                )
+            });
+        let header = h_flex()
+            .items_start()
             .justify_between()
             .gap(px(12.))
             .child(
-                h_flex()
-                    .flex_wrap()
-                    .items_baseline()
-                    .gap_x(px(12.))
-                    .gap_y(px(4.))
+                v_flex()
+                    .min_w_0()
+                    .gap(px(2.))
                     .child(widgets::heading("Lichess", &palette).text_size(px(16.)))
-                    .child(
-                        h_flex()
-                            .items_baseline()
-                            .gap(px(10.))
-                            .text_size(px(13.))
-                            .text_color(palette.text_muted)
-                            .child(format!("@{}", self.account))
-                            .when(games > 0., |line| {
-                                line.child(format!("{} games", grouped(games))).child(
-                                    h_flex()
-                                        .id("home-record")
-                                        .test_support()
-                                        .gap(px(8.))
-                                        .child(tally(count("win"), "W", palette.win))
-                                        .child(tally(count("loss"), "L", palette.loss))
-                                        .child(tally(count("draw"), "D", palette.highlighted)),
-                                )
-                            }),
-                    ),
+                    .child(account_line),
             )
             .child(
                 Button::new("home-sync")
                     .outline()
                     .small()
+                    .flex_none()
                     .icon(icon("refresh-cw"))
                     .label("Sync games")
                     .loading(busy)
@@ -280,7 +280,12 @@ impl Render for LichessActivity {
                                     .line_height(px(36.))
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(palette.highlighted)
-                                    .child(rating.map_or_else(|| "—".into(), grouped)),
+                                    .child(
+                                        rating.map_or_else(
+                                            || "—".into(),
+                                            |rating| format!("{rating}"),
+                                        ),
+                                    ),
                             )
                             .children(progress.map(|prog| {
                                 div()
@@ -323,7 +328,7 @@ impl Render for LichessActivity {
                 h_flex()
                     .justify_between()
                     .mb(px(4.))
-                    .child(widgets::heading("Recent games", &palette))
+                    .child(widgets::heading("Games", &palette))
                     .when(!self.recent.is_empty(), |header| {
                         header.child(
                             Button::new("home-lichess-all")
