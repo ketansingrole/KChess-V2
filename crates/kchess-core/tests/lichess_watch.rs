@@ -581,9 +581,12 @@ fn reads_the_start_moves_and_result_from_a_game_export() {
     assert_eq!(game.status.as_deref(), Some("mate"));
     assert_eq!(game.winner, Some("black"));
     assert_eq!(game.details.rated, Some(true));
-    // Crazyhouse cannot be replayed, so it gets the board without a move list.
+    // Crazyhouse replays, pockets and all; a variant KChess cannot play gets the board without a
+    // move list.
+    let house = parse_tv_game(&json!({ "variant": "crazyhouse", "moves": "e4" }));
+    assert_eq!(house.setup.unwrap().variant, "crazyhouse");
     assert!(
-        parse_tv_game(&json!({ "variant": "crazyhouse", "moves": "e4" }))
+        parse_tv_game(&json!({ "variant": "bughouse", "moves": "e4" }))
             .setup
             .is_none()
     );
