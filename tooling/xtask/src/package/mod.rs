@@ -19,6 +19,8 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 mod manifest;
+#[cfg(target_os = "macos")]
+mod mas;
 mod windows;
 
 use std::path::{Path, PathBuf};
@@ -223,6 +225,7 @@ fn sha256(path: &Path) -> Result<String> {
 pub fn run(args: &[String]) -> Result {
     let skip = args.iter().any(|arg| arg == "--skip-build");
     let snap = args.iter().any(|arg| arg == "--snap");
+    let store = args.iter().any(|arg| arg == "--mas");
     // KCHESS_PACKAGE_VERSION builds a test installer above every release (windows-upgrade.yml);
     // the app reads the same variable (apps/gpui/build.rs).
     let version = std::env::var("KCHESS_PACKAGE_VERSION")
@@ -233,10 +236,26 @@ pub fn run(args: &[String]) -> Result {
     let built = build(skip)?;
     let out = root().join("apps/gpui/dist");
     let stage = root().join("target/package/stage");
-    let _ = std::fs::remove_dir_all(&out);
+    // The App Store's package leaves the other packages in place.
+    if !store {
+        let _ = std::fs::remove_dir_all(&out);
+    }
     let _ = std::fs::remove_dir_all(&stage);
     std::fs::create_dir_all(&out).map_err(|cause| cause.to_string())?;
     std::fs::create_dir_all(&stage).map_err(|cause| cause.to_string())?;
+    #[cfg(target_os = "macos")]
+    if store {
+        // The App Store's package goes to the store alone: no manifest, checksums or release asset.
+        let _ = std::fs::remove_dir_all(out.join("mas"));
+        for pkg in mas::package(&identity, &built, &stage, &out)? {
+            say(&format!("Done: {}", pkg.display()));
+        }
+        return Ok(());
+    }
+    #[cfg(not(target_os = "macos"))]
+    if store {
+        return Err("The Mac App Store package is built on macOS.".into());
+    }
     #[cfg(target_os = "macos")]
     let packages = mac::package(&identity, &built, &stage, &out)?;
     #[cfg(windows)]

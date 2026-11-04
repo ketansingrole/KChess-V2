@@ -53,7 +53,8 @@ pub async fn engine_status(
     configured: &str,
 ) -> EngineStatus {
     let managed = managed_engine(host, &locations.managed_dir).await;
-    let can_download = can_download(locations.target.platform, locations.target.arch);
+    let can_download =
+        !crate::app_store() && can_download(locations.target.platform, locations.target.arch);
     if !configured.is_empty() && is_executable_file(host, Path::new(configured)).await {
         return EngineStatus {
             ready: true,

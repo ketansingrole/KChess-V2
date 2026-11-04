@@ -64,6 +64,11 @@ fn badge(phase: Phase) -> Option<(&'static str, Look, &'static str)> {
         Phase::Installing => ("Installing", Look::Primary, "rotate-cw"),
         Phase::Error => ("Update failed", Look::Error, "circle-alert"),
         Phase::Disabled => ("Manual updates", Look::NeutralSoft, "hand"),
+        Phase::Store => (
+            "Updated by the App Store",
+            Look::NeutralSoft,
+            "circle-check",
+        ),
         Phase::Idle | Phase::Checking => return None,
     })
 }

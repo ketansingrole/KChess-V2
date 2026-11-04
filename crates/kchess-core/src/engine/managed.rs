@@ -311,6 +311,11 @@ where
 }
 
 async fn install(host: &dyn Host, location: &ManagedLocation) -> Result<InstallResult> {
+    if crate::app_store() {
+        return Err(CoreError::new(
+            "The App Store version uses the Stockfish it comes with.",
+        ));
+    }
     let dir = location.dir.clone();
     let mut cancel = location.cancel.clone();
     let client = reqwest::Client::builder()

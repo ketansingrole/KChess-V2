@@ -1,0 +1,94 @@
+name: App Store build
+
+# The Mac App Store's KChess (`cargo xtask package --mas`, docs/app-store.md): signed for the store
+# and, for a release tag, uploaded to App Store Connect, where it waits in TestFlight. Publishing
+# the GitHub release sends it to review (app-store-publish.yml). Without the signing secrets it
+# builds the sandboxed app signed ad hoc, which shows the package still builds.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-latest
+    env:
+      KCHESS_MAS_SIGNING: ${{ secrets.MAS_APP_P12 != '' && 'true' || 'false' }}
+      CARGO_PROFILE_RELEASE_LTO: fat
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: package
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: false
+      # Both identities go into a keychain of this job's own; the profile into a file beside it.
+      - name: Import the App Store signing identities
+        id: signing
+        if: env.KCHESS_MAS_SIGNING == 'true'
+        shell: bash
+        env:
+          MAS_APP_P12: ${{ secrets.MAS_APP_P12 }}
+          MAS_INSTALLER_P12: ${{ secrets.MAS_INSTALLER_P12 }}
+          MAS_P12_PASSWORD: ${{ secrets.MAS_P12_PASSWORD }}
+          MAS_PROVISION_PROFILE: ${{ secrets.MAS_PROVISION_PROFILE }}
+        run: |
+          keychain="$RUNNER_TEMP/kchess-store.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          for name in MAS_APP_P12 MAS_INSTALLER_P12; do
+            file="$RUNNER_TEMP/$name.p12"
+            printf '%s' "${!name}" | base64 --decode > "$file"
+            security import "$file" -k "$keychain" -P "$MAS_P12_PASSWORD" -f pkcs12 \
+              -T /usr/bin/codesign -T /usr/bin/productbuild
+            rm -f "$file"
+          done
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          app="$(security find-identity -v -p codesigning "$keychain" | awk -F'"' '/"Apple Distribution:/ { print $2; exit }')"
+          installer="$(security find-identity -v "$keychain" | awk -F'"' '/"3rd Party Mac Developer Installer:|"Mac Installer Distribution:/ { print $2; exit }')"
+          test -n "$app" || { echo "::error::No Apple Distribution identity in MAS_APP_P12."; exit 1; }
+          test -n "$installer" || { echo "::error::No Mac Installer Distribution identity in MAS_INSTALLER_P12."; exit 1; }
+          profile="$RUNNER_TEMP/KChess.provisionprofile"
+          printf '%s' "$MAS_PROVISION_PROFILE" | base64 --decode > "$profile"
+          {
+            echo "app=$app"
+            echo "installer=$installer"
+            echo "profile=$profile"
+          } >> "$GITHUB_OUTPUT"
+      - run: cargo xtask package --mas
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KCHESS_MAS_APP_IDENTITY: ${{ steps.signing.outputs.app }}
+          KCHESS_MAS_INSTALLER_IDENTITY: ${{ steps.signing.outputs.installer }}
+          KCHESS_MAS_PROFILE: ${{ steps.signing.outputs.profile }}
+          APPLE_TEAM_ID: ${{ env.KCHESS_MAS_SIGNING == 'true' && secrets.APPLE_TEAM_ID || '' }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kchess-app-store
+          path: apps/gpui/dist/mas/
+          if-no-files-found: error
+          retention-days: 14
+      # Only a release tag's build reaches App Store Connect; its version is the build number too.
+      - name: Upload to App Store Connect
+        if: env.KCHESS_MAS_SIGNING == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          ASC_APP_ID: ${{ vars.ASC_APP_ID }}
+          ASC_BYPASS_KEYCHAIN: '1'
+        run: |
+          test -n "$ASC_APP_ID" || { echo "::error::Set the ASC_APP_ID repository variable."; exit 1; }
+          brew install asc
+          version="${GITHUB_REF_NAME#v}"
+          pkg="apps/gpui/dist/mas/KChess-$version-mac-arm64.pkg"
+          test -s "$pkg" || { echo "::error::No $pkg; the tag and the workspace version differ."; exit 1; }
+          asc builds upload --app "$ASC_APP_ID" --pkg "$pkg" --version "$version" \
+            --build-number "$version" --wait --output table

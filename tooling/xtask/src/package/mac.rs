@@ -26,15 +26,27 @@ fn escape(text: &str) -> String {
 const ELECTRON_APP_ID: &str = "com.kchess.electron";
 
 pub fn info_plist(identity: &Identity) -> String {
-    plist(identity, identity.app_id, "kchess", false)
+    plist(identity, identity.app_id, "kchess", false, false)
+}
+
+/// The Mac App Store's: it also says KChess uses only exempt encryption (HTTPS), which App Store
+/// Connect otherwise asks about for every build.
+pub fn store_plist(identity: &Identity) -> String {
+    plist(identity, identity.app_id, "kchess", false, true)
 }
 
 /// The bridge's: Electron's identifier, and no Dock icon while it works.
 fn bridge_plist(identity: &Identity) -> String {
-    plist(identity, ELECTRON_APP_ID, identity.name, true)
+    plist(identity, ELECTRON_APP_ID, identity.name, true, false)
 }
 
-fn plist(identity: &Identity, app_id: &str, executable: &str, background: bool) -> String {
+fn plist(
+    identity: &Identity,
+    app_id: &str,
+    executable: &str,
+    background: bool,
+    store: bool,
+) -> String {
     let strings = [
         ("CFBundleName", identity.name),
         ("CFBundleDisplayName", identity.name),
@@ -63,12 +75,15 @@ fn plist(identity: &Identity, app_id: &str, executable: &str, background: bool) 
     if background {
         body.push_str("  <key>LSUIElement</key>\n  <true/>\n");
     }
+    if store {
+        body.push_str("  <key>ITSAppUsesNonExemptEncryption</key>\n  <false/>\n");
+    }
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n{body}</dict>\n</plist>\n"
     )
 }
 
-fn text(path: &Path) -> String {
+pub fn text(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
@@ -179,6 +194,38 @@ fn bridge(identity: &Identity, built: &Built, app: &Path, stage: &Path) -> Resul
     sign(app, &[], stage)
 }
 
+/// The unsigned bundle at `app`, with `plist`; the programs and libraries in it that are signed
+/// before it. The app finds Stockfish, the core service and the voice runtime beside itself
+/// (apps/gpui/src/profile.rs, core.rs); the command line only where it can reach the core, which
+/// a sandboxed app's core is not.
+pub fn assemble(built: &Built, app: &Path, plist: &str, cli: bool) -> Result<Vec<PathBuf>> {
+    let contents = app.join("Contents");
+    let macos = contents.join("MacOS");
+    copy_program(&built.app, &macos.join("kchess"))?;
+    copy_program(&built.stockfish, &macos.join("stockfish"))?;
+    copy_program(&built.service, &macos.join("kchess-service"))?;
+    if cli {
+        copy_program(&built.cli, &macos.join("kchess-cli"))?;
+    }
+    let resources = contents.join("Resources");
+    // Resources, not MacOS: the notices beside the helper are not code, which codesign rejects there.
+    let mut nested = copy_voice(built, &resources)?;
+    std::fs::copy(
+        root().join("apps/gpui/build/icon.icns"),
+        resources.join("icon.icns"),
+    )
+    .map_err(|cause| cause.to_string())?;
+    std::fs::copy(&built.licenses, resources.join("THIRD_PARTY_LICENSES.txt"))
+        .map_err(|cause| cause.to_string())?;
+    std::fs::write(contents.join("Info.plist"), plist).map_err(|cause| cause.to_string())?;
+    nested.push(macos.join("kchess-service"));
+    if cli {
+        nested.push(macos.join("kchess-cli"));
+    }
+    nested.push(macos.join("stockfish"));
+    Ok(nested)
+}
+
 /// The `.zip` and `.dmg`, as `(file name, path)`.
 pub fn package(
     identity: &Identity,
@@ -190,32 +237,7 @@ pub fn package(
         return Err("macOS packages are Apple Silicon only.".into());
     }
     let app = stage.join(format!("{}.app", identity.name));
-    let contents = app.join("Contents");
-    let macos = contents.join("MacOS");
-    // The app finds Stockfish, the core service and the voice runtime beside itself
-    // (apps/gpui/src/profile.rs, core.rs).
-    copy_program(&built.app, &macos.join("kchess"))?;
-    copy_program(&built.stockfish, &macos.join("stockfish"))?;
-    copy_program(&built.service, &macos.join("kchess-service"))?;
-    copy_program(&built.cli, &macos.join("kchess-cli"))?;
-    let resources = contents.join("Resources");
-    // Resources, not MacOS: the notices beside the helper are not code, which codesign rejects there.
-    let voice = copy_voice(built, &resources)?;
-    std::fs::copy(
-        root().join("apps/gpui/build/icon.icns"),
-        resources.join("icon.icns"),
-    )
-    .map_err(|cause| cause.to_string())?;
-    std::fs::copy(&built.licenses, resources.join("THIRD_PARTY_LICENSES.txt"))
-        .map_err(|cause| cause.to_string())?;
-    std::fs::write(contents.join("Info.plist"), info_plist(identity))
-        .map_err(|cause| cause.to_string())?;
-    let mut nested = voice;
-    nested.extend([
-        macos.join("kchess-service"),
-        macos.join("kchess-cli"),
-        macos.join("stockfish"),
-    ]);
+    let nested = assemble(built, &app, &info_plist(identity), true)?;
     sign(&app, &nested, stage)?;
     let bridged = stage.join("zip");
     let bridge_app = bridged

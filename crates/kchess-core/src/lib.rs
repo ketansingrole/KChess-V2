@@ -5,6 +5,13 @@
 /// program with a 403 page; GitHub asks every API caller for one).
 pub const USER_AGENT: &str = "KChess";
 
+/// Whether this is the Mac App Store's KChess. Only that build runs in the App Sandbox, which
+/// sets `APP_SANDBOX_CONTAINER_ID` for the app and every program it starts. The App Store updates
+/// it and forbids downloading programs, so its updater and the Stockfish download stay off.
+pub fn app_store() -> bool {
+    cfg!(target_os = "macos") && std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some()
+}
+
 pub mod ai;
 pub mod archive;
 pub mod capabilities;

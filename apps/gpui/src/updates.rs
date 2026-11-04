@@ -47,6 +47,8 @@ pub enum Phase {
     Error,
     /// Updates are not installed here (a development build).
     Disabled,
+    /// The Mac App Store updates this installation.
+    Store,
 }
 
 /// The kind of package KChess was installed from, which is the kind its updates come in.
@@ -1001,13 +1003,17 @@ fn last_install_failed(install: Option<&Install>, root: Option<&Path>) -> bool {
 }
 
 pub fn init(cx: &mut App) {
-    let install = (!cfg!(debug_assertions)).then(installed).flatten();
+    let store = kchess_core::app_store();
+    let install = (!cfg!(debug_assertions) && !store)
+        .then(installed)
+        .flatten();
     let root = install.as_ref().and_then(|_| downloads_root().ok());
     tidy(install.as_ref(), root.as_deref());
     let failed = last_install_failed(install.as_ref(), root.as_deref());
     let feed = std::env::var("KCHESS_UPDATE_FEED")
         .ok()
         .filter(|feed| !feed.is_empty())
+        .filter(|_| !store)
         .or_else(|| install.is_some().then(|| FEED.to_string()));
     let workspace = feed.as_ref().and_then(|_| {
         downloads_root()
@@ -1026,6 +1032,8 @@ pub fn init(cx: &mut App) {
                 Phase::Error
             } else if feed.is_some() {
                 Phase::Idle
+            } else if store {
+                Phase::Store
             } else {
                 Phase::Disabled
             },

@@ -94,12 +94,26 @@ pub fn socket_path(profile: &Path) -> std::io::Result<PathBuf> {
     let base = std::env::var_os("XDG_RUNTIME_DIR")
         .or_else(|| std::env::var_os("TMPDIR"))
         .map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
-    let mut dir = base.join(format!("kchess-{uid}"));
-    if dir.join(&name).as_os_str().len() >= 100 {
-        dir = PathBuf::from("/tmp").join(format!("kchess-{uid}"));
-    }
+    let sandboxed = std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some();
+    let dir = socket_dir(&base, uid, &name, sandboxed);
     private_dir(&dir)?;
     Ok(dir.join(name))
+}
+
+/// The folder `name` goes in. The App Sandbox (the Mac App Store's KChess) may use only its own
+/// container, whose temporary folder already belongs to this user and app alone, so the socket
+/// goes straight in it: `/tmp` is refused there, and the extra folder could push the container's
+/// long path past the limit.
+#[cfg(unix)]
+fn socket_dir(base: &Path, uid: u32, name: &str, sandboxed: bool) -> PathBuf {
+    if sandboxed {
+        return base.to_path_buf();
+    }
+    let dir = base.join(format!("kchess-{uid}"));
+    if dir.join(name).as_os_str().len() >= 100 {
+        return PathBuf::from("/tmp").join(format!("kchess-{uid}"));
+    }
+    dir
 }
 
 /// The pipe of `profile`'s core, per user.
@@ -233,6 +247,25 @@ mod tests {
         assert_eq!(mode & 0o777, 0o700);
         let other = tempfile::tempdir().expect("another profile");
         assert_ne!(path, socket_path(other.path()).expect("socket path"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_sandbox_puts_the_socket_in_its_own_container() {
+        let container =
+            Path::new("/Users/someone-with-a-long-name/Library/Containers/com.kchess.app/Data/tmp");
+        let name = "core-0123456789abcdef.sock";
+        assert_eq!(socket_dir(container, 501, name, true), container);
+        assert!(container.join(name).as_os_str().len() < 104);
+        // Outside the sandbox the same long folder falls back to /tmp, which the sandbox refuses.
+        assert_eq!(
+            socket_dir(container, 501, name, false),
+            Path::new("/tmp/kchess-501")
+        );
+        assert_eq!(
+            socket_dir(Path::new("/run/user/501"), 501, name, false),
+            Path::new("/run/user/501/kchess-501")
+        );
     }
 
     #[cfg(unix)]

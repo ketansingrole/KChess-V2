@@ -1,0 +1,90 @@
+name: Publish to the App Store
+
+# Drafts and tag pushes never reach review. Publishing the reviewed GitHub release sends the build
+# its tag uploaded (app-store-build.yml) to App Review, with the listing in `app-store/`. Apple
+# releases it when the review passes.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag whose build to submit (v2026.11.3)
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-store-review
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    if: github.event_name == 'workflow_dispatch' || (github.event.release.draft == false && github.event.release.prerelease == false)
+    runs-on: macos-latest
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+      ASC_APP_ID: ${{ vars.ASC_APP_ID }}
+      ASC_BYPASS_KEYCHAIN: '1'
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      # Run trusted publishing code and the listing from main, never from a release asset.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - name: Install asc
+        run: |
+          test -n "$ASC_APP_ID" || { echo "::error::Set the ASC_APP_ID repository variable."; exit 1; }
+          test -n "$ASC_KEY_ID" || { echo "::error::Add the ASC_KEY_ID, ASC_ISSUER_ID and ASC_PRIVATE_KEY secrets."; exit 1; }
+          brew install asc
+      - name: Find the uploaded build
+        id: build
+        run: |
+          version="${RELEASE_TAG#v}"
+          build_id="$(asc builds info --app "$ASC_APP_ID" --build-number "$version" --platform MAC_OS --output json \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["data"]["id"])')"
+          test -n "$build_id" || { echo "::error::App Store Connect has no build $version; rerun the tag's App Store build."; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "id=$build_id" >> "$GITHUB_OUTPUT"
+      # The listing (`app-store/`) for this version, with the release's notes as What's New once a
+      # version is on the store (the first one has none).
+      - name: Write this version's listing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          metadata="$RUNNER_TEMP/metadata"
+          mkdir -p "$metadata/version/$VERSION"
+          cp -R app-store/app-info "$metadata/"
+          asc versions list --app "$ASC_APP_ID" --platform MAC_OS --paginate --output json > "$RUNNER_TEMP/versions.json"
+          gh release view "$RELEASE_TAG" --json body --jq .body > "$RUNNER_TEMP/notes.md"
+          python3 - "$metadata/version/$VERSION/en-US.json" <<'PY'
+          import json, os, re, sys
+          temp = os.environ["RUNNER_TEMP"]
+          listing = json.load(open("app-store/listing/en-US.json"))
+          versions = json.load(open(f"{temp}/versions.json")).get("data", [])
+          live = any(v["attributes"].get("appStoreState") == "READY_FOR_SALE" for v in versions)
+          notes = open(f"{temp}/notes.md").read()
+          # Plain text: no Markdown headings, emphasis or links' targets.
+          notes = re.sub(r"^#+\s*", "", notes, flags=re.M)
+          notes = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", notes)
+          notes = notes.replace("**", "").replace("`", "").strip()
+          if live:
+              listing["whatsNew"] = (notes or "Improvements and fixes.")[:4000]
+          json.dump(listing, open(sys.argv[1], "w"), ensure_ascii=False, indent=2)
+          PY
+          echo "METADATA_DIR=$metadata" >> "$GITHUB_ENV"
+      - name: Stage the version
+        run: |
+          asc release stage --app "$ASC_APP_ID" --platform MAC_OS \
+            --version "${{ steps.build.outputs.version }}" --build-id "${{ steps.build.outputs.id }}" \
+            --metadata-dir "$METADATA_DIR" --confirm --output table
+      - name: Submit for review
+        run: |
+          asc review submit --app "$ASC_APP_ID" --platform MAC_OS \
+            --version "${{ steps.build.outputs.version }}" --build-id "${{ steps.build.outputs.id }}" \
+            --confirm --output table

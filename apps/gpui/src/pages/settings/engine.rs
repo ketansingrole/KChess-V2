@@ -454,20 +454,24 @@ impl SettingsPage {
             bundled_buttons,
             palette,
         ));
-        rows.rows.push(self.engine_option(
-            "Downloaded Stockfish",
-            downloaded,
-            source == Source::Downloaded,
-            downloaded_buttons,
-            palette,
-        ));
-        rows.rows.push(self.engine_option(
-            "Your own executable",
-            custom,
-            source == Source::Custom,
-            custom_buttons,
-            palette,
-        ));
+        // The App Store's KChess runs only the Stockfish it comes with: the store forbids
+        // downloading programs, and the sandbox cannot keep a chosen executable across launches.
+        if !kchess_core::app_store() {
+            rows.rows.push(self.engine_option(
+                "Downloaded Stockfish",
+                downloaded,
+                source == Source::Downloaded,
+                downloaded_buttons,
+                palette,
+            ));
+            rows.rows.push(self.engine_option(
+                "Your own executable",
+                custom,
+                source == Source::Custom,
+                custom_buttons,
+                palette,
+            ));
+        }
         let review = cx.global::<ReviewHandle>().0.read(cx).status.clone();
         let auto = settings.core.review_auto;
         let review_rows = Rows::new(self.narrow())

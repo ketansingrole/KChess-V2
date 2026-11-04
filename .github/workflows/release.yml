@@ -155,6 +155,13 @@ jobs:
   snap:
     uses: ./.github/workflows/snap-build.yml
 
+  # The Mac App Store's KChess: a tag's build goes to App Store Connect (TestFlight), and review
+  # follows the published release (app-store-publish.yml). It is no release asset.
+  app-store:
+    needs: validate
+    uses: ./.github/workflows/app-store-build.yml
+    secrets: inherit
+
   release:
     needs: [validate, package, snap]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
