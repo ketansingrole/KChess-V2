@@ -259,7 +259,19 @@ impl HistoryPage {
         self.load_lichess(cx);
     }
 
-    fn clear_lichess_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Sync the chosen account's games, or every account's.
+    pub(super) fn sync_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let account = (self.lichess.account != "all").then(|| self.lichess.account.clone());
+        crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.sync(account, window, cx));
+    }
+
+    /// Whether a filter narrows the synced games.
+    pub(super) fn lichess_filtered(&self) -> bool {
+        let tab = &self.lichess;
+        tab.account != "all" || tab.result != "all" || tab.rated != "all"
+    }
+
+    pub(super) fn clear_lichess_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let tab = &mut self.lichess;
         tab.account = "all".into();
         tab.result = "all";
@@ -464,11 +476,7 @@ impl HistoryPage {
             .label("Sync games")
             .loading(busy)
             .disabled(busy)
-            .on_click(cx.listener(|this, _, window, cx| {
-                let account = (this.lichess.account != "all").then(|| this.lichess.account.clone());
-                crate::accounts::handle(cx)
-                    .update(cx, |accounts, cx| accounts.sync(account, window, cx));
-            }));
+            .on_click(cx.listener(|this, _, window, cx| this.sync_lichess(window, cx)));
         if count == 0 {
             let body = if has_accounts {
                 widgets::empty_state(
@@ -514,7 +522,7 @@ impl HistoryPage {
                 .into_any_element();
         }
         let tab = &self.lichess;
-        let filtered = tab.account != "all" || tab.result != "all" || tab.rated != "all";
+        let filtered = self.lichess_filtered();
         let chosen = RESULTS
             .iter()
             .position(|(key, _)| *key == tab.result)
@@ -910,7 +918,7 @@ pub fn game_row(
 
 /// Review a synced game on the analysis board, opened at the move being looked at
 /// (`openGameReview`).
-fn open_review(game: Value, ply: usize, window: &mut Window, cx: &mut App) {
+pub(super) fn open_review(game: Value, ply: usize, window: &mut Window, cx: &mut App) {
     let Some(pgn) = game["pgn"].as_str().map(str::to_string) else {
         return;
     };

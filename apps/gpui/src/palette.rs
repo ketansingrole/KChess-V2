@@ -506,6 +506,7 @@ fn page_commands(cx: &App) -> Vec<Command> {
         Some(Page::Openings) => openings_commands(cx),
         Some(Page::Tournaments) => tournament_commands(cx),
         Some(Page::Practice) => practice_commands(cx),
+        Some(Page::History) => history_commands(cx),
         _ => Vec::new(),
     }
 }
@@ -713,6 +714,28 @@ fn practice_commands(cx: &App) -> Vec<Command> {
             }
         },
         PracticePage::act,
+    )
+}
+
+/// Game history's actions: the open game's, or the synced games'.
+fn history_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::history::{Action, HistoryPage};
+    let Some(page) = crate::shell::view_of::<HistoryPage>(Page::History, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::History,
+        "history",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::AllGames => ("all", "All games", "arrow-left", "back list"),
+            Action::Export => ("export", "Export PGN", "download", "save file"),
+            Action::Analyse => ("analyse", "Open analysis", "chart-line", "analysis board"),
+            Action::Review => ("review", "Review", "chart-line", "analysis accuracy"),
+            Action::Sync => ("sync", "Sync games", "refresh-cw", "lichess download"),
+            Action::ClearFilters => ("clear", "Clear filters", "x", "reset all"),
+        },
+        HistoryPage::act,
     )
 }
 

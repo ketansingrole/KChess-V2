@@ -200,6 +200,30 @@ enum Redo {
     Lichess(Value),
 }
 
+/// The page's actions, as its buttons offer them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Action {
+    AllGames,
+    Export,
+    Analyse,
+    Review,
+    Sync,
+    ClearFilters,
+}
+
+/// Whether the analysis board plays the saved game: standard chess and Chess960 only.
+fn analysable(game: &Value) -> bool {
+    crate::game::analysable(game["setup"]["variant"].as_str().unwrap_or("standard"))
+}
+
+/// Open the saved game on the analysis board.
+fn analyse(game: &Value, window: &mut Window, cx: &mut App) {
+    let Some(pgn) = pgn(game) else { return };
+    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+        analysis.open_game(&pgn, 0, None, None, false, cx)
+    });
+}
+
 pub struct HistoryPage {
     source: Source,
     filter: Filter,
@@ -468,6 +492,65 @@ impl HistoryPage {
         cx.notify();
     }
 
+    /// What the page's buttons can do now: the open game's, or the synced games'.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        if let Some((game, _)) = &self.open {
+            let mut actions = vec![Action::AllGames, Action::Export];
+            if analysable(game) {
+                actions.push(Action::Analyse);
+            }
+            return actions;
+        }
+        if self.source != Source::Lichess {
+            return Vec::new();
+        }
+        if let Some((game, _)) = &self.lichess.open {
+            let mut actions = vec![Action::AllGames];
+            if crate::game::pgn_analysable(game["pgn"].as_str().unwrap_or_default()) {
+                actions.push(Action::Review);
+            }
+            return actions;
+        }
+        let accounts = crate::accounts::handle(cx).read(cx);
+        let mut actions = Vec::new();
+        if !accounts.all().is_empty() && !accounts.busy {
+            actions.push(Action::Sync);
+        }
+        if accounts.data["gameCount"].as_f64().unwrap_or_default() > 0. && self.lichess_filtered() {
+            actions.push(Action::ClearFilters);
+        }
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        match action {
+            Action::AllGames if self.open.is_some() => self.close_game(window, cx),
+            Action::AllGames => self.close_lichess(window, cx),
+            Action::Export => {
+                if let Some((game, _)) = self.open.clone() {
+                    self.export(&game, cx);
+                }
+            }
+            Action::Analyse => {
+                if let Some((game, _)) = &self.open {
+                    analyse(game, window, cx);
+                }
+            }
+            Action::Review => {
+                if let Some((game, replay)) = self.lichess.open.clone() {
+                    let ply = replay.read(cx).ply();
+                    lichess::open_review(game, ply, window, cx);
+                }
+            }
+            Action::Sync => self.sync_lichess(window, cx),
+            Action::ClearFilters => self.clear_lichess_filters(window, cx),
+        }
+    }
+
     fn close_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = None;
         self.redo = None;
@@ -700,26 +783,14 @@ impl HistoryPage {
                             ),
                     )
                     .child({
-                        let opened = pgn(game);
-                        let analysable = crate::game::analysable(
-                            game["setup"]["variant"].as_str().unwrap_or("standard"),
-                        );
+                        let opened = game.clone();
                         Button::new("open-analysis")
                             .primary()
                             .icon(icon("chart-line"))
                             .label("Open analysis")
                             // The analysis board plays standard chess and Chess960 only.
-                            .disabled(!analysable)
-                            .on_click(move |_, window, cx| {
-                                let Some(pgn) = opened.clone() else { return };
-                                crate::shell::replace_analysis(
-                                    window,
-                                    cx,
-                                    move |analysis, _, cx| {
-                                        analysis.open_game(&pgn, 0, None, None, false, cx)
-                                    },
-                                );
-                            })
+                            .disabled(!analysable(game))
+                            .on_click(move |_, window, cx| analyse(&opened, window, cx))
                     })
                     .children(self.message.clone().map(|message| {
                         div()
