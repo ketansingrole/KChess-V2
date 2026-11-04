@@ -11,6 +11,7 @@ use std::time::Duration;
 use fixtures::{Recording, Reply, http_client, serve};
 use kchess_core::lichess::client::{Failure, LichessClient, authorize, urlencoded};
 use kchess_core::lichess::policy::{Policy, is_stream};
+use kchess_core::{CoreError, ErrorKind};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -29,7 +30,7 @@ fn client_for(base: &str, host: Arc<Recording>) -> (LichessClient, Arc<Policy>) 
 }
 
 #[tokio::test]
-async fn an_api_error_names_the_request_and_its_detail() {
+async fn an_api_error_is_plain_for_people_and_technical_for_the_log() {
     let fixture = serve(|_| Reply::Json(401, r#"{"error":"No such token"}"#.into())).await;
     let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
     let failure = client
@@ -42,10 +43,116 @@ async fn an_api_error_names_the_request_and_its_detail() {
         .await
         .unwrap_err();
     assert_eq!(failure.status(), Some(401));
+    // A 401 asks for the account to be reconnected, without the status or the endpoint.
     assert_eq!(
         failure.message(),
+        "Lichess no longer accepts this account’s login. Reconnect it."
+    );
+    let Failure::Lichess(error) = &failure else {
+        panic!("Lichess's answer");
+    };
+    assert_eq!(error.kind(), ErrorKind::Login);
+    assert_eq!(
+        error.technical(),
         r#"Lichess 401 from GET /api/account: {"error":"No such token"}"#
     );
+    assert_eq!(CoreError::from(failure).kind, Some(ErrorKind::Login));
+}
+
+async fn failure_for(status: u16, body: &str) -> Failure {
+    let body = body.to_string();
+    let fixture = serve(move |_| Reply::Json(status, body.clone())).await;
+    let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
+    client
+        .get_json::<Value>(
+            "/api/board/game/stream/abc",
+            &[],
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err()
+}
+
+/// Opening a game Lichess keeps from the Board API showed
+/// `Lichess 400 from GET /api/board/game/stream/…: {"error":…}`.
+#[tokio::test]
+async fn a_board_api_refusal_is_lichess_s_own_sentence() {
+    let failure = failure_for(
+        400,
+        r#"{"error":"This game cannot be played with the Board API."}"#,
+    )
+    .await;
+    assert_eq!(
+        failure.message(),
+        "This game cannot be played with the Board API."
+    );
+    let error = CoreError::from(failure);
+    assert_eq!(error.kind, Some(ErrorKind::Refused));
+    assert!(!ErrorKind::Refused.retryable());
+}
+
+#[tokio::test]
+async fn too_many_requests_asks_to_wait() {
+    let failure = failure_for(429, "").await;
+    assert_eq!(
+        failure.message(),
+        "Lichess asked KChess to slow down. Try again in a minute."
+    );
+    assert_eq!(CoreError::from(failure).kind, Some(ErrorKind::RateLimited));
+}
+
+#[tokio::test]
+async fn a_server_error_shows_no_status_or_body() {
+    let failure = failure_for(502, r#"{"error":"upstream <b>gateway</b>"}"#).await;
+    let message = failure.message();
+    assert_eq!(
+        message,
+        "Lichess isn’t working right now. Try again shortly."
+    );
+    assert_eq!(CoreError::from(failure).kind, Some(ErrorKind::Unavailable));
+}
+
+#[tokio::test]
+async fn an_unreachable_lichess_is_offline() {
+    let (client, _) = client_for("http://127.0.0.1:9", Arc::new(Recording::default()));
+    let failure = client
+        .get_json::<Value>("/api/account", &[], None, &CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert_eq!(failure.message(), "Couldn’t reach Lichess");
+    assert_eq!(CoreError::from(failure).kind, Some(ErrorKind::Offline));
+}
+
+/// No user-visible message carries a status, an endpoint or raw JSON, whatever Lichess answers.
+#[test]
+fn no_message_names_a_status_an_endpoint_or_json() {
+    use kchess_core::lichess::client::LichessError;
+    for status in [400, 401, 403, 404, 409, 410, 422, 429, 500, 502, 503] {
+        for detail in [
+            "",
+            "not found",
+            r#"{"error":"No such token"}"#,
+            r#"{"error":{"nested":true}}"#,
+            "<html>oops</html>",
+        ] {
+            let message = LichessError {
+                status,
+                endpoint: "GET /api/board/game/stream/abc".into(),
+                detail: detail.into(),
+            }
+            .message();
+            assert!(
+                !message.contains(&status.to_string()),
+                "{status} {detail}: {message}"
+            );
+            assert!(!message.contains("/api/"), "{status} {detail}: {message}");
+            assert!(
+                !message.contains(['{', '<']),
+                "{status} {detail}: {message}"
+            );
+        }
+    }
 }
 
 #[tokio::test]
@@ -63,10 +170,7 @@ async fn a_website_page_is_never_shown_to_the_user() {
         .get_json::<Value>("/api/user/nobody", &[], None, &CancellationToken::new())
         .await
         .unwrap_err();
-    assert_eq!(
-        failure.message(),
-        "Lichess 404 from GET /api/user/nobody: not found"
-    );
+    assert_eq!(failure.message(), "Lichess has no such thing.");
 }
 
 #[tokio::test]
@@ -87,7 +191,7 @@ async fn an_empty_success_names_the_path() {
     );
     assert_eq!(
         failure.message(),
-        "Lichess 200 from /api/user/x: empty response"
+        "Lichess isn’t working right now. Try again shortly."
     );
 }
 
@@ -190,7 +294,7 @@ async fn ndjson_lines_reach_the_caller_while_the_stream_is_open() {
 }
 
 #[tokio::test]
-async fn an_ndjson_error_names_the_request() {
+async fn an_ndjson_error_is_logged_with_the_request() {
     let fixture = serve(|_| Reply::Text(404, "text/html", "<html>nope</html>".into())).await;
     let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
     let failure = client
@@ -205,8 +309,12 @@ async fn an_ndjson_error_names_the_request() {
         )
         .await
         .unwrap_err();
+    assert_eq!(failure.message(), "Lichess has no such thing.");
+    let Failure::Lichess(error) = &failure else {
+        panic!("Lichess's answer");
+    };
     assert_eq!(
-        failure.message(),
+        error.technical(),
         "Lichess 404 from GET /api/games/user/nobody: not found"
     );
 }
@@ -384,7 +492,7 @@ async fn ordinary_and_error_response_bodies_keep_their_deadline() {
                 .await
                 .unwrap_err()
         };
-        assert!(error.message().contains("timed out"));
+        assert_eq!(error.message(), "Lichess didn’t answer in time.");
     }
 }
 
@@ -453,6 +561,13 @@ async fn a_request_redirected_to_a_web_page_fails_instead_of_returning_the_page(
         .unwrap_err();
     assert_eq!(
         failure.message(),
+        "Lichess isn’t working right now. Try again shortly."
+    );
+    let Failure::Lichess(error) = &failure else {
+        panic!("Lichess's answer");
+    };
+    assert_eq!(
+        error.technical(),
         "Lichess 200 from GET /game/export/abcd1234: unexpected page response"
     );
 }

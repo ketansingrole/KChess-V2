@@ -26,7 +26,7 @@ use serde_json::json;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, Result};
+use crate::error::{CoreError, ErrorKind, Result};
 use crate::host::{Host, Level};
 
 /// A request may take this long to answer (its headers, and its body unless it is a stream).
@@ -199,6 +199,11 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
+/// A request Lichess did not answer within its deadline.
+pub(crate) fn timed_out() -> CoreError {
+    CoreError::new("Lichess didn’t answer in time.").with_kind(ErrorKind::TimedOut)
+}
+
 fn aborted() -> CoreError {
     CoreError::aborted("This operation was aborted")
 }
@@ -270,6 +275,11 @@ pub fn cooldown_for(headers: &HeaderMap) -> Duration {
 }
 
 impl Policy {
+    /// A failure for the log: what a person is told is worded elsewhere.
+    pub(crate) fn log_warning(&self, message: &str) {
+        self.host.log(Level::Warn, "lichess", message);
+    }
+
     /// `host` receives the `host:usage` events and the warnings; `lifetime` ends the accounting
     /// when the core closes.
     pub fn new(
@@ -473,9 +483,9 @@ impl Policy {
                 Ok(Err(cause)) => {
                     // The cause is for the log: it names the address, which says nothing to a player.
                     self.host.log(Level::Warn, "request-policy", &format!("Lichess request failed: {cause}"));
-                    return Err(CoreError::new("Couldn’t reach Lichess"));
+                    return Err(CoreError::new("Couldn’t reach Lichess").with_kind(ErrorKind::Offline));
                 }
-                Err(_) => return Err(CoreError::new("Lichess request timed out. Retry or reconnect.")),
+                Err(_) => return Err(timed_out()),
             },
         };
         if response.status().as_u16() == 429 {

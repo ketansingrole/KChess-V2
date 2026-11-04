@@ -58,6 +58,22 @@ fn a_game_lichess_keeps_from_apps_is_offered_to_watch(cx: &mut gpui_kit::TestApp
     );
 }
 
+/// When Lichess refuses the board stream of a game it listed as playable, the page says so in
+/// Lichess's words, offers the game to watch and never a Reconnect that cannot work.
+#[gpui_kit::test]
+fn a_refused_game_offers_watching_instead_of_reconnecting(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = in_a_game(cx);
+    lichess.lock().board_refused = true;
+    app.find("online-watch");
+    assert!(!app.shows("online-reconnect"));
+    assert!(app.shows("online-another"));
+    app.click("online-watch");
+    assert_eq!(
+        app.cx.update(|cx| crate::shell::current_page(cx)),
+        Some(crate::pages::Page::Watch)
+    );
+}
+
 fn writes(lichess: &Handle) -> Vec<String> {
     lichess.lock().writes.clone()
 }

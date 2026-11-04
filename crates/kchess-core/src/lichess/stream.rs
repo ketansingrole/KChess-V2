@@ -39,6 +39,11 @@ const OVERSIZED: &str = "Lichess sent an oversized stream record.";
 /// The error of a stream silent past its idle deadline.
 pub(crate) const STALLED: &str = "Lichess stream stalled. Reconnecting…";
 
+/// The error of a connection that broke while Lichess was sending.
+fn dropped() -> CoreError {
+    CoreError::new("The connection to Lichess dropped.").with_kind(crate::error::ErrorKind::Offline)
+}
+
 /// Read `body` to its end, calling `on_line` for every non-empty trimmed line as it arrives.
 ///
 /// `on_line` may fail: the read stops at that line, so a malformed record surfaces when it
@@ -78,7 +83,7 @@ where
         let chunk = match next {
             Err(_) => return Err(CoreError::new(STALLED).into()),
             Ok(None) => break,
-            Ok(Some(Err(cause))) => return Err(CoreError::new(cause.to_string()).into()),
+            Ok(Some(Err(_))) => return Err(dropped().into()),
             Ok(Some(Ok(chunk))) => chunk,
         };
         tail.extend_from_slice(chunk.as_ref());
@@ -131,7 +136,7 @@ where
             answer = body.next() => answer,
         };
         let Some(item) = next else { break };
-        let chunk = item.map_err(|cause| CoreError::new(cause.to_string()))?;
+        let chunk = item.map_err(|_| dropped())?;
         pending.extend_from_slice(chunk.as_ref());
         let complete = match std::str::from_utf8(&pending) {
             Ok(_) => pending.len(),

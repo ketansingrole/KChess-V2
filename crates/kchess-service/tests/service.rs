@@ -144,7 +144,7 @@ async fn two_windows_share_one_core_and_see_each_others_writes() {
         )
         .await
         .expect_err("based on an older study");
-    assert!(stale.contains("another KChess window"), "{stale}");
+    assert!(stale.message.contains("another KChess window"), "{stale:?}");
 
     drop((gpui, electron));
     service.abort();
@@ -167,7 +167,7 @@ async fn a_client_reaches_only_the_core_api() {
             .await
             .expect_err("an internal method");
         assert!(
-            refused.contains("Unknown core method"),
+            refused.message.contains("Unknown core method"),
             "{method}: {refused}"
         );
     }

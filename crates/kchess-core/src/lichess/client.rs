@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::policy::{Admitted, Policy, is_stream};
 use super::stream::{LineOptions, read_chunks, read_lines};
-use crate::error::{CoreError, Result as CoreResult};
+use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 
 /// The Lichess website and API.
 pub const BASE_URL: &str = "https://lichess.org";
@@ -57,7 +57,7 @@ impl From<CoreError> for Failure {
 impl From<Failure> for CoreError {
     fn from(failure: Failure) -> CoreError {
         match failure {
-            Failure::Lichess(error) => CoreError::new(error.message()),
+            Failure::Lichess(error) => CoreError::new(error.message()).with_kind(error.kind()),
             Failure::Core(error) => error,
         }
     }
@@ -86,7 +86,7 @@ impl Failure {
     }
 }
 
-/// `LichessError`: a failed Lichess call. The detail is UI-safe.
+/// `LichessError`: a failed Lichess call, its status, endpoint and the start of its body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LichessError {
     pub status: u16,
@@ -95,8 +95,43 @@ pub struct LichessError {
 }
 
 impl LichessError {
-    /// `Lichess ${status} from ${endpoint}: ${detail}`, or without the detail when there is none.
+    /// What kind of failure Lichess's answer is.
+    pub fn kind(&self) -> ErrorKind {
+        match self.status {
+            401 => ErrorKind::Login,
+            403 if self.mentions_login() => ErrorKind::Login,
+            400 | 403 | 409 | 422 => ErrorKind::Refused,
+            404 | 410 => ErrorKind::NotFound,
+            429 => ErrorKind::RateLimited,
+            _ => ErrorKind::Unavailable,
+        }
+    }
+
+    /// What a person is told: Lichess's own reason when it gave one in words, otherwise what
+    /// the kind means. Never the status, the endpoint or the raw body (`technical` has those).
     pub fn message(&self) -> String {
+        let reason = self.reason();
+        match self.kind() {
+            ErrorKind::Login => {
+                "Lichess no longer accepts this account’s login. Reconnect it.".into()
+            }
+            ErrorKind::Refused => reason.unwrap_or_else(|| "Lichess refused this.".into()),
+            ErrorKind::NotFound => reason
+                .filter(|reason| {
+                    !reason
+                        .trim_end_matches('.')
+                        .eq_ignore_ascii_case("not found")
+                })
+                .unwrap_or_else(|| "Lichess has no such thing.".into()),
+            ErrorKind::RateLimited => {
+                "Lichess asked KChess to slow down. Try again in a minute.".into()
+            }
+            _ => "Lichess isn’t working right now. Try again shortly.".into(),
+        }
+    }
+
+    /// `Lichess ${status} from ${endpoint}: ${detail}`: for the log, never for a person.
+    pub fn technical(&self) -> String {
         if self.detail.is_empty() {
             format!("Lichess {} from {}", self.status, self.endpoint)
         } else {
@@ -105,6 +140,46 @@ impl LichessError {
                 self.status, self.endpoint, self.detail
             )
         }
+    }
+
+    /// Lichess's reason in its own words: the `error` (or `message`) text of a JSON body, as a
+    /// sentence. A body that is not one plain sentence gives none.
+    fn reason(&self) -> Option<String> {
+        let parsed: Option<Value> = serde_json::from_str(&self.detail).ok();
+        let text = match &parsed {
+            Some(Value::Object(fields)) => fields
+                .get("error")
+                .or_else(|| fields.get("message"))
+                .and_then(Value::as_str)?
+                .to_string(),
+            Some(Value::String(text)) => text.clone(),
+            Some(_) => return None,
+            None => self.detail.clone(),
+        };
+        let text = text.trim();
+        let plain =
+            !text.is_empty() && text.chars().count() <= 160 && !text.contains(['{', '<', '[']);
+        plain.then(|| {
+            let mut chars = text.chars();
+            let mut sentence: String = chars
+                .next()
+                .into_iter()
+                .flat_map(char::to_uppercase)
+                .collect();
+            sentence.push_str(chars.as_str());
+            if !sentence.ends_with(['.', '!', '?']) {
+                sentence.push('.');
+            }
+            sentence
+        })
+    }
+
+    /// A 403 about the token rather than the request: a missing scope or a revoked login.
+    fn mentions_login(&self) -> bool {
+        let detail = self.detail.to_ascii_lowercase();
+        ["scope", "token", "oauth", "permission"]
+            .iter()
+            .any(|word| detail.contains(word))
     }
 }
 
@@ -165,6 +240,12 @@ pub struct LichessClient {
 }
 
 impl LichessClient {
+    /// Lichess's failed answer: its technical form goes to the log, the person sees `message`.
+    fn failed(&self, error: LichessError) -> Failure {
+        self.policy.log_warning(&error.technical());
+        Failure::Lichess(error)
+    }
+
     pub fn new(policy: Arc<Policy>, http: reqwest::Client) -> LichessClient {
         LichessClient::with_base(BASE_URL, policy, http)
     }
@@ -385,7 +466,7 @@ impl LichessClient {
             let status = response.status().as_u16();
             let text =
                 read_with_deadline(response, cancel, false, self.policy.timeout(), None).await?;
-            return Err(Failure::Lichess(lichess_error(
+            return Err(self.failed(lichess_error(
                 status,
                 body_value(&text),
                 &format!("{method} {path}"),
@@ -419,7 +500,7 @@ impl LichessClient {
             let status = response.status().as_u16();
             let text =
                 read_with_deadline(response, cancel, false, self.policy.timeout(), None).await?;
-            return Err(Failure::Lichess(lichess_error(
+            return Err(self.failed(lichess_error(
                 status,
                 body_value(&text),
                 &format!("GET {path}"),
@@ -458,7 +539,7 @@ impl LichessClient {
                 .is_some_and(|value| value.starts_with("text/html"));
         if page {
             drop(hold);
-            return Err(Failure::Lichess(LichessError {
+            return Err(self.failed(LichessError {
                 status,
                 endpoint: format!("{method} {path}"),
                 detail: "unexpected page response".to_string(),
@@ -469,7 +550,7 @@ impl LichessClient {
         drop(hold);
         let text = text?;
         if !(200..300).contains(&status) {
-            return Err(Failure::Lichess(lichess_error(
+            return Err(self.failed(lichess_error(
                 status,
                 body_value(&text),
                 &format!("{method} {path}"),
@@ -524,7 +605,7 @@ pub(crate) async fn read_with_deadline(
             return tokio::select! {
                 biased;
                 _ = cancel.cancelled() => Err(Failure::Core(CoreError::aborted("This operation was aborted"))),
-                text = response.text() => text.map_err(|cause| Failure::Core(CoreError::new(cause.to_string()))),
+                text = response.text() => text.map_err(|_| Failure::Core(CoreError::new("The connection to Lichess dropped.").with_kind(ErrorKind::Offline))),
             };
         }
         let mut text = String::new();
@@ -547,9 +628,7 @@ pub(crate) async fn read_with_deadline(
     } else {
         match tokio::time::timeout(timeout, read).await {
             Ok(answer) => answer,
-            Err(_) => Err(Failure::Core(CoreError::new(
-                "Lichess request timed out. Retry or reconnect.",
-            ))),
+            Err(_) => Err(Failure::Core(super::policy::timed_out())),
         }
     }
 }

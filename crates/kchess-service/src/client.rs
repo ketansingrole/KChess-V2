@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use kchess_core::Config;
+use kchess_core::{Config, CoreError, ErrorKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
@@ -74,7 +74,7 @@ impl std::fmt::Display for ConnectError {
 
 /// Calls waiting for their answers; `None` once the connection closed, so a later call fails at
 /// once instead of waiting for a reader that has gone.
-type Pending = Arc<Mutex<Option<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>>;
+type Pending = Arc<Mutex<Option<HashMap<u64, oneshot::Sender<Result<Value, CoreError>>>>>>;
 
 /// The connection closed: no call is admitted, and every waiting one fails.
 fn close(pending: &Pending) {
@@ -194,14 +194,23 @@ impl Client {
                         _ = &mut written => break,
                     };
                     match frame {
-                        Frame::Result { id, value, error } => {
+                        Frame::Result {
+                            id,
+                            value,
+                            error,
+                            kind,
+                        } => {
                             let waiting = pending
                                 .lock()
                                 .ok()
                                 .and_then(|mut p| p.as_mut().and_then(|p| p.remove(&id)));
                             if let Some(waiting) = waiting {
                                 let _ = waiting.send(match error {
-                                    Some(error) => Err(error),
+                                    Some(error) => {
+                                        let mut error = CoreError::new(error);
+                                        error.kind = kind.as_deref().and_then(ErrorKind::parse);
+                                        Err(error)
+                                    }
                                     None => Ok(value.unwrap_or(Value::Null)),
                                 });
                             }
@@ -243,7 +252,7 @@ impl Client {
         &self,
         method: &str,
         args: Vec<Value>,
-    ) -> impl std::future::Future<Output = Result<Value, String>> + Send + 'static + use<> {
+    ) -> impl std::future::Future<Output = Result<Value, CoreError>> + Send + 'static + use<> {
         let id = self.next.fetch_add(1, Ordering::SeqCst);
         let (answer, answered) = oneshot::channel();
         // Admitted under the lock that closing drains: a call racing the close fails too.

@@ -361,9 +361,9 @@ pub async fn storm_dashboard(lichess: &Lichess, username: &str, days: u32) -> Co
     match result {
         Ok(value) => Ok(value),
         Err(Failure::Lichess(error)) if error.status == 404 => Err(CoreError::new(format!(
-            "Lichess 404 from {}: no such Lichess user \"{username}\"",
-            error.endpoint
-        ))),
+            "No such Lichess user \"{username}\"."
+        ))
+        .with_kind(crate::error::ErrorKind::NotFound)),
         Err(failure) => Err(failure.into()),
     }
 }

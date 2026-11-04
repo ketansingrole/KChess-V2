@@ -278,8 +278,7 @@ impl CoreBridge {
                     .lock()
                     .map(|client| client.call(&method, args))
                     .map_err(|_| CoreError::new("The KChess core stopped"));
-                self.runtime
-                    .spawn(async move { answer?.await.map_err(CoreError::new) })
+                self.runtime.spawn(async move { answer?.await })
             }
         };
         async move {

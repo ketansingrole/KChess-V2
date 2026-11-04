@@ -209,12 +209,13 @@ impl Spectator {
                         Level::Warn,
                         &format!("Watch failed: {label} {}", cause.message),
                     );
+                    let kind = cause.kind.unwrap_or(crate::error::ErrorKind::Offline);
                     let message = if cause.message.is_empty() {
-                        "The feed disconnected. Retry to reconnect.".to_string()
+                        "The feed disconnected.".to_string()
                     } else {
                         cause.message
                     };
-                    inner.report(session, &token, "error", Some(&message));
+                    inner.report_failure(session, &token, &message, kind);
                 }
             }
         });
@@ -316,6 +317,25 @@ impl Inner {
                 session,
                 phase,
                 message: message.map(str::to_string),
+                kind: None,
+            });
+        }
+    }
+
+    /// The feed failed: its state says what kind of failure, for the viewer's next step.
+    fn report_failure(
+        &self,
+        session: u64,
+        token: &CancellationToken,
+        message: &str,
+        kind: crate::error::ErrorKind,
+    ) {
+        if !token.is_cancelled() && self.is_current(session) {
+            self.sink.state(WatchState {
+                session,
+                phase: "error",
+                message: Some(message.to_string()),
+                kind: Some(kind.as_str()),
             });
         }
     }
@@ -464,6 +484,7 @@ impl Inner {
                     session,
                     phase: "connected",
                     message: None,
+                    kind: None,
                 });
                 self.emit_tv(channel, frame);
                 let inner = Arc::clone(self);
@@ -521,6 +542,7 @@ impl Inner {
                     session,
                     phase: "connected",
                     message: None,
+                    kind: None,
                 });
                 self.emit_tv(channel, frame);
                 Ok(())
@@ -787,6 +809,7 @@ impl Inner {
                             session,
                             phase: "connected",
                             message: None,
+                            kind: None,
                         });
                         self.sink.frame(frame);
                     }

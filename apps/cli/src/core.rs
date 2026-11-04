@@ -190,7 +190,10 @@ impl CoreClient {
     pub async fn call(&self, method: &str, args: Vec<Value>) -> Result<Value, String> {
         match &self.backend {
             Backend::Embedded(core) => core.call(method, args).await.map_err(|cause| cause.message),
-            Backend::Service(client) => client.call(method, args).await,
+            Backend::Service(client) => client
+                .call(method, args)
+                .await
+                .map_err(|cause| cause.message),
         }
     }
 

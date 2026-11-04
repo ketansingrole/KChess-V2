@@ -278,10 +278,8 @@ async fn a_request_that_never_answers_fails_at_the_deadline() {
         )
         .await
         .unwrap_err();
-    assert_eq!(
-        error.message,
-        "Lichess request timed out. Retry or reconnect."
-    );
+    assert_eq!(error.message, "Lichess didn’t answer in time.");
+    assert_eq!(error.kind, Some(kchess_core::ErrorKind::TimedOut));
     assert!(started.elapsed() < Duration::from_secs(5));
 }
 
@@ -374,4 +372,7 @@ async fn an_unreachable_server_is_said_in_plain_words() {
         panic!("nothing listens on the discard port");
     };
     assert_eq!(failure.message, "Couldn’t reach Lichess");
+    // Offline is a kind pages offer to retry.
+    assert_eq!(failure.kind, Some(kchess_core::ErrorKind::Offline));
+    assert!(kchess_core::ErrorKind::Offline.retryable());
 }

@@ -37,6 +37,9 @@ pub struct Session {
     /// The game was started where the Board API cannot play it (`compat.board` false): its
     /// board stream answers 400, as Lichess does.
     pub elsewhere: bool,
+    /// The game's listing says the Board API can play it, but its board stream answers 400 (an
+    /// open one ends).
+    pub board_refused: bool,
     /// How many times the app opened the game's board stream.
     pub board_streams: usize,
     pub moves: Vec<String>,
@@ -335,7 +338,8 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             let (first, seen, elsewhere) = {
                 let mut session = session.lock();
                 session.board_streams += 1;
-                (full(&session), session.version, session.elsewhere)
+                let refused = session.elsewhere || session.board_refused;
+                (full(&session), session.version, refused)
             };
             if elsewhere {
                 return refuse(
@@ -344,10 +348,12 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 );
             }
             let mut seen = seen;
+            let watched = session.clone();
             stream(
                 &mut out,
                 vec![first],
-                || true,
+                // Refusing the game later ends its open stream; the app's reconnect gets the 400.
+                move || !watched.lock().board_refused,
                 move |_| {
                     let session = session.lock();
                     (session.version != seen).then(|| {

@@ -125,6 +125,8 @@ pub struct WatchPage {
     target: Option<Target>,
     /// The connection to the feed (`WatchState`), once known.
     phase: Option<String>,
+    /// The kind of failure (`ErrorKind`) the feed's last state reported.
+    failure: Option<String>,
     error: Option<SharedString>,
     session: Option<f64>,
     round_session: Option<f64>,
@@ -196,6 +198,7 @@ impl WatchPage {
             channels: Vec::new(),
             target: None,
             phase: None,
+            failure: None,
             error: None,
             session: None,
             round_session: None,
@@ -474,6 +477,7 @@ impl WatchPage {
                 if let Some(message) = event.payload["message"].as_str() {
                     self.error = Some(message.to_string().into());
                 }
+                self.failure = event.payload["kind"].as_str().map(str::to_string);
                 self.phase = Some(phase);
             }
             "watch:broadcast" if session.is_some() && session == self.round_session => {
@@ -746,8 +750,12 @@ impl WatchPage {
             .frame
             .as_ref()
             .is_some_and(|frame| frame["finished"] == json!(true));
+        // A retry helps a feed that dropped, not one Lichess refused or has no game for.
         let failed = match self.phase.as_deref() {
-            Some("error") => true,
+            Some("error") => !matches!(
+                self.failure.as_deref(),
+                Some("refused" | "notFound" | "login")
+            ),
             Some("ended") => !over,
             _ => false,
         };

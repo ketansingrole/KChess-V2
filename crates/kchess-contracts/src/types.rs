@@ -1148,6 +1148,9 @@ pub struct WatchState {
     pub session: f64,
     pub phase: WatchPhase,
     pub message: Option<String>,
+    /// The kind of failure of an `error` phase (`offline`, `refused`, `notFound`…).
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]

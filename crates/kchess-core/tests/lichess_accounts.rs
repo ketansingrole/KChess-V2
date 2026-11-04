@@ -110,7 +110,11 @@ async fn a_failed_export_does_not_move_the_cursor() {
     );
 
     let error = lichess.sync_games(Some("Alice")).await.unwrap_err();
-    assert_eq!(error.message, "Lichess 503 from GET /api/games/user/Alice");
+    assert_eq!(
+        error.message,
+        "Lichess isn’t working right now. Try again shortly."
+    );
+    assert_eq!(error.kind, Some(kchess_core::ErrorKind::Unavailable));
     assert!(store.cursors.lock().unwrap().is_empty());
     assert!(store.games.lock().unwrap().is_empty());
 }
@@ -432,10 +436,8 @@ async fn a_missing_user_is_named_in_the_error() {
         MemoryTokens::with(&[]),
     );
     let error = lichess.profile("nobody").await.unwrap_err();
-    assert_eq!(
-        error.message,
-        r#"Lichess 404 from GET /api/user/nobody: no such Lichess user "nobody""#
-    );
+    assert_eq!(error.message, r#"No such Lichess user "nobody"."#);
+    assert_eq!(error.kind, Some(kchess_core::ErrorKind::NotFound));
 }
 
 #[tokio::test]

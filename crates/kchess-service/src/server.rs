@@ -408,6 +408,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                 id,
                 value: Some(Value::Null),
                 error: None,
+                kind: None,
             })
             .is_ok()
     };
@@ -458,10 +459,12 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                             id,
                             value: Some(value),
                             error: None,
+                            kind: None,
                         },
                         Err(error) => Frame::Result {
                             id,
                             value: None,
+                            kind: error.kind.map(|kind| kind.as_str().to_string()),
                             error: Some(error.message),
                         },
                     };
@@ -482,6 +485,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                         id,
                         value: None,
                         error: Some("The call was cancelled.".into()),
+                        kind: None,
                     });
                     if cancelled.is_err() {
                         behind = true;

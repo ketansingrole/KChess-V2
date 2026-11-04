@@ -99,6 +99,9 @@ pub enum Frame {
         value: Option<Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// The error's `ErrorKind`, so the client picks its action without reading the message.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
     },
     /// Stop a call in flight; its result is an error.
     Cancel { id: u64 },
@@ -218,11 +221,33 @@ mod tests {
             id: 1,
             value: None,
             error: Some("No.".into()),
+            kind: None,
         };
         assert_eq!(
             serde_json::to_value(&result).expect("json"),
             json!({ "type": "result", "id": 1, "error": "No." })
         );
+    }
+
+    /// A page chooses its action from the failure's kind, so the kind crosses the service.
+    #[test]
+    fn a_failure_carries_its_kind() {
+        let refused = Frame::Result {
+            id: 2,
+            value: None,
+            error: Some("This game cannot be played with the Board API.".into()),
+            kind: Some("refused".into()),
+        };
+        let text = serde_json::to_string(&refused).expect("json");
+        let Frame::Result { kind, .. } = serde_json::from_str(&text).expect("frame") else {
+            panic!("a result");
+        };
+        assert_eq!(kind.as_deref(), Some("refused"));
+        // A frame from a service without kinds still reads.
+        let old: Frame =
+            serde_json::from_value(json!({ "type": "result", "id": 3, "error": "No." }))
+                .expect("frame");
+        assert!(matches!(old, Frame::Result { kind: None, .. }));
     }
 
     #[test]

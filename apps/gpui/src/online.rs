@@ -103,6 +103,8 @@ pub struct OnlineState {
     pub ongoing: Vec<Value>,
     pub ongoing_loaded: bool,
     pub ongoing_error: Option<String>,
+    /// The kind of failure that ended the game's connection (`ErrorKind`), until it recovers.
+    pub failure: Option<String>,
     pub busy_challenge: String,
     /// Turn flags seen at the last check, to say only when it becomes your turn.
     turns: std::collections::HashMap<String, bool>,
@@ -850,6 +852,7 @@ impl OnlineState {
                 }
             }
             "online:state" => {
+                self.failure = event.payload["kind"].as_str().map(str::to_string);
                 self.transition(
                     "onlineGameConnection",
                     vec![event.payload.clone()],
@@ -952,6 +955,7 @@ pub fn init(cx: &mut App) {
             ongoing: Vec::new(),
             ongoing_loaded: false,
             ongoing_error: None,
+            failure: None,
             busy_challenge: String::new(),
             turns: std::collections::HashMap::new(),
             _ticker: None,

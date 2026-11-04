@@ -138,11 +138,8 @@ async fn does_not_retry_an_ambiguous_mutation() {
     let error = sync_lichess_study(&lichess, &request(&edited))
         .await
         .unwrap_err();
-    assert!(
-        error
-            .message
-            .contains("from POST /api/study/Study001/Chapter1/moves")
-    );
+    assert_eq!(error.kind, Some(kchess_core::ErrorKind::Unavailable));
+    assert!(!error.message.contains("/api/"), "{}", error.message);
     assert_eq!(posts(&fixture).len(), 1);
 }
 

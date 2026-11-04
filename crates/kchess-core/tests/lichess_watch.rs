@@ -85,7 +85,12 @@ async fn reports_an_initial_http_failure_after_the_start_call_has_returned() {
     .await;
     let last = sink.states.lock().unwrap().last().cloned().unwrap();
     assert_eq!(last.session, session);
-    assert!(last.message.unwrap().contains("503"));
+    // The page offers a retry for an outage, and shows no status.
+    assert_eq!(
+        last.message.as_deref(),
+        Some("Lichess isn’t working right now. Try again shortly.")
+    );
+    assert_eq!(last.kind, Some("unavailable"));
     spectator.stop();
 }
 

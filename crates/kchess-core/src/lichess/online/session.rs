@@ -12,7 +12,7 @@ use super::super::client::{
     Failure, LichessError, TokenSource, authorize, lichess_error, read_with_deadline,
 };
 use super::super::stream::{LineOptions, read_lines};
-use crate::error::CoreError;
+use crate::error::{CoreError, ErrorKind};
 use crate::host::Level;
 
 use super::events::{is_challenge_event, validate_online_event};
@@ -81,6 +81,21 @@ impl OnlineSession {
         phase: &str,
         message: Option<&str>,
     ) {
+        self.emit_state_kind(session, account, game_id, lane, phase, message, None);
+    }
+
+    /// `emit_state` with the kind of failure that caused it, so the page offers what can help.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_state_kind(
+        &self,
+        session: u64,
+        account: &str,
+        game_id: &str,
+        lane: Lane,
+        phase: &str,
+        message: Option<&str>,
+        kind: Option<ErrorKind>,
+    ) {
         let mut payload = json!({
             "session": session,
             "account": account,
@@ -90,6 +105,9 @@ impl OnlineSession {
         });
         if let Some(message) = message {
             payload["message"] = json!(message);
+        }
+        if let Some(kind) = kind {
+            payload["kind"] = json!(kind.as_str());
         }
         let live_game = phase == "checking" || (!game_id.is_empty() && phase != "idle");
         self.run_state_hook(live_game, self.assistance_blocked());
@@ -241,6 +259,37 @@ impl OnlineSession {
         }
     }
 
+    /// The stream failed for good: its state carries the failure's kind.
+    fn listen_failed(
+        &self,
+        options: &Listen,
+        cancel: &CancellationToken,
+        phase: &str,
+        cause: &Failure,
+    ) {
+        if cancel.is_cancelled() {
+            return;
+        }
+        let message = cause.message();
+        if let Some(quiet) = &options.quiet {
+            quiet(phase, Some(&message));
+        } else if options.session == self.st().epoch {
+            self.emit_state_kind(
+                options.session,
+                &options.account,
+                &options.game_id,
+                options.lane,
+                phase,
+                Some(&message),
+                Some(
+                    CoreError::from(cause.clone())
+                        .kind
+                        .unwrap_or(ErrorKind::Unavailable),
+                ),
+            );
+        }
+    }
+
     /// `listen(open, signal, emit, options)`: keeps one stream open, validates its events and
     /// reconnects with backoff as `options` says, until it ends, fails permanently or is cancelled.
     /// A panic ends it as a lost connection, so the game or lobby does not wait on a dead stream.
@@ -333,7 +382,7 @@ impl OnlineSession {
                         } else {
                             "disconnected"
                         };
-                        self.listen_state(options, cancel, phase, Some(&cause.message()));
+                        self.listen_failed(options, cancel, phase, &cause);
                         if options.quiet.is_none() {
                             self.report(&cause);
                         }

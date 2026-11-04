@@ -27,5 +27,5 @@ pub mod usage;
 pub mod voice;
 
 pub use crate::core::Core;
-pub use error::{CoreError, Result};
+pub use error::{CoreError, ErrorKind, Result};
 pub use host::{Config, Host, Level};

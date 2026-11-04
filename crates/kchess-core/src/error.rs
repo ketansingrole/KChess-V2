@@ -3,10 +3,71 @@
 
 use std::fmt;
 
+/// What kind of failure an error is, so a frontend offers the action that can help (a retry, a
+/// reconnect, nothing) without reading its message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorKind {
+    /// Lichess could not be reached.
+    Offline,
+    /// Lichess did not answer in time.
+    TimedOut,
+    /// Lichess asked for fewer requests for a while.
+    RateLimited,
+    /// The account's login no longer works or lacks a permission: reconnect it.
+    Login,
+    /// Lichess refused the request for a reason it gave; trying again changes nothing.
+    Refused,
+    /// What was asked for does not exist (any more).
+    NotFound,
+    /// Lichess failed or answered something unexpected.
+    Unavailable,
+}
+
+impl ErrorKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ErrorKind::Offline => "offline",
+            ErrorKind::TimedOut => "timedOut",
+            ErrorKind::RateLimited => "rateLimited",
+            ErrorKind::Login => "login",
+            ErrorKind::Refused => "refused",
+            ErrorKind::NotFound => "notFound",
+            ErrorKind::Unavailable => "unavailable",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<ErrorKind> {
+        [
+            ErrorKind::Offline,
+            ErrorKind::TimedOut,
+            ErrorKind::RateLimited,
+            ErrorKind::Login,
+            ErrorKind::Refused,
+            ErrorKind::NotFound,
+            ErrorKind::Unavailable,
+        ]
+        .into_iter()
+        .find(|kind| kind.as_str() == text)
+    }
+
+    /// Whether the same request may work if made again later.
+    pub fn retryable(self) -> bool {
+        matches!(
+            self,
+            ErrorKind::Offline
+                | ErrorKind::TimedOut
+                | ErrorKind::RateLimited
+                | ErrorKind::Unavailable
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreError {
+    /// What a person is told: plain words, never a status, an endpoint or a response body.
     pub message: String,
     pub aborted: bool,
+    pub kind: Option<ErrorKind>,
 }
 
 impl CoreError {
@@ -14,6 +75,7 @@ impl CoreError {
         CoreError {
             message: message.into(),
             aborted: false,
+            kind: None,
         }
     }
 
@@ -21,7 +83,14 @@ impl CoreError {
         CoreError {
             message: message.into(),
             aborted: true,
+            kind: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_kind(mut self, kind: ErrorKind) -> CoreError {
+        self.kind = Some(kind);
+        self
     }
 
     /// A low-level failure with what was being attempted: `"{message}: {err}"`.
