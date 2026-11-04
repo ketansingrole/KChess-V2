@@ -218,7 +218,7 @@ pub fn parse_game_details(raw: &Value) -> GameDetails {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TvGame {
     pub details: GameDetails,
-    /// Absent for variants KChess cannot replay (Crazyhouse).
+    /// Absent for variants KChess cannot replay.
     pub setup: Option<GameSetup>,
     pub san: Vec<String>,
     pub status: Option<String>,
@@ -550,6 +550,7 @@ mod tests {
         assert_eq!(variant_from_lichess(None), Some("standard"));
         assert_eq!(variant_from_lichess(Some("fromPosition")), Some("standard"));
         assert_eq!(variant_from_lichess(Some("chess960")), Some("chess960"));
-        assert_eq!(variant_from_lichess(Some("crazyhouse")), None);
+        assert_eq!(variant_from_lichess(Some("crazyhouse")), Some("crazyhouse"));
+        assert_eq!(variant_from_lichess(Some("bughouse")), None);
     }
 }

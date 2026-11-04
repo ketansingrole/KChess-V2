@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Lichess variant keys KChess can play. Crazyhouse is missing: its pocket needs a drop UI.
+/// Lichess variant keys KChess can play.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
     #[serde(rename = "standard")]
@@ -21,19 +21,12 @@ pub enum Variant {
     Horde,
     #[serde(rename = "racingKings")]
     RacingKings,
+    #[serde(rename = "crazyhouse")]
+    Crazyhouse,
 }
 
 /// The variant keys in `Variant`'s order.
-pub const VARIANTS: &[&str] = &[
-    "standard",
-    "chess960",
-    "kingOfTheHill",
-    "threeCheck",
-    "antichess",
-    "atomic",
-    "horde",
-    "racingKings",
-];
+pub use kchess_domain::misc::constants::VARIANTS;
 
 /// A game's starting point.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

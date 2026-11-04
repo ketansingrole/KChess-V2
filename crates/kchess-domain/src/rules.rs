@@ -25,6 +25,7 @@ pub fn lichess_variant(key: &str) -> Option<Variant> {
         "atomic" => Variant::Atomic,
         "horde" => Variant::Horde,
         "racingKings" => Variant::RacingKings,
+        "crazyhouse" => Variant::Crazyhouse,
         _ => return None,
     })
 }
