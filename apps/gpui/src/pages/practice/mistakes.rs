@@ -101,6 +101,8 @@ pub(crate) enum MistakeAction {
 
 pub struct Mistakes {
     items: Vec<Value>,
+    /// Until the saved drills arrive, "no mistakes yet" would not be true.
+    loading: bool,
     games: Vec<Value>,
     error: Option<String>,
     has_accounts: bool,
@@ -150,6 +152,7 @@ impl Mistakes {
         });
         let mut trainer = Mistakes {
             items: Vec::new(),
+            loading: false,
             games: Vec::new(),
             error: None,
             has_accounts: false,
@@ -172,6 +175,7 @@ impl Mistakes {
         self.done = false;
         self.show_all = false;
         self.now = now();
+        self.loading = true;
         let core = cx.global::<AppCore>().clone();
         let (library, games, data) = (
             core.call("library", Vec::new()),
@@ -181,6 +185,7 @@ impl Mistakes {
         cx.spawn(async move |this, cx| {
             let (library, games, data) = (library.await, games.await, data.await);
             let _ = this.update(cx, |this, cx| {
+                this.loading = false;
                 match library {
                     Ok(library) => {
                         this.items = library["mistakes"].as_array().cloned().unwrap_or_default();
@@ -580,7 +585,7 @@ impl Mistakes {
                     .text_color(palette.error)
                     .child(error)
             }))
-            .when(self.items.is_empty(), |card| {
+            .when(self.items.is_empty() && !self.loading, |card| {
                 card.child(
                     widgets::empty_state(
                         icon("book-open"),
