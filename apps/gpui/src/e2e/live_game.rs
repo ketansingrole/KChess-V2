@@ -74,6 +74,19 @@ fn a_refused_game_offers_watching_instead_of_reconnecting(cx: &mut gpui_kit::Tes
     );
 }
 
+/// The same refusal on launch, when the app resumes the game by itself: it once arrived before
+/// the page was listening, and the board waited on a game that would never come.
+#[gpui_kit::test]
+fn a_game_refused_on_launch_offers_watching(cx: &mut gpui_kit::TestAppContext) {
+    let (app, lichess) = Harness::signed_in(cx, true);
+    lichess.lock().board_refused = true;
+    let mut app = app.restart();
+    app.online();
+    app.open("Play on Lichess");
+    app.find("online-watch");
+    assert!(!app.shows("online-reconnect"));
+}
+
 fn writes(lichess: &Handle) -> Vec<String> {
     lichess.lock().writes.clone()
 }

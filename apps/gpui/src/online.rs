@@ -105,6 +105,8 @@ pub struct OnlineState {
     pub ongoing_error: Option<String>,
     /// The kind of failure that ended the game's connection (`ErrorKind`), until it recovers.
     pub failure: Option<String>,
+    /// The game connection's state that ended it for good, kept until the game connects again.
+    failed_state: Option<Value>,
     pub busy_challenge: String,
     /// Turn flags seen at the last check, to say only when it becomes your turn.
     turns: std::collections::HashMap<String, bool>,
@@ -838,6 +840,14 @@ impl OnlineState {
                     && event.payload["game"]["speed"] != json!("correspondence")
                     && event.payload["game"]["compat"]["board"] != json!(false);
                 self.transition("onlineGameEvent", vec![event.payload.clone()], None, cx);
+                // The event stream announces a game whose board stream already failed for good
+                // (on launch the two race): the failure stands, as the core opens no new stream.
+                if event.payload["type"] == json!("gameStart")
+                    && let Some(failed) = self.failed_state.clone()
+                    && failed["gameId"] == event.payload["game"]["gameId"]
+                {
+                    self.transition("onlineGameConnection", vec![failed], None, cx);
+                }
                 // A pairing or an accepted challenge takes you to the board, as Lichess does.
                 if starts {
                     cx.defer(|cx| {
@@ -852,7 +862,15 @@ impl OnlineState {
                 }
             }
             "online:state" => {
-                self.failure = event.payload["kind"].as_str().map(str::to_string);
+                let kind = event.payload["kind"].as_str().map(str::to_string);
+                if event.payload["lane"] == json!("game") {
+                    // Only a failure that ended the stream carries a kind.
+                    self.failed_state = kind.is_some().then(|| event.payload.clone());
+                    self.failure = kind;
+                } else if kind.is_some() {
+                    // The event stream's own states never clear the game's failure.
+                    self.failure = kind;
+                }
                 self.transition(
                     "onlineGameConnection",
                     vec![event.payload.clone()],
@@ -956,6 +974,7 @@ pub fn init(cx: &mut App) {
             ongoing_loaded: false,
             ongoing_error: None,
             failure: None,
+            failed_state: None,
             busy_challenge: String::new(),
             turns: std::collections::HashMap::new(),
             _ticker: None,

@@ -40,6 +40,8 @@ pub struct Session {
     /// The game's listing says the Board API can play it, but its board stream answers 400 (an
     /// open one ends).
     pub board_refused: bool,
+    /// How many board streams were refused.
+    pub refusals: usize,
     /// How many times the app opened the game's board stream.
     pub board_streams: usize,
     pub moves: Vec<String>,
@@ -328,6 +330,14 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             };
             let first = start.then(|| json!({ "type": "gameStart", "game": summary(elsewhere) }));
             let listening = session.clone();
+            // A refused game's announcement comes after the refusal, the order that once lost it.
+            let waited = Instant::now();
+            while session.lock().board_refused
+                && session.lock().refusals == 0
+                && waited.elapsed() < Duration::from_secs(5)
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
             let open = move || !session.lock().revoked;
             // Until the app hangs up (a keep-alive fails to send) or the login is revoked.
             let ended = stream(&mut out, first.into_iter().collect(), open, |_| None);
@@ -342,6 +352,7 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 (full(&session), session.version, refused)
             };
             if elsewhere {
+                session.lock().refusals += 1;
                 return refuse(
                     &mut out,
                     &json!({ "error": "This game cannot be played with the Board API." }),
