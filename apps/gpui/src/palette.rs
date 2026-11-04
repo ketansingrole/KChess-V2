@@ -884,6 +884,19 @@ fn pasted(text: &str) -> Vec<Command> {
             .detail(id),
         ];
     }
+    if let Some(pgn) = movetext(text) {
+        return vec![Command::new(
+            "pasted:moves",
+            "Analyse these moves",
+            icon("microscope"),
+            move |window, cx| {
+                let pgn = pgn.clone();
+                crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+                    analysis.open_game(&pgn, usize::MAX, None, None, false, cx)
+                });
+            },
+        )];
+    }
     let fen = text
         .contains('/')
         .then(|| crate::game::editor_setup(text))
@@ -921,6 +934,16 @@ fn pasted(text: &str) -> Vec<Command> {
             move |window, cx| crate::shell::edit_position(edited.clone(), orientation, window, cx),
         ),
     ]
+}
+
+/// Numbered moves (`1. e4 e5 2. Nf3`, with or without PGN headers) the analysis board can play.
+fn movetext(text: &str) -> Option<String> {
+    let numbered = text.split_whitespace().any(|word| word.starts_with("1."));
+    (numbered && crate::game::pgn_analysable(text))
+        .then(|| crate::game::tree::TreeNode::from_pgn(text))
+        .flatten()
+        .filter(|tree| !tree.children.is_empty())
+        .map(|_| text.to_string())
 }
 
 pub struct CommandPalette {
