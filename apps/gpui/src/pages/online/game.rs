@@ -21,13 +21,9 @@ use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 
-/// The player may touch pieces: the game is on, at its last move, in a variant shown here.
+/// The player may touch pieces: the game is on, at its last move.
 pub fn can_play(online: &OnlineState) -> bool {
-    online.phase == Phase::Playing
-        && online.view_ply.is_none()
-        && online.model()["onlineUnsupported"]
-            .as_str()
-            .is_none_or(str::is_empty)
+    online.phase == Phase::Playing && online.view_ply.is_none()
 }
 
 fn color_name(color: Color) -> &'static str {
@@ -587,11 +583,7 @@ impl OnlinePage {
             .as_str()
             .unwrap_or("Opponent")
             .to_string();
-        let unsupported = model["onlineUnsupported"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let reviewing = playing && !can_play(online) && unsupported.is_empty();
+        let reviewing = playing && !can_play(online);
         let variant = setup["variant"].as_str().unwrap_or("standard");
         let variant_name = (variant != "standard").then(|| crate::game::variant_label(variant));
         let rated = model["onlineGameRated"] == json!(true);
@@ -599,14 +591,7 @@ impl OnlinePage {
             .as_str()
             .unwrap_or_default()
             .to_string();
-        let banner: Option<(&'static str, String, String)> = if !unsupported.is_empty() {
-            Some((
-                "triangle-alert",
-                format!("{unsupported} is not supported yet"),
-                "KChess cannot show this variant’s board. You can still resign or abort it here."
-                    .into(),
-            ))
-        } else if reviewing {
+        let banner: Option<(&'static str, String, String)> = if reviewing {
             Some((
                 "history",
                 "Reviewing an earlier position".into(),
