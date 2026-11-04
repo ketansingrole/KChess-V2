@@ -30,6 +30,7 @@ Commands:
   review <link|file|moves>         Review a game with Stockfish: accuracy and faulted moves
   explore [masters|opening|tablebase] <fen|startpos|moves>
                                    Look a position up (the tablebase for 7 pieces or fewer)
+  opening <fen|startpos|moves>     Name the opening a position or line reaches (ECO)
   methods                          List available CoreApi methods
 
 Options:
@@ -192,6 +193,10 @@ async fn run(argv: &[String]) -> Result<(), String> {
         }
         "methods" => {
             print(&json!(method_names()));
+            return Ok(());
+        }
+        "opening" => {
+            print(&opening_name(&args[1..])?);
             return Ok(());
         }
         _ => {}
@@ -370,6 +375,23 @@ fn analysis_fen(words: &[String]) -> Result<String, String> {
     Ok(fen)
 }
 
+/// `opening`: the named opening a position or line reaches, from the openings the app names, as
+/// Lichess does (the last named position on the way). Offline: no core is needed.
+fn opening_name(words: &[String]) -> Result<Value, String> {
+    let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "opening"))?;
+    let root = request.get("rootFen").unwrap_or(&request["fen"]).clone();
+    let moves = request.get("moves").cloned().unwrap_or_else(|| json!([]));
+    let named = kchess_domain::api::call_value(
+        "openingAt",
+        &[json!({ "variant": "standard", "fen": root }), moves],
+    )
+    .map_err(|cause| cause.to_string())?;
+    if named.is_null() {
+        return Err("No named opening there.".into());
+    }
+    Ok(json!({ "eco": named["eco"], "name": named["name"], "fen": request["fen"] }))
+}
+
 /// What `explore` looks up: the database named first, else the tablebase when it covers the
 /// position (seven pieces or fewer, no castling rights) and the masters' games when not.
 fn explore_request(words: &[String]) -> Result<(&'static str, String), String> {
@@ -510,6 +532,28 @@ mod tests {
         );
         assert!(super::analysis_fen(&[]).is_err());
         assert!(super::analysis_fen(&strings(&["8/8/8/8/8/8/8/8 w - - 0 1"])).is_err());
+    }
+
+    #[test]
+    fn an_opening_is_named_from_moves_or_a_position() {
+        let sicilian =
+            opening_name(&strings(&["1.", "e4", "c5", "2.", "Nf3", "d6"])).expect("named");
+        assert_eq!(sicilian["eco"], json!("B50"));
+        assert_eq!(
+            sicilian["name"],
+            json!("Sicilian Defense: Modern Variations")
+        );
+        // A position is named the same, by itself.
+        let fen = sicilian["fen"].as_str().expect("a FEN").to_string();
+        assert_eq!(opening_name(&strings(&[&fen])), Ok(sicilian));
+        assert_eq!(
+            opening_name(&strings(&["8/8/8/8/8/3k4/8/K6Q w - - 0 1"])),
+            Err("No named opening there.".into())
+        );
+        assert_eq!(
+            opening_name(&[]),
+            Err("opening requires a FEN or moves.".into())
+        );
     }
 
     #[test]
