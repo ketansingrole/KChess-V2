@@ -10,7 +10,7 @@ use image::codecs::gif::{GifEncoder, Repeat};
 use image::{Delay, Frame, ImageEncoder as _, RgbaImage};
 use resvg::tiny_skia::{Color as Paint, IntSize, Pixmap, PixmapPaint, Rect, Transform};
 use resvg::usvg;
-use shakmaty::{Board, Color, Piece, Position as _, Square};
+use shakmaty::{Board, ByColor, ByRole, Color, Piece, Position as _, Role, Square};
 
 use crate::board::looks;
 
@@ -18,6 +18,25 @@ use crate::board::looks;
 const BAR: u32 = 28;
 /// The longest game a GIF is made of (300 moves).
 const MAX_FRAMES: usize = 600;
+/// A Crazyhouse pocket piece in a name bar, and the most a count is drawn up to.
+const POCKET_PIECE: u32 = BAR - 4;
+const MAX_COUNT: u8 = 30;
+/// The droppable roles, in Lichess's pocket order.
+const POCKET_ROLES: [Role; 5] = [
+    Role::Pawn,
+    Role::Knight,
+    Role::Bishop,
+    Role::Rook,
+    Role::Queen,
+];
+
+/// One position of the game: its board, the move that led to it, and a Crazyhouse game's
+/// pockets.
+struct Shown {
+    board: Board,
+    last: Option<String>,
+    pockets: Option<ByColor<ByRole<u8>>>,
+}
 
 /// What to draw (`ImageOptions`).
 #[derive(Clone)]
@@ -80,8 +99,24 @@ struct Painter {
     /// The board and the names, drawn once.
     base: Pixmap,
     pieces: HashMap<Piece, Pixmap>,
+    /// Crazyhouse only: the pocket pieces, and the counts beside them, drawn once.
+    pocket_pieces: HashMap<Piece, Pixmap>,
+    counts: HashMap<u8, Pixmap>,
     square: u32,
     flipped: bool,
+}
+
+/// A pocket count ("2") as the name bar writes it.
+fn count_image(count: u8) -> Result<Pixmap, String> {
+    let font = BAR / 2;
+    let width = font * 3 / 2;
+    let svg = format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{BAR}'>\
+         <text x='0' y='{}' font-family='Helvetica, Arial, sans-serif' font-weight='600' \
+         font-size='{font}' fill='#e8e6e3'>{count}</text></svg>",
+        BAR / 2 + font * 7 / 20,
+    );
+    rasterize(svg.as_bytes(), width, BAR)
 }
 
 fn painter(options: &ImageOptions) -> Result<Painter, String> {
@@ -128,18 +163,30 @@ fn painter(options: &ImageOptions) -> Result<Painter, String> {
         Transform::identity(),
         None,
     );
-    let mut pieces = HashMap::new();
+    let crazyhouse = options.variant == "crazyhouse";
+    let (mut pieces, mut pocket_pieces, mut counts) =
+        (HashMap::new(), HashMap::new(), HashMap::new());
     for color in Color::ALL {
         for role in shakmaty::Role::ALL {
             let piece = Piece { color, role };
             let svg = crate::assets::shared(&looks::piece_path(&options.piece_set, piece))
                 .ok_or("An image for the export could not be loaded")?;
             pieces.insert(piece, rasterize(&svg, square, square)?);
+            if crazyhouse && role != Role::King {
+                pocket_pieces.insert(piece, rasterize(&svg, POCKET_PIECE, POCKET_PIECE)?);
+            }
+        }
+    }
+    if crazyhouse {
+        for count in 2..=MAX_COUNT {
+            counts.insert(count, count_image(count)?);
         }
     }
     Ok(Painter {
         base,
         pieces,
+        pocket_pieces,
+        counts,
         square,
         flipped,
     })
@@ -155,8 +202,64 @@ impl Painter {
         }
     }
 
-    fn draw(&self, board: &Board, last_move: Option<&str>) -> Pixmap {
+    /// Each side's pocket at the right of its name bar: the pieces it holds, a count beside any
+    /// it holds more than one of.
+    fn draw_pockets(&self, frame: &mut Pixmap, pockets: &ByColor<ByRole<u8>>) {
+        let width = frame.width();
+        let mut tile_paint = resvg::tiny_skia::Paint::default();
+        tile_paint.set_color(Paint::from_rgba8(0xc8, 0xc4, 0xbe, 255));
+        for color in Color::ALL {
+            let top = (color == Color::White) == self.flipped;
+            let bar_top = if top { 0 } else { BAR + 8 * self.square };
+            let y = (bar_top + (BAR - POCKET_PIECE) / 2) as i32;
+            let mut x = width.saturating_sub(4) as i32;
+            for role in POCKET_ROLES.into_iter().rev() {
+                let held = *pockets.get(color).get(role);
+                if held == 0 {
+                    continue;
+                }
+                if let Some(count) = self.counts.get(&held.min(MAX_COUNT)) {
+                    x -= count.width() as i32;
+                    frame.draw_pixmap(
+                        x,
+                        bar_top as i32,
+                        count.as_ref(),
+                        &PixmapPaint::default(),
+                        Transform::identity(),
+                        None,
+                    );
+                }
+                if let Some(image) = self.pocket_pieces.get(&Piece { color, role }) {
+                    x -= POCKET_PIECE as i32;
+                    // A light tile, so a black piece reads on the dark bar.
+                    if let Some(tile) = Rect::from_xywh(
+                        x as f32,
+                        y as f32,
+                        POCKET_PIECE as f32,
+                        POCKET_PIECE as f32,
+                    ) {
+                        frame.fill_rect(tile, &tile_paint, Transform::identity(), None);
+                    }
+                    frame.draw_pixmap(
+                        x,
+                        y,
+                        image.as_ref(),
+                        &PixmapPaint::default(),
+                        Transform::identity(),
+                        None,
+                    );
+                }
+                x -= 4;
+            }
+        }
+    }
+
+    fn draw(&self, shown: &Shown) -> Pixmap {
+        let (board, last_move) = (&shown.board, shown.last.as_deref());
         let mut frame = self.base.clone();
+        if let Some(pockets) = &shown.pockets {
+            self.draw_pockets(&mut frame, pockets);
+        }
         let squares = last_move
             .into_iter()
             .flat_map(|uci| [uci.get(0..2), uci.get(2..4)])
@@ -191,10 +294,14 @@ impl Painter {
 
 /// Each position of the game from the start, with the move that led to it; `up_to` stops after
 /// that many moves. The line stops at the first illegal move.
-fn positions(options: &ImageOptions, up_to: usize) -> Result<Vec<(Board, Option<String>)>, String> {
+fn positions(options: &ImageOptions, up_to: usize) -> Result<Vec<Shown>, String> {
     let mut position = kchess_domain::rules::setup_start(&options.variant, &options.fen)
         .ok_or("That game cannot be replayed")?;
-    let mut list = vec![(position.board().clone(), None)];
+    let mut list = vec![Shown {
+        board: position.board().clone(),
+        last: None,
+        pockets: position.pockets().copied(),
+    }];
     for uci in options.moves.iter().take(up_to) {
         let Some(chosen) = kchess_domain::rules::parse_uci(uci.trim())
             .and_then(|parsed| kchess_domain::rules::legal_move(&position, parsed))
@@ -202,7 +309,11 @@ fn positions(options: &ImageOptions, up_to: usize) -> Result<Vec<(Board, Option<
             break;
         };
         position.play_unchecked(chosen);
-        list.push((position.board().clone(), Some(uci.clone())));
+        list.push(Shown {
+            board: position.board().clone(),
+            last: Some(uci.clone()),
+            pockets: position.pockets().copied(),
+        });
     }
     Ok(list)
 }
@@ -276,10 +387,10 @@ pub fn rotated_text_png(
 /// A PNG of the position after `ply` moves.
 pub fn position_png(options: &ImageOptions, ply: usize) -> Result<Vec<u8>, String> {
     let paint = painter(options)?;
-    let (board, last) = positions(options, ply)?
+    let shown = positions(options, ply)?
         .pop()
         .ok_or("That game cannot be replayed")?;
-    let frame = rgba(paint.draw(&board, last.as_deref()))?;
+    let frame = rgba(paint.draw(&shown))?;
     let mut out = Vec::new();
     image::codecs::png::PngEncoder::new(&mut out)
         .write_image(
@@ -312,7 +423,7 @@ pub fn game_gif(
             .set_repeat(Repeat::Infinite)
             .map_err(|_| "The image could not be made")?;
         let count = list.len();
-        for (index, (board, last)) in list.iter().enumerate() {
+        for (index, shown) in list.iter().enumerate() {
             if cancel.load(Ordering::Relaxed) {
                 return Err("Cancelled".into());
             }
@@ -324,7 +435,7 @@ pub fn game_gif(
                 delay
             };
             let frame = Frame::from_parts(
-                rgba(paint.draw(board, last.as_deref()))?,
+                rgba(paint.draw(shown))?,
                 0,
                 0,
                 Delay::from_numer_denom_ms(hundredths * 10, 1),
@@ -384,6 +495,32 @@ mod tests {
             image.to_rgba8().get_pixel(300, 4).0,
             [0x26, 0x24, 0x21, 255]
         );
+    }
+
+    /// A Crazyhouse picture shows what each side holds at the right of its name bar.
+    #[test]
+    fn a_crazyhouse_picture_shows_the_pockets() {
+        let options = ImageOptions {
+            variant: "crazyhouse".into(),
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1".into(),
+            moves: ["e2e4", "d7d5", "e4d5", "d8d5"].map(String::from).to_vec(),
+            ..game()
+        };
+        let bar_pixels = |ply: usize, bar_top: u32| {
+            let png = position_png(&options, ply).unwrap();
+            let image = image::load_from_memory(&png).unwrap().to_rgba8();
+            (300..360)
+                .flat_map(|x| (bar_top..bar_top + 28).map(move |y| (x, y)))
+                .filter(|&(x, y)| image.get_pixel(x, y).0 != [0x26, 0x24, 0x21, 255])
+                .count()
+        };
+        // Black's bar is on top, White's below the board; at the start both pockets are empty.
+        assert_eq!(bar_pixels(0, 0), 0);
+        assert_eq!(bar_pixels(0, 28 + 360), 0);
+        // White took a pawn; then Black took one back.
+        assert_eq!(bar_pixels(3, 0), 0);
+        assert!(bar_pixels(3, 28 + 360) > 0);
+        assert!(bar_pixels(4, 0) > 0);
     }
 
     #[test]
