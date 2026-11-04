@@ -32,6 +32,8 @@ pub struct DailyPuzzle {
     day: String,
     /// The id of a linked puzzle shown instead of the daily one.
     linked: Option<String>,
+    /// The latest fetch: an answer to an earlier one is dropped.
+    request: u64,
     board: Entity<PuzzleBoard>,
     themes: Vec<Theme>,
     layout: PlayLayout,
@@ -51,6 +53,7 @@ impl DailyPuzzle {
             loading: false,
             day: String::new(),
             linked: None,
+            request: 0,
             _subscriptions: vec![cx.observe(&board, |_, _, cx| cx.notify())],
             board,
             themes,
@@ -91,7 +94,7 @@ impl DailyPuzzle {
     fn today(&mut self, cx: &mut Context<Self>) {
         self.linked = None;
         self.puzzle = None;
-        // A linked puzzle still on its way is dropped when it arrives.
+        // A linked puzzle still on its way is dropped when it arrives (`request`).
         self.loading = false;
         self.load(true, cx);
     }
@@ -109,12 +112,13 @@ impl DailyPuzzle {
         day: String,
         cx: &mut Context<Self>,
     ) {
-        let asked = self.linked.clone();
+        self.request += 1;
+        let asked = self.request;
         cx.spawn(async move |this, cx| {
             let daily = request.await;
             let _ = this.update(cx, |this, cx| {
                 // An answer for a puzzle no longer asked for.
-                if this.linked != asked {
+                if this.request != asked {
                     return;
                 }
                 this.loading = false;

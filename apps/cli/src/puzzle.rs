@@ -82,6 +82,9 @@ impl Solving {
     /// Play `text` (SAN or UCI). As on Lichess, any checkmate solves the puzzle, not only the
     /// one in its solution.
     pub fn answer(&mut self, text: &str) -> Answer {
+        if self.solved() {
+            return Answer::Illegal;
+        }
         let Some(position) = setup_start("standard", &self.fen()) else {
             return Answer::Illegal;
         };
@@ -255,6 +258,7 @@ mod tests {
             }
         );
         assert!(solving.solved());
+        assert_eq!(solving.answer("Kd2"), Answer::Illegal);
     }
 
     #[test]

@@ -246,7 +246,8 @@ impl Session<'_> {
             "random" => "black",
             chosen => chosen,
         };
-        if self.state()["color"].as_str().unwrap_or("white") == color {
+        // The game on the board is already that: kept, unless it is over.
+        if self.state()["color"].as_str().unwrap_or("white") == color && !self.over() {
             return Ok(());
         }
         if !self.moves().is_empty() && !self.over() {
@@ -274,6 +275,7 @@ impl Session<'_> {
             .as_str()
             .unwrap_or("standard")
             == variant
+            && !self.over()
         {
             return Ok(());
         }

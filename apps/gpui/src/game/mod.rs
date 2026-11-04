@@ -114,17 +114,19 @@ pub fn pgn_analysable(pgn: &str) -> bool {
 /// without one; `None` for a variant KChess does not know.
 pub fn pgn_variant_key(pgn: &str) -> Option<&'static str> {
     use shakmaty::variant::Variant;
-    let name = pgn
-        .lines()
-        .map(str::trim)
-        .take_while(|line| line.is_empty() || line.starts_with('['))
-        .find_map(|line| {
-            let rest = line.strip_prefix("[Variant ")?;
-            rest.trim_end_matches(']')
+    // The tags before the moves, one per line or (pasted into a one-line field) side by side.
+    let mut name = None;
+    let mut rest = pgn.trim_start();
+    while let Some(tag) = rest.strip_prefix('[') {
+        let Some(end) = tag.find(']') else { break };
+        if let Some(value) = tag[..end].strip_prefix("Variant ") {
+            name = value
                 .trim()
-                .strip_prefix('"')?
-                .strip_suffix('"')
-        });
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'));
+        }
+        rest = tag[end + 1..].trim_start();
+    }
     Some(match kchess_domain::rules::pgn_variant(name)? {
         Variant::Chess => {
             let name = name.unwrap_or_default().to_lowercase();
@@ -192,6 +194,10 @@ mod pgn_tests {
             "[Event \"x\"]\n[Variant \"Crazyhouse\"]\n\n1. e4 *"
         ));
         assert!(!pgn_analysable("[Variant \"Something else\"]\n\n1. e4 *"));
+        // Pasted into a one-line field, the tags sit side by side.
+        assert!(!pgn_analysable(
+            "[Event \"x\"] [Variant \"Crazyhouse\"] 1. e4 *"
+        ));
         assert_eq!(super::pgn_variant_key("1. e4 *"), Some("standard"));
         assert_eq!(
             super::pgn_variant_key("[Variant \"Chess960\"]\n\n*"),
