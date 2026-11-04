@@ -15,7 +15,7 @@ use crate::core::AppCore;
 use crate::game::computer::{ComputerGame, Host};
 use crate::game::{rules, view};
 use crate::pages::Page;
-use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
+use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::PlayedHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets;
@@ -31,6 +31,11 @@ const TILE_HEIGHT: Pixels = px(56.);
 /// The board's side, and the smaller one beside its details in a narrow window.
 const BOARD: Pixels = px(300.);
 const BOARD_SMALL: Pixels = px(200.);
+/// The widest Home grows; past it, the page keeps to the middle.
+const CONTENT_MAX: Pixels = px(1280.);
+/// Gaps between the cards in a group, and between the board's card and the rest.
+const GAP: Pixels = px(12.);
+const COLUMN_GAP: Pixels = px(24.);
 
 pub struct HomePage {
     /// The computer game left unfinished, and how Home names it.
@@ -39,6 +44,8 @@ pub struct HomePage {
     board: Option<(String, Entity<ChessBoard>)>,
     /// Your Lichess activity, once an account is connected, and the account it shows.
     activity: Option<(String, Entity<lichess::LichessActivity>)>,
+    /// The page's content, as last laid out: it, not the window, decides what goes beside what.
+    area: Measured,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -115,6 +122,7 @@ impl HomePage {
             continue_game: None,
             board: None,
             activity: None,
+            area: Measured::default(),
             focus: cx.focus_handle(),
             _subscriptions: vec![
                 cx.observe(&played, |_, _, cx| cx.notify()),
@@ -223,8 +231,29 @@ impl Render for HomePage {
             let accounts = accounts.read(cx);
             (accounts.active(cx), accounts.busy)
         };
-        let width = window.viewport_size().width;
-        let stacked = width < px(900.);
+        let padding = side_padding(window);
+        // Before the first layout, the window less the sidebar is the guess.
+        let measured = self.area.size().width;
+        let width = if measured > px(0.) {
+            measured - padding * 2.
+        } else {
+            window.viewport_size().width - px(260.)
+        };
+        // The board's card beside two tiles abreast, else the board over the rest.
+        let stacked = width < BOARD + px(34.) + COLUMN_GAP + TILE * 2. + GAP;
+        // The tiles beside the board, or under it: four abreast when they fit, else two, else one.
+        let tiles_width = if stacked {
+            width
+        } else {
+            width - BOARD - px(34.) - COLUMN_GAP
+        };
+        let per_row = if tiles_width >= TILE * 4. + GAP * 3. && stacked {
+            4
+        } else if tiles_width >= TILE * 2. + GAP {
+            2
+        } else {
+            1
+        };
         let tiles = [
             tile(
                 "home-puzzles",
@@ -259,11 +288,12 @@ impl Render for HomePage {
             )
             .into_any_element(),
         ];
-        // Two rows of two.
-        let mut tiles = tiles.into_iter();
-        let tiles = v_flex()
-            .gap(px(12.))
-            .children((0..2).map(|_| h_flex().gap(px(12.)).children(tiles.by_ref().take(2))));
+        let mut tiles = tiles.into_iter().peekable();
+        let mut rows = Vec::new();
+        while tiles.peek().is_some() {
+            rows.push(h_flex().gap(GAP).children(tiles.by_ref().take(per_row)));
+        }
+        let tiles = v_flex().gap(GAP).children(rows);
 
         let mut games: Vec<Value> = cx
             .global::<PlayedHandle>()
@@ -407,6 +437,9 @@ impl Render for HomePage {
         // Side by side under the board; stacked beside the smaller one.
         let actions = if stacked {
             v_flex()
+                // A button's width, not the card's, in a wide window.
+                .w_full()
+                .max_w(px(320.))
                 .gap(px(8.))
                 .child(primary.w_full())
                 .children(review.map(|review| review.w_full()))
@@ -618,10 +651,15 @@ impl Render for HomePage {
             .overflow_y_scroll()
             .child(
                 v_flex()
+                    .relative()
+                    .w_full()
+                    .max_w(CONTENT_MAX + padding * 2.)
+                    .mx_auto()
                     .pt(PAGE_TOP)
                     .pb(PAGE_BOTTOM)
-                    .px(side_padding(window))
+                    .px(padding)
                     .gap(section_gap)
+                    .child(self.area.probe(cx))
                     .child(if stacked {
                         v_flex().gap(px(16.)).child(now).child(starts)
                     } else {

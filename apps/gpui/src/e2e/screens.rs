@@ -126,7 +126,8 @@ fn the_timeline() {
 /// Home as a new person, someone with games played here, and a connected Lichess account with
 /// years of history, in both appearances, wide and narrow:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::home -- --ignored` writes
-/// `<dir>/home/<state>-<appearance>-<width>.png`.
+/// `<dir>/home/<state>-<appearance>-<width>.png`; `KCHESS_HOME_STATES` and `KCHESS_HOME_SIZES`
+/// narrow it down.
 #[test]
 #[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
 fn home() {
@@ -140,7 +141,7 @@ fn home() {
             continue;
         }
         for (appearance, name) in [(Appearance::Dark, "dark"), (Appearance::Light, "light")] {
-            for (width, height) in [(1320., 1100.), (760., 1400.)] {
+            for (width, height) in home_sizes() {
                 let profile = tempfile::tempdir().expect("a temporary profile");
                 let (mut cx, window) = start(profile.path(), width, height);
                 cx.update(|cx| {
@@ -168,6 +169,23 @@ fn home() {
                 crate::profile::TEST_DATA_DIR.set(None);
             }
         }
+    }
+}
+
+/// The window sizes Home is shot at: wide and narrow, or `KCHESS_HOME_SIZES` ("1920x1100,760x1400").
+fn home_sizes() -> Vec<(f32, f32)> {
+    let sizes: Vec<(f32, f32)> = std::env::var("KCHESS_HOME_SIZES")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|size| {
+            let (width, height) = size.split_once('x')?;
+            Some((width.trim().parse().ok()?, height.trim().parse().ok()?))
+        })
+        .collect();
+    if sizes.is_empty() {
+        vec![(1320., 1100.), (760., 1400.)]
+    } else {
+        sizes
     }
 }
 
