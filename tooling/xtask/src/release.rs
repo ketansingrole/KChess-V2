@@ -267,6 +267,11 @@ pub fn attach_draft(dir: &std::path::Path) -> Result {
     if files.is_empty() {
         return Err("No release assets were provided.".into());
     }
+    if let Some(store) = files.iter().find(|file| store_only(file)) {
+        return Err(format!(
+            "{store} is the App Store package; it goes to App Store Connect, not a GitHub release."
+        ));
+    }
     let listed = output(
         "gh",
         &[
@@ -330,6 +335,11 @@ pub fn attach_draft(dir: &std::path::Path) -> Result {
             run("gh", &args)
         }
     }
+}
+
+/// The Mac App Store installer package, which only installs from the store.
+fn store_only(file: &str) -> bool {
+    file.ends_with(".pkg")
 }
 
 /// The release's Snap, named for its tag, as SHA256SUMS.txt lists it exactly once.
@@ -463,6 +473,20 @@ mod tests {
             refused.contains("snap, package (macos-latest)"),
             "{refused}"
         );
+    }
+
+    #[test]
+    fn the_app_store_package_is_never_a_github_download() {
+        assert!(store_only("packages/KChess-2026.11.3-mac-arm64.pkg"));
+        for asset in [
+            "KChess-2026.11.3-mac-arm64.zip",
+            "KChess-2026.11.3-mac-arm64.dmg",
+            "KChess-2026.11.3-win-x64.exe",
+            "KChess-2026.11.3-linux-amd64.deb",
+            "SHA256SUMS.txt",
+        ] {
+            assert!(!store_only(asset), "{asset}");
+        }
     }
 
     #[test]

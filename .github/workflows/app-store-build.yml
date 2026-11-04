@@ -70,7 +70,7 @@ jobs:
           APPLE_TEAM_ID: ${{ env.KCHESS_MAS_SIGNING == 'true' && secrets.APPLE_TEAM_ID || '' }}
       - uses: actions/upload-artifact@v7
         with:
-          name: kchess-app-store
+          name: mas-package
           path: apps/gpui/dist/mas/
           if-no-files-found: error
           retention-days: 14
