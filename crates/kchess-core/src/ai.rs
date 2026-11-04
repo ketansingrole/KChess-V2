@@ -574,7 +574,6 @@ mod tests {
         })
     }
 
-    /// OpenAI refused a bare random string (`invalid_authorize_request`, `ext_agent_host_id`).
     /// The sign-in callback waits on OpenAI's registered port, and on any free one under test:
     /// two test binaries both holding 1455 once failed whichever started second.
     #[tokio::test]
@@ -585,6 +584,7 @@ mod tests {
         assert_eq!(fixture.callback_port(), 0);
     }
 
+    /// OpenAI refused a bare random string (`invalid_authorize_request`, `ext_agent_host_id`).
     #[test]
     fn a_host_id_is_a_uuid_uri() {
         assert_eq!(

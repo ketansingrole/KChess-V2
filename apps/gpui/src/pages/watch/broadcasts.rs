@@ -1027,7 +1027,6 @@ impl WatchPage {
             .into_any_element()
     }
 
-    /// One board followed: players and clocks, the moves, All boards and Analyse.
     /// Back from the board open to the round's boards.
     pub(super) fn all_boards(&mut self, cx: &mut Context<Self>) {
         self.broadcasts.selected.clear();
@@ -1050,6 +1049,7 @@ impl WatchPage {
         });
     }
 
+    /// One board followed: players and clocks, the moves, All boards and Analyse.
     fn broadcast_game(
         &mut self,
         window: &mut Window,

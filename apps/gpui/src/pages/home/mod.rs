@@ -118,7 +118,7 @@ fn short_date(millis: f64) -> String {
 /// Home's buttons, as Quick Pick offers them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Action {
-    /// The last game, on the analysis board.
+    /// The last game, open in Game history.
     Review,
     /// Your Lichess games, downloaded again.
     Sync,
@@ -160,7 +160,6 @@ impl HomePage {
         page
     }
 
-    /// Read the unfinished computer game and the accounts again (the page was shown).
     /// The game _Review_ opens: the last one, unless a computer game is left unfinished.
     fn reviewable(&self, cx: &App) -> Option<String> {
         if self.continue_game.is_some() {
@@ -205,6 +204,7 @@ impl HomePage {
         }
     }
 
+    /// Read the unfinished computer game and the accounts again (the page was shown).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<AppCore>().clone();
         let library = core.call("library", Vec::new());

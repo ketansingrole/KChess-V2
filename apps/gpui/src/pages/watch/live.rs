@@ -949,7 +949,8 @@ impl WatchPage {
             .into_any_element()
     }
 
-    /// The actions the watched game's panel allows now: none without a game, or on Broadcasts.
+    /// The actions the watched game's panel allows now, or the open broadcast board's; none
+    /// without either.
     pub(crate) fn actions(&self) -> Vec<Action> {
         if self.tab == super::Tab::Broadcasts {
             return if self.broadcasts.current().is_some() {
