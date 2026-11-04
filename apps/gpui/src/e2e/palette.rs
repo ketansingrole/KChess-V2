@@ -421,3 +421,45 @@ fn a_computer_game_takes_back_from_quick_pick(cx: &mut gpui_kit::TestAppContext)
     app.wait_for_moves(&[]);
     assert!(!app.enabled("takeback"));
 }
+
+/// Over the board, Quick Pick offers the panel's actions as they apply, and runs them.
+#[gpui_kit::test]
+fn a_game_over_the_board_is_drawn_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Over the board");
+    app.find("chess-board");
+    let shown = |app: &mut Harness| {
+        app.press("secondary-k");
+        app.type_text(">");
+        wait_for_first(app, "Zen mode");
+        let labels: Vec<String> = app.with_window(|window, _| {
+            (0..10usize)
+                .filter_map(|index| window.try_find(("palette-item", index)))
+                .filter_map(|item| item.label().map(str::to_string))
+                .collect()
+        });
+        app.press("escape");
+        wait_until_closed(app);
+        labels
+    };
+    let before = shown(&mut app);
+    assert!(before.contains(&"Flip board".to_string()), "{before:?}");
+    assert!(!before.contains(&"Draw".to_string()), "{before:?}");
+    assert!(!before.contains(&"Take back".to_string()), "{before:?}");
+
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.wait_for_moves(&["e4"]);
+    let during = shown(&mut app);
+    for label in ["Take back", "Draw", "Resign", "Copy PGN"] {
+        assert!(during.contains(&label.to_string()), "{label}: {during:?}");
+    }
+    app.press("secondary-k");
+    app.type_text(">Draw");
+    wait_for_first(&mut app, "Draw");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.wait_gone("local-draw");
+    let after = shown(&mut app);
+    assert!(!after.contains(&"Draw".to_string()), "{after:?}");
+}

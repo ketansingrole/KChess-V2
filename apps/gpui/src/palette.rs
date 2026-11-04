@@ -496,7 +496,8 @@ fn page_commands(cx: &App) -> Vec<Command> {
     .kbds("Z");
     match crate::shell::current_page(cx) {
         Some(Page::Computer) => std::iter::once(zen).chain(computer_commands(cx)).collect(),
-        Some(Page::Local | Page::Online) => vec![zen],
+        Some(Page::Local) => std::iter::once(zen).chain(local_commands(cx)).collect(),
+        Some(Page::Online) => vec![zen],
         Some(Page::Analysis) => analysis_commands(),
         _ => Vec::new(),
     }
@@ -524,6 +525,47 @@ fn computer_commands(cx: &App) -> Vec<Command> {
                 icon(glyph),
                 move |window, cx| {
                     if let Some(page) = crate::shell::view_of::<ComputerPage>(Page::Computer, cx) {
+                        page.update(cx, |page, cx| page.act(action, window, cx));
+                    }
+                },
+            )
+            .keywords(keywords)
+        })
+        .collect()
+}
+
+/// The game over the board's actions, as its panel's buttons offer them.
+fn local_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::local::{Action, LocalPage};
+    let Some(page) = crate::shell::view_of::<LocalPage>(Page::Local, cx) else {
+        return Vec::new();
+    };
+    page.read(cx)
+        .actions(cx)
+        .into_iter()
+        .map(|action| {
+            let (id, label, glyph, keywords) = match action {
+                Action::TakeBack => ("takeback", "Take back", "undo-2", "undo"),
+                Action::Pause => ("pause", "Pause", "pause", "clock stop"),
+                Action::Resume => ("resume", "Resume", "play", "clock continue"),
+                Action::Draw => ("draw", "Draw", "handshake", "agree"),
+                Action::Resign => ("resign", "Resign", "flag", "give up"),
+                Action::NewGame => ("new-game", "New game", "plus", "restart"),
+                Action::Flip => (
+                    "flip",
+                    "Flip board",
+                    "refresh-cw",
+                    "turn rotate orientation",
+                ),
+                Action::CopyPgn => ("copy-pgn", "Copy PGN", "copy", "game moves clipboard"),
+                Action::Analyse => ("analyse", "Analyse", "microscope", "analysis review"),
+            };
+            Command::new(
+                format!("local:{id}"),
+                label,
+                icon(glyph),
+                move |window, cx| {
+                    if let Some(page) = crate::shell::view_of::<LocalPage>(Page::Local, cx) {
                         page.update(cx, |page, cx| page.act(action, window, cx));
                     }
                 },

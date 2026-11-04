@@ -65,6 +65,20 @@ enum ClockLayout {
 
 use crate::game::variants;
 
+/// What the panel's buttons do, for Quick Pick to offer the same.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Action {
+    TakeBack,
+    Pause,
+    Resume,
+    Draw,
+    Resign,
+    NewGame,
+    Flip,
+    CopyPgn,
+    Analyse,
+}
+
 pub struct LocalPage {
     /// Either player's spoken moves.
     voice: crate::voice::moves::VoiceMoves,
@@ -1652,6 +1666,56 @@ impl LocalPage {
 }
 
 impl LocalPage {
+    /// The actions its buttons allow now. The clock alone has none of the board's.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        if self.mode(cx) == Mode::Clock {
+            return Vec::new();
+        }
+        let now = self.now();
+        let over = self.game.over(now);
+        let played = !self.moves().is_empty();
+        let mut actions = Vec::new();
+        if played && !self.timed_out() {
+            actions.push(Action::TakeBack);
+        }
+        if played && !over && !self.game.state["times"].is_null() {
+            let paused = self.game.state["paused"].as_bool() == Some(true);
+            actions.push(if paused {
+                Action::Resume
+            } else {
+                Action::Pause
+            });
+        }
+        if played && !over {
+            actions.extend([Action::Draw, Action::Resign]);
+        }
+        actions.extend([Action::NewGame, Action::Flip]);
+        if played {
+            actions.push(Action::CopyPgn);
+            if crate::game::analysable(self.setup()["variant"].as_str().unwrap_or("standard")) {
+                actions.push(Action::Analyse);
+            }
+        }
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        match action {
+            Action::TakeBack => self.takeback(cx),
+            Action::Pause | Action::Resume => self.toggle_pause(cx),
+            Action::Draw => self.agree_draw(cx),
+            Action::Resign => self.ask_resign(window, cx),
+            Action::NewGame => self.open_new_game(window, cx),
+            Action::Flip => self.flip(cx),
+            Action::CopyPgn => self.copy_pgn(window, cx),
+            Action::Analyse => self.analyse(window, cx),
+        }
+    }
+
     /// A clock ran out: taking back cannot refill it, so the game stays lost on time.
     fn timed_out(&self) -> bool {
         let times = &self.game.state["times"];
