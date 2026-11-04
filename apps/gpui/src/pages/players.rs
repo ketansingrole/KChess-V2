@@ -90,16 +90,24 @@ fn played_perfs(profile: &Value) -> Vec<(&'static str, &'static str)> {
     perfs
 }
 
-/// Recent lookups first, then followed players, each name once.
-fn suggestions(recent: &[String], followed: &[String]) -> Vec<String> {
+/// Recent lookups, then followed players not among them, each name once and at most
+/// `SUGGESTED` in all.
+fn suggestions(recent: &[String], followed: &[String]) -> (Vec<String>, Vec<String>) {
     let mut seen = std::collections::HashSet::new();
-    recent
+    let mut once = |name: &&String| seen.insert(name.to_lowercase());
+    let recent: Vec<String> = recent
         .iter()
-        .chain(followed)
-        .filter(|name| seen.insert(name.to_lowercase()))
+        .filter(&mut once)
         .take(SUGGESTED)
         .cloned()
-        .collect()
+        .collect();
+    let followed = followed
+        .iter()
+        .filter(&mut once)
+        .take(SUGGESTED - recent.len())
+        .cloned()
+        .collect();
+    (recent, followed)
 }
 
 /// "12 h" or "40 min" of play.
@@ -119,6 +127,60 @@ fn local_date(millis: f64) -> String {
         .single()
         .map(|date| date.format("%-d %b %Y").to_string())
         .unwrap_or_else(|| "?".into())
+}
+
+/// The small muted word before a group of names under the search.
+fn chip_label(text: &'static str, palette: &Palette) -> Div {
+    div()
+        .text_size(px(12.))
+        .text_color(palette.text_muted)
+        .child(text)
+}
+
+/// A player's name as a filled chip under the search: their title in the leaderboard's colour,
+/// and a dot while they are online.
+fn name_chip(
+    id: impl Into<ElementId>,
+    name: &str,
+    title: Option<&str>,
+    online: bool,
+    palette: &Palette,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let label = match title {
+        Some(title) => format!("{title} {name}"),
+        None => name.to_string(),
+    };
+    h_flex()
+        .id(id)
+        .on_click(on_click)
+        .test_support()
+        .role(Role::Button)
+        .aria_label(if online {
+            format!("{label}, online")
+        } else {
+            label
+        })
+        .keyboard_focus(palette.primary)
+        .cursor_pointer()
+        .h(px(24.))
+        .px(px(8.))
+        .gap(px(4.))
+        .rounded(radii::SM)
+        .bg(palette.accented)
+        .text_size(px(13.))
+        .text_color(palette.toned)
+        .hover(|chip| chip.text_color(palette.highlighted))
+        .when(online, |chip| {
+            chip.child(div().size(px(6.)).rounded_full().bg(palette.success))
+        })
+        .children(title.map(|title| {
+            div()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(palette.warning)
+                .child(title.to_string())
+        }))
+        .child(name.to_string())
 }
 
 fn message_of(cause: &kchess_core::CoreError) -> SharedString {
@@ -204,51 +266,54 @@ impl PlayersPage {
         });
         let board_title: String = crate::prefs::get(cx, BOARD_TITLE_KEY, "all".to_string());
         let title_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
-        let subscriptions =
-            vec![
-                cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
-                    match event {
-                        InputEvent::PressEnter { .. } => this.lookup(None, window, cx),
-                        InputEvent::Change => this.search_names(cx),
-                        _ => {}
+        let subscriptions = vec![
+            cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
+                match event {
+                    InputEvent::PressEnter { .. } => this.lookup(None, window, cx),
+                    InputEvent::Change => {
+                        // A message about what was typed before goes with it.
+                        this.error = None;
+                        this.search_names(cx)
                     }
-                }),
-                cx.subscribe(
-                    &perf_select,
-                    |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
-                        if let SelectEvent::Confirm(Some(value)) = event
-                            && *value != this.perf.as_str()
-                        {
-                            this.perf = value.to_string();
-                            this.load_stats(cx);
-                        }
-                    },
-                ),
-                cx.subscribe(
-                    &board_select,
-                    |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
-                        if let SelectEvent::Confirm(Some(value)) = event
-                            && *value != this.board_perf.as_str()
-                        {
-                            this.board_perf = value.to_string();
-                            crate::prefs::set(cx, BOARD_PERF_KEY, this.board_perf.clone());
-                            this.load_board(cx);
-                        }
-                    },
-                ),
-                cx.subscribe(
-                    &title_select,
-                    |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
-                        if let SelectEvent::Confirm(Some(value)) = event {
-                            this.show_titles(value.to_string(), cx);
-                        }
-                    },
-                ),
-                cx.observe(&accounts, |this, _, cx| {
-                    this.account_changed(cx);
-                    cx.notify();
-                }),
-            ];
+                    _ => {}
+                }
+            }),
+            cx.subscribe(
+                &perf_select,
+                |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
+                    if let SelectEvent::Confirm(Some(value)) = event
+                        && *value != this.perf.as_str()
+                    {
+                        this.perf = value.to_string();
+                        this.load_stats(cx);
+                    }
+                },
+            ),
+            cx.subscribe(
+                &board_select,
+                |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
+                    if let SelectEvent::Confirm(Some(value)) = event
+                        && *value != this.board_perf.as_str()
+                    {
+                        this.board_perf = value.to_string();
+                        crate::prefs::set(cx, BOARD_PERF_KEY, this.board_perf.clone());
+                        this.load_board(cx);
+                    }
+                },
+            ),
+            cx.subscribe(
+                &title_select,
+                |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
+                    if let SelectEvent::Confirm(Some(value)) = event {
+                        this.show_titles(value.to_string(), cx);
+                    }
+                },
+            ),
+            cx.observe(&accounts, |this, _, cx| {
+                this.account_changed(cx);
+                cx.notify();
+            }),
+        ];
         PlayersPage {
             input,
             profile: None,
@@ -405,7 +470,11 @@ impl PlayersPage {
     fn lookup(&mut self, name: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let name = name.unwrap_or_else(|| self.input.read(cx).value().trim().to_string());
         if !is_username(&name) {
-            self.error = Some("Enter a Lichess username".into());
+            self.error = Some(if name.is_empty() {
+                "Enter a Lichess username".into()
+            } else {
+                "Lichess usernames are 2–30 letters, digits, - or _".into()
+            });
             cx.notify();
             return;
         }
@@ -805,107 +874,139 @@ impl PlayersPage {
     }
 
     fn search(&self, followed: &[String], cx: &mut Context<Self>, palette: &Palette) -> Div {
-        let recent: Vec<String> = crate::prefs::get(cx, RECENT_KEY, Vec::new());
-        let names = suggestions(&recent, followed);
-        let empty = self.profile.is_none();
+        // The player open is already in the field, so not offered again.
+        let shown = self.username().unwrap_or_default().to_lowercase();
+        let others = |names: Vec<String>| -> Vec<String> {
+            names
+                .into_iter()
+                .filter(|name| name.to_lowercase() != shown)
+                .collect()
+        };
+        let recent = others(crate::prefs::get(cx, RECENT_KEY, Vec::new()));
+        let (recent, followed) = suggestions(&recent, &others(followed.to_vec()));
         let online = crate::network::online(cx);
-        // `.player-search-empty`: 28px above and 32px below, the `UEmpty` with room around it.
-        widgets::card(palette)
-            .gap(px(8.))
-            .when(empty, |card| {
-                card.pt(px(28.)).pb(px(32.)).items_center().child(
-                    v_flex()
-                        .items_center()
-                        .pt(px(40.))
-                        .pb(px(24.))
-                        .gap(px(20.))
-                        .child(
-                            icon("user-search")
-                                .size(px(22.))
-                                .text_color(palette.text_muted),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(14.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(palette.highlighted)
-                                .child("Look up a player"),
-                        ),
-                )
+        let typed = !self.input.read(cx).value().trim().is_empty();
+        let pick = |name: String| {
+            cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
+                this.show_player(&name, window, cx)
             })
+        };
+        // Names typed so far match these players; otherwise the ones looked up lately and
+        // followed, each group under its own small label.
+        let groups: Vec<AnyElement> = if self.matches.is_empty() {
+            let mut groups = Vec::new();
+            if !recent.is_empty() {
+                groups.push(chip_label("Recent", palette).into_any_element());
+                groups.extend(recent.into_iter().enumerate().map(|(index, name)| {
+                    name_chip(
+                        ("players-suggestion", index),
+                        &name,
+                        None,
+                        false,
+                        palette,
+                        pick(name.clone()),
+                    )
+                    .into_any_element()
+                }));
+                groups.push(
+                    div()
+                        .id("players-recent-clear")
+                        .test_support()
+                        .role(Role::Button)
+                        .aria_label("Clear recent players")
+                        .keyboard_focus(palette.primary)
+                        .cursor_pointer()
+                        .h(px(24.))
+                        .flex()
+                        .items_center()
+                        .px(px(4.))
+                        .rounded(radii::SM)
+                        .text_size(px(12.))
+                        .text_color(palette.text_muted)
+                        .hover(|clear| clear.text_color(palette.highlighted))
+                        .child("Clear")
+                        .on_click(cx.listener(|_, _, _, cx| {
+                            crate::prefs::set(cx, RECENT_KEY, Vec::<String>::new());
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                );
+            }
+            if !followed.is_empty() {
+                groups.push(chip_label("Following", palette).into_any_element());
+                groups.extend(followed.into_iter().enumerate().map(|(index, name)| {
+                    name_chip(
+                        ("players-followed", index),
+                        &name,
+                        None,
+                        false,
+                        palette,
+                        pick(name.clone()),
+                    )
+                    .into_any_element()
+                }));
+            }
+            groups
+        } else {
+            std::iter::once(chip_label("Matches", palette).into_any_element())
+                .chain(self.matches.iter().enumerate().map(|(index, found)| {
+                    let name = found["username"].as_str().unwrap_or_default().to_string();
+                    name_chip(
+                        ("players-match", index),
+                        &name,
+                        found["title"].as_str(),
+                        found["online"] == json!(true),
+                        palette,
+                        pick(name.clone()),
+                    )
+                    .into_any_element()
+                }))
+                .collect()
+        };
+        widgets::card(palette)
+            .gap(px(12.))
             .child(
                 h_flex()
+                    .w_full()
                     .gap(px(8.))
-                    .when(empty, |row| row.w_full().justify_center())
-                    .when(!empty, |row| row.w_full())
                     .child(
-                        // `.player-search-input`: up to 420px, with its user-search icon.
-                        div()
-                            .when(empty, |field| field.flex_1().max_w(px(420.)))
-                            .when(!empty, |field| field.flex_1())
-                            .min_w(px(192.))
-                            .child(
-                                Input::new(&self.input)
-                                    .prefix(icon("user-search").size(px(16.)))
-                                    .aria_label("Lichess username"),
-                            ),
+                        // A name is at most 30 characters: the field stops at 480px.
+                        div().flex_1().min_w(px(192.)).max_w(px(480.)).child(
+                            Input::new(&self.input)
+                                .prefix(icon("user-search").size(px(16.)))
+                                .cleanable(true)
+                                .aria_label("Lichess username"),
+                        ),
                     )
                     .child(
                         Button::new("players-lookup")
                             .primary()
                             .label("Look up")
                             .loading(self.loading)
-                            .disabled(!online)
+                            .disabled(!online || !typed)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.lookup(None, window, cx)),
                             ),
                     ),
             )
-            .when(!self.matches.is_empty(), |card| {
+            .children(self.error.clone().map(|error| {
+                h_flex()
+                    .id("players-error")
+                    .test_support()
+                    .aria_label(error.clone())
+                    .gap(px(6.))
+                    .text_size(px(13.))
+                    .text_color(palette.error)
+                    .child(icon("circle-alert").size(px(14.)))
+                    .child(error)
+            }))
+            .when(!groups.is_empty(), |card| {
                 card.child(
                     h_flex()
                         .flex_wrap()
-                        .gap(px(4.))
-                        .when(empty, |row| row.justify_center())
-                        .children(self.matches.iter().enumerate().map(|(index, found)| {
-                            let name = found["username"].as_str().unwrap_or_default().to_string();
-                            let label = match found["title"].as_str() {
-                                Some(title) => format!("{title} {name}"),
-                                None => name.clone(),
-                            };
-                            div().rounded(radii::SM).bg(palette.accented).child(
-                                Button::new(("players-match", index))
-                                    .xsmall()
-                                    .ghost()
-                                    .label(label)
-                                    .when(found["online"] == json!(true), |button| {
-                                        button.icon(icon("circle-dot"))
-                                    })
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.show_player(&name, window, cx)
-                                    })),
-                            )
-                        })),
-                )
-            })
-            .when(self.matches.is_empty() && !names.is_empty(), |card| {
-                card.child(
-                    h_flex()
-                        .flex_wrap()
-                        .gap(px(4.))
-                        .when(empty, |row| row.justify_center())
-                        .children(names.into_iter().enumerate().map(|(index, name)| {
-                            // `variant="soft" color="neutral"`: a filled chip.
-                            div().rounded(radii::SM).bg(palette.accented).child(
-                                Button::new(("players-suggestion", index))
-                                    .xsmall()
-                                    .ghost()
-                                    .label(name.clone())
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.show_player(&name, window, cx)
-                                    })),
-                            )
-                        })),
+                        .items_center()
+                        .gap(px(6.))
+                        .children(groups),
                 )
             })
     }
@@ -1644,15 +1745,6 @@ impl Render for PlayersPage {
                     .pt(PAGE_TOP)
                     .pb(PAGE_BOTTOM)
                     .child(search)
-                    .children(self.error.clone().map(|error| {
-                        div()
-                            .id("players-error")
-                            .test_support()
-                            .aria_label(error.clone())
-                            .text_size(px(13.))
-                            .text_color(palette.error)
-                            .child(error)
-                    }))
                     .children(board)
                     .children(body),
             )
@@ -1825,7 +1917,9 @@ mod tests {
     fn suggestions_name_each_player_once() {
         let recent = vec!["Alice".to_string(), "bob".to_string()];
         let followed = vec!["Bob".to_string(), "Carol".to_string()];
-        assert_eq!(suggestions(&recent, &followed), ["Alice", "bob", "Carol"]);
+        let (recent, followed) = suggestions(&recent, &followed);
+        assert_eq!(recent, ["Alice", "bob"]);
+        assert_eq!(followed, ["Carol"]);
     }
 
     #[test]

@@ -281,6 +281,17 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
     {
         return ndjson(&mut out);
     }
+    // Name search is public: a few players whatever is typed, one of them online.
+    if request.path == "/api/player/autocomplete" {
+        return reply(
+            &mut out,
+            &json!({ "result": [
+                { "id": "magnuscarlsen", "name": "MagnusCarlsen", "title": "GM", "online": true },
+                { "id": "magicmike", "name": "MagicMike" },
+                { "id": "magnolia_77", "name": "Magnolia_77" },
+            ] }),
+        );
+    }
     // Leaderboards are public, so they are asked for without the login.
     if let Some(perf) = request.path.strip_prefix("/api/player/top/100/") {
         let user = |username: &str, title: Option<&str>, rating: u32, progress: i32| {

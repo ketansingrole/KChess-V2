@@ -125,7 +125,11 @@ fn a_player_lookup_checks_the_name_and_survives_a_failed_request(
     app.click_label("Lichess username");
     app.type_text("!");
     app.click("players-lookup");
-    wait_for_label(&mut app, "players-error", "Enter a Lichess username");
+    wait_for_label(
+        &mut app,
+        "players-error",
+        "Lichess usernames are 2–30 letters, digits, - or _",
+    );
 
     // A real name goes out, fails and leaves the lookup ready for another try.
     app.click_label("Lichess username");
@@ -139,9 +143,45 @@ fn a_player_lookup_checks_the_name_and_survives_a_failed_request(
         window
             .try_find("players-error")
             .and_then(|error| error.label().map(str::to_string))
-            .is_some_and(|error| !error.is_empty() && error != "Enter a Lichess username")
+            .is_some_and(|error| !error.is_empty() && !error.starts_with("Lichess usernames"))
     });
     assert!(app.enabled("players-lookup"));
+}
+
+#[gpui_kit::test]
+fn the_player_search_drops_a_stale_message_and_forgets_recent_names(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut app = open(cx, "Players", true);
+    // Nothing typed: nothing to look up.
+    assert!(!app.enabled("players-lookup"));
+    app.cx.update(|cx| {
+        crate::prefs::set(cx, "kchess:players-recent", ["alice", "bob"]);
+    });
+    app.click_label("Lichess username");
+    app.type_text("!");
+    app.press("enter");
+    wait_for_label(
+        &mut app,
+        "players-error",
+        "Lichess usernames are 2–30 letters, digits, - or _",
+    );
+    // Typing again takes the message about the old text away.
+    app.type_text("x");
+    app.wait_for("the message to go", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find("players-error").is_none()
+    });
+    assert!(app.shows(("players-suggestion", 1usize)));
+    app.click("players-recent-clear");
+    app.wait_for("the recent names to go", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find(("players-suggestion", 0usize)).is_none()
+    });
+    let kept: Vec<String> = app
+        .cx
+        .update(|cx| crate::prefs::get(cx, "kchess:players-recent", vec!["?".to_string()]));
+    assert!(kept.is_empty());
 }
 
 #[gpui_kit::test]
