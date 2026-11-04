@@ -135,3 +135,30 @@ fn an_unfinished_game_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
     app.open("Play with computer");
     app.wait_for_moves(&["e4", "e5"]);
 }
+
+/// A position whose king and rooks castle from unusual squares is played on as Chess960: its
+/// castling is king takes rook, and the game is analysable.
+#[gpui_kit::test]
+fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.with_window(|window, cx| {
+        crate::shell::play_computer_from(
+            "1rk4r/pppppppp/8/8/8/8/PPPPPPPP/1RK4R w HBhb - 0 1".into(),
+            window,
+            cx,
+        )
+    });
+    app.wait_for_moves(&[]);
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("O-O-O");
+    app.press("enter");
+    app.wait_for_moves(&["O-O-O"]);
+    let variant = app.cx.update(|cx| {
+        crate::shell::view_of::<crate::pages::computer::ComputerPage>(
+            crate::pages::Page::Computer,
+            cx,
+        )
+        .map(|page| page.read(cx).setup_variant())
+    });
+    assert_eq!(variant.as_deref(), Some("chess960"));
+}

@@ -534,7 +534,7 @@ impl ComputerPage {
         }
     }
 
-    fn setup_variant(&self) -> String {
+    pub(crate) fn setup_variant(&self) -> String {
         self.game.state["setup"]["variant"]
             .as_str()
             .unwrap_or("standard")
