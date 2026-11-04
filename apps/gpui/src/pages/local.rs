@@ -1590,7 +1590,7 @@ impl LocalPage {
                     [
                         Button::new("copy-pgn")
                             .ghost()
-                            .xsmall()
+                            .small()
                             .w_full()
                             .icon(icon("copy"))
                             .label("Copy PGN")
@@ -1612,7 +1612,7 @@ impl LocalPage {
                     .chain(analysable.then(|| {
                         Button::new("local-analyse")
                             .ghost()
-                            .xsmall()
+                            .small()
                             .w_full()
                             .icon(icon("microscope"))
                             .label("Analyse")

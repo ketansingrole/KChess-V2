@@ -2093,7 +2093,7 @@ impl AnalysisPage {
             .trigger(
                 Button::new("engine-settings-button")
                     .ghost()
-                    .xsmall()
+                    .small()
                     .icon(icon("settings-2"))
                     .tooltip("Engine settings")
                     .accessibility_label("Engine settings"),

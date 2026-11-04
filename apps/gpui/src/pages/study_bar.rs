@@ -589,7 +589,7 @@ impl Render for StudyBar {
             .is_some_and(|(study, _)| !study["cloud"].is_null());
         let menu = Button::new("study-actions")
             .ghost()
-            .xsmall()
+            .small()
             .icon(icon("ellipsis"))
             .accessibility_label("Study actions")
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
@@ -739,7 +739,7 @@ impl Render for StudyBar {
                         Button::new("save-as-study")
                             .flex_none()
                             .ghost()
-                            .xsmall()
+                            .small()
                             .icon(icon("book-plus"))
                             .label("Save as study")
                             .on_click(cx.listener(|this, _, window, cx| this.save_new(window, cx))),
@@ -766,7 +766,7 @@ impl Render for StudyBar {
                     .child(
                         Button::new("all-studies")
                             .ghost()
-                            .xsmall()
+                            .small()
                             .icon(icon("library-big"))
                             .label("All studies")
                             .on_click(|_, window, cx| {

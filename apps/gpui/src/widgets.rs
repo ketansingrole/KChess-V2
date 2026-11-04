@@ -698,7 +698,7 @@ pub fn view_toggles(blindfold: bool, zen: bool) -> impl IntoElement {
     let toggle =
         |id: &'static str, glyph: gpui_kit::component::Icon, label: &'static str, on: bool| {
             Button::new(id)
-                .xsmall()
+                .small()
                 .when(on, |button| button.primary())
                 .when(!on, |button| button.ghost())
                 .icon(glyph)
@@ -925,7 +925,7 @@ fn pill_row(
                 .when(wrap, |tab| tab.flex_grow(1.))
                 .justify_center()
                 .gap(px(if compact { 6. } else { 8. }))
-                .h(px(if compact { 20. } else { 26. }))
+                .h(px(if compact { 24. } else { 26. }))
                 .px(px(if compact { 8. } else { 12. }))
                 .rounded(radii::SM)
                 .text_size(px(if compact { 12. } else { 14. }))

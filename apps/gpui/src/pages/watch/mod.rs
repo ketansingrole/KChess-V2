@@ -534,7 +534,7 @@ impl WatchPage {
             .child(
                 Button::new("watch-channels-refresh")
                     .ghost()
-                    .xsmall()
+                    .small()
                     .icon(icon("refresh-cw"))
                     .accessibility_label("Refresh channels")
                     .on_click(cx.listener(|this, _, _, cx| this.load_channels(cx))),
@@ -764,7 +764,7 @@ impl WatchPage {
                 h_flex()
                     .child(
                         Button::new("watch-retry")
-                            .xsmall()
+                            .small()
                             .outline()
                             .label("Retry feed")
                             .on_click(

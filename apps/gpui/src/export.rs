@@ -345,7 +345,7 @@ pub fn export_menu(
             .child(
                 Button::new((id, 1usize))
                     .ghost()
-                    .xsmall()
+                    .small()
                     .label("Cancel export")
                     .on_click(move |_, _, cx| {
                         let _ = cancel.update(cx, |exporter, cx| {
@@ -358,7 +358,7 @@ pub fn export_menu(
         .child(
             Button::new(id)
                 .ghost()
-                .xsmall()
+                .small()
                 .icon(icon("download"))
                 .label("Export")
                 .loading(busy || uploading)
