@@ -23,6 +23,22 @@ pub fn game_date(millis: f64) -> String {
         .unwrap_or_default()
 }
 
+/// "Nov 4", or "Nov 4, 2025" outside this year: a game's day where space is short.
+pub fn short_game_date(millis: f64) -> String {
+    use chrono::{Datelike as _, TimeZone as _};
+    chrono::Local
+        .timestamp_millis_opt(millis as i64)
+        .single()
+        .map(|date| {
+            if date.year() == chrono::Local::now().year() {
+                date.format("%b %-d").to_string()
+            } else {
+                date.format("%b %-d, %Y").to_string()
+            }
+        })
+        .unwrap_or_default()
+}
+
 /// The Chess960 start numbered `n` (`chess960Fen`).
 pub fn chess960(n: i64) -> String {
     kchess_domain::rules::chess960_fen(n)

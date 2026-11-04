@@ -870,14 +870,13 @@ fn showcase_public(path: &str) -> Option<Showcase> {
     let lower = path.to_lowercase();
     let (name, kind) = if let Some(rest) = lower.strip_prefix("/api/games/user/") {
         (rest.to_string(), 2)
-    } else if let Some(rest) = lower.strip_prefix("/api/user/") {
+    } else {
+        let rest = lower.strip_prefix("/api/user/")?;
         match rest.split_once('/') {
             None => (rest.to_string(), 0),
             Some((name, "rating-history")) => (name.to_string(), 1),
             Some(_) => return None,
         }
-    } else {
-        return None;
     };
     let sessions = server().sessions.lock().expect("the sessions");
     let username = sessions.values().find_map(|session| {

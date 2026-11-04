@@ -6,10 +6,12 @@ use super::Harness;
 fn the_app_starts_on_home(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     for action in [
-        "home-history",
+        "home-play",
+        "home-puzzles",
+        "home-analysis",
         "home-local",
-        "home-practice",
-        "home-studies",
+        "home-online",
+        "home-connect",
     ] {
         app.find(action);
     }
@@ -171,14 +173,12 @@ fn tab_and_shift_tab_walk_the_same_controls(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(again, forward[1..], "Tab after the shell redrew");
 }
 
-/// The record's counts are smaller than the ratings beside it, and its card was shorter.
+/// A connected account's section: a card for the speed it plays, its record and Sync games.
 #[gpui_kit::test]
-fn the_lichess_activity_cards_are_one_height(cx: &mut gpui_kit::TestAppContext) {
+fn the_lichess_section_shows_the_account(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in(cx, false);
-    let heights = ["Games", "Blitz rating", "Rapid rating", "Recent record"]
-        .map(|card| app.find(card).bounds().size.height);
-    assert!(
-        heights.iter().all(|height| *height == heights[0]),
-        "{heights:?}"
-    );
+    // The stand-in account plays Rapid only.
+    app.find("home-perf-rapid");
+    app.find("home-record");
+    assert!(app.enabled("home-sync"));
 }

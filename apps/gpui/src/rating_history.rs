@@ -186,6 +186,20 @@ impl RatingHistory {
         }
     }
 
+    /// The mode on the chart, as chosen elsewhere (Home's rating cards).
+    pub fn show_mode(&mut self, mode: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.mode = mode.to_string();
+        self.mode_select.update(cx, |state, cx| {
+            state.set_selected_value(&SharedString::from(mode.to_string()), window, cx)
+        });
+        self.draw(cx);
+    }
+
+    /// The mode on the chart.
+    pub fn mode(&self) -> &str {
+        &self.mode
+    }
+
     /// Lichess's history and the one from games (either may be `null` while unknown).
     pub fn set(&mut self, official: Value, fallback: Value, cx: &mut Context<Self>) {
         self.official = official;

@@ -200,9 +200,9 @@ fn seed_played(cx: &mut HeadlessAppContext) {
         .map_or(0, |since| since.as_millis() as u64);
     let games = [
         ("You", "Stockfish · Club Player", "1-0", "computer"),
-        ("Sam", "You", "1/2-1/2", "local"),
+        ("Stockfish · Club Player", "You", "1/2-1/2", "computer"),
         ("You", "Stockfish · Intermediate", "0-1", "computer"),
-        ("You", "Priya", "1-0", "local"),
+        ("You", "Stockfish · Club Player", "1-0", "computer"),
         ("Stockfish · Club Player", "You", "0-1", "computer"),
     ];
     cx.update(|cx| {

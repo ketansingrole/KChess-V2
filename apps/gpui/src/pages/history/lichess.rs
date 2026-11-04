@@ -770,7 +770,7 @@ pub fn game_row(
         .keyboard_focus(palette.primary)
         .aria_label(format!("Game against {opponent}"))
         .px(px(12.))
-        .py(px(12.))
+        .py(px(if detailed { 12. } else { 8. }))
         .gap(px(12.))
         .rounded(radii::MD)
         .text_size(px(13.))
@@ -779,7 +779,8 @@ pub fn game_row(
         .on_click(move |_, window, cx| select(window, cx))
         .child(
             div()
-                .w(px(64.))
+                .w(px(if detailed { 64. } else { 52. }))
+                .flex_none()
                 .child(super::badge(outcome, Some(px(52.)), palette)),
         )
         .child(
@@ -787,20 +788,63 @@ pub fn game_row(
                 .flex_1()
                 .min_w_0()
                 .child(
-                    div()
-                        .font_weight(FontWeight::MEDIUM)
-                        .truncate()
-                        .child(opponent),
+                    h_flex()
+                        .min_w_0()
+                        .items_baseline()
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::MEDIUM)
+                                .truncate()
+                                .child(opponent),
+                        )
+                        // A brief row keeps the opponent's rating on the name's line.
+                        .when(!detailed, |name| {
+                            name.children(game["opponentRating"].as_f64().map(|rating| {
+                                div()
+                                    .flex_none()
+                                    .text_size(px(12.))
+                                    .text_color(muted)
+                                    .child(format!("{rating}"))
+                            }))
+                        }),
                 )
                 .when(detailed, |column| column.child(line(sub))),
         )
-        .child(v_flex().w(px(90.)).child(speed).when(detailed, |column| {
-            column.child(line(if game["rated"] == json!(true) {
-                "Rated".into()
-            } else {
-                "Casual".into()
-            }))
-        }))
+        .when(!detailed, |row| {
+            row.child(
+                div()
+                    .w(px(36.))
+                    .flex_none()
+                    .text_right()
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(match diff {
+                        Some(diff) if diff > 0. => palette.win,
+                        Some(_) => palette.loss,
+                        None => muted,
+                    })
+                    .child(match diff {
+                        Some(diff) if diff > 0. => format!("+{diff}"),
+                        Some(diff) => format!("−{}", diff.abs()),
+                        None => String::new(),
+                    }),
+            )
+        })
+        .child(
+            v_flex()
+                .w(px(if detailed { 90. } else { 56. }))
+                .flex_none()
+                .when(!detailed, |column| column.text_color(muted))
+                .child(speed)
+                .when(detailed, |column| {
+                    column.child(line(if game["rated"] == json!(true) {
+                        "Rated".into()
+                    } else {
+                        "Casual".into()
+                    }))
+                }),
+        )
         .when(detailed, |row| {
             row.child(
                 div()
@@ -835,11 +879,15 @@ pub fn game_row(
         })
         .child(
             div()
-                .w(px(100.))
+                .w(px(if detailed { 100. } else { 52. }))
+                .flex_none()
+                .when(!detailed, |date| date.text_right())
                 .text_color(muted)
-                .child(crate::game::game_date(
-                    game["createdAt"].as_f64().unwrap_or_default(),
-                )),
+                .child(if detailed {
+                    crate::game::game_date(game["createdAt"].as_f64().unwrap_or_default())
+                } else {
+                    crate::game::short_game_date(game["createdAt"].as_f64().unwrap_or_default())
+                }),
         )
         .into_any_element()
 }
