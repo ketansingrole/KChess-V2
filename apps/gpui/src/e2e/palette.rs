@@ -326,8 +326,14 @@ fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {
     wait_until_closed(&mut app);
     assert_eq!(page(&mut app), Some(Page::Tournaments));
     app.find("tournament-join");
-    app.click("tournament-back");
+    // The event's own actions are in Quick Pick too.
+    app.press("secondary-k");
+    app.type_text(">All tournaments");
+    wait_for_first(&mut app, "All tournaments");
+    app.press("enter");
+    wait_until_closed(&mut app);
     app.wait_gone("tournament-join");
+    app.find("tournaments-refresh");
 }
 
 /// A Lichess TV link opens that channel on Watch → TV, from whichever tab was showing.

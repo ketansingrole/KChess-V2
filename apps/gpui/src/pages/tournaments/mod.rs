@@ -51,6 +51,18 @@ struct Open {
     epoch: u64,
 }
 
+/// The page's actions, as its buttons offer them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Action {
+    Refresh,
+    Create,
+    Back,
+    Join,
+    Game,
+    Pause,
+    Withdraw,
+}
+
 pub struct TournamentsPage {
     /// Only what KChess can play (`playable`), or everything.
     playable_only: bool,
@@ -411,6 +423,64 @@ impl TournamentsPage {
                     })
             },
         );
+    }
+
+    /// What the page's buttons can do now: the schedule's, or the open event's.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        let Some(open) = &self.open else {
+            let mut actions = Vec::new();
+            if !self.loading {
+                actions.push(Action::Refresh);
+            }
+            actions.push(Action::Create);
+            return actions;
+        };
+        let mut actions = vec![Action::Back];
+        let Some(detail) = &open.detail else {
+            return actions;
+        };
+        if detail["status"] == json!("finished") || self.busy {
+            return actions;
+        }
+        if !self.joined_now(detail, cx) {
+            if detail["playable"] == json!(true) && detail["verdicts"]["accepted"] != json!(false) {
+                actions.push(Action::Join);
+            }
+            return actions;
+        }
+        if detail["me"]["gameId"].is_string() {
+            actions.push(Action::Game);
+        }
+        actions.push(if detail["system"] == json!("arena") {
+            Action::Pause
+        } else {
+            Action::Withdraw
+        });
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn run(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        match action {
+            Action::Refresh => self.refresh(cx),
+            Action::Create => self.start_create(window, cx),
+            Action::Back => self.close_event(cx),
+            Action::Join => self.join(window, cx),
+            Action::Game => {
+                let game = self
+                    .open
+                    .as_ref()
+                    .and_then(|open| open.detail.as_ref())
+                    .and_then(|detail| detail["me"]["gameId"].as_str().map(str::to_string));
+                if let Some(id) = game {
+                    crate::shell::open_online_game(&id, window, cx);
+                }
+            }
+            Action::Pause | Action::Withdraw => self.leave(window, cx),
+        }
     }
 
     fn start_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {

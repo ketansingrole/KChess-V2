@@ -503,6 +503,8 @@ fn page_commands(cx: &App) -> Vec<Command> {
         Some(Page::Puzzles) => puzzle_commands(cx),
         Some(Page::Watch) => watch_commands(cx),
         Some(Page::Studies) => studies_commands(),
+        Some(Page::Openings) => openings_commands(cx),
+        Some(Page::Tournaments) => tournament_commands(cx),
         _ => Vec::new(),
     }
 }
@@ -622,6 +624,55 @@ fn watch_commands(cx: &App) -> Vec<Command> {
             Action::Stop => ("stop", "Stop watching", "square", "close end"),
         },
         WatchPage::act,
+    )
+}
+
+/// An open line's actions on the Openings page.
+fn openings_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::openings::{Action, OpeningsPage};
+    let Some(page) = crate::shell::view_of::<OpeningsPage>(Page::Openings, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Openings,
+        "openings",
+        page.read(cx).actions(),
+        |action| match action {
+            Action::Train => (
+                "train",
+                "Train this line",
+                "graduation-cap",
+                "repertoire drill",
+            ),
+            Action::Analyse => ("analyse", "Analyse", "microscope", "analysis"),
+            Action::Puzzles => ("puzzles", "Train with puzzles", "puzzle", "tactics"),
+            Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            Action::AllOpenings => ("all", "All openings", "arrow-left", "back browse"),
+        },
+        OpeningsPage::act,
+    )
+}
+
+/// The Tournaments page's actions: the schedule's, or the open event's.
+fn tournament_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::tournaments::{Action, TournamentsPage};
+    let Some(page) = crate::shell::view_of::<TournamentsPage>(Page::Tournaments, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Tournaments,
+        "tournaments",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::Refresh => ("refresh", "Refresh", "refresh-cw", "reload schedule"),
+            Action::Create => ("create", "Create arena", "plus", "new tournament host"),
+            Action::Back => ("back", "All tournaments", "arrow-left", "schedule list"),
+            Action::Join => ("join", "Join", "log-in", "enter tournament"),
+            Action::Game => ("game", "Go to your game", "swords", "play pairing"),
+            Action::Pause => ("pause", "Pause", "pause", "leave arena"),
+            Action::Withdraw => ("withdraw", "Withdraw", "log-out", "leave tournament"),
+        },
+        TournamentsPage::run,
     )
 }
 
