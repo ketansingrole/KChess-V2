@@ -524,6 +524,7 @@ fn page_commands(cx: &App) -> Vec<Command> {
         Some(Page::History) => history_commands(cx),
         Some(Page::Players) => profile_commands(cx),
         Some(Page::Friends) => following_commands(cx),
+        Some(Page::Dashboard) => home_commands(cx),
         _ => Vec::new(),
     }
 }
@@ -850,6 +851,24 @@ fn following_commands(cx: &App) -> Vec<Command> {
             Action::Sync => ("sync", "Sync all", "refresh-cw", "games download"),
         },
         FriendsPage::act,
+    )
+}
+
+/// Home's buttons: the last game, and your Lichess games.
+fn home_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::home::{Action, HomePage};
+    let Some(page) = crate::shell::view_of::<HomePage>(Page::Dashboard, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Dashboard,
+        "home",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::Review => ("review", "Review last game", "microscope", "analyse recent"),
+            Action::Sync => ("sync", "Sync games", "refresh-cw", "lichess download"),
+        },
+        HomePage::act,
     )
 }
 

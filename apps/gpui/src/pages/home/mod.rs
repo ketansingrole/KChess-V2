@@ -115,6 +115,33 @@ fn short_date(millis: f64) -> String {
         .unwrap_or_default()
 }
 
+/// Home's buttons, as Quick Pick offers them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Action {
+    /// The last game, on the analysis board.
+    Review,
+    /// Your Lichess games, downloaded again.
+    Sync,
+}
+
+/// Your saved games, newest first; the chess clock's are not games to show.
+fn played_games(cx: &App) -> Vec<Value> {
+    let mut games: Vec<Value> = cx
+        .global::<PlayedHandle>()
+        .0
+        .read(cx)
+        .games()
+        .iter()
+        .filter(|game| game["source"] != "clock")
+        .cloned()
+        .collect();
+    games.sort_by(|a, b| {
+        let started = |game: &Value| game["startedAt"].as_f64().unwrap_or_default();
+        started(b).total_cmp(&started(a))
+    });
+    games
+}
+
 impl HomePage {
     pub fn new(cx: &mut Context<Self>) -> HomePage {
         let played = cx.global::<PlayedHandle>().0.clone();
@@ -134,6 +161,50 @@ impl HomePage {
     }
 
     /// Read the unfinished computer game and the accounts again (the page was shown).
+    /// The game _Review_ opens: the last one, unless a computer game is left unfinished.
+    fn reviewable(&self, cx: &App) -> Option<String> {
+        if self.continue_game.is_some() {
+            return None;
+        }
+        played_games(cx).first()?["id"].as_str().map(str::to_string)
+    }
+
+    /// What Home's buttons can do now.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        let mut actions = Vec::new();
+        if self.reviewable(cx).is_some() {
+            actions.push(Action::Review);
+        }
+        if self.activity.is_some()
+            && crate::network::online(cx)
+            && !crate::accounts::handle(cx).read(cx).busy
+        {
+            actions.push(Action::Sync);
+        }
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        match action {
+            Action::Review => {
+                if let Some(id) = self.reviewable(cx) {
+                    crate::shell::open_game(&id, window, cx);
+                }
+            }
+            Action::Sync => {
+                if let Some((account, _)) = &self.activity {
+                    let name = account.clone();
+                    crate::accounts::handle(cx)
+                        .update(cx, |accounts, cx| accounts.sync(Some(name), window, cx));
+                }
+            }
+        }
+    }
+
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<AppCore>().clone();
         let library = core.call("library", Vec::new());
@@ -302,19 +373,7 @@ impl Render for HomePage {
         }
         let tiles = v_flex().gap(GAP).children(rows);
 
-        let mut games: Vec<Value> = cx
-            .global::<PlayedHandle>()
-            .0
-            .read(cx)
-            .games()
-            .iter()
-            .filter(|game| game["source"] != "clock")
-            .cloned()
-            .collect();
-        games.sort_by(|a, b| {
-            let started = |game: &Value| game["startedAt"].as_f64().unwrap_or_default();
-            started(b).total_cmp(&started(a))
-        });
+        let mut games = played_games(cx);
         // The game you left, else the last one you finished, else the starting position.
         let session = self.continue_game.as_ref().map(|(_, session)| session);
         let latest = games.first().cloned();

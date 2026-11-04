@@ -121,6 +121,30 @@ fn an_open_game_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     app.find("tree-e2e4 e7e5 d1h5 b8c6 f1c4 g8f6 h5f7");
 }
 
+/// Home's _Review_ is in Quick Pick: the last game opens in Game history. With no account,
+/// there is nothing to sync.
+#[gpui_kit::test]
+fn the_last_game_is_reviewed_from_home_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = mate_in_history(cx);
+    app.open("Home");
+    app.find("home-review");
+    app.press("secondary-k");
+    app.type_text(">");
+    super::palette::wait_for_first(&mut app, "Review last game");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..8usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert!(!listed.iter().any(|label| label == "Sync games"));
+    app.press("enter");
+    super::palette::wait_until_closed(&mut app);
+    app.wait_for_moves(&SCHOLARS_MATE);
+    app.find("open-analysis");
+}
+
 #[gpui_kit::test]
 fn a_resigned_computer_game_is_listed_with_the_computer_games(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
