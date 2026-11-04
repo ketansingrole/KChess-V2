@@ -15,7 +15,7 @@ use crate::core::AppCore;
 use crate::game::computer::{ComputerGame, Host};
 use crate::game::{rules, view};
 use crate::pages::Page;
-use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
+use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::PlayedHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets;
@@ -27,10 +27,15 @@ mod lichess;
 const RECENT: usize = 6;
 /// A tile's narrowest width; two of them share a row when they fit, else one.
 const TILE: Pixels = px(200.);
-const TILE_HEIGHT: Pixels = px(64.);
+const TILE_HEIGHT: Pixels = px(56.);
 /// The board's side, and the smaller one beside its details in a narrow window.
 const BOARD: Pixels = px(300.);
 const BOARD_SMALL: Pixels = px(200.);
+/// The widest Home grows; past it, the page keeps to the middle.
+const CONTENT_MAX: Pixels = px(1280.);
+/// Gaps between the cards in a group, and between the board's card and the rest.
+const GAP: Pixels = px(12.);
+const COLUMN_GAP: Pixels = px(24.);
 
 pub struct HomePage {
     /// The computer game left unfinished, and how Home names it.
@@ -39,6 +44,8 @@ pub struct HomePage {
     board: Option<(String, Entity<ChessBoard>)>,
     /// Your Lichess activity, once an account is connected, and the account it shows.
     activity: Option<(String, Entity<lichess::LichessActivity>)>,
+    /// The page's content, as last laid out: it, not the window, decides what goes beside what.
+    area: Measured,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -51,10 +58,10 @@ impl Focusable for HomePage {
 
 /// An unfinished computer game as Home names it: the opponent, and where the game stands.
 struct Unfinished {
-    /// "Stockfish · Club Player · ~1600".
-    opponent: String,
-    /// "Move 3 · You play White · Your move".
-    state: String,
+    /// "Stockfish · Club Player", and its strength, "~1600".
+    opponent: (String, Option<String>),
+    /// "Move 3", "You play White", "Your move".
+    state: Vec<String>,
 }
 
 /// `computerDescription`: the level, the move to play, your side and whose turn it is.
@@ -79,17 +86,22 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
         .ok()
         .and_then(|label| label.as_str().map(str::to_string))
         .unwrap_or_default();
+    let (name, strength) = match level.rsplit_once(" · ") {
+        Some((name, strength)) => (name, Some(strength.to_string())),
+        None => (level.as_str(), None),
+    };
     Some(Unfinished {
-        opponent: format!("Stockfish · {level}"),
-        state: format!(
-            "Move {} · You play {side} · {}",
-            moves / 2 + 1,
+        opponent: (format!("Stockfish · {name}"), strength),
+        state: vec![
+            format!("Move {}", moves / 2 + 1),
+            format!("You play {side}"),
             if yours {
                 "Your move"
             } else {
                 "Stockfish to move"
             }
-        ),
+            .to_string(),
+        ],
     })
 }
 
@@ -110,6 +122,7 @@ impl HomePage {
             continue_game: None,
             board: None,
             activity: None,
+            area: Measured::default(),
             focus: cx.focus_handle(),
             _subscriptions: vec![
                 cx.observe(&played, |_, _, cx| cx.notify()),
@@ -158,6 +171,27 @@ fn line(game: &Value) -> (Value, Vec<String>) {
     (game["setup"].clone(), moves)
 }
 
+/// Whether the board goes over the rest for a page `width` wide, and how many tiles share a
+/// row: the board's card beside two tiles abreast, else the board over tiles four, two or one
+/// abreast, as many as fit whole.
+fn arrangement(width: Pixels) -> (bool, usize) {
+    let card = BOARD + px(34.);
+    let stacked = width < card + COLUMN_GAP + TILE * 2. + GAP;
+    let tiles_width = if stacked {
+        width
+    } else {
+        width - card - COLUMN_GAP
+    };
+    let per_row = if stacked && tiles_width >= TILE * 4. + GAP * 3. {
+        4
+    } else if tiles_width >= TILE * 2. + GAP {
+        2
+    } else {
+        1
+    };
+    (stacked, per_row)
+}
+
 /// `.home-tile`: a place to start, beside the board.
 fn tile(
     id: &'static str,
@@ -177,7 +211,7 @@ fn tile(
         .min_w_0()
         .h(TILE_HEIGHT)
         .gap(px(12.))
-        .px(px(16.))
+        .px(px(12.))
         .rounded(radii::XL)
         .border_1()
         .bg(palette.elevated)
@@ -192,18 +226,19 @@ fn tile(
         .child(
             div()
                 .flex_none()
-                .size(px(36.))
+                .size(px(32.))
                 .rounded(radii::LG)
                 .bg(palette.accented)
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(glyph.size(px(18.)).text_color(palette.toned)),
+                .child(glyph.size(px(16.)).text_color(palette.toned)),
         )
         .child(
             div()
                 .min_w_0()
                 .truncate()
+                .text_size(px(14.))
                 .font_weight(FontWeight::MEDIUM)
                 .child(label),
         )
@@ -217,8 +252,15 @@ impl Render for HomePage {
             let accounts = accounts.read(cx);
             (accounts.active(cx), accounts.busy)
         };
-        let width = window.viewport_size().width;
-        let stacked = width < px(900.);
+        let padding = side_padding(window);
+        // Before the first layout, the window less the sidebar is the guess.
+        let measured = self.area.size().width;
+        let width = if measured > px(0.) {
+            measured - padding * 2.
+        } else {
+            window.viewport_size().width - px(260.)
+        };
+        let (stacked, per_row) = arrangement(width);
         let tiles = [
             tile(
                 "home-puzzles",
@@ -253,11 +295,12 @@ impl Render for HomePage {
             )
             .into_any_element(),
         ];
-        // Two rows of two.
-        let mut tiles = tiles.into_iter();
-        let tiles = v_flex()
-            .gap(px(12.))
-            .children((0..2).map(|_| h_flex().gap(px(12.)).children(tiles.by_ref().take(2))));
+        let mut tiles = tiles.into_iter().peekable();
+        let mut rows = Vec::new();
+        while tiles.peek().is_some() {
+            rows.push(h_flex().gap(GAP).children(tiles.by_ref().take(per_row)));
+        }
+        let tiles = v_flex().gap(GAP).children(rows);
 
         let mut games: Vec<Value> = cx
             .global::<PlayedHandle>()
@@ -299,12 +342,17 @@ impl Render for HomePage {
         let (title, detail, opens) = match (&self.continue_game, &latest) {
             (Some((game, _)), _) => (
                 Some(game.opponent.clone()),
-                Some(div().child(game.state.clone()).into_any_element()),
+                // Beside the smaller board, a line each.
+                Some(if stacked {
+                    v_flex().children(game.state.clone()).into_any_element()
+                } else {
+                    widgets::dotted(game.state.clone()).into_any_element()
+                }),
                 None,
             ),
             // The last game, as its row in Recent games says it: who won, and against whom.
             (None, Some(game)) => (
-                Some(crate::pages::history::opponent(game)),
+                Some((crate::pages::history::opponent(game), None)),
                 Some(
                     h_flex()
                         .gap(px(8.))
@@ -322,7 +370,13 @@ impl Render for HomePage {
         };
         let unfinished = self.continue_game.is_some();
         let side_length = if stacked { BOARD_SMALL } else { BOARD };
-        let board_label = title.clone().unwrap_or_else(|| "Play the computer".into());
+        let board_label = title.as_ref().map_or_else(
+            || "Play the computer".into(),
+            |(name, strength)| match strength {
+                Some(strength) => format!("{name} · {strength}"),
+                None => name.clone(),
+            },
+        );
         let board_game = opens.clone();
         let board_view = div()
             .id("home-board")
@@ -361,11 +415,24 @@ impl Render for HomePage {
         let about = v_flex()
             .min_w_0()
             .gap(px(2.))
-            .children(title.map(|title| {
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(palette.highlighted)
-                    .child(title)
+            // The strength follows the name, muted, and drops to the next line whole.
+            .children(title.map(|(name, strength)| {
+                h_flex()
+                    .flex_wrap()
+                    .items_baseline()
+                    .gap_x(px(6.))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(palette.highlighted)
+                            .child(name),
+                    )
+                    .children(strength.map(|strength| {
+                        div()
+                            .whitespace_nowrap()
+                            .text_color(palette.text_muted)
+                            .child(strength)
+                    }))
             }))
             .children(detail.map(|detail| {
                 div()
@@ -377,6 +444,9 @@ impl Render for HomePage {
         // Side by side under the board; stacked beside the smaller one.
         let actions = if stacked {
             v_flex()
+                // A button's width, not the card's, in a wide window.
+                .w_full()
+                .max_w(px(320.))
                 .gap(px(8.))
                 .child(primary.w_full())
                 .children(review.map(|review| review.w_full()))
@@ -396,8 +466,9 @@ impl Render for HomePage {
                         .min_w_0()
                         .self_stretch()
                         .gap(px(14.))
-                        .when(has_about, |side| side.child(about))
-                        .child(div().flex_1())
+                        // With nothing to name, the action stands level with the board's middle.
+                        .when(!has_about, |side| side.justify_center())
+                        .when(has_about, |side| side.child(about).child(div().flex_1()))
                         .child(actions),
                 ),
             )
@@ -449,7 +520,7 @@ impl Render for HomePage {
             })
             .child(
                 v_flex()
-                    .mx(px(-8.))
+                    .mx(px(-12.))
                     .children(games.into_iter().enumerate().map(|(index, game)| {
                         let id = game["id"].as_str().unwrap_or_default().to_string();
                         h_flex()
@@ -458,8 +529,8 @@ impl Render for HomePage {
                             .keyboard_focus(palette.primary)
                             .aria_label(names(&game))
                             .gap(px(12.))
-                            .px(px(8.))
-                            .py(px(6.))
+                            .px(px(12.))
+                            .py(px(8.))
                             .rounded(radii::MD)
                             .text_size(px(13.))
                             .cursor_pointer()
@@ -479,6 +550,15 @@ impl Render for HomePage {
                                     .truncate()
                                     .font_weight(FontWeight::MEDIUM)
                                     .child(crate::pages::history::opponent(&game)),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_right()
+                                    .text_color(palette.text_muted)
+                                    .child(crate::pages::history::move_count(
+                                        game["moves"].as_array().map_or(0, Vec::len),
+                                    )),
                             )
                             .child(
                                 div()
@@ -578,10 +658,15 @@ impl Render for HomePage {
             .overflow_y_scroll()
             .child(
                 v_flex()
+                    .relative()
+                    .w_full()
+                    .max_w(CONTENT_MAX + padding * 2.)
+                    .mx_auto()
                     .pt(PAGE_TOP)
                     .pb(PAGE_BOTTOM)
-                    .px(side_padding(window))
+                    .px(padding)
                     .gap(section_gap)
+                    .child(self.area.probe(cx))
                     .child(if stacked {
                         v_flex().gap(px(16.)).child(now).child(starts)
                     } else {
@@ -602,7 +687,28 @@ mod tests {
     use serde_json::json;
     use shakmaty::Color;
 
-    use super::{line, orientation};
+    use gpui_kit::px;
+
+    use super::{TILE, arrangement, line, orientation};
+
+    /// A 1000px window with the sidebar open leaves Home about 680px: the tiles once shared
+    /// what was left beside the board and were cut short ("Analysis bo…").
+    #[test]
+    fn tiles_are_never_narrower_than_a_tile() {
+        assert_eq!(arrangement(px(683.)), (true, 2));
+        assert_eq!(arrangement(px(1280.)), (false, 2));
+        assert_eq!(arrangement(px(380.)), (true, 1));
+        assert_eq!(arrangement(px(769.)), (true, 2));
+        for width in (300..1400).step_by(7) {
+            let (stacked, per_row) = arrangement(px(width as f32));
+            let beside = if stacked { 0. } else { 334. + 24. };
+            let room = width as f32 - beside - 12. * (per_row as f32 - 1.);
+            assert!(
+                per_row == 1 || room / per_row as f32 >= TILE.as_f32(),
+                "{width}px fits {per_row} tiles"
+            );
+        }
+    }
 
     #[test]
     fn the_board_shows_the_game_from_your_side() {

@@ -599,6 +599,21 @@ pub fn hint(text: impl Into<SharedString>, palette: &Palette) -> Div {
         .child(text.into())
 }
 
+/// "Move 3 · You play White · Your move": parts joined by middle dots that wrap whole, so a
+/// line never ends on a dot or breaks inside a part.
+pub fn dotted(parts: impl IntoIterator<Item = impl Into<SharedString>>) -> Div {
+    h_flex()
+        .flex_wrap()
+        .children(parts.into_iter().enumerate().map(|(index, part)| {
+            let part: SharedString = part.into();
+            div().whitespace_nowrap().child(if index == 0 {
+                part
+            } else {
+                format!("\u{a0}·\u{a0}{part}").into()
+            })
+        }))
+}
+
 /// `.section-title` with a muted note beside it, cut short when it does not fit.
 pub fn section_title(
     title: &'static str,

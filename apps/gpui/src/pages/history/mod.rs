@@ -107,7 +107,7 @@ pub(crate) fn badge(outcome: &str, width: Option<Pixels>, palette: &Palette) -> 
 }
 
 /// `moveCount`: full moves, a lone white move counting as one.
-fn move_count(plies: usize) -> String {
+pub(crate) fn move_count(plies: usize) -> String {
     let moves = plies.div_ceil(2);
     format!("{moves} {}", if moves == 1 { "move" } else { "moves" })
 }
