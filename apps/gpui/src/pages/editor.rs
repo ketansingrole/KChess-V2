@@ -75,6 +75,18 @@ fn role_name(role: Role) -> &'static str {
     }
 }
 
+/// What the editor's buttons do, for Quick Pick to offer the same.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Action {
+    StartPosition,
+    ClearBoard,
+    Flip,
+    CopyFen,
+    Analyse,
+    PlayStockfish,
+    PlayFriend,
+}
+
 pub struct EditorPage {
     setup: Value,
     orientation: Color,
@@ -280,6 +292,41 @@ impl EditorPage {
         });
         self.setup["ep"] = json!("");
         self.changed(cx);
+    }
+
+    /// The actions its buttons allow now: a position that cannot be played is only edited.
+    pub(crate) fn actions(&self) -> Vec<Action> {
+        let mut actions = vec![
+            Action::StartPosition,
+            Action::ClearBoard,
+            Action::Flip,
+            Action::CopyFen,
+        ];
+        if self.problem().is_none() {
+            actions.extend([Action::Analyse, Action::PlayStockfish, Action::PlayFriend]);
+        }
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions().contains(&action) {
+            return;
+        }
+        match action {
+            Action::StartPosition => self.start_position(cx),
+            Action::ClearBoard => self.clear_board(cx),
+            Action::Flip => self.flip(cx),
+            Action::CopyFen => self.copy_fen(window, cx),
+            Action::Analyse => self.analyse(window, cx),
+            Action::PlayStockfish => crate::shell::play_computer_from(self.fen(), window, cx),
+            Action::PlayFriend => crate::shell::play_local_from(self.fen(), window, cx),
+        }
+    }
+
+    fn copy_fen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(self.fen()));
+        window.push_notification("FEN copied", cx);
     }
 
     fn start_position(&mut self, cx: &mut Context<Self>) {
@@ -642,10 +689,7 @@ impl Render for EditorPage {
                             .icon(icon("copy"))
                             .tooltip("Copy FEN")
                             .accessibility_label("Copy FEN")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(this.fen()));
-                                window.push_notification("FEN copied", cx);
-                            })),
+                            .on_click(cx.listener(|this, _, window, cx| this.copy_fen(window, cx))),
                     ),
             )
             .children(self.fen_error.clone().map(|error| {

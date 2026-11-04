@@ -550,3 +550,37 @@ fn a_lichess_study_link_imports_its_chapter(cx: &mut gpui_kit::TestAppContext) {
     assert!(app.shows("import-run"), "the dialog stays");
     assert!(app.shows("tree-d2d4"), "the chapter stays on the board");
 }
+
+/// Quick Pick runs the editor's buttons: the board is cleared from it, and the actions an
+/// unplayable position cannot take are left out until it is playable again.
+#[gpui_kit::test]
+fn the_editors_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = editor(cx);
+    let run = |app: &mut Harness, label: &str| {
+        app.press("secondary-k");
+        app.type_text(&format!(">{label}"));
+        super::palette::wait_for_first(app, label);
+        app.press("enter");
+        settle(app);
+    };
+    run(&mut app, "Clear board");
+    wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
+    // No kings: nothing can be played or analysed from here.
+    app.press("secondary-k");
+    app.type_text(">Analyse this position");
+    settle(&mut app);
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..10usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert!(
+        !listed.iter().any(|label| label == "Analyse this position"),
+        "{listed:?}"
+    );
+    app.press("escape");
+    settle(&mut app);
+    run(&mut app, "Starting position");
+    wait_for_fen(&mut app, START_FEN);
+}

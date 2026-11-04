@@ -499,6 +499,7 @@ fn page_commands(cx: &App) -> Vec<Command> {
         Some(Page::Local) => std::iter::once(zen).chain(local_commands(cx)).collect(),
         Some(Page::Online) => std::iter::once(zen).chain(live_commands(cx)).collect(),
         Some(Page::Analysis) => analysis_commands(),
+        Some(Page::Editor) => editor_commands(cx),
         _ => Vec::new(),
     }
 }
@@ -552,6 +553,45 @@ fn live_commands(cx: &App) -> Vec<Command> {
                 label,
                 icon(glyph),
                 move |window, cx| run_live_action(action, window, cx),
+            )
+            .keywords(keywords)
+        })
+        .collect()
+}
+
+/// The board editor's actions, as its buttons offer them.
+fn editor_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::editor::{Action, EditorPage};
+    let Some(page) = crate::shell::view_of::<EditorPage>(Page::Editor, cx) else {
+        return Vec::new();
+    };
+    page.read(cx)
+        .actions()
+        .into_iter()
+        .map(|action| {
+            let (id, label, glyph, keywords) = match action {
+                Action::StartPosition => ("start", "Starting position", "rotate-ccw", "reset"),
+                Action::ClearBoard => ("clear", "Clear board", "eraser", "empty"),
+                Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+                Action::CopyFen => ("copy-fen", "Copy FEN", "copy", "position clipboard"),
+                Action::Analyse => ("analyse", "Analyse this position", "microscope", "analysis"),
+                Action::PlayStockfish => ("stockfish", "Play Stockfish", "cpu", "computer"),
+                Action::PlayFriend => (
+                    "friend",
+                    "Play a friend here",
+                    "users-round",
+                    "over the board local",
+                ),
+            };
+            Command::new(
+                format!("editor:{id}"),
+                label,
+                icon(glyph),
+                move |window, cx| {
+                    if let Some(page) = crate::shell::view_of::<EditorPage>(Page::Editor, cx) {
+                        page.update(cx, |page, cx| page.act(action, window, cx));
+                    }
+                },
             )
             .keywords(keywords)
         })
