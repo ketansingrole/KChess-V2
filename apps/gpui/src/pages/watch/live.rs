@@ -200,6 +200,18 @@ pub struct Live {
     past: HashMap<String, Entity<ChessBoard>>,
 }
 
+/// A FEN's piece placement, without a Crazyhouse pocket or promoted marks.
+fn placement(fen: &str) -> String {
+    let board = fen.split_whitespace().next().unwrap_or_default();
+    let board = board.split('[').next().unwrap_or_default();
+    board
+        .split('/')
+        .take(8)
+        .collect::<Vec<_>>()
+        .join("/")
+        .replace('~', "")
+}
+
 impl Live {
     pub fn new(cx: &mut App) -> Live {
         Live {
@@ -335,17 +347,36 @@ impl Live {
             return;
         };
         let orientation = self.orientation();
-        let state = match self.setup() {
-            Some(setup) if self.browsing() => {
-                view::board_state(&setup, &self.moves(), self.shown_ply(), orientation, None)
-            }
-            _ => BoardState::shown(
-                frame["fen"].as_str().unwrap_or_default(),
+        let fen = frame["fen"].as_str().unwrap_or_default();
+        let crazyhouse = frame["variant"] == json!("crazyhouse");
+        let moves = self.moves();
+        let replayed = self
+            .setup()
+            .map(|setup| (setup, moves.len()))
+            .filter(|_| self.browsing() || crazyhouse)
+            .map(|(setup, live)| {
+                let ply = if self.browsing() {
+                    self.shown_ply()
+                } else {
+                    live
+                };
+                view::board_state(&setup, &moves, ply, orientation, None)
+            })
+            // The feed's FEN has no pockets: the replayed moves have them, once they reach it.
+            .filter(|state| self.browsing() || placement(&state.fen) == placement(fen));
+        let state = replayed.unwrap_or_else(|| {
+            let mut state = BoardState::shown(
+                fen,
                 frame["variant"].as_str().unwrap_or("standard"),
                 orientation,
-                frame["lastMove"].as_str().filter(|uci| !uci.contains('@')),
-            ),
-        };
+                frame["lastMove"].as_str(),
+            );
+            // Pockets the feed does not send are not shown as empty.
+            if crazyhouse {
+                state.pockets = None;
+            }
+            state
+        });
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
     }
@@ -551,7 +582,6 @@ impl WatchPage {
             return div().into_any_element();
         };
         let palette = &{ *cx.global::<Palette>() };
-        let crazyhouse = frame["variant"] == json!("crazyhouse");
         let finished = frame["finished"] == json!(true);
         let board_size = self
             .layout
@@ -658,8 +688,6 @@ impl WatchPage {
             .unwrap_or_default();
         let empty = if frame["source"] != json!("tv") {
             "Lichess does not send this game’s moves"
-        } else if crazyhouse {
-            "No move list for Crazyhouse"
         } else {
             "Loading moves…"
         };
@@ -812,7 +840,11 @@ impl WatchPage {
         let crazyhouse = frame["variant"] == json!("crazyhouse");
         let turn = turn_of(&frame);
         let finished = frame["finished"] == json!(true);
-        let line = |color: Color, index: usize| {
+        let mut pockets = [
+            crate::board::pocket(&self.live.board, Color::White, cx),
+            crate::board::pocket(&self.live.board, Color::Black, cx),
+        ];
+        let mut line = |color: Color, index: usize| {
             let player = &frame[if color == Color::White {
                 "white"
             } else {
@@ -847,11 +879,17 @@ impl WatchPage {
                 } else {
                     div().child(shown).into_any_element()
                 })
-                .children(if crazyhouse {
-                    None
-                } else {
-                    widgets::material(&fen, color == Color::White, &set, palette)
-                });
+                .children(
+                    pockets[usize::from(color == Color::Black)]
+                        .take()
+                        .or_else(|| {
+                            (!crazyhouse)
+                                .then(|| {
+                                    widgets::material(&fen, color == Color::White, &set, palette)
+                                })
+                                .flatten()
+                        }),
+                );
             let ix = usize::from(color == Color::Black);
             let clock = self
                 .live

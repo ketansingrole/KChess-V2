@@ -18,7 +18,7 @@ use shakmaty::{Color, Piece, Role};
 
 use crate::assets::icon;
 use crate::board::looks;
-use crate::board::{BoardEvent, BoardState, ChessBoard, EditTool, SparePiece};
+use crate::board::{BoardEvent, BoardState, ChessBoard, EditTool, PieceGhost, SparePiece};
 use crate::game::{STANDARD_FEN, editor_setup, position_problem, rules};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
@@ -72,17 +72,6 @@ fn role_name(role: Role) -> &'static str {
         Role::Bishop => "bishop",
         Role::Knight => "knight",
         Role::Pawn => "pawn",
-    }
-}
-
-/// The piece a dragged spare shows under the pointer.
-struct SpareGhost {
-    image: SharedString,
-}
-
-impl Render for SpareGhost {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        img(self.image.clone()).size(px(56.))
     }
 }
 
@@ -516,7 +505,7 @@ impl EditorPage {
                     cx.listener(move |this, _, _, cx| this.choose_tool(EditTool::Place(piece), cx)),
                 )
                 .on_drag(SparePiece(piece), move |_, _, _, cx| {
-                    cx.new(|_| SpareGhost {
+                    cx.new(|_| PieceGhost {
                         image: ghost.clone(),
                     })
                 })
