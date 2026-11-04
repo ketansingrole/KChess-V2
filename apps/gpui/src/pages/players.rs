@@ -70,14 +70,6 @@ const PERFS: [(&str, &str); 14] = [
     ("crazyhouse", "Crazyhouse"),
 ];
 
-/// `USERNAME`: what Lichess accepts as a name.
-fn is_username(name: &str) -> bool {
-    (2..=30).contains(&name.len())
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-}
-
 /// `playedPerfs`: the speeds a player has games in, most played first.
 fn played_perfs(profile: &Value) -> Vec<(&'static str, &'static str)> {
     let games = |key: &str| profile["perfs"][key]["games"].as_f64().unwrap_or_default();
@@ -421,7 +413,11 @@ impl PlayersPage {
         let shown = self
             .username()
             .is_some_and(|name| name.eq_ignore_ascii_case(&term));
-        if term.chars().count() < 3 || !is_username(&term) || shown || !crate::network::online(cx) {
+        if term.chars().count() < 3
+            || !crate::game::is_username(&term)
+            || shown
+            || !crate::network::online(cx)
+        {
             self.matches.clear();
             cx.notify();
             return;
@@ -469,7 +465,7 @@ impl PlayersPage {
     /// `lookup`: the profile first, then everything else about the player at once.
     fn lookup(&mut self, name: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let name = name.unwrap_or_else(|| self.input.read(cx).value().trim().to_string());
-        if !is_username(&name) {
+        if !crate::game::is_username(&name) {
             self.error = Some(if name.is_empty() {
                 "Enter a Lichess username".into()
             } else {
@@ -1920,7 +1916,8 @@ impl Render for MessageDialog {
 
 #[cfg(test)]
 mod tests {
-    use super::{hours, is_username, played_perfs, suggestions, title_choices, title_shown};
+    use super::{hours, played_perfs, suggestions, title_choices, title_shown};
+    use crate::game::is_username;
     use serde_json::json;
 
     #[test]

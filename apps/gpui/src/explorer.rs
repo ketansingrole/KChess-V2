@@ -106,14 +106,6 @@ impl Prefs {
     }
 }
 
-/// Lichess usernames: what the player database accepts.
-fn is_username(name: &str) -> bool {
-    (2..=30).contains(&name.len())
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-}
-
 fn toggled<T: PartialEq + Clone>(list: &[T], value: &T) -> Vec<T> {
     if list.contains(value) {
         list.iter()
@@ -355,7 +347,7 @@ impl PositionExplorer {
 
     fn needs_player(cx: &App) -> bool {
         let prefs = Self::prefs(cx);
-        prefs.kind == "player" && !is_username(prefs.player.trim())
+        prefs.kind == "player" && !crate::game::is_username(prefs.player.trim())
     }
 
     /// Show a position (`opened`: the explorer just came into view). Following moves looks up
@@ -1115,7 +1107,8 @@ impl Render for PositionExplorer {
 
 #[cfg(test)]
 mod tests {
-    use super::{Prefs, category, is_username, toggled};
+    use super::{Prefs, category, toggled};
+    use crate::game::is_username;
     use serde_json::json;
 
     #[test]

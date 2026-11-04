@@ -226,7 +226,7 @@ fn the_interface_zoom_steps_with_the_keys_and_is_kept(cx: &mut gpui_kit::TestApp
 }
 
 /// A FEN typed or pasted into Quick Pick is analysed or edited from there; a Lichess game link
-/// or numbered moves open that game.
+/// or numbered moves open that game, and a profile link that player.
 #[gpui_kit::test]
 fn a_pasted_position_or_game_link_opens_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
@@ -256,6 +256,14 @@ fn a_pasted_position_or_game_link_opens_from_quick_pick(cx: &mut gpui_kit::TestA
     app.click("ok");
     app.find("tree-e2e4 e7e5 g1f3 b8c6 f1b5 a7a6");
     assert_eq!(app.find("tree-e2e4 e7e5").selected(), Some(true));
+
+    // A profile link opens that player.
+    app.press("secondary-k");
+    app.type_text("https://lichess.org/@/SomeIm/perf/blitz");
+    wait_for_first(&mut app, "Open SomeIm’s profile");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert_eq!(page(&mut app), Some(Page::Players));
 
     // Numbered moves open as a game, at its last move.
     app.press("secondary-k");

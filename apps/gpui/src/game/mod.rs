@@ -280,6 +280,28 @@ pub struct GameLink {
     pub ply: Option<usize>,
 }
 
+/// `USERNAME`: what Lichess accepts as a name.
+pub fn is_username(name: &str) -> bool {
+    (2..=30).contains(&name.len())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// The player a lichess.org profile link names (`lichess.org/@/DrNykterstein`, with `/all`,
+/// `/perf/blitz` and the like after it).
+pub fn profile_link(text: &str) -> Option<String> {
+    let text = text.trim();
+    let rest = text
+        .strip_prefix("https://")
+        .or_else(|| text.strip_prefix("http://"))
+        .unwrap_or(text);
+    let rest = rest.strip_prefix("www.").unwrap_or(rest);
+    let path = rest.strip_prefix("lichess.org/@/")?;
+    let name = path.split(['/', '?', '#']).next().unwrap_or_default();
+    is_username(name).then(|| name.to_string())
+}
+
 /// Reads `lichess.org/abcdefgh`, `https://lichess.org/abcdefgh1234/black#12` and the like; `None`
 /// for anything else, a study or a puzzle included.
 pub fn game_link(text: &str) -> Option<GameLink> {
@@ -320,7 +342,22 @@ pub fn game_link(text: &str) -> Option<GameLink> {
 
 #[cfg(test)]
 mod link_tests {
-    use super::{GameLink, game_link};
+    use super::{GameLink, game_link, profile_link};
+
+    #[test]
+    fn a_profile_link_names_its_player() {
+        for (text, name) in [
+            ("https://lichess.org/@/DrNykterstein", Some("DrNykterstein")),
+            ("lichess.org/@/Magnus_C-1/perf/blitz", Some("Magnus_C-1")),
+            ("www.lichess.org/@/someone/all?page=2", Some("someone")),
+            ("https://lichess.org/@/a", None),
+            ("https://lichess.org/@/", None),
+            ("https://lichess.org/abcdefgh", None),
+            ("@DrNykterstein", None),
+        ] {
+            assert_eq!(profile_link(text).as_deref(), name, "{text}");
+        }
+    }
     use shakmaty::Color;
 
     #[test]
