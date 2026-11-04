@@ -366,11 +366,21 @@ async fn wait_until_gone(profile: &Path) {
     }
 }
 
+/// The program to start: this release's runtime copy, except in the App Sandbox. There a copy the
+/// app wrote is quarantined and refused, and the App Store quits KChess before it replaces the
+/// bundle, so the service runs from the bundle itself.
+fn service_binary(bundled: &Path, sandboxed: bool) -> PathBuf {
+    if sandboxed {
+        return bundled.to_path_buf();
+    }
+    crate::runtime::install(bundled).unwrap_or_else(|_| bundled.to_path_buf())
+}
+
 /// Starts the service for `profile` from this release's runtime copy, detached from this app:
 /// closing the window that started it does not stop it. Two clients starting at once are
 /// settled by the profile lock: the second service exits.
 fn launch(profile: &Path, start: &Start) -> Result<(), ConnectError> {
-    let binary = crate::runtime::install(&start.binary).unwrap_or_else(|_| start.binary.clone());
+    let binary = service_binary(&start.binary, kchess_core::app_store());
     let config = serde_json::to_string(&start.config)
         .map_err(|error| ConnectError::Failed(error.to_string()))?;
     let mut command = std::process::Command::new(binary);
@@ -403,4 +413,16 @@ fn launch(profile: &Path, start: &Start) -> Result<(), ConnectError> {
         let _ = child.wait();
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_sandbox_starts_the_service_from_the_bundle() {
+        // A copy the sandboxed app wrote was quarantined: "Operation not permitted" on start.
+        let bundled = Path::new("/Applications/KChess.app/Contents/MacOS/kchess-service");
+        assert_eq!(service_binary(bundled, true), bundled);
+    }
 }

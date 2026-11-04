@@ -94,8 +94,7 @@ pub fn socket_path(profile: &Path) -> std::io::Result<PathBuf> {
     let base = std::env::var_os("XDG_RUNTIME_DIR")
         .or_else(|| std::env::var_os("TMPDIR"))
         .map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
-    let sandboxed = std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some();
-    let dir = socket_dir(&base, uid, &name, sandboxed);
+    let dir = socket_dir(&base, uid, &name, kchess_core::app_store());
     private_dir(&dir)?;
     Ok(dir.join(name))
 }
