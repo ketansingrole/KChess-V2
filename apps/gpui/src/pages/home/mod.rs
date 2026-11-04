@@ -171,6 +171,27 @@ fn line(game: &Value) -> (Value, Vec<String>) {
     (game["setup"].clone(), moves)
 }
 
+/// Whether the board goes over the rest for a page `width` wide, and how many tiles share a
+/// row: the board's card beside two tiles abreast, else the board over tiles four, two or one
+/// abreast, as many as fit whole.
+fn arrangement(width: Pixels) -> (bool, usize) {
+    let card = BOARD + px(34.);
+    let stacked = width < card + COLUMN_GAP + TILE * 2. + GAP;
+    let tiles_width = if stacked {
+        width
+    } else {
+        width - card - COLUMN_GAP
+    };
+    let per_row = if stacked && tiles_width >= TILE * 4. + GAP * 3. {
+        4
+    } else if tiles_width >= TILE * 2. + GAP {
+        2
+    } else {
+        1
+    };
+    (stacked, per_row)
+}
+
 /// `.home-tile`: a place to start, beside the board.
 fn tile(
     id: &'static str,
@@ -239,21 +260,7 @@ impl Render for HomePage {
         } else {
             window.viewport_size().width - px(260.)
         };
-        // The board's card beside two tiles abreast, else the board over the rest.
-        let stacked = width < BOARD + px(34.) + COLUMN_GAP + TILE * 2. + GAP;
-        // The tiles beside the board, or under it: four abreast when they fit, else two, else one.
-        let tiles_width = if stacked {
-            width
-        } else {
-            width - BOARD - px(34.) - COLUMN_GAP
-        };
-        let per_row = if tiles_width >= TILE * 4. + GAP * 3. && stacked {
-            4
-        } else if tiles_width >= TILE * 2. + GAP {
-            2
-        } else {
-            1
-        };
+        let (stacked, per_row) = arrangement(width);
         let tiles = [
             tile(
                 "home-puzzles",
@@ -680,7 +687,28 @@ mod tests {
     use serde_json::json;
     use shakmaty::Color;
 
-    use super::{line, orientation};
+    use gpui_kit::px;
+
+    use super::{TILE, arrangement, line, orientation};
+
+    /// A 1000px window with the sidebar open leaves Home about 680px: the tiles once shared
+    /// what was left beside the board and were cut short ("Analysis bo…").
+    #[test]
+    fn tiles_are_never_narrower_than_a_tile() {
+        assert_eq!(arrangement(px(683.)), (true, 2));
+        assert_eq!(arrangement(px(1280.)), (false, 2));
+        assert_eq!(arrangement(px(380.)), (true, 1));
+        assert_eq!(arrangement(px(769.)), (true, 2));
+        for width in (300..1400).step_by(7) {
+            let (stacked, per_row) = arrangement(px(width as f32));
+            let beside = if stacked { 0. } else { 334. + 24. };
+            let room = width as f32 - beside - 12. * (per_row as f32 - 1.);
+            assert!(
+                per_row == 1 || room / per_row as f32 >= TILE.as_f32(),
+                "{width}px fits {per_row} tiles"
+            );
+        }
+    }
 
     #[test]
     fn the_board_shows_the_game_from_your_side() {
