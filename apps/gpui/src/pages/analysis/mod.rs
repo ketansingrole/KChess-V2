@@ -163,6 +163,9 @@ pub struct AnalysisPage {
     lines_choice: Entity<SelectState<Vec<SharedString>>>,
     import: Entity<TextareaState>,
     import_error: Option<SharedString>,
+    /// A Lichess game being fetched for the import, by its turn: a later import replaces it.
+    importing: Option<u64>,
+    import_turn: u64,
     /// Shown while the page is open: the engine follows the board.
     attached: bool,
     engine_ready: bool,
@@ -423,6 +426,8 @@ impl AnalysisPage {
             lines_choice,
             import,
             import_error: None,
+            importing: None,
+            import_turn: 0,
             attached: false,
             engine_ready: false,
             engine_identity: None,
@@ -1517,9 +1522,10 @@ impl AnalysisPage {
         let page = cx.entity().downgrade();
         let import = self.import.clone();
         window.open_dialog(cx, move |dialog, _, cx| {
-            let error = page
-                .upgrade()
-                .and_then(|page| page.read(cx).import_error.clone());
+            let (error, importing) = page.upgrade().map_or((None, false), |page| {
+                let page = page.read(cx);
+                (page.import_error.clone(), page.importing.is_some())
+            });
             let (run, text) = (page.clone(), import.clone());
             dialog.title("Import a position or game").w(px(512.)).child(
                 v_flex()
@@ -1528,9 +1534,9 @@ impl AnalysisPage {
                         div()
                             .text_size(px(14.))
                             .text_color(cx.global::<Palette>().text_muted)
-                            .child("Paste a FEN, or a PGN with or without variations"),
+                            .child("Paste a FEN, a PGN or a Lichess game link"),
                     )
-                    .child(Textarea::new(&import).aria_label("FEN or PGN"))
+                    .child(Textarea::new(&import).aria_label("FEN, PGN or game link"))
                     .children(error.map(|error| {
                         div()
                             .text_size(px(14.))
@@ -1551,6 +1557,7 @@ impl AnalysisPage {
                                 Button::new("import-run")
                                     .primary()
                                     .label("Import")
+                                    .loading(importing)
                                     .disabled(text.read(cx).value().trim().is_empty())
                                     .on_click(move |_, window, cx| {
                                         let _ =
@@ -1562,12 +1569,17 @@ impl AnalysisPage {
         });
     }
 
-    /// `runImport`: a FEN starts a new analysis there; otherwise the text is read as one PGN game.
+    /// `runImport`: a FEN starts a new analysis there; a Lichess game link fetches that game;
+    /// otherwise the text is read as one PGN game.
     fn run_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.import.read(cx).value().trim().to_string();
         if text.is_empty() {
             return;
         }
+        if let Some(link) = crate::game::game_link(&text) {
+            return self.import_game(link, window, cx);
+        }
+        self.importing = None;
         if let Some(fen) = crate::game::editor_setup(&text)
             .and_then(|setup| crate::game::rules("setupFen", &[setup]).ok())
             .and_then(|fen| fen.as_str().map(str::to_string))
@@ -1590,6 +1602,56 @@ impl AnalysisPage {
         }
         self.import_error = None;
         window.close_dialog(cx);
+    }
+
+    /// Fetch a Lichess game by its link and open it facing as linked, at the move linked.
+    fn import_game(
+        &mut self,
+        link: crate::game::GameLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.import_turn += 1;
+        let turn = self.import_turn;
+        self.importing = Some(turn);
+        self.import_error = None;
+        window.refresh();
+        let export = cx
+            .global::<AppCore>()
+            .call("exportGame", vec![json!(link.id)]);
+        cx.spawn_in(window, async move |this, cx| {
+            let pgn = export.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.importing != Some(turn) {
+                    return;
+                }
+                this.importing = None;
+                let opened = match pgn {
+                    Ok(Value::String(pgn)) => {
+                        let origin = json!({ "gameId": link.id });
+                        // A link without a move opens at the start, as Lichess does.
+                        let ply = link.ply.unwrap_or(0);
+                        this.open_game(&pgn, ply, Some(link.orientation), Some(origin), false, cx)
+                    }
+                    Ok(_) => false,
+                    Err(cause) => {
+                        this.import_error =
+                            Some(format!("Could not fetch that game: {}", cause.message).into());
+                        window.refresh();
+                        return;
+                    }
+                };
+                if opened {
+                    this.import_error = None;
+                    window.close_dialog(cx);
+                } else {
+                    this.import_error =
+                        Some("That game cannot be opened on the analysis board".into());
+                    window.refresh();
+                }
+            });
+        })
+        .detach();
     }
 }
 

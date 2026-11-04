@@ -47,7 +47,7 @@ pub(super) fn settle(app: &mut Harness) {
 /// Import a FEN or PGN through the analysis board's dialog, and let it close if it will.
 pub(super) fn import(app: &mut Harness, text: &str) {
     app.click("analysis-import");
-    fill_in_dialog(app, "FEN or PGN", text);
+    fill_in_dialog(app, "FEN, PGN or game link", text);
     app.click("import-run");
     settle(app);
 }
@@ -149,7 +149,7 @@ fn an_import_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     assert!(app.shows("import-run"), "the dialog stays for a correction");
     fill_in_dialog(
         &mut app,
-        "FEN or PGN",
+        "FEN, PGN or game link",
         "rnbqkbnr/pppppppp/8/8/3q4/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     );
     app.click("import-run");
@@ -158,7 +158,11 @@ fn an_import_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.shows("tree-e2e4"));
 
     // A valid position closes it, and play goes on from there: only this king can reach d2.
-    fill_in_dialog(&mut app, "FEN or PGN", "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
+    fill_in_dialog(
+        &mut app,
+        "FEN, PGN or game link",
+        "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
+    );
     app.click("import-run");
     // The dialog closes on the core's answer, which a loaded runner gives after any fixed wait.
     app.wait_gone("import-run");
@@ -479,4 +483,22 @@ fn a_png_shows_the_position_in_the_variation_shown(cx: &mut gpui_kit::TestAppCon
     app.click("tree-e2e4 c7c5");
     let on_main_line = export(&mut app, "PNG of this position", "main.png");
     assert!(in_variation == on_main_line, "the PNG shows 1... c5");
+}
+
+/// A Lichess game link pasted into the import fetches that game, opened from the side and at the
+/// move the link names.
+#[gpui_kit::test]
+fn a_lichess_game_link_imports_the_game(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    app.online();
+    import(
+        &mut app,
+        &format!(
+            "https://lichess.org/{}/black#3",
+            super::fake_lichess::LINKED_GAME
+        ),
+    );
+    app.wait_gone("import-run");
+    app.find("tree-e2e4 e7e5 g1f3 b8c6 f1b5 a7a6");
+    assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
 }

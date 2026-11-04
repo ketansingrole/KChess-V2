@@ -321,6 +321,12 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             Showcase::Games(name) => ndjson_lines(&mut out, &showcase_games(&name)),
         };
     }
+    // Games are public: the one a pasted link can fetch here.
+    if (request.method.as_str(), request.path.as_str()) == ("POST", "/api/games/export/_ids")
+        && request.body.trim() == LINKED_GAME
+    {
+        return pgn(&mut out, LINKED_PGN);
+    }
     // Nobody signed in: no answer at all.
     let Some(session) = session else {
         return Ok(());
@@ -501,6 +507,20 @@ fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
     write!(
         out,
         "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )?;
+    answered(out)
+}
+
+/// The game a Lichess link in the analysis board's import names, and its PGN.
+pub const LINKED_GAME: &str = "kchessE2";
+const LINKED_PGN: &str = "[Event \"Rated rapid game\"]\n[Site \"https://lichess.org/kchessE2\"]\n\
+[White \"alice\"]\n[Black \"Tester\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0\n";
+
+fn pgn(out: &mut TcpStream, body: &str) -> std::io::Result<()> {
+    write!(
+        out,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/x-chess-pgn\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )?;
     answered(out)

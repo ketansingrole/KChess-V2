@@ -196,3 +196,90 @@ mod variant_tests {
         assert_eq!(super::variant_label("fromPosition"), "fromPosition");
     }
 }
+
+/// A Lichess game link pasted in place of a PGN: the game's id, the side the link looks from
+/// (`/black`), and the move it points at (`#23`).
+#[derive(Debug, PartialEq)]
+pub struct GameLink {
+    pub id: String,
+    pub orientation: shakmaty::Color,
+    pub ply: Option<usize>,
+}
+
+/// Reads `lichess.org/abcdefgh`, `https://lichess.org/abcdefgh1234/black#12` and the like; `None`
+/// for anything else, a study or a puzzle included.
+pub fn game_link(text: &str) -> Option<GameLink> {
+    const NOT_GAMES: [&str; 9] = [
+        "analysis", "training", "practice", "insights", "streamer", "learning", "tutorial",
+        "settings", "features",
+    ];
+    let text = text.trim();
+    let rest = text
+        .strip_prefix("https://")
+        .or_else(|| text.strip_prefix("http://"))
+        .unwrap_or(text);
+    let rest = rest.strip_prefix("www.").unwrap_or(rest);
+    let rest = rest.strip_prefix("lichess.org/")?;
+    let (path, anchor) = rest.split_once('#').unwrap_or((rest, ""));
+    let path = path.split('?').next().unwrap_or_default();
+    let mut parts = path.split('/').filter(|part| !part.is_empty());
+    let first = parts.next()?;
+    let side = parts.next();
+    if parts.next().is_some()
+        || !matches!(first.len(), 8 | 12)
+        || !first.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        || NOT_GAMES.contains(&first)
+    {
+        return None;
+    }
+    let orientation = match side {
+        None | Some("white") => shakmaty::Color::White,
+        Some("black") => shakmaty::Color::Black,
+        Some(_) => return None,
+    };
+    Some(GameLink {
+        id: first[..8].to_string(),
+        orientation,
+        ply: anchor.parse().ok(),
+    })
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::{GameLink, game_link};
+    use shakmaty::Color;
+
+    #[test]
+    fn a_lichess_game_link_names_the_game_side_and_move() {
+        let link = |id: &str, orientation, ply| {
+            Some(GameLink {
+                id: id.to_string(),
+                orientation,
+                ply,
+            })
+        };
+        assert_eq!(
+            game_link("https://lichess.org/q7ZvsdUF"),
+            link("q7ZvsdUF", Color::White, None)
+        );
+        assert_eq!(
+            game_link(" lichess.org/q7ZvsdUFab12/black#23 "),
+            link("q7ZvsdUF", Color::Black, Some(23))
+        );
+        assert_eq!(
+            game_link("http://www.lichess.org/q7ZvsdUF/white?x=1"),
+            link("q7ZvsdUF", Color::White, None)
+        );
+        for other in [
+            "q7ZvsdUF",
+            "https://lichess.org/study/abcdefgh",
+            "https://lichess.org/training/abcde",
+            "https://lichess.org/analysis",
+            "https://lichess.org/q7ZvsdUF/red",
+            "https://example.org/q7ZvsdUF",
+            "https://lichess.org/q7Zv-dUF",
+        ] {
+            assert_eq!(game_link(other), None, "{other}");
+        }
+    }
+}
