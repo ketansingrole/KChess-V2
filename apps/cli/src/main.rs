@@ -23,7 +23,7 @@ Commands:
   call <method> --args-file <path> Read arguments from a JSON file
   analyze <fen|startpos>           Stream engine analysis as JSON lines until Ctrl-C
   play [level] [white|black|random] Play Stockfish; type moves in SAN or UCI
-  local                            Play a local game; type moves in SAN or UCI
+  local [variant]                  Play over the board (chess960, crazyhouse, atomic…)
   puzzle [id|link]                 Solve the daily puzzle, or that one; solution shows it
   methods                          List available CoreApi methods
 
@@ -249,8 +249,13 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 let _ = core.call("stopAnalysis", vec![]).await;
             }
             "play" | "local" => {
-                let (level, color) = play::choices(&args[1..])?;
-                play::interactive(&core, &mut events, command == "play", level, color).await?;
+                let computer = command == "play";
+                let ((level, color), variant) = if computer {
+                    (play::choices(&args[1..])?, None)
+                } else {
+                    ((None, None), play::local_variant(&args[1..])?)
+                };
+                play::interactive(&core, &mut events, computer, level, color, variant).await?;
             }
             "puzzle" => {
                 let id = args.get(1).map(String::as_str);

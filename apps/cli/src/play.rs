@@ -266,6 +266,40 @@ impl Session<'_> {
         Ok(())
     }
 
+    /// Start a game over the board in `variant`, as the app's New game does: Chess960 from a
+    /// random position, the others from their usual start, the clock as it was.
+    async fn choose_variant(&mut self, variant: &str) -> Result<(), String> {
+        let now = self.now();
+        if self.state()["setup"]["variant"]
+            .as_str()
+            .unwrap_or("standard")
+            == variant
+        {
+            return Ok(());
+        }
+        if !self.moves().is_empty() && !self.over() {
+            return Err(
+                "A game is in progress: finish it, or type new, before choosing a variant.".into(),
+            );
+        }
+        let fen = if variant == "chess960" {
+            json!(kchess_domain::rules::chess960_fen(
+                (kchess_games::random_unit() * 960.0) as i64
+            ))
+        } else {
+            kchess_games::rules("defaultFen", &[json!(variant)])
+                .map_err(|cause| cause.to_string())?
+        };
+        self.reset_history().await;
+        let Game::Local(game) = &mut self.game else {
+            return Ok(());
+        };
+        let clock = game.state["clock"].clone();
+        game.start(json!({ "variant": variant, "fen": fen }), clock, now)?;
+        self.persist().await;
+        Ok(())
+    }
+
     /// A new game gets its own Game history entry.
     async fn reset_history(&mut self) {
         let (source, has_play) = self.archive_host();
@@ -459,12 +493,31 @@ pub fn choices(words: &[String]) -> Result<(Option<String>, Option<String>), Str
     Ok((level, color))
 }
 
+/// `local [variant]`: a variant as Lichess keys it, in any case (`crazyhouse`, `kingOfTheHill`).
+pub fn local_variant(words: &[String]) -> Result<Option<String>, String> {
+    match words {
+        [] => Ok(None),
+        [word] => kchess_domain::misc::constants::VARIANTS
+            .iter()
+            .find(|key| key.eq_ignore_ascii_case(word))
+            .map(|key| Some((*key).to_string()))
+            .ok_or_else(|| {
+                format!(
+                    "Unknown variant {word}. Choose one of {}.",
+                    kchess_domain::misc::constants::VARIANTS.join(", ")
+                )
+            }),
+        [_, other, ..] => Err(format!("Unexpected argument {other}.")),
+    }
+}
+
 pub async fn interactive(
     core: &CoreClient,
     events: &mut UnboundedReceiver<Event>,
     computer: bool,
     level: Option<String>,
     color: Option<String>,
+    variant: Option<String>,
 ) -> Result<(), String> {
     let library = core.call("library", vec![]).await?;
     let sessions = &library["sessions"];
@@ -531,6 +584,9 @@ pub async fn interactive(
     if let Some(color) = color.filter(|_| computer) {
         session.choose_color(&color).await?;
     }
+    if let Some(variant) = variant.filter(|_| !computer) {
+        session.choose_variant(&variant).await?;
+    }
     session.show();
     session.computer_turn(events).await;
 
@@ -596,6 +652,22 @@ mod tests {
 
     fn words(list: &[&str]) -> Vec<String> {
         list.iter().map(|word| (*word).to_string()).collect()
+    }
+
+    #[test]
+    fn local_takes_a_variant_in_any_case() {
+        use super::local_variant;
+        assert_eq!(local_variant(&[]), Ok(None));
+        assert_eq!(
+            local_variant(&words(&["CrazyHouse"])),
+            Ok(Some("crazyhouse".into()))
+        );
+        assert_eq!(
+            local_variant(&words(&["kingofthehill"])),
+            Ok(Some("kingOfTheHill".into()))
+        );
+        assert!(local_variant(&words(&["bughouse"])).is_err());
+        assert!(local_variant(&words(&["atomic", "horde"])).is_err());
     }
 
     #[test]
