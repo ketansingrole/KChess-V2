@@ -505,35 +505,54 @@ fn page_commands(cx: &App) -> Vec<Command> {
     }
 }
 
-/// The computer game's actions its buttons allow now.
-fn computer_commands(cx: &App) -> Vec<Command> {
-    use crate::pages::computer::{Action, ComputerPage};
-    let Some(page) = crate::shell::view_of::<ComputerPage>(Page::Computer, cx) else {
-        return Vec::new();
-    };
-    page.read(cx)
-        .actions()
+/// How Quick Pick names a page's action: its id, label, icon and search keywords.
+type Described = (&'static str, &'static str, &'static str, &'static str);
+
+/// A page's actions as commands, each run by `act` on that page if it is still open.
+fn page_actions<V: 'static, A: Copy + 'static>(
+    page: Page,
+    prefix: &'static str,
+    actions: Vec<A>,
+    describe: fn(A) -> Described,
+    act: fn(&mut V, A, &mut Window, &mut Context<V>),
+) -> Vec<Command> {
+    actions
         .into_iter()
         .map(|action| {
-            let (id, label, glyph, keywords) = match action {
-                Action::TakeBack => ("takeback", "Take back", "undo-2", "undo"),
-                Action::Resign => ("resign", "Resign", "flag", "give up"),
-                Action::NewGame => ("new-game", "New game", "rotate-ccw", "restart"),
-                Action::SwitchSides => ("switch-sides", "Switch sides", "repeat", "colour color"),
-            };
+            let (id, label, glyph, keywords) = describe(action);
             Command::new(
-                format!("computer:{id}"),
+                format!("{prefix}:{id}"),
                 label,
                 icon(glyph),
                 move |window, cx| {
-                    if let Some(page) = crate::shell::view_of::<ComputerPage>(Page::Computer, cx) {
-                        page.update(cx, |page, cx| page.act(action, window, cx));
+                    if let Some(view) = crate::shell::view_of::<V>(page, cx) {
+                        view.update(cx, |view, cx| act(view, action, window, cx));
                     }
                 },
             )
             .keywords(keywords)
         })
         .collect()
+}
+
+/// The computer game's actions its buttons allow now.
+fn computer_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::computer::{Action, ComputerPage};
+    let Some(page) = crate::shell::view_of::<ComputerPage>(Page::Computer, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Computer,
+        "computer",
+        page.read(cx).actions(),
+        |action| match action {
+            Action::TakeBack => ("takeback", "Take back", "undo-2", "undo"),
+            Action::Resign => ("resign", "Resign", "flag", "give up"),
+            Action::NewGame => ("new-game", "New game", "rotate-ccw", "restart"),
+            Action::SwitchSides => ("switch-sides", "Switch sides", "repeat", "colour color"),
+        },
+        ComputerPage::act,
+    )
 }
 
 /// The live Lichess game's actions, as its buttons offer them.
@@ -566,24 +585,18 @@ fn puzzle_commands(cx: &App) -> Vec<Command> {
     let Some(page) = crate::shell::view_of::<PuzzlesPage>(Page::Puzzles, cx) else {
         return Vec::new();
     };
-    page.read(cx)
-        .actions(cx)
-        .into_iter()
-        .map(|action| {
-            let (id, label, glyph, keywords) = match action {
-                Action::Hint => ("hint", "Hint", "lightbulb", "clue help"),
-                Action::Solution => ("solution", "Solution", "eye", "show answer give up"),
-                Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
-                Action::Next => ("next", "Next puzzle", "arrow-right", "another skip"),
-            };
-            Command::new(format!("puzzle:{id}"), label, icon(glyph), move |_, cx| {
-                if let Some(page) = crate::shell::view_of::<PuzzlesPage>(Page::Puzzles, cx) {
-                    page.update(cx, |page, cx| page.act(action, cx));
-                }
-            })
-            .keywords(keywords)
-        })
-        .collect()
+    page_actions(
+        Page::Puzzles,
+        "puzzle",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::Hint => ("hint", "Hint", "lightbulb", "clue help"),
+            Action::Solution => ("solution", "Solution", "eye", "show answer give up"),
+            Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            Action::Next => ("next", "Next puzzle", "arrow-right", "another skip"),
+        },
+        |page: &mut PuzzlesPage, action, _, cx| page.act(action, cx),
+    )
 }
 
 /// The board editor's actions, as its buttons offer them.
@@ -592,37 +605,26 @@ fn editor_commands(cx: &App) -> Vec<Command> {
     let Some(page) = crate::shell::view_of::<EditorPage>(Page::Editor, cx) else {
         return Vec::new();
     };
-    page.read(cx)
-        .actions()
-        .into_iter()
-        .map(|action| {
-            let (id, label, glyph, keywords) = match action {
-                Action::StartPosition => ("start", "Starting position", "rotate-ccw", "reset"),
-                Action::ClearBoard => ("clear", "Clear board", "eraser", "empty"),
-                Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
-                Action::CopyFen => ("copy-fen", "Copy FEN", "copy", "position clipboard"),
-                Action::Analyse => ("analyse", "Analyse this position", "microscope", "analysis"),
-                Action::PlayStockfish => ("stockfish", "Play Stockfish", "cpu", "computer"),
-                Action::PlayFriend => (
-                    "friend",
-                    "Play a friend here",
-                    "users-round",
-                    "over the board local",
-                ),
-            };
-            Command::new(
-                format!("editor:{id}"),
-                label,
-                icon(glyph),
-                move |window, cx| {
-                    if let Some(page) = crate::shell::view_of::<EditorPage>(Page::Editor, cx) {
-                        page.update(cx, |page, cx| page.act(action, window, cx));
-                    }
-                },
-            )
-            .keywords(keywords)
-        })
-        .collect()
+    page_actions(
+        Page::Editor,
+        "editor",
+        page.read(cx).actions(),
+        |action| match action {
+            Action::StartPosition => ("start", "Starting position", "rotate-ccw", "reset"),
+            Action::ClearBoard => ("clear", "Clear board", "eraser", "empty"),
+            Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            Action::CopyFen => ("copy-fen", "Copy FEN", "copy", "position clipboard"),
+            Action::Analyse => ("analyse", "Analyse this position", "microscope", "analysis"),
+            Action::PlayStockfish => ("stockfish", "Play Stockfish", "cpu", "computer"),
+            Action::PlayFriend => (
+                "friend",
+                "Play a friend here",
+                "users-round",
+                "over the board local",
+            ),
+        },
+        EditorPage::act,
+    )
 }
 
 /// The game over the board's actions, as its panel's buttons offer them.
@@ -631,39 +633,28 @@ fn local_commands(cx: &App) -> Vec<Command> {
     let Some(page) = crate::shell::view_of::<LocalPage>(Page::Local, cx) else {
         return Vec::new();
     };
-    page.read(cx)
-        .actions(cx)
-        .into_iter()
-        .map(|action| {
-            let (id, label, glyph, keywords) = match action {
-                Action::TakeBack => ("takeback", "Take back", "undo-2", "undo"),
-                Action::Pause => ("pause", "Pause", "pause", "clock stop"),
-                Action::Resume => ("resume", "Resume", "play", "clock continue"),
-                Action::Draw => ("draw", "Draw", "handshake", "agree"),
-                Action::Resign => ("resign", "Resign", "flag", "give up"),
-                Action::NewGame => ("new-game", "New game", "plus", "restart"),
-                Action::Flip => (
-                    "flip",
-                    "Flip board",
-                    "refresh-cw",
-                    "turn rotate orientation",
-                ),
-                Action::CopyPgn => ("copy-pgn", "Copy PGN", "copy", "game moves clipboard"),
-                Action::Analyse => ("analyse", "Analyse", "microscope", "analysis review"),
-            };
-            Command::new(
-                format!("local:{id}"),
-                label,
-                icon(glyph),
-                move |window, cx| {
-                    if let Some(page) = crate::shell::view_of::<LocalPage>(Page::Local, cx) {
-                        page.update(cx, |page, cx| page.act(action, window, cx));
-                    }
-                },
-            )
-            .keywords(keywords)
-        })
-        .collect()
+    page_actions(
+        Page::Local,
+        "local",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::TakeBack => ("takeback", "Take back", "undo-2", "undo"),
+            Action::Pause => ("pause", "Pause", "pause", "clock stop"),
+            Action::Resume => ("resume", "Resume", "play", "clock continue"),
+            Action::Draw => ("draw", "Draw", "handshake", "agree"),
+            Action::Resign => ("resign", "Resign", "flag", "give up"),
+            Action::NewGame => ("new-game", "New game", "plus", "restart"),
+            Action::Flip => (
+                "flip",
+                "Flip board",
+                "refresh-cw",
+                "turn rotate orientation",
+            ),
+            Action::CopyPgn => ("copy-pgn", "Copy PGN", "copy", "game moves clipboard"),
+            Action::Analyse => ("analyse", "Analyse", "microscope", "analysis review"),
+        },
+        LocalPage::act,
+    )
 }
 
 /// The analysis board's own actions, as its menu and keys offer them.
