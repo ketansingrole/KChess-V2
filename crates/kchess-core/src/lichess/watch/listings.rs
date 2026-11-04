@@ -225,6 +225,25 @@ pub async fn broadcasts(
     Ok(all)
 }
 
+/// `broadcastRound(id)`: the tournament a broadcast round is in, as a round's link names only
+/// the round (`{ tourId, roundId }`).
+pub async fn broadcast_round(lichess: &Lichess, id: &str) -> CoreResult<Value> {
+    let cancel = lichess.lifetime().clone();
+    let path = format!("/api/broadcast/-/-/{}", path_segment(id));
+    let raw: Value = lichess
+        .client()
+        .policy()
+        .with_usage("", "watch", async {
+            lichess.client().get_json(&path, &[], None, &cancel).await
+        })
+        .await?;
+    let tour = raw["tour"]["id"]
+        .as_str()
+        .filter(|tour| !tour.is_empty())
+        .ok_or_else(|| CoreError::new("Lichess sent an unreadable broadcast."))?;
+    Ok(serde_json::json!({ "tourId": tour, "roundId": id }))
+}
+
 /// `broadcastTour(id)`: a broadcast tournament and its rounds (at most 100).
 pub async fn broadcast_tour(lichess: &Lichess, id: &str) -> CoreResult<BroadcastTourDetail> {
     let cancel = lichess.lifetime().clone();

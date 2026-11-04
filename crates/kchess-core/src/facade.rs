@@ -116,6 +116,7 @@ pub const FACADE_METHODS: &[&str] = &[
     "stopWatching",
     "broadcasts",
     "broadcastTour",
+    "broadcastRound",
     "tournaments",
     "tournament",
     "joinTournament",
@@ -656,7 +657,7 @@ impl Core {
             | "setRelation" | "profiles" | "leaderboard" | "searchPlayers" | "activity"
             | "timeline" | "importGame" | "bookmarkedGames" => self.run_online(method, args).await,
             "tvChannels" | "watch" | "watchBroadcast" | "stopWatching" | "broadcasts"
-            | "broadcastTour" => self.run_spectate(method, args).await,
+            | "broadcastTour" | "broadcastRound" => self.run_spectate(method, args).await,
             "tournaments" | "tournament" | "joinTournament" | "leaveTournament"
             | "createTournament" => self.run_tournaments(method, args).await,
             "puzzleNext"

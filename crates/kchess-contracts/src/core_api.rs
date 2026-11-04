@@ -287,6 +287,11 @@ pub fn methods() -> Vec<Method> {
         method("broadcasts", "", vec![opt("query")]),
         method("broadcastTour", "", vec![req("id")]),
         method(
+            "broadcastRound",
+            "The tournament a broadcast round is in: { tourId, roundId }.",
+            vec![req("id")],
+        ),
+        method(
             "tournaments",
             "Current arenas, and the Swiss events of the account's teams.",
             vec![req("account")],

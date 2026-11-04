@@ -314,6 +314,35 @@ pub fn profile_link(text: &str) -> Option<String> {
     is_username(name).then(|| name.to_string())
 }
 
+/// A Lichess broadcast link: a tournament's (`broadcast/slug/TOURID`), or a round's
+/// (`broadcast/slug/round-slug/ROUNDID`, with a board's game id after it).
+#[derive(Debug, PartialEq)]
+pub enum BroadcastLink {
+    Tour(String),
+    Round { round: String, game: String },
+}
+
+pub fn broadcast_link(text: &str) -> Option<BroadcastLink> {
+    let id = |part: &str| part.len() == 8 && part.bytes().all(|byte| byte.is_ascii_alphanumeric());
+    let path = lichess_path(text)?.strip_prefix("broadcast/")?;
+    let path = path.split(['?', '#']).next().unwrap_or_default();
+    let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+    match parts.as_slice() {
+        // `broadcast/by/someone` lists a user's broadcasts.
+        ["by", ..] => None,
+        [_, tour] if id(tour) => Some(BroadcastLink::Tour((*tour).to_string())),
+        [_, _, round] if id(round) => Some(BroadcastLink::Round {
+            round: (*round).to_string(),
+            game: String::new(),
+        }),
+        [_, _, round, game] if id(round) && id(game) => Some(BroadcastLink::Round {
+            round: (*round).to_string(),
+            game: (*game).to_string(),
+        }),
+        _ => None,
+    }
+}
+
 /// Reads `lichess.org/abcdefgh`, `https://lichess.org/abcdefgh1234/black#12` and the like; `None`
 /// for anything else, a study or a puzzle included.
 pub fn game_link(text: &str) -> Option<GameLink> {
@@ -349,6 +378,39 @@ pub fn game_link(text: &str) -> Option<GameLink> {
 #[cfg(test)]
 mod link_tests {
     use super::{GameLink, game_link, profile_link};
+
+    #[test]
+    fn a_broadcast_link_names_its_tournament_or_round() {
+        use super::{BroadcastLink, broadcast_link};
+        let round = |round: &str, game: &str| {
+            Some(BroadcastLink::Round {
+                round: round.into(),
+                game: game.into(),
+            })
+        };
+        assert_eq!(
+            broadcast_link("https://lichess.org/broadcast/european-youth-2026/uyRfZyjV"),
+            Some(BroadcastLink::Tour("uyRfZyjV".into()))
+        );
+        assert_eq!(
+            broadcast_link("lichess.org/broadcast/european-youth-2026/round-2/BeCQF8BD"),
+            round("BeCQF8BD", "")
+        );
+        assert_eq!(
+            broadcast_link("https://lichess.org/broadcast/e/round-2/BeCQF8BD/AbCd1234#12"),
+            round("BeCQF8BD", "AbCd1234")
+        );
+        assert_eq!(
+            broadcast_link("https://lichess.org/broadcast/by/someone1"),
+            None
+        );
+        assert_eq!(broadcast_link("https://lichess.org/broadcast"), None);
+        assert_eq!(
+            broadcast_link("https://lichess.org/broadcast/calendar"),
+            None
+        );
+        assert_eq!(broadcast_link("https://lichess.org/abcdefgh"), None);
+    }
 
     #[test]
     fn a_profile_link_names_its_player() {

@@ -605,6 +605,14 @@ pub fn view_of<V: 'static>(page: Page, cx: &App) -> Option<Entity<V>> {
     workspace.read(cx).pages.view_of::<V>(page)
 }
 
+/// Open a Lichess broadcast link on Watch → Broadcasts.
+pub fn open_broadcast(link: crate::game::BroadcastLink, window: &mut Window, cx: &mut App) {
+    open(Page::Watch, window, cx);
+    if let Some(watch) = view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx) {
+        watch.update(cx, |watch, cx| watch.open_broadcast(link, window, cx));
+    }
+}
+
 /// Open a Lichess puzzle by its id on Puzzles → Daily.
 pub fn open_puzzle(id: String, window: &mut Window, cx: &mut App) {
     open(Page::Puzzles, window, cx);

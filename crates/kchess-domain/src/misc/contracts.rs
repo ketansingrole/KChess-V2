@@ -254,6 +254,7 @@ const CORE: &[Row] = &[
     ("watchBroadcast", 1, &[Valid("assertLichessId")]),
     ("broadcasts", 0, &[Valid("assertBroadcastQuery")]),
     ("broadcastTour", 1, &[Valid("assertLichessId")]),
+    ("broadcastRound", 1, &[Valid("assertLichessId")]),
     ("tournaments", 1, &[Valid("assertOptionalAccount")]),
     (
         "tournament",

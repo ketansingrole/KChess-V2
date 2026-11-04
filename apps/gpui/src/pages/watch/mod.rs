@@ -345,6 +345,50 @@ impl WatchPage {
         cx.notify();
     }
 
+    /// Open a Lichess broadcast link on the Broadcasts tab: its tournament, or its round (and
+    /// board), found by asking Lichess which tournament the round is in.
+    pub fn open_broadcast(
+        &mut self,
+        link: crate::game::BroadcastLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.tab != Tab::Broadcasts {
+            self.tab = Tab::Broadcasts;
+            crate::prefs::set(cx, TAB_KEY, Tab::Broadcasts.key());
+            self.engine_changed(cx);
+        }
+        let (round, game) = match link {
+            crate::game::BroadcastLink::Tour(tour) => {
+                return self.open_tour_at(tour, None, String::new(), window, cx);
+            }
+            crate::game::BroadcastLink::Round { round, game } => (round, game),
+        };
+        self.stop(cx);
+        self.error = None;
+        let epoch = self.epoch;
+        let found = cx
+            .global::<AppCore>()
+            .call("broadcastRound", vec![json!(round)]);
+        cx.spawn_in(window, async move |this, cx| {
+            let answer = found.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.epoch != epoch {
+                    return;
+                }
+                match answer {
+                    Ok(found) => {
+                        let tour = found["tourId"].as_str().unwrap_or_default().to_string();
+                        this.open_tour_at(tour, Some(round), game, window, cx);
+                    }
+                    Err(cause) => this.error = Some(cause.message.into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Watch a live game (`watchGame`): the Following tab, streaming it.
     pub fn watch_game(&mut self, id: &str, cx: &mut Context<Self>) {
         self.tab = Tab::Friends;

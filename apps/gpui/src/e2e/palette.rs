@@ -274,3 +274,41 @@ fn a_pasted_position_or_game_link_opens_from_quick_pick(cx: &mut gpui_kit::TestA
     app.click("ok");
     assert_eq!(app.find("tree-d2d4 d7d5 c2c4").selected(), Some(true));
 }
+
+/// A Lichess broadcast link opens on Watch → Broadcasts: a round's link at that round, though
+/// the tournament would open at its live one.
+#[gpui_kit::test]
+fn a_pasted_broadcast_link_opens_its_round(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::{BROADCAST_ROUNDS, BROADCAST_TOUR};
+    let mut app = Harness::start(cx);
+    app.online();
+    let wait_for_round = |app: &mut Harness, wanted: &str| {
+        let wanted = wanted.to_string();
+        app.wait_for(&format!("round {wanted}"), move |_, cx| {
+            crate::shell::view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx)
+                .is_some_and(|watch| watch.read(cx).broadcast_round() == wanted)
+        });
+    };
+
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/broadcast/kchess-open/round-1/{}",
+        BROADCAST_ROUNDS[0]
+    ));
+    wait_for_first(&mut app, "Watch this broadcast");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert_eq!(page(&mut app), Some(Page::Watch));
+    wait_for_round(&mut app, BROADCAST_ROUNDS[0]);
+    assert_eq!(app.find(("watch-tabs", 2usize)).selected(), Some(true));
+
+    // The tournament's own link opens it at its live round.
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "lichess.org/broadcast/kchess-open/{BROADCAST_TOUR}"
+    ));
+    wait_for_first(&mut app, "Watch this broadcast");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    wait_for_round(&mut app, BROADCAST_ROUNDS[1]);
+}

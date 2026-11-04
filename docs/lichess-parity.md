@@ -48,6 +48,9 @@ The Watch page has three tabs:
   of boards; any board opens with its move list and clocks, and _Analyse_ sends it to the
   analysis board.
 
+A lichess.org broadcast link pasted into Quick Pick (⌘K) opens there too: a tournament's at
+its live round, a round's at that round, with the board it names selected.
+
 Only one stream runs at a time, and watching stops while you play your own game.
 
 ### Players

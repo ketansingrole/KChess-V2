@@ -354,6 +354,37 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             }),
         );
     }
+    // Broadcasts are public: a tournament of two rounds, which a round's link finds.
+    match (request.method.as_str(), request.path.as_str()) {
+        ("GET", path) if path == format!("/api/broadcast/{BROADCAST_TOUR}") => {
+            return reply(
+                &mut out,
+                &json!({
+                    "tour": { "id": BROADCAST_TOUR, "name": "KChess Open" },
+                    "rounds": [
+                        { "id": BROADCAST_ROUNDS[0], "name": "Round 1", "finished": true },
+                        { "id": BROADCAST_ROUNDS[1], "name": "Round 2", "ongoing": true },
+                    ],
+                    "defaultRoundId": BROADCAST_ROUNDS[1],
+                }),
+            );
+        }
+        ("GET", path)
+            if BROADCAST_ROUNDS
+                .iter()
+                .any(|round| path == format!("/api/broadcast/-/-/{round}")) =>
+        {
+            let round = path.rsplit('/').next().unwrap_or_default();
+            return reply(
+                &mut out,
+                &json!({ "tour": { "id": BROADCAST_TOUR }, "round": { "id": round } }),
+            );
+        }
+        ("GET", path) if path.starts_with("/api/stream/broadcast/round/") => {
+            return pgn(&mut out, "");
+        }
+        _ => {}
+    }
     // Nobody signed in: no answer at all.
     let Some(session) = session else {
         return Ok(());
@@ -541,6 +572,9 @@ fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
 
 /// The game a Lichess link in the analysis board's import names, and its PGN.
 pub const LINKED_GAME: &str = "kchessE2";
+/// The broadcast a pasted lichess.org/broadcast link opens, and its two rounds.
+pub const BROADCAST_TOUR: &str = "kcTour01";
+pub const BROADCAST_ROUNDS: [&str; 2] = ["kcRound1", "kcRound2"];
 /// The puzzle a pasted lichess.org/training link opens.
 pub const LINKED_PUZZLE: &str = "KcPz1";
 const LINKED_PGN: &str = "[Event \"Rated rapid game\"]\n[Site \"https://lichess.org/kchessE2\"]\n\

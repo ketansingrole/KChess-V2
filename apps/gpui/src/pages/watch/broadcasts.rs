@@ -412,8 +412,26 @@ impl WatchPage {
         }));
     }
 
+    /// The broadcast round being followed, for the tests.
+    #[cfg(test)]
+    pub fn broadcast_round(&self) -> String {
+        self.broadcasts.round.clone()
+    }
+
     /// `openTour`: the tournament, at its default round (or the live one, or the last).
     fn open_tour(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_tour_at(id, None, String::new(), window, cx);
+    }
+
+    /// The tournament at `round` when it has that round (a link's), with `game` selected.
+    pub(super) fn open_tour_at(
+        &mut self,
+        id: String,
+        wanted: Option<String>,
+        game: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.broadcasts.redo = None;
         self.stop(cx);
         let epoch = self.epoch;
@@ -429,9 +447,11 @@ impl WatchPage {
                 match answer {
                     Ok(tour) => {
                         let rounds = tour["rounds"].as_array().cloned().unwrap_or_default();
-                        let round = rounds
-                            .iter()
-                            .find(|r| r["id"] == tour["defaultRoundId"])
+                        let linked = wanted.as_ref().and_then(|wanted| {
+                            rounds.iter().find(|r| r["id"].as_str() == Some(wanted))
+                        });
+                        let round = linked
+                            .or_else(|| rounds.iter().find(|r| r["id"] == tour["defaultRoundId"]))
                             .or_else(|| rounds.iter().find(|r| r["ongoing"] == json!(true)))
                             .or(rounds.last())
                             .and_then(|r| r["id"].as_str().map(str::to_string));
@@ -457,7 +477,12 @@ impl WatchPage {
                             .update(cx, |select, cx| select.set_items(items, window, cx));
                         this.broadcasts.tour = Some(tour);
                         if let Some(round) = round {
-                            this.open_round(round, String::new(), window, cx);
+                            let game = if linked.is_some() {
+                                game.clone()
+                            } else {
+                                String::new()
+                            };
+                            this.open_round(round, game, window, cx);
                         }
                     }
                     Err(cause) => this.error = Some(cause.message.into()),

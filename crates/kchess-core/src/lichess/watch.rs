@@ -22,7 +22,7 @@ pub use feed::{
     GameDetails, GameSetup, TvGame, align_tv_moves, broadcast_game, display_fen,
     parse_game_details, parse_tv_game, variant_from_lichess,
 };
-pub use listings::{broadcast_summaries, broadcast_tour, broadcasts, tv_channels};
+pub use listings::{broadcast_round, broadcast_summaries, broadcast_tour, broadcasts, tv_channels};
 pub use spectator::Spectator;
 
 /// The TV channels: key and label, in display order.

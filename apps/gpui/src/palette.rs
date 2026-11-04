@@ -872,6 +872,19 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
 
 /// What a pasted FEN or Lichess game link can open.
 fn pasted(text: &str) -> Vec<Command> {
+    if crate::game::broadcast_link(text).is_some() {
+        let text = text.to_string();
+        return vec![Command::new(
+            "pasted:broadcast",
+            "Watch this broadcast",
+            icon("radio"),
+            move |window, cx| {
+                if let Some(link) = crate::game::broadcast_link(&text) {
+                    crate::shell::open_broadcast(link, window, cx);
+                }
+            },
+        )];
+    }
     if let Some(name) = crate::game::profile_link(text) {
         return vec![Command::new(
             format!("pasted:player:{name}"),

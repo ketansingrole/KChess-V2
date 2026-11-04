@@ -132,6 +132,12 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
             false,
         ),
         (
+            "broadcastRound",
+            vec![json!("abcdEFGH")],
+            vec!["GET /api/broadcast/-/-/abcdEFGH"],
+            false,
+        ),
+        (
             "cloudEval",
             vec![json!(START), json!(1)],
             vec!["GET /api/cloud-eval"],

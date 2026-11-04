@@ -503,6 +503,10 @@ impl Services {
                 let query = optional_text(args, 0);
                 to_json(super::watch::broadcasts(&self.lichess, query.as_deref()).await)
             }
+            "spectate.broadcastRound" => match text(args, 0) {
+                Ok(id) => super::watch::broadcast_round(&self.lichess, &id).await,
+                Err(cause) => Err(cause),
+            },
             "spectate.broadcastTour" => match text(args, 0) {
                 Ok(id) => to_json(super::watch::broadcast_tour(&self.lichess, &id).await),
                 Err(cause) => Err(cause),
