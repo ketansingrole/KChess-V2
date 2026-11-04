@@ -325,6 +325,12 @@ fn quick_pick_offers_a_draw_and_asks_before_resigning(cx: &mut gpui_kit::TestApp
         writes(&lichess)
     );
     assert!(app.shows("online-resign"));
+
+    // The board turns round from there as its button turns it.
+    run(&mut app, "Flip board");
+    app.wait_for("the board to turn round", |_, cx| {
+        crate::online::handle(cx).read(cx).flipped
+    });
 }
 
 /// Help stays out of Quick Pick during the game; once it is over, Analyse there opens it.

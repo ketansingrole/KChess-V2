@@ -613,6 +613,7 @@ fn live_commands(cx: &App) -> Vec<Command> {
                 LiveAction::Analyse => ("analyse", "Analyse", "microscope", "analysis review"),
                 LiveAction::NewGame => ("new-game", "New game", "plus", "another seek"),
                 LiveAction::CancelSeek => ("cancel-seek", "Cancel seek", "x", "stop waiting"),
+                LiveAction::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
             };
             Command::new(
                 format!("online:{id}"),

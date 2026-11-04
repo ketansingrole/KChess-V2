@@ -50,6 +50,7 @@ pub(crate) enum LiveAction {
     Analyse,
     NewGame,
     CancelSeek,
+    Flip,
 }
 
 /// The actions the game's buttons allow now: while it is sought, played, or once it is over.
@@ -70,7 +71,7 @@ pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
             if crate::game::analysable(online.setup()["variant"].as_str().unwrap_or("standard")) {
                 actions.push(LiveAction::Analyse);
             }
-            actions.push(LiveAction::NewGame);
+            actions.extend([LiveAction::NewGame, LiveAction::Flip]);
             actions
         }
         _ => Vec::new(),
@@ -102,6 +103,7 @@ fn playing_actions(online: &OnlineState) -> Vec<LiveAction> {
     } else {
         LiveAction::Abort
     });
+    actions.push(LiveAction::Flip);
     actions
 }
 
@@ -118,12 +120,21 @@ pub(crate) fn run_live_action(action: LiveAction, window: &mut Window, cx: &mut 
         LiveAction::NewGame | LiveAction::CancelSeek => {
             return online.update(cx, |online, cx| online.stop(cx));
         }
+        LiveAction::Flip => return flip(cx),
         LiveAction::Berserk => "berserk",
         LiveAction::Takeback => "takeback",
         LiveAction::OfferDraw => "offerDraw",
         LiveAction::Abort => "abort",
     };
     online.update(cx, |online, cx| online.action(name, cx));
+}
+
+/// The board turned round, as its button does.
+fn flip(cx: &mut App) {
+    crate::online::handle(cx).update(cx, |online, cx| {
+        online.flipped = !online.flipped;
+        cx.notify();
+    });
 }
 
 fn ask_resign(window: &mut Window, cx: &mut App) {
@@ -867,12 +878,7 @@ impl OnlinePage {
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
             crate::online::handle(cx).update(cx, |online, cx| online.view_ply(ply, cx));
         };
-        let flip: widgets::ClickHandler = Box::new(move |_, _, cx| {
-            crate::online::handle(cx).update(cx, |online, cx| {
-                online.flipped = !online.flipped;
-                cx.notify();
-            });
-        });
+        let flip: widgets::ClickHandler = Box::new(move |_, _, cx| flip(cx));
         let live = live_actions(online);
         let tournament = model["onlineTournament"]
             .as_str()
