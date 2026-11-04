@@ -186,3 +186,40 @@ fn deleting_a_game_asks_first_and_is_kept_after_a_restart(cx: &mut gpui_kit::Tes
     board_games(&mut app);
     app.find("history-play");
 }
+
+/// A Crazyhouse game in the history shows what each side held in its pocket at the move looked
+/// at, and does not offer the analysis board, which cannot play drops.
+#[gpui_kit::test]
+fn a_crazyhouse_game_shows_its_pockets(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::local::LocalPage;
+    let mut app = Harness::start(cx);
+    app.open("Over the board");
+    app.with_window(|window, cx| {
+        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        local.update(cx, |local, cx| {
+            let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+            let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
+            local.replace_game(setup, serde_json::Value::Null, window, cx);
+        });
+    });
+    let moves = ["e4", "d5", "exd5", "Qxd5"];
+    for (played, text) in moves.iter().enumerate() {
+        app.click_label("Enter a chess move in SAN or UCI");
+        app.type_text(text);
+        app.press("enter");
+        app.wait_for_moves(&moves[..=played]);
+    }
+    app.click("local-resign");
+    app.click("ok");
+    board_games(&mut app);
+    app.click(("history-row", 0usize));
+    app.wait_for_moves(&moves);
+    let held = |app: &mut Harness, id: &'static str| app.find(id).label().map(str::to_string);
+    assert!(held(&mut app, "pocket-White-Pawn").is_some_and(|label| label.ends_with(": 1")));
+    assert!(held(&mut app, "pocket-Black-Pawn").is_some_and(|label| label.ends_with(": 1")));
+    // Before Black took back, only White held a pawn.
+    app.click(("move", 2usize));
+    assert!(held(&mut app, "pocket-Black-Pawn").is_some_and(|label| label.ends_with(": 0")));
+    assert!(!app.enabled("open-analysis"));
+}

@@ -701,10 +701,15 @@ impl HistoryPage {
                     )
                     .child({
                         let opened = pgn(game);
+                        let analysable = crate::game::analysable(
+                            game["setup"]["variant"].as_str().unwrap_or("standard"),
+                        );
                         Button::new("open-analysis")
                             .primary()
                             .icon(icon("chart-line"))
                             .label("Open analysis")
+                            // The analysis board plays standard chess and Chess960 only.
+                            .disabled(!analysable)
                             .on_click(move |_, window, cx| {
                                 let Some(pgn) = opened.clone() else { return };
                                 crate::shell::replace_analysis(
