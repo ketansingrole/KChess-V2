@@ -1782,7 +1782,7 @@ impl NewGame {
             return self
                 .fen_problem(cx)
                 .is_none()
-                .then(|| json!({ "variant": "standard", "fen": text }));
+                .then(|| crate::game::setup_from_fen(&text));
         }
         let fen = rules("defaultFen", &[json!(variant)]).ok()?;
         Some(json!({ "variant": variant, "fen": fen }))

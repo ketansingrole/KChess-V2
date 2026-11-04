@@ -221,7 +221,8 @@ impl GameOptions {
                 "variant": "chess960",
                 "fen": chess960(self.number960(cx).unwrap_or(518)),
             }),
-            Start::Fen => json!({ "variant": "standard", "fen": self.fen.read(cx).value().trim() }),
+            // A Chess960 position pasted here castles as Chess960 (`setup_from_fen`).
+            Start::Fen => crate::game::setup_from_fen(self.fen.read(cx).value().trim()),
         };
         let row = |select: &Entity<SelectState<Vec<SharedString>>>| {
             select
