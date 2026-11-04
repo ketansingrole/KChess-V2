@@ -179,6 +179,22 @@ fn message_of(cause: &kchess_core::CoreError) -> SharedString {
     cause.message.clone().into()
 }
 
+/// The open player's actions, as their buttons offer them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Action {
+    Follow,
+    Challenge,
+    Message,
+    Watch,
+}
+
+/// Follow a player with the active account.
+fn follow(name: String, window: &mut Window, cx: &mut App) {
+    crate::accounts::handle(cx).update(cx, |accounts, cx| {
+        accounts.follow(name, window, cx, |_, _, _| {})
+    });
+}
+
 pub struct PlayersPage {
     input: Entity<InputState>,
     profile: Option<Value>,
@@ -852,6 +868,68 @@ impl PlayersPage {
         );
     }
 
+    /// What the open player's buttons can do now.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        let Some(username) = self.username() else {
+            return Vec::new();
+        };
+        let accounts = crate::accounts::handle(cx).read(cx);
+        let followed = accounts.all().iter().any(|account| {
+            account["username"]
+                .as_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case(&username))
+        });
+        let not_me = accounts
+            .active(cx)
+            .as_deref()
+            .is_none_or(|me| !me.eq_ignore_ascii_case(&username));
+        let mut actions = Vec::new();
+        if !followed && !accounts.busy {
+            actions.push(Action::Follow);
+        }
+        if !accounts.connected().is_empty() && not_me {
+            actions.extend([Action::Challenge, Action::Message]);
+        }
+        if self
+            .status
+            .as_ref()
+            .is_some_and(|status| status["playingId"].is_string())
+        {
+            actions.push(Action::Watch);
+        }
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        let Some(username) = self.username() else {
+            return;
+        };
+        match action {
+            Action::Follow => follow(username, window, cx),
+            Action::Challenge => crate::shell::challenge(&username, window, cx),
+            Action::Message => self.open_message(window, cx),
+            Action::Watch => {
+                let playing = self
+                    .status
+                    .as_ref()
+                    .and_then(|status| status["playingId"].as_str().map(str::to_string));
+                if let Some(id) = playing {
+                    crate::shell::watch_game(&id, window, cx);
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn show_profile(&mut self, profile: Value, cx: &mut Context<Self>) {
+        self.profile = Some(profile);
+        cx.notify();
+    }
+
     fn open_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(username), Some(account)) = (self.username(), Self::active_account(cx)) else {
             return;
@@ -1108,13 +1186,7 @@ impl PlayersPage {
                                         .label("Follow player")
                                         .disabled(busy)
                                         .on_click(move |_, window, cx| {
-                                            let name = follow_name.clone();
-                                            crate::accounts::handle(cx).update(
-                                                cx,
-                                                |accounts, cx| {
-                                                    accounts.follow(name, window, cx, |_, _, _| {})
-                                                },
-                                            )
+                                            follow(follow_name.clone(), window, cx)
                                         }),
                                 )
                             })

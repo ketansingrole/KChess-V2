@@ -308,3 +308,40 @@ fn the_leaderboard_shows_one_title(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.shows(("players-board-row", 1usize)));
     assert!(!app.shows(("players-board-row", 2usize)));
 }
+
+/// An open player's buttons are in Quick Pick: a message is written from there.
+#[gpui_kit::test]
+fn a_player_is_messaged_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Players");
+    app.find("players-lookup");
+    app.cx.update(|cx| {
+        let page = crate::shell::view_of::<crate::pages::players::PlayersPage>(
+            crate::pages::Page::Players,
+            cx,
+        )
+        .expect("the Players page");
+        page.update(cx, |page, cx| {
+            page.show_profile(
+                serde_json::json!({ "id": "rival", "username": "Rival", "count": { "all": 3 } }),
+                cx,
+            )
+        });
+    });
+    app.find("players-challenge");
+    app.press("secondary-k");
+    app.type_text(">");
+    super::palette::wait_for_first(&mut app, "Follow player");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..6usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert_eq!(&listed[..3], ["Follow player", "Challenge", "Message"]);
+    app.type_text("Message");
+    super::palette::wait_for_first(&mut app, "Message");
+    app.press("enter");
+    app.find("message-send");
+}

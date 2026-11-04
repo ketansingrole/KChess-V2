@@ -507,6 +507,7 @@ fn page_commands(cx: &App) -> Vec<Command> {
         Some(Page::Tournaments) => tournament_commands(cx),
         Some(Page::Practice) => practice_commands(cx),
         Some(Page::History) => history_commands(cx),
+        Some(Page::Players) => profile_commands(cx),
         _ => Vec::new(),
     }
 }
@@ -771,6 +772,26 @@ fn history_commands(cx: &App) -> Vec<Command> {
             Action::ClearFilters => ("clear", "Clear filters", "x", "reset all"),
         },
         HistoryPage::act,
+    )
+}
+
+/// The open player's actions on the Players page.
+fn profile_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::players::{Action, PlayersPage};
+    let Some(page) = crate::shell::view_of::<PlayersPage>(Page::Players, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Players,
+        "players",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::Follow => ("follow", "Follow player", "user-plus", "friend add"),
+            Action::Challenge => ("challenge", "Challenge", "swords", "play game invite"),
+            Action::Message => ("message", "Message", "message-circle", "send write"),
+            Action::Watch => ("watch", "Watch", "tv", "spectate game"),
+        },
+        PlayersPage::act,
     )
 }
 
