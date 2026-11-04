@@ -495,10 +495,42 @@ fn page_commands(cx: &App) -> Vec<Command> {
     )
     .kbds("Z");
     match crate::shell::current_page(cx) {
-        Some(Page::Computer | Page::Local | Page::Online) => vec![zen],
+        Some(Page::Computer) => std::iter::once(zen).chain(computer_commands(cx)).collect(),
+        Some(Page::Local | Page::Online) => vec![zen],
         Some(Page::Analysis) => analysis_commands(),
         _ => Vec::new(),
     }
+}
+
+/// The computer game's actions its buttons allow now.
+fn computer_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::computer::{Action, ComputerPage};
+    let Some(page) = crate::shell::view_of::<ComputerPage>(Page::Computer, cx) else {
+        return Vec::new();
+    };
+    page.read(cx)
+        .actions()
+        .into_iter()
+        .map(|action| {
+            let (id, label, glyph, keywords) = match action {
+                Action::TakeBack => ("takeback", "Take back", "undo-2", "undo"),
+                Action::Resign => ("resign", "Resign", "flag", "give up"),
+                Action::NewGame => ("new-game", "New game", "rotate-ccw", "restart"),
+                Action::SwitchSides => ("switch-sides", "Switch sides", "repeat", "colour color"),
+            };
+            Command::new(
+                format!("computer:{id}"),
+                label,
+                icon(glyph),
+                move |window, cx| {
+                    if let Some(page) = crate::shell::view_of::<ComputerPage>(Page::Computer, cx) {
+                        page.update(cx, |page, cx| page.act(action, window, cx));
+                    }
+                },
+            )
+            .keywords(keywords)
+        })
+        .collect()
 }
 
 /// The analysis board's own actions, as its menu and keys offer them.

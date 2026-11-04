@@ -47,6 +47,15 @@ enum Engine {
 /// Work a spoken command leaves for after the phrase is read.
 type Deferred = Box<dyn FnOnce(&mut ComputerPage, &mut Window, &mut Context<ComputerPage>)>;
 
+/// The game's actions Quick Pick offers on this page.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Action {
+    TakeBack,
+    Resign,
+    NewGame,
+    SwitchSides,
+}
+
 /// A question the page asks before it throws a game away.
 #[derive(Clone, Copy, PartialEq)]
 enum Question {
@@ -829,6 +838,31 @@ impl ComputerPage {
         self.select_level(window, cx);
         self.changed(cx);
         self.computer_turn(cx);
+    }
+
+    /// The actions its buttons allow now.
+    pub(crate) fn actions(&self) -> Vec<Action> {
+        let mut actions = Vec::new();
+        if self.can_takeback() {
+            actions.push(Action::TakeBack);
+        }
+        if self.in_progress() {
+            actions.push(Action::Resign);
+        }
+        actions.extend([Action::NewGame, Action::SwitchSides]);
+        actions
+    }
+
+    /// Run an action as its button does, asking first where the button asks.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
+            Action::TakeBack if self.can_takeback() => self.takeback(cx),
+            Action::TakeBack => {}
+            Action::Resign if self.in_progress() => self.ask(Question::Resign, window, cx),
+            Action::Resign => {}
+            Action::NewGame => self.ask(Question::NewGame, window, cx),
+            Action::SwitchSides => self.ask(Question::SwitchSides, window, cx),
+        }
     }
 
     fn new_game(&mut self, cx: &mut Context<Self>) {

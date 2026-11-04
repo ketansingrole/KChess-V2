@@ -379,3 +379,45 @@ fn the_analysis_boards_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppConte
     app.click_square("e5", false);
     assert_eq!(app.find("tree-e2e4 e7e5").selected(), Some(true));
 }
+
+/// On Play with computer, Quick Pick takes back a move only when the Take back button would.
+#[gpui_kit::test]
+fn a_computer_game_takes_back_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Play with computer");
+    app.wait_for("the game to take moves", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .try_find_by_label("Enter a chess move in SAN or UCI")
+            .is_some_and(|entry| entry.disabled() != Some(true))
+    });
+    // Before a move there is nothing to take back: the page's actions lead the list without it.
+    let shown = |app: &mut Harness| {
+        app.press("secondary-k");
+        app.type_text(">");
+        wait_for_first(app, "Zen mode");
+        let labels: Vec<String> = app.with_window(|window, _| {
+            (0..6usize)
+                .filter_map(|index| window.try_find(("palette-item", index)))
+                .filter_map(|item| item.label().map(str::to_string))
+                .collect()
+        });
+        app.press("escape");
+        wait_until_closed(app);
+        labels
+    };
+    let before = shown(&mut app);
+    assert!(before.contains(&"New game".to_string()), "{before:?}");
+    assert!(!before.contains(&"Take back".to_string()), "{before:?}");
+
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.wait_for_moves(&["e4"]);
+    app.press("secondary-k");
+    app.type_text(">Take back");
+    wait_for_first(&mut app, "Take back");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.wait_for_moves(&[]);
+    assert!(!app.enabled("takeback"));
+}
