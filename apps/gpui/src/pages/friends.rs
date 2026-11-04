@@ -753,7 +753,13 @@ impl Render for FriendsPage {
             });
         let body =
             if friends.is_empty() {
-                widgets::empty_state(icon("users"), "Follow your first player", None, &palette)
+                widgets::card(&palette)
+                    .child(widgets::empty_state(
+                        icon("users"),
+                        "Follow your first player",
+                        None,
+                        &palette,
+                    ))
                     .into_any_element()
             } else {
                 let head_cell =
