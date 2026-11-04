@@ -45,6 +45,11 @@ fn utc_day() -> String {
 }
 
 impl DailyPuzzle {
+    /// The board, while it shows a puzzle.
+    pub(super) fn shown_board(&self) -> Option<Entity<PuzzleBoard>> {
+        self.puzzle.as_ref().map(|_| self.board.clone())
+    }
+
     pub fn new(themes: Vec<Theme>, window: &mut Window, cx: &mut Context<Self>) -> DailyPuzzle {
         let board = cx.new(|cx| PuzzleBoard::new(true, window, cx));
         DailyPuzzle {

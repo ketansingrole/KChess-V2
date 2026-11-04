@@ -169,6 +169,15 @@ fn theme_name(key: &str, themes: &[Theme]) -> String {
     name
 }
 
+/// What the puzzle panel's buttons do, for Quick Pick to offer the same.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Action {
+    Hint,
+    Solution,
+    Flip,
+    Next,
+}
+
 pub struct PuzzlesPage {
     session: PuzzleSession,
     /// The puzzle key the board shows (`:key="puzzleKey"`): a new key starts the board afresh.
@@ -1531,6 +1540,52 @@ impl PuzzlesPage {
         ));
         self.daily = Some(daily.clone());
         daily
+    }
+
+    /// The puzzle board of the tab shown, while it shows a puzzle, and whether it is Train's.
+    fn shown_board(&self, cx: &App) -> Option<(Entity<PuzzleBoard>, bool)> {
+        match crate::prefs::get::<String>(cx, TAB, "train".into()).as_str() {
+            "train" => (self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == "ready")
+                .then(|| (self.puzzle.clone(), true)),
+            "daily" => self
+                .daily
+                .as_ref()
+                .and_then(|daily| daily.read(cx).shown_board())
+                .map(|board| (board, false)),
+            _ => None,
+        }
+    }
+
+    /// The actions the shown puzzle's buttons allow now.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        let Some((board, train)) = self.shown_board(cx) else {
+            return Vec::new();
+        };
+        let mut actions = Vec::new();
+        if board.read(cx).playing() {
+            actions.extend([Action::Hint, Action::Solution]);
+        }
+        actions.push(Action::Flip);
+        if train {
+            actions.push(Action::Next);
+        }
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        let Some((board, _)) = self.shown_board(cx) else {
+            return;
+        };
+        match action {
+            Action::Hint => board.update(cx, |board, cx| board.hint(cx)),
+            Action::Solution => board.update(cx, |board, cx| board.show_solution(cx)),
+            Action::Flip => board.update(cx, |board, cx| board.flip(cx)),
+            Action::Next => self.load_next(cx),
+        }
     }
 
     /// Show a linked puzzle on the Daily tab's board.

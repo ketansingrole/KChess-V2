@@ -500,6 +500,7 @@ fn page_commands(cx: &App) -> Vec<Command> {
         Some(Page::Online) => std::iter::once(zen).chain(live_commands(cx)).collect(),
         Some(Page::Analysis) => analysis_commands(),
         Some(Page::Editor) => editor_commands(cx),
+        Some(Page::Puzzles) => puzzle_commands(cx),
         _ => Vec::new(),
     }
 }
@@ -554,6 +555,32 @@ fn live_commands(cx: &App) -> Vec<Command> {
                 icon(glyph),
                 move |window, cx| run_live_action(action, window, cx),
             )
+            .keywords(keywords)
+        })
+        .collect()
+}
+
+/// The shown puzzle's actions, as its panel's buttons offer them.
+fn puzzle_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::puzzles::{Action, PuzzlesPage};
+    let Some(page) = crate::shell::view_of::<PuzzlesPage>(Page::Puzzles, cx) else {
+        return Vec::new();
+    };
+    page.read(cx)
+        .actions(cx)
+        .into_iter()
+        .map(|action| {
+            let (id, label, glyph, keywords) = match action {
+                Action::Hint => ("hint", "Hint", "lightbulb", "clue help"),
+                Action::Solution => ("solution", "Solution", "eye", "show answer give up"),
+                Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+                Action::Next => ("next", "Next puzzle", "arrow-right", "another skip"),
+            };
+            Command::new(format!("puzzle:{id}"), label, icon(glyph), move |_, cx| {
+                if let Some(page) = crate::shell::view_of::<PuzzlesPage>(Page::Puzzles, cx) {
+                    page.update(cx, |page, cx| page.act(action, cx));
+                }
+            })
             .keywords(keywords)
         })
         .collect()

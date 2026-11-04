@@ -141,3 +141,45 @@ fn a_pasted_puzzle_link_opens_the_puzzle(cx: &mut gpui_kit::TestAppContext) {
     app.click("daily-today");
     app.wait_gone("daily-today");
 }
+
+/// Quick Pick shows the solution of the puzzle on the board, offering only what the panel does.
+#[gpui_kit::test]
+fn quick_pick_shows_the_solution(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/training/{}",
+        super::fake_lichess::LINKED_PUZZLE
+    ));
+    super::palette::wait_for_first(&mut app, "Solve this puzzle");
+    app.press("enter");
+    app.find("daily-today");
+    app.wait_for("the puzzle to be playable", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_some_and(|hint| hint.disabled() != Some(true))
+    });
+    super::palette::wait_until_closed(&mut app);
+    app.press("secondary-k");
+    app.type_text(">");
+    super::palette::wait_for_first(&mut app, "Hint");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..6usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    // Daily puzzles have no next one: Today's puzzle is the way back.
+    assert!(listed.contains(&"Solution".to_string()), "{listed:?}");
+    assert!(!listed.contains(&"Next puzzle".to_string()), "{listed:?}");
+    app.type_text("Solution");
+    super::palette::wait_for_first(&mut app, "Solution");
+    app.press("enter");
+    app.wait_for("the solution to be shown", |window, _| {
+        window
+            .try_find_by_label("Solution shown — not counted as solved")
+            .is_some()
+    });
+}

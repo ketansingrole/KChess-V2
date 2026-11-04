@@ -35,7 +35,7 @@ pub(super) fn wait_for_first(app: &mut Harness, name: &str) {
 }
 
 /// Wait until the palette is closed.
-fn wait_until_closed(app: &mut Harness) {
+pub(super) fn wait_until_closed(app: &mut Harness) {
     app.wait_for("the palette to close", |window, _| {
         window.try_find(("palette-item", 0usize)).is_none()
     });
