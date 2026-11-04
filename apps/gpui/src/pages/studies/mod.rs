@@ -83,11 +83,16 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
+/// Why an import was refused.
+const INVALID_IMPORT: &str = "Paste valid PGN with up to 64 chapters";
+const VARIANT_IMPORT: &str = "Studies hold standard chess and Chess960 games only";
+
 /// An import's chapters (`pgnGames`): each game named by its `ChapterName`, or numbered.
-fn import_chapters(text: &str) -> Option<Vec<(String, String)>> {
-    let games = crate::game::rules("pgnGames", &[json!(text)]).ok()?;
+fn import_chapters(text: &str) -> Result<Vec<(String, String)>, &'static str> {
+    let games = crate::game::rules("pgnGames", &[json!(text)]).map_err(|_| INVALID_IMPORT)?;
     let chapters: Vec<(String, String)> = games
-        .as_array()?
+        .as_array()
+        .ok_or(INVALID_IMPORT)?
         .iter()
         .enumerate()
         .map(|(index, game)| {
@@ -101,12 +106,23 @@ fn import_chapters(text: &str) -> Option<Vec<(String, String)>> {
             (name, game["pgn"].as_str().unwrap_or_default().to_string())
         })
         .collect();
+    // Read under standard rules, an Atomic or Crazyhouse game would show positions it never had.
+    if chapters
+        .iter()
+        .any(|(_, pgn)| !crate::game::pgn_analysable(pgn))
+    {
+        return Err(VARIANT_IMPORT);
+    }
     let valid = !chapters.is_empty()
         && chapters.len() <= MAX_CHAPTERS
         && chapters
             .iter()
             .all(|(_, pgn)| TreeNode::from_pgn(pgn).is_some());
-    valid.then_some(chapters)
+    if valid {
+        Ok(chapters)
+    } else {
+        Err(INVALID_IMPORT)
+    }
 }
 
 /// An imported study's name when none is given: its players, else its event.
@@ -989,10 +1005,13 @@ impl ImportStudy {
 
     fn run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.text.read(cx).value().trim().to_string();
-        let Some(chapters) = import_chapters(&text) else {
-            self.error = Some("Paste valid PGN with up to 64 chapters".into());
-            cx.notify();
-            return;
+        let chapters = match import_chapters(&text) {
+            Ok(chapters) => chapters,
+            Err(problem) => {
+                self.error = Some(problem.into());
+                cx.notify();
+                return;
+            }
         };
         let library = StudiesPage::library(cx);
         let given = self.name.read(cx).value().trim().to_string();
@@ -1102,8 +1121,14 @@ mod tests {
         assert_eq!(chapters[0].0, "Main");
         assert_eq!(chapters[1].0, "Chapter 2");
         assert_eq!(import_name(&chapters[0].1).as_deref(), Some("A – B"));
-        assert!(import_chapters("").is_none());
+        assert!(import_chapters("").is_err());
         // A study holds at most 64 chapters.
-        assert!(import_chapters(&"[Event \"?\"]\n\n1. e4 *\n\n".repeat(65)).is_none());
+        assert!(import_chapters(&"[Event \"?\"]\n\n1. e4 *\n\n".repeat(65)).is_err());
+        // Standard rules cannot replay an Atomic game, though these moves are legal in both.
+        assert_eq!(
+            import_chapters("[Variant \"Atomic\"]\n\n1. e4 d5 2. exd5 *"),
+            Err(super::VARIANT_IMPORT)
+        );
+        assert!(import_chapters("[Variant \"Chess960\"]\n[FEN \"bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1\"]\n\n1. e4 *").is_ok());
     }
 }
