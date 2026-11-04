@@ -77,7 +77,8 @@ can add them as a friend, challenge them or watch their current game.
   study's for its first chapter), pasted into the command palette or Analysis → Import, opens
   that chapter on the analysis board without signing in.
 - **Import a game by link**: paste a lichess.org game link (with `/black` or `#move` if you
-  like) into the analysis board's import, and the game opens there.
+  like) into the analysis board's import, and the game opens there. On the command line,
+  `kchess-cli pgn <link>` prints a game's or a public study chapter's PGN.
 - **Export**: animated GIF of the main line, PNG of the position, or PGN. The images are drawn
   locally with your board theme and piece set; no image service is involved.
 

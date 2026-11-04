@@ -25,6 +25,7 @@ Commands:
   play [level] [white|black|random] Play Stockfish; type moves in SAN or UCI
   local [variant]                  Play over the board (chess960, crazyhouse, atomic…)
   puzzle [id|link]                 Solve the daily puzzle, or that one; solution shows it
+  pgn <link>                       Print a Lichess game's PGN, or a public study chapter's
   methods                          List available CoreApi methods
 
 Options:
@@ -261,6 +262,10 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 let id = args.get(1).map(String::as_str);
                 puzzle::interactive(&core, &mut events, id).await?;
             }
+            "pgn" => {
+                let link = args.get(1).map(String::as_str).unwrap_or_default();
+                println!("{}", linked_pgn(&core, link).await?.trim_end());
+            }
             other => return Err(format!("Unknown command: {other}. Run --help.")),
         }
         Ok(())
@@ -268,6 +273,24 @@ async fn run(argv: &[String]) -> Result<(), String> {
     .await;
     core.close().await;
     result
+}
+
+/// `pgn <link>`: the PGN of a Lichess game, or of a public study's chapter (its first for a
+/// study's own link).
+async fn linked_pgn(core: &CoreClient, link: &str) -> Result<String, String> {
+    use kchess_domain::links::{game_link, study_link};
+    let pgn = if let Some(game) = game_link(link) {
+        core.call("exportGame", vec![json!(game.id)]).await?
+    } else if let Some((study, chapter)) = study_link(link) {
+        core.call("lichessStudyChapter", vec![json!(study), json!(chapter)])
+            .await?["pgn"]
+            .take()
+    } else {
+        return Err("pgn takes a lichess.org game or study link.".into());
+    };
+    pgn.as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "Lichess sent no PGN.".into())
 }
 
 /// The position `analyze` was given: a FEN, quoted or as separate words, or `startpos`.

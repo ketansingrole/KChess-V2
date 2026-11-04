@@ -161,6 +161,10 @@ fn help_and_methods_need_no_core_and_bad_commands_fail() {
         ),
         (vec!["analyze"], "analyze requires a FEN."),
         (
+            vec!["pgn", "https://lichess.org/training/FPFg0"],
+            "pgn takes a lichess.org game or study link.",
+        ),
+        (
             vec!["--browser", "never"],
             "--browser must be open or print.",
         ),

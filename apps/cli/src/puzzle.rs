@@ -140,9 +140,7 @@ impl Solving {
 
 /// The puzzle id in a word typed after `puzzle`: an id, or a lichess.org/training link.
 pub fn named(word: &str) -> String {
-    let id = word.split("/training/").last().unwrap_or(word);
-    let id = id.split(['?', '#', '/']).next().unwrap_or(id);
-    id.to_string()
+    kchess_domain::links::training_link(word).unwrap_or_else(|| word.trim().to_string())
 }
 
 pub async fn interactive(
