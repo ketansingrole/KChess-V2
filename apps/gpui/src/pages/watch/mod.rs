@@ -25,7 +25,7 @@ pub(crate) mod live;
 use broadcasts::Broadcasts;
 use live::Live;
 
-const TAB_KEY: &str = "kchess:watch-tab";
+pub(crate) const TAB_KEY: &str = "kchess:watch-tab";
 pub(crate) const CHANNEL_KEY: &str = "kchess:watch-channel";
 /// Clocks are redrawn this often while something is being watched.
 const TICK: Duration = Duration::from_millis(500);
@@ -331,6 +331,11 @@ impl WatchPage {
             }
             _ => {}
         }
+    }
+
+    /// Show a tab by its key (`tv`, `friends` or `broadcasts`), as its pill does.
+    pub fn show_tab(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.choose_tab(Tab::of(key), window, cx);
     }
 
     fn choose_tab(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {

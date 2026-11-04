@@ -153,7 +153,7 @@ fn current(page: Page, cx: &App) -> Option<String> {
     (crate::shell::current_page(cx) == Some(page)).then(|| "Current".into())
 }
 
-/// The sidebar's pages, Settings, and the Puzzles and Practice tabs (`places`).
+/// The sidebar's pages, Settings, and the Puzzles, Watch and Practice tabs (`places`).
 fn places(cx: &App) -> Vec<Command> {
     let pages: [(Page, &str, Icon, &'static str); 16] = [
         (Page::Dashboard, "Home", icon("house"), "start overview"),
@@ -285,6 +285,30 @@ fn places(cx: &App) -> Vec<Command> {
                 crate::shell::open(Page::Puzzles, window, cx);
             })
             .detail("Puzzles")
+            .keywords(keywords),
+        );
+    }
+    let watch: [(&str, &str, Icon, &'static str); 3] = [
+        ("tv", "Lichess TV", icon("tv"), "channels top rated"),
+        (
+            "friends",
+            "Following games",
+            icon("users"),
+            "friends players live",
+        ),
+        (
+            "broadcasts",
+            "Broadcasts",
+            icon("radio"),
+            "over the board events rounds",
+        ),
+    ];
+    for (tab, label, glyph, keywords) in watch {
+        list.push(
+            Command::new(format!("watch:{tab}"), label, glyph, move |window, cx| {
+                crate::shell::watch_tab(tab, window, cx)
+            })
+            .detail("Watch")
             .keywords(keywords),
         );
     }

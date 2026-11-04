@@ -440,6 +440,15 @@ pub fn watch_channel(channel: String, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Watch at one of its tabs (`tv`, `friends` or `broadcasts`); a Watch page made now opens there.
+pub fn watch_tab(tab: &'static str, window: &mut Window, cx: &mut App) {
+    crate::prefs::set(cx, crate::pages::watch::TAB_KEY, tab);
+    open(Page::Watch, window, cx);
+    if let Some(watch) = view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx) {
+        watch.update(cx, |watch, cx| watch.show_tab(tab, window, cx));
+    }
+}
+
 /// Watch a game being played on Lichess (`watchGame`).
 pub fn watch_game(id: &str, window: &mut Window, cx: &mut App) {
     open(Page::Watch, window, cx);

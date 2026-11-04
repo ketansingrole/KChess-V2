@@ -635,6 +635,24 @@ fn every_command_has_its_own_id_on_every_page(cx: &mut gpui_kit::TestAppContext)
     }
 }
 
+/// Watch's tabs are in Quick Pick from any page, and switch an open Watch page too.
+#[gpui_kit::test]
+fn watch_tabs_open_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let run = |app: &mut Harness, label: &str| {
+        app.press("secondary-k");
+        app.type_text(label);
+        wait_for_first(app, label);
+        app.press("enter");
+        wait_until_closed(app);
+    };
+    run(&mut app, "Broadcasts");
+    assert_eq!(page(&mut app), Some(Page::Watch));
+    assert_eq!(app.find(("watch-tabs", 2usize)).selected(), Some(true));
+    run(&mut app, "Lichess TV");
+    assert_eq!(app.find(("watch-tabs", 0usize)).selected(), Some(true));
+}
+
 /// Watch's TV channels are in Quick Pick, but for the one already on.
 #[gpui_kit::test]
 fn a_tv_channel_is_chosen_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
