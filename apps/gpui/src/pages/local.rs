@@ -1694,7 +1694,7 @@ impl NewGame {
         });
         let number = cx.new(|cx| {
             let mut input = InputState::new(window, cx);
-            input.set_value(random_960().to_string(), window, cx);
+            input.set_value(crate::game::random_chess960().to_string(), window, cx);
             input
         });
         let fen = cx.new(|cx| InputState::new(window, cx).placeholder("Standard start"));
@@ -1813,14 +1813,6 @@ impl NewGame {
     }
 }
 
-fn random_960() -> u16 {
-    let mut bytes = [0u8; 2];
-    if getrandom::fill(&mut bytes).is_err() {
-        return 518;
-    }
-    u16::from_le_bytes(bytes) % 960
-}
-
 impl Render for NewGame {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
@@ -1870,7 +1862,11 @@ impl Render for NewGame {
                                 .label("Random")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.number.update(cx, |input, cx| {
-                                        input.set_value(random_960().to_string(), window, cx)
+                                        input.set_value(
+                                            crate::game::random_chess960().to_string(),
+                                            window,
+                                            cx,
+                                        )
                                     });
                                     cx.notify();
                                 })),

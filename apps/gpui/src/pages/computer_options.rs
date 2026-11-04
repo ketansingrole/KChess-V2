@@ -262,12 +262,7 @@ impl GameOptions {
     }
 
     fn randomize(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut bytes = [0u8; 2];
-        let n = if getrandom::fill(&mut bytes).is_ok() {
-            i64::from(u16::from_le_bytes(bytes) % 960)
-        } else {
-            518
-        };
+        let n = crate::game::random_chess960();
         self.number
             .update(cx, |input, cx| input.set_value(n.to_string(), window, cx));
         self.refresh_preview(cx);

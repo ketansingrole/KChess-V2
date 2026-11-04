@@ -39,6 +39,15 @@ pub fn short_game_date(millis: f64) -> String {
         .unwrap_or_default()
 }
 
+/// A Chess960 start's number picked at random, or 518 (the standard start) without randomness.
+pub fn random_chess960() -> i64 {
+    let mut bytes = [0u8; 2];
+    if getrandom::fill(&mut bytes).is_err() {
+        return 518;
+    }
+    i64::from(u16::from_le_bytes(bytes) % 960)
+}
+
 /// The Chess960 start numbered `n` (`chess960Fen`).
 pub fn chess960(n: i64) -> String {
     kchess_domain::rules::chess960_fen(n)
