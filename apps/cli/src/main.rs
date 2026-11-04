@@ -21,8 +21,8 @@ Commands:
   call <method> '[arguments]'      Invoke any CoreApi method (JSON argument array)
   call <method> --args-file <path> Read arguments from a JSON file
   analyze <fen>                    Stream engine analysis as JSON lines until Ctrl-C
-  play [level]                     Play Stockfish with UCI moves
-  local                            Play a local game with UCI moves
+  play [level]                     Play Stockfish; type moves in SAN or UCI
+  local                            Play a local game; type moves in SAN or UCI
   methods                          List available CoreApi methods
 
 Options:
@@ -32,7 +32,7 @@ Options:
   --engine <path>                  Use a native Stockfish executable
   --embedded                       Run the core in this process, not the shared one
 
-Interactive game commands: e2e4, undo, resign, new, status, quit.
+Interactive game commands: e4 or e2e4, undo, resign, new, status, quit.
 Local games also accept draw and pause. Sessions are saved in the core library.
 ";
 

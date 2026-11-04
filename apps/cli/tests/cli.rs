@@ -108,6 +108,25 @@ fn a_local_game_is_played_through_stdin_and_kept_in_the_library() {
     assert!(lines(&status)[0].get("engine").is_some());
 }
 
+/// Moves are typed in SAN as readily as in UCI, read in the position on the board.
+#[test]
+fn moves_are_typed_in_san_or_uci() {
+    let profile = tempfile::tempdir().expect("profile");
+    let played = cli(
+        profile.path(),
+        &["local"],
+        "Nf3\nd7d5\ng3\nNc6\nBg2\nBf5\nO-O\nNf3\nquit\n",
+    );
+    assert!(played.status.success(), "{played:?}");
+    let last = lines(&played).pop().expect("a state");
+    assert_eq!(
+        last["moves"],
+        json!(["g1f3", "d7d5", "g2g3", "b8c6", "f1g2", "c8f5", "e1h1"])
+    );
+    // Black has no knight that reaches f3.
+    assert!(String::from_utf8_lossy(&played.stderr).contains("Illegal move or game unavailable."));
+}
+
 #[test]
 fn help_and_methods_need_no_core_and_bad_commands_fail() {
     let profile = tempfile::tempdir().expect("profile");

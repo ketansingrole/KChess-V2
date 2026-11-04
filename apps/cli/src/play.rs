@@ -1,4 +1,5 @@
-//! `play` and `local`: a game against Stockfish, or two people at one terminal, with UCI moves.
+//! `play` and `local`: a game against Stockfish, or two people at one terminal, with moves in SAN
+//! or UCI.
 //! The rules run both (`kchess-games`); the session and Game history entry are saved in the
 //! core's library as the app saves them, so either can carry the game on.
 
@@ -107,6 +108,26 @@ impl Session<'_> {
         kchess_domain::replay::replay_setup(variant, fen, &self.moves())
             .map(|replay| replay.fen)
             .unwrap_or_else(|| fen.to_string())
+    }
+
+    /// A typed move as UCI: SAN ("Nf3", "O-O", "exd8=Q") is read in the position on the board;
+    /// UCI, and anything that is not a legal move, are passed on as typed for the rules to judge.
+    fn typed_uci(&self, text: &str) -> String {
+        let bytes = text.as_bytes();
+        let is_uci = bytes.len() >= 4
+            && bytes[0].is_ascii_lowercase()
+            && bytes[1].is_ascii_digit()
+            && bytes[2].is_ascii_lowercase()
+            && bytes[3].is_ascii_digit();
+        if is_uci {
+            return text.to_lowercase();
+        }
+        let variant = self.state()["setup"]["variant"]
+            .as_str()
+            .unwrap_or("standard");
+        kchess_domain::rules::setup_start(variant, &self.fen())
+            .and_then(|position| kchess_domain::position::play_san(&position, text))
+            .map_or_else(|| text.to_string(), |played| played.uci)
     }
 
     fn show(&self) {
@@ -264,6 +285,7 @@ impl Session<'_> {
 
     /// One typed command; false when it was not understood or not legal.
     async fn command(&mut self, command: &str) -> Result<bool, String> {
+        let typed = self.typed_uci(command);
         let host = self.host();
         let now = self.now();
         match &mut self.game {
@@ -278,8 +300,8 @@ impl Session<'_> {
                         };
                         game.start(None, None, &host)?
                     }
-                    uci => {
-                        let (legal, effects) = game.play(uci, &host)?;
+                    _ => {
+                        let (legal, effects) = game.play(&typed, &host)?;
                         if !legal {
                             return Ok(false);
                         }
@@ -318,8 +340,8 @@ impl Session<'_> {
                     let (setup, clock) = (game.state["setup"].clone(), game.state["clock"].clone());
                     game.start(setup, clock, now)?;
                 }
-                uci => {
-                    let (san, _) = game.play(uci, now)?;
+                _ => {
+                    let (san, _) = game.play(&typed, now)?;
                     if san.is_none() {
                         return Ok(false);
                     }
