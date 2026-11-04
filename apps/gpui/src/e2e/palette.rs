@@ -111,6 +111,22 @@ fn acronyms_and_several_words_find_pages_and_commands(cx: &mut gpui_kit::TestApp
 }
 
 #[gpui_kit::test]
+fn renamed_settings_categories_are_found_by_their_old_names(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    for (old, name) in [
+        ("app theme", "Themes"),
+        ("my accounts", "Accounts"),
+        ("analysis", "Cloud evaluation"),
+    ] {
+        app.press("secondary-k");
+        app.type_text(old);
+        wait_until_listed(&mut app, name);
+        app.press("escape");
+        wait_until_closed(&mut app);
+    }
+}
+
+#[gpui_kit::test]
 fn commands_are_run_from_the_command_mode(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.press("secondary-k");

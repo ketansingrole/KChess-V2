@@ -479,17 +479,28 @@ impl Harness {
 
     /// Open a category of Settings from its sidebar ("Sound").
     pub fn open_settings(&mut self, label: &str) {
-        // The pages' third group is shorter than this.
-        if !self.shows("2-3") {
+        if !self.shows(SETTINGS_SHOWN) {
             self.click("settings");
         }
         let index = crate::pages::settings::sections()
             .iter()
             .position(|(_, name, _)| *name == label)
             .unwrap_or_else(|| panic!("no Settings category {label:?}"));
-        self.click(format!("2-{index}"));
+        // Back is the sidebar's first block, then a block for each group of categories.
+        let (mut block, mut row) = (1, index);
+        for (_, size) in crate::pages::settings::SECTION_GROUPS {
+            if row < size {
+                break;
+            }
+            row -= size;
+            block += 1;
+        }
+        self.click(format!("{block}-{row}"));
     }
 }
+
+/// A sidebar row only Settings lists: the first of its last group, past the pages' groups.
+pub const SETTINGS_SHOWN: &str = "5-0";
 
 impl Drop for Harness {
     fn drop(&mut self) {

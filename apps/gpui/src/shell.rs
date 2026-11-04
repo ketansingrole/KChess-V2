@@ -9,8 +9,8 @@ use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::sidebar::{SidebarItem, SidebarMenu, SidebarMenuItem};
 use gpui_kit::component::{
-    ActiveTheme as _, Collapsible, Disableable as _, Icon, Sizable as _, TitleBar, WindowExt as _,
-    h_flex, v_flex,
+    ActiveTheme as _, Collapsible, Disableable as _, Icon, Selectable as _, Sizable as _, TitleBar,
+    WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -28,7 +28,7 @@ use crate::pages::local::LocalPage;
 use crate::pages::openings::OpeningsPage;
 use crate::pages::practice::PracticePage;
 use crate::pages::puzzles::PuzzlesPage;
-use crate::pages::settings::{Section, sections};
+use crate::pages::settings::{SECTION_GROUPS, Section, sections};
 use crate::pages::studies::StudiesPage;
 use crate::pages::watch::WatchPage;
 use crate::pages::{Page, Pages};
@@ -150,7 +150,7 @@ mod nav_tests {
 }
 
 /// A row of the sidebar's navigation: 32px tall, an 18px icon 8px from its label.
-fn nav_item(label: &'static str, glyph: Icon) -> SidebarMenuItem {
+fn nav_item(label: impl Into<SharedString>, glyph: Icon) -> SidebarMenuItem {
     SidebarMenuItem::new(label)
         .icon(glyph.size(px(18.)))
         .min_h(px(32.))
@@ -159,7 +159,7 @@ fn nav_item(label: &'static str, glyph: Icon) -> SidebarMenuItem {
 }
 
 /// What the sidebar lists: menus, each under its group's heading (on the rail, a short rule
-/// instead), with a heading between them while Settings is open.
+/// instead), and while Settings is open its categories in headed groups.
 #[derive(Clone)]
 enum NavBlock {
     /// A group: its heading, its rows, and which of its rows carries the Lichess game's mark.
@@ -168,14 +168,13 @@ enum NavBlock {
         Box<SidebarMenu>,
         Option<(usize, GameMark)>,
     ),
-    Heading(&'static str, bool),
+    Group(&'static str, Box<SidebarMenu>),
 }
 
 impl Collapsible for NavBlock {
     fn is_collapsed(&self) -> bool {
         match self {
-            NavBlock::Menu(_, menu, _) => menu.is_collapsed(),
-            NavBlock::Heading(_, collapsed) => *collapsed,
+            NavBlock::Menu(_, menu, _) | NavBlock::Group(_, menu) => menu.is_collapsed(),
         }
     }
 
@@ -184,7 +183,9 @@ impl Collapsible for NavBlock {
             NavBlock::Menu(heading, menu, mark) => {
                 NavBlock::Menu(heading, Box::new(menu.collapsed(collapsed)), mark)
             }
-            NavBlock::Heading(label, _) => NavBlock::Heading(label, collapsed),
+            NavBlock::Group(heading, menu) => {
+                NavBlock::Group(heading, Box::new(menu.collapsed(collapsed)))
+            }
         }
     }
 }
@@ -240,18 +241,31 @@ impl SidebarItem for NavBlock {
                     })
                     .into_any_element()
             }
-            // A collapsed sidebar shows icons only.
-            NavBlock::Heading(_, true) => div().into_any_element(),
-            // On the rows' icon column, nearer its own rows than the row above.
-            NavBlock::Heading(label, false) => div()
-                .px(px(6.))
-                .mt_1()
-                .text_size(px(12.))
-                .line_height(px(20.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(cx.global::<Palette>().highlighted)
-                .child(label)
-                .into_any_element(),
+            // The heading on the rows' icon column, dimmed under the rows' labels; on the rail,
+            // where there is no room for it, a short rule.
+            NavBlock::Group(heading, menu) => {
+                let palette = cx.global::<Palette>();
+                let (dimmed, border) = (palette.dimmed, palette.border);
+                // Named for its heading, which a screen reader announces entering it.
+                v_flex()
+                    .id(SharedString::from(format!("group-{heading}")))
+                    .test_support()
+                    .role(Role::Group)
+                    .aria_label(heading)
+                    .child(if menu.is_collapsed() {
+                        div().h(px(1.)).w(px(16.)).mx_auto().my(px(4.)).bg(border)
+                    } else {
+                        div()
+                            .px(px(6.))
+                            .text_size(px(12.))
+                            .line_height(px(24.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(dimmed)
+                            .child(heading)
+                    })
+                    .child(menu.render(id, window, cx))
+                    .into_any_element()
+            }
         }
     }
 }
@@ -763,6 +777,9 @@ pub struct Workspace {
     /// while its width eases.
     sidebar_toggled: Option<std::time::Instant>,
     sidebar: Entity<Part<Workspace>>,
+    /// The sidebar's list, scrolled in a short window: back to its top when it changes between
+    /// the pages and Settings' categories, and to the category Settings shows.
+    sidebar_scroll: ScrollHandle,
     topbar: Entity<Part<Workspace>>,
     /// The sidebar toggle over the top bar (`render_sidebar_toggle`).
     toggle: Entity<Part<Workspace>>,
@@ -861,6 +878,7 @@ impl Workspace {
                 SidebarInputs::of,
                 cx,
             ),
+            sidebar_scroll: ScrollHandle::new(),
             topbar: Part::keyed(
                 |this, window, cx| this.render_topbar(window, cx).into_any_element(),
                 TopbarInputs::of,
@@ -920,6 +938,14 @@ impl Workspace {
         }
         if page == Page::Settings && current != Page::Settings {
             self.back = current;
+        }
+        if (page == Page::Settings) != (current == Page::Settings) {
+            self.sidebar_scroll.set_offset(point(px(0.), px(0.)));
+        }
+        if page == Page::Settings
+            && let Some(settings) = self.pages.settings()
+        {
+            self.scroll_to_section(settings.read(cx).section());
         }
         // The microphone test runs only while its section is shown.
         if current == Page::Settings
@@ -1153,7 +1179,27 @@ impl Workspace {
         if let Some(settings) = self.pages.settings() {
             settings.update(cx, |page, cx| page.show(section, cx));
         }
+        self.scroll_to_section(section);
         cx.notify();
+    }
+
+    /// Scroll the sidebar to the group of the category Settings shows, which the palette may have
+    /// chosen, or Settings remembered, out of a short window's sight: its block, after Back's.
+    fn scroll_to_section(&self, section: Section) {
+        let row = sections()
+            .iter()
+            .position(|(shown, _, _)| *shown == section);
+        let group = row.map_or(0, |row| {
+            SECTION_GROUPS
+                .iter()
+                .scan(0, |end, (_, size)| {
+                    *end += size;
+                    Some(*end)
+                })
+                .take_while(|end| *end <= row)
+                .count()
+        });
+        self.sidebar_scroll.scroll_to_item(1 + group);
     }
 
     /// The pages, or while Settings is open its categories with a way back (`navItems`).
@@ -1202,31 +1248,41 @@ impl Workspace {
             .settings()
             .map_or(Section::Appearance, |page| page.read(cx).section());
         let back = self.back;
-        vec![
-            NavBlock::Menu(
-                None,
-                Box::new(
-                    SidebarMenu::new().child(nav_item("Back", icon("arrow-left")).on_click(
-                        cx.listener(move |this, _, window, cx| this.choose(back, window, cx)),
-                    )),
+        // The rail's tooltip, and a screen reader, name the page it returns to.
+        let to = nav()
+            .into_iter()
+            .find_map(|(page, label, _)| (page == back).then(|| format!("Back to {label}")))
+            .unwrap_or_else(|| "Back".into());
+        let label = if open { "Back".into() } else { to.clone() };
+        let back = std::iter::once(NavBlock::Menu(
+            None,
+            Box::new(
+                SidebarMenu::new().child(
+                    nav_item(label, icon("arrow-left"))
+                        .accessibility_label(to)
+                        .on_click(
+                            cx.listener(move |this, _, window, cx| this.choose(back, window, cx)),
+                        ),
                 ),
-                None,
             ),
-            NavBlock::Heading("Settings", false),
-            NavBlock::Menu(
-                None,
+            None,
+        ));
+        let mut rows = sections().into_iter();
+        back.chain(SECTION_GROUPS.into_iter().map(|(heading, size)| {
+            NavBlock::Group(
+                heading,
                 Box::new(
                     SidebarMenu::new()
                         .gap_0()
-                        .children(sections().into_iter().map(|(section, label, glyph)| {
+                        .children(rows.by_ref().take(size).map(|(section, label, glyph)| {
                             nav_item(label, glyph).active(shown == section).on_click(
                                 cx.listener(move |this, _, _, cx| this.choose_section(section, cx)),
                             )
                         })),
                 ),
-                None,
-            ),
-        ]
+            )
+        }))
+        .collect()
     }
 
     /// Whether the sidebar is open as shown: in a narrow window, only while opened there.
@@ -1266,6 +1322,7 @@ impl Workspace {
     /// its width easing between the two in 200ms.
     fn render_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let open = self.shown();
+        let in_settings = self.pages.current() == Page::Settings;
         let width = sidebar_width(open);
         let border = cx.theme().sidebar_border;
         // macOS keeps the rail's edge out of the header row, where it would cut through the
@@ -1308,6 +1365,7 @@ impl Workspace {
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
+                            .track_scroll(&self.sidebar_scroll)
                             .px_4()
                             .py_2()
                             .gap_1()
@@ -1329,9 +1387,20 @@ impl Workspace {
                                     open,
                                     cx,
                                 )
+                                // Open while Settings is, and a second press closes it.
+                                .when(in_settings, |button| {
+                                    button.custom(open_sidebar(cx)).selected(true).toggled(true)
+                                })
                                 .accessibility_label("Settings")
                                 .on_click(cx.listener(
-                                    |this, _, window, cx| this.choose(Page::Settings, window, cx),
+                                    move |this, _, window, cx| {
+                                        let page = if in_settings {
+                                            this.back
+                                        } else {
+                                            Page::Settings
+                                        };
+                                        this.choose(page, window, cx)
+                                    },
                                 )),
                             )
                             .child(account_button(open, cx)),
@@ -1578,6 +1647,17 @@ fn ghost_sidebar(cx: &App) -> ButtonCustomVariant {
         .foreground(palette.text_muted)
         .hover(palette.elevated)
         .active(palette.elevated)
+}
+
+/// A footer button whose page is open: on the current row's background, in the rows' own text
+/// color, so the category open in it stays the one accented row.
+fn open_sidebar(cx: &App) -> ButtonCustomVariant {
+    let theme = cx.theme();
+    ButtonCustomVariant::new(cx)
+        .color(theme.sidebar_accent)
+        .foreground(theme.sidebar_foreground)
+        .hover(theme.sidebar_accent)
+        .active(theme.sidebar_accent)
 }
 
 /// A footer button drawn as a navigation row: 32px tall, an 18px icon on the rows' column with
