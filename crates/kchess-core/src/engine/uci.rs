@@ -167,6 +167,30 @@ impl EngineHub {
     }
 }
 
+/// How long `spawn_waiting_out_busy` keeps retrying a busy executable, in all.
+const BUSY_FOR: Duration = Duration::from_secs(1);
+
+/// Spawn `command`. On Linux, a process forked elsewhere in this process while the executable
+/// was still open for writing (a fresh copy or download) holds that descriptor until it execs,
+/// and `execve` fails with `ETXTBSY` meanwhile. The window is brief, so a busy spawn is retried
+/// for up to `BUSY_FOR`; the caller is synchronous, so the waits block (only ever on this error).
+fn spawn_waiting_out_busy(command: &mut Command) -> std::io::Result<Child> {
+    let started = std::time::Instant::now();
+    let mut delay = Duration::from_millis(5);
+    loop {
+        match command.spawn() {
+            Err(cause)
+                if cause.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && started.elapsed() < BUSY_FOR =>
+            {
+                std::thread::sleep(delay);
+                delay = (delay * 2).min(Duration::from_millis(200));
+            }
+            spawned => return spawned,
+        }
+    }
+}
+
 /// A running UCI process. Dropping it terminates the process.
 pub struct UciController {
     inner: Arc<Inner>,
@@ -185,8 +209,7 @@ impl UciController {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        let mut child = command
-            .spawn()
+        let mut child = spawn_waiting_out_busy(&mut command)
             .map_err(|error| CoreError::wrap("Could not start the engine", error))?;
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
@@ -876,4 +899,41 @@ fn uci_command_name(command: &str) -> String {
         String::new()
     };
     truncate_for_log(&format!("{head}{moves}"), 40)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// CI regression (Linux, `core_wiring::a_lease_never_waits_on_an_unanswered_battery_request`):
+    /// "Could not start the engine: Text file busy" when a test's fresh engine copy was still
+    /// held open for writing by a child another thread had just forked. The spawn waits it out.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_busy_engine_executable_is_waited_out() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("engine");
+        let mut writer = std::fs::File::create(&path).unwrap();
+        writer.write_all(b"#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let busy = Command::new(&path).spawn().unwrap_err();
+        assert_eq!(busy.kind(), std::io::ErrorKind::ExecutableFileBusy);
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            drop(writer);
+        });
+        let mut child = spawn_waiting_out_busy(&mut Command::new(&path)).unwrap();
+        assert!(child.wait().await.unwrap().success());
+        release.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_missing_engine_is_an_error_at_once() {
+        let started = std::time::Instant::now();
+        let missing = spawn_waiting_out_busy(&mut Command::new("/nonexistent/kchess-engine"));
+        assert_eq!(missing.unwrap_err().kind(), std::io::ErrorKind::NotFound);
+        assert!(started.elapsed() < BUSY_FOR);
+    }
 }
