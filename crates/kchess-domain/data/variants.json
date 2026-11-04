@@ -38,5 +38,10 @@
     "key": "racingKings",
     "label": "Racing Kings",
     "hint": "No checks allowed; the first king to reach the eighth rank wins."
+  },
+  {
+    "key": "crazyhouse",
+    "label": "Crazyhouse",
+    "hint": "Captured pieces change sides and can be dropped back onto the board."
   }
 ]

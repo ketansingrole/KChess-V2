@@ -4,6 +4,9 @@
 //! painted in one pass; the page gives the board its position and hears its moves.
 
 pub mod looks;
+mod pocket;
+
+pub use pocket::{PieceGhost, pocket};
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -15,7 +18,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::types::{CoordinateMode, PromotionMode};
 use shakmaty::variant::VariantPosition;
-use shakmaty::{Board, Color, File, Piece, Position as _, Rank, Role, Square};
+use shakmaty::{Board, ByColor, ByRole, Color, File, Piece, Position as _, Rank, Role, Square};
 
 use crate::settings::SettingsHandle;
 use crate::theme::radii;
@@ -67,6 +70,10 @@ pub struct BoardState {
     pub badge: Option<Badge>,
     /// The side that may queue a move for its next turn while the other side is to move.
     pub premove: Option<Color>,
+    /// Crazyhouse: the pieces each side holds in hand.
+    pub pockets: Option<ByColor<ByRole<u8>>>,
+    /// Crazyhouse: where each piece in the mover's pocket may be dropped.
+    pub drops: HashMap<Role, Vec<Square>>,
 }
 
 /// A move's label as a badge over its square's top-right corner.
@@ -203,6 +210,13 @@ impl BoardState {
             .is_check()
             .then(|| position.board().king_of(position.turn()))
             .flatten();
+        let drops = if can_move {
+            kchess_domain::position::drop_dests(position)
+                .into_iter()
+                .collect()
+        } else {
+            HashMap::new()
+        };
         BoardState {
             fen: kchess_domain::rules::make_fen(position),
             orientation,
@@ -220,6 +234,8 @@ impl BoardState {
             edit: None,
             badge: None,
             premove: None,
+            pockets: position.pockets().cloned(),
+            drops,
         }
     }
 }
@@ -237,11 +253,7 @@ impl BoardState {
                 fen.split_whitespace().take(2).collect::<Vec<_>>().join(" ")
             )
         };
-        let last = last.and_then(|uci| {
-            uci.get(0..2)
-                .and_then(|from| from.parse().ok())
-                .zip(uci.get(2..4).and_then(|to| to.parse().ok()))
-        });
+        let last = last.and_then(last_squares);
         match kchess_domain::rules::setup_start(variant, &full)
             .or_else(|| kchess_domain::rules::setup_start("standard", &full))
         {
@@ -261,9 +273,21 @@ impl BoardState {
     }
 }
 
+/// The squares a UCI move marks as the last move; a drop (`N@f3`) marks the one it landed on.
+pub fn last_squares(uci: &str) -> Option<(Square, Square)> {
+    if uci.get(1..2) == Some("@") {
+        let to = uci.get(2..4)?.parse().ok()?;
+        return Some((to, to));
+    }
+    let from = uci.get(0..2)?.parse().ok()?;
+    let to = uci.get(2..4)?.parse().ok()?;
+    Some((from, to))
+}
+
 /// What the board tells its page.
 pub enum BoardEvent {
-    /// A move the player made, in UCI (`e2e4`, `e7e8q`, castling as king to rook or two squares).
+    /// A move the player made, in UCI (`e2e4`, `e7e8q`, castling as king to rook or two squares,
+    /// a Crazyhouse drop as `N@f3`).
     Move(String),
     /// A square was clicked (`select`): the coordinate drills' answers.
     Select(Square),
@@ -418,6 +442,8 @@ pub struct ChessBoard {
     animation: Option<Animation>,
     _animating: Option<Task<()>>,
     selected: Option<Square>,
+    /// A Crazyhouse pocket piece picked to be dropped.
+    selected_drop: Option<Role>,
     drag: Option<Drag>,
     /// A pawn move waiting for its promotion piece.
     promotion: Option<(Square, Square)>,
@@ -437,6 +463,7 @@ impl ChessBoard {
             _animating: None,
             state,
             selected: None,
+            selected_drop: None,
             drag: None,
             promotion: None,
             bounds: Rc::new(Cell::new(Bounds::default())),
@@ -462,6 +489,12 @@ impl ChessBoard {
             .is_some_and(|square| !state.dests.contains_key(&square))
         {
             self.selected = None;
+        }
+        if self
+            .selected_drop
+            .is_some_and(|role| !state.drops.contains_key(&role))
+        {
+            self.selected_drop = None;
         }
         self.state = state;
         self.play_queued(cx);
@@ -598,6 +631,49 @@ impl ChessBoard {
             .is_some_and(|targets| targets.contains(&to))
     }
 
+    /// A pocket piece of this role can be dropped on the square.
+    fn drops_to(&self, role: Role, square: Square) -> bool {
+        self.state
+            .drops
+            .get(&role)
+            .is_some_and(|squares| squares.contains(&square))
+    }
+
+    /// Pick a pocket piece to drop (or let go of it, picked again); a board piece's selection
+    /// goes.
+    pub fn select_drop(&mut self, role: Role, cx: &mut Context<Self>) {
+        if !self.state.drops.contains_key(&role) || self.promotion.is_some() {
+            return;
+        }
+        self.selected_drop = (self.selected_drop != Some(role)).then_some(role);
+        self.selected = None;
+        cx.notify();
+    }
+
+    /// Drop a pocket piece: it lands at once, and the page's next position confirms or undoes it.
+    fn drop_piece(&mut self, role: Role, to: Square, cx: &mut Context<Self>) {
+        if let Some(color) = self.state.movable {
+            self.pieces.set_piece_at(to, Piece { color, role });
+        }
+        self.selected_drop = None;
+        cx.emit(BoardEvent::Move(format!(
+            "{}@{to}",
+            role.char().to_ascii_uppercase()
+        )));
+        cx.notify();
+    }
+
+    /// A pocket piece dragged onto the board.
+    fn drop_pocket(&mut self, role: Role, position: Point<Pixels>, cx: &mut Context<Self>) {
+        match self.square_at(position) {
+            Some(square) if self.drops_to(role, square) => self.drop_piece(role, square, cx),
+            _ => {
+                self.selected_drop = None;
+                cx.notify();
+            }
+        }
+    }
+
     fn press(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
         if self.promotion.is_some() || self.state.preview {
             return;
@@ -614,6 +690,14 @@ impl ChessBoard {
             return self.edit_press(tool, square, event.position, cx);
         }
         cx.emit(BoardEvent::Select(square));
+        if let Some(role) = self.selected_drop.take() {
+            if self.drops_to(role, square) {
+                self.selected = None;
+                self.drop_piece(role, square, cx);
+                return;
+            }
+            cx.notify();
+        }
         // A press while a premove waits takes it back (Chessground's `cancelPremove`).
         if self.queued.take().is_some() {
             self.selected = None;
@@ -1052,8 +1136,17 @@ fn far(start: Point<Pixels>, now: Point<Pixels>) -> bool {
     (dx * dx + dy * dy).sqrt() > DRAG_THRESHOLD.as_f32()
 }
 
+/// The pieces of a FEN's placement; a Crazyhouse pocket (`[Pn]`, or a ninth rank) and promoted
+/// marks (`~`) are not pieces on the board.
 fn board_of(fen: &str) -> Board {
-    let placement = fen.split(' ').next().unwrap_or_default();
+    let field = fen.split(' ').next().unwrap_or_default();
+    let field = field.split('[').next().unwrap_or_default();
+    let placement = field
+        .split('/')
+        .take(8)
+        .collect::<Vec<_>>()
+        .join("/")
+        .replace('~', "");
     Board::from_ascii_board_fen(placement.as_bytes()).unwrap_or_else(|_| Board::empty())
 }
 
@@ -1072,6 +1165,8 @@ struct Frame {
     /// The queued premove's squares, and the targets of a piece picked for one.
     queued: Option<(Square, Square)>,
     premove_dests: Vec<Square>,
+    /// Where the picked pocket piece may be dropped.
+    drop_dests: Vec<Square>,
     /// Squares whose pieces are sliding in, drawn on top as they move.
     sliding: Vec<Square>,
 }
@@ -1136,6 +1231,24 @@ fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &m
                     );
                 }
             }
+        }
+    }
+    if frame.show_dests {
+        for &to in &frame.drop_dests {
+            if frame.hovered == Some(to) {
+                fill(window, to, DEST_HOVER);
+                continue;
+            }
+            let cell = at(to);
+            let diameter = side * 0.311;
+            let dot = Bounds::new(
+                point(
+                    cell.center().x - diameter / 2.,
+                    cell.center().y - diameter / 2.,
+                ),
+                size(diameter, diameter),
+            );
+            window.paint_quad(gpui_kit::fill(dot, rgba(DEST_DOT)).corner_radii(diameter / 2.));
         }
     }
     if let Some((from, to)) = frame.queued {
@@ -1463,6 +1576,10 @@ impl Render for ChessBoard {
             set: set.clone(),
             queued: self.queued,
             premove_dests,
+            drop_dests: self
+                .selected_drop
+                .and_then(|role| self.state.drops.get(&role).cloned())
+                .unwrap_or_default(),
             sliding,
         };
         let bounds = Rc::clone(&self.bounds);
@@ -1713,6 +1830,9 @@ impl Render for ChessBoard {
             .on_drop(cx.listener(|this, spare: &SparePiece, window, cx| {
                 this.drop_spare(spare.0, window.mouse_position(), cx)
             }))
+            .on_drop(cx.listener(|this, held: &pocket::PocketPiece, window, cx| {
+                this.drop_pocket(held.0, window.mouse_position(), cx)
+            }))
             .cursor(match self.state.edit {
                 Some(EditTool::Place(_) | EditTool::Trash) => CursorStyle::Crosshair,
                 Some(EditTool::Pointer) => CursorStyle::PointingHand,
@@ -1820,5 +1940,29 @@ mod description_tests {
             Some("e2e4"),
         );
         assert_eq!(describe(&after), "Last move e2–e4 · Black to move");
+    }
+}
+
+#[cfg(test)]
+mod fen_tests {
+    use super::board_of;
+    use shakmaty::{Board, Square};
+
+    /// Crazyhouse FENs once showed an empty board: the pocket made the placement unreadable.
+    #[test]
+    fn a_crazyhouse_placement_keeps_its_pieces() {
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+        for fen in [
+            format!("{start}[PPpb] w KQkq - 0 1"),
+            format!("{start}/PPpb w KQkq - 0 1"),
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQ~KBNR[] w - - 0 1".to_string(),
+        ] {
+            assert_eq!(board_of(&fen), Board::default(), "{fen}");
+        }
+        assert!(
+            board_of("4k3/8/8/8/8/8/8/3Q~K3[] w - - 0 1")
+                .piece_at(Square::D1)
+                .is_some()
+        );
     }
 }

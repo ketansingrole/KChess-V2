@@ -114,6 +114,25 @@ pub fn info(pos: &VariantPosition) -> Info {
     }
 }
 
+/// Where each piece in the side to move's Crazyhouse pocket may be dropped, in role order
+/// (pawn to king) and squares ascending; empty in other variants and once the game has ended.
+pub fn drop_dests(pos: &VariantPosition) -> Vec<(Role, Vec<Square>)> {
+    let mut out: Vec<(Role, Vec<Square>)> = Vec::new();
+    for m in &moves(pos) {
+        if let shakmaty::Move::Put { role, to } = *m {
+            match out.iter_mut().find(|(r, _)| *r == role) {
+                Some((_, squares)) => squares.push(to),
+                None => out.push((role, vec![to])),
+            }
+        }
+    }
+    out.sort_by_key(|(role, _)| *role);
+    for (_, squares) in &mut out {
+        squares.sort();
+    }
+    out
+}
+
 /// How destinations are listed.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DestMode {
@@ -574,5 +593,33 @@ mod tests {
         assert_eq!(line["moves"].as_array().unwrap().len(), 3);
         assert_eq!(line["moves"][0]["clock"], json!(60.0));
         assert_eq!(line["start"], json!(START));
+    }
+
+    #[test]
+    fn crazyhouse_drops_list_each_pocket_piece_and_its_squares() {
+        let pos = crate::rules::setup_start(
+            "crazyhouse",
+            "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3",
+        )
+        .unwrap();
+        let drops = super::drop_dests(&pos);
+        assert_eq!(drops.len(), 1);
+        let (role, squares) = &drops[0];
+        assert_eq!(*role, Role::Pawn);
+        // Pawns never land on the first or last rank, nor on a piece.
+        assert!(squares.contains(&Square::E4));
+        assert!(!squares.contains(&Square::E1) && !squares.contains(&Square::E8));
+        assert!(!squares.contains(&Square::A2));
+        // Black's pawn waits for Black's turn; standard chess has no pockets.
+        assert!(
+            super::drop_dests(
+                &crate::rules::setup_start(
+                    "standard",
+                    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+                )
+                .unwrap()
+            )
+            .is_empty()
+        );
     }
 }

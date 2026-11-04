@@ -32,10 +32,7 @@ pub fn sans(setup: &Value, moves: &[String]) -> Vec<String> {
 
 /// The squares of the move before `ply` (`lastMoveKeys`).
 pub fn last_move(moves: &[String], ply: usize) -> Option<(Square, Square)> {
-    let uci = moves.get(ply.checked_sub(1)?)?;
-    let from = uci.get(0..2)?.parse::<Square>().ok()?;
-    let to = uci.get(2..4)?.parse::<Square>().ok()?;
-    Some((from, to))
+    crate::board::last_squares(moves.get(ply.checked_sub(1)?)?)
 }
 
 /// Whether the game began with Black to move (the move list then starts with "1. …").

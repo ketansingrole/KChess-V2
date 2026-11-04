@@ -388,67 +388,76 @@ impl OnlinePage {
             .unwrap_or("Opponent")
             .to_string();
         let opponent_id = model["opponentId"].as_str().unwrap_or_default().to_string();
-        let line = |side: Color| {
-            let mine = side == color;
-            let rating = model[if mine {
-                "onlineRating"
-            } else {
-                "onlineOpponentRating"
-            }]
-            .as_f64();
-            let name = match (mine, rating) {
-                (true, Some(rating)) => format!("You ({rating})"),
-                (true, None) => "You".into(),
-                (false, Some(rating)) => format!("{opponent} ({rating})"),
-                (false, None) => opponent.clone(),
+        let mut pockets = [
+            crate::board::pocket(&self.board, Color::White, cx),
+            crate::board::pocket(&self.board, Color::Black, cx),
+        ];
+        let mut line =
+            |side: Color| {
+                let mine = side == color;
+                let rating = model[if mine {
+                    "onlineRating"
+                } else {
+                    "onlineOpponentRating"
+                }]
+                .as_f64();
+                let name = match (mine, rating) {
+                    (true, Some(rating)) => format!("You ({rating})"),
+                    (true, None) => "You".into(),
+                    (false, Some(rating)) => format!("{opponent} ({rating})"),
+                    (false, None) => opponent.clone(),
+                };
+                let shown: AnyElement = if !mine && !opponent_id.is_empty() {
+                    let link = opponent.clone();
+                    div()
+                        .id("online-opponent-name")
+                        .role(Role::Link)
+                        .keyboard_focus(palette.primary)
+                        .aria_label(link.clone())
+                        .cursor_pointer()
+                        .hover(|name| name.underline())
+                        .on_click(move |_, window, cx| crate::shell::open_player(&link, window, cx))
+                        .child(name)
+                        .into_any_element()
+                } else {
+                    div().child(name).into_any_element()
+                };
+                let running = playing && live_turn == side;
+                widgets::player_line(
+                    h_flex()
+                        .gap(px(8.))
+                        .child(widgets::avatar(
+                            icon("user"),
+                            if side == Color::White {
+                                Side::White
+                            } else {
+                                Side::Black
+                            },
+                            running,
+                            &palette,
+                        ))
+                        .child(shown)
+                        .children(pockets[usize::from(side == Color::Black)].take().or_else(
+                            || {
+                                widgets::material(
+                                    &fen,
+                                    side == Color::White,
+                                    &settings.frontend.piece_set,
+                                    &palette,
+                                )
+                            },
+                        )),
+                    connection(online, mine, &palette),
+                    has_clock.then(|| {
+                        widgets::clock(
+                            online.clock_text(color_name(side)).into(),
+                            running,
+                            &palette,
+                        )
+                        .into_any_element()
+                    }),
+                )
             };
-            let shown: AnyElement = if !mine && !opponent_id.is_empty() {
-                let link = opponent.clone();
-                div()
-                    .id("online-opponent-name")
-                    .role(Role::Link)
-                    .keyboard_focus(palette.primary)
-                    .aria_label(link.clone())
-                    .cursor_pointer()
-                    .hover(|name| name.underline())
-                    .on_click(move |_, window, cx| crate::shell::open_player(&link, window, cx))
-                    .child(name)
-                    .into_any_element()
-            } else {
-                div().child(name).into_any_element()
-            };
-            let running = playing && live_turn == side;
-            widgets::player_line(
-                h_flex()
-                    .gap(px(8.))
-                    .child(widgets::avatar(
-                        icon("user"),
-                        if side == Color::White {
-                            Side::White
-                        } else {
-                            Side::Black
-                        },
-                        running,
-                        &palette,
-                    ))
-                    .child(shown)
-                    .children(widgets::material(
-                        &fen,
-                        side == Color::White,
-                        &settings.frontend.piece_set,
-                        &palette,
-                    )),
-                connection(online, mine, &palette),
-                has_clock.then(|| {
-                    widgets::clock(
-                        online.clock_text(color_name(side)).into(),
-                        running,
-                        &palette,
-                    )
-                    .into_any_element()
-                }),
-            )
-        };
         let mut board_column = v_flex().w(board_size).flex_none().gap(widgets::STACK_GAP);
         if online.phase == Phase::Disconnected {
             board_column = board_column.child(self.disconnected(online, &palette));

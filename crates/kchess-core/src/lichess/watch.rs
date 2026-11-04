@@ -45,17 +45,7 @@ pub const TV_CHANNELS: [(&str, &str); 16] = [
     ("computer", "Computer"),
 ];
 
-/// `VARIANTS` of the domain: the variants KChess can play.
-const VARIANTS: [&str; 8] = [
-    "standard",
-    "chess960",
-    "kingOfTheHill",
-    "threeCheck",
-    "antichess",
-    "atomic",
-    "horde",
-    "racingKings",
-];
+pub(crate) use kchess_domain::misc::constants::VARIANTS;
 /// How many earlier games a TV channel keeps for the session.
 const PAST_GAMES: usize = 6;
 /// The longest broadcast PGN read, in UTF-16 units (`pgn.slice(0, 200_000)`).

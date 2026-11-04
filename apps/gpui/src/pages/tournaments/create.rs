@@ -230,17 +230,15 @@ impl CreateArena {
 
     /// Lichess lets third-party apps play only Rapid and Classical arena games.
     fn playable_here(&self, cx: &App) -> bool {
-        let variant = self.variant.read(cx).selected_value();
-        variant.is_none_or(|variant| variant.as_ref() != "crazyhouse")
-            && rules(
-                "canBoardSeek",
-                &[
-                    json!(Self::number(&self.clock, cx)),
-                    json!(Self::number(&self.increment, cx)),
-                ],
-            )
-            .ok()
-                == Some(json!(true))
+        rules(
+            "canBoardSeek",
+            &[
+                json!(Self::number(&self.clock, cx)),
+                json!(Self::number(&self.increment, cx)),
+            ],
+        )
+        .ok()
+            == Some(json!(true))
     }
 
     fn arena(&self, cx: &App) -> Value {

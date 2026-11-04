@@ -248,8 +248,19 @@ mod tests {
         )
         .unwrap()
         .info;
-        assert!(!house.playable);
-        assert!(house.problem.unwrap().contains("Crazyhouse"));
+        assert!(
+            house.playable,
+            "Crazyhouse is played on the board's pockets"
+        );
+        let unknown = read_challenge_event(
+            "Alice",
+            &challenge(json!({ "variant": { "key": "bughouse", "name": "Bughouse" } })),
+            0,
+        )
+        .unwrap()
+        .info;
+        assert!(!unknown.playable);
+        assert!(unknown.problem.unwrap().contains("Bughouse"));
         let mut bullet = challenge(json!({}));
         bullet["compat"] = json!({ "board": false });
         assert!(

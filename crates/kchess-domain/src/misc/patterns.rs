@@ -152,14 +152,18 @@ pub fn fen(s: &str) -> bool {
             && parts[5].bytes().all(|b| b.is_ascii_digit())
 }
 
-/// `^[a-h][1-8][a-h][1-8][qrbn]?$`: a move in UCI notation.
+/// `^[a-h][1-8][a-h][1-8][qrbn]?$`: a move in UCI notation, or a Crazyhouse drop
+/// (`^[PNBRQ]@[a-h][1-8]$`).
 pub fn uci_move(s: &str) -> bool {
     let b = s.as_bytes();
+    let square =
+        |file: u8, rank: u8| (b'a'..=b'h').contains(&file) && (b'1'..=b'8').contains(&rank);
+    if b.len() == 4 && b[1] == b'@' {
+        return matches!(b[0], b'P' | b'N' | b'B' | b'R' | b'Q') && square(b[2], b[3]);
+    }
     if !matches!(b.len(), 4 | 5) {
         return false;
     }
-    let square =
-        |file: u8, rank: u8| (b'a'..=b'h').contains(&file) && (b'1'..=b'8').contains(&rank);
     square(b[0], b[1])
         && square(b[2], b[3])
         && (b.len() == 4 || matches!(b[4], b'q' | b'r' | b'b' | b'n'))
@@ -257,6 +261,8 @@ mod tests {
     fn moves_and_names() {
         assert!(uci_move("e2e4") && uci_move("a7a8q"));
         assert!(!uci_move("e2e9") && !uci_move("e7e8k") && !uci_move("e2e4q1"));
+        assert!(uci_move("P@e3") && uci_move("Q@h7"));
+        assert!(!uci_move("K@e3") && !uci_move("p@e3") && !uci_move("P@e9"));
         assert!(arena_name("Éclair (2026) & co.") && arena_name(""));
         assert!(!arena_name("bad;name") && !arena_name("emoji 😀"));
         assert!(since("2026") && since("2026-03") && !since("26") && !since("2026-3"));

@@ -258,3 +258,33 @@ fn a_refreshed_login_brings_back_the_event_stream(cx: &mut gpui_kit::TestAppCont
         refreshed.lock().streams == 1
     });
 }
+
+/// Crazyhouse games were refused as needing a piece-drop board. Now a captured pawn waits in
+/// the pocket beside the player, and picking it and a square drops it, sent as `P@e3`.
+#[gpui_kit::test]
+fn a_crazyhouse_pawn_is_dropped_from_the_pocket(cx: &mut gpui_kit::TestAppContext) {
+    let (app, lichess) = Harness::signed_in(cx, true);
+    {
+        let mut session = lichess.lock();
+        session.variant = Some("crazyhouse");
+        // White took on d5 and Black took back: each holds a pawn, White to move.
+        session.moves = ["e2e4", "d7d5", "e4d5", "d8d5"].map(String::from).to_vec();
+    }
+    let mut app = app.restart();
+    app.online();
+    app.open("Play on Lichess");
+    app.find("online-resign");
+    app.find("pocket-White-Pawn");
+    app.find("pocket-Black-Pawn");
+    lichess.lock().writes.clear();
+
+    app.click("pocket-White-Pawn");
+    app.click_square("e3", true);
+    app.wait_for("the drop to reach Lichess", |_, _| {
+        !lichess.lock().writes.is_empty()
+    });
+    assert_eq!(
+        writes(&lichess),
+        ["POST /api/board/game/E2eGame1/move/P%40e3"]
+    );
+}

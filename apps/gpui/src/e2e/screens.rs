@@ -170,6 +170,59 @@ fn settings_sidebar() {
     }
 }
 
+/// A Crazyhouse game over the board, with pieces in both pockets and one picked to drop, in
+/// both appearances: `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::crazyhouse
+/// -- --ignored` writes `<dir>/crazyhouse/<appearance>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn crazyhouse() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("crazyhouse");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), 1320., 880.);
+        cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Local, window, cx);
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            let local = crate::shell::view_of::<crate::pages::local::LocalPage>(Page::Local, cx)
+                .expect("the page");
+            local.update(cx, |local, cx| {
+                let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+                let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
+                local.replace_game(setup, serde_json::Value::Null, window, cx);
+                for uci in [
+                    "e2e4", "d7d5", "e4d5", "d8d5", "b1c3", "d5a5", "f1b5", "c7c6", "b5c6",
+                ] {
+                    local.play(uci, window, cx);
+                }
+                // Black takes back with the knight: White holds two pawns, Black a pawn and a
+                // bishop.
+                local.play("b8c6", window, cx);
+            });
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            window.click("pocket-White-Pawn", cx)
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{name}.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::core::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
 /// Home as a new person, someone with games played here, and a connected Lichess account with
 /// years of history, in both appearances, wide and narrow:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::home -- --ignored` writes

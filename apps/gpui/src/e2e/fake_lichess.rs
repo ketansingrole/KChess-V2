@@ -48,6 +48,8 @@ pub struct Session {
     /// How many times the app opened the game's board stream.
     pub board_streams: usize,
     pub moves: Vec<String>,
+    /// The game's Lichess variant key; standard when unset.
+    pub variant: Option<&'static str>,
     /// Lichess's `status`, once the game has ended; `started` until then.
     pub finished: Option<&'static str>,
     pub winner: Option<&'static str>,
@@ -351,20 +353,21 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             let session = session.lock();
             let playing: Vec<Value> = session
                 .game
-                .then(|| summary(session.elsewhere))
+                .then(|| summary(session.elsewhere, session.variant))
                 .filter(|_| session.finished.is_none())
                 .into_iter()
                 .collect();
             reply(&mut out, &json!({ "nowPlaying": playing }))
         }
         ("GET", "/api/stream/event") => {
-            let (start, elsewhere) = {
+            let (start, elsewhere, variant) = {
                 let mut session = session.lock();
                 session.streams += 1;
                 session.listening += 1;
-                (session.game, session.elsewhere)
+                (session.game, session.elsewhere, session.variant)
             };
-            let first = start.then(|| json!({ "type": "gameStart", "game": summary(elsewhere) }));
+            let first =
+                start.then(|| json!({ "type": "gameStart", "game": summary(elsewhere, variant) }));
             let listening = session.clone();
             // A refused game's announcement comes after the refusal, the order that once lost it.
             let waited = Instant::now();
@@ -585,7 +588,7 @@ fn account(username: &str) -> Value {
     })
 }
 
-fn summary(elsewhere: bool) -> Value {
+fn summary(elsewhere: bool, variant: Option<&str>) -> Value {
     json!({
         "gameId": GAME,
         "fullId": format!("{GAME}abcd"),
@@ -600,7 +603,7 @@ fn summary(elsewhere: bool) -> Value {
         "secondsLeft": 600,
         "source": "lobby",
         "speed": "rapid",
-        "variant": { "key": "standard", "name": "Standard" },
+        "variant": { "key": variant.unwrap_or("standard") },
         "compat": { "bot": false, "board": !elsewhere }
     })
 }
@@ -610,7 +613,7 @@ fn full(session: &Session) -> Value {
         "type": "gameFull",
         "id": GAME,
         "rated": false,
-        "variant": { "key": "standard", "name": "Standard", "short": "Std" },
+        "variant": { "key": session.variant.unwrap_or("standard") },
         "clock": { "initial": 600_000, "increment": 5_000 },
         "speed": "rapid",
         "perf": { "name": "Rapid" },

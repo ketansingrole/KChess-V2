@@ -1252,37 +1252,46 @@ impl Render for LocalPage {
         let paused = self.game.state["paused"].as_bool() == Some(true);
         self.faces_active = [Color::White, Color::Black]
             .map(|color| live && display_turn == color && timed && !paused);
-        let line = |color: Color, middle: Option<AnyElement>| {
-            let name = if color == Color::White {
-                "White"
-            } else {
-                "Black"
+        let mut pockets = [
+            crate::board::pocket(&self.board, Color::White, cx),
+            crate::board::pocket(&self.board, Color::Black, cx),
+        ];
+        let mut line =
+            |color: Color, middle: Option<AnyElement>| {
+                let name = if color == Color::White {
+                    "White"
+                } else {
+                    "Black"
+                };
+                let active = live && display_turn == color;
+                widgets::player_line(
+                    h_flex()
+                        .gap(px(8.))
+                        .child(widgets::avatar(
+                            icon("user"),
+                            if color == Color::White {
+                                PieceSide::White
+                            } else {
+                                PieceSide::Black
+                            },
+                            active,
+                            &palette,
+                        ))
+                        .child(name)
+                        .children(pockets[usize::from(color == Color::Black)].take().or_else(
+                            || {
+                                widgets::material(
+                                    &fen,
+                                    color == Color::White,
+                                    &frontend.piece_set,
+                                    &palette,
+                                )
+                            },
+                        )),
+                    middle,
+                    timed.then(|| self.faces[face(color)].clone().into_any_element()),
+                )
             };
-            let active = live && display_turn == color;
-            widgets::player_line(
-                h_flex()
-                    .gap(px(8.))
-                    .child(widgets::avatar(
-                        icon("user"),
-                        if color == Color::White {
-                            PieceSide::White
-                        } else {
-                            PieceSide::Black
-                        },
-                        active,
-                        &palette,
-                    ))
-                    .child(name)
-                    .children(widgets::material(
-                        &fen,
-                        color == Color::White,
-                        &frontend.piece_set,
-                        &palette,
-                    )),
-                middle,
-                timed.then(|| self.faces[face(color)].clone().into_any_element()),
-            )
-        };
         let interactive = !over && self.at_live();
         let entry = widgets::move_entry(&self.move_input, interactive, &palette);
         let (voice, voice_line) = crate::voice::moves::board_bar(

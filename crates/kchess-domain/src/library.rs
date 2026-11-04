@@ -13,16 +13,7 @@ pub const MAX_STUDIES: usize = 50;
 pub const MAX_CHAPTERS: usize = 64;
 pub const MAX_MISTAKES: usize = 500;
 
-const VARIANTS: [&str; 8] = [
-    "standard",
-    "chess960",
-    "kingOfTheHill",
-    "threeCheck",
-    "antichess",
-    "atomic",
-    "horde",
-    "racingKings",
-];
+use crate::misc::constants::VARIANTS;
 
 fn is_variant(v: Option<&Value>) -> Option<&str> {
     string(v).filter(|s| VARIANTS.contains(s))

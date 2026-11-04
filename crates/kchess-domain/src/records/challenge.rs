@@ -282,9 +282,7 @@ pub fn read_challenge_event(account: &str, raw: &Value, now: i64) -> Option<Chal
         .to_owned();
     let playable_variant = crate::online_game::variant_from_lichess(Some(variant_key.as_str()));
     let problem = if playable_variant.is_none() {
-        Some(format!(
-            "{variant_name} needs a piece-drop board KChess does not have yet."
-        ))
+        Some(format!("KChess cannot play {variant_name}."))
     } else if !board_ok {
         Some(format!(
             "Lichess does not let third-party apps play {} games.",

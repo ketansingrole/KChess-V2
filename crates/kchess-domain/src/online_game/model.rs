@@ -13,17 +13,7 @@ use crate::rules::{default_position, lichess_variant, make_fen};
 /// The standard start.
 pub const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-/// The variants a Lichess key may name.
-const VARIANTS: [&str; 8] = [
-    "standard",
-    "chess960",
-    "kingOfTheHill",
-    "threeCheck",
-    "antichess",
-    "atomic",
-    "horde",
-    "racingKings",
-];
+use crate::misc::constants::VARIANTS;
 
 /// `GameSetup`: the rules and the position before the first move.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
