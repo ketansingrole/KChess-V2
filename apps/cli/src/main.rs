@@ -20,7 +20,7 @@ Commands:
   login                            Connect a Lichess account in your browser
   call <method> '[arguments]'      Invoke any CoreApi method (JSON argument array)
   call <method> --args-file <path> Read arguments from a JSON file
-  analyze <fen>                    Stream engine analysis as JSON lines until Ctrl-C
+  analyze <fen|startpos>           Stream engine analysis as JSON lines until Ctrl-C
   play [level]                     Play Stockfish; type moves in SAN or UCI
   local                            Play a local game; type moves in SAN or UCI
   methods                          List available CoreApi methods
@@ -234,7 +234,7 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 print(&core.call(method, parameters).await?);
             }
             "analyze" => {
-                let fen = args.get(1).ok_or("analyze requires a FEN.")?;
+                let fen = analysis_fen(&args[1..])?;
                 core.call("resumeOnline", vec![]).await?;
                 core.call("startAnalysis", vec![json!({ "fen": fen, "lines": 3 })])
                     .await?;
@@ -257,6 +257,20 @@ async fn run(argv: &[String]) -> Result<(), String> {
     .await;
     core.close().await;
     result
+}
+
+/// The position `analyze` was given: a FEN, quoted or as separate words, or `startpos`.
+fn analysis_fen(words: &[String]) -> Result<String, String> {
+    let fen = words.join(" ");
+    let fen = match fen.trim() {
+        "" => return Err("analyze requires a FEN.".into()),
+        "startpos" => "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+        fen => fen.to_string(),
+    };
+    if kchess_domain::position::fen_problem(&fen).is_some() {
+        return Err(format!("Not a legal position: {fen}"));
+    }
+    Ok(fen)
 }
 
 #[tokio::main]
@@ -316,6 +330,25 @@ mod tests {
             parse(&strings(&["--browser", "never"])).unwrap_err(),
             "--browser must be open or print."
         );
+    }
+
+    #[test]
+    fn analyze_reads_a_fen_quoted_or_in_words() {
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        assert_eq!(
+            super::analysis_fen(&strings(&[start])),
+            Ok(start.to_string())
+        );
+        assert_eq!(
+            super::analysis_fen(&strings(&start.split(' ').collect::<Vec<_>>())),
+            Ok(start.to_string())
+        );
+        assert_eq!(
+            super::analysis_fen(&strings(&["startpos"])),
+            Ok(start.to_string())
+        );
+        assert!(super::analysis_fen(&[]).is_err());
+        assert!(super::analysis_fen(&strings(&["8/8/8/8/8/8/8/8 w - - 0 1"])).is_err());
     }
 
     #[test]
