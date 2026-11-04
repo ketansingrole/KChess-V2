@@ -107,7 +107,14 @@ pub fn analysable(variant: &str) -> bool {
 /// Chess960 (both read as standard rules with Chess960 castling), or none at all. An Atomic or
 /// Crazyhouse game read that way would show positions the game never had.
 pub fn pgn_analysable(pgn: &str) -> bool {
-    let variant = pgn
+    pgn_variant_key(pgn).is_some_and(analysable)
+}
+
+/// The Lichess key of the variant a PGN's `Variant` header names ("atomic", "chess960"), standard
+/// without one; `None` for a variant KChess does not know.
+pub fn pgn_variant_key(pgn: &str) -> Option<&'static str> {
+    use shakmaty::variant::Variant;
+    let name = pgn
         .lines()
         .map(str::trim)
         .take_while(|line| line.is_empty() || line.starts_with('['))
@@ -118,7 +125,23 @@ pub fn pgn_analysable(pgn: &str) -> bool {
                 .strip_prefix('"')?
                 .strip_suffix('"')
         });
-    kchess_domain::rules::pgn_variant(variant) == Some(shakmaty::variant::Variant::Chess)
+    Some(match kchess_domain::rules::pgn_variant(name)? {
+        Variant::Chess => {
+            let name = name.unwrap_or_default().to_lowercase();
+            if name.contains("960") || name.contains("fischer") {
+                "chess960"
+            } else {
+                "standard"
+            }
+        }
+        Variant::Crazyhouse => "crazyhouse",
+        Variant::KingOfTheHill => "kingOfTheHill",
+        Variant::ThreeCheck => "threeCheck",
+        Variant::Antichess => "antichess",
+        Variant::Atomic => "atomic",
+        Variant::Horde => "horde",
+        Variant::RacingKings => "racingKings",
+    })
 }
 
 /// A position's setup for a game started from it: Chess960 when it can still castle with a king
@@ -169,6 +192,19 @@ mod pgn_tests {
             "[Event \"x\"]\n[Variant \"Crazyhouse\"]\n\n1. e4 *"
         ));
         assert!(!pgn_analysable("[Variant \"Something else\"]\n\n1. e4 *"));
+        assert_eq!(super::pgn_variant_key("1. e4 *"), Some("standard"));
+        assert_eq!(
+            super::pgn_variant_key("[Variant \"Chess960\"]\n\n*"),
+            Some("chess960")
+        );
+        assert_eq!(
+            super::pgn_variant_key("[Variant \"King of the Hill\"]\n\n*"),
+            Some("kingOfTheHill")
+        );
+        assert_eq!(
+            super::pgn_variant_key("[Variant \"Something else\"]\n\n*"),
+            None
+        );
     }
 }
 

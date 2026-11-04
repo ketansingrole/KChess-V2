@@ -62,8 +62,20 @@ fn result_of(game: &Value) -> &'static str {
     }
 }
 
-/// The PGN's setup and main line, for the replay.
+/// The PGN's setup and main line, for the replay, in the variant its header names.
 fn line_of(pgn: &str) -> Option<(Value, Vec<String>)> {
+    let variant = crate::game::pgn_variant_key(pgn)?;
+    if !crate::game::analysable(variant) {
+        // Replayed under the variant's own rules, which the analysis tree does not know.
+        let line = crate::game::rules("pgnMainline", &[json!(pgn)]).ok()?;
+        let start = line["start"].as_str()?;
+        let moves = line["moves"]
+            .as_array()?
+            .iter()
+            .filter_map(|entry| entry["uci"].as_str().map(str::to_string))
+            .collect();
+        return Some((json!({ "variant": variant, "fen": start }), moves));
+    }
     let tree = TreeNode::from_pgn(pgn)?;
     let mut moves = Vec::new();
     let mut node = &tree;
@@ -71,7 +83,7 @@ fn line_of(pgn: &str) -> Option<(Value, Vec<String>)> {
         moves.push(next.uci.clone());
         node = next;
     }
-    Some((json!({ "variant": "standard", "fen": tree.fen }), moves))
+    Some((json!({ "variant": variant, "fen": tree.fen }), moves))
 }
 
 pub fn new_tab(
@@ -414,6 +426,10 @@ impl HistoryPage {
                         Button::new("lichess-review")
                             .outline()
                             .small()
+                            // The analysis board plays standard chess and Chess960 only.
+                            .disabled(!crate::game::pgn_analysable(
+                                reviewed["pgn"].as_str().unwrap_or_default(),
+                            ))
                             .icon(icon("chart-line"))
                             .label("Review")
                             .on_click(move |_, window, cx| {
@@ -939,5 +955,14 @@ mod tests {
         let (setup, moves) = line_of("1. e4 e5 2. Nf3 (2. Bc4) Nc6 *").unwrap();
         assert_eq!(moves, vec!["e2e4", "e7e5", "g1f3", "b8c6"]);
         assert_eq!(setup["variant"], json!("standard"));
+        // A variant's moves follow its own rules: in Atomic, Qxf7 explodes the king.
+        let (setup, moves) =
+            line_of("[Variant \"Atomic\"]\n\n1. e4 e5 2. Qh5 Nc6 3. Qxf7# *").unwrap();
+        assert_eq!(setup["variant"], json!("atomic"));
+        assert_eq!(moves.len(), 5);
+        let (setup, moves) =
+            line_of("[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 3. P@e3 *").unwrap();
+        assert_eq!(setup["variant"], json!("crazyhouse"));
+        assert_eq!(moves.last().map(String::as_str), Some("P@e3"));
     }
 }
