@@ -872,6 +872,18 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
 
 /// What a pasted FEN or Lichess game link can open.
 fn pasted(text: &str) -> Vec<Command> {
+    if let Some(id) = crate::pages::puzzles::puzzle_link(text) {
+        let shown = id.clone();
+        return vec![
+            Command::new(
+                format!("pasted:puzzle:{id}"),
+                "Solve this puzzle",
+                icon("puzzle"),
+                move |window, cx| crate::shell::open_puzzle(id.clone(), window, cx),
+            )
+            .detail(shown),
+        ];
+    }
     if let Some(link) = crate::game::game_link(text) {
         let id = link.id.clone();
         return vec![

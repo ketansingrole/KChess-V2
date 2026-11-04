@@ -353,6 +353,11 @@ pub fn methods() -> Vec<Method> {
             vec![],
         ),
         method(
+            "puzzleById",
+            "One puzzle by its Lichess id; public, nothing is recorded.",
+            vec![req("id")],
+        ),
+        method(
             "puzzleDashboard",
             "Read-only: the account's puzzle dashboard.",
             vec![req("account"), req("days")],

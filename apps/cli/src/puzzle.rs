@@ -1,4 +1,5 @@
-//! `puzzle`: solve Lichess's daily puzzle by typing moves, as on the Puzzles page.
+//! `puzzle [id|link]`: solve Lichess's daily puzzle, or the one named, by typing moves, as on the
+//! Puzzles page.
 
 use kchess_domain::position::{Played, play_san, play_uci};
 use kchess_domain::rules::setup_start;
@@ -134,11 +135,22 @@ impl Solving {
     }
 }
 
+/// The puzzle id in a word typed after `puzzle`: an id, or a lichess.org/training link.
+pub fn named(word: &str) -> String {
+    let id = word.split("/training/").last().unwrap_or(word);
+    let id = id.split(['?', '#', '/']).next().unwrap_or(id);
+    id.to_string()
+}
+
 pub async fn interactive(
     core: &CoreClient,
     events: &mut UnboundedReceiver<Event>,
+    id: Option<&str>,
 ) -> Result<(), String> {
-    let puzzle = core.call("puzzleDaily", vec![]).await?;
+    let puzzle = match id {
+        Some(word) => core.call("puzzleById", vec![json!(named(word))]).await?,
+        None => core.call("puzzleDaily", vec![]).await?,
+    };
     let mut solving =
         Solving::new(&puzzle).ok_or("Lichess sent a puzzle KChess could not read.")?;
     println!(
@@ -257,6 +269,13 @@ mod tests {
             solving.answer("Rb8#"),
             Answer::Right { solved: true, .. }
         ));
+    }
+
+    #[test]
+    fn a_puzzle_is_named_by_its_id_or_link() {
+        assert_eq!(super::named("FPFg0"), "FPFg0");
+        assert_eq!(super::named("https://lichess.org/training/FPFg0"), "FPFg0");
+        assert_eq!(super::named("lichess.org/training/FPFg0/?a#b"), "FPFg0");
     }
 
     #[test]

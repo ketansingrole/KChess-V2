@@ -81,6 +81,12 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
         ),
         ("puzzleDaily", vec![], vec!["GET /api/puzzle/daily"], false),
         (
+            "puzzleById",
+            vec![json!("FPFg0")],
+            vec!["GET /api/puzzle/FPFg0"],
+            false,
+        ),
+        (
             "puzzleDashboard",
             vec![json!("Alice"), json!(30)],
             vec!["GET /api/puzzle/dashboard/30"],

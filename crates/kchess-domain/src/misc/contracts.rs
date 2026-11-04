@@ -298,6 +298,7 @@ const CORE: &[Row] = &[
     ("puzzleNext", 1, &[Valid("assertPuzzleRequest")]),
     ("puzzleSolve", 1, &[Valid("assertPuzzleSolve")]),
     ("puzzleDaily", 0, &[]),
+    ("puzzleById", 1, &[Valid("assertPuzzleId")]),
     (
         "puzzleDashboard",
         2,

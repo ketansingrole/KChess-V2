@@ -130,6 +130,7 @@ pub const FACADE_METHODS: &[&str] = &[
     "puzzleNext",
     "puzzleSolve",
     "puzzleDaily",
+    "puzzleById",
     "puzzleDashboard",
     "puzzleActivity",
     "stormDashboard",
@@ -661,6 +662,7 @@ impl Core {
             "puzzleNext"
             | "puzzleSolve"
             | "puzzleDaily"
+            | "puzzleById"
             | "puzzleDashboard"
             | "puzzleActivity"
             | "stormDashboard"

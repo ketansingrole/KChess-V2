@@ -1500,6 +1500,55 @@ impl PuzzlesPage {
     }
 }
 
+/// The puzzle id a lichess.org/training link names (`lichess.org/training/FPFg0`); `None` for
+/// anything else, a theme's or the daily puzzle's page included.
+pub fn puzzle_link(text: &str) -> Option<String> {
+    let text = text.trim();
+    let rest = text
+        .strip_prefix("https://")
+        .or_else(|| text.strip_prefix("http://"))
+        .unwrap_or(text);
+    let rest = rest.strip_prefix("www.").unwrap_or(rest);
+    let path = rest.strip_prefix("lichess.org/training/")?;
+    let id = path.split(['?', '#']).next().unwrap_or_default();
+    let id = id.strip_suffix('/').unwrap_or(id);
+    let theme = |key: &str| key == "daily" || themes().iter().any(|theme| theme.key == key);
+    (id.len() == 5 && id.bytes().all(|byte| byte.is_ascii_alphanumeric()) && !theme(id))
+        .then(|| id.to_string())
+}
+
+impl PuzzlesPage {
+    /// The Daily tab's view, made when first shown.
+    fn daily_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<daily::DailyPuzzle> {
+        if let Some(daily) = &self.daily {
+            return daily.clone();
+        }
+        let themes = self.theme_list.clone();
+        let daily = cx.new(|cx| daily::DailyPuzzle::new(themes, window, cx));
+        self._subscriptions.push(cx.subscribe_in(
+            &daily,
+            window,
+            |this, _, event: &daily::DailyEvent, window, cx| match event {
+                daily::DailyEvent::UseDownloaded => this.use_downloaded(window, cx),
+            },
+        ));
+        self.daily = Some(daily.clone());
+        daily
+    }
+
+    /// Show a linked puzzle on the Daily tab's board.
+    pub fn open_puzzle(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        crate::prefs::set(cx, TAB, "daily");
+        self.daily_view(window, cx)
+            .update(cx, |daily, cx| daily.open(id, cx));
+        cx.notify();
+    }
+}
+
 impl Render for PuzzlesPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
@@ -1538,23 +1587,7 @@ impl Render for PuzzlesPage {
         let body = if tab == "train" {
             self.render_train(window, cx, &palette)
         } else if tab == "daily" {
-            let daily = match &self.daily {
-                Some(daily) => daily.clone(),
-                None => {
-                    let themes = self.theme_list.clone();
-                    let daily = cx.new(|cx| daily::DailyPuzzle::new(themes, window, cx));
-                    self._subscriptions.push(cx.subscribe_in(
-                        &daily,
-                        window,
-                        |this, _, event: &daily::DailyEvent, window, cx| match event {
-                            daily::DailyEvent::UseDownloaded => this.use_downloaded(window, cx),
-                        },
-                    ));
-                    self.daily = Some(daily.clone());
-                    daily
-                }
-            };
-            daily.into_any_element()
+            self.daily_view(window, cx).into_any_element()
         } else if tab == "history" {
             let history = match &self.history {
                 Some(history) => history.clone(),
@@ -1678,5 +1711,28 @@ mod tests {
         assert_eq!(list[0].name, "Healthy mix");
         assert_eq!(theme_name("mateIn2", &list), "Mate in 2");
         assert_eq!(theme_name("someNewTheme", &list), "Some New Theme");
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::puzzle_link;
+
+    #[test]
+    fn a_training_link_names_its_puzzle() {
+        for (text, id) in [
+            ("https://lichess.org/training/FPFg0", Some("FPFg0")),
+            ("lichess.org/training/K69di/", Some("K69di")),
+            ("www.lichess.org/training/00008?x=1", Some("00008")),
+            // A theme's page, the daily puzzle's page and games are not puzzles.
+            ("https://lichess.org/training/short", None),
+            ("https://lichess.org/training/daily", None),
+            ("https://lichess.org/training/fork", None),
+            ("https://lichess.org/training/mateIn2", None),
+            ("https://lichess.org/abcdefgh", None),
+            ("FPFg0", None),
+        ] {
+            assert_eq!(puzzle_link(text).as_deref(), id, "{text}");
+        }
     }
 }

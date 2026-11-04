@@ -20,6 +20,10 @@ impl Core {
                 self.inner("lichess.puzzleSolve", vec![request]).await
             }
             "puzzleDaily" => self.inner("lichess.puzzleDaily", vec![]).await,
+            "puzzleById" => {
+                let id = normal("assertPuzzleId", &arg(args, 0))?;
+                self.inner("lichess.puzzleById", vec![id]).await
+            }
             "puzzleDashboard" => {
                 let account = normal("assertUsername", &arg(args, 0))?;
                 let days = normal("assertDays", &arg(args, 1))?;

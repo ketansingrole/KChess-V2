@@ -76,6 +76,12 @@ can add them as a friend, challenge them or watch their current game.
 - **Export**: animated GIF of the main line, PNG of the position, or PGN. The images are drawn
   locally with your board theme and piece set; no image service is involved.
 
+### Puzzles
+
+- **Open a puzzle by link**: paste a lichess.org/training link into Quick Pick (⌘K) and the
+  puzzle opens on Puzzles → Daily; _Today’s puzzle_ goes back. The command line takes one too:
+  `kchess-cli puzzle [id|link]`.
+
 ### Playing without Lichess
 
 - **Computer games**: _Game options_ starts from the standard position, a Chess960 position

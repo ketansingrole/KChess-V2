@@ -335,6 +335,25 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
     {
         return pgn(&mut out, LINKED_PGN);
     }
+    // Puzzles are public too: the one a pasted training link names.
+    if (request.method.as_str(), request.path.as_str())
+        == ("GET", format!("/api/puzzle/{LINKED_PUZZLE}").as_str())
+    {
+        return reply(
+            &mut out,
+            &json!({
+                "game": { "id": LINKED_GAME },
+                "puzzle": {
+                    "id": LINKED_PUZZLE,
+                    "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                    "lastMove": "g8f6",
+                    "solution": ["h5f7"],
+                    "rating": 1100,
+                    "themes": ["mateIn1", "short"],
+                },
+            }),
+        );
+    }
     // Nobody signed in: no answer at all.
     let Some(session) = session else {
         return Ok(());
@@ -522,6 +541,8 @@ fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
 
 /// The game a Lichess link in the analysis board's import names, and its PGN.
 pub const LINKED_GAME: &str = "kchessE2";
+/// The puzzle a pasted lichess.org/training link opens.
+pub const LINKED_PUZZLE: &str = "KcPz1";
 const LINKED_PGN: &str = "[Event \"Rated rapid game\"]\n[Site \"https://lichess.org/kchessE2\"]\n\
 [White \"alice\"]\n[Black \"Tester\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0\n";
 

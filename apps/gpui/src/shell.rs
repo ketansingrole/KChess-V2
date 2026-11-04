@@ -605,6 +605,14 @@ pub fn view_of<V: 'static>(page: Page, cx: &App) -> Option<Entity<V>> {
     workspace.read(cx).pages.view_of::<V>(page)
 }
 
+/// Open a Lichess puzzle by its id on Puzzles → Daily.
+pub fn open_puzzle(id: String, window: &mut Window, cx: &mut App) {
+    open(Page::Puzzles, window, cx);
+    if let Some(puzzles) = view_of::<crate::pages::puzzles::PuzzlesPage>(Page::Puzzles, cx) {
+        puzzles.update(cx, |puzzles, cx| puzzles.open_puzzle(id, window, cx));
+    }
+}
+
 /// Open a played game in Game history (Home's recent games).
 pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
     open(Page::History, window, cx);

@@ -101,3 +101,43 @@ fn the_chosen_tab_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppContex
     assert_eq!(app.find(("puzzle-tabs", 4usize)).selected(), Some(true));
     app.find("puzzle-history-train");
 }
+
+/// A lichess.org/training link pasted into Quick Pick opens its puzzle on the Daily tab, and
+/// Today's puzzle goes back to the puzzle of the day.
+#[gpui_kit::test]
+fn a_pasted_puzzle_link_opens_the_puzzle(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/training/{}",
+        super::fake_lichess::LINKED_PUZZLE
+    ));
+    {
+        use gpui_kit::test::TestWindowExt as _;
+        app.wait_for("the puzzle to be offered", |window, _| {
+            window
+                .try_find(("palette-item", 0usize))
+                .is_some_and(|item| item.label() == Some("Solve this puzzle"))
+        });
+    }
+    app.press("enter");
+    app.find("daily-today");
+    assert_eq!(app.find(("puzzle-tabs", 1usize)).selected(), Some(true));
+    // Scholar's mate: the queen takes f7.
+    {
+        use gpui_kit::test::TestWindowExt as _;
+        app.wait_for("the puzzle's board", |window, _| {
+            window.try_find("chess-board").is_some()
+        });
+    }
+    app.click_square("h5", true);
+    app.click_square("f7", true);
+    app.wait_for("the puzzle to be solved", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.try_find_by_label("Puzzle solved").is_some()
+    });
+
+    app.click("daily-today");
+    app.wait_gone("daily-today");
+}

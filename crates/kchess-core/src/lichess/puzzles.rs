@@ -278,6 +278,20 @@ pub async fn puzzle_daily(lichess: &Lichess) -> CoreResult<Value> {
     readable_puzzle(&raw)
 }
 
+/// `puzzleById(id)`: one puzzle, as a lichess.org/training link names it; no login needed.
+pub async fn puzzle_by_id(lichess: &Lichess, id: &str) -> CoreResult<Value> {
+    let cancel = lichess.lifetime().clone();
+    let path = format!("/api/puzzle/{}", path_segment(id));
+    let raw: Value = lichess
+        .client()
+        .policy()
+        .with_usage("", "puzzles", async {
+            lichess.client().get_json(&path, &[], None, &cancel).await
+        })
+        .await?;
+    readable_puzzle(&raw)
+}
+
 /// `puzzleDashboard(account, days)`: the account's results over the last `days` days, as Lichess
 /// reports them.
 pub async fn puzzle_dashboard(

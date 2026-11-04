@@ -192,6 +192,10 @@ impl Services {
                 Err(cause) => Err(cause),
             },
             "lichess.puzzleDaily" => super::puzzles::puzzle_daily(&self.lichess).await,
+            "lichess.puzzleById" => match text(args, 0) {
+                Ok(id) => super::puzzles::puzzle_by_id(&self.lichess, &id).await,
+                Err(cause) => Err(cause),
+            },
             "lichess.puzzleDashboard" => match parse::<AccountDays>(args, 0, "request") {
                 Ok(request) => reply_json(
                     super::puzzles::puzzle_dashboard(&self.lichess, &request.account, request.days)

@@ -346,6 +346,13 @@ fn assert_perf_type(value: J) -> Checked<String> {
     picked(value, PERF_TYPES, Some("Invalid rating category."))
 }
 
+/// A puzzle's id, as a lichess.org/training link names it.
+fn assert_puzzle_id(value: J) -> Checked<String> {
+    let text: String = decode(value, always!("Invalid puzzle."))?;
+    matches(&text, patterns::puzzle_id, Some("Invalid puzzle."), "", "")?;
+    Ok(text)
+}
+
 fn assert_lichess_id(value: J) -> Checked<String> {
     let text: String = decode(value, always!("Invalid id."))?;
     lichess_id(&text, "Invalid id.")?;
@@ -2189,6 +2196,7 @@ validators! {
     "assertInsightsQuery" => assert_insights_query,
     "assertPerfType" => assert_perf_type,
     "assertLichessId" => assert_lichess_id,
+    "assertPuzzleId" => assert_puzzle_id,
     "assertOptionalAccount" => assert_optional_account,
     "assertOnlineOptions" => assert_online_options,
     "assertTheme" => assert_theme,
