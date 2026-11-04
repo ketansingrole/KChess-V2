@@ -123,6 +123,157 @@ fn the_timeline() {
     }
 }
 
+/// Home as a new person, someone with games played here, and a connected Lichess account with
+/// years of history, in both appearances, wide and narrow:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::home -- --ignored` writes
+/// `<dir>/home/<state>-<appearance>-<width>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn home() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("home");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    let only = std::env::var("KCHESS_HOME_STATES").unwrap_or_default();
+    for state in ["new", "played", "lichess"] {
+        if !only.is_empty() && !only.split(',').any(|wanted| wanted == state) {
+            continue;
+        }
+        for (appearance, name) in [(Appearance::Dark, "dark"), (Appearance::Light, "light")] {
+            for (width, height) in [(1320., 1100.), (760., 1400.)] {
+                let profile = tempfile::tempdir().expect("a temporary profile");
+                let (mut cx, window) = start(profile.path(), width, height);
+                cx.update(|cx| {
+                    crate::settings::change(cx, move |s| s.frontend.appearance = appearance)
+                });
+                if state != "new" {
+                    seed_played(&mut cx);
+                }
+                if state == "lichess" {
+                    connect_showcase(&mut cx, window, profile.path(), "Rattiestword5");
+                }
+                cx.update_window(window, |_, window, cx| {
+                    crate::shell::open(Page::Dashboard, window, cx)
+                })
+                .expect("the window");
+                for _ in 0..6 {
+                    settle(&mut cx, window);
+                }
+                cx.capture_screenshot(window)
+                    .expect("a screenshot")
+                    .save(out.join(format!("{state}-{name}-{width}.png")))
+                    .expect("the screenshot saves");
+                let quit = cx.update(crate::core::quit);
+                cx.foreground_executor().block_test(quit);
+                crate::profile::TEST_DATA_DIR.set(None);
+            }
+        }
+    }
+}
+
+/// An unfinished game against the computer, and a few finished games played here.
+fn seed_played(cx: &mut HeadlessAppContext) {
+    use crate::game::computer::{ComputerGame, Host};
+    let host = Host {
+        now: 0.,
+        allowed: true,
+        ready: false,
+    };
+    let session = serde_json::json!({
+        "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4"],
+        "color": "white",
+        "level": "club",
+    });
+    let snapshot = ComputerGame::new(Some(&session), &host)
+        .expect("the computer game")
+        .snapshot(&host);
+    let saved = cx.update(|cx| {
+        cx.global::<crate::core::AppCore>()
+            .call("saveSession", vec![serde_json::json!("computer"), snapshot])
+    });
+    cx.foreground_executor()
+        .block_test(saved)
+        .expect("the computer game is saved");
+    let moves: Vec<String> = OPERA.split_whitespace().map(str::to_string).collect();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64);
+    let games = [
+        ("You", "Stockfish · Club Player", "1-0", "computer"),
+        ("Sam", "You", "1/2-1/2", "local"),
+        ("You", "Stockfish · Intermediate", "0-1", "computer"),
+        ("You", "Priya", "1-0", "local"),
+        ("Stockfish · Club Player", "You", "0-1", "computer"),
+    ];
+    cx.update(|cx| {
+        let played = cx.global::<crate::played::PlayedHandle>().0.clone();
+        played.update(cx, |played, cx| {
+            for (index, (white, black, result, source)) in games.iter().enumerate() {
+                let length = moves.len() - index * 2;
+                let at = now - (index as u64 + 1) * 20 * 3_600_000;
+                played.save(
+                    serde_json::json!({
+                        "id": format!("home-{index}"),
+                        "source": source,
+                        "setup": { "variant": "standard", "fen": crate::game::STANDARD_FEN },
+                        "moves": moves[..length],
+                        "white": white,
+                        "black": black,
+                        "result": result,
+                        "reason": "checkmate",
+                        "finished": true,
+                        "timeControl": "300+3",
+                        "startedAt": at,
+                        "updatedAt": at,
+                    }),
+                    cx,
+                );
+            }
+        });
+    });
+}
+
+/// Connect the stand-in Lichess's showcase account as a person would, and sync its games.
+fn connect_showcase(
+    cx: &mut HeadlessAppContext,
+    window: AnyWindowHandle,
+    profile: &Path,
+    username: &str,
+) {
+    let (code, session) = super::fake_lichess::session(username, false);
+    session.lock().showcase = true;
+    let opened = profile.join("opened-urls.txt");
+    cx.update_window(window, |_, window, cx| {
+        crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.connect(window, cx))
+    })
+    .expect("the window");
+    for _ in 0..400 {
+        settle(cx, window);
+        let url = std::fs::read_to_string(&opened).ok().and_then(|text| {
+            Some(
+                text.lines()
+                    .find(|line| line.contains("/oauth"))?
+                    .to_string(),
+            )
+        });
+        if let Some(url) = url {
+            super::fake_lichess::return_from_login(&url, &code);
+            break;
+        }
+    }
+    for _ in 0..400 {
+        settle(cx, window);
+        let done = cx.update(|cx| {
+            let accounts = crate::accounts::handle(cx);
+            let accounts = accounts.read(cx);
+            accounts.active(cx).as_deref() == Some(username) && !accounts.busy
+        });
+        if done {
+            break;
+        }
+    }
+}
+
 /// The Opera Game, a real game with a clear story for a review to tell.
 const OPERA: &str = "e2e4 e7e5 g1f3 d7d6 d2d4 c8g4 d4e5 g4f3 d1f3 d6e5 f1c4 g8f6 f3b3 d8e7 b1c3 c7c6 \
                      c1g5 b7b5 c3b5 c6b5 c4b5 b8d7 e1c1 a8d8 d1d7 d8d7 h1d1 e7e6 b5d7 f6d7 b3b8 \

@@ -37,6 +37,9 @@ pub struct Session {
     /// The game was started where the Board API cannot play it (`compat.board` false): its
     /// board stream answers 400, as Lichess does.
     pub elsewhere: bool,
+    /// The account has years of history: ratings in every speed, a rating history and a few
+    /// dozen synced games, for screenshots of the pages that show them.
+    pub showcase: bool,
     /// The game's listing says the Board API can play it, but its board stream answers 400 (an
     /// open one ends).
     pub board_refused: bool,
@@ -297,6 +300,14 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             ] }),
         );
     }
+    // A showcase account's profile, rating history and games are public, as on Lichess.
+    if let Some(reply_to) = showcase_public(&request.path) {
+        return match reply_to {
+            Showcase::Profile(name) => reply(&mut out, &showcase_account(&name)),
+            Showcase::History => reply(&mut out, &showcase_history()),
+            Showcase::Games(name) => ndjson_lines(&mut out, &showcase_games(&name)),
+        };
+    }
     // Nobody signed in: no answer at all.
     let Some(session) = session else {
         return Ok(());
@@ -306,6 +317,20 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
     }
     let path = request.path.as_str();
     let stream_path = format!("/api/board/game/stream/{GAME}");
+    if session.lock().showcase {
+        let username = session.lock().username.clone();
+        let name = username.to_lowercase();
+        let user = format!("/api/user/{name}");
+        if path == "/api/account" || path.to_lowercase() == user {
+            return reply(&mut out, &showcase_account(&username));
+        }
+        if path.to_lowercase() == format!("{user}/rating-history") {
+            return reply(&mut out, &showcase_history());
+        }
+        if path.to_lowercase() == format!("/api/games/user/{name}") {
+            return ndjson_lines(&mut out, &showcase_games(&username));
+        }
+    }
     match (request.method.as_str(), path) {
         ("GET", "/api/account") => {
             let username = session.lock().username.clone();
@@ -471,6 +496,16 @@ fn ndjson(out: &mut TcpStream) -> std::io::Result<()> {
     write!(
         out,
         "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    )?;
+    answered(out)
+}
+
+fn ndjson_lines(out: &mut TcpStream, lines: &[Value]) -> std::io::Result<()> {
+    let body: String = lines.iter().map(|line| format!("{line}\n")).collect();
+    write!(
+        out,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
     )?;
     answered(out)
 }
@@ -656,4 +691,203 @@ fn activity(name: &str) -> Value {
             })
         ),
     ])
+}
+
+/// A showcase account: rated in every speed, Blitz climbing.
+fn showcase_account(username: &str) -> Value {
+    let perf = |games: u32, rating: u32, prog: i32| json!({ "games": games, "rating": rating, "rd": 55, "prog": prog });
+    json!({
+        "id": username.to_lowercase(),
+        "username": username,
+        "createdAt": 1_600_000_000_000u64,
+        "seenAt": now_ms(),
+        "perfs": {
+            "bullet": perf(412, 1302, -6),
+            "blitz": perf(2870, 1445, 41),
+            "rapid": perf(560, 1538, 12),
+            "classical": perf(55, 1610, 0),
+            "puzzle": perf(1240, 1820, 18),
+        },
+        "count": { "all": 3897, "rated": 3810, "win": 2014, "loss": 1779, "draw": 104 },
+        "playTime": { "total": 4_200_000, "tv": 0 }
+    })
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64)
+}
+
+/// A pseudo-random walk, the same every run: two years of a rating, ending at `end`.
+fn walk(seed: u64, points: usize, end: i64, spread: i64) -> Vec<i64> {
+    let mut state = seed;
+    let mut next = move || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        ((state >> 33) % 1000) as i64
+    };
+    let mut ratings = vec![end];
+    for _ in 1..points {
+        let last = *ratings.last().unwrap_or(&end);
+        ratings.push(last - (next() * spread / 1000 - spread / 2) - 1);
+    }
+    ratings.reverse();
+    ratings
+}
+
+/// Lichess's rating history: one series per speed, a point a few days apart.
+fn showcase_history() -> Value {
+    use chrono::{Datelike as _, Duration as Days, Utc};
+    let today = Utc::now().date_naive();
+    let series = |name: &str, seed: u64, points: usize, end: i64, every: i64| {
+        let ratings = walk(seed, points, end, 34);
+        let points: Vec<Value> = ratings
+            .iter()
+            .enumerate()
+            .map(|(index, rating)| {
+                let day = today - Days::days((points - 1 - index) as i64 * every);
+                json!([day.year(), day.month0(), day.day(), rating])
+            })
+            .collect();
+        json!({ "name": name, "points": points })
+    };
+    json!([
+        series("Bullet", 7, 60, 1302, 12),
+        series("Blitz", 11, 240, 1445, 3),
+        series("Rapid", 13, 90, 1538, 8),
+        series("Classical", 17, 12, 1610, 60),
+        series("Puzzles", 19, 120, 1820, 6),
+    ])
+}
+
+/// The account's latest games, newest first: mostly Blitz, a few Rapid, all openings sound.
+fn showcase_games(username: &str) -> Vec<Value> {
+    const OPPONENTS: [&str; 12] = [
+        "yrod_doma",
+        "lore_puli",
+        "Ohnooob",
+        "khoinguyen2602",
+        "PawnStormer",
+        "quiet_bishop",
+        "Mirela_K",
+        "endgame_enjoyer",
+        "TacticalTom",
+        "zugzwang42",
+        "Nadia_R",
+        "knightrider77",
+    ];
+    const LINES: [(&str, &str, &str); 4] = [
+        (
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7",
+            "C84",
+            "Ruy Lopez: Closed",
+        ),
+        (
+            "d4 d5 c4 e6 Nc3 Nf6 Bg5 Be7 e3 O-O",
+            "D53",
+            "Queen's Gambit Declined",
+        ),
+        (
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6",
+            "B90",
+            "Sicilian Defense: Najdorf",
+        ),
+        (
+            "e4 e6 d4 d5 Nc3 Bb4 e5 c5 a3 Bxc3+",
+            "C18",
+            "French Defense: Winawer",
+        ),
+    ];
+    const HOUR: u64 = 3_600_000;
+    let now = now_ms();
+    let user = json!({ "name": username, "id": username.to_lowercase() });
+    (0..40u64)
+        .map(|index| {
+            let opponent = OPPONENTS[index as usize % OPPONENTS.len()];
+            let (moves, eco, opening) = LINES[index as usize % LINES.len()];
+            let white = index % 2 == 0;
+            let outcome = [1, 0, 1, 2, 1, 0, 1, 1, 0, 1][index as usize % 10];
+            let mine = 1445 - index as i64 * 3;
+            let theirs = mine + [12, -30, 5, 44, -8, 21, -15, 3, 60, -22][index as usize % 10];
+            let diff = match outcome {
+                1 => 6,
+                0 => -6,
+                _ => 0,
+            };
+            let me = json!({ "user": user, "rating": mine - diff, "ratingDiff": diff });
+            let them = json!({
+                "user": { "name": opponent, "id": opponent.to_lowercase() },
+                "rating": theirs,
+                "ratingDiff": -diff,
+            });
+            let winner = match (outcome, white) {
+                (2, _) => None,
+                (1, true) | (0, false) => Some("white"),
+                _ => Some("black"),
+            };
+            let rapid = index % 5 == 4;
+            let created = now - (index * 7 + 2) * HOUR;
+            let mut game = json!({
+                "id": format!("Show{index:04}"),
+                "rated": true,
+                "variant": "standard",
+                "speed": if rapid { "rapid" } else { "blitz" },
+                "perf": if rapid { "rapid" } else { "blitz" },
+                "createdAt": created,
+                "lastMoveAt": created + 600_000,
+                "status": if outcome == 2 { "draw" } else if index % 3 == 0 { "mate" } else { "resign" },
+                "players": if white {
+                    json!({ "white": me, "black": them })
+                } else {
+                    json!({ "white": them, "black": me })
+                },
+                "opening": { "eco": eco, "name": opening, "ply": 10 },
+                "moves": moves,
+                "clock": if rapid {
+                    json!({ "initial": 600, "increment": 0, "totalTime": 600 })
+                } else {
+                    json!({ "initial": 180, "increment": 2, "totalTime": 260 })
+                },
+            });
+            if let Some(winner) = winner {
+                game["winner"] = json!(winner);
+            }
+            game
+        })
+        .collect()
+}
+
+enum Showcase {
+    Profile(String),
+    History,
+    Games(String),
+}
+
+/// What a public request asks of a showcase account, if it names one.
+fn showcase_public(path: &str) -> Option<Showcase> {
+    let lower = path.to_lowercase();
+    let (name, kind) = if let Some(rest) = lower.strip_prefix("/api/games/user/") {
+        (rest.to_string(), 2)
+    } else if let Some(rest) = lower.strip_prefix("/api/user/") {
+        match rest.split_once('/') {
+            None => (rest.to_string(), 0),
+            Some((name, "rating-history")) => (name.to_string(), 1),
+            Some(_) => return None,
+        }
+    } else {
+        return None;
+    };
+    let sessions = server().sessions.lock().expect("the sessions");
+    let username = sessions.values().find_map(|session| {
+        let session = session.lock();
+        (session.showcase && session.username.to_lowercase() == name)
+            .then(|| session.username.clone())
+    })?;
+    Some(match kind {
+        0 => Showcase::Profile(username),
+        1 => Showcase::History,
+        _ => Showcase::Games(username),
+    })
 }
