@@ -329,3 +329,23 @@ fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {
     app.click("tournament-back");
     app.wait_gone("tournament-join");
 }
+
+/// A Lichess TV link opens that channel on Watch → TV, from whichever tab was showing.
+#[gpui_kit::test]
+fn a_pasted_tv_link_watches_its_channel(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.online();
+    app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
+    app.click(("watch-tabs", 2usize));
+    app.press("secondary-k");
+    app.type_text("https://lichess.org/tv/racingKings");
+    wait_for_first(&mut app, "Watch this TV channel");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert_eq!(page(&mut app), Some(Page::Watch));
+    assert_eq!(app.find(("watch-tabs", 0usize)).selected(), Some(true));
+    app.wait_for("the channel to be kept", |_, cx| {
+        crate::prefs::get::<String>(cx, crate::pages::watch::CHANNEL_KEY, String::new())
+            == "racingKings"
+    });
+}

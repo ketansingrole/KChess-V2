@@ -893,6 +893,14 @@ fn pasted(text: &str) -> Vec<Command> {
             },
         )];
     }
+    if let Some(channel) = kchess_domain::links::tv_link(text) {
+        return vec![Command::new(
+            format!("pasted:tv:{channel}"),
+            "Watch this TV channel",
+            icon("tv"),
+            move |window, cx| crate::shell::watch_channel(channel.clone(), window, cx),
+        )];
+    }
     if let Some((system, id)) = kchess_domain::links::tournament_link(text) {
         return vec![Command::new(
             format!("pasted:tournament:{id}"),

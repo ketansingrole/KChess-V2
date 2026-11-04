@@ -122,6 +122,42 @@ pub fn tournament_link(text: &str) -> Option<(&'static str, String)> {
     .then(|| (system, id.to_string()))
 }
 
+/// The Lichess TV channels, by the keys their links and the API use.
+const TV_CHANNELS: [&str; 16] = [
+    "best",
+    "bullet",
+    "blitz",
+    "rapid",
+    "classical",
+    "chess960",
+    "kingOfTheHill",
+    "threeCheck",
+    "antichess",
+    "atomic",
+    "horde",
+    "racingKings",
+    "crazyhouse",
+    "ultraBullet",
+    "bot",
+    "computer",
+];
+
+/// The TV channel a lichess.org/tv link shows: `tv` alone is the top-rated channel (`best`).
+pub fn tv_link(text: &str) -> Option<String> {
+    let path = lichess_path(text)?;
+    let path = path.split(['?', '#']).next().unwrap_or_default();
+    let path = path.strip_suffix('/').unwrap_or(path);
+    let key = match path.strip_prefix("tv") {
+        Some("") => "best",
+        Some(rest) => rest.strip_prefix('/')?,
+        None => return None,
+    };
+    TV_CHANNELS
+        .iter()
+        .find(|channel| channel.eq_ignore_ascii_case(key))
+        .map(|channel| (*channel).to_string())
+}
+
 /// Reads `lichess.org/abcdefgh`, `https://lichess.org/abcdefgh1234/black#12` and the like; `None`
 /// for anything else, a study or a puzzle included.
 pub fn game_link(text: &str) -> Option<GameLink> {
@@ -250,6 +286,20 @@ mod link_tests {
         ] {
             assert_eq!(tournament_link(other), None, "{other}");
         }
+    }
+
+    #[test]
+    fn a_tv_link_names_its_channel() {
+        use super::tv_link;
+        assert_eq!(tv_link("https://lichess.org/tv").as_deref(), Some("best"));
+        assert_eq!(tv_link("lichess.org/tv/rapid/").as_deref(), Some("rapid"));
+        assert_eq!(
+            tv_link("https://lichess.org/tv/racingkings").as_deref(),
+            Some("racingKings")
+        );
+        assert_eq!(tv_link("https://lichess.org/tv/nonsense"), None);
+        assert_eq!(tv_link("https://lichess.org/tvx"), None);
+        assert_eq!(tv_link("https://lichess.org/@/someone/tv"), None);
     }
 
     #[test]

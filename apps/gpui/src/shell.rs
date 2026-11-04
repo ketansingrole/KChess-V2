@@ -432,6 +432,14 @@ pub fn open_player(username: &str, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Watch a Lichess TV channel.
+pub fn watch_channel(channel: String, window: &mut Window, cx: &mut App) {
+    open(Page::Watch, window, cx);
+    if let Some(watch) = view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx) {
+        watch.update(cx, |watch, cx| watch.open_channel(channel, window, cx));
+    }
+}
+
 /// Watch a game being played on Lichess (`watchGame`).
 pub fn watch_game(id: &str, window: &mut Window, cx: &mut App) {
     open(Page::Watch, window, cx);

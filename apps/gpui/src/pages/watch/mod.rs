@@ -26,7 +26,7 @@ use broadcasts::Broadcasts;
 use live::Live;
 
 const TAB_KEY: &str = "kchess:watch-tab";
-const CHANNEL_KEY: &str = "kchess:watch-channel";
+pub(crate) const CHANNEL_KEY: &str = "kchess:watch-channel";
 /// Clocks are redrawn this often while something is being watched.
 const TICK: Duration = Duration::from_millis(500);
 /// The tabs' row and the gap under it, above the board.
@@ -387,6 +387,16 @@ impl WatchPage {
             });
         })
         .detach();
+    }
+
+    /// Watch a Lichess TV channel, as its link names it, on the TV tab.
+    pub fn open_channel(&mut self, channel: String, window: &mut Window, cx: &mut Context<Self>) {
+        crate::prefs::set(cx, CHANNEL_KEY, channel.clone());
+        if self.tab != Tab::Tv {
+            self.choose_tab(Tab::Tv, window, cx);
+        } else if !Self::playing_own_game(cx) {
+            self.watch_channel(channel, cx);
+        }
     }
 
     /// Watch a live game (`watchGame`): the Following tab, streaming it.

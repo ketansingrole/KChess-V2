@@ -50,7 +50,8 @@ The Watch page has three tabs:
   analysis board.
 
 A lichess.org broadcast link pasted into Quick Pick (⌘K) opens there too: a tournament's at
-its live round, a round's at that round, with the board it names selected.
+its live round, a round's at that round, with the board it names selected. A TV link
+(`lichess.org/tv/rapid`) opens that channel.
 
 Only one stream runs at a time, and watching stops while you play your own game.
 
