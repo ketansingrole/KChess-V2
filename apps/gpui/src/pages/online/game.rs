@@ -38,6 +38,80 @@ fn action(name: &'static str) -> impl Fn(&ClickEvent, &mut Window, &mut App) + '
     move |_, _, cx| crate::online::handle(cx).update(cx, |online, cx| online.action(name, cx))
 }
 
+/// What the live game's buttons do, for Quick Pick to offer the same.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum LiveAction {
+    Berserk,
+    Takeback,
+    OfferDraw,
+    Resign,
+    Abort,
+}
+
+/// The actions the game's buttons allow now: none unless a game is being played.
+pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
+    if online.phase != Phase::Playing {
+        return Vec::new();
+    }
+    let model = online.model();
+    // Before each side has moved the game is aborted, not resigned.
+    let started = view::sans(&online.setup(), &online.moves()).len() >= 2;
+    let berserk = model["onlineTournament"]
+        .as_str()
+        .is_some_and(|tournament| !tournament.is_empty())
+        && model["onlineClockConfig"].is_object()
+        && model["berserked"] != json!(true)
+        && online.view()["ownMoves"].as_f64() == Some(0.);
+    let mut actions = Vec::new();
+    if berserk {
+        actions.push(LiveAction::Berserk);
+    }
+    if started && model["takebackOffer"].as_str().unwrap_or("none") == "none" {
+        actions.push(LiveAction::Takeback);
+    }
+    if started && model["drawOffer"].as_str().unwrap_or("none") == "none" {
+        actions.push(LiveAction::OfferDraw);
+    }
+    actions.push(if started {
+        LiveAction::Resign
+    } else {
+        LiveAction::Abort
+    });
+    actions
+}
+
+/// Run an action as its button does, if the game still allows it; resigning asks first.
+pub(crate) fn run_live_action(action: LiveAction, window: &mut Window, cx: &mut App) {
+    let online = crate::online::handle(cx);
+    if !live_actions(online.read(cx)).contains(&action) {
+        return;
+    }
+    let name = match action {
+        LiveAction::Resign => return ask_resign(window, cx),
+        LiveAction::Berserk => "berserk",
+        LiveAction::Takeback => "takeback",
+        LiveAction::OfferDraw => "offerDraw",
+        LiveAction::Abort => "abort",
+    };
+    online.update(cx, |online, cx| online.action(name, cx));
+}
+
+fn ask_resign(window: &mut Window, cx: &mut App) {
+    window.open_alert_dialog(cx, |dialog: AlertDialog, _, _| {
+        dialog
+            .title("Resign this game?")
+            .description("Your opponent will be awarded the win")
+            .ok_text("Resign")
+            .ok_variant(ButtonVariant::Danger)
+            .cancel_text("Cancel")
+            .show_cancel(true)
+            .on_ok(|_, _, cx| {
+                crate::online::handle(cx).update(cx, |online, cx| online.action("resign", cx));
+                true
+            })
+    });
+}
+
 /// An offer or a notice above the moves (`.offer-banner`).
 fn offer(glyph: &'static str, text: String, buttons: Vec<AnyElement>, palette: &Palette) -> Div {
     h_flex()
@@ -769,22 +843,17 @@ impl OnlinePage {
                 cx.notify();
             });
         });
-        let can_takeback = playing && sans.len() >= 2;
+        let live = live_actions(online);
         let tournament = model["onlineTournament"]
             .as_str()
             .unwrap_or_default()
             .to_string();
-        let can_berserk = playing
-            && !tournament.is_empty()
-            && model["onlineClockConfig"].is_object()
-            && model["berserked"] != json!(true)
-            && online.view()["ownMoves"].as_f64() == Some(0.);
         let last_game = model["lastGame"].is_object();
         let actions = if playing {
             h_flex()
                 .flex_wrap()
                 .gap(px(8.))
-                .when(can_berserk, |row| {
+                .when(live.contains(&LiveAction::Berserk), |row| {
                     row.child(
                         Button::new("online-berserk")
                             .warning()
@@ -793,7 +862,7 @@ impl OnlinePage {
                             .on_click(action("berserk")),
                     )
                 })
-                .when(can_takeback && takeback == "none", |row| {
+                .when(live.contains(&LiveAction::Takeback), |row| {
                     row.child(
                         Button::new("online-takeback")
                             .outline()
@@ -802,7 +871,7 @@ impl OnlinePage {
                             .on_click(action("takeback")),
                     )
                 })
-                .when(can_takeback && draw == "none", |row| {
+                .when(live.contains(&LiveAction::OfferDraw), |row| {
                     row.child(
                         Button::new("online-draw")
                             .outline()
@@ -811,28 +880,13 @@ impl OnlinePage {
                             .on_click(action("offerDraw")),
                     )
                 })
-                .child(if can_takeback {
+                .child(if live.contains(&LiveAction::Resign) {
                     Button::new("online-resign")
                         .outline()
                         .danger()
                         .icon(icon("flag"))
                         .label("Resign")
-                        .on_click(|_, window, cx| {
-                            window.open_alert_dialog(cx, |dialog: AlertDialog, _, _| {
-                                dialog
-                                    .title("Resign this game?")
-                                    .description("Your opponent will be awarded the win")
-                                    .ok_text("Resign")
-                                    .ok_variant(ButtonVariant::Danger)
-                                    .cancel_text("Cancel")
-                                    .show_cancel(true)
-                                    .on_ok(|_, _, cx| {
-                                        crate::online::handle(cx)
-                                            .update(cx, |online, cx| online.action("resign", cx));
-                                        true
-                                    })
-                            })
-                        })
+                        .on_click(|_, window, cx| ask_resign(window, cx))
                 } else {
                     Button::new("online-abort")
                         .outline()

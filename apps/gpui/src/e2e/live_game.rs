@@ -294,3 +294,35 @@ fn a_crazyhouse_pawn_is_dropped_from_the_pocket(cx: &mut gpui_kit::TestAppContex
         ["POST /api/board/game/E2eGame1/move/P%40e3"]
     );
 }
+
+/// Quick Pick offers the game's own actions: a draw offer goes to Lichess as the button sends
+/// it, and resigning asks first there too.
+#[gpui_kit::test]
+fn quick_pick_offers_a_draw_and_asks_before_resigning(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = past_the_opening(cx);
+    let run = |app: &mut Harness, label: &str| {
+        app.press("secondary-k");
+        app.type_text(&format!(">{label}"));
+        super::palette::wait_for_first(app, label);
+        app.press("enter");
+    };
+    run(&mut app, "Offer draw");
+    let offered = lichess.clone();
+    app.wait_for("the draw offer to reach Lichess", move |_, _| {
+        offered
+            .lock()
+            .writes
+            .contains(&"POST /api/board/game/E2eGame1/draw/yes".to_string())
+    });
+    run(&mut app, "Resign");
+    app.click("cancel");
+    app.wait_gone("cancel");
+    assert!(
+        !writes(&lichess)
+            .iter()
+            .any(|write| write.ends_with("/resign")),
+        "{:?}",
+        writes(&lichess)
+    );
+    assert!(app.shows("online-resign"));
+}

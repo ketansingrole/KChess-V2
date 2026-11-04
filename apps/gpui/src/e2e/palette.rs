@@ -26,7 +26,7 @@ fn wait_until_listed(app: &mut Harness, name: &str) {
 }
 
 /// Wait until the best result is named `name`.
-fn wait_for_first(app: &mut Harness, name: &str) {
+pub(super) fn wait_for_first(app: &mut Harness, name: &str) {
     app.wait_for(&format!("{name:?} as the first result"), |window, _| {
         window
             .try_find(("palette-item", 0usize))

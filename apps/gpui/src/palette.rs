@@ -497,7 +497,7 @@ fn page_commands(cx: &App) -> Vec<Command> {
     match crate::shell::current_page(cx) {
         Some(Page::Computer) => std::iter::once(zen).chain(computer_commands(cx)).collect(),
         Some(Page::Local) => std::iter::once(zen).chain(local_commands(cx)).collect(),
-        Some(Page::Online) => vec![zen],
+        Some(Page::Online) => std::iter::once(zen).chain(live_commands(cx)).collect(),
         Some(Page::Analysis) => analysis_commands(),
         _ => Vec::new(),
     }
@@ -528,6 +528,30 @@ fn computer_commands(cx: &App) -> Vec<Command> {
                         page.update(cx, |page, cx| page.act(action, window, cx));
                     }
                 },
+            )
+            .keywords(keywords)
+        })
+        .collect()
+}
+
+/// The live Lichess game's actions, as its buttons offer them.
+fn live_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::online::game::{LiveAction, live_actions, run_live_action};
+    live_actions(crate::online::handle(cx).read(cx))
+        .into_iter()
+        .map(|action| {
+            let (id, label, glyph, keywords) = match action {
+                LiveAction::Berserk => ("berserk", "Berserk", "flame", "arena half time"),
+                LiveAction::Takeback => ("takeback", "Takeback", "undo-2", "undo take back"),
+                LiveAction::OfferDraw => ("draw", "Offer draw", "handshake", "agree"),
+                LiveAction::Resign => ("resign", "Resign", "flag", "give up"),
+                LiveAction::Abort => ("abort", "Abort", "ban", "cancel"),
+            };
+            Command::new(
+                format!("online:{id}"),
+                label,
+                icon(glyph),
+                move |window, cx| run_live_action(action, window, cx),
             )
             .keywords(keywords)
         })

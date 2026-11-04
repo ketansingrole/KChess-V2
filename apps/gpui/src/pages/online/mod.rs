@@ -21,7 +21,7 @@ use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
 
 mod chat;
-mod game;
+pub(crate) mod game;
 mod lists;
 
 /// The time controls offered (`timeControls`).
