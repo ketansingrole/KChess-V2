@@ -571,3 +571,45 @@ fn every_command_has_its_own_id_on_every_page(cx: &mut gpui_kit::TestAppContext)
         check(&mut app, &format!("Practice tab {tab}"));
     }
 }
+
+/// A watched standard game opens on the analysis board, from its button and from Quick Pick:
+/// leaving Watch tells the Watch page it is hidden, which must not happen while it runs the action.
+#[gpui_kit::test]
+fn a_watched_game_is_analysed_from_its_button_and_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::watch::WatchPage;
+    let mut app = Harness::start(cx);
+    let watch = |app: &mut Harness| {
+        app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
+        app.with_window(|_, cx| {
+            let page = crate::shell::view_of::<WatchPage>(Page::Watch, cx).expect("Watch");
+            page.update(cx, |page, cx| {
+                page.show_frame(
+                    serde_json::json!({
+                        "source": "tv", "channel": "rapid", "variant": "standard", "gameId": "tv2",
+                        "startFen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                        "moves": ["e2e4", "c7c5"],
+                        "fen": "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+                        "white": { "name": "A" }, "black": { "name": "B" },
+                    }),
+                    cx,
+                )
+            });
+        });
+    };
+    watch(&mut app);
+    app.click("watch-analyse");
+    app.find("tree-e2e4 c7c5");
+
+    watch(&mut app);
+    app.press("secondary-k");
+    app.type_text(">Analyse");
+    wait_for_first(&mut app, "Analyse");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    // The first game is still on the analysis board, unsaved.
+    app.click("ok");
+    app.wait_for("the analysis board", |_, cx| {
+        crate::shell::current_page(cx) == Some(Page::Analysis)
+    });
+    app.find("tree-e2e4 c7c5");
+}

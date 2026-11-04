@@ -1010,27 +1010,32 @@ impl WatchPage {
             );
             if let Ok(Value::String(pgn)) = pgn {
                 let ply = self.live.shown_ply();
-                crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
-                    analysis.open_game(
-                        &pgn,
-                        ply,
-                        Some(orientation),
-                        Some(origin.clone()),
-                        false,
-                        cx,
-                    )
+                // Once this page is no longer being updated: leaving Watch tells it it is hidden.
+                window.defer(cx, move |window, cx| {
+                    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+                        analysis.open_game(
+                            &pgn,
+                            ply,
+                            Some(orientation),
+                            Some(origin.clone()),
+                            false,
+                            cx,
+                        )
+                    });
                 });
                 return;
             }
         }
-        crate::pages::players::open_exported(
-            frame["gameId"].as_str().unwrap_or_default(),
-            frame["white"]["name"].clone(),
-            frame["black"]["name"].clone(),
-            orientation,
-            window,
-            cx,
-        );
+        window.defer(cx, move |window, cx| {
+            crate::pages::players::open_exported(
+                frame["gameId"].as_str().unwrap_or_default(),
+                frame["white"]["name"].clone(),
+                frame["black"]["name"].clone(),
+                orientation,
+                window,
+                cx,
+            );
+        });
     }
 }
 
