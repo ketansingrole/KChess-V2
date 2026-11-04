@@ -381,7 +381,7 @@ impl Render for LichessActivity {
             })
             .child(
                 v_flex()
-                    .mx(px(-8.))
+                    .mx(px(-12.))
                     .children(self.recent.iter().enumerate().map(|(index, game)| {
                         let chosen = game.clone();
                         game_row(
