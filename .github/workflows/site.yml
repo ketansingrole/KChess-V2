@@ -67,7 +67,7 @@ jobs:
           if grep -q '{{' _site/index.html; then
             echo "::error::site/index.html has a placeholder this job does not fill"; exit 1
           fi
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
@@ -82,4 +82,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
