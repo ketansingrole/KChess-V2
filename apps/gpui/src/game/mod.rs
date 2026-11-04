@@ -103,6 +103,24 @@ pub fn analysable(variant: &str) -> bool {
     matches!(variant, "standard" | "chess960")
 }
 
+/// Whether a PGN's `Variant` header names a game the analysis board can play: standard chess or
+/// Chess960 (both read as standard rules with Chess960 castling), or none at all. An Atomic or
+/// Crazyhouse game read that way would show positions the game never had.
+pub fn pgn_analysable(pgn: &str) -> bool {
+    let variant = pgn
+        .lines()
+        .map(str::trim)
+        .take_while(|line| line.is_empty() || line.starts_with('['))
+        .find_map(|line| {
+            let rest = line.strip_prefix("[Variant ")?;
+            rest.trim_end_matches(']')
+                .trim()
+                .strip_prefix('"')?
+                .strip_suffix('"')
+        });
+    kchess_domain::rules::pgn_variant(variant) == Some(shakmaty::variant::Variant::Chess)
+}
+
 /// A position's setup for a game started from it: Chess960 when it can still castle with a king
 /// or rook off their usual squares, which an engine reads only with `UCI_Chess960` on, and
 /// standard otherwise.
@@ -132,6 +150,26 @@ fn chess960_castling(fen: &str) -> bool {
                     .is_some_and(|rook| rook != *usual)
             }))
     })
+}
+
+#[cfg(test)]
+mod pgn_tests {
+    use super::pgn_analysable;
+
+    #[test]
+    fn only_standard_and_chess960_games_are_analysable() {
+        assert!(pgn_analysable("1. e4 e5 *"));
+        assert!(pgn_analysable("[Event \"x\"]\n\n1. e4 *"));
+        assert!(pgn_analysable("[Variant \"Standard\"]\n\n1. e4 *"));
+        assert!(pgn_analysable(
+            "[Variant \"Chess960\"]\n[FEN \"x\"]\n\n1. e4 *"
+        ));
+        assert!(!pgn_analysable("[Variant \"Atomic\"]\n\n1. e4 *"));
+        assert!(!pgn_analysable(
+            "[Event \"x\"]\n[Variant \"Crazyhouse\"]\n\n1. e4 *"
+        ));
+        assert!(!pgn_analysable("[Variant \"Something else\"]\n\n1. e4 *"));
+    }
 }
 
 #[cfg(test)]

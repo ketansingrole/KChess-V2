@@ -502,3 +502,18 @@ fn a_lichess_game_link_imports_the_game(cx: &mut gpui_kit::TestAppContext) {
     app.find("tree-e2e4 e7e5 g1f3 b8c6 f1b5 a7a6");
     assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
 }
+
+/// An Atomic game whose moves standard chess also allows is still refused: read under standard
+/// rules its captures would not explode, and the board would show positions it never had.
+#[gpui_kit::test]
+fn a_game_in_a_variant_the_board_cannot_play_is_refused(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "[Variant \"Atomic\"]\n\n1. e4 d5 2. exd5 *");
+    assert!(app.shows("import-run"), "the dialog stays");
+    assert!(!app.shows("tree-e2e4"));
+    // Without the header the same moves are an ordinary game.
+    fill_in_dialog(&mut app, "FEN, PGN or game link", "1. e4 d5 2. exd5 *");
+    app.click("import-run");
+    app.wait_gone("import-run");
+    app.find("tree-e2e4 d7d5 e4d5");
+}

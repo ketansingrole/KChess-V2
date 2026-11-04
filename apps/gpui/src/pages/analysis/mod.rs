@@ -571,8 +571,11 @@ impl AnalysisPage {
         self.load(Some(fen), cx);
     }
 
-    /// Load a game (`loadPgn`), opened at its start.
+    /// Load a game (`loadPgn`), opened at its start; refused for a variant this board cannot play.
     fn load_pgn(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        if !crate::game::pgn_analysable(text) {
+            return false;
+        }
         let Some(tree) = TreeNode::from_pgn(text) else {
             return false;
         };
@@ -1590,6 +1593,10 @@ impl AnalysisPage {
                 return;
             }
             self.load(Some(&fen), cx);
+        } else if !crate::game::pgn_analysable(&text) {
+            self.import_error = Some(UNPLAYABLE_VARIANT.into());
+            window.refresh();
+            return;
         } else if !self.load_pgn(&text, cx) {
             self.import_error =
                 Some("Use a valid FEN or one PGN game with legal moves, under 2 MB".into());
@@ -1626,6 +1633,8 @@ impl AnalysisPage {
                     return;
                 }
                 this.importing = None;
+                let unplayable =
+                    matches!(&pgn, Ok(Value::String(pgn)) if !crate::game::pgn_analysable(pgn));
                 let opened = match pgn {
                     Ok(Value::String(pgn)) => {
                         let origin = json!({ "gameId": link.id });
@@ -1645,8 +1654,11 @@ impl AnalysisPage {
                     this.import_error = None;
                     window.close_dialog(cx);
                 } else {
-                    this.import_error =
-                        Some("That game cannot be opened on the analysis board".into());
+                    this.import_error = Some(if unplayable {
+                        UNPLAYABLE_VARIANT.into()
+                    } else {
+                        "That game cannot be opened on the analysis board".into()
+                    });
                     window.refresh();
                 }
             });
@@ -1654,6 +1666,9 @@ impl AnalysisPage {
         .detach();
     }
 }
+
+/// Why a game in another variant is not imported.
+const UNPLAYABLE_VARIANT: &str = "The analysis board plays standard chess and Chess960 only";
 
 /// The engine lines chosen (1–5, three by default).
 fn prefs_lines(cx: &App) -> usize {
@@ -2610,7 +2625,7 @@ impl AnalysisPage {
                                 })),
                         )
                         .item(
-                            PopupMenuItem::new("Import FEN or PGN…")
+                            PopupMenuItem::new("Import a position or game…")
                                 .icon(icon("import"))
                                 .on_click(action(|page, window, cx| page.open_import(window, cx))),
                         )

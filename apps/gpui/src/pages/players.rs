@@ -1642,6 +1642,14 @@ fn open_exported_at(
         .spawn(cx, async move |cx| {
             let pgn = export.await;
             let _ = cx.update(|window, cx| match pgn {
+                // A variant the analysis board cannot play (Crazyhouse, Atomic…): say so before
+                // asking to replace anything.
+                Ok(Value::String(pgn))
+                    if !crate::game::pgn_analysable(&pgn)
+                        || crate::game::tree::TreeNode::from_pgn(&pgn).is_none() =>
+                {
+                    window.push_notification("The analysis board cannot open this game", cx)
+                }
                 Ok(Value::String(pgn)) => {
                     crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
                         analysis.open_game(
