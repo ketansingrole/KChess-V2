@@ -783,21 +783,18 @@ impl StudiesPage {
                 .children(error_line)
                 .when(error.is_none(), |page| {
                     page.child(
-                        widgets::card(palette)
-                            .items_center()
-                            .gap(px(12.))
-                            .py(px(48.))
-                            .px(px(24.))
-                            .child(icon("library-big").size(px(40.)).text_color(palette.dimmed))
-                            .child(
-                                div()
-                                    .text_size(px(18.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child("No studies yet"),
+                        widgets::card(palette).child(
+                            widgets::empty_state(
+                                icon("library-big"),
+                                "No studies yet",
+                                None,
+                                palette,
                             )
                             .child(
                                 h_flex()
+                                    .justify_center()
                                     .gap(px(8.))
+                                    .mt(px(8.))
                                     .child(
                                         Button::new("empty-new-study")
                                             .primary()
@@ -815,6 +812,7 @@ impl StudiesPage {
                                             }),
                                     ),
                             ),
+                        ),
                     )
                 })
                 .into_any_element();
