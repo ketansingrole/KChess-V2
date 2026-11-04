@@ -472,6 +472,15 @@ pub fn open_tournament(id: &str, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// A tournament named by its system (`arena` or `swiss`) and id, as a pasted link names it.
+pub fn open_event(system: &str, id: &str, window: &mut Window, cx: &mut App) {
+    open(Page::Tournaments, window, cx);
+    if let Some(page) = view_of::<crate::pages::tournaments::TournamentsPage>(Page::Tournaments, cx)
+    {
+        page.update(cx, |page, cx| page.show_event(system, id, cx));
+    }
+}
+
 /// Play Stockfish at a level and side, from the palette (`startComputerGame`).
 pub fn play_computer(level: &str, color: &'static str, window: &mut Window, cx: &mut App) {
     open(Page::Computer, window, cx);

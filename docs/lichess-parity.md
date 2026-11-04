@@ -35,7 +35,8 @@ panel shows its entry conditions, an entry-code field, standings that update eve
 your rank, and Join / Withdraw. Paired games open on the board automatically, as on Lichess.
 While you are in a tournament, the event stream stays open even if _Receive challenges_ is off.
 Joining needs the `tournament:write` permission, so accounts connected earlier are asked to
-connect again.
+connect again. A lichess.org tournament or Swiss link pasted into Quick Pick (⌘K) opens that
+event's panel.
 
 ### Watching
 

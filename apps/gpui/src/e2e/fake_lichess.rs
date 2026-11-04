@@ -380,6 +380,21 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 &json!({ "tour": { "id": BROADCAST_TOUR }, "round": { "id": round } }),
             );
         }
+        // A public arena about to start, which its link opens.
+        ("GET", path) if path == format!("/api/tournament/{ARENA}") => {
+            return reply(
+                &mut out,
+                &json!({
+                    "id": ARENA,
+                    "fullName": "KChess Rapid Arena",
+                    "clock": { "limit": 600, "increment": 0 },
+                    "minutes": 60,
+                    "nbPlayers": 3,
+                    "secondsToStart": 300,
+                    "standing": { "page": 1, "players": [] },
+                }),
+            );
+        }
         // A public study's chapter, and the whole study (two chapters, the first answering).
         ("GET", path)
             if path == format!("/api/study/{STUDY}/{STUDY_CHAPTER}.pgn")
@@ -586,6 +601,7 @@ fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
 /// The game a Lichess link in the analysis board's import names, and its PGN.
 pub const LINKED_GAME: &str = "kchessE2";
 /// A public study, the chapter its link names, and one in a variant the board cannot play.
+pub const ARENA: &str = "kcArena1";
 pub const STUDY: &str = "kcStudy1";
 pub const STUDY_CHAPTER: &str = "kcChap01";
 pub const VARIANT_STUDY: &str = "kcStudy2";

@@ -312,3 +312,20 @@ fn a_pasted_broadcast_link_opens_its_round(cx: &mut gpui_kit::TestAppContext) {
     wait_until_closed(&mut app);
     wait_for_round(&mut app, BROADCAST_ROUNDS[1]);
 }
+
+/// A Lichess tournament link opens the event on the Tournaments page, signed in or not.
+#[gpui_kit::test]
+fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::ARENA;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text(&format!("https://lichess.org/tournament/{ARENA}"));
+    wait_for_first(&mut app, "Open this tournament");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert_eq!(page(&mut app), Some(Page::Tournaments));
+    app.find("tournament-join");
+    app.click("tournament-back");
+    app.wait_gone("tournament-join");
+}

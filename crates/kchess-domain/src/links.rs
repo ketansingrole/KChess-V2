@@ -104,6 +104,24 @@ pub fn training_link(text: &str) -> Option<String> {
     (id.len() == 5 && id.bytes().all(|byte| byte.is_ascii_alphanumeric())).then(|| id.to_string())
 }
 
+/// A Lichess tournament link: an arena's (`tournament/ID`) or a Swiss event's (`swiss/ID`), as
+/// the system (`arena` or `swiss`) and the id.
+pub fn tournament_link(text: &str) -> Option<(&'static str, String)> {
+    let path = lichess_path(text)?;
+    let (system, rest) = if let Some(rest) = path.strip_prefix("tournament/") {
+        ("arena", rest)
+    } else {
+        ("swiss", path.strip_prefix("swiss/")?)
+    };
+    let id = rest.split(['?', '#']).next().unwrap_or_default();
+    let id = id.strip_suffix('/').unwrap_or(id);
+    // Lists share the shape: `tournament/calendar`, `tournament/featured`.
+    (id.len() == 8
+        && id.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        && !["calendar", "featured"].contains(&id))
+    .then(|| (system, id.to_string()))
+}
+
 /// Reads `lichess.org/abcdefgh`, `https://lichess.org/abcdefgh1234/black#12` and the like; `None`
 /// for anything else, a study or a puzzle included.
 pub fn game_link(text: &str) -> Option<GameLink> {
@@ -209,6 +227,29 @@ mod link_tests {
         assert_eq!(training_link("https://lichess.org/training"), None);
         assert_eq!(training_link("https://lichess.org/training/mateIn2"), None);
         assert_eq!(training_link("FPFg0"), None);
+    }
+
+    #[test]
+    fn a_tournament_link_names_its_system_and_event() {
+        use super::tournament_link;
+        let event = |system, id: &str| Some((system, id.to_string()));
+        assert_eq!(
+            tournament_link("https://lichess.org/tournament/Hb3sLw0T"),
+            event("arena", "Hb3sLw0T")
+        );
+        assert_eq!(
+            tournament_link("lichess.org/swiss/j8rtJ5GL/?page=2#x"),
+            event("swiss", "j8rtJ5GL")
+        );
+        for other in [
+            "https://lichess.org/tournament/calendar",
+            "https://lichess.org/tournament",
+            "https://lichess.org/tournament/Hb3sLw0T/extra",
+            "https://lichess.org/swiss",
+            "https://lichess.org/Hb3sLw0T",
+        ] {
+            assert_eq!(tournament_link(other), None, "{other}");
+        }
     }
 
     #[test]

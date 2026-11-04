@@ -893,6 +893,14 @@ fn pasted(text: &str) -> Vec<Command> {
             },
         )];
     }
+    if let Some((system, id)) = kchess_domain::links::tournament_link(text) {
+        return vec![Command::new(
+            format!("pasted:tournament:{id}"),
+            "Open this tournament",
+            icon("trophy"),
+            move |window, cx| crate::shell::open_event(system, &id, window, cx),
+        )];
+    }
     if let Some(name) = crate::game::profile_link(text) {
         return vec![Command::new(
             format!("pasted:player:{name}"),
