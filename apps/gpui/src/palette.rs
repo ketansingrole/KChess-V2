@@ -508,6 +508,7 @@ fn page_commands(cx: &App) -> Vec<Command> {
         Some(Page::Practice) => practice_commands(cx),
         Some(Page::History) => history_commands(cx),
         Some(Page::Players) => profile_commands(cx),
+        Some(Page::Friends) => following_commands(cx),
         _ => Vec::new(),
     }
 }
@@ -792,6 +793,30 @@ fn profile_commands(cx: &App) -> Vec<Command> {
             Action::Watch => ("watch", "Watch", "tv", "spectate game"),
         },
         PlayersPage::act,
+    )
+}
+
+/// The Following page's header actions.
+fn following_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::friends::{Action, FriendsPage};
+    let Some(page) = crate::shell::view_of::<FriendsPage>(Page::Friends, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Friends,
+        "following",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::Follow => ("follow", "Follow player", "plus", "friend add"),
+            Action::Import => (
+                "import",
+                "Import from Lichess",
+                "download",
+                "followed players",
+            ),
+            Action::Sync => ("sync", "Sync all", "refresh-cw", "games download"),
+        },
+        FriendsPage::act,
     )
 }
 

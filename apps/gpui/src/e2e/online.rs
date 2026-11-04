@@ -207,6 +207,20 @@ fn a_player_is_followed_without_an_account_and_stays_followed(cx: &mut gpui_kit:
     app.find("friends-sync");
 }
 
+/// The Following page's buttons are in Quick Pick: a typed name is followed from there.
+#[gpui_kit::test]
+fn a_player_is_followed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = open(cx, "Following", true);
+    app.click_label("Lichess username to follow");
+    app.type_text("carol");
+    app.press("secondary-k");
+    app.type_text(">Follow player");
+    super::palette::wait_for_first(&mut app, "Follow player");
+    app.press("enter");
+    super::palette::wait_until_closed(&mut app);
+    app.find("friends-sync");
+}
+
 /// The timeline is what the followed players did, from their public activity: Lichess's own
 /// timeline answers only its mobile app, so it always read as "Nothing new".
 #[gpui_kit::test]

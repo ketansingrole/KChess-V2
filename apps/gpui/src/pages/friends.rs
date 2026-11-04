@@ -37,6 +37,19 @@ const PROFILES_EVERY: Duration = Duration::from_secs(300);
 const TIMELINE_FIRST: usize = 12;
 const TIMELINE_MORE: usize = 20;
 
+/// The header's actions, as its buttons offer them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Action {
+    Follow,
+    Import,
+    Sync,
+}
+
+/// Download every followed player's new games.
+fn sync_all(window: &mut Window, cx: &mut App) {
+    crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.sync(None, window, cx));
+}
+
 pub struct FriendsPage {
     input: Entity<InputState>,
     /// Profiles by lowercase name (`LichessUser`), and presence (`UserPresence`).
@@ -362,6 +375,34 @@ impl FriendsPage {
                     true
                 })
         });
+    }
+
+    /// What the header's buttons can do now.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        let accounts = crate::accounts::handle(cx).read(cx);
+        let mut actions = Vec::new();
+        if !self.input.read(cx).value().trim().is_empty() && !accounts.busy {
+            actions.push(Action::Follow);
+        }
+        if !accounts.connected().is_empty() {
+            actions.push(Action::Import);
+        }
+        if !accounts.tracked().is_empty() && !accounts.busy {
+            actions.push(Action::Sync);
+        }
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        match action {
+            Action::Follow => self.follow(window, cx),
+            Action::Import => self.open_import(window, cx),
+            Action::Sync => sync_all(window, cx),
+        }
     }
 
     fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -745,10 +786,7 @@ impl Render for FriendsPage {
                         })
                         .loading(busy)
                         .disabled(busy)
-                        .on_click(|_, window, cx| {
-                            crate::accounts::handle(cx)
-                                .update(cx, |accounts, cx| accounts.sync(None, window, cx))
-                        }),
+                        .on_click(|_, window, cx| sync_all(window, cx)),
                 )
             });
         let body =
