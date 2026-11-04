@@ -21,7 +21,7 @@ Commands:
   call <method> '[arguments]'      Invoke any CoreApi method (JSON argument array)
   call <method> --args-file <path> Read arguments from a JSON file
   analyze <fen|startpos>           Stream engine analysis as JSON lines until Ctrl-C
-  play [level]                     Play Stockfish; type moves in SAN or UCI
+  play [level] [white|black|random] Play Stockfish; type moves in SAN or UCI
   local                            Play a local game; type moves in SAN or UCI
   methods                          List available CoreApi methods
 
@@ -247,8 +247,8 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 let _ = core.call("stopAnalysis", vec![]).await;
             }
             "play" | "local" => {
-                play::interactive(&core, &mut events, command == "play", args.get(1).cloned())
-                    .await?;
+                let (level, color) = play::choices(&args[1..])?;
+                play::interactive(&core, &mut events, command == "play", level, color).await?;
             }
             other => return Err(format!("Unknown command: {other}. Run --help.")),
         }

@@ -238,6 +238,34 @@ impl Session<'_> {
             .await;
     }
 
+    /// Play as `color` (`white`, `black` or `random`): a new game, as the app's New game starts
+    /// one, unless the game on the board is still being played.
+    async fn choose_color(&mut self, color: &str) -> Result<(), String> {
+        let color = match color {
+            "random" if kchess_games::random_unit() < 0.5 => "white",
+            "random" => "black",
+            chosen => chosen,
+        };
+        if self.state()["color"].as_str().unwrap_or("white") == color {
+            return Ok(());
+        }
+        if !self.moves().is_empty() && !self.over() {
+            return Err(
+                "A game is in progress: finish it, or type new, before choosing a colour.".into(),
+            );
+        }
+        self.reset_history().await;
+        let host = self.host();
+        let Game::Computer(game) = &mut self.game else {
+            return Ok(());
+        };
+        game.state["color"] = json!(color);
+        let effects = game.start(None, None, &host)?;
+        self.computer_effects(effects).await;
+        self.persist().await;
+        Ok(())
+    }
+
     /// A new game gets its own Game history entry.
     async fn reset_history(&mut self) {
         let (source, has_play) = self.archive_host();
@@ -418,11 +446,25 @@ fn wall_now() -> f64 {
         .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0)
 }
 
+/// `play`'s level and colour, in either order: `play 5 black`, `play black`.
+pub fn choices(words: &[String]) -> Result<(Option<String>, Option<String>), String> {
+    let (mut level, mut color) = (None, None);
+    for word in words {
+        match word.as_str() {
+            "white" | "black" | "random" if color.is_none() => color = Some(word.clone()),
+            _ if level.is_none() => level = Some(word.clone()),
+            other => return Err(format!("Unexpected argument {other}.")),
+        }
+    }
+    Ok((level, color))
+}
+
 pub async fn interactive(
     core: &CoreClient,
     events: &mut UnboundedReceiver<Event>,
     computer: bool,
     level: Option<String>,
+    color: Option<String>,
 ) -> Result<(), String> {
     let library = core.call("library", vec![]).await?;
     let sessions = &library["sessions"];
@@ -440,6 +482,7 @@ pub async fn interactive(
             }
             saved["level"] = json!(level);
         }
+
         // The core still refuses engine help during a live game on every search.
         core.call("resumeOnline", vec![]).await?;
         let engine = core.call("engineStatus", vec![]).await?;
@@ -485,6 +528,9 @@ pub async fn interactive(
         started,
         failed: false,
     };
+    if let Some(color) = color.filter(|_| computer) {
+        session.choose_color(&color).await?;
+    }
     session.show();
     session.computer_turn(events).await;
 
@@ -542,4 +588,26 @@ pub async fn interactive(
         return Err("Some changes could not be saved.".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::choices;
+
+    fn words(list: &[&str]) -> Vec<String> {
+        list.iter().map(|word| (*word).to_string()).collect()
+    }
+
+    #[test]
+    fn play_takes_a_level_and_a_colour_in_either_order() {
+        let some = |text: &str| Some(text.to_string());
+        assert_eq!(choices(&words(&[])), Ok((None, None)));
+        assert_eq!(choices(&words(&["club"])), Ok((some("club"), None)));
+        assert_eq!(choices(&words(&["black"])), Ok((None, some("black"))));
+        assert_eq!(
+            choices(&words(&["random", "club"])),
+            Ok((some("club"), some("random")))
+        );
+        assert!(choices(&words(&["club", "black", "extra"])).is_err());
+    }
 }
