@@ -513,7 +513,10 @@ fn page_commands(cx: &App) -> Vec<Command> {
         Some(Page::Computer) => std::iter::once(zen).chain(computer_commands(cx)).collect(),
         Some(Page::Local) => std::iter::once(zen).chain(local_commands(cx)).collect(),
         Some(Page::Online) => std::iter::once(zen).chain(live_commands(cx)).collect(),
-        Some(Page::Analysis) => analysis_commands(),
+        Some(Page::Analysis) => analysis_commands()
+            .into_iter()
+            .chain(study_commands(cx))
+            .collect(),
         Some(Page::Editor) => editor_commands(cx),
         Some(Page::Puzzles) => puzzle_commands(cx),
         Some(Page::Watch) => watch_commands(cx),
@@ -950,6 +953,58 @@ fn local_commands(cx: &App) -> Vec<Command> {
         },
         LocalPage::act,
     )
+}
+
+/// The study bar's menus over the analysis board: the study's and its chapters' actions.
+fn study_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::analysis::AnalysisPage;
+    use crate::pages::study_bar::StudyAction;
+    let Some(page) = crate::shell::view_of::<AnalysisPage>(Page::Analysis, cx) else {
+        return Vec::new();
+    };
+    let bar = page.read(cx).study_bar();
+    let cloud = bar.read(cx).cloud(cx);
+    bar.read(cx)
+        .actions(cx)
+        .into_iter()
+        .map(|action| {
+            let (id, label, glyph, keywords) = match action {
+                StudyAction::SaveAsStudy => ("save", "Save as study", "book-plus", "keep store"),
+                StudyAction::Details => (
+                    "details",
+                    "Game details",
+                    "file-pen-line",
+                    "headers pgn tags",
+                ),
+                StudyAction::SaveCopy => ("copy", "Save a copy", "copy", "duplicate study"),
+                StudyAction::Close => ("close", "Close study", "book-x", "unsaved analysis"),
+                StudyAction::Remove if cloud => {
+                    ("remove", "Remove offline copy", "trash-2", "lichess study")
+                }
+                StudyAction::Remove => ("remove", "Delete study", "trash-2", "remove"),
+                StudyAction::AddChapter => ("add-chapter", "Add chapter", "plus", "new"),
+                StudyAction::RenameChapter => {
+                    ("rename-chapter", "Rename chapter", "pencil", "name")
+                }
+                StudyAction::DuplicateChapter => {
+                    ("duplicate-chapter", "Duplicate chapter", "copy", "copy")
+                }
+                StudyAction::RemoveChapter => {
+                    ("delete-chapter", "Delete chapter", "trash-2", "remove")
+                }
+            };
+            let bar = bar.downgrade();
+            Command::new(
+                format!("study:{id}"),
+                label,
+                icon(glyph),
+                move |window, cx| {
+                    let _ = bar.update(cx, |bar, cx| bar.act(action, window, cx));
+                },
+            )
+            .keywords(keywords)
+        })
+        .collect()
 }
 
 /// The analysis board's own actions, as its menu and keys offer them.

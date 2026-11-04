@@ -602,6 +602,11 @@ impl AnalysisPage {
         self.root.to_pgn()
     }
 
+    /// The bar over the board: the study open, or Save as study.
+    pub(crate) fn study_bar(&self) -> Entity<StudyBar> {
+        self.study_bar.clone()
+    }
+
     pub fn study_id(&self) -> &str {
         &self.study
     }

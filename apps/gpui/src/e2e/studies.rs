@@ -356,3 +356,31 @@ fn quick_pick_makes_and_imports_studies(cx: &mut gpui_kit::TestAppContext) {
     app.find("study-actions");
     wait_for_value(&mut app, "Study name", "Untitled study");
 }
+
+/// The study bar's menus are in Quick Pick over the analysis board: an analysis is saved as a
+/// study, a chapter added to it, and the study closed again.
+#[gpui_kit::test]
+fn quick_pick_saves_a_study_adds_a_chapter_and_closes_it(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let run = |app: &mut Harness, label: &str| {
+        app.press("secondary-k");
+        app.type_text(&format!(">{label}"));
+        super::palette::wait_for_first(app, label);
+        app.press("enter");
+        super::palette::wait_until_closed(app);
+    };
+    app.open("Analysis board");
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    run(&mut app, "Save as study");
+    name_in_dialog(&mut app, "Opening study");
+    wait_for_value(&mut app, "Study name", "Opening study");
+
+    run(&mut app, "Add chapter");
+    name_in_dialog(&mut app, "Endgames");
+    wait_for_value(&mut app, "Study chapter", "2. Endgames");
+
+    run(&mut app, "Close study");
+    app.find("save-as-study");
+    assert!(!app.shows("chapter-actions"));
+}
