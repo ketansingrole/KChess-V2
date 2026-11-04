@@ -3,6 +3,7 @@
 mod core;
 mod play;
 mod puzzle;
+mod review;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -26,6 +27,7 @@ Commands:
   local [variant]                  Play over the board (chess960, crazyhouse, atomic…)
   puzzle [id|link]                 Solve the daily puzzle, or that one; solution shows it
   pgn <link>                       Print a Lichess game's PGN, or a public study chapter's
+  review <link|file|moves>         Review a game with Stockfish: accuracy and faulted moves
   methods                          List available CoreApi methods
 
 Options:
@@ -266,6 +268,10 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 let link = args.get(1).map(String::as_str).unwrap_or_default();
                 println!("{}", linked_pgn(&core, link).await?.trim_end());
             }
+            "review" => {
+                let pgn = review_input(&core, &args[1..]).await?;
+                print(&review::run(&core, &mut events, &pgn).await?);
+            }
             other => return Err(format!("Unknown command: {other}. Run --help.")),
         }
         Ok(())
@@ -291,6 +297,34 @@ async fn linked_pgn(core: &CoreClient, link: &str) -> Result<String, String> {
     pgn.as_str()
         .map(str::to_string)
         .ok_or_else(|| "Lichess sent no PGN.".into())
+}
+
+/// The game `review` was given: a Lichess link, a PGN file, or the PGN or moves themselves.
+async fn review_input(core: &CoreClient, words: &[String]) -> Result<String, String> {
+    let text = words.join(" ");
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("review requires a game: a Lichess link, a PGN file or moves.".into());
+    }
+    if kchess_domain::links::game_link(text).is_some()
+        || kchess_domain::links::study_link(text).is_some()
+    {
+        return linked_pgn(core, text).await;
+    }
+    let path = std::path::Path::new(text);
+    if path.is_file() {
+        let size = tokio::fs::metadata(path)
+            .await
+            .map_err(|cause| format!("Cannot read {text}: {cause}"))?
+            .len();
+        if size > MAX_ARGUMENTS {
+            return Err(format!("{text} is too large."));
+        }
+        return tokio::fs::read_to_string(path)
+            .await
+            .map_err(|cause| format!("Cannot read {text}: {cause}"));
+    }
+    Ok(text.to_string())
 }
 
 /// The position `analyze` was given: a FEN, quoted or as separate words, or `startpos`.

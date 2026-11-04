@@ -161,6 +161,14 @@ fn help_and_methods_need_no_core_and_bad_commands_fail() {
         ),
         (vec!["analyze"], "analyze requires a FEN."),
         (
+            vec!["review"],
+            "review requires a game: a Lichess link, a PGN file or moves.",
+        ),
+        (
+            vec!["review", "1. e4 e5 2. Ke3"],
+            "Move 2 (Ke3) is not legal there.",
+        ),
+        (
             vec!["pgn", "https://lichess.org/training/FPFg0"],
             "pgn takes a lichess.org game or study link.",
         ),

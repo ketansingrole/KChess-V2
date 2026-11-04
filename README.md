@@ -70,6 +70,8 @@ cargo run -p kchess-cli -- --help
 cargo run -p kchess-cli -- library
 cargo run -p kchess-cli -- play beginner
 cargo run -p kchess-cli -- local
+cargo run -p kchess-cli -- puzzle
+cargo run -p kchess-cli -- review https://lichess.org/q7ZvsdUF
 cargo run -p kchess-cli -- call studyCommand '[{"op":"save","name":"Opening","pgn":"1. e4 e5 *"}]'
 ```
 
