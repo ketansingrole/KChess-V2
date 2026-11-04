@@ -236,6 +236,15 @@ impl StudiesPage {
                     .flatten()
                     .map(|chapter| json!({ "name": chapter["name"], "pgn": chapter["pgn"] }))
                     .collect();
+                // A study in Atomic, Crazyhouse… would be replayed with positions it never had.
+                if chapters
+                    .iter()
+                    .any(|chapter| !crate::game::pgn_analysable(chapter["pgn"].as_str().unwrap_or_default()))
+                {
+                    let note = super::VARIANT_IMPORT.to_string();
+                    let _ = cx.update(|window, cx| fail(note, window, cx));
+                    return;
+                }
                 let command = json!({
                     "op": "offline",
                     "account": account,
