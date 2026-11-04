@@ -160,7 +160,8 @@ fills `{{version}}` with the latest published release, after checking that relea
 installer the page links to, and copies the app icon beside the page. The screenshots in
 `site/screenshots/` come from `KCHESS_SCREENSHOTS=<dir> KCHESS_E2E_LICHESS=https://lichess.org
 cargo test -p kchess-gpui e2e::screens::every_screen_with_content -- --ignored` (`content-dark`),
-cropped above the sidebar's Development build badge.
+cropped above the sidebar's Development build badge, with the sidebar toggle and title moved from
+beside the macOS window buttons to the window's left edge, in line with the sidebar's icons.
 
 ## Features
 

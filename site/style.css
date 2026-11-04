@@ -336,26 +336,18 @@ code {
 .hero-shot {
   margin: 64px auto 0;
   max-width: 1100px;
-  perspective: 2000px;
 }
 
+/* The screenshot as it is: the app's own window edge, no bezel. */
 .shot-frame {
   margin: 0;
-  padding: 8px;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, rgba(255, 236, 205, 0.14), rgba(255, 236, 205, 0.03));
-  box-shadow: 0 40px 120px -40px rgba(216, 162, 63, 0.35), 0 30px 80px -30px rgba(0, 0, 0, 0.9);
-}
-
-.hero-shot .shot-frame {
-  transform: rotateX(10deg);
-  transform-origin: 50% 0;
 }
 
 .shot-frame img {
   width: 100%;
-  border-radius: calc(var(--radius-lg) - 6px);
-  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.9);
 }
 
 /* Sections */
@@ -722,10 +714,6 @@ kbd {
     margin-top: 44px;
   }
 
-  .hero-shot .shot-frame {
-    transform: none;
-  }
-
   .section {
     padding: 80px 0;
   }
@@ -752,9 +740,5 @@ kbd {
 
   .piece {
     animation: none;
-  }
-
-  .hero-shot .shot-frame {
-    transform: none;
   }
 }
