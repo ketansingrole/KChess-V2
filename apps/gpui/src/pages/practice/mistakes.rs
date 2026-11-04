@@ -87,6 +87,18 @@ fn judgment_counts(items: &[&Value]) -> Vec<(&'static str, String)> {
     }))
 }
 
+/// The mistakes trainer's actions, as its buttons offer them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum MistakeAction {
+    Hint,
+    Solution,
+    /// The next due position, from a drill.
+    Next,
+    /// The due positions, from the overview.
+    Due,
+    Early,
+}
+
 pub struct Mistakes {
     items: Vec<Value>,
     games: Vec<Value>,
@@ -200,6 +212,45 @@ impl Mistakes {
             .iter()
             .filter(|item| due_at(item) <= self.now)
             .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn seed(&mut self, items: Vec<Value>, cx: &mut Context<Self>) {
+        self.items = items;
+        cx.notify();
+    }
+
+    /// What the trainer's buttons can do now: the drill's, or the overview's.
+    pub(crate) fn actions(&self) -> Vec<MistakeAction> {
+        let due = !self.due().is_empty();
+        let mut actions = Vec::new();
+        if self.current.is_some() {
+            if !self.done {
+                actions.extend([MistakeAction::Hint, MistakeAction::Solution]);
+            }
+            if due {
+                actions.push(MistakeAction::Next);
+            }
+        } else if self.items.is_empty() {
+            return actions;
+        } else if due {
+            actions.push(MistakeAction::Due);
+        }
+        actions.push(MistakeAction::Early);
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: MistakeAction, cx: &mut Context<Self>) {
+        if !self.actions().contains(&action) {
+            return;
+        }
+        match action {
+            MistakeAction::Hint => self.puzzle.update(cx, |board, cx| board.hint(cx)),
+            MistakeAction::Solution => self.puzzle.update(cx, |board, cx| board.show_solution(cx)),
+            MistakeAction::Next | MistakeAction::Due => self.next(false, cx),
+            MistakeAction::Early => self.next(true, cx),
+        }
     }
 
     /// The next position: the one due longest, or with `all` the next one at all (Review early).

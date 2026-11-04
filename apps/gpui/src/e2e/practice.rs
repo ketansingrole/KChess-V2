@@ -238,3 +238,56 @@ fn an_empty_repertoire_and_empty_mistakes_lead_elsewhere(cx: &mut gpui_kit::Test
     app.click("review-a-game");
     assert_eq!(page(&mut app), Some(Page::History));
 }
+
+/// A saved mistake is practised from Quick Pick, as the trainer's buttons do.
+#[gpui_kit::test]
+fn a_mistake_is_practised_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = practice(cx);
+    tab(&mut app, 5);
+    app.find("review-a-game");
+    app.cx.update(|cx| {
+        let mistakes =
+            crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+                .and_then(|page| page.read(cx).mistakes())
+                .expect("the mistakes trainer");
+        mistakes.update(cx, |mistakes, cx| {
+            mistakes.seed(
+                vec![serde_json::json!({
+                    "id": "back-rank",
+                    "fen": "6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1",
+                    "solution": ["a1a8"],
+                    "dueAt": 0,
+                })],
+                cx,
+            )
+        });
+    });
+    let run = |app: &mut Harness, label: &str| {
+        app.press("secondary-k");
+        app.type_text(&format!(">{label}"));
+        super::palette::wait_for_first(app, label);
+        app.press("enter");
+        super::palette::wait_until_closed(app);
+    };
+    run(&mut app, "Practice due positions");
+    app.find("mistake-solution");
+    app.press("secondary-k");
+    app.type_text(">");
+    super::palette::wait_for_first(&mut app, "Hint: piece to move");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..6usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert_eq!(
+        &listed[..4],
+        [
+            "Hint: piece to move",
+            "Show solution",
+            "Next due position",
+            "Review early"
+        ]
+    );
+}

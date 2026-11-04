@@ -678,10 +678,12 @@ fn tournament_commands(cx: &App) -> Vec<Command> {
     )
 }
 
-/// The actions of the Practice trainer on screen: an endgame drill's or the repertoire's.
+/// The actions of the Practice trainer on screen: an endgame drill's, the repertoire's or the
+/// mistakes'.
 fn practice_commands(cx: &App) -> Vec<Command> {
     use crate::pages::practice::{
-        Action, PracticePage, endgame_drills::DrillAction, repertoire::RepertoireAction,
+        Action, PracticePage, endgame_drills::DrillAction, mistakes::MistakeAction,
+        repertoire::RepertoireAction,
     };
     let Some(page) = crate::shell::view_of::<PracticePage>(Page::Practice, cx) else {
         return Vec::new();
@@ -711,6 +713,21 @@ fn practice_commands(cx: &App) -> Vec<Command> {
             }
             Action::Repertoire(RepertoireAction::Save) => {
                 ("save", "Save as study", "save", "keep opening")
+            }
+            Action::Mistakes(MistakeAction::Hint) => {
+                ("mistake-hint", "Hint: piece to move", "lightbulb", "help")
+            }
+            Action::Mistakes(MistakeAction::Solution) => {
+                ("solution", "Show solution", "eye", "answer")
+            }
+            Action::Mistakes(MistakeAction::Next) => {
+                ("next", "Next due position", "arrow-right", "mistake")
+            }
+            Action::Mistakes(MistakeAction::Due) => {
+                ("due", "Practice due positions", "target", "mistakes start")
+            }
+            Action::Mistakes(MistakeAction::Early) => {
+                ("early", "Review early", "fast-forward", "mistakes ahead")
             }
         },
         PracticePage::act,

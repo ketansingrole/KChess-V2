@@ -7,7 +7,7 @@ mod endgame_lesson;
 mod endgames;
 mod engine_move;
 mod knight;
-mod mistakes;
+pub(crate) mod mistakes;
 pub(crate) mod repertoire;
 mod run;
 mod square_color;
@@ -37,6 +37,7 @@ const TABS: [(&str, &str); 6] = [
 pub(crate) enum Action {
     Drill(endgame_drills::DrillAction),
     Repertoire(repertoire::RepertoireAction),
+    Mistakes(mistakes::MistakeAction),
 }
 
 pub struct PracticePage {
@@ -79,6 +80,11 @@ impl PracticePage {
         self.endgames.as_ref()?.read(cx).shown_drills(cx)
     }
 
+    #[cfg(test)]
+    pub(crate) fn mistakes(&self) -> Option<Entity<mistakes::Mistakes>> {
+        self.mistakes.clone()
+    }
+
     /// What the trainer on screen can do now.
     pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
         match Self::tab(cx) {
@@ -97,6 +103,14 @@ impl PracticePage {
                 .into_iter()
                 .map(Action::Repertoire)
                 .collect(),
+            "mistakes" => self
+                .mistakes
+                .as_ref()
+                .map(|mistakes| mistakes.read(cx).actions())
+                .unwrap_or_default()
+                .into_iter()
+                .map(Action::Mistakes)
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -107,6 +121,14 @@ impl PracticePage {
             Action::Drill(action) => {
                 if let Some(drills) = self.drills(cx) {
                     drills.update(cx, |drills, cx| drills.act(action, cx));
+                }
+            }
+            Action::Mistakes(action) => {
+                if Self::tab(cx) != "mistakes" {
+                    return;
+                }
+                if let Some(mistakes) = self.mistakes.clone() {
+                    mistakes.update(cx, |mistakes, cx| mistakes.act(action, cx));
                 }
             }
             Action::Repertoire(action) => {
