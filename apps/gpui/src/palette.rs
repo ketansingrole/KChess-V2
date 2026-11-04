@@ -569,6 +569,9 @@ fn live_commands(cx: &App) -> Vec<Command> {
                 LiveAction::OfferDraw => ("draw", "Offer draw", "handshake", "agree"),
                 LiveAction::Resign => ("resign", "Resign", "flag", "give up"),
                 LiveAction::Abort => ("abort", "Abort", "ban", "cancel"),
+                LiveAction::Rematch => ("rematch", "Rematch", "repeat", "again"),
+                LiveAction::Analyse => ("analyse", "Analyse", "microscope", "analysis review"),
+                LiveAction::NewGame => ("new-game", "New game", "plus", "another seek"),
             };
             Command::new(
                 format!("online:{id}"),

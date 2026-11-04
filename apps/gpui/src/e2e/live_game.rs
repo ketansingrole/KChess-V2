@@ -326,3 +326,38 @@ fn quick_pick_offers_a_draw_and_asks_before_resigning(cx: &mut gpui_kit::TestApp
     );
     assert!(app.shows("online-resign"));
 }
+
+/// Help stays out of Quick Pick during the game; once it is over, Analyse there opens it.
+#[gpui_kit::test]
+fn a_finished_game_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let (mut app, _lichess) = past_the_opening(cx);
+    let listed = |app: &mut Harness| -> Vec<String> {
+        app.press("secondary-k");
+        app.type_text(">");
+        super::palette::wait_for_first(app, "Zen mode");
+        let labels = app.with_window(|window, _| {
+            (0..8usize)
+                .filter_map(|index| window.try_find(("palette-item", index)))
+                .filter_map(|item| item.label().map(str::to_string))
+                .collect()
+        });
+        app.press("escape");
+        super::palette::wait_until_closed(app);
+        labels
+    };
+    let playing = listed(&mut app);
+    assert!(!playing.contains(&"Analyse".to_string()), "{playing:?}");
+    app.click("online-resign");
+    app.click("ok");
+    app.find("online-analyse");
+    let over = listed(&mut app);
+    assert!(over.contains(&"New game".to_string()), "{over:?}");
+    app.press("secondary-k");
+    app.type_text(">Analyse");
+    super::palette::wait_for_first(&mut app, "Analyse");
+    app.press("enter");
+    app.wait_for("the analysis board", |_, cx| {
+        crate::shell::current_page(cx) == Some(crate::pages::Page::Analysis)
+    });
+}

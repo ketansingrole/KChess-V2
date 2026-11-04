@@ -46,13 +46,35 @@ pub(crate) enum LiveAction {
     OfferDraw,
     Resign,
     Abort,
+    Rematch,
+    Analyse,
+    NewGame,
 }
 
-/// The actions the game's buttons allow now: none unless a game is being played.
+/// The actions the game's buttons allow now: while it is played, or once it is over.
 pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
-    if online.phase != Phase::Playing {
-        return Vec::new();
+    match online.phase {
+        Phase::Playing => playing_actions(online),
+        Phase::Finished => {
+            let model = online.model();
+            let mut actions = Vec::new();
+            let tournament = model["onlineTournament"]
+                .as_str()
+                .is_some_and(|tournament| !tournament.is_empty());
+            if model["lastGame"].is_object() && !tournament {
+                actions.push(LiveAction::Rematch);
+            }
+            if crate::game::analysable(online.setup()["variant"].as_str().unwrap_or("standard")) {
+                actions.push(LiveAction::Analyse);
+            }
+            actions.push(LiveAction::NewGame);
+            actions
+        }
+        _ => Vec::new(),
     }
+}
+
+fn playing_actions(online: &OnlineState) -> Vec<LiveAction> {
     let model = online.model();
     // Before each side has moved the game is aborted, not resigned.
     let started = view::sans(&online.setup(), &online.moves()).len() >= 2;
@@ -88,6 +110,9 @@ pub(crate) fn run_live_action(action: LiveAction, window: &mut Window, cx: &mut 
     }
     let name = match action {
         LiveAction::Resign => return ask_resign(window, cx),
+        LiveAction::Analyse => return analyse(window, cx),
+        LiveAction::Rematch => return online.update(cx, |online, cx| online.rematch(cx)),
+        LiveAction::NewGame => return online.update(cx, |online, cx| online.stop(cx)),
         LiveAction::Berserk => "berserk",
         LiveAction::Takeback => "takeback",
         LiveAction::OfferDraw => "offerDraw",
@@ -907,12 +932,11 @@ impl OnlinePage {
                     )
                 })
         } else {
-            let can_analyse = finished && crate::game::analysable(variant);
             let export = finished.then(|| self.game_export(online, model));
             h_flex()
                 .flex_wrap()
                 .gap(px(8.))
-                .when(last_game && finished && tournament.is_empty(), |row| {
+                .when(live.contains(&LiveAction::Rematch), |row| {
                     row.child(
                         Button::new("online-rematch")
                             .primary()
@@ -925,7 +949,7 @@ impl OnlinePage {
                             }),
                     )
                 })
-                .when(can_analyse, |row| {
+                .when(live.contains(&LiveAction::Analyse), |row| {
                     row.child(
                         Button::new("online-analyse")
                             .outline()
