@@ -201,16 +201,16 @@ impl SidebarItem for NavBlock {
                 let (dimmed, border) = (palette.dimmed, palette.border);
                 v_flex()
                     // Midway between the groups: the row above ends 7px below its icon and the
-                    // sidebar's 8px gap follows, so the rule keeps 8px to the rows it heads.
+                    // sidebar's 4px gap follows, so the rule keeps 4px to the rows it heads.
                     .when(collapsed, |group| {
-                        group.child(div().h(px(1.)).w(px(16.)).mx_auto().mb(px(8.)).bg(border))
+                        group.child(div().h(px(1.)).w(px(16.)).mx_auto().mb(px(4.)).bg(border))
                     })
                     .when(!collapsed, |group| {
                         group.child(
                             div()
                                 .px(px(6.))
                                 .text_size(px(12.))
-                                .line_height(px(24.))
+                                .line_height(px(20.))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(dimmed)
                                 .child(heading),
@@ -226,7 +226,7 @@ impl SidebarItem for NavBlock {
                                 .id("sidebar-game-mark")
                                 .test_support()
                                 .absolute()
-                                .top(px(9. + 32. * row as f32 + 3.))
+                                .top(px(5. + 32. * row as f32 + 3.))
                                 .left(px(18.))
                                 .size(px(12.))
                                 .rounded_full()
@@ -1275,8 +1275,8 @@ impl Workspace {
                             .min_h_0()
                             .overflow_y_scroll()
                             .px_4()
-                            .py_3()
-                            .gap_2()
+                            .py_2()
+                            .gap_1()
                             .children(blocks),
                     )
                     .child(
