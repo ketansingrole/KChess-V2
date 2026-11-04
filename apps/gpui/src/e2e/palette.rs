@@ -330,10 +330,7 @@ fn a_broadcast_board_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppConte
     app.press("enter");
     wait_until_closed(&mut app);
     let open_board = |app: &mut Harness| {
-        app.wait_for("the round's board", |_, cx| {
-            crate::shell::view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx)
-                .is_some_and(|watch| watch.update(cx, |watch, cx| watch.open_first_board(cx)))
-        });
+        app.click(("broadcast-cell", 0usize));
         app.find("broadcast-analyse");
     };
     open_board(&mut app);

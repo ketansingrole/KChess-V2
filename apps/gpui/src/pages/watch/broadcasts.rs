@@ -725,6 +725,7 @@ impl WatchPage {
                 };
                 v_flex()
                     .id(("broadcast-cell", index))
+                    .test_support()
                     .role(Role::Button)
                     .keyboard_focus(palette.primary)
                     .aria_label(format!(
@@ -1027,22 +1028,6 @@ impl WatchPage {
     }
 
     /// One board followed: players and clocks, the moves, All boards and Analyse.
-    /// Open the round's first board, as a click on its cell does; once the round has one.
-    #[cfg(test)]
-    pub(crate) fn open_first_board(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(id) = self
-            .broadcasts
-            .games
-            .first()
-            .and_then(|game| game["id"].as_str())
-        else {
-            return false;
-        };
-        self.broadcasts.select_game(id.to_string(), cx);
-        self.engine_changed(cx);
-        true
-    }
-
     /// Back from the board open to the round's boards.
     pub(super) fn all_boards(&mut self, cx: &mut Context<Self>) {
         self.broadcasts.selected.clear();
