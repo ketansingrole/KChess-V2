@@ -26,8 +26,10 @@ pub mod radii {
     pub const MD: Pixels = px(8.);
     /// Boxes inside a card: lists, banners, icon tiles.
     pub const LG: Pixels = px(10.);
-    /// Cards, side panels, page tiles and the board.
+    /// Cards, side panels and page tiles.
     pub const XL: Pixels = px(14.);
+    /// The board: Lichess's 8px, tight enough that the corner coordinates stay inside it.
+    pub const BOARD: Pixels = px(8.);
 }
 
 /// The default theme's id: no palette, KChess's own colors.

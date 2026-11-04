@@ -409,12 +409,15 @@ impl WatchPage {
     pub(super) fn broadcast_eval_bar(&self, cx: &App) -> Option<AnyElement> {
         let broadcasts = &self.broadcasts;
         (broadcasts.engine_active(cx) && crate::prefs::get(cx, BAR, true)).then(|| {
-            crate::engine_view::eval_bar(
-                broadcasts.engine.engine.best(),
-                broadcasts.orientation,
-                broadcasts.terminal(),
-            )
-            .into_any_element()
+            // The bar ends where the squares end, above any outside coordinates.
+            div()
+                .pb(crate::board::outside_gutter(cx))
+                .child(crate::engine_view::eval_bar(
+                    broadcasts.engine.engine.best(),
+                    broadcasts.orientation,
+                    broadcasts.terminal(),
+                ))
+                .into_any_element()
         })
     }
 

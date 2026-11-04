@@ -25,6 +25,9 @@ const LAST_MOVE: u32 = 0x9bc70069; // rgba(155, 199, 0, 0.41)
 const SELECTED: u32 = 0x14551e80; // rgba(20, 85, 30, 0.5)
 const DEST_DOT: u32 = 0x14551e80; // rgba(20, 85, 30, 0.5)
 const DEST_CORNER: u32 = 0x1455004d; // rgba(20, 85, 0, 0.3)
+/// The strip right of and below the board that holds coordinates drawn outside it, inside the
+/// board's own bounds so the controls beside it cannot cover them.
+const OUTSIDE_GUTTER: Pixels = px(16.);
 const DEST_HOVER: u32 = 0x14551e4d; // rgba(20, 85, 30, 0.3)
 /// Chessground's queued premove and its targets (`current-premove`, `premove-dest`).
 const PREMOVE: u32 = 0x141e5580; // rgba(20, 30, 85, 0.5)
@@ -879,6 +882,11 @@ impl ChessBoard {
             .collect()
     }
 
+    /// Lichess's coordinate size: 8px on a small board, 12px from a large one up.
+    fn coordinate_size(&self) -> Pixels {
+        px((f32::from(self.square_size()) * 8. * 0.0192).clamp(8., 12.))
+    }
+
     fn render_coordinates(
         &self,
         mode: CoordinateMode,
@@ -904,9 +912,10 @@ impl ChessBoard {
             Color::White => (File::H, Rank::First),
             Color::Black => (File::A, Rank::Eighth),
         };
-        // Chessground sets rank labels 39% down their square, below a 2px inset.
-        let rank_offset = self.square_size() * 0.39 + px(2.);
+        let size = self.coordinate_size();
         let mut labels = Vec::new();
+        // As on Lichess: ranks in the top-right corner of the edge file, files in the bottom-left
+        // corner of the edge rank; outside, each centred on its square in the board's gutter.
         for rank in Rank::ALL {
             let square = Square::from_coords(edge_file, rank);
             let (_, row) = self.cell(square);
@@ -914,18 +923,19 @@ impl ChessBoard {
                 div()
                     .absolute()
                     .top(relative(row as f32 / 8.))
-                    .when(inside, |label| label.right_0().w(px(10.)).mt(rank_offset))
+                    .when(inside, |label| label.right_0().w(size * 0.8).mt(px(1.)))
                     .when(!inside, |label| {
                         label
-                            .right(px(-15.))
+                            .right(-OUTSIDE_GUTTER)
+                            .w(OUTSIDE_GUTTER)
                             .h(relative(0.125))
                             .flex()
                             .items_center()
+                            .justify_center()
                     })
-                    .text_size(px(11.))
-                    .font_weight(FontWeight::MEDIUM)
+                    .text_size(size)
+                    .font_weight(FontWeight::BOLD)
                     .text_color(color(square))
-                    .opacity(0.8)
                     .child(rank.char().to_string())
                     .into_any_element(),
             );
@@ -937,18 +947,26 @@ impl ChessBoard {
                 div()
                     .absolute()
                     .left(relative(column as f32 / 8.))
-                    .when(inside, |label| label.bottom_0().h(px(15.)).pl(px(4.)))
+                    .when(inside, |label| {
+                        label
+                            .bottom_0()
+                            .h(size * 1.4)
+                            .flex()
+                            .items_center()
+                            .pl(px(4.))
+                    })
                     .when(!inside, |label| {
                         label
-                            .bottom(px(-17.))
+                            .bottom(-OUTSIDE_GUTTER)
+                            .h(OUTSIDE_GUTTER)
                             .w(relative(0.125))
                             .flex()
+                            .items_center()
                             .justify_center()
                     })
-                    .text_size(px(11.))
-                    .font_weight(FontWeight::MEDIUM)
+                    .text_size(size)
+                    .font_weight(FontWeight::BOLD)
                     .text_color(color(square))
-                    .opacity(0.8)
                     .child(file.char().to_string())
                     .into_any_element(),
             );
@@ -1070,7 +1088,7 @@ fn paint_frame(frame: Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &m
     // A corner square's fill takes the board's rounded corner: GPUI does not clip to it.
     let rounded = |square: Square| -> Corners<Pixels> {
         let (column, row) = place(square);
-        let corner = |at: bool| if at { radii::XL.min(side) } else { px(0.) };
+        let corner = |at: bool| if at { radii::BOARD.min(side) } else { px(0.) };
         Corners {
             top_left: corner(column == 0 && row == 0),
             top_right: corner(column == 7 && row == 0),
@@ -1374,6 +1392,17 @@ fn describe(state: &BoardState) -> String {
     }
 }
 
+/// The strip a board that follows Settings keeps right of and below its squares for coordinates
+/// drawn outside, so what stands beside it (the evaluation bar) can end where the squares end.
+pub fn outside_gutter(cx: &App) -> Pixels {
+    let settings = &cx.global::<SettingsHandle>().0.read(cx).settings;
+    if settings.frontend.coordinates == CoordinateMode::Outside {
+        OUTSIDE_GUTTER
+    } else {
+        px(0.)
+    }
+}
+
 impl Render for ChessBoard {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let frontend = cx
@@ -1518,14 +1547,13 @@ impl Render for ChessBoard {
             )
             .with_priority(1)
         });
+        let coordinate_mode = self.state.coordinates.unwrap_or(frontend.coordinates);
+        let gutter = (!self.state.preview && coordinate_mode == CoordinateMode::Outside)
+            .then_some(OUTSIDE_GUTTER);
         let mut coordinates = if self.state.preview {
             Vec::new()
         } else {
-            self.render_coordinates(
-                self.state.coordinates.unwrap_or(frontend.coordinates),
-                look,
-                cx,
-            )
+            self.render_coordinates(coordinate_mode, look, cx)
         };
         if self.state.square_names {
             coordinates.extend(self.render_square_names(look));
@@ -1578,57 +1606,73 @@ impl Render for ChessBoard {
                     .aria_description(description.clone())
                     .child(crate::widgets::live_region("board-live", description))
             })
-            .relative()
             .w_full()
             .aspect_ratio(1.)
+            // Coordinates outside the board take a strip of the board's own square.
+            .when_some(gutter, |board, gutter| board.pr(gutter).pb(gutter))
             .child(
-                img(SharedString::from(format!("boards/{}", look.image)))
-                    .absolute()
+                // The board itself: every square, piece and label, which the canvas measures.
+                div()
+                    .relative()
                     .size_full()
-                    .object_fit(ObjectFit::Fill)
-                    .rounded(radii::XL),
-            )
-            .children(check)
-            .child(
-                canvas(
-                    move |canvas_bounds, _, _| bounds.set(canvas_bounds),
-                    move |canvas_bounds, (), window, cx| {
-                        paint_frame(frame, canvas_bounds, window, cx);
-                        if dragging {
-                            // A drag follows the pointer anywhere in the window, not only over the board.
-                            let moving = entity.clone();
-                            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
-                                if phase == DispatchPhase::Bubble {
-                                    let _ = moving.update(cx, |this, cx| {
-                                        // A release this listener missed (it arrived before
-                                        // this frame) ends the drag at the next move.
-                                        if event.pressed_button == Some(MouseButton::Left) {
-                                            this.pointer_moved(event.position, cx)
-                                        } else {
-                                            this.release(event.position, cx)
-                                        }
-                                    });
+                    .child(
+                        img(SharedString::from(format!("boards/{}", look.image)))
+                            .absolute()
+                            .size_full()
+                            .object_fit(ObjectFit::Fill)
+                            .rounded(radii::BOARD),
+                    )
+                    .children(check)
+                    .child(
+                        canvas(
+                            move |canvas_bounds, _, _| bounds.set(canvas_bounds),
+                            move |canvas_bounds, (), window, cx| {
+                                paint_frame(frame, canvas_bounds, window, cx);
+                                if dragging {
+                                    // A drag follows the pointer anywhere in the window, not only over the board.
+                                    let moving = entity.clone();
+                                    window.on_mouse_event(
+                                        move |event: &MouseMoveEvent, phase, _, cx| {
+                                            if phase == DispatchPhase::Bubble {
+                                                let _ = moving.update(cx, |this, cx| {
+                                                    // A release this listener missed (it arrived before
+                                                    // this frame) ends the drag at the next move.
+                                                    if event.pressed_button
+                                                        == Some(MouseButton::Left)
+                                                    {
+                                                        this.pointer_moved(event.position, cx)
+                                                    } else {
+                                                        this.release(event.position, cx)
+                                                    }
+                                                });
+                                            }
+                                        },
+                                    );
+                                    let releasing = entity.clone();
+                                    window.on_mouse_event(
+                                        move |event: &MouseUpEvent, phase, _, cx| {
+                                            if phase == DispatchPhase::Bubble
+                                                && event.button == MouseButton::Left
+                                            {
+                                                let _ = releasing.update(cx, |this, cx| {
+                                                    this.release(event.position, cx)
+                                                });
+                                            }
+                                        },
+                                    );
                                 }
-                            });
-                            let releasing = entity.clone();
-                            window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
-                                if phase == DispatchPhase::Bubble
-                                    && event.button == MouseButton::Left
-                                {
-                                    let _ = releasing
-                                        .update(cx, |this, cx| this.release(event.position, cx));
-                                }
-                            });
-                        }
-                    },
-                )
-                .absolute()
-                .size_full(),
+                            },
+                        )
+                        .absolute()
+                        .size_full(),
+                    )
+                    .children(ghost)
+                    .children(sliding)
+                    .children(coordinates)
+                    .children(badge)
+                    .children(held)
+                    .children(promotion),
             )
-            .children(ghost)
-            .children(sliding)
-            .children(coordinates)
-            .children(badge)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event, _, cx| this.press(event, cx)),
@@ -1666,8 +1710,6 @@ impl Render for ChessBoard {
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseUpEvent, _, cx| this.release(event.position, cx)),
             )
-            .children(held)
-            .children(promotion)
             .on_drop(cx.listener(|this, spare: &SparePiece, window, cx| {
                 this.drop_spare(spare.0, window.mouse_position(), cx)
             }))

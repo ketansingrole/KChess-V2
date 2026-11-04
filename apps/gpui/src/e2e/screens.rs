@@ -337,6 +337,41 @@ fn capture(out: &Path, width: f32, height: f32, differ: &mut Vec<String>) {
     crate::profile::TEST_DATA_DIR.set(None);
 }
 
+/// The board's coordinates in each mode, on the pages with a board, at the smallest and the default
+/// window size: `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::board_coordinates
+/// -- --ignored` writes `<dir>/coordinates/<page>-<mode>-<width>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn board_coordinates() {
+    use kchess_contracts::types::CoordinateMode;
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("coordinates");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (width, height) in [SIZES[0], SIZES[2]] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), width, height);
+        for (page, name) in [(Page::Analysis, "analysis"), (Page::Local, "local")] {
+            cx.update_window(window, |_, window, cx| crate::shell::open(page, window, cx))
+                .expect("the window");
+            for (mode, label) in [
+                (CoordinateMode::Inside, "inside"),
+                (CoordinateMode::Outside, "outside"),
+            ] {
+                cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.coordinates = mode));
+                settle(&mut cx, window);
+                cx.capture_screenshot(window)
+                    .expect("a screenshot")
+                    .save(out.join(format!("{name}-{label}-{width}.png")))
+                    .expect("the screenshot saves");
+            }
+        }
+        let quit = cx.update(crate::core::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
 /// Let the core answer and animations end before a picture.
 fn settle(cx: &mut HeadlessAppContext, window: AnyWindowHandle) {
     for _ in 0..60 {

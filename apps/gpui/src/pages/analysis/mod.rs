@@ -2807,10 +2807,9 @@ impl Render for AnalysisPage {
                     .items_stretch()
                     .gap(EVAL_GAP)
                     .when(show_bar, |row| {
-                        row.child(crate::engine_view::eval_bar(
-                            lines.first(),
-                            self.orientation,
-                            result,
+                        // The bar ends where the squares end, above any outside coordinates.
+                        row.child(div().pb(crate::board::outside_gutter(cx)).child(
+                            crate::engine_view::eval_bar(lines.first(), self.orientation, result),
                         ))
                     })
                     .when(!show_bar, |row| row.pl(EVAL_BAR))
