@@ -54,6 +54,7 @@ pub(crate) enum Action {
     Resign,
     NewGame,
     SwitchSides,
+    Review,
 }
 
 /// A question the page asks before it throws a game away.
@@ -457,7 +458,6 @@ impl ComputerPage {
         }
     }
 
-    /// Review the game on the analysis board, opened at the move being looked at.
     /// The game an Export saves, named "You" and "Stockfish" (`pgnResult` for its result).
     fn game_export(&self) -> GameExport {
         let user = self.user_color();
@@ -492,6 +492,7 @@ impl ComputerPage {
         }
     }
 
+    /// Review the game on the analysis board, opened at the move being looked at.
     fn review_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pgn = rules(
             "setupPgn",
@@ -850,7 +851,17 @@ impl ComputerPage {
             actions.push(Action::Resign);
         }
         actions.extend([Action::NewGame, Action::SwitchSides]);
+        if self.can_review() {
+            actions.push(Action::Review);
+        }
         actions
+    }
+
+    /// The finished game can go to the analysis board, which plays standard chess and Chess960.
+    fn can_review(&self) -> bool {
+        self.game.result(&self.host()).is_some()
+            && !self.moves().is_empty()
+            && crate::game::analysable(&self.setup_variant())
     }
 
     /// Run an action as its button does, asking first where the button asks.
@@ -862,6 +873,8 @@ impl ComputerPage {
             Action::Resign => {}
             Action::NewGame => self.ask(Question::NewGame, window, cx),
             Action::SwitchSides => self.ask(Question::SwitchSides, window, cx),
+            Action::Review if self.can_review() => self.review_game(window, cx),
+            Action::Review => {}
         }
     }
 
@@ -1232,19 +1245,14 @@ impl ComputerPage {
                 |banner, value| banner.detail(value),
             )
             .when_some(
-                // The analysis board and reviews take standard chess and Chess960.
-                (!self.moves().is_empty() && crate::game::analysable(&self.setup_variant())).then(
-                    || {
-                        Button::new("review-game")
-                            .outline()
-                            .small()
-                            .label("Review game")
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.review_game(window, cx)),
-                            )
-                            .into_any_element()
-                    },
-                ),
+                self.can_review().then(|| {
+                    Button::new("review-game")
+                        .outline()
+                        .small()
+                        .label("Review game")
+                        .on_click(cx.listener(|this, _, window, cx| this.review_game(window, cx)))
+                        .into_any_element()
+                }),
                 |banner, value| banner.extra(value),
             )
             .into_any_element();

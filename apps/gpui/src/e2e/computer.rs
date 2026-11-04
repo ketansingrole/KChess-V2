@@ -162,3 +162,23 @@ fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::Test
     });
     assert_eq!(variant.as_deref(), Some("chess960"));
 }
+
+/// Once the game is over, Quick Pick reviews it on the analysis board, as the banner's button does.
+#[gpui_kit::test]
+fn a_finished_game_is_reviewed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.wait_for_moves(&["e4"]);
+    app.click("resign");
+    app.click("ok");
+    app.find("review-game");
+    super::palette::wait_until_closed(&mut app);
+    app.press("secondary-k");
+    app.type_text(">Review game");
+    super::palette::wait_for_first(&mut app, "Review game");
+    app.press("enter");
+    app.wait_for("the analysis board", |_, cx| {
+        crate::shell::current_page(cx) == Some(crate::pages::Page::Analysis)
+    });
+}

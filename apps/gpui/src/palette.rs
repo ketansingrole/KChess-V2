@@ -551,6 +551,7 @@ fn computer_commands(cx: &App) -> Vec<Command> {
             Action::Resign => ("resign", "Resign", "flag", "give up"),
             Action::NewGame => ("new-game", "New game", "rotate-ccw", "restart"),
             Action::SwitchSides => ("switch-sides", "Switch sides", "repeat", "colour color"),
+            Action::Review => ("review", "Review game", "microscope", "analyse analysis"),
         },
         ComputerPage::act,
     )
