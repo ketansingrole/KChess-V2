@@ -435,19 +435,27 @@ impl TournamentsPage {
             actions.push(Action::Create);
             return actions;
         };
+        // Create arena stays in the header while an event is open.
         let mut actions = vec![Action::Back];
-        let Some(detail) = &open.detail else {
-            return actions;
+        actions.extend(self.event_actions(open.detail.as_ref(), cx));
+        actions.push(Action::Create);
+        actions
+    }
+
+    /// The open event's own actions: join it, or go to your game and leave it.
+    fn event_actions(&self, detail: Option<&Value>, cx: &App) -> Vec<Action> {
+        let Some(detail) = detail else {
+            return Vec::new();
         };
         if detail["status"] == json!("finished") || self.busy {
-            return actions;
+            return Vec::new();
         }
         if !self.joined_now(detail, cx) {
-            if detail["playable"] == json!(true) && detail["verdicts"]["accepted"] != json!(false) {
-                actions.push(Action::Join);
-            }
-            return actions;
+            let open =
+                detail["playable"] == json!(true) && detail["verdicts"]["accepted"] != json!(false);
+            return if open { vec![Action::Join] } else { Vec::new() };
         }
+        let mut actions = Vec::new();
         if detail["me"]["gameId"].is_string() {
             actions.push(Action::Game);
         }

@@ -326,7 +326,22 @@ fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {
     wait_until_closed(&mut app);
     assert_eq!(page(&mut app), Some(Page::Tournaments));
     app.find("tournament-join");
-    // The event's own actions are in Quick Pick too.
+    // The event's own actions are in Quick Pick too, with the header's.
+    app.press("secondary-k");
+    app.type_text(">");
+    wait_for_first(&mut app, "All tournaments");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..6usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert!(
+        listed.iter().any(|label| label == "Create arena"),
+        "{listed:?}"
+    );
+    app.press("escape");
+    wait_until_closed(&mut app);
     app.press("secondary-k");
     app.type_text(">All tournaments");
     wait_for_first(&mut app, "All tournaments");
