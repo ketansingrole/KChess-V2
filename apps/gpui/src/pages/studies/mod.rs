@@ -235,6 +235,13 @@ impl StudiesPage {
         cx.global::<StudyHandle>().0.clone()
     }
 
+    /// Show the Lichess tab, as its pill does.
+    pub fn show_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::prefs::set(cx, TAB, "lichess");
+        self.load_lichess(false, cx);
+        window.refresh();
+    }
+
     fn connected(cx: &App) -> bool {
         !crate::accounts::handle(cx).read(cx).connected().is_empty()
     }

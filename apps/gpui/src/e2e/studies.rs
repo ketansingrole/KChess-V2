@@ -384,3 +384,15 @@ fn quick_pick_saves_a_study_adds_a_chapter_and_closes_it(cx: &mut gpui_kit::Test
     app.find("save-as-study");
     assert!(!app.shows("chapter-actions"));
 }
+
+/// With an account, Studies' Lichess tab is in Quick Pick; without one it is not offered.
+#[gpui_kit::test]
+fn lichess_studies_open_from_quick_pick_with_an_account(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.press("secondary-k");
+    app.type_text("Lichess studies");
+    super::palette::wait_for_first(&mut app, "Lichess studies");
+    app.press("enter");
+    super::palette::wait_until_closed(&mut app);
+    assert_eq!(app.find(("studies-tabs", 1usize)).selected(), Some(true));
+}

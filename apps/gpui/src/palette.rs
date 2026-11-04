@@ -1203,7 +1203,7 @@ fn play_commands(cx: &App) -> Vec<Command> {
 fn app_commands(cx: &App) -> Vec<Command> {
     let connected = !crate::accounts::handle(cx).read(cx).connected().is_empty();
     let sidebar = crate::shell::sidebar_open(cx);
-    vec![
+    let mut list = vec![
         if connected {
             Command::new(
                 "app:sync",
@@ -1238,7 +1238,21 @@ fn app_commands(cx: &App) -> Vec<Command> {
             crate::shell::toggle_sidebar,
         )
         .keywords("toggle navigation"),
-    ]
+    ];
+    // Studies' Lichess tab is there only with an account.
+    if connected {
+        list.push(
+            Command::new(
+                "studies:lichess",
+                "Lichess studies",
+                icon("cloud"),
+                crate::shell::open_studies_lichess,
+            )
+            .detail("Studies")
+            .keywords("account cloud chapters"),
+        );
+    }
+    list
 }
 
 /// Followed players' profiles and challenges (`playerCommands`).

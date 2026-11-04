@@ -580,6 +580,14 @@ pub fn open_history_lichess(window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Studies at its Lichess tab: the connected account's own studies.
+pub fn open_studies_lichess(window: &mut Window, cx: &mut App) {
+    open(Page::Studies, window, cx);
+    if let Some(studies) = view_of::<crate::pages::studies::StudiesPage>(Page::Studies, cx) {
+        studies.update(cx, |studies, cx| studies.show_lichess(window, cx));
+    }
+}
+
 /// Open a synced Lichess game in Game history (`openReview`).
 pub fn open_lichess_game(game: serde_json::Value, window: &mut Window, cx: &mut App) {
     open(Page::History, window, cx);
