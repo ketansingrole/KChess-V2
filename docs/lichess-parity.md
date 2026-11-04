@@ -81,7 +81,7 @@ can add them as a friend, challenge them or watch their current game.
 - **Import a game by link**: paste a lichess.org game link (with `/black` or `#move` if you
   like) into the analysis board's import, and the game opens there. On the command line,
   `kchess-cli pgn <link>` prints a game's or a public study chapter's PGN, and
-  `kchess-cli review <link|file|moves>` reviews a standard game with Stockfish, printing each
+  `kchess-cli review <link|file|moves>` reviews a standard or Chess960 game with Stockfish, printing each
   side's accuracy and the inaccuracies, mistakes and blunders.
   `kchess-cli explore [masters|opening|tablebase] <fen|moves>` prints the explorer's moves for a
   position, from the tablebase when it has seven pieces or fewer.

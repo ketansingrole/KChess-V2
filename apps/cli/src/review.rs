@@ -18,17 +18,18 @@ pub struct Line {
     pub moves: Vec<String>,
 }
 
-/// The main line of the first game in `pgn`. Only standard games are reviewed: the review reads
-/// moves under standard rules.
+/// The main line of the first game in `pgn`. Standard games and Chess960 are reviewed, as on
+/// the analysis board: the review reads moves under standard rules.
 pub fn main_line(pgn: &str) -> Result<Line, String> {
     let game = parse_pgn(pgn)
         .into_iter()
         .next()
         .ok_or("No game could be read from that PGN.")?;
-    if let Some(variant) = game
-        .header("Variant")
-        .filter(|variant| !variant.eq_ignore_ascii_case("standard"))
-    {
+    if let Some(variant) = game.header("Variant").filter(|variant| {
+        !["standard", "chess960", "from position"]
+            .iter()
+            .any(|known| variant.eq_ignore_ascii_case(known))
+    }) {
         return Err(format!("{variant} games cannot be reviewed."));
     }
     let fen = game.header("FEN").unwrap_or(START).to_string();
@@ -158,6 +159,13 @@ mod tests {
             main_line("[Variant \"Atomic\"]\n\n1. e4 *"),
             Err("Atomic games cannot be reviewed.".into())
         );
+        // Chess960 castles king onto rook's square or the king's, as the core accepts either.
+        let fischer = main_line(
+            "[Variant \"Chess960\"]\n[FEN \"4k3/8/8/8/8/8/8/1RK3R1 w GB - 0 1\"]\n\n1. O-O Kd7 2. Rfe1 *",
+        )
+        .expect("a Chess960 game");
+        assert_eq!(fischer.sans, ["O-O", "Kd7", "Rfe1"]);
+        assert_eq!(fischer.moves.len(), 3, "{:?}", fischer.moves);
         assert_eq!(
             main_line("1. e4 e5 2. Ke3 *"),
             Err("Move 2 (Ke3) is not legal there.".into())
