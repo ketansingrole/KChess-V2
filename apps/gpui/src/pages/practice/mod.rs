@@ -2,13 +2,13 @@
 //! each made the first time it is shown and kept, as the Electron page keeps its stores.
 
 mod coordinates;
-mod endgame_drills;
+pub(crate) mod endgame_drills;
 mod endgame_lesson;
 mod endgames;
 mod engine_move;
 mod knight;
 mod mistakes;
-mod repertoire;
+pub(crate) mod repertoire;
 mod run;
 mod square_color;
 
@@ -31,6 +31,13 @@ const TABS: [(&str, &str); 6] = [
     ("openings", "Repertoire"),
     ("mistakes", "Your mistakes"),
 ];
+
+/// The actions of the trainer on screen, as its buttons offer them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Action {
+    Drill(endgame_drills::DrillAction),
+    Repertoire(repertoire::RepertoireAction),
+}
 
 pub struct PracticePage {
     coordinates: Option<Entity<coordinates::Coordinates>>,
@@ -61,6 +68,55 @@ impl PracticePage {
             mistakes: None,
             shown_tab: None,
             focus: cx.focus_handle(),
+        }
+    }
+
+    /// The endgame drills, while they are on screen.
+    pub(crate) fn drills(&self, cx: &App) -> Option<Entity<endgame_drills::EndgameDrills>> {
+        if Self::tab(cx) != "endgames" {
+            return None;
+        }
+        self.endgames.as_ref()?.read(cx).shown_drills(cx)
+    }
+
+    /// What the trainer on screen can do now.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        match Self::tab(cx) {
+            "endgames" => self
+                .drills(cx)
+                .map(|drills| drills.read(cx).actions())
+                .unwrap_or_default()
+                .into_iter()
+                .map(Action::Drill)
+                .collect(),
+            "openings" => self
+                .repertoire
+                .as_ref()
+                .map(|repertoire| repertoire.read(cx).actions(cx))
+                .unwrap_or_default()
+                .into_iter()
+                .map(Action::Repertoire)
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Run an action on the trainer on screen.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
+            Action::Drill(action) => {
+                if let Some(drills) = self.drills(cx) {
+                    drills.update(cx, |drills, cx| drills.act(action, cx));
+                }
+            }
+            Action::Repertoire(action) => {
+                if Self::tab(cx) != "openings" {
+                    return;
+                }
+                if let Some(repertoire) = self.repertoire.clone() {
+                    repertoire.update(cx, |repertoire, cx| repertoire.act(action, window, cx));
+                }
+            }
         }
     }
 

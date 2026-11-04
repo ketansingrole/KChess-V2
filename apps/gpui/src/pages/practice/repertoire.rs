@@ -166,6 +166,15 @@ fn color_name(color: Color) -> &'static str {
     }
 }
 
+/// The repertoire trainer's actions, as its buttons offer them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum RepertoireAction {
+    ShowMove,
+    Restart,
+    Forget,
+    Save,
+}
+
 pub struct Repertoire {
     studies: Vec<Study>,
     misses: Value,
@@ -660,6 +669,40 @@ impl Repertoire {
                 ))
             })
             .collect()
+    }
+
+    /// What the trainer's buttons can do now; nothing before there is a study or opening.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<RepertoireAction> {
+        if self.studies.is_empty() && Self::opening(cx).is_none() {
+            return Vec::new();
+        }
+        let mut actions = Vec::new();
+        if self.your_turn(cx) {
+            actions.push(RepertoireAction::ShowMove);
+        }
+        actions.extend([RepertoireAction::Restart, RepertoireAction::Forget]);
+        if Self::drills_opening(cx) && self.drill.is_some() && !self.saving {
+            actions.push(RepertoireAction::Save);
+        }
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(
+        &mut self,
+        action: RepertoireAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        match action {
+            RepertoireAction::ShowMove => self.show_answer(cx),
+            RepertoireAction::Restart => self.start_line(cx),
+            RepertoireAction::Forget => self.clear_misses(cx),
+            RepertoireAction::Save => self.save_opening(window, cx),
+        }
     }
 
     fn show_answer(&mut self, cx: &mut Context<Self>) {

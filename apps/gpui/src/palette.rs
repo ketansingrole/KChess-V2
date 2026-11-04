@@ -505,6 +505,7 @@ fn page_commands(cx: &App) -> Vec<Command> {
         Some(Page::Studies) => studies_commands(),
         Some(Page::Openings) => openings_commands(cx),
         Some(Page::Tournaments) => tournament_commands(cx),
+        Some(Page::Practice) => practice_commands(cx),
         _ => Vec::new(),
     }
 }
@@ -673,6 +674,45 @@ fn tournament_commands(cx: &App) -> Vec<Command> {
             Action::Withdraw => ("withdraw", "Withdraw", "log-out", "leave tournament"),
         },
         TournamentsPage::run,
+    )
+}
+
+/// The actions of the Practice trainer on screen: an endgame drill's or the repertoire's.
+fn practice_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::practice::{
+        Action, PracticePage, endgame_drills::DrillAction, repertoire::RepertoireAction,
+    };
+    let Some(page) = crate::shell::view_of::<PracticePage>(Page::Practice, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Practice,
+        "practice",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::Drill(DrillAction::Hint) => ("hint", "Hint", "lightbulb", "help best move"),
+            Action::Drill(DrillAction::TakeBack) => ("takeback", "Take back", "undo-2", "undo"),
+            Action::Drill(DrillAction::Flip) => {
+                ("flip", "Flip board", "arrow-up-down", "turn rotate")
+            }
+            Action::Drill(DrillAction::Restart) => ("restart", "Restart", "rotate-ccw", "again"),
+            Action::Repertoire(RepertoireAction::ShowMove) => {
+                ("show-move", "Show move", "lightbulb", "hint answer")
+            }
+            Action::Repertoire(RepertoireAction::Restart) => (
+                "restart-line",
+                "Restart line",
+                "rotate-ccw",
+                "new line again",
+            ),
+            Action::Repertoire(RepertoireAction::Forget) => {
+                ("forget", "Forget mistakes", "eraser", "clear misses")
+            }
+            Action::Repertoire(RepertoireAction::Save) => {
+                ("save", "Save as study", "save", "keep opening")
+            }
+        },
+        PracticePage::act,
     )
 }
 

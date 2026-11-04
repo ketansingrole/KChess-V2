@@ -173,6 +173,38 @@ fn endgame_drills_open_and_return_to_the_courses(cx: &mut gpui_kit::TestAppConte
     assert!(!app.shows("chess-board"));
 }
 
+/// An endgame drill's buttons are in Quick Pick, those it allows now.
+#[gpui_kit::test]
+fn an_endgame_drill_is_flipped_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = practice(cx);
+    tab(&mut app, 3);
+    reveal(&mut app, "endgame-courses", "card-drills");
+    app.click("card-drills");
+    app.find("drill-hint");
+    app.press("secondary-k");
+    app.type_text(">");
+    super::palette::wait_for_first(&mut app, "Hint");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..6usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    // Nothing was played, so there is nothing to take back.
+    assert_eq!(&listed[..3], ["Hint", "Flip board", "Restart"]);
+    app.type_text("Flip board");
+    super::palette::wait_for_first(&mut app, "Flip board");
+    app.press("enter");
+    super::palette::wait_until_closed(&mut app);
+    let flipped = app.cx.update(|cx| {
+        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+            .and_then(|page| page.read(cx).drills(cx))
+            .map(|drills| drills.read(cx).flipped())
+    });
+    assert_eq!(flipped, Some(true));
+}
+
 #[gpui_kit::test]
 fn a_checkmate_lesson_takes_back_a_wrong_move_and_accepts_the_mate(
     cx: &mut gpui_kit::TestAppContext,

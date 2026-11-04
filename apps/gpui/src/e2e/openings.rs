@@ -192,3 +192,37 @@ fn an_open_lines_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     super::palette::wait_until_closed(&mut app);
     assert_eq!(page(&mut app), Some(Page::Puzzles));
 }
+
+/// The repertoire trainer's buttons are in Quick Pick: a drilled line is saved from there.
+#[gpui_kit::test]
+fn a_drilled_line_is_saved_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = openings(cx);
+    open_kieseritzky(&mut app);
+    app.click("train-line");
+    app.find("save-opening");
+    app.press("secondary-k");
+    app.type_text(">");
+    super::palette::wait_for_first(&mut app, "Show move");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..6usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert_eq!(
+        &listed[..4],
+        [
+            "Show move",
+            "Restart line",
+            "Forget mistakes",
+            "Save as study"
+        ]
+    );
+    app.type_text("Save as study");
+    super::palette::wait_for_first(&mut app, "Save as study");
+    app.press("enter");
+    super::palette::wait_until_closed(&mut app);
+    let studies = loop_until_saved(&mut app);
+    assert!(studies.contains("King's Gambit"), "{studies}");
+}

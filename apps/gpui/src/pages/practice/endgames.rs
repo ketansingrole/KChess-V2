@@ -192,6 +192,11 @@ impl Endgames {
         .detach();
     }
 
+    /// The drills, while they are on screen.
+    pub(crate) fn shown_drills(&self, cx: &App) -> Option<Entity<EndgameDrills>> {
+        self.drills.clone().filter(|_| Self::view(cx) == DRILLS)
+    }
+
     fn view(cx: &App) -> String {
         crate::prefs::get::<String>(cx, VIEW, COURSES.into())
     }

@@ -47,6 +47,15 @@ pub fn move_squares(fen: &str, uci: &str) -> Option<(shakmaty::Square, shakmaty:
     ))
 }
 
+/// A drill's actions, as its buttons offer them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum DrillAction {
+    Hint,
+    TakeBack,
+    Flip,
+    Restart,
+}
+
 pub struct EndgameDrills {
     drill: Drill,
     moves: Vec<String>,
@@ -243,6 +252,43 @@ impl EndgameDrills {
             this.summary = saved["summary"].clone();
             cx.notify();
         });
+    }
+
+    /// What the drill's buttons can do now.
+    pub(crate) fn actions(&self) -> Vec<DrillAction> {
+        let thinking = self.engine.thinking;
+        let mut actions = Vec::new();
+        if self.your_turn() && !thinking {
+            actions.push(DrillAction::Hint);
+        }
+        if !self.moves.is_empty() && !thinking {
+            actions.push(DrillAction::TakeBack);
+        }
+        actions.extend([DrillAction::Flip, DrillAction::Restart]);
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: DrillAction, cx: &mut Context<Self>) {
+        if !self.actions().contains(&action) {
+            return;
+        }
+        match action {
+            DrillAction::Hint => self.show_hint(cx),
+            DrillAction::TakeBack => self.takeback(cx),
+            DrillAction::Flip => self.flip(cx),
+            DrillAction::Restart => self.restart(None, cx),
+        }
+    }
+
+    fn flip(&mut self, cx: &mut Context<Self>) {
+        self.flipped = !self.flipped;
+        self.redraw(cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn flipped(&self) -> bool {
+        self.flipped
     }
 
     fn takeback(&mut self, cx: &mut Context<Self>) {
@@ -474,10 +520,7 @@ impl Render for EndgameDrills {
                             .icon(icon("arrow-up-down"))
                             .tooltip("Flip board")
                             .accessibility_label("Flip board")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.flipped = !this.flipped;
-                                this.redraw(cx);
-                            })),
+                            .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     )
                     .child(
                         Button::new("drill-restart")
