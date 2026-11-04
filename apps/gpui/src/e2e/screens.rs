@@ -123,6 +123,53 @@ fn the_timeline() {
     }
 }
 
+/// The sidebar while Settings is open, in both appearances, open and as a rail, at the default
+/// window size and a short one that scrolls it: `KCHESS_SCREENSHOTS=<dir> cargo test -p
+/// kchess-gpui e2e::screens::settings_sidebar -- --ignored` writes
+/// `<dir>/settings-sidebar/<appearance>-<height>[-rail].png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn settings_sidebar() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("settings-sidebar");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        for height in [880., 560.] {
+            let profile = tempfile::tempdir().expect("a temporary profile");
+            let (mut cx, window) = start(profile.path(), 1320., height);
+            cx.update(|cx| {
+                crate::settings::change(cx, move |s| s.frontend.appearance = appearance)
+            });
+            cx.update_window(window, |_, window, cx| {
+                crate::shell::open_settings(crate::pages::settings::Section::Sound, window, cx)
+            })
+            .expect("the window");
+            settle(&mut cx, window);
+            let shoot = |cx: &mut HeadlessAppContext, suffix: &str| {
+                settle(cx, window);
+                cx.capture_screenshot(window)
+                    .expect("a screenshot")
+                    .save(out.join(format!("{name}-{height}{suffix}.png")))
+                    .expect("the screenshot saves");
+            };
+            shoot(&mut cx, "");
+            // The last category, from the palette: the sidebar scrolls to it.
+            cx.update_window(window, |_, window, cx| {
+                crate::shell::open_settings(crate::pages::settings::Section::Updates, window, cx)
+            })
+            .expect("the window");
+            shoot(&mut cx, "-updates");
+            cx.update_window(window, |_, window, cx| window.click("sidebar-toggle", cx))
+                .expect("the window");
+            shoot(&mut cx, "-rail");
+            let quit = cx.update(crate::core::quit);
+            cx.foreground_executor().block_test(quit);
+            crate::profile::TEST_DATA_DIR.set(None);
+        }
+    }
+}
+
 /// Home as a new person, someone with games played here, and a connected Lichess account with
 /// years of history, in both appearances, wide and narrow:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::home -- --ignored` writes

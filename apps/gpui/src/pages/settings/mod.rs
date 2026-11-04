@@ -56,26 +56,35 @@ pub enum Section {
     Updates,
 }
 
-/// The categories the sidebar lists while Settings is open, in the Electron app's order.
+/// The categories the sidebar lists while Settings is open, in `SECTION_GROUPS`.
 pub fn sections() -> [(Section, &'static str, Icon); 15] {
     [
         (Section::Appearance, "Appearance", icon("palette")),
-        (Section::Themes, "App theme", icon("swatch-book")),
-        (Section::Gameplay, "Gameplay", icon("gamepad-2")),
-        (Section::Gestures, "Gestures", icon("hand")),
-        (Section::Online, "Online play", icon("globe-2")),
-        (Section::Analysis, "Analysis", icon("microscope")),
-        (Section::Ai, "AI", icon("lightbulb")),
+        (Section::Themes, "Themes", icon("swatch-book")),
         (Section::Sound, "Sound", icon("volume-2")),
         (Section::Notifications, "Notifications", icon("bell")),
+        (Section::Gameplay, "Gameplay", icon("chess-knight")),
+        (Section::Gestures, "Gestures", icon("hand")),
         (Section::Voice, "Voice input", icon("mic")),
         (Section::Engine, "Chess engine", icon("cpu")),
-        (Section::Accounts, "My accounts", icon("user-round")),
+        (Section::Analysis, "Cloud evaluation", icon("cloud")),
+        (Section::Ai, "AI", icon("lightbulb")),
+        (Section::Accounts, "Accounts", icon("user-round")),
+        (Section::Online, "Online play", icon("globe-2")),
         (Section::Offline, "Offline downloads", icon("download")),
         (Section::Data, "Data & storage", icon("database")),
         (Section::Updates, "Updates", icon("refresh-cw")),
     ]
 }
+
+/// The sidebar's groups of `sections`, in order: each heading and how many categories it holds.
+pub const SECTION_GROUPS: [(&str, usize); 5] = [
+    ("Interface", 4),
+    ("Play", 3),
+    ("Analysis", 3),
+    ("Lichess", 2),
+    ("System", 3),
+];
 
 /// A yes/no row: its id, title, hint, state and how it changes the settings.
 type SwitchRow = (
