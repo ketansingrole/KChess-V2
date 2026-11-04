@@ -2,6 +2,7 @@
 
 mod core;
 mod play;
+mod puzzle;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -23,6 +24,7 @@ Commands:
   analyze <fen|startpos>           Stream engine analysis as JSON lines until Ctrl-C
   play [level] [white|black|random] Play Stockfish; type moves in SAN or UCI
   local                            Play a local game; type moves in SAN or UCI
+  puzzle                           Solve Lichess's daily puzzle; solution shows the answer
   methods                          List available CoreApi methods
 
 Options:
@@ -250,6 +252,7 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 let (level, color) = play::choices(&args[1..])?;
                 play::interactive(&core, &mut events, command == "play", level, color).await?;
             }
+            "puzzle" => puzzle::interactive(&core, &mut events).await?,
             other => return Err(format!("Unknown command: {other}. Run --help.")),
         }
         Ok(())
