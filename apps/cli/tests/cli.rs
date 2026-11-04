@@ -159,7 +159,11 @@ fn help_and_methods_need_no_core_and_bad_commands_fail() {
             vec!["call", "library", "{}"],
             "Arguments must be a JSON array.",
         ),
-        (vec!["analyze"], "analyze requires a FEN."),
+        (vec!["analyze"], "analyze requires a FEN or moves."),
+        (
+            vec!["analyze", "e4", "Ke7"],
+            "Move 1 (Ke7) is not legal there.",
+        ),
         (
             vec!["review"],
             "review requires a game: a Lichess link, a PGN file or moves.",

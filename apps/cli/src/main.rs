@@ -22,7 +22,7 @@ Commands:
   login                            Connect a Lichess account in your browser
   call <method> '[arguments]'      Invoke any CoreApi method (JSON argument array)
   call <method> --args-file <path> Read arguments from a JSON file
-  analyze <fen|startpos>           Stream engine analysis as JSON lines until Ctrl-C
+  analyze <fen|startpos|moves>     Stream engine analysis as JSON lines until Ctrl-C
   play [level] [white|black|random] Play Stockfish; type moves in SAN or UCI
   local [variant]                  Play over the board (chess960, crazyhouse, atomic…)
   puzzle [id|link]                 Solve the daily puzzle, or that one; solution shows it
@@ -241,10 +241,9 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 print(&core.call(method, parameters).await?);
             }
             "analyze" => {
-                let fen = analysis_fen(&args[1..])?;
+                let request = analysis_request(&args[1..])?;
                 core.call("resumeOnline", vec![]).await?;
-                core.call("startAnalysis", vec![json!({ "fen": fen, "lines": 3 })])
-                    .await?;
+                core.call("startAnalysis", vec![request]).await?;
                 until_interrupted(&core, &mut events, |event| {
                     if event.name == "engine:analysis" {
                         print(&event.payload);
@@ -336,6 +335,25 @@ async fn review_input(core: &CoreClient, words: &[String]) -> Result<String, Str
             .map_err(|cause| format!("Cannot read {text}: {cause}"));
     }
     Ok(text.to_string())
+}
+
+/// What `analyze` searches: a position, or the one a game's moves (SAN or a PGN) reach, sent
+/// with its history so repetitions count.
+fn analysis_request(words: &[String]) -> Result<Value, String> {
+    if let Ok(fen) = analysis_fen(words) {
+        return Ok(json!({ "fen": fen, "lines": 3 }));
+    }
+    let text = words.join(" ");
+    let line = review::main_line(&text).map_err(|cause| match text.trim() {
+        "" => "analyze requires a FEN or moves.".to_string(),
+        _ if cause.starts_with("Move ") => cause,
+        text => format!("Not a legal position or moves: {text}"),
+    })?;
+    let fen = kchess_domain::replay::replay_positions(&line.fen, &line.moves)
+        .pop()
+        .map(|position| position.fen)
+        .ok_or("Not a legal position.")?;
+    Ok(json!({ "fen": fen, "rootFen": line.fen, "moves": line.moves, "lines": 3 }))
 }
 
 /// The position `analyze` was given: a FEN, quoted or as separate words, or `startpos`.
@@ -490,6 +508,31 @@ mod tests {
             explore_request(&strings(&["8/8/8/8/8/3k4/8/K4Q2 w - - 0 1"])),
             Err("Not a legal position: 8/8/8/8/8/3k4/8/K4Q2 w - - 0 1".into())
         );
+    }
+
+    #[test]
+    fn analyze_reads_moves_and_keeps_their_history() {
+        let request = analysis_request(&strings(&["1.", "e4", "e5", "2.", "Nf3"])).unwrap();
+        assert_eq!(
+            request["fen"],
+            "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
+        );
+        assert_eq!(request["moves"], json!(["e2e4", "e7e5", "g1f3"]));
+        assert_eq!(
+            request["rootFen"],
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        );
+        assert_eq!(
+            analysis_request(&strings(&["e4", "Ke7"])).unwrap_err(),
+            "Move 1 (Ke7) is not legal there."
+        );
+        assert_eq!(
+            analysis_request(&[]).unwrap_err(),
+            "analyze requires a FEN or moves."
+        );
+        // A FEN still goes as it is, without a history.
+        let start = analysis_request(&strings(&["startpos"])).unwrap();
+        assert!(start.get("moves").is_none());
     }
 
     #[test]
