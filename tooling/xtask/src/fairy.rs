@@ -73,9 +73,11 @@ pub fn build() -> Result<PathBuf> {
     if cfg!(windows) {
         // The Makefile calls `uname` and POSIX shell commands: Git's Bash has them, and MinGW's
         // g++ and make (on the Windows runners' PATH) build a program without MinGW DLLs.
-        let src = src.to_string_lossy().replace('\\', "/");
+        // `canonicalize` gives a verbatim path (`\\?\D:\…`), which `make -C` cannot open.
+        let src = src.to_string_lossy();
+        let src = src.strip_prefix(r"\\?\").unwrap_or(&src).replace('\\', "/");
         run_with(
-            Command::new("bash")
+            Command::new(git_bash())
                 .arg("-c")
                 .arg(format!("mingw32-make {arguments} '{src}' COMP=mingw")),
         )?;
@@ -99,4 +101,25 @@ pub fn build() -> Result<PathBuf> {
     let _ = std::fs::remove_dir_all(&work);
     say(&format!("Built Fairy-Stockfish in {}.", target.display()));
     Ok(target)
+}
+
+/// Git's Bash. A plain `bash` on a Windows PATH may be `System32\bash.exe`, which starts WSL.
+fn git_bash() -> PathBuf {
+    let exec_path = Command::new("git")
+        .arg("--exec-path")
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok());
+    // `<Git>/mingw64/libexec/git-core`: Bash is `<Git>/bin/bash.exe`.
+    exec_path
+        .as_deref()
+        .map(str::trim)
+        .and_then(|path| {
+            PathBuf::from(path)
+                .ancestors()
+                .nth(3)
+                .map(|git| git.join("bin/bash.exe"))
+        })
+        .filter(|bash| bash.is_file())
+        .unwrap_or_else(|| PathBuf::from("bash"))
 }
