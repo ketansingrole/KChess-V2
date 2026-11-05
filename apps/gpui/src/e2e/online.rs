@@ -65,6 +65,9 @@ fn play_online_asks_to_connect_and_offers_the_computer(cx: &mut gpui_kit::TestAp
 fn a_tournament_list_that_cannot_load_can_be_refreshed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = open(cx, "Tournaments", true);
     wait_until_enabled(&mut app, "tournaments-refresh");
+    // The failure takes the list's place, without the key to a schedule that is not there.
+    app.find("tournaments-error");
+    assert!(!app.shows("tournaments-legend"));
     app.click("tournaments-refresh");
     wait_until_enabled(&mut app, "tournaments-refresh");
 

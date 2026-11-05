@@ -593,9 +593,15 @@ impl Render for TournamentsPage {
             .flex_wrap()
             // The key keeps room for two of its entries a line; when the controls leave it less,
             // they wrap below it rather than squeezing it into a column.
-            .child(div().flex_1().min_w_0().when(!showing_event, |lead| {
-                lead.min_w(px(320.)).child(timeline::legend(&palette))
-            }))
+            // The key names the colours of a listed schedule, so it waits for one.
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .when(!showing_event && self.list.is_some(), |lead| {
+                        lead.min_w(px(320.)).child(timeline::legend(&palette))
+                    }),
+            )
             // The controls wrap as one group.
             .child(
                 h_flex()

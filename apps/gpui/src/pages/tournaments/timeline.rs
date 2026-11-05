@@ -169,6 +169,8 @@ pub fn rows(arenas: &[Value], (start, end): (f64, f64)) -> Vec<Vec<Value>> {
 /// The colour key, beside the page's controls.
 pub fn legend(palette: &Palette) -> impl IntoElement {
     h_flex()
+        .id("tournaments-legend")
+        .test_support()
         .flex_wrap()
         .gap(px(16.))
         .text_size(px(12.))
@@ -232,6 +234,19 @@ impl TournamentsPage {
         palette: &Palette,
     ) -> AnyElement {
         let mut body = v_flex().gap(px(12.));
+        // With nothing listed, the failure takes the list's place; Refresh above asks again.
+        if let (None, Some(error)) = (&self.list, &self.error) {
+            return widgets::card(palette)
+                .id("tournaments-error")
+                .test_support()
+                .child(widgets::empty_state(
+                    icon("triangle-alert"),
+                    error.clone(),
+                    None,
+                    palette,
+                ))
+                .into_any_element();
+        }
         if let Some(error) = &self.error {
             body = body.child(
                 div()
