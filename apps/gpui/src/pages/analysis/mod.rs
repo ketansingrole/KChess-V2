@@ -1682,6 +1682,12 @@ impl AnalysisPage {
         self.copy(pgn, "PGN", window, cx);
     }
 
+    /// Copy the moves from the start to `path` as PGN, without the side lines.
+    fn copy_line(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let pgn = self.root.line_to(path).to_pgn();
+        self.copy(pgn, "Line", window, cx);
+    }
+
     fn copy(&self, text: String, what: &str, window: &mut Window, cx: &mut Context<Self>) {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         window.push_notification(SharedString::from(format!("{what} copied")), cx);
@@ -2084,7 +2090,8 @@ fn move_menu(
                 })
         }
     };
-    let (promote_at, delete_at, fen) = (at.clone(), at.clone(), state.fen.clone());
+    let (promote_at, delete_at, line_at, fen) =
+        (at.clone(), at.clone(), at.clone(), state.fen.clone());
     menu.item(
         PopupMenuItem::new(if state.commented {
             "Edit comment"
@@ -2121,6 +2128,13 @@ fn move_menu(
             .icon(icon("copy"))
             .on_click(act(Box::new(move |page, window, cx| {
                 page.copy(fen.clone(), "FEN", window, cx)
+            }))),
+    )
+    .item(
+        PopupMenuItem::new("Copy line")
+            .icon(icon("list-tree"))
+            .on_click(act(Box::new(move |page, window, cx| {
+                page.copy_line(&line_at, window, cx)
             }))),
     )
 }
@@ -2994,6 +3008,15 @@ impl AnalysisPage {
                             PopupMenuItem::new("Copy PGN")
                                 .icon(icon("file-text"))
                                 .on_click(action(|page, window, cx| page.copy_pgn(window, cx))),
+                        )
+                        .item(
+                            PopupMenuItem::new("Copy line")
+                                .icon(icon("list-tree"))
+                                .disabled(at_start)
+                                .on_click(action(|page, window, cx| {
+                                    let path = page.path.clone();
+                                    page.copy_line(&path, window, cx)
+                                })),
                         )
                         .item(
                             PopupMenuItem::new("Import a position or game…")

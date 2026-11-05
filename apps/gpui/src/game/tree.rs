@@ -184,6 +184,34 @@ impl TreeNode {
         text("treeToPgn", &[Value::Object(document), headers])
     }
 
+    /// The moves from the start to `path` alone, as a tree of their own: the comments and
+    /// annotations on the way and the variant, without side lines or the game's other headers.
+    pub fn line_to(&self, path: &str) -> TreeNode {
+        let alone = |node: &TreeNode, children: Vec<TreeNode>| TreeNode {
+            uci: node.uci.clone(),
+            san: node.san.clone(),
+            fen: node.fen.clone(),
+            ply: node.ply,
+            children,
+            headers: None,
+            comments: node.comments.clone(),
+            starting_comments: node.starting_comments.clone(),
+            nags: node.nags.clone(),
+        };
+        let nodes = self.nodes_along(path);
+        let mut line = Vec::new();
+        for node in nodes.iter().skip(1).rev() {
+            line = vec![alone(node, line)];
+        }
+        let mut root = alone(self, line);
+        root.headers = self
+            .headers
+            .as_ref()
+            .and_then(|headers| headers.get("Variant"))
+            .map(|variant| Map::from_iter([("Variant".to_string(), variant.clone())]));
+        root
+    }
+
     /// The nodes from the root to `path`, as far as the path exists.
     pub fn nodes_along(&self, path: &str) -> Vec<&TreeNode> {
         let mut nodes = vec![self];
@@ -333,6 +361,30 @@ mod tests {
         let e4 = &tree.children[0];
         assert_eq!(e4.nags, Some(vec![5]));
         assert_eq!(e4.children[0].children[0].nags, Some(vec![1]));
+    }
+
+    /// A line is the moves to one move, with what was said on the way, and no side lines.
+    #[test]
+    fn a_line_is_copied_without_its_side_lines() {
+        let tree = TreeNode::from_pgn(
+            "[Event \"Club\"]\n[White \"A\"]\n\n1. e4 {Best by test} e5 (1... c5 2. Nf3) 2. Nf3 $1 Nc6 3. Bb5 1-0",
+        )
+        .unwrap();
+        let line = tree.line_to("e2e4 e7e5 g1f3").to_pgn();
+        assert!(
+            line.contains("1. e4 { Best by test } e5 2. Nf3 $1 *"),
+            "{line}"
+        );
+        assert!(
+            !line.contains("c5") && !line.contains("Nc6") && !line.contains("Club"),
+            "{line}"
+        );
+        // From a set-up position, the line says where it starts.
+        let fen = "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1";
+        let mut tree = TreeNode::new(Some(fen));
+        let path = tree.add_move("", "e2e4").unwrap();
+        let line = tree.line_to(&path).to_pgn();
+        assert!(line.contains(fen) && line.contains("1. e4"), "{line}");
     }
 
     #[test]

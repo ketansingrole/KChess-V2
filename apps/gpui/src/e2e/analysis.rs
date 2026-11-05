@@ -1063,3 +1063,23 @@ fn x_shows_the_threat(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(app.cx.update(|cx| analysis.read(cx).threat_shown()), None);
     wait_for_search(&mut app);
 }
+
+/// Copy line copies the moves to the one shown, without the side lines or what follows.
+#[gpui_kit::test]
+fn the_line_to_a_move_is_copied(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 (1... c5 2. Nf3) 2. Nf3 Nc6 *");
+    app.click("tree-e2e4 e7e5 g1f3");
+    app.click("analysis-more");
+    app.click_label("Copy line");
+    let copied = app
+        .cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default();
+    assert!(copied.contains("1. e4 e5 2. Nf3 *"), "{copied}");
+    assert!(
+        !copied.contains("c5") && !copied.contains("Nc6"),
+        "{copied}"
+    );
+}
