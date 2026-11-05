@@ -602,7 +602,9 @@ impl OnlinePage {
             .child(field(
                 "Variant",
                 Some(variant_hint),
-                Select::new(&self.variant_select).into_any_element(),
+                Select::new(&self.variant_select)
+                    .accessibility_label("Variant")
+                    .into_any_element(),
             ));
         if form.correspondence {
             card = card.child(field(

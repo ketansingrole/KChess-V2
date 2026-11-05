@@ -448,11 +448,13 @@ impl Render for PuzzleHistory {
                 h_flex()
                     .gap(px(12.))
                     .flex_wrap()
-                    .child(
-                        div()
-                            .w(px(160.))
-                            .when(any, |slot| slot.child(Select::new(&self.filter).small())),
-                    )
+                    .child(div().w(px(160.)).when(any, |slot| {
+                        slot.child(
+                            Select::new(&self.filter)
+                                .small()
+                                .accessibility_label("Puzzle mode"),
+                        )
+                    }))
                     .when(any, |row| row.child(result_pills)),
             )
             .when(has_account, |row| {

@@ -465,9 +465,11 @@ impl StudiesPage {
             .gap(px(8.))
             .when(several, |row| {
                 row.child(
-                    div()
-                        .w(px(180.))
-                        .child(Select::new(&self.lichess.account_select).small()),
+                    div().w(px(180.)).child(
+                        Select::new(&self.lichess.account_select)
+                            .small()
+                            .accessibility_label("Account"),
+                    ),
                 )
             })
             .child(
@@ -574,9 +576,11 @@ impl StudiesPage {
                         .child("Send the analysis board to"),
                 )
                 .child(
-                    div()
-                        .min_w(px(200.))
-                        .child(Select::new(&self.lichess.target).small()),
+                    div().min_w(px(200.)).child(
+                        Select::new(&self.lichess.target)
+                            .small()
+                            .accessibility_label("Send the analysis board to"),
+                    ),
                 )
                 .child(
                     Button::new("lichess-studies-send")

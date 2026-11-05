@@ -617,16 +617,20 @@ impl HistoryPage {
             .gap(px(8.))
             .when(several, |row| {
                 row.child(
-                    div()
-                        .w(px(180.))
-                        .child(Select::new(&tab.account_select).small()),
+                    div().w(px(180.)).child(
+                        Select::new(&tab.account_select)
+                            .small()
+                            .accessibility_label("Account"),
+                    ),
                 )
             })
             .child(results)
             .child(
-                div()
-                    .w(px(160.))
-                    .child(Select::new(&tab.rated_select).small()),
+                div().w(px(160.)).child(
+                    Select::new(&tab.rated_select)
+                        .small()
+                        .accessibility_label("Rated or casual"),
+                ),
             )
             .child(
                 div().w(px(200.)).child(
@@ -739,9 +743,11 @@ impl HistoryPage {
             )
             .child(div().flex_1())
             .child(
-                div()
-                    .w(px(130.))
-                    .child(Select::new(&tab.size_select).small()),
+                div().w(px(130.)).child(
+                    Select::new(&tab.size_select)
+                        .small()
+                        .accessibility_label("Games per page"),
+                ),
             )
             .child(self.lichess_pager(tab.page, pages, cx));
         v_flex()

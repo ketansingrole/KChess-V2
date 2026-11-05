@@ -550,15 +550,19 @@ impl Render for PuzzleStats {
             .gap(px(8.))
             .when(self.accounts.len() > 1, |row| {
                 row.child(
-                    div()
-                        .w(px(160.))
-                        .child(Select::new(&self.account_select).small()),
+                    div().w(px(160.)).child(
+                        Select::new(&self.account_select)
+                            .small()
+                            .accessibility_label("Account"),
+                    ),
                 )
             })
             .child(
-                div()
-                    .w(px(140.))
-                    .child(Select::new(&self.days_select).small()),
+                div().w(px(140.)).child(
+                    Select::new(&self.days_select)
+                        .small()
+                        .accessibility_label("Period"),
+                ),
             )
             .child(
                 Button::new("stats-refresh")
@@ -734,9 +738,11 @@ impl Render for PuzzleStats {
                         ),
                     ))
                     .child(
-                        div()
-                            .w(px(150.))
-                            .child(Select::new(&self.sort_select).small()),
+                        div().w(px(150.)).child(
+                            Select::new(&self.sort_select)
+                                .small()
+                                .accessibility_label("Sort themes"),
+                        ),
                     ),
             )
             .child(themes_body);

@@ -1679,6 +1679,42 @@ mod tests {
         assert!(found.is_empty(), "a still loader in {found:?}");
     }
 
+    /// A select's placeholder and value are never its accessible name (GPUI Kit 0.9), so each one
+    /// is named where it is built. Most of the unnamed ones sat behind a connected account, where
+    /// the end-to-end audit cannot reach.
+    #[test]
+    fn every_select_is_named() {
+        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).expect("the source folder") {
+                let path = entry.expect("an entry").path();
+                if path.is_dir() {
+                    if !path.ends_with("e2e") {
+                        walk(&path, found);
+                    }
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let text = std::fs::read_to_string(&path).expect("a source file");
+                    let lines: Vec<&str> = text.lines().collect();
+                    for (index, line) in lines.iter().enumerate() {
+                        if !line.contains("Select::new(") || line.trim_start().starts_with("//") {
+                            continue;
+                        }
+                        // The builder chain that follows, up to where the element is handed on.
+                        let chain = lines[index..lines.len().min(index + 8)].join("\n");
+                        if !chain.contains("accessibility_label") {
+                            found.push(format!("{}:{}", path.display(), index + 1));
+                        }
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        assert!(found.is_empty(), "an unnamed select at {found:?}");
+    }
+
     /// A move list in a window whose page holds the keys, as a game page's does.
     struct Page {
         focus: FocusHandle,

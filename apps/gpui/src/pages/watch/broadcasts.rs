@@ -677,6 +677,7 @@ impl WatchPage {
                     div().w(px(190.)).child(
                         Select::new(&self.broadcasts.round_select)
                             .small()
+                            .accessibility_label("Round")
                             .placeholder(if rounds > 0 {
                                 "Choose a round"
                             } else {
