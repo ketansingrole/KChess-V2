@@ -760,6 +760,61 @@ impl HistoryPage {
         .detach();
     }
 
+    /// Save the games listed (filter and search applied) as one PGN file where the player picks.
+    /// Clock sessions have no moves to save and are left out.
+    fn export_shown(&mut self, cx: &mut Context<Self>) {
+        let pgns: Vec<String> = self
+            .shown_games(cx)
+            .iter()
+            .filter(|game| text(game, "source") != "clock")
+            .filter_map(pgn)
+            .collect();
+        if pgns.is_empty() {
+            return;
+        }
+        let count = pgns.len();
+        let name = format!(
+            "kchess-{}-games-{}.pgn",
+            if self.source == Source::Computer {
+                "computer"
+            } else {
+                "board"
+            },
+            chrono::Local::now().format("%Y-%m-%d")
+        );
+        let saved = crate::export::save_text(&name, pgns.join("\n\n"), cx);
+        cx.spawn(async move |this, cx| {
+            let message: Option<SharedString> = match saved.await {
+                Some(Ok(())) => Some(
+                    format!(
+                        "Saved {count} {}",
+                        if count == 1 { "game" } else { "games" }
+                    )
+                    .into(),
+                ),
+                Some(Err(cause)) => Some(format!("Export failed: {cause}").into()),
+                None => None,
+            };
+            let _ = this.update(cx, |this, cx| {
+                if message.is_some() {
+                    this.message = message;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The games the list shows across its pages: searched, then filtered by result.
+    fn shown_games(&self, cx: &App) -> Vec<Value> {
+        self.games(cx)
+            .into_iter()
+            .filter(|game| {
+                self.filter == Filter::All || filter_of(&outcome(game)) == Some(self.filter)
+            })
+            .collect()
+    }
+
     /// Delete a game at once; its notice's Undo puts it back where it was.
     fn delete(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
         let played = cx.global::<PlayedHandle>().0.clone();
@@ -1248,15 +1303,29 @@ impl HistoryPage {
         v_flex()
             .gap(px(16.))
             .child(
-                h_flex().flex_wrap().gap(px(12.)).child(filter_tabs).child(
-                    div().w(px(200.)).child(
-                        Input::new(&self.search_input)
+                h_flex()
+                    .flex_wrap()
+                    .gap(px(12.))
+                    .child(filter_tabs)
+                    .child(
+                        div().w(px(200.)).child(
+                            Input::new(&self.search_input)
+                                .small()
+                                .cleanable(true)
+                                .prefix(icon("search").size(px(14.)))
+                                .aria_label("Search by opponent or opening"),
+                        ),
+                    )
+                    .child(
+                        Button::new("history-export-all")
+                            .outline()
                             .small()
-                            .cleanable(true)
-                            .prefix(icon("search").size(px(14.)))
-                            .aria_label("Search by opponent or opening"),
+                            .icon(icon("download"))
+                            .label("Export")
+                            .tooltip("Save the games listed as one PGN file")
+                            .disabled(shown.is_empty())
+                            .on_click(cx.listener(|this, _, _, cx| this.export_shown(cx))),
                     ),
-                ),
             )
             .child(list)
             .into_any_element()

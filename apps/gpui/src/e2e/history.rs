@@ -494,3 +494,47 @@ fn board_games_are_searched_by_opponent_or_opening(cx: &mut gpui_kit::TestAppCon
     app.click("show-all");
     app.find(("history-row", 1usize));
 }
+
+/// Export saves the games listed, search applied, as one PGN file.
+#[gpui_kit::test]
+fn the_games_listed_are_exported_as_one_pgn(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = mate_in_history(cx);
+    app.open("Over the board");
+    app.click("local-new");
+    app.click("start-local");
+    app.wait_for_moves(&[]);
+    play_over_the_board(&mut app, &["e4"]);
+    app.open("Game history");
+    app.find(("history-row", 1usize));
+
+    let folder = tempfile::tempdir().expect("a folder to save in");
+    let save = |app: &mut Harness, name: &str| {
+        let started = std::time::Instant::now();
+        while !app.cx.did_prompt_for_new_path() {
+            assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
+            app.tick();
+        }
+        let path = folder.path().join(name);
+        let chosen = path.clone();
+        app.cx.simulate_new_path_selection(move |_| Some(chosen));
+        path
+    };
+    app.click("history-export-all");
+    let both = save(&mut app, "both.pgn");
+    app.wait_for("the file", |_, _| both.exists());
+    let saved = std::fs::read_to_string(&both).expect("the saved PGN");
+    assert_eq!(saved.matches("[Event ").count(), 2, "{saved}");
+
+    app.click_label("Search by opponent or opening");
+    app.type_text("wayward");
+    app.wait_for("one game found", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find(("history-row", 1usize)).is_none()
+    });
+    app.click("history-export-all");
+    let one = save(&mut app, "one.pgn");
+    app.wait_for("the file", |_, _| one.exists());
+    let saved = std::fs::read_to_string(&one).expect("the saved PGN");
+    assert_eq!(saved.matches("[Event ").count(), 1, "{saved}");
+    assert!(saved.contains("Qxf7#"), "{saved}");
+}
