@@ -1267,7 +1267,10 @@ mod tests {
         let drill = &added["items"][0];
         assert_eq!(drill["solution"], json!(["P@e4"]));
         assert_eq!(drill["variant"], json!("crazyhouse"));
-        assert!(drill["fen"].as_str().is_some_and(|fen| fen.contains('[')), "{drill}");
+        assert!(
+            drill["fen"].as_str().is_some_and(|fen| fen.contains('[')),
+            "{drill}"
+        );
         // The drill is kept, variant and all, as the document is read back.
         let answered = run(
             &db,
