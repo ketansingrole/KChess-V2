@@ -652,9 +652,9 @@ impl LocalPage {
     }
 
     /// A game over the board from a position (the board editor's, the analysis board's), untimed.
-    pub fn start_from(&mut self, fen: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn start_from(&mut self, setup: Value, window: &mut Window, cx: &mut Context<Self>) {
         crate::prefs::set(cx, "kchess:local-mode", Mode::Board);
-        self.replace_game(crate::game::setup_from_fen(fen), Value::Null, window, cx);
+        self.replace_game(setup, Value::Null, window, cx);
     }
 
     /// Start a game, asking first when one on the board is still being played.

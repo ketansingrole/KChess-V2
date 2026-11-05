@@ -622,25 +622,39 @@ fn a_crazyhouse_drop_is_played_from_the_pocket(cx: &mut gpui_kit::TestAppContext
     assert_eq!(selected(&mut app, "e2e4 d7d5 e4d5 d8d5 P@e3"), Some(true));
     // The drop's position goes to the engine by Crazyhouse's rules, which standard rules refuse.
     wait_for_search(&mut app);
-    // The game keeps its variant in its PGN; the standard editor and games are not offered.
+    // The game keeps its variant in its PGN; the standard board editor is not offered.
     app.click("analysis-more");
     app.wait_for("the menu", |window, _| {
         window.try_find_by_label("Copy PGN").is_some()
     });
-    for label in [
-        "Edit this position",
-        "Play Stockfish from here",
-        "Play a friend from here",
-    ] {
-        assert!(
-            app.with_window(|window, _| { window.try_find_by_label(label).is_none() }),
-            "{label}"
-        );
-    }
+    assert!(
+        app.with_window(|window, _| { window.try_find_by_label("Edit this position").is_none() })
+    );
     app.click_label("Copy PGN");
     let pgn = clipboard(&mut app).expect("a copied PGN");
     assert!(pgn.contains("[Variant \"Crazyhouse\"]"), "{pgn}");
     assert!(pgn.contains("3. P@e3"), "{pgn}");
+    // The computer plays on from the drop, in Crazyhouse, as White; the player takes Black.
+    app.click("analysis-more");
+    app.wait_for("the menu", |window, _| {
+        window
+            .try_find_by_label("Play Stockfish from here")
+            .is_some()
+    });
+    app.click_label("Play Stockfish from here");
+    app.wait_for("a Crazyhouse game from the drop", |_, cx| {
+        crate::shell::view_of::<crate::pages::computer::ComputerPage>(
+            crate::pages::Page::Computer,
+            cx,
+        )
+        .is_some_and(|page| {
+            let page = page.read(cx);
+            page.setup_variant() == "crazyhouse"
+                && page
+                    .setup_fen()
+                    .starts_with("rnb1kbnr/ppp1pppp/8/3q4/8/4P3/PPPP1PPP/")
+        })
+    });
 }
 
 /// A public Lichess study's link imports the chapter it names, or the study's first, in its own

@@ -677,33 +677,45 @@ pub fn analysis_board(window: &mut Window, cx: &mut App) -> Option<Entity<Analys
     page_view::<AnalysisPage>(Page::Analysis, window, cx)
 }
 
-/// Play Stockfish from a position, as the side to move (`startComputerFrom`).
-pub fn play_computer_from(fen: String, window: &mut Window, cx: &mut App) {
-    let color = if fen.split(' ').nth(1) == Some("b") {
+/// Whether a game can start from `setup` (`{ variant, fen }`): a standard position the engine
+/// takes (not one with too many pieces), or a legal one in its variant.
+fn playable(setup: &serde_json::Value) -> bool {
+    let variant = setup["variant"].as_str().unwrap_or("standard");
+    let fen = setup["fen"].as_str().unwrap_or_default();
+    if crate::game::standard_rules(variant) {
+        crate::game::position_problem(fen).is_none()
+    } else {
+        kchess_domain::rules::setup_start(variant, fen).is_some()
+    }
+}
+
+/// Play Stockfish (Fairy-Stockfish in another variant) from a setup's position, as the side to
+/// move (`startComputerFrom`).
+pub fn play_computer_from(setup: serde_json::Value, window: &mut Window, cx: &mut App) {
+    let color = if setup["fen"].as_str().and_then(|fen| fen.split(' ').nth(1)) == Some("b") {
         shakmaty::Color::Black
     } else {
         shakmaty::Color::White
     };
     open(Page::Computer, window, cx);
-    // A position Stockfish refuses (one with too many pieces) only opens the page.
-    if crate::game::position_problem(&fen).is_some() {
+    // A position that cannot be played only opens the page.
+    if !playable(&setup) {
         return;
     }
     if let Some(page) = view_of::<ComputerPage>(Page::Computer, cx) {
-        let setup = crate::game::setup_from_fen(&fen);
         page.update(cx, |page, cx| page.start_from(setup, color, window, cx));
     }
 }
 
-/// A game over the board from a position (`/local?fen=`).
-pub fn play_local_from(fen: String, window: &mut Window, cx: &mut App) {
+/// A game over the board from a setup's position (`/local?fen=`).
+pub fn play_local_from(setup: serde_json::Value, window: &mut Window, cx: &mut App) {
     open(Page::Local, window, cx);
     // As the page does with `?fen=`: a position that cannot be played only opens it.
-    if crate::game::position_problem(&fen).is_some() {
+    if !playable(&setup) {
         return;
     }
     if let Some(page) = view_of::<LocalPage>(Page::Local, cx) {
-        page.update(cx, |page, cx| page.start_from(&fen, window, cx));
+        page.update(cx, |page, cx| page.start_from(setup, window, cx));
     }
 }
 

@@ -551,6 +551,15 @@ impl ComputerPage {
             .to_string()
     }
 
+    /// The FEN the game started from.
+    #[cfg(test)]
+    pub(crate) fn setup_fen(&self) -> String {
+        self.game.state["setup"]["fen"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    }
+
     fn thinking(&self) -> bool {
         self.game.state["thinking"].as_bool() == Some(true)
     }

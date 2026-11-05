@@ -537,6 +537,16 @@ impl AnalysisPage {
         crate::game::standard_rules(self.root.variant())
     }
 
+    /// The position shown, as a game to play from: in the game's variant, or (standard chess)
+    /// castling as Chess960 when its rooks need it.
+    fn play_setup(&self) -> Value {
+        let fen = self.node().fen.clone();
+        match self.fairy_variant() {
+            Some(variant) => json!({ "variant": variant, "fen": fen }),
+            None => crate::game::setup_from_fen(&fen),
+        }
+    }
+
     /// The Lichess key of the game's variant when Fairy-Stockfish analyses and reviews it.
     pub(super) fn fairy_variant(&self) -> Option<&'static str> {
         (!self.standard_rules()).then(|| self.root.variant())
@@ -2646,7 +2656,7 @@ impl AnalysisPage {
         let on_variation = !self.path.is_empty() && !self.root.on_mainline(&self.path);
         // A finished game cannot be played on from its last position.
         let over = game_over(self.position().as_ref()).is_some();
-        // The editor and the games started from a position are standard chess's.
+        // The board editor is standard chess's.
         let standard = self.standard_rules();
         let page = cx.entity().downgrade();
         let step = |id: &'static str, glyph: &'static str, label: &'static str, disabled: bool| {
@@ -2739,6 +2749,15 @@ impl AnalysisPage {
                                 run(fen, orientation, window, cx);
                             }
                         };
+                        // The same, with the position's setup: its variant and FEN.
+                        let play = |run: fn(Value, &mut Window, &mut App)| {
+                            let page = page.clone();
+                            move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                let Some(page) = page.upgrade() else { return };
+                                let setup = page.read(cx).play_setup();
+                                run(setup, window, cx);
+                            }
+                        };
                         menu.item(
                             PopupMenuItem::new("Copy FEN")
                                 .icon(icon("copy"))
@@ -2767,37 +2786,28 @@ impl AnalysisPage {
                                 .disabled(at_start)
                                 .on_click(action(|page, window, cx| page.ask_remove(window, cx))),
                         )
+                        .separator()
                         .when(standard, |menu| {
-                            menu.separator()
-                                .item(
-                                    PopupMenuItem::new("Edit this position")
-                                        .icon(icon("pencil-ruler"))
-                                        .on_click(leave(|fen, orientation, window, cx| {
-                                            crate::shell::edit_position(
-                                                fen,
-                                                orientation,
-                                                window,
-                                                cx,
-                                            )
-                                        })),
-                                )
-                                .item(
-                                    PopupMenuItem::new("Play Stockfish from here")
-                                        .icon(icon("cpu"))
-                                        .disabled(over)
-                                        .on_click(leave(|fen, _, window, cx| {
-                                            crate::shell::play_computer_from(fen, window, cx)
-                                        })),
-                                )
-                                .item(
-                                    PopupMenuItem::new("Play a friend from here")
-                                        .icon(icon("users-round"))
-                                        .disabled(over)
-                                        .on_click(leave(|fen, _, window, cx| {
-                                            crate::shell::play_local_from(fen, window, cx)
-                                        })),
-                                )
+                            menu.item(
+                                PopupMenuItem::new("Edit this position")
+                                    .icon(icon("pencil-ruler"))
+                                    .on_click(leave(|fen, orientation, window, cx| {
+                                        crate::shell::edit_position(fen, orientation, window, cx)
+                                    })),
+                            )
                         })
+                        .item(
+                            PopupMenuItem::new("Play Stockfish from here")
+                                .icon(icon("cpu"))
+                                .disabled(over)
+                                .on_click(play(crate::shell::play_computer_from)),
+                        )
+                        .item(
+                            PopupMenuItem::new("Play a friend from here")
+                                .icon(icon("users-round"))
+                                .disabled(over)
+                                .on_click(play(crate::shell::play_local_from)),
+                        )
                         .separator()
                         .item(
                             PopupMenuItem::new("New analysis")

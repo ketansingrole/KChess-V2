@@ -143,7 +143,7 @@ fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::Test
     let mut app = computer(cx);
     app.with_window(|window, cx| {
         crate::shell::play_computer_from(
-            "1rk4r/pppppppp/8/8/8/8/PPPPPPPP/1RK4R w HBhb - 0 1".into(),
+            crate::game::setup_from_fen("1rk4r/pppppppp/8/8/8/8/PPPPPPPP/1RK4R w HBhb - 0 1"),
             window,
             cx,
         )

@@ -377,8 +377,14 @@ impl EditorPage {
             Action::Flip => self.flip(cx),
             Action::CopyFen => self.copy_fen(window, cx),
             Action::Analyse => self.analyse(window, cx),
-            Action::PlayStockfish => crate::shell::play_computer_from(self.fen(), window, cx),
-            Action::PlayFriend => crate::shell::play_local_from(self.fen(), window, cx),
+            Action::PlayStockfish => crate::shell::play_computer_from(
+                crate::game::setup_from_fen(&self.fen()),
+                window,
+                cx,
+            ),
+            Action::PlayFriend => {
+                crate::shell::play_local_from(crate::game::setup_from_fen(&self.fen()), window, cx)
+            }
         }
     }
 
@@ -922,7 +928,11 @@ impl Render for EditorPage {
                                     .label("Play Stockfish")
                                     .disabled(problem.is_some())
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        crate::shell::play_computer_from(this.fen(), window, cx)
+                                        crate::shell::play_computer_from(
+                                            crate::game::setup_from_fen(&this.fen()),
+                                            window,
+                                            cx,
+                                        )
                                     })),
                             )
                             .child(
@@ -933,7 +943,11 @@ impl Render for EditorPage {
                                     .label("Play a friend here")
                                     .disabled(problem.is_some())
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        crate::shell::play_local_from(this.fen(), window, cx)
+                                        crate::shell::play_local_from(
+                                            crate::game::setup_from_fen(&this.fen()),
+                                            window,
+                                            cx,
+                                        )
                                     })),
                             ),
                     ),
