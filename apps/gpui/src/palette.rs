@@ -1720,6 +1720,27 @@ pub fn open_pasted(window: &mut Window, cx: &mut App) {
     }
 }
 
+/// New (⌘N): what the page's own New does, asking first where it asks — a game against the
+/// computer, over the board or on Lichess, a study, a fresh analysis board. Under a dialog, or
+/// on a page with nothing to start, nothing happens.
+pub fn new_on_page(window: &mut Window, cx: &mut App) {
+    use gpui_kit::component::WindowExt as _;
+    if window.has_active_dialog(cx) {
+        return;
+    }
+    if crate::shell::current_page(cx) == Some(Page::Analysis) {
+        crate::shell::new_analysis(window, cx);
+        return;
+    }
+    let commands = page_commands(cx);
+    let new = commands
+        .iter()
+        .find(|command| command.id.ends_with(":new-game") || command.id == "studies:new");
+    if let Some(command) = new {
+        (command.run)(window, cx);
+    }
+}
+
 /// Copy outside a text field: the page's game as PGN, or its position as FEN where it has no
 /// game (the board editor), as its own Copy command would. Under a dialog, or on a page with
 /// nothing to copy, nothing happens.

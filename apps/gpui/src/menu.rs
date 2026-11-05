@@ -25,7 +25,8 @@ gpui_kit::actions!(
         GoForward,
         ShowShortcuts,
         ToggleSidebar,
-        Find
+        Find,
+        New
     ]
 );
 
@@ -147,6 +148,7 @@ pub fn init(cx: &mut App) {
         bind("ctrl-cmd-f", ToggleFullScreen, cx),
         bind("secondary-k", Search, cx),
         bind("secondary-f", Find, cx),
+        bind("secondary-n", New, cx),
         bind("shift-secondary-p", Commands, cx),
         bind("secondary-,", OpenSettings, cx),
         // Interface size, as Electron takes them: with or without Shift, and the keypad's.
@@ -207,6 +209,13 @@ pub fn init(cx: &mut App) {
         cx.defer(|cx| {
             if let Some(window) = cx.active_window() {
                 let _ = window.update(cx, |_, window, cx| crate::palette::open_pasted(window, cx));
+            }
+        })
+    });
+    cx.on_action(|_: &New, cx| {
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, cx| crate::palette::new_on_page(window, cx));
             }
         })
     });
@@ -285,7 +294,11 @@ pub fn init(cx: &mut App) {
             MenuItem::separator(),
             MenuItem::action("Quit KChess", Quit),
         ]),
-        Menu::new("File").items([MenuItem::action("Close Window", CloseWindow)]),
+        Menu::new("File").items([
+            MenuItem::action("New", New),
+            MenuItem::separator(),
+            MenuItem::action("Close Window", CloseWindow),
+        ]),
         Menu::new("Edit").items([
             MenuItem::os_action("Undo", Undo, OsAction::Undo),
             MenuItem::os_action("Redo", Redo, OsAction::Redo),

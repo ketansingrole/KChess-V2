@@ -175,6 +175,18 @@ fn new_game_asks_first_then_clears_the_board(cx: &mut gpui_kit::TestAppContext) 
     app.wait_for_moves(&[]);
 }
 
+/// ⌘N asks the same as New game does.
+#[gpui_kit::test]
+fn the_new_key_asks_first_then_clears_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.wait_for_moves(&["e4"]);
+    app.press("secondary-n");
+    app.click("ok");
+    app.wait_for_moves(&[]);
+}
+
 #[gpui_kit::test]
 fn moves_can_be_stepped_through(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);

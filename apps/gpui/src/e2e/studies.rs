@@ -103,6 +103,16 @@ fn new_study(cx: &mut gpui_kit::TestAppContext) -> Harness {
     app
 }
 
+/// ⌘N on Studies starts a study, as its New study does.
+#[gpui_kit::test]
+fn new_starts_a_study_on_the_studies_page(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Studies");
+    app.press("secondary-n");
+    app.find("study-actions");
+    wait_for_value(&mut app, "Study name", "Untitled study");
+}
+
 #[gpui_kit::test]
 fn a_new_study_opens_on_the_board_and_is_listed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = new_study(cx);
