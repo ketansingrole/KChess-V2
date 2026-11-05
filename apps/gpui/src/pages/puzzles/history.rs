@@ -13,6 +13,7 @@ use super::{Theme, theme_name};
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::rules;
+use crate::play_layout::Measured;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, Look, Pill};
 
@@ -27,6 +28,14 @@ const FILTERS: [(&str, &str); 5] = [
     ("rated", "Rated"),
     ("lichess", "Lichess"),
 ];
+/// The width every column of a row takes, with room for its themes.
+const COLUMNS_WIDTH: f32 = 96. + 120. + 130. + 56. + 110. + 120. + 6. * 12. + 24. + 160.;
+/// Whether a list card this wide (padding included; zero before it is laid out) puts each row
+/// on two lines rather than in columns.
+fn compact(card: Pixels) -> bool {
+    card > px(0.) && card - px(40.) < px(COLUMNS_WIDTH)
+}
+
 /// Lichess's record of an attempt also kept here is the same attempt within this window.
 const SAME_ATTEMPT_MS: f64 = 15. * 60_000.;
 
@@ -195,6 +204,8 @@ pub struct PuzzleHistory {
     loaded: String,
     themes: Vec<Theme>,
     filter: Entity<SelectState<Vec<Choice>>>,
+    /// The list's card, to fit the rows' columns to it.
+    area: Measured,
     epoch: u64,
     _subscriptions: Vec<Subscription>,
 }
@@ -235,6 +246,7 @@ impl PuzzleHistory {
             loaded: String::new(),
             themes,
             filter,
+            area: Measured::default(),
             epoch: 0,
             _subscriptions: subscriptions,
         }
@@ -485,20 +497,25 @@ impl Render for PuzzleHistory {
                 .into_any_element()
         } else {
             let muted = palette.text_muted;
-            let head = h_flex()
-                .px(px(12.))
-                .pb(px(8.))
-                .gap(px(12.))
-                .text_size(px(11.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(muted)
-                .child(div().w(px(96.)).child("RESULT"))
-                .child(div().w(px(120.)).child("MODE"))
-                .child(div().flex_1().child("THEMES"))
-                .child(div().w(px(130.)).child("MOVES"))
-                .child(div().w(px(56.)).child("RATING"))
-                .child(div().w(px(110.)).child("PLAYED"))
-                .child(div().w(px(120.)));
+            // Every column fits only in a wide card; a narrower one puts the themes first and the
+            // rest on a line under them, so nothing is squeezed out or cut off.
+            let compact = compact(self.area.size().width);
+            let head = (!compact).then(|| {
+                h_flex()
+                    .px(px(12.))
+                    .pb(px(8.))
+                    .gap(px(12.))
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(muted)
+                    .child(div().w(px(96.)).child("RESULT"))
+                    .child(div().w(px(120.)).child("MODE"))
+                    .child(div().flex_1().child("THEMES"))
+                    .child(div().w(px(130.)).child("MOVES"))
+                    .child(div().w(px(56.)).child("RATING"))
+                    .child(div().w(px(110.)).child("PLAYED"))
+                    .child(div().w(px(120.)))
+            });
             let list = rows.into_iter().enumerate().map(|(index, row)| {
                 let (label, glyph, tip) = mode_look(row.mode);
                 let themes: Vec<String> = row.puzzle["themes"]
@@ -510,7 +527,54 @@ impl Render for PuzzleHistory {
                     .collect();
                 let (retry, analysed, wrong) =
                     (row.puzzle.clone(), row.puzzle.clone(), row.wrong.clone());
-                h_flex()
+                let rating = format!("{}", row.puzzle["rating"].as_f64().unwrap_or_default());
+                let played = played_text(row.at, now);
+                let badge = div().w(px(96.)).flex_none().child(
+                    widgets::badge(row.badge.0, row.badge.1, &palette)
+                        .w(px(80.))
+                        .justify_center(),
+                );
+                let mode = h_flex()
+                    .id(("puzzle-mode", index))
+                    .flex_none()
+                    .gap(px(8.))
+                    .text_color(muted)
+                    .tooltip(move |window, cx| {
+                        let tip = if compact {
+                            format!("{label}: {tip}")
+                        } else {
+                            tip.to_string()
+                        };
+                        gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx)
+                    })
+                    .child(glyph.size(px(14.)))
+                    .when(compact, |mode| mode.aria_label(label))
+                    .when(!compact, |mode| mode.w(px(120.)).child(label));
+                let actions = h_flex()
+                    .w(px(120.))
+                    .flex_none()
+                    .gap(px(4.))
+                    .child(
+                        Button::new(("puzzle-retry", index))
+                            .outline()
+                            .xsmall()
+                            .label("Try again")
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.emit(HistoryEvent::Retry(retry.clone()))
+                            })),
+                    )
+                    .child(
+                        Button::new(("puzzle-analyse", index))
+                            .ghost()
+                            .xsmall()
+                            .icon(icon("microscope"))
+                            .tooltip("Analysis board")
+                            .accessibility_label("Open on the analysis board")
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.emit(HistoryEvent::Analyse(analysed.clone(), wrong.clone()))
+                            })),
+                    );
+                let line = h_flex()
                     .id(("puzzle-attempt", index))
                     .px(px(12.))
                     .py(px(8.))
@@ -518,76 +582,46 @@ impl Render for PuzzleHistory {
                     .rounded(radii::MD)
                     .text_size(px(13.))
                     .hover(|row| row.bg(palette.accented))
-                    .child(
-                        div().w(px(96.)).child(
-                            widgets::badge(row.badge.0, row.badge.1, &palette)
-                                .w(px(80.))
-                                .justify_center(),
-                        ),
-                    )
-                    .child(
-                        h_flex()
-                            .id(("puzzle-mode", index))
-                            .w(px(120.))
-                            .gap(px(8.))
-                            .text_color(muted)
-                            .tooltip(move |window, cx| {
-                                gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx)
-                            })
-                            .child(glyph.size(px(14.)))
-                            .child(label),
-                    )
-                    .child(div().flex_1().min_w_0().truncate().child(themes.join(", ")))
-                    .child(
-                        div()
-                            .w(px(130.))
-                            .text_color(if row.moves.is_some() {
-                                muted
-                            } else {
-                                palette.border_accented
-                            })
-                            .child(row.moves.unwrap_or_else(|| "—".into())),
-                    )
-                    .child(div().w(px(56.)).child(format!(
-                        "{}",
-                        row.puzzle["rating"].as_f64().unwrap_or_default()
-                    )))
-                    .child(
-                        div()
-                            .w(px(110.))
-                            .text_color(muted)
-                            .child(played_text(row.at, now)),
-                    )
-                    .child(
-                        h_flex()
-                            .w(px(120.))
-                            .gap(px(4.))
+                    .child(badge)
+                    .child(mode);
+                if compact {
+                    let details = [row.moves.clone(), Some(rating), Some(played)]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                    line.child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(div().truncate().child(themes.join(", ")))
                             .child(
-                                Button::new(("puzzle-retry", index))
-                                    .outline()
-                                    .xsmall()
-                                    .label("Try again")
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        cx.emit(HistoryEvent::Retry(retry.clone()))
-                                    })),
-                            )
-                            .child(
-                                Button::new(("puzzle-analyse", index))
-                                    .ghost()
-                                    .xsmall()
-                                    .icon(icon("microscope"))
-                                    .tooltip("Analysis board")
-                                    .accessibility_label("Open on the analysis board")
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        cx.emit(HistoryEvent::Analyse(
-                                            analysed.clone(),
-                                            wrong.clone(),
-                                        ))
-                                    })),
+                                div()
+                                    .truncate()
+                                    .text_size(px(12.))
+                                    .text_color(muted)
+                                    .child(details),
                             ),
                     )
+                    .child(actions)
+                } else {
+                    line.child(div().flex_1().min_w_0().truncate().child(themes.join(", ")))
+                        .child(
+                            div()
+                                .w(px(130.))
+                                .text_color(if row.moves.is_some() {
+                                    muted
+                                } else {
+                                    palette.border_accented
+                                })
+                                .child(row.moves.unwrap_or_else(|| "—".into())),
+                        )
+                        .child(div().w(px(56.)).child(rating))
+                        .child(div().w(px(110.)).text_color(muted).child(played))
+                        .child(actions)
+                }
             });
-            v_flex().child(head).children(list).into_any_element()
+            v_flex().children(head).children(list).into_any_element()
         };
         let notes = if has_account && self.reconnect {
             Some(
@@ -634,6 +668,8 @@ impl Render for PuzzleHistory {
                     .children(self.summary(&palette))
                     .child(
                         widgets::card(&palette)
+                            .relative()
+                            .child(self.area.probe(cx))
                             .child(header)
                             .children(notes)
                             .child(body),
@@ -644,7 +680,19 @@ impl Render for PuzzleHistory {
 
 #[cfg(test)]
 mod tests {
-    use super::rows_of;
+    use super::{compact, rows_of};
+
+    /// The columns need about 900 px: a 1024-wide window's card (about 700) once squeezed the
+    /// themes out and pushed the buttons past its edge, so it takes two lines a row; a 1320-wide
+    /// one's (about 1000) keeps the columns.
+    #[test]
+    fn rows_take_two_lines_in_a_narrow_card() {
+        use gpui_kit::px;
+        assert!(compact(px(540.)));
+        assert!(compact(px(700.)));
+        assert!(!compact(px(1000.)));
+        assert!(!compact(px(0.)));
+    }
     use serde_json::json;
 
     #[test]
