@@ -291,6 +291,12 @@ fn players_with_games_to_sync_are_marked(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn insights_without_games_lead_to_following_or_analysis(cx: &mut gpui_kit::TestAppContext) {
     let mut app = open(cx, "Lichess insights", true);
+    // With no games there is nothing to filter.
+    app.find("insights-follow");
+    assert!(app.with_window(|window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.try_find_by_label("Speed").is_none()
+    }));
     app.click("insights-analyse");
     assert_eq!(page(&mut app), Some(Page::Analysis));
     app.open("Lichess insights");

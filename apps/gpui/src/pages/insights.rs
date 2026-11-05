@@ -589,7 +589,8 @@ impl Render for InsightsPage {
                         .map(|report| headline(report, &palette)),
                 ),
             )
-            .child(filters);
+            // Filters wait for games to filter.
+            .when(!names.is_empty(), |header| header.child(filters));
         let body: AnyElement = if names.is_empty() {
             widgets::card(&palette)
                 .child(

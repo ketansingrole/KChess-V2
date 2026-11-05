@@ -329,6 +329,7 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
     };
     app.wait_for("the first report", |_, cx| page_loaded(cx));
     assert!(app.with_window(|window, _| window.try_find_by_label("Variant").is_none()));
+    assert!(app.with_window(|window, _| window.try_find_by_label("Speed").is_some()));
 
     // The account turns out to have Chess960 games.
     let insights = page(&mut app);
