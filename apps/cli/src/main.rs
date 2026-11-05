@@ -24,9 +24,9 @@ Commands:
   call <method> --args-file <path> Read arguments from a JSON file
   analyze [--variant name] <fen|startpos|moves>
                                    Stream engine analysis as JSON lines until Ctrl-C
-  play [level] [white|black|random] [variant]
+  play [level] [white|black|random] [variant] [--fen FEN]
                                    Play Stockfish; type moves in SAN or UCI
-  local [variant]                  Play over the board (chess960, crazyhouse, atomic…)
+  local [variant] [--fen FEN]      Play over the board (chess960, crazyhouse, atomic…)
   puzzle [id|link]                 Solve the daily puzzle, or that one (hint, solution)
   pgn <link>                       Print a Lichess game's PGN, or a public study chapter's
   review <link|file|moves>         Review a game with the engine: accuracy and faulted moves
@@ -268,12 +268,13 @@ async fn run(argv: &[String]) -> Result<(), String> {
             }
             "play" | "local" => {
                 let computer = command == "play";
+                let (fen, words) = play::take_fen(&args[1..])?;
                 let (level, color, variant) = if computer {
-                    play::choices(&args[1..])?
+                    play::choices(&words)?
                 } else {
-                    (None, None, play::local_variant(&args[1..])?)
+                    (None, None, play::local_variant(&words)?)
                 };
-                play::interactive(&core, &mut events, computer, level, color, variant).await?;
+                play::interactive(&core, &mut events, computer, level, color, variant, fen).await?;
             }
             "puzzle" => {
                 let id = args.get(1).map(String::as_str);

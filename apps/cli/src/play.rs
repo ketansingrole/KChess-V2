@@ -269,12 +269,14 @@ impl Session<'_> {
 
     /// Start a game over the board in `variant`, as the app's New game does: Chess960 from a
     /// random position, the others from their usual start, the clock as it was.
-    async fn choose_variant(&mut self, variant: &str) -> Result<(), String> {
+    /// Start a game in `variant`, from its usual start or from `fen`.
+    async fn choose_setup(&mut self, variant: &str, fen: Option<&str>) -> Result<(), String> {
         let now = self.now();
-        if self.state()["setup"]["variant"]
-            .as_str()
-            .unwrap_or("standard")
-            == variant
+        if fen.is_none()
+            && self.state()["setup"]["variant"]
+                .as_str()
+                .unwrap_or("standard")
+                == variant
             && !self.over()
         {
             return Ok(());
@@ -284,7 +286,9 @@ impl Session<'_> {
                 "A game is in progress: finish it, or type new, before choosing a variant.".into(),
             );
         }
-        let fen = if variant == "chess960" {
+        let fen = if let Some(fen) = fen {
+            playable_fen(variant, fen)?
+        } else if variant == "chess960" {
             json!(kchess_domain::rules::chess960_fen(
                 (kchess_games::random_unit() * 960.0) as i64
             ))
@@ -511,6 +515,56 @@ pub fn choices(words: &[String]) -> Result<Choices, String> {
     Ok((level, color, variant))
 }
 
+/// `--fen <FEN>` among a command's words, quoted or as its six fields: the position to start
+/// from, and the other words.
+pub fn take_fen(words: &[String]) -> Result<(Option<String>, Vec<String>), String> {
+    let Some(at) = words.iter().position(|word| word == "--fen") else {
+        return Ok((None, words.to_vec()));
+    };
+    let field = |index: usize, word: &str| match index {
+        1 => matches!(word, "w" | "b"),
+        2 => word
+            .chars()
+            .all(|c| c == '-' || "KQkqABCDEFGHabcdefgh".contains(c)),
+        3 => word == "-" || (word.len() == 2 && word.as_bytes()[1].is_ascii_digit()),
+        _ => word.parse::<u32>().is_ok(),
+    };
+    // The first word is the board (or the whole quoted FEN); each next one a further field.
+    let mut fields: Vec<&str> = Vec::new();
+    let mut taken = 1;
+    for word in &words[at + 1..] {
+        if fields.is_empty() {
+            fields.extend(word.split_whitespace());
+        } else if fields.len() < 6 && field(fields.len(), word) {
+            fields.push(word);
+        } else {
+            break;
+        }
+        taken += 1;
+    }
+    if fields.is_empty() {
+        return Err("--fen needs a position.".into());
+    }
+    let mut rest = words.to_vec();
+    rest.drain(at..at + taken);
+    Ok((Some(fields.join(" ")), rest))
+}
+
+/// A position a game can start from in `variant`, as the app's "Play from here" checks it.
+fn playable_fen(variant: &str, fen: &str) -> Result<Value, String> {
+    let fen = fen.trim();
+    let playable = if matches!(variant, "standard" | "chess960") {
+        kchess_domain::position::fen_problem(fen).is_none()
+    } else {
+        kchess_domain::rules::setup_start(variant, fen).is_some()
+    };
+    if playable {
+        Ok(json!(fen))
+    } else {
+        Err(format!("Not a playable position: {fen}"))
+    }
+}
+
 /// `local [variant]`: a variant as Lichess keys it, in any case (`crazyhouse`, `kingOfTheHill`).
 pub fn local_variant(words: &[String]) -> Result<Option<String>, String> {
     match words {
@@ -536,6 +590,7 @@ pub async fn interactive(
     level: Option<String>,
     color: Option<String>,
     variant: Option<String>,
+    fen: Option<String>,
 ) -> Result<(), String> {
     let library = core.call("library", vec![]).await?;
     let sessions = &library["sessions"];
@@ -606,8 +661,9 @@ pub async fn interactive(
     if let Some(color) = color.filter(|_| computer) {
         session.choose_color(&color).await?;
     }
-    if let Some(variant) = variant {
-        session.choose_variant(&variant).await?;
+    if variant.is_some() || fen.is_some() {
+        let variant = variant.as_deref().unwrap_or("standard");
+        session.choose_setup(variant, fen.as_deref()).await?;
     }
     session.show();
     session.computer_turn(events).await;
@@ -690,6 +746,40 @@ mod tests {
         );
         assert!(local_variant(&words(&["bughouse"])).is_err());
         assert!(local_variant(&words(&["atomic", "horde"])).is_err());
+    }
+
+    /// A game starts from a position given quoted or as its six words, among the other choices;
+    /// the position must be playable in its variant.
+    #[test]
+    fn a_game_takes_a_starting_position() {
+        use super::{playable_fen, take_fen};
+        let fen = "4k3/8/8/8/8/8/4P3/4K3 b - - 0 40";
+        assert_eq!(
+            take_fen(&words(&["club", "--fen", fen, "black"])),
+            Ok((Some(fen.to_string()), words(&["club", "black"])))
+        );
+        let mut split = vec!["--fen"];
+        split.extend(fen.split(' '));
+        split.push("crazyhouse");
+        assert_eq!(
+            take_fen(&words(&split)),
+            Ok((Some(fen.to_string()), words(&["crazyhouse"])))
+        );
+        // A FEN with fewer fields stops at the first word that is not one.
+        assert_eq!(
+            take_fen(&words(&["--fen", "4k3/8/8/8/8/8/4P3/4K3", "w", "black"])),
+            Ok((
+                Some("4k3/8/8/8/8/8/4P3/4K3 w".to_string()),
+                words(&["black"])
+            ))
+        );
+        assert_eq!(take_fen(&words(&["club"])), Ok((None, words(&["club"]))));
+        assert!(take_fen(&words(&["--fen"])).is_err());
+        assert_eq!(playable_fen("standard", fen), Ok(serde_json::json!(fen)));
+        assert!(playable_fen("standard", "8/8/8/8/8/8/8/8 w - - 0 1").is_err());
+        let zh = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
+        assert!(playable_fen("crazyhouse", zh).is_ok());
+        assert!(playable_fen("horde", zh).is_err());
     }
 
     #[test]
