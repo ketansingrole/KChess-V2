@@ -319,11 +319,19 @@ impl Mistakes {
         .detach();
     }
 
-    /// A key for the drill on the board: F turns it, and once it is over the arrows, Home and End
-    /// step through its moves. Whether the key was taken.
+    /// A key for the drill on the board: F turns it, once it is over Return or Space goes on to the
+    /// next due position (as on Puzzles), and the arrows, Home and End step through its moves.
+    /// Whether the key was taken.
     pub fn key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
         if self.current.is_none() {
             return false;
+        }
+        if matches!(key, "enter" | "space")
+            && self.done
+            && self.actions().contains(&MistakeAction::Next)
+        {
+            self.next(false, cx);
+            return true;
         }
         if key == "f" {
             self.puzzle.update(cx, |board, cx| board.flip(cx));
