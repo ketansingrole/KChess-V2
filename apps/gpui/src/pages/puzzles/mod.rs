@@ -954,7 +954,8 @@ pub(crate) fn status_panel(
                         .w_full()
                         .outline()
                         .icon(icon("microscope"))
-                        .label("Analysis board")
+                        .label("Analyse")
+                        .tooltip("Analysis board")
                         .on_click(move |_, window, cx| {
                             crate::shell::analyse_puzzle(studied.clone(), wrong.clone(), window, cx)
                         })
