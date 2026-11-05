@@ -7,7 +7,7 @@
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState, Redo, Undo};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
     Disableable as _, IndexPath, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -174,6 +174,11 @@ pub struct EditorPage {
     voice: Control,
     /// A piece said without a colour takes the colour said last.
     last_color: &'static str,
+    /// Undo and redo: each position as `(variant, FEN)`, the one shown last of `undone`.
+    edits: Vec<(String, String)>,
+    undone: Vec<(String, String)>,
+    /// The position as last recorded, which the next change is undone to.
+    shown: (String, String),
     _subscriptions: Vec<Subscription>,
 }
 
@@ -277,8 +282,12 @@ impl EditorPage {
             focus: cx.focus_handle(),
             voice: Control::new(true, cx),
             last_color: "white",
+            edits: Vec::new(),
+            undone: Vec::new(),
+            shown: (String::new(), String::new()),
             _subscriptions: subscriptions,
         };
+        page.shown = page.snapshot();
         page.redraw(cx);
         page
     }
@@ -384,11 +393,50 @@ impl EditorPage {
         self.changed(cx);
     }
 
-    /// The position changed: the board, the FEN box and the en passant choices follow.
+    /// The position changed: the board, the FEN box and the en passant choices follow, and Undo
+    /// can go back to the one before.
     fn changed(&mut self, cx: &mut Context<Self>) {
+        let now = self.snapshot();
+        if now != self.shown {
+            self.edits.push(std::mem::replace(&mut self.shown, now));
+            self.undone.clear();
+        }
+        self.show_changed(cx);
+    }
+
+    fn show_changed(&mut self, cx: &mut Context<Self>) {
         self.fen_error = None;
         self.stale_fields = true;
         self.redraw(cx);
+    }
+
+    /// The position as Undo keeps it: its variant and FEN.
+    fn snapshot(&self) -> (String, String) {
+        (self.variant.clone(), self.fen())
+    }
+
+    fn restore(&mut self, (variant, fen): (String, String), cx: &mut Context<Self>) {
+        if self.read_fen(&fen) {
+            self.variant = variant;
+        }
+        self.shown = self.snapshot();
+        self.show_changed(cx);
+    }
+
+    /// Back to the position before the last change (⌘Z, Edit → Undo).
+    pub(crate) fn undo(&mut self, cx: &mut Context<Self>) {
+        if let Some(before) = self.edits.pop() {
+            self.undone.push(self.shown.clone());
+            self.restore(before, cx);
+        }
+    }
+
+    /// The change Undo took back, again (⇧⌘Z, Edit → Redo).
+    pub(crate) fn redo(&mut self, cx: &mut Context<Self>) {
+        if let Some(after) = self.undone.pop() {
+            self.edits.push(self.shown.clone());
+            self.restore(after, cx);
+        }
     }
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
@@ -1107,6 +1155,9 @@ impl Render for EditorPage {
                     cx.stop_propagation();
                 }
             }))
+            // The FEN box takes these for its own text first.
+            .on_action(cx.listener(|this, _: &Undo, _, cx| this.undo(cx)))
+            .on_action(cx.listener(|this, _: &Redo, _, cx| this.redo(cx)))
             // A click gives the keys back to the page, before a text field (the FEN) takes them.
             .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
                 if event.button == MouseButton::Left {

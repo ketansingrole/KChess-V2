@@ -47,13 +47,16 @@ pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
                     format!("{MOD} Z"),
                 ),
                 ("Zen mode", "Z".to_string()),
+                (
+                    "Undo an edit, on the analysis board or in the editor",
+                    format!("{MOD} Z"),
+                ),
+                ("Redo", redo.to_string()),
             ],
         ),
         (
             "Analysis board",
             vec![
-                ("Undo an edit", format!("{MOD} Z")),
-                ("Redo", redo.to_string()),
                 ("Into / out of a variation", "⇧ → ⇧ ←".to_string()),
                 ("Engine on or off", "L".to_string()),
                 ("Show threat", "X".to_string()),

@@ -414,6 +414,32 @@ fn the_editor_starts_from_the_standard_position(cx: &mut gpui_kit::TestAppContex
     }
 }
 
+/// ⌘Z takes back the editor's changes one by one, and ⇧⌘Z redoes them.
+#[gpui_kit::test]
+fn the_editor_undoes_and_redoes_its_changes(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = editor(cx);
+    app.click("clear-board");
+    wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
+    app.click(("editor-turn", 1usize));
+    wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 b - - 0 1");
+    app.press("secondary-z");
+    wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
+    app.press("secondary-z");
+    wait_for_fen(&mut app, START_FEN);
+    // Nothing more to undo: the start stays.
+    app.press("secondary-z");
+    wait_for_fen(&mut app, START_FEN);
+    app.press("shift-secondary-z");
+    wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
+    // A new change drops what was undone.
+    app.click("start-position");
+    wait_for_fen(&mut app, START_FEN);
+    app.press("shift-secondary-z");
+    wait_for_fen(&mut app, START_FEN);
+    app.press("secondary-z");
+    wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
+}
+
 /// F turns the editor's board, as its button does.
 #[gpui_kit::test]
 fn f_flips_the_editors_board(cx: &mut gpui_kit::TestAppContext) {
