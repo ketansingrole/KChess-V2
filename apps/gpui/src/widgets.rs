@@ -520,13 +520,18 @@ pub fn moves_list(
         }))
 }
 
-/// `.move-controls`: first, previous, next and last move, and a board flip.
+/// `.move-controls`: first, previous, next and last move, and a board flip: its label, the key
+/// that does the same on the page (named in the tooltip), and what a click does.
 pub fn move_controls(
     ply: usize,
     count: usize,
     select: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
-    flip: (SharedString, ClickHandler),
+    flip: (SharedString, Option<&'static str>, ClickHandler),
 ) -> impl IntoElement {
+    let flip_tooltip: SharedString = match flip.1 {
+        Some(key) => format!("{} ({key})", flip.0).into(),
+        None => flip.0.clone(),
+    };
     let targets = [
         ("skip-back", "Go to start", 0, ply == 0),
         (
@@ -573,9 +578,9 @@ pub fn move_controls(
                 .ghost()
                 .small()
                 .icon(icon("arrow-up-down"))
-                .tooltip(flip.0.clone())
+                .tooltip(flip_tooltip)
                 .accessibility_label(flip.0)
-                .on_click(flip.1),
+                .on_click(flip.2),
         )
 }
 

@@ -532,3 +532,34 @@ fn a_chess960_game_can_be_taken_to_the_analysis_board(cx: &mut gpui_kit::TestApp
     app.find("tree-c1b1");
     assert_eq!(app.find("tree-c1b1 e7e5").selected(), Some(true));
 }
+
+/// F turns the board, as its flip button does, and the arrows and Home still step the moves.
+#[gpui_kit::test]
+fn f_flips_the_board(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::local::LocalPage;
+    let mut app = board(cx);
+    type_moves(&mut app, &["e4", "e5"]);
+    let orientation = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<LocalPage>(Page::Local, cx)
+                .expect("the page")
+                .read(cx)
+                .orientation(cx)
+        })
+    };
+    let before = orientation(&mut app);
+    app.click(("move", 1usize));
+    app.press("f");
+    assert_eq!(orientation(&mut app), !before);
+    app.press("home");
+    assert!(!app.enabled("skip-back"));
+    app.press("f");
+    assert_eq!(orientation(&mut app), before);
+    // The move box still takes a click and the next move.
+    app.press("end");
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Nf3");
+    app.press("enter");
+    app.wait_for_moves(&["e4", "e5", "Nf3"]);
+}

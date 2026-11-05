@@ -728,7 +728,7 @@ impl WatchPage {
                 self.live.shown_ply(),
                 moves.len(),
                 select,
-                ("Flip board".into(), flip),
+                ("Flip board".into(), Some("F"), flip),
             ))
             .when(frame["source"] == json!("game"), |panel| {
                 panel.child(widgets::hint(

@@ -106,7 +106,10 @@ impl GameReplay {
         if !self.focus.is_focused(window) || event.keystroke.modifiers.modified() {
             return;
         }
-        if let Some(ply) = view::navigate(&event.keystroke.key, self.ply, self.moves.len()) {
+        if event.keystroke.key == "f" {
+            self.flip(cx);
+            cx.stop_propagation();
+        } else if let Some(ply) = view::navigate(&event.keystroke.key, self.ply, self.moves.len()) {
             self.show(ply, cx);
             cx.stop_propagation();
         }
@@ -212,7 +215,7 @@ impl Render for GameReplay {
                 self.ply,
                 self.moves.len(),
                 select,
-                ("Flip board".into(), flip),
+                ("Flip board".into(), Some("F"), flip),
             ));
         div()
             .size_full()

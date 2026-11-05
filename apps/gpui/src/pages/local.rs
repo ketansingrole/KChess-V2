@@ -322,7 +322,7 @@ impl LocalPage {
     }
 
     /// The board faces whoever is to move while automatic turning is on.
-    fn orientation(&self, cx: &App) -> Color {
+    pub(crate) fn orientation(&self, cx: &App) -> Color {
         if self.auto_flip(cx) && !self.game.over(self.now()) {
             self.turn()
         } else {
@@ -886,7 +886,7 @@ impl LocalPage {
     }
 
     /// Keys when the page itself has focus (not a text field): in the clock, Space presses the
-    /// running clock and P pauses; on the board, the arrows step through the moves.
+    /// running clock and P pauses; on the board, the arrows step through the moves and F flips it.
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus.is_focused(window) || event.keystroke.modifiers.modified() {
             return;
@@ -910,6 +910,8 @@ impl LocalPage {
                 }
                 _ => return,
             }
+        } else if key == "f" {
+            self.flip(cx);
         } else if let Some(ply) = view::navigate(key, self.shown_ply(), self.moves().len()) {
             self.show_ply(ply, cx);
         } else {
@@ -1341,6 +1343,13 @@ impl Render for LocalPage {
         self.layout
             .render("local-page", board_column, panel, window, cx)
             .track_focus(&self.focus)
+            // A click anywhere on the page gives the keys back to it, before a text field (the
+            // move box) takes them for itself, as on the analysis board.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .on_key_down(cx.listener(Self::key))
             .into_any_element()
     }
@@ -1526,7 +1535,7 @@ impl LocalPage {
                 shown,
                 moves.len(),
                 select,
-                ("Flip board".into(), flip),
+                ("Flip board".into(), Some("F"), flip),
             ))
             .child(
                 h_flex()

@@ -331,6 +331,12 @@ fn quick_pick_offers_a_draw_and_asks_before_resigning(cx: &mut gpui_kit::TestApp
     app.wait_for("the board to turn round", |_, cx| {
         crate::online::handle(cx).read(cx).flipped
     });
+    // F turns it back, as on every board.
+    app.click(("move", 0usize));
+    app.press("f");
+    app.wait_for("the board to turn back", |_, cx| {
+        !crate::online::handle(cx).read(cx).flipped
+    });
 }
 
 /// Help stays out of Quick Pick during the game; once it is over, Analyse there opens it.

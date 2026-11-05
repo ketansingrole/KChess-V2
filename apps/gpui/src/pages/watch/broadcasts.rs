@@ -1198,7 +1198,7 @@ impl WatchPage {
                 ply,
                 moves.len(),
                 select,
-                ("Flip board (F)".into(), flip),
+                ("Flip board".into(), Some("F"), flip),
             ))
             .child(
                 h_flex()

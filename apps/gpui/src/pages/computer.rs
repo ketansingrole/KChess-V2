@@ -1640,7 +1640,7 @@ impl Render for ComputerPage {
                 ply,
                 moves.len(),
                 select,
-                (format!("Switch sides (play {other})").into(), flip),
+                (format!("Switch sides (play {other})").into(), None, flip),
             ))
             .child(
                 h_flex()
@@ -1689,6 +1689,13 @@ impl Render for ComputerPage {
         self.layout
             .render("computer-page", board_column, panel, window, cx)
             .track_focus(&self.focus)
+            // A click anywhere on the page gives the keys back to it, before a text field (the
+            // move box) takes them for itself, as on the analysis board.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 // The arrows step through the moves when no text field has the keys.
                 if !this.focus.is_focused(window) || event.keystroke.modifiers.modified() {

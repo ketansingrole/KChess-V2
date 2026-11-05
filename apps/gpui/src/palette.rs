@@ -614,6 +614,15 @@ fn page_actions<V: 'static, A: Copy + 'static>(
         .collect()
 }
 
+/// A page's flip command, with the F its page takes for it.
+fn flip_key(command: Command) -> Command {
+    if command.id.ends_with(":flip") {
+        command.kbds("F")
+    } else {
+        command
+    }
+}
+
 /// The computer game's actions its buttons allow now.
 fn computer_commands(cx: &App) -> Vec<Command> {
     use crate::pages::computer::{Action, ComputerPage};
@@ -660,6 +669,7 @@ fn live_commands(cx: &App) -> Vec<Command> {
                 move |window, cx| run_live_action(action, window, cx),
             )
             .keywords(keywords)
+            .kbds(if action == LiveAction::Flip { "F" } else { "" })
         })
         .collect()
 }
@@ -730,6 +740,7 @@ fn watch_commands(cx: &App) -> Vec<Command> {
         WatchPage::act,
     )
     .into_iter()
+    .map(flip_key)
     .chain(channels)
     .collect()
 }
@@ -1017,6 +1028,9 @@ fn local_commands(cx: &App) -> Vec<Command> {
         },
         LocalPage::act,
     )
+    .into_iter()
+    .map(flip_key)
+    .collect()
 }
 
 /// The study bar's menus over the analysis board: the study's and its chapters' actions.

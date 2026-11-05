@@ -589,6 +589,11 @@ impl OnlinePage {
                     cx.stop_propagation();
                     return;
                 }
+                if event.keystroke.key == "f" {
+                    flip(cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 let online = crate::online::handle(cx);
                 let (ply, count) = {
                     let online = online.read(cx);
@@ -1062,7 +1067,7 @@ impl OnlinePage {
                 ply,
                 moves.len(),
                 select,
-                ("Flip board".into(), flip),
+                ("Flip board".into(), Some("F"), flip),
             ))
             .child(
                 div()

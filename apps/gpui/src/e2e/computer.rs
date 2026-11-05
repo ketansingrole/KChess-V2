@@ -45,6 +45,22 @@ fn a_typed_move_is_played(cx: &mut gpui_kit::TestAppContext) {
     app.wait_for_moves(&["Nf3"]);
 }
 
+/// After a typed move, a click on the moves gives the arrow keys back to the board: they had
+/// stayed with the move box, so ← moved its cursor instead of the game.
+#[gpui_kit::test]
+fn the_arrows_step_the_moves_after_a_typed_move(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Nf3");
+    app.press("enter");
+    app.wait_for_moves(&["Nf3"]);
+    app.click(("move", 0usize));
+    app.press("left");
+    assert!(!app.enabled("skip-back"));
+    app.press("end");
+    assert!(app.enabled("skip-back"));
+}
+
 #[gpui_kit::test]
 fn an_illegal_move_is_not_played(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
