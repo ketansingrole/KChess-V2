@@ -412,6 +412,18 @@ pub fn open(page: Page, window: &mut Window, cx: &mut App) {
     let _ = workspace.update(cx, |workspace, cx| workspace.choose(page, window, cx));
 }
 
+/// Back (-1) or forward (1): out of the page's inner level, then through the pages visited, as
+/// a swipe goes.
+pub fn go(direction: crate::swipe::Direction, window: &mut Window, cx: &mut App) {
+    let Some(workspace) = cx
+        .try_global::<Navigator>()
+        .map(|navigator| navigator.0.clone())
+    else {
+        return;
+    };
+    let _ = workspace.update(cx, |workspace, cx| workspace.go(direction, window, cx));
+}
+
 /// Game history's Lichess tab showing one account's games (`historyAccount`).
 pub fn open_history_account(account: &str, window: &mut Window, cx: &mut App) {
     open(Page::History, window, cx);
@@ -2022,6 +2034,15 @@ impl Render for Workspace {
                             .relative()
                             .overflow_hidden()
                             .on_scroll(cx.listener(Self::scrolled))
+                            // A mouse's back and forward buttons go as a swipe does.
+                            .on_mouse_down(
+                                MouseButton::Navigate(NavigationDirection::Back),
+                                cx.listener(|this, _, window, cx| this.go(-1, window, cx)),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Navigate(NavigationDirection::Forward),
+                                cx.listener(|this, _, window, cx| this.go(1, window, cx)),
+                            )
                             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                                 if !event.is_held && this.pages.page_focused(window) {
                                     Self::talk_key(&event.keystroke, true, cx);

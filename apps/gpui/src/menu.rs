@@ -20,7 +20,9 @@ gpui_kit::actions!(
         OpenSettings,
         ZoomIn,
         ZoomOut,
-        ActualSize
+        ActualSize,
+        GoBack,
+        GoForward
     ]
 );
 
@@ -41,6 +43,15 @@ fn zoom(direction: i8, cx: &mut App) {
             let _ = window.update(cx, |_, window, cx| {
                 crate::interface_zoom::step_window(direction, window, cx)
             });
+        }
+    });
+}
+
+/// Back (-1) or forward (1) through the pages visited, as a swipe goes; after the key's dispatch.
+fn go(direction: crate::swipe::Direction, cx: &mut App) {
+    cx.defer(move |cx| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |_, window, cx| crate::shell::go(direction, window, cx));
         }
     });
 }
@@ -104,6 +115,18 @@ pub fn init(cx: &mut App) {
         bind("secondary-0", ActualSize, cx),
     ];
     cx.bind_keys(bindings);
+    // Back and forward through the pages, as a browser takes them: ⌘[ and ⌘] on macOS, Alt
+    // with an arrow elsewhere.
+    cx.bind_keys(if cfg!(target_os = "macos") {
+        [bind("cmd-[", GoBack, cx), bind("cmd-]", GoForward, cx)]
+    } else {
+        [
+            bind("alt-left", GoBack, cx),
+            bind("alt-right", GoForward, cx),
+        ]
+    });
+    cx.on_action(|_: &GoBack, cx| go(-1, cx));
+    cx.on_action(|_: &GoForward, cx| go(1, cx));
     cx.on_action(|_: &ZoomIn, cx| zoom(1, cx));
     cx.on_action(|_: &ZoomOut, cx| zoom(-1, cx));
     cx.on_action(|_: &ActualSize, cx| zoom(0, cx));
@@ -168,6 +191,9 @@ pub fn init(cx: &mut App) {
         Menu::new("View").items([
             MenuItem::action("Search…", Search),
             MenuItem::action("Run a Command…", Commands),
+            MenuItem::separator(),
+            MenuItem::action("Back", GoBack),
+            MenuItem::action("Forward", GoForward),
             MenuItem::separator(),
             MenuItem::action("Actual Size", ActualSize),
             MenuItem::action("Zoom In", ZoomIn),

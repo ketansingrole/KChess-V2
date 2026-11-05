@@ -51,6 +51,33 @@ fn every_sidebar_page_opens(cx: &mut gpui_kit::TestAppContext) {
     }
 }
 
+/// The keyboard goes back and forward through the pages visited, as a swipe does: ⌘[ and ⌘] on
+/// macOS, Alt with an arrow elsewhere.
+#[gpui_kit::test]
+fn the_keyboard_goes_back_and_forward_through_the_pages(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    let (back, forward) = if cfg!(target_os = "macos") {
+        ("cmd-[", "cmd-]")
+    } else {
+        ("alt-left", "alt-right")
+    };
+    let mut app = Harness::start(cx);
+    app.open("Puzzles");
+    app.open("Studies");
+    let shown = |app: &mut Harness| app.cx.update(|cx| crate::shell::current_page(cx));
+    app.press(back);
+    assert_eq!(shown(&mut app), Some(Page::Puzzles));
+    app.press(back);
+    assert_eq!(shown(&mut app), Some(Page::Dashboard));
+    app.press(forward);
+    assert_eq!(shown(&mut app), Some(Page::Puzzles));
+    app.press(forward);
+    assert_eq!(shown(&mut app), Some(Page::Studies));
+    // Nothing further forward: the page stays.
+    app.press(forward);
+    assert_eq!(shown(&mut app), Some(Page::Studies));
+}
+
 /// The sidebar marks your move in a Lichess game beside Play; collapsed to its rail it had no room
 /// for the mark and dropped it, so a correspondence move went unseen there.
 #[gpui_kit::test]
