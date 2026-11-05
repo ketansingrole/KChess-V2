@@ -78,14 +78,53 @@ fn show_palette(prefix: &'static str, cx: &mut App) {
 /// Close `window` once everything is saved, with it still open to say what could not be: its
 /// pages own the unsaved work, and on macOS closing it does not quit the app.
 pub fn close_window(window: AnyWindowHandle, cx: &mut App) {
-    crate::core::prepare_quit(
-        cx,
-        "Close without saving",
-        move |cx| {
-            let _ = window.update(cx, |_, window, _| window.remove_window());
-        },
-        |_| {},
-    );
+    unless_leaving_a_game("Close", cx, move |cx| {
+        crate::core::prepare_quit(
+            cx,
+            "Close without saving",
+            move |cx| {
+                let _ = window.update(cx, |_, window, _| window.remove_window());
+            },
+            |_| {},
+        );
+    });
+}
+
+/// Run `then`, after asking first while a real-time Lichess game is on: its clock keeps running
+/// once KChess is gone, and the game is lost on time.
+fn unless_leaving_a_game(leave: &'static str, cx: &mut App, then: impl FnOnce(&mut App) + 'static) {
+    let on = cx
+        .try_global::<crate::online::OnlineHandle>()
+        .is_some_and(|_| crate::online::handle(cx).read(cx).live_game_on());
+    if !on {
+        return then(cx);
+    }
+    // After the update that brought the key or the click: the window cannot ask during it.
+    cx.defer(move |cx| {
+        let window = cx.active_window().or_else(|| cx.windows().first().copied());
+        let answer = window.and_then(|window| {
+            window
+                .update(cx, |_, window, cx| {
+                    window.prompt(
+                        PromptLevel::Warning,
+                        "Your Lichess game is still on",
+                        Some("Its clock keeps running on Lichess."),
+                        &[leave, "Cancel"],
+                        cx,
+                    )
+                })
+                .ok()
+        });
+        let Some(answer) = answer else {
+            return then(cx);
+        };
+        cx.spawn(async move |cx| {
+            if answer.await == Ok(0) {
+                cx.update(then);
+            }
+        })
+        .detach();
+    });
 }
 
 /// A binding whose `secondary-` is the host's Cmd or Ctrl. GPUI resolves `secondary-` only when
@@ -171,7 +210,9 @@ pub fn init(cx: &mut App) {
     });
     // Everything is saved, with the window still open to say what could not be, before quitting.
     cx.on_action(|_: &Quit, cx| {
-        crate::core::prepare_quit(cx, "Quit without saving", |cx| cx.quit(), |_| {});
+        unless_leaving_a_game("Quit", cx, |cx| {
+            crate::core::prepare_quit(cx, "Quit without saving", |cx| cx.quit(), |_| {});
+        });
     });
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());

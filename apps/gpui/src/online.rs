@@ -185,6 +185,17 @@ impl OnlineState {
 
     /// `onlineGameView`: the live position, the SAN history, the moves this side made, whether
     /// it is a correspondence game, and the rematch's options.
+    /// A real-time game of the account's is on, its clock running on Lichess whether or not
+    /// KChess stays open (`beforeunload` on lichess.org asks first too).
+    pub fn live_game_on(&self) -> bool {
+        let on = match self.phase {
+            Phase::Playing => true,
+            Phase::Disconnected => !self.id().is_empty(),
+            _ => false,
+        };
+        on && !self.correspondence()
+    }
+
     pub fn view(&self) -> Value {
         rules("onlineGameView", std::slice::from_ref(&self.model)).unwrap_or(Value::Null)
     }

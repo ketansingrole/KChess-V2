@@ -365,3 +365,32 @@ fn the_window_title_names_the_page(cx: &mut gpui_kit::TestAppContext) {
     app.open("Analysis board");
     assert_eq!(title(&mut app).as_deref(), Some("Analysis board — KChess"));
 }
+
+/// Quitting during a real-time Lichess game asks first: its clock keeps running on Lichess.
+#[gpui_kit::test]
+fn quitting_during_a_live_game_asks_first(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.wait_for("the startup check to finish", |_, cx| {
+        crate::online::handle(cx).read(cx).phase != crate::online::Phase::Checking
+    });
+    app.cx.update(|cx| {
+        crate::online::handle(cx).update(cx, |online, cx| online.set_phase("playing", cx))
+    });
+    assert!(
+        app.cx
+            .update(|cx| crate::online::handle(cx).read(cx).live_game_on()),
+        "on"
+    );
+    app.press("secondary-q");
+    app.cx.run_until_parked();
+    assert!(app.cx.has_pending_prompt(), "asked before quitting");
+    app.cx.simulate_prompt_answer("Cancel");
+    app.cx.run_until_parked();
+    assert!(!app.cx.has_pending_prompt());
+    // Still open, and the game still on.
+    app.open("Home");
+    assert!(
+        app.cx
+            .update(|cx| crate::online::handle(cx).read(cx).live_game_on())
+    );
+}
