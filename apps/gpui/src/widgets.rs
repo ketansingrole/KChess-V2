@@ -214,7 +214,7 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
 }
 
 /// A clock's last ten seconds, which `formatClock` alone shows with tenths ("0:09.4").
-fn low_time(text: &str) -> bool {
+pub(crate) fn low_time(text: &str) -> bool {
     text.starts_with("0:0") && text.contains('.')
 }
 

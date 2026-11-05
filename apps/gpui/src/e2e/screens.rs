@@ -590,6 +590,47 @@ fn shortcuts() {
     }
 }
 
+/// An over-the-board game's clocks in their last ten seconds, in both appearances:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::low_clock -- --ignored`
+/// writes `<dir>/low-clock/<appearance>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn low_clock() {
+    use crate::pages::local::LocalPage;
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("low-clock");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), 1320., 880.);
+        cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Local, window, cx);
+            let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+            local.update(cx, |local, cx| {
+                let setup =
+                    serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+                let clock = serde_json::json!({
+                    "white": { "minutes": 0.15, "increment": 0 },
+                    "black": { "minutes": 0.15, "increment": 0 },
+                });
+                local.replace_game(setup, clock, window, cx);
+                local.play("e2e4", window, cx);
+            });
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{name}.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::core::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
 /// Connect the stand-in Lichess's showcase account as a person would, and sync its games.
 fn connect_showcase(
     cx: &mut HeadlessAppContext,

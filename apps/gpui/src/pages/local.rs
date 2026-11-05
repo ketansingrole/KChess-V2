@@ -972,7 +972,8 @@ impl LocalPage {
             } else {
                 "Ready"
             };
-            let (background, foreground) = if flagged {
+            // Red when time is up, and while the last ten seconds run.
+            let (background, foreground) = if flagged || (running && widgets::low_time(&time)) {
                 (palette.error, palette.bg)
             } else if running {
                 (palette.primary, palette.bg)
