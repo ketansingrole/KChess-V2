@@ -322,3 +322,58 @@ fn return_goes_on_to_the_next_puzzle(cx: &mut gpui_kit::TestAppContext) {
     playable(&mut app);
     assert_ne!(key(&mut app), second);
 }
+
+/// Once a puzzle is over its moves step back and forth with the arrows, Home and End, as a game's
+/// do; while it is being solved they do nothing to the board.
+#[gpui_kit::test]
+fn a_finished_puzzle_is_stepped_through(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.cx.update(|cx| {
+        crate::prefs::set(
+            cx,
+            "kchess:puzzle-angle",
+            super::fake_lichess::TRAINED_THEME,
+        );
+        crate::settings::change(cx, |settings| settings.frontend.puzzle_auto_next = false);
+    });
+    app.open("Puzzles");
+    app.wait_for("the puzzle to be playable", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_some_and(|hint| hint.disabled() != Some(true))
+    });
+    let viewing = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<crate::pages::puzzles::PuzzlesPage>(
+                crate::pages::Page::Puzzles,
+                cx,
+            )
+            .and_then(|page| page.read(cx).viewing(cx))
+        })
+    };
+    app.click("chess-board");
+    app.press("left");
+    assert_eq!(viewing(&mut app), None, "not while it is being solved");
+
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Qxf7#");
+    app.press("enter");
+    app.wait_for("the puzzle to be solved", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_none_or(|hint| hint.disabled() == Some(true))
+    });
+    app.click("chess-board");
+    app.press("left");
+    let back = viewing(&mut app).expect("a position before the mate");
+    app.press("home");
+    assert_eq!(viewing(&mut app), Some(0));
+    app.press("right");
+    // One on from the start: the second position, or the last (shown as none) in a two-position
+    // puzzle.
+    assert_eq!(viewing(&mut app), (back >= 1).then_some(1));
+    app.press("end");
+    assert_eq!(viewing(&mut app), None);
+}

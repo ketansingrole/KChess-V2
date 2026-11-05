@@ -1559,6 +1559,12 @@ impl PuzzlesPage {
         self.session.puzzle_key()
     }
 
+    /// The Train tab's board, while a finished puzzle is stepped back through: the position shown.
+    #[cfg(test)]
+    pub(crate) fn viewing(&self, cx: &App) -> Option<usize> {
+        self.puzzle.read(cx).viewing()
+    }
+
     fn shown_board(&self, cx: &App) -> Option<(Entity<PuzzleBoard>, bool)> {
         match crate::prefs::get::<String>(cx, TAB, "train".into()).as_str() {
             "train" => (self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == "ready")
@@ -1645,6 +1651,13 @@ impl PuzzlesPage {
             return;
         }
         if !self.focus.is_focused(window) {
+            return;
+        }
+        // A finished puzzle's moves step back and forth, as a game's do.
+        if let Some((board, _)) = self.shown_board(cx)
+            && board.update(cx, |board, cx| board.step(&event.keystroke.key, cx))
+        {
+            cx.stop_propagation();
             return;
         }
         if event.keystroke.key == "f" && self.actions(cx).contains(&Action::Flip) {

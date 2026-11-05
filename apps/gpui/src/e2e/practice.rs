@@ -374,3 +374,48 @@ fn a_mistake_is_practised_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
         ]
     );
 }
+
+/// A solved mistake's board answers the keys as a puzzle's: the arrows step back through its
+/// moves, and F turns it. A click on the board gives the keys back to the page.
+#[gpui_kit::test]
+fn a_solved_mistake_is_stepped_through_and_turned(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, 5);
+    app.find("review-a-game");
+    let mistakes = app.cx.update(|cx| {
+        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+            .and_then(|page| page.read(cx).mistakes())
+            .expect("the mistakes trainer")
+    });
+    app.cx.update(|cx| {
+        mistakes.update(cx, |mistakes, cx| {
+            mistakes.seed(
+                vec![serde_json::json!({
+                    "id": "mate",
+                    "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                    "solution": ["h5f7"],
+                    "dueAt": 0,
+                })],
+                cx,
+            )
+        });
+    });
+    app.click("practice-due");
+    app.click_square("h5", true);
+    app.click_square("f7", true);
+    app.wait_for("the mate to solve the drill", |_, cx| {
+        mistakes.read(cx).board().read(cx).status() == "solved"
+    });
+    app.click("chess-board");
+    app.press("left");
+    assert_eq!(
+        app.cx
+            .update(|cx| mistakes.read(cx).board().read(cx).viewing()),
+        Some(0)
+    );
+    app.press("f");
+    assert!(
+        app.cx
+            .update(|cx| mistakes.read(cx).board().read(cx).flipped())
+    );
+}

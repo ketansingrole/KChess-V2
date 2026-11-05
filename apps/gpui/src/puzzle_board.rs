@@ -78,6 +78,10 @@ pub struct PuzzleBoard {
     /// Spoken moves: kept with the board, which outlives each puzzle, so
     /// the speech model is not reloaded for every one.
     voice: VoiceMoves,
+    /// Each position the puzzle reached and the move into it, to step back through once it is
+    /// over; and the one shown then, when not the last.
+    seen: Vec<(String, Option<(shakmaty::Square, shakmaty::Square)>)>,
+    viewing: Option<usize>,
     /// Bumped when the puzzle changes, so a late timer from the old one does nothing.
     generation: u64,
     timers: Vec<Task<()>>,
@@ -157,6 +161,8 @@ impl PuzzleBoard {
             voice: VoiceMoves::new("puzzles", cx),
             generation: 0,
             timers: Vec::new(),
+            seen: Vec::new(),
+            viewing: None,
             _subscriptions: subscriptions,
         }
     }
@@ -166,6 +172,8 @@ impl PuzzleBoard {
         self.generation += 1;
         self.timers.clear();
         self.on_board = Some(OnBoard::start(puzzle));
+        self.seen.clear();
+        self.viewing = None;
         self.waiting = false;
         self.outcome = outcome;
         self.mistakes = u32::from(outcome == Some(false));
@@ -260,6 +268,32 @@ impl PuzzleBoard {
         self.on_board.is_some() && matches!(self.status(), "solved" | "failed" | "revealed")
     }
 
+    /// Once the puzzle is over, step through its moves as on any board: `left`, `right`, `home` or
+    /// `end`. Whether the key was taken.
+    pub fn step(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        if !self.over() || self.seen.len() < 2 {
+            return false;
+        }
+        let last = self.seen.len() - 1;
+        let current = self.viewing.unwrap_or(last);
+        let next = match key {
+            "left" => current.saturating_sub(1),
+            "right" => (current + 1).min(last),
+            "home" => 0,
+            "end" => last,
+            _ => return false,
+        };
+        self.viewing = (next < last).then_some(next);
+        self.redraw(cx);
+        true
+    }
+
+    /// The position shown while stepping back, counted from the puzzle's start.
+    #[cfg(test)]
+    pub(crate) fn viewing(&self) -> Option<usize> {
+        self.viewing
+    }
+
     /// Runs (`retry: false`, `reply-delay`): a wrong move fails the puzzle, replies come faster.
     pub fn for_runs(&mut self, reply_delay: Duration) {
         self.retry = false;
@@ -298,11 +332,23 @@ impl PuzzleBoard {
             cx.notify();
             return;
         };
-        let position = kchess_domain::rules::setup_start(on_board.variant(), on_board.fen())
-            .unwrap_or_default();
+        if self
+            .seen
+            .last()
+            .is_none_or(|(fen, _)| fen != on_board.fen())
+        {
+            self.seen
+                .push((on_board.fen().to_string(), on_board.last_move()));
+        }
+        // A position stepped back to, once the puzzle is over.
+        let (fen, last_move) = match self.viewing.filter(|_| self.over()) {
+            Some(index) => self.seen[index].clone(),
+            None => (on_board.fen().to_string(), on_board.last_move()),
+        };
+        let position =
+            kchess_domain::rules::setup_start(on_board.variant(), &fen).unwrap_or_default();
         let movable = self.playing().then(|| on_board.player_color());
-        let mut state =
-            BoardState::of(&position, self.orientation(), movable, on_board.last_move());
+        let mut state = BoardState::of(&position, self.orientation(), movable, last_move);
         if on_board.status() == "playing"
             && let Some((from, to)) = on_board.next_squares()
         {

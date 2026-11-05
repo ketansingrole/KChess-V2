@@ -319,6 +319,19 @@ impl Mistakes {
         .detach();
     }
 
+    /// A key for the drill on the board: F turns it, and once it is over the arrows, Home and End
+    /// step through its moves. Whether the key was taken.
+    pub fn key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        if self.current.is_none() {
+            return false;
+        }
+        if key == "f" {
+            self.puzzle.update(cx, |board, cx| board.flip(cx));
+            return true;
+        }
+        self.puzzle.update(cx, |board, cx| board.step(key, cx))
+    }
+
     fn render_practice(
         &mut self,
         window: &mut Window,

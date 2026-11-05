@@ -258,6 +258,16 @@ impl PracticePage {
                     cx.stop_propagation();
                 }
             }
+            // A mistake's board: F turns it, and a finished one's moves step back and forth.
+            "mistakes"
+                if self.focus.is_focused(window) && !event.keystroke.modifiers.modified() =>
+            {
+                if let Some(mistakes) = &self.mistakes
+                    && mistakes.update(cx, |mistakes, cx| mistakes.key(&event.keystroke.key, cx))
+                {
+                    cx.stop_propagation();
+                }
+            }
             _ => {}
         }
     }
@@ -307,10 +317,12 @@ impl Render for PracticePage {
                     }
                 }),
             )
-            // On an endgame's board a click gives F back to the page, before a text field
-            // takes the keys.
+            // On an endgame's or a mistake's board a click gives the keys back to the page,
+            // before a text field takes them.
             .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left && Self::tab(cx) == "endgames" {
+                if event.button == MouseButton::Left
+                    && matches!(Self::tab(cx), "endgames" | "mistakes")
+                {
                     window.focus(&this.focus, cx);
                 }
             }))
