@@ -75,8 +75,8 @@ can add them as a friend, challenge them or watch their current game.
 - **Variant analysis**: Crazyhouse, Atomic, Antichess, Horde, King of the Hill, Racing Kings and
   Three-check games open on the analysis board in their own rules, with the Crazyhouse pockets
   beside the board, and the bundled Fairy-Stockfish analyses and reviews them (accuracy, faulted
-  moves and the eval chart, judged by the variant's own wins). Cloud evaluation and mistake drills
-  cover standard chess and Chess960. On the command line,
+  moves and the eval chart, judged by the variant's own wins), synced games too, in the
+  background. Cloud evaluation and mistake drills cover standard chess and Chess960. On the command line,
   `kchess-cli analyze --variant crazyhouse <fen|moves>` and `kchess-cli review` (a PGN with its
   `Variant` header) do the same.
 - **Opening names** from Lichess's CC0 opening list, bundled with the app, in every game view.
