@@ -798,21 +798,7 @@ pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
     let Some(path) = paths.paths().first() else {
         return;
     };
-    let readable = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            ["pgn", "fen", "txt"].contains(&extension.to_ascii_lowercase().as_str())
-        });
-    let text = readable
-        .then(|| {
-            std::fs::metadata(path)
-                .ok()
-                .filter(|meta| meta.len() <= DROPPED_MAX)
-                .and_then(|_| std::fs::read_to_string(path).ok())
-        })
-        .flatten();
-    let Some(text) = text else {
+    let Some(text) = read_game_file(path) else {
         window.push_notification(
             gpui_kit::component::notification::Notification::error(
                 "Drop a PGN or FEN file under 2 MB",
@@ -826,6 +812,24 @@ pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
         analysis.import_text(text.clone(), window, cx);
         true
     });
+}
+
+/// A PGN or FEN file's text (`.pgn`, `.fen` or `.txt`, up to 2 MB), or `None`.
+pub fn read_game_file(path: &std::path::Path) -> Option<String> {
+    let readable = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["pgn", "fen", "txt"].contains(&extension.to_ascii_lowercase().as_str())
+        });
+    readable
+        .then(|| {
+            std::fs::metadata(path)
+                .ok()
+                .filter(|meta| meta.len() <= DROPPED_MAX)
+                .and_then(|_| std::fs::read_to_string(path).ok())
+        })
+        .flatten()
 }
 
 /// Practise a reviewed game's positions on the analysis board (`usePracticeGame`); another game

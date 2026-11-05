@@ -881,3 +881,24 @@ fn a_dropped_file_that_is_no_game_is_refused(cx: &mut gpui_kit::TestAppContext) 
     let _file = drop_file(&mut app, "board.png", "png");
     assert!(!app.shows("import-run"));
 }
+
+/// The import's Open file… reads a PGN file from disk, as if it were pasted.
+#[gpui_kit::test]
+fn the_import_opens_a_pgn_file(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    let folder = tempfile::tempdir().expect("a folder");
+    let path = folder.path().join("game.pgn");
+    std::fs::write(&path, "1. c4 e5 *").expect("the file");
+    app.click("analysis-import");
+    app.click("import-file");
+    let started = std::time::Instant::now();
+    while !app.cx.did_prompt_for_paths() {
+        assert!(started.elapsed() < super::TIMEOUT, "no open dialog");
+        app.tick();
+    }
+    app.cx
+        .simulate_path_prompt_response(move |_| Some(vec![path]));
+    settle(&mut app);
+    app.find("tree-c2c4 e7e5");
+    assert!(!app.shows("import-run"));
+}
