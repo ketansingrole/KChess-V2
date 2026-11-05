@@ -328,6 +328,10 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             ] }),
         );
     }
+    // Presence is public: nobody asked about is online.
+    if request.path == "/api/users/status" {
+        return reply(&mut out, &json!([]));
+    }
     // Leaderboards are public, so they are asked for without the login.
     if let Some(perf) = request.path.strip_prefix("/api/player/top/100/") {
         let user = |username: &str, title: Option<&str>, rating: u32, progress: i32| {
@@ -576,7 +580,6 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             reply(&mut out, &json!({}))
         }
         ("GET", "/api/challenge") => reply(&mut out, &json!({ "in": [], "out": [] })),
-        ("GET", "/api/users/status") => reply(&mut out, &json!([])),
         ("GET", "/api/timeline") => reply(&mut out, &json!({ "entries": [], "users": {} })),
         ("GET", p) if p.ends_with("/chat") || p.starts_with("/api/team/of/") => {
             reply(&mut out, &json!([]))

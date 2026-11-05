@@ -775,12 +775,22 @@ impl WatchPage {
                     .text_color(palette.error)
                     .child(format!("Could not refresh followed players: {error}"))
             }))
-            .when(playing.is_empty(), |card| {
-                card.child(div().px(px(8.)).child(widgets::hint(
-                    "No followed player is playing right now",
-                    palette,
-                )))
-            })
+            // Said only of players followed, and not while the refresh failed: unknown, not none.
+            .when(
+                playing.is_empty() && !friends.is_empty() && self.presence_error.is_none(),
+                |card| {
+                    card.child(
+                        div()
+                            .id("watch-friends-none")
+                            .test_support()
+                            .px(px(8.))
+                            .child(widgets::hint(
+                                "No followed player is playing right now",
+                                palette,
+                            )),
+                    )
+                },
+            )
             .children(
                 playing
                     .into_iter()

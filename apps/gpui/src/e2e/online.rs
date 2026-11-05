@@ -114,6 +114,8 @@ fn watch_shows_its_feed_failing_and_the_following_and_broadcast_tabs(
     app.click(("watch-tabs", 1usize));
     assert_eq!(app.find(("watch-tabs", 1usize)).selected(), Some(true));
     assert!(app.enabled("watch-friends-refresh"));
+    // Nobody is followed: the header says where to follow players, and nothing more.
+    assert!(!app.shows("watch-friends-none"));
 
     app.click(("watch-tabs", 2usize));
     assert_eq!(app.find(("watch-tabs", 2usize)).selected(), Some(true));
@@ -372,4 +374,22 @@ fn a_player_is_messaged_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     super::palette::wait_for_first(&mut app, "Message");
     app.press("enter");
     app.find("message-send");
+}
+
+/// With players followed and none of them playing, Watch's Following tab says so.
+#[gpui_kit::test]
+fn watch_says_when_no_followed_player_is_playing(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Following");
+    app.click_label("Lichess username to follow");
+    app.type_text("dana");
+    app.click("friends-follow");
+    app.wait_for("the follow", |_, cx| {
+        !crate::accounts::handle(cx).read(cx).tracked().is_empty()
+    });
+    // Straight to the Following tab: the follow's toasts cover the tab pills.
+    app.with_window(|_, cx| crate::prefs::set(cx, crate::pages::watch::TAB_KEY, "friends"));
+    app.open("Watch");
+    assert_eq!(app.find(("watch-tabs", 1usize)).selected(), Some(true));
+    app.find("watch-friends-none");
 }
