@@ -195,7 +195,7 @@ fn bridge(identity: &Identity, built: &Built, app: &Path, stage: &Path) -> Resul
 }
 
 /// The unsigned bundle at `app`, with `plist`; the programs and libraries in it that are signed
-/// before it. The app finds Stockfish, the core service and the voice runtime beside itself
+/// before it. The app finds Stockfish, Fairy-Stockfish, the core service and the voice runtime beside itself
 /// (apps/gpui/src/profile.rs, core.rs); the command line only where it can reach the core, which
 /// a sandboxed app's core is not.
 pub fn assemble(built: &Built, app: &Path, plist: &str, cli: bool) -> Result<Vec<PathBuf>> {
@@ -203,6 +203,7 @@ pub fn assemble(built: &Built, app: &Path, plist: &str, cli: bool) -> Result<Vec
     let macos = contents.join("MacOS");
     copy_program(&built.app, &macos.join("kchess"))?;
     copy_program(&built.stockfish, &macos.join("stockfish"))?;
+    copy_program(&built.fairy, &macos.join("fairy-stockfish"))?;
     copy_program(&built.service, &macos.join("kchess-service"))?;
     if cli {
         copy_program(&built.cli, &macos.join("kchess-cli"))?;
@@ -223,6 +224,7 @@ pub fn assemble(built: &Built, app: &Path, plist: &str, cli: bool) -> Result<Vec
         nested.push(macos.join("kchess-cli"));
     }
     nested.push(macos.join("stockfish"));
+    nested.push(macos.join("fairy-stockfish"));
     Ok(nested)
 }
 

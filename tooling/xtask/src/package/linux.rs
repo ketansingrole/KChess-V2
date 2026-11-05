@@ -33,10 +33,12 @@ pub fn desktop_entry(identity: &Identity, exec: &str) -> String {
     )
 }
 
-/// The app folder: the launcher, Stockfish, the core service, the command line and voice.
+/// The app folder: the launcher, Stockfish and Fairy-Stockfish, the core service, the command
+/// line and voice.
 fn stage_folder(identity: &Identity, built: &Built, folder: &Path) -> Result {
     copy_program(&built.app, &folder.join(identity.linux_exe))?;
     copy_program(&built.stockfish, &folder.join("stockfish"))?;
+    copy_program(&built.fairy, &folder.join("fairy-stockfish"))?;
     copy_program(&built.service, &folder.join("kchess-service"))?;
     copy_program(&built.cli, &folder.join("kchess-cli"))?;
     copy_voice(built, folder)?;

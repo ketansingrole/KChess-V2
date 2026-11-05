@@ -29,6 +29,7 @@ crate they depend on directly is named here.
 | [`rustix`](https://github.com/bytecodealliance/rustix), [`libc`](https://github.com/rust-lang/libc)                                               | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; MIT OR Apache-2.0 | Engine process signals and file checks on macOS and Linux                              |
 | [`aes-gcm`](https://github.com/RustCrypto/AEADs), [`keyring`](https://github.com/open-source-cooperative/keyring-rs)                              | Apache-2.0 OR MIT; MIT OR Apache-2.0                                   | Sealing Lichess logins in the profile with a key kept in the system's credential store |
 | [Stockfish](https://stockfishchess.org) (official native build)                                                                                                   | GPL-3.0                                | The bundled computer opponent, beside the app, run as a separate UCI process                                                  |
+| [Fairy-Stockfish](https://github.com/fairy-stockfish/Fairy-Stockfish) (built from source)                                                                         | GPL-3.0                                | The variant engine, beside the app, run as a separate UCI process                                                             |
 | [GPUI](https://github.com/zed-industries/zed) (`gpui-pre`), [GPUI Kit](https://github.com/longbridge/gpui-kit) (`gpui-kit`, `gpui-component`, `gpui-base`)        | Apache-2.0                             | The window, rendering and interface components; `gpui-pre` ships with window zoom, view caching and icon-drawing patches (`vendor/gpui-pre/KCHESS-PATCH.md`), `gpui-pre-apple` with whole large glyphs (`vendor/gpui-pre-apple/KCHESS-PATCH.md`) |
 | [`rodio`](https://github.com/RustAudio/rodio), [`cpal`](https://github.com/RustAudio/cpal), [Symphonia](https://github.com/pdeljanov/Symphonia)                   | MIT OR Apache-2.0; Apache-2.0; MPL-2.0 | Playing sounds, and the microphone for voice input                                                                            |
 | [`resvg`](https://github.com/linebender/resvg) (`usvg`), [`tiny-skia`](https://github.com/RazrFalcon/tiny-skia), [`fontdb`](https://github.com/RazrFalcon/fontdb) | Apache-2.0 OR MIT; BSD-3-Clause; MIT   | Drawing pieces, and the pictures a game exports                                                                               |
@@ -93,6 +94,13 @@ The bundled engine is an unmodified official Stockfish build, fetched from the S
 page when KChess is packaged and verified against the SHA-256 digest GitHub publishes, as the
 app's own engine download is. Its source is available from
 <https://github.com/official-stockfish/Stockfish>.
+
+## Fairy-Stockfish
+
+The variant engine is Fairy-Stockfish, compiled from its source at commit
+`2f1959e1f0b44d4648ff35015b89d8e918a5c746` when KChess is packaged (`cargo xtask fairy-stockfish`),
+the source archive verified against a pinned SHA-256. It is built unmodified and without a neural
+network. Its source is available from <https://github.com/fairy-stockfish/Fairy-Stockfish>.
 
 ## Offline voice recognition
 

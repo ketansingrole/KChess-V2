@@ -81,6 +81,8 @@ pub struct Built {
     pub service: PathBuf,
     pub cli: PathBuf,
     pub stockfish: PathBuf,
+    /// Fairy-Stockfish, the variant engine (`crate::fairy`).
+    pub fairy: PathBuf,
     pub voice: PathBuf,
     pub licenses: PathBuf,
     /// The Electron bridge (macOS only).
@@ -175,6 +177,7 @@ fn build(skip: bool) -> Result<Built> {
         run_with(&mut cargo)?;
     }
     let voice = crate::voice::stage("release")?;
+    let fairy = crate::fairy::build()?;
     say("Fetching Stockfish…");
     let fetched = Command::new("cargo")
         .args([
@@ -207,6 +210,7 @@ fn build(skip: bool) -> Result<Built> {
         service: target.join(exe("kchess-service")),
         cli: target.join(exe("kchess-cli")),
         stockfish,
+        fairy,
         voice,
         licenses,
         bridge: target.join("kchess-electron-bridge"),
