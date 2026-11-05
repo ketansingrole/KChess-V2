@@ -1133,6 +1133,7 @@ impl OnlinePage {
                 view::first_move(&setup),
                 "No moves yet".into(),
                 select,
+                crate::notation::figurine(cx),
                 palette,
             )))
             .child(widgets::move_controls(

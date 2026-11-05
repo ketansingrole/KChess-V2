@@ -580,6 +580,7 @@ impl WatchPage {
                         let _ = page.update(cx, |page, cx| page.explore(pv, at, cx));
                     }),
                     palette,
+                    crate::notation::figurine(cx),
                 ))
             })
             .when(broadcasts.engine.variation_base.is_some(), |panel| {

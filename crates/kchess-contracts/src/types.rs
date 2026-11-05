@@ -431,6 +431,8 @@ pub struct FrontendPreferences {
     pub puzzle_auto_next: bool,
     /// Ask before a correspondence move is sent: there it cannot be taken back.
     pub confirm_correspondence: bool,
+    /// Write moves with piece symbols (♘f3) rather than letters (Nf3).
+    pub figurine_notation: bool,
 }
 
 /// Every setting: the core's preferences and the desktop's.

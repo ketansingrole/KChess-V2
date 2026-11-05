@@ -462,6 +462,7 @@ fn move_at(index: usize, first: FirstMove) -> FirstMove {
 /// `.moves-list`: the game's moves as a scoresheet, ruled numbered pairs on the panel itself, the
 /// one on the board highlighted, numbered from the game's `first` move. `select` is called with the
 /// ply to show (1 for the first move).
+#[allow(clippy::too_many_arguments)]
 pub fn moves_list(
     id: impl Into<ElementId>,
     sans: &[String],
@@ -469,6 +470,7 @@ pub fn moves_list(
     first: FirstMove,
     empty: SharedString,
     select: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
+    figurine: bool,
     palette: &Palette,
 ) -> impl IntoElement {
     let number_cell = |text: String| {
@@ -524,7 +526,7 @@ pub fn moves_list(
                 })
                 .hover(|cell| cell.bg(palette.accented))
                 .on_click(move |_, window, cx| select(index + 1, window, cx))
-                .child(san.clone())
+                .child(crate::notation::shown(san, figurine))
                 .into_any_element(),
         );
     }
@@ -1638,6 +1640,7 @@ mod tests {
                     super::FirstMove::default(),
                     "No moves".into(),
                     move |ply, _, _| chosen.set(Some(ply)),
+                    false,
                     &palette,
                 ))
         }

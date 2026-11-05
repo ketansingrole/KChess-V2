@@ -722,6 +722,7 @@ impl WatchPage {
                 setup.as_ref().map(view::first_move).unwrap_or_default(),
                 empty.into(),
                 select.clone(),
+                crate::notation::figurine(cx),
                 palette,
             )))
             .child(widgets::move_controls(

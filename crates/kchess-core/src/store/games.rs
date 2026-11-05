@@ -31,7 +31,7 @@ pub const RESULT_SQL: &str =
     "CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END";
 
 /// Every persisted setting, in column order (`SETTINGS_KEYS`).
-const SETTINGS_KEYS: [&str; 42] = [
+const SETTINGS_KEYS: [&str; 43] = [
     "appearance",
     "boardTheme",
     "lightTheme",
@@ -74,6 +74,7 @@ const SETTINGS_KEYS: [&str; 42] = [
     "swipeIndicator",
     "puzzleAutoNext",
     "confirmCorrespondence",
+    "figurineNotation",
 ];
 
 /// Every persisted game field, in column order (`GAME_KEYS`).
@@ -149,6 +150,7 @@ pub struct Settings {
     pub swipe_indicator: bool,
     pub puzzle_auto_next: bool,
     pub confirm_correspondence: bool,
+    pub figurine_notation: bool,
 }
 
 pub(super) fn default_settings() -> Settings {
@@ -197,6 +199,7 @@ pub(super) fn default_settings() -> Settings {
         swipe_indicator: true,
         puzzle_auto_next: false,
         confirm_correspondence: true,
+        figurine_notation: false,
     }
 }
 
@@ -662,6 +665,7 @@ fn settings_from_values(values: &[SqlValue]) -> Result<Settings> {
         swipe_indicator: is_not_zero(&column("swipeIndicator")),
         puzzle_auto_next: is_not_zero(&column("puzzleAutoNext")),
         confirm_correspondence: is_not_zero(&column("confirmCorrespondence")),
+        figurine_notation: is_one(&column("figurineNotation")),
     };
     if settings.sound_volume > 1.0 {
         settings.sound_volume = (settings.sound_volume / 100.0).min(1.0);

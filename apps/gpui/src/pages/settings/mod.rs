@@ -902,6 +902,18 @@ impl SettingsPage {
                 ),
                 palette,
             )
+            .row(
+                "Moves",
+                None,
+                choice(
+                    "notation",
+                    &[(false, "Nf3", None), (true, "♘f3", None)],
+                    frontend.figurine_notation,
+                    |s, value| s.frontend.figurine_notation = value,
+                    palette,
+                ),
+                palette,
+            )
             .stacked("Piece set", None, grid(count, pieces), palette)
             .stacked("Board theme", None, grid(count, boards), palette)
             .card(palette)

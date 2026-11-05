@@ -2156,6 +2156,8 @@ struct TreeView<'a> {
     /// Bring the move shown into view after it changes (`block: 'nearest'`).
     reveal: std::rc::Rc<std::cell::Cell<bool>>,
     scroll: ScrollHandle,
+    /// Moves shown with piece symbols.
+    figurine: bool,
 }
 
 impl TreeView<'_> {
@@ -2249,7 +2251,7 @@ impl TreeView<'_> {
                         .child(number),
                 )
             })
-            .child(node.san.clone())
+            .child(crate::notation::shown(&node.san, self.figurine))
             .children(glyph.map(|(glyph, _)| {
                 div()
                     .ml(px(1.))
@@ -2787,6 +2789,7 @@ impl AnalysisPage {
                             }
                         }),
                         palette,
+                        crate::notation::figurine(cx),
                     )
                 }
                 .into_any_element(),
@@ -2874,6 +2877,7 @@ impl AnalysisPage {
             },
             reveal: self.reveal_move.clone(),
             scroll: self.moves_scroll.clone(),
+            figurine: crate::notation::figurine(cx),
         };
         let mut pieces = Vec::new();
         view.line(&self.root, "", None, 0, &mut pieces);

@@ -30,6 +30,7 @@ mod menu;
 mod microphone;
 mod name_dialog;
 mod network;
+mod notation;
 mod notifications;
 mod online;
 mod pages;

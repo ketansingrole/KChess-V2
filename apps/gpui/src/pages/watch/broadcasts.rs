@@ -1212,6 +1212,7 @@ impl WatchPage {
                 view::first_move(&setup),
                 "No moves yet".into(),
                 select.clone(),
+                crate::notation::figurine(cx),
                 palette,
             )))
             .child(widgets::move_controls(

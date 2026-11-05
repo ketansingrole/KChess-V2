@@ -225,6 +225,7 @@ impl Render for GameReplay {
                 view::first_move(&self.setup),
                 "No moves to review".into(),
                 select.clone(),
+                crate::notation::figurine(cx),
                 &palette,
             )))
             .child(widgets::move_controls(

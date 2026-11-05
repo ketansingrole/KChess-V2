@@ -1697,6 +1697,7 @@ impl Render for ComputerPage {
                 first,
                 "No moves yet".into(),
                 select.clone(),
+                crate::notation::figurine(cx),
                 &palette,
             )))
             .child(widgets::move_controls(

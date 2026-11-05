@@ -1042,6 +1042,8 @@ struct Settings {
     /// Newer than the other settings: a frontend that does not send it keeps the default, on.
     #[serde(default = "on")]
     confirm_correspondence: bool,
+    #[serde(default)]
+    figurine_notation: bool,
 }
 
 fn on() -> bool {
@@ -1080,6 +1082,7 @@ fn settings_messages(keys: &[&str]) -> Msg {
         ["swipeNavigation" | "swipeIndicator"] => "Invalid swipe setting.",
         ["puzzleAutoNext"] => "Invalid puzzle setting.",
         ["confirmCorrespondence"] => "Invalid move confirmation setting.",
+        ["figurineNotation"] => "Invalid notation setting.",
         ["notificationsEnabled"] => NOTIFY,
         [key] if key.starts_with("notify") => NOTIFY,
         _ => "Invalid settings.",
@@ -2500,6 +2503,7 @@ mod tests {
             "swipeIndicator",
             "puzzleAutoNext",
             "confirmCorrespondence",
+            "figurineNotation",
         ] {
             fields.push((flag, J::Bool(true)));
         }

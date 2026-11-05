@@ -973,6 +973,7 @@ impl OpeningsPage {
             .gap(widgets::STACK_GAP)
             .child(crate::board::cached(&self.board))
             .child(widgets::lone_entry(entry));
+        let figurine = crate::notation::figurine(cx);
         let moves = h_flex()
             .flex_wrap()
             .gap_x(px(8.))
@@ -1005,7 +1006,7 @@ impl OpeningsPage {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.show_line(Some(upto.clone()), cx)
                             }))
-                            .child(san.clone()),
+                            .child(crate::notation::shown(san, figurine)),
                     )
             }));
         let train_choice = OpeningChoice {

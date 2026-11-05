@@ -126,3 +126,22 @@ fn a_category_opened_in_a_short_window_scrolls_into_the_sidebar(cx: &mut gpui_ki
     let updates = app.find("5-2").bounds();
     assert!(updates.bottom() <= footer.top());
 }
+
+#[gpui_kit::test]
+fn moves_can_be_shown_with_piece_symbols(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Appearance");
+    let symbols = ("notation", 1usize);
+    assert_eq!(app.find(("notation", 0usize)).selected(), Some(true));
+    app.click(symbols);
+    assert_eq!(app.find(symbols).selected(), Some(true));
+    app.wait_for_saved("figurineNotation", json!(true));
+    assert!(app.cx.update(|cx| crate::notation::figurine(cx)));
+    // Only what is shown changes: a screen reader still hears the move in letters.
+    app.click("0-0");
+    app.open("Analysis board");
+    app.find("chess-board");
+    app.click_square("g1", true);
+    app.click_square("f3", true);
+    assert_eq!(app.find("tree-g1f3").label(), Some("Nf3"));
+}

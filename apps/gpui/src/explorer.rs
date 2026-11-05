@@ -781,7 +781,9 @@ impl PositionExplorer {
                                 .justify_between()
                                 .items_baseline()
                                 .gap(px(8.))
-                                .child(div().font_weight(FontWeight::MEDIUM).child(san))
+                                .child(div().font_weight(FontWeight::MEDIUM).child(
+                                    crate::notation::shown(&san, crate::notation::figurine(cx)),
+                                ))
                                 .child(
                                     div()
                                         .text_size(px(12.))
@@ -816,6 +818,7 @@ impl PositionExplorer {
                 .children(rows)
                 .into_any_element();
         }
+        let figurine = crate::notation::figurine(cx);
         v_flex()
             .gap(px(4.))
             .children(moves.iter().enumerate().map(|(index, entry)| {
@@ -839,7 +842,7 @@ impl PositionExplorer {
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(ExplorerEvent::Play(uci.clone()))
                             }))
-                            .child(san),
+                            .child(crate::notation::shown(&san, figurine)),
                     )
                     .when(!tablebase, |row| {
                         row.child(
