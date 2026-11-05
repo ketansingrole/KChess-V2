@@ -265,12 +265,17 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             .unwrap_or_else(PoisonError::into_inner);
         sessions.get(login).cloned()
     });
-    // A player's activity is public too: a few weeks of it, which each name staggers.
+    // A player's activity is public too: a few weeks of it, which each name staggers. Frank's
+    // fails the first time it is asked for (a failed timeline tried again).
     if let Some(name) = request
         .path
         .strip_prefix("/api/user/")
         .and_then(|rest| rest.strip_suffix("/activity"))
     {
+        static FRANK_ASKED: AtomicBool = AtomicBool::new(false);
+        if name == "frank" && !FRANK_ASKED.swap(true, Ordering::SeqCst) {
+            return refuse(&mut out, &json!({ "error": "Not now" }));
+        }
         return reply(&mut out, &activity(name));
     }
     // Profiles are public: many at once, by the comma-separated names in the body.

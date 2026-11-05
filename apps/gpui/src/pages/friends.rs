@@ -882,12 +882,17 @@ impl FriendsPage {
             .gap(px(8.))
             .child(widgets::heading("Timeline", palette));
         Some(match (&self.timeline_error, &self.timeline) {
-            (Some(error), _) => card.child(
-                div()
-                    .text_size(px(13.))
-                    .text_color(palette.error)
-                    .child(error.clone()),
-            ),
+            (Some(error), _) => {
+                let page = cx.entity().downgrade();
+                card.child(widgets::retry_line(
+                    "friends-timeline-retry",
+                    error.clone(),
+                    palette.error,
+                    move |_, _, cx| {
+                        let _ = page.update(cx, |page, cx| page.load_timeline(cx));
+                    },
+                ))
+            }
             (None, None) => card.child(widgets::loading("Loading…", palette)),
             (None, Some(entries)) if entries.is_empty() => {
                 card.child(widgets::hint("Nothing new", palette))

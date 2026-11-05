@@ -260,6 +260,22 @@ fn the_timeline_shows_what_followed_players_did(cx: &mut gpui_kit::TestAppContex
     );
 }
 
+/// A timeline that could not be read is tried again from where its failure shows.
+#[gpui_kit::test]
+fn a_failed_timeline_can_be_tried_again(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Following");
+    app.click_label("Lichess username to follow");
+    app.type_text("frank");
+    app.click("friends-follow");
+    app.click("friends-timeline-retry");
+    app.find(gpui_kit::ElementId::NamedInteger(
+        "friends-timeline-player".into(),
+        1,
+    ));
+    assert!(!app.shows("friends-timeline-retry"));
+}
+
 /// A player who finished a game since their sync is marked, and so is Sync all, from their profile
 /// alone; syncing takes the mark away.
 #[gpui_kit::test]
