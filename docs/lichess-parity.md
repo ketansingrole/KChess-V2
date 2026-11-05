@@ -109,7 +109,7 @@ can add them as a friend, challenge them or watch their current game.
   puzzle opens on Puzzles → Daily; _Today’s puzzle_ goes back. The command line takes one too:
   `kchess-cli puzzle [id|link]`, where `hint` names the piece to move and `solution` shows the rest.
 - **Analysis board after a puzzle**: a finished puzzle opens there, its solution as the main line
-  and each wrong try as a side line marked _Your move_.
+  and each wrong try as a side line marked _Your move_. Its themes train that theme.
 
 ### Playing without Lichess
 

@@ -588,9 +588,8 @@ impl PuzzlesPage {
             window,
             |this, view, event: &stats::StatsEvent, window, cx| match event {
                 stats::StatsEvent::Train(key) => {
-                    crate::prefs::set(cx, TAB, "train");
                     let key = key.clone();
-                    this.choose_angle(&key, window, cx);
+                    this.train_theme(&key, window, cx);
                 }
                 stats::StatsEvent::Connect | stats::StatsEvent::Reconnect => {
                     crate::accounts::handle(cx)
@@ -646,6 +645,12 @@ impl PuzzlesPage {
         self.load_next(cx);
     }
 
+    /// Train a theme from another tab or a finished puzzle's themes: back on Train, with it chosen.
+    pub(crate) fn train_theme(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        crate::prefs::set(cx, TAB, "train");
+        self.choose_angle(key, window, cx);
+    }
+
     fn choose_difficulty(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         crate::prefs::set(cx, DIFFICULTY, key);
         let index = DIFFICULTIES
@@ -688,6 +693,15 @@ impl PuzzlesPage {
         self.follow(step, "puzzleSessionLoadSettled", cx);
         cx.notify();
     }
+}
+
+/// Train a theme on the Puzzles page, after the click that asked for it.
+fn train_theme(key: String, window: &mut Window, cx: &mut App) {
+    window.defer(cx, move |window, cx| {
+        if let Some(page) = crate::shell::view_of::<PuzzlesPage>(crate::pages::Page::Puzzles, cx) {
+            page.update(cx, |page, cx| page.train_theme(&key, window, cx));
+        }
+    });
 }
 
 /// What to do, how it went, and the buttons that help.
@@ -877,8 +891,15 @@ pub(crate) fn status_panel(
                                 .into_iter()
                                 .flatten()
                                 .filter_map(Value::as_str)
-                                .map(|theme| {
+                                .enumerate()
+                                .map(|(index, theme)| {
+                                    let name = theme_name(theme, themes);
+                                    // A theme Train offers is a way to train it, as on Lichess.
+                                    let trainable = themes.iter().any(|known| known.key == theme);
+                                    let key = theme.to_string();
                                     div()
+                                        .id(("puzzle-theme", index))
+                                        .test_support()
                                         .px(px(6.))
                                         .py(px(1.))
                                         .rounded(radii::SM)
@@ -886,7 +907,16 @@ pub(crate) fn status_panel(
                                         .border_color(palette.border_accented)
                                         .bg(palette.elevated)
                                         .text_size(px(12.))
-                                        .child(theme_name(theme, themes))
+                                        .when(trainable, |pill| {
+                                            pill.role(gpui_kit::Role::Button)
+                                                .aria_label(format!("Train {name}"))
+                                                .cursor_pointer()
+                                                .hover(|pill| pill.bg(palette.accented))
+                                                .on_click(move |_, window, cx| {
+                                                    train_theme(key.clone(), window, cx)
+                                                })
+                                        })
+                                        .child(name)
                                 }),
                         ),
                     ),

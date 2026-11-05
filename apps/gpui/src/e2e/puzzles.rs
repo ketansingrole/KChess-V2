@@ -436,3 +436,40 @@ fn a_finished_puzzle_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppConte
         "{pgn}"
     );
 }
+
+/// A finished puzzle's themes train that theme, as on Lichess: back on Train, with it chosen.
+#[gpui_kit::test]
+fn a_finished_puzzles_theme_is_trained(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/training/{}",
+        super::fake_lichess::LINKED_PUZZLE
+    ));
+    super::palette::wait_for_first(&mut app, "Solve this puzzle");
+    app.press("enter");
+    app.find("daily-today");
+    app.wait_for("the puzzle to be playable", |window, _| {
+        window
+            .try_find("puzzle-solution")
+            .is_some_and(|button| button.disabled() != Some(true))
+    });
+    assert!(
+        !app.shows(("puzzle-theme", 0usize)),
+        "not while it is being solved"
+    );
+    app.click("puzzle-solution");
+    assert_eq!(
+        app.find(("puzzle-theme", 0usize)).label(),
+        Some("Train Mate in 1")
+    );
+    app.click(("puzzle-theme", 0usize));
+    app.wait_for("Train with the theme chosen", |window, cx| {
+        crate::prefs::get::<String>(cx, "kchess:puzzle-angle", String::new()) == "mateIn1"
+            && window
+                .try_find(("puzzle-tabs", 0usize))
+                .is_some_and(|tab| tab.selected() == Some(true))
+    });
+}
