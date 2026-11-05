@@ -240,6 +240,20 @@ impl PracticePage {
                     drill.update(cx, |drill, cx| drill.key(event, window, cx));
                 }
             }
+            // Return or Space goes on to a lesson's next step once this one is read or passed.
+            "endgames"
+                if self.focus.is_focused(window)
+                    && !event.keystroke.modifiers.modified()
+                    && matches!(event.keystroke.key.as_str(), "enter" | "space") =>
+            {
+                let next = self
+                    .lesson(cx)
+                    .and_then(|lesson| lesson.read(cx).next_on_return());
+                if let Some(next) = next {
+                    self.act(Action::Lesson(next), window, cx);
+                    cx.stop_propagation();
+                }
+            }
             // F turns an endgame drill's or lesson's board, as its button does.
             "endgames"
                 if self.focus.is_focused(window)

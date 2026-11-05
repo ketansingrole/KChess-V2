@@ -474,3 +474,29 @@ fn return_goes_on_to_the_next_due_mistake(cx: &mut gpui_kit::TestAppContext) {
         mistakes.read(cx).board().read(cx).status() == "playing"
     });
 }
+
+/// Return goes on through a lesson: past a step to read, and past a step once it is passed, but
+/// not while it is being played.
+#[gpui_kit::test]
+fn return_goes_on_through_a_lesson(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, 3);
+    app.click("card-checkmate-patterns-2");
+    app.click("training-cp2-balestra");
+    app.find("lesson-next");
+    app.click("chess-board");
+    app.press("enter");
+    assert_eq!(app.status(), "Your turn");
+    app.press("enter");
+    assert_eq!(app.status(), "Your turn", "not while it is being played");
+    app.drag_square("d3", "b5", true);
+    wait_for_label(&mut app, "status-banner", "Checkmate");
+    app.click("chess-board");
+    app.press("enter");
+    app.wait_for("the next chapter", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("status-banner")
+            .is_none_or(|banner| banner.label() != Some("Checkmate"))
+    });
+}

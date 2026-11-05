@@ -241,6 +241,17 @@ impl EndgameLesson {
         color_of(self.status()["player"].as_str().unwrap_or("white"))
     }
 
+    /// What Return goes on to: the next step or chapter, once this step is read or passed.
+    pub(crate) fn next_on_return(&self) -> Option<LessonAction> {
+        let status = self.status();
+        let passed =
+            !self.playable() || (status["over"] == json!(true) && status["success"] == json!(true));
+        let actions = self.actions();
+        [LessonAction::Next, LessonAction::NextChapter]
+            .into_iter()
+            .find(|next| passed && actions.contains(next))
+    }
+
     /// What the lesson's buttons can do now.
     pub(crate) fn actions(&self) -> Vec<LessonAction> {
         let thinking = self.engine.thinking;
