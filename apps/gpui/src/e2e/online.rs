@@ -241,9 +241,7 @@ fn a_player_is_followed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
 fn the_timeline_shows_what_followed_players_did(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in(cx, false);
     app.open("Following");
-    app.click_label("Lichess username to follow");
-    app.type_text("carol");
-    app.click("friends-follow");
+    follow(&mut app, "carol");
     let line = app
         .find(gpui_kit::ElementId::NamedInteger(
             "friends-timeline-player".into(),
@@ -269,9 +267,7 @@ fn the_timeline_shows_what_followed_players_did(cx: &mut gpui_kit::TestAppContex
 fn a_failed_timeline_can_be_tried_again(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in(cx, false);
     app.open("Following");
-    app.click_label("Lichess username to follow");
-    app.type_text("frank");
-    app.click("friends-follow");
+    follow(&mut app, "frank");
     // A text button is still a 24 px target (WCAG 2.5.8).
     let retry = app.find("friends-timeline-retry").bounds();
     assert!(retry.size.height >= gpui_kit::px(24.), "{retry:?}");
@@ -289,9 +285,7 @@ fn a_failed_timeline_can_be_tried_again(cx: &mut gpui_kit::TestAppContext) {
 fn players_with_games_to_sync_are_marked(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in(cx, false);
     app.open("Following");
-    app.click_label("Lichess username to follow");
-    app.type_text("dana");
-    app.click("friends-follow");
+    follow(&mut app, "dana");
     let new_games = ("friend-new-games", 0usize);
     app.wait_for("the follow's sync", |_, cx| {
         let accounts = crate::accounts::handle(cx).read(cx);
@@ -404,9 +398,7 @@ fn a_player_is_messaged_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
 fn watch_says_when_no_followed_player_is_playing(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in(cx, false);
     app.open("Following");
-    app.click_label("Lichess username to follow");
-    app.type_text("dana");
-    app.click("friends-follow");
+    follow(&mut app, "dana");
     app.wait_for("the follow", |_, cx| {
         !crate::accounts::handle(cx).read(cx).tracked().is_empty()
     });
@@ -427,4 +419,18 @@ fn a_failed_leaderboard_can_be_tried_again(cx: &mut gpui_kit::TestAppContext) {
     app.open("Players");
     app.click("players-board-retry");
     app.find(("players-board-row", 0usize));
+}
+
+/// Follow `name` from the Following page. Follow waits while the accounts are busy, as they are
+/// with signing in's first sync, so the click waits for it too.
+fn follow(app: &mut Harness, name: &str) {
+    app.click_label("Lichess username to follow");
+    app.type_text(name);
+    app.wait_for("Follow", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find(gpui_kit::ElementId::from("friends-follow"))
+            .is_some_and(|follow| follow.disabled() != Some(true))
+    });
+    app.click("friends-follow");
 }
