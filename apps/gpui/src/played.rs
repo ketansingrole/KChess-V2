@@ -190,14 +190,24 @@ impl PlayedGames {
         cx.notify();
     }
 
-    pub fn remove(&mut self, id: &str, cx: &mut Context<Self>) {
-        let before = self.games.len();
+    /// Remove a game: the game and where it was listed, for `restore`, if it was listed.
+    pub fn remove(&mut self, id: &str, cx: &mut Context<Self>) -> Option<(usize, Value)> {
+        let index = self.games.iter().position(|entry| entry["id"] == id)?;
+        let game = self.games.remove(index);
+        self.reads.edited();
+        let _ = self.writes.unbounded_send(Write::Remove(id.to_string()));
+        cx.notify();
+        Some((index, game))
+    }
+
+    /// Put a removed game back where it was listed (Undo).
+    pub fn restore(&mut self, index: usize, game: Value, cx: &mut Context<Self>) {
+        let id = game["id"].clone();
         self.games.retain(|entry| entry["id"] != id);
-        if self.games.len() != before {
-            self.reads.edited();
-            let _ = self.writes.unbounded_send(Write::Remove(id.to_string()));
-            cx.notify();
-        }
+        self.games.insert(index.min(self.games.len()), game.clone());
+        self.reads.edited();
+        let _ = self.writes.unbounded_send(Write::Game(game));
+        cx.notify();
     }
 
     /// Keep a page's session after the game writes sent before it.

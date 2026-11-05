@@ -4,8 +4,8 @@
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -597,59 +597,29 @@ impl HistoryPage {
         .detach();
     }
 
-    /// Delete a game, with a copy exported or its summary copied first if wanted (Electron's
-    /// delete dialog).
-    fn ask_delete(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
-        let page = cx.entity().downgrade();
-        let game = std::rc::Rc::new(game);
-        let export_label = if text(&game, "source") == "clock" {
-            "Copy summary"
-        } else {
-            "Export copy"
+    /// Delete a game at once; its notice's Undo puts it back where it was.
+    fn delete(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
+        let played = cx.global::<PlayedHandle>().0.clone();
+        let id = text(&game, "id").to_string();
+        let Some((index, removed)) =
+            played.update(cx, |played: &mut PlayedGames, cx| played.remove(&id, cx))
+        else {
+            return;
         };
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
-            let (export_page, export_game) = (page.clone(), game.clone());
-            let id = text(&game, "id").to_string();
-            dialog
-                .title("Delete saved game?")
-                .description(
-                    "This removes the game from this device. Export a copy first if you want to keep it.",
-                )
-                .footer(
-                    h_flex()
-                        .w_full()
-                        .justify_end()
-                        .gap(px(8.))
-                        .child(
-                            Button::new("delete-export")
-                                .outline()
-                                .label(export_label)
-                                .on_click(move |_, _, cx| {
-                                    let _ = export_page.update(cx, |page, cx| {
-                                        page.export(&export_game, cx)
-                                    });
-                                }),
-                        )
-                        .child(
-                            Button::new("delete-game")
-                                .danger()
-                                .label("Delete game")
-                                .on_click(move |_, window, cx| {
-                                    let played = cx.global::<PlayedHandle>().0.clone();
-                                    played.update(cx, |played: &mut PlayedGames, cx| {
-                                        played.remove(&id, cx)
-                                    });
-                                    window.close_dialog(cx);
-                                }),
-                        )
-                        .child(
-                            Button::new("delete-cancel")
-                                .ghost()
-                                .label("Cancel")
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        ),
-                )
-        });
+        window.push_notification(
+            widgets::action_notification(
+                Notification::new().title("Game deleted"),
+                "undo-delete-game",
+                "Undo",
+                move |_, cx| {
+                    let (played, removed) = (played.clone(), removed.clone());
+                    played.update(cx, |played: &mut PlayedGames, cx| {
+                        played.restore(index, removed, cx)
+                    });
+                },
+            ),
+            cx,
+        );
     }
 
     /// A swipe steps out of the open game before leaving the page, and forward opens the game it
@@ -1003,7 +973,7 @@ impl HistoryPage {
                                     move |_, window, cx| {
                                         let deleted = deleted.clone();
                                         let _ = delete_page.update(cx, |page, cx| {
-                                            page.ask_delete(deleted, window, cx)
+                                            page.delete(deleted, window, cx)
                                         });
                                     },
                                 ),

@@ -242,14 +242,18 @@ fn deleting_a_game_asks_first_and_is_kept_after_a_restart(cx: &mut gpui_kit::Tes
     });
     let label = label.expect("the game's actions");
 
+    // Deleting asks nothing: its notice's Undo brings the game back, and it stays.
     app.click_label(&label);
     app.click_label("Delete");
-    app.click("delete-cancel");
+    app.find("history-play");
+    app.click("undo-delete-game");
+    app.find(("history-row", 0usize));
+    let mut app = app.restart();
+    board_games(&mut app);
     app.find(("history-row", 0usize));
 
     app.click_label(&label);
     app.click_label("Delete");
-    app.click("delete-game");
     app.find("history-play");
     assert!(!app.shows(("history-row", 0usize)));
 
