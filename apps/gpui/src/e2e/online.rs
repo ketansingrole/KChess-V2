@@ -64,16 +64,16 @@ fn play_online_asks_to_connect_and_offers_the_computer(cx: &mut gpui_kit::TestAp
 #[gpui_kit::test]
 fn a_tournament_list_that_cannot_load_can_be_refreshed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = open(cx, "Tournaments", true);
-    wait_until_enabled(&mut app, "tournaments-refresh");
+    wait_until_enabled(&mut app, "tournaments-try-again");
     // The failure takes the list's place, without the key to a schedule that is not there.
     app.find("tournaments-error");
     assert!(!app.shows("tournaments-legend"));
-    // It offers to try again in its place, as the other pages' failed loads do.
+    // It offers to try again in its place, as the other pages' failed loads do, and only there:
+    // Refresh beside it would be a second button for the same thing.
+    assert!(!app.shows("tournaments-refresh"));
     app.click("tournaments-try-again");
-    wait_until_enabled(&mut app, "tournaments-refresh");
-    app.find("tournaments-try-again");
-    app.click("tournaments-refresh");
-    wait_until_enabled(&mut app, "tournaments-refresh");
+    wait_until_enabled(&mut app, "tournaments-try-again");
+    assert!(!app.shows("tournaments-refresh"));
 
     // The list shows every tournament, or only those that can be played here.
     assert_eq!(

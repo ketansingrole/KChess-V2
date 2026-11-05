@@ -581,6 +581,7 @@ impl Render for TournamentsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let showing_event = self.open.is_some();
+        let failed = self.list.is_none() && self.error.is_some();
         let page = cx.entity().downgrade();
         let choose = move |index: usize, _: &mut Window, cx: &mut App| {
             let _ = page.update(cx, |page, cx| {
@@ -629,16 +630,19 @@ impl Render for TournamentsPage {
                             true,
                             &palette,
                         ))
-                        .child(
-                            Button::new("tournaments-refresh")
-                                .small()
-                                .outline()
-                                .icon(icon("refresh-cw"))
-                                .label("Refresh")
-                                .loading(self.loading)
-                                .disabled(self.loading)
-                                .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-                        )
+                        // A list that failed to load offers Try again in its place instead.
+                        .when(!failed, |row| {
+                            row.child(
+                                Button::new("tournaments-refresh")
+                                    .small()
+                                    .outline()
+                                    .icon(icon("refresh-cw"))
+                                    .label("Refresh")
+                                    .loading(self.loading)
+                                    .disabled(self.loading)
+                                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                            )
+                        })
                     })
                     .child(
                         Button::new("tournaments-create")

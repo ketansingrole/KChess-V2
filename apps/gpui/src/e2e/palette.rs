@@ -421,7 +421,7 @@ fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {
     app.press("enter");
     wait_until_closed(&mut app);
     app.wait_gone("tournament-join");
-    app.find("tournaments-refresh");
+    app.find(("tournaments-filter", 0usize));
 }
 
 /// A Lichess TV link opens that channel on Watch → TV, from whichever tab was showing.

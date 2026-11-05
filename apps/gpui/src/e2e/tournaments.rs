@@ -40,5 +40,5 @@ fn escape_goes_back_to_all_tournaments(cx: &mut gpui_kit::TestAppContext) {
     app.find("tournament-join");
     app.press("escape");
     app.wait_gone("tournament-join");
-    app.find("tournaments-refresh");
+    app.find(("tournaments-filter", 0usize));
 }
