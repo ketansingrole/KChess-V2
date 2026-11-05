@@ -618,7 +618,7 @@ impl Render for PuzzleStats {
                 Some(
                     div()
                         .child(match global["nb"].as_f64() {
-                            Some(nb) => format!("{} puzzles", widgets::format_count(nb)),
+                            Some(nb) => widgets::format_counted(nb, "puzzle", "puzzles"),
                             None => format!("Last {days} days"),
                         })
                         .into_any_element(),

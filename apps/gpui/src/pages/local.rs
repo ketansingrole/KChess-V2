@@ -1001,7 +1001,12 @@ impl LocalPage {
                 let lines = [
                     (format!("Player {index}"), 14., true, 0.75),
                     (time.clone(), 120., true, 1.),
-                    (format!("{moves} moves"), 14., false, 0.75),
+                    (
+                        crate::widgets::format_counted(moves as f64, "move", "moves"),
+                        14.,
+                        false,
+                        0.75,
+                    ),
                     (state.to_string(), 12., true, 1.),
                 ];
                 let rgb = Rgba::from(foreground);
@@ -1056,12 +1061,9 @@ impl LocalPage {
                         .line_height(px(120.))
                         .child(time.clone()),
                 )
-                .child(
-                    div()
-                        .text_size(px(14.))
-                        .opacity(0.75)
-                        .child(format!("{moves} moves")),
-                )
+                .child(div().text_size(px(14.)).opacity(0.75).child(
+                    crate::widgets::format_counted(moves as f64, "move", "moves"),
+                ))
                 .child(
                     div()
                         .text_size(px(12.))

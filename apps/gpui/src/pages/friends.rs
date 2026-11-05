@@ -556,7 +556,7 @@ impl FriendsPage {
                             .child(
                                 h_flex()
                                     .gap(px(6.))
-                                    .child(format!("{} games", widgets::format_count(games)))
+                                    .child(widgets::format_counted(games, "game", "games"))
                                     .children(new_badge.take()),
                             )
                             .child(

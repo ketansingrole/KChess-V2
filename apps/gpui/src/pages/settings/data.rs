@@ -323,7 +323,10 @@ impl SettingsPage {
                     .child(tile(
                         "Downloaded",
                         format_bytes(downloaded),
-                        Some(format!("{} requests{since}", format_count(requests))),
+                        Some(format!(
+                            "{}{since}",
+                            widgets::format_counted(requests, "request", "requests")
+                        )),
                     ))
                     .child(tile("Stored games & profiles", format_bytes(stored), None))
                     .child(tile(
@@ -368,7 +371,9 @@ impl SettingsPage {
                                     v_flex()
                                         .items_end()
                                         .child(format_bytes(row.stored))
-                                        .child(muted(format!("{} games", format_count(row.games))))
+                                        .child(muted(widgets::format_counted(
+                                            row.games, "game", "games",
+                                        )))
                                         .into_any_element(),
                                     div().child(format_bytes(row.downloaded)).into_any_element(),
                                     div().child(format_count(row.requests)).into_any_element(),

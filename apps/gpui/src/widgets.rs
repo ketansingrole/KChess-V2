@@ -1447,6 +1447,12 @@ pub fn format_count(count: f64) -> String {
     out
 }
 
+/// A count with its noun: "1 request", "2,048 requests".
+pub fn format_counted(count: f64, one: &str, many: &str) -> String {
+    let shown = format_count(count);
+    format!("{shown} {}", if shown == "1" { one } else { many })
+}
+
 /// `formatBytes`: "312 MB", "1.5 GB".
 pub fn format_bytes(bytes: f64) -> String {
     if !bytes.is_finite() || bytes <= 0. {
@@ -1631,6 +1637,17 @@ mod tests {
     };
 
     use crate::theme::{Palette, colors};
+
+    #[test]
+    fn a_count_of_one_takes_the_singular() {
+        use super::format_counted;
+        assert_eq!(format_counted(1., "request", "requests"), "1 request");
+        assert_eq!(format_counted(0., "game", "games"), "0 games");
+        assert_eq!(
+            format_counted(2048., "request", "requests"),
+            "2,048 requests"
+        );
+    }
 
     /// Every wait turns: the loader icon appears only inside `spinner`, never as a still glyph
     /// (the Lichess seek card once showed one that never moved), and "Loading…" lines come

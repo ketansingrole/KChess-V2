@@ -77,7 +77,10 @@ fn review_text(status: &Value, auto: ReviewAuto) -> String {
         Some("online") => "Paused during your online game".into(),
         Some("off") => "Games are reviewed when you ask for it".into(),
         _ if auto == ReviewAuto::Off => "Games are reviewed when you ask for it".into(),
-        _ if waiting > 0 => format!("{waiting} games waiting"),
+        _ if waiting > 0 => format!(
+            "{} waiting",
+            crate::widgets::format_counted(waiting as f64, "game", "games")
+        ),
         _ => "All caught up".into(),
     }
 }
@@ -569,6 +572,10 @@ mod tests {
         assert_eq!(
             review_text(&json!({ "waiting": 4 }), ReviewAuto::Recent),
             "4 games waiting"
+        );
+        assert_eq!(
+            review_text(&json!({ "waiting": 1 }), ReviewAuto::Recent),
+            "1 game waiting"
         );
         assert_eq!(
             review_text(&json!({ "waiting": 0 }), ReviewAuto::Recent),
