@@ -54,6 +54,7 @@ pub(crate) enum Action {
     Resign,
     NewGame,
     SwitchSides,
+    CopyPgn,
     Review,
 }
 
@@ -924,6 +925,9 @@ impl ComputerPage {
             actions.push(Action::Resign);
         }
         actions.extend([Action::NewGame, Action::SwitchSides]);
+        if !self.moves().is_empty() {
+            actions.push(Action::CopyPgn);
+        }
         if self.can_review() {
             actions.push(Action::Review);
         }
@@ -944,6 +948,7 @@ impl ComputerPage {
             Action::Resign => {}
             Action::NewGame => self.ask(Question::NewGame, window, cx),
             Action::SwitchSides => self.ask(Question::SwitchSides, window, cx),
+            Action::CopyPgn => crate::export::copy_pgn(&self.game_export(), window, cx),
             Action::Review if self.can_review() => self.review_game(window, cx),
             Action::Review => {}
         }

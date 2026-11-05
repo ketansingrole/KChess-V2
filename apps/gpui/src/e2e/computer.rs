@@ -94,6 +94,27 @@ fn the_export_menu_copies_the_pgn_and_the_fen(cx: &mut gpui_kit::TestAppContext)
     );
 }
 
+/// Copy outside a text field copies the game's PGN here too, as on the other boards.
+#[gpui_kit::test]
+fn copy_copies_the_game(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Nf3");
+    app.press("enter");
+    app.wait_for_moves(&["Nf3"]);
+    app.click("chess-board");
+    app.cx
+        .write_to_clipboard(gpui_kit::ClipboardItem::new_string("kept".into()));
+    app.press("secondary-c");
+    app.tick();
+    let pgn = app
+        .cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default();
+    assert!(pgn.contains("1. Nf3"), "{pgn}");
+}
+
 #[gpui_kit::test]
 fn an_illegal_move_is_not_played(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
