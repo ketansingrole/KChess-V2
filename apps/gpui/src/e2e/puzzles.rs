@@ -480,3 +480,51 @@ fn a_finished_puzzles_theme_is_trained(cx: &mut gpui_kit::TestAppContext) {
                 .is_some_and(|tab| tab.selected() == Some(true))
     });
 }
+
+/// History narrows to the puzzles not solved, the ones worth another try, and keeps that choice.
+#[gpui_kit::test]
+fn history_shows_the_puzzles_not_solved(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let day = crate::game::puzzle::local_day();
+    for (id, win, found) in [("aaaaa", true, 2), ("bbbbb", false, 1), ("ccccc", true, 2)] {
+        let attempt = serde_json::json!({
+            "puzzle": {
+                "id": id,
+                "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 2 4",
+                "solution": ["f3f7", "e8f7"],
+                "rating": 1500,
+                "themes": ["mateIn1"],
+            },
+            "mode": "practice",
+            "retry": false,
+            "win": win,
+            "revealed": false,
+            "hinted": false,
+            "found": found,
+            "wrong": u64::from(!win),
+            "total": 2,
+            "day": day,
+        });
+        let saved = app.cx.update(|cx| {
+            cx.global::<crate::core::AppCore>()
+                .call("recordPuzzleAttempt", vec![attempt])
+        });
+        app.cx
+            .foreground_executor()
+            .block_test(saved)
+            .expect("the attempt is kept");
+    }
+    app.open("Puzzles");
+    tab(&mut app, 4);
+    app.find(("puzzle-retry", 2usize));
+    app.click(("puzzle-history-result", 1usize));
+    app.find(("puzzle-retry", 0usize));
+    assert!(!app.shows(("puzzle-retry", 1usize)));
+
+    let mut app = app.restart();
+    app.open("Puzzles");
+    app.find(("puzzle-retry", 0usize));
+    assert!(!app.shows(("puzzle-retry", 1usize)));
+    app.click(("puzzle-history-result", 0usize));
+    app.find(("puzzle-retry", 2usize));
+}

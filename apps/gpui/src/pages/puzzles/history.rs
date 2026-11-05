@@ -14,9 +14,11 @@ use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::rules;
 use crate::theme::{Palette, radii};
-use crate::widgets::{self, Choice, Look};
+use crate::widgets::{self, Choice, Look, Pill};
 
 const FILTER: &str = "kchess:puzzle-history-filter";
+/// Whether the list shows only the puzzles not solved, to try again.
+const UNSOLVED: &str = "kchess:puzzle-history-unsolved";
 /// `HISTORY_FILTERS`.
 const FILTERS: [(&str, &str); 5] = [
     ("all", "All"),
@@ -43,6 +45,8 @@ struct Row {
     at: f64,
     /// `ATTEMPT_BADGES`' label and look.
     badge: (&'static str, Look),
+    /// Solved, with or without a hint.
+    solved: bool,
     moves: Option<String>,
     puzzle: Value,
     wrong: Vec<Value>,
@@ -112,9 +116,11 @@ fn rows_of(local: &[Value], lichess: &[Value]) -> Vec<Row> {
                 }
             );
             let mode = mode_of(attempt["mode"].as_str().unwrap_or_default());
+            let outcome = attempt["outcome"].as_str().unwrap_or_default();
             Row {
                 at: attempt["at"].as_f64().unwrap_or_default(),
-                badge: badge_of(attempt["outcome"].as_str().unwrap_or_default()),
+                badge: badge_of(outcome),
+                solved: matches!(outcome, "solved" | "hinted"),
                 moves: Some(moves),
                 puzzle: attempt["puzzle"].clone(),
                 wrong: attempt["wrongMoves"]
@@ -146,6 +152,7 @@ fn rows_of(local: &[Value], lichess: &[Value]) -> Vec<Row> {
             } else {
                 badge_of("missed")
             },
+            solved: entry["win"] == json!(true),
             moves: None,
             puzzle: entry["puzzle"].clone(),
             wrong: Vec::new(),
@@ -388,18 +395,53 @@ impl Render for PuzzleHistory {
             .unwrap_or_default();
         let all_rows = rows_of(&local, &self.activity);
         let any = !all_rows.is_empty();
+        let unsolved_only = crate::prefs::get(cx, UNSOLVED, false);
         let rows: Vec<Row> = all_rows
             .into_iter()
             .filter(|row| filter == "all" || row.played_in == filter)
             .collect();
+        let unsolved = rows.iter().filter(|row| !row.solved).count();
+        let shown_count = rows.len();
+        let rows: Vec<Row> = rows
+            .into_iter()
+            .filter(|row| !unsolved_only || !row.solved)
+            .collect();
+        let result_pills = widgets::pills(
+            "puzzle-history-result",
+            vec![
+                Pill {
+                    icon: None,
+                    label: "All".into(),
+                    badge: Some(shown_count.to_string().into()),
+                    disabled: false,
+                },
+                Pill {
+                    icon: None,
+                    label: "Not solved".into(),
+                    badge: Some(unsolved.to_string().into()),
+                    // An empty filter cannot lead anywhere; the chosen one stays reachable.
+                    disabled: unsolved == 0 && !unsolved_only,
+                },
+            ],
+            usize::from(unsolved_only),
+            |index, _, cx| crate::prefs::set(cx, UNSOLVED, index == 1),
+            true,
+            &palette,
+        );
         let has_account = !self.account.is_empty();
         let header = h_flex()
             .justify_between()
             .mb(px(8.))
             .child(
-                div()
-                    .w(px(160.))
-                    .when(any, |slot| slot.child(Select::new(&self.filter).small())),
+                h_flex()
+                    .gap(px(12.))
+                    .flex_wrap()
+                    .child(
+                        div()
+                            .w(px(160.))
+                            .when(any, |slot| slot.child(Select::new(&self.filter).small())),
+                    )
+                    .when(any, |row| row.child(result_pills)),
             )
             .when(has_account, |row| {
                 row.child(
@@ -416,6 +458,12 @@ impl Render for PuzzleHistory {
         let now = chrono::Local::now();
         let body: AnyElement = if self.loading && rows.is_empty() {
             crate::widgets::loading("Loading from Lichess…", &palette).into_any_element()
+        } else if any && rows.is_empty() && unsolved_only && shown_count > 0 {
+            div()
+                .text_size(px(13.))
+                .text_color(palette.text_muted)
+                .child("Every one solved")
+                .into_any_element()
         } else if any && rows.is_empty() {
             let label = mode_look(if filter == "all" { "practice" } else { &filter }).0;
             div()
