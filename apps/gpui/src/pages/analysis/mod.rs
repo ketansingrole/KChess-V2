@@ -111,6 +111,17 @@ fn position_of(variant: &str, fen: &str) -> Option<VariantPosition> {
     kchess_domain::rules::setup_start(variant, fen)
 }
 
+/// The position with the other side to move (a null move), whose best line is the threat; `None`
+/// in check, where the side to move cannot pass.
+fn threat_fen(variant: &str, fen: &str) -> Option<String> {
+    let position = position_of(variant, fen)?;
+    if position.is_check() {
+        return None;
+    }
+    let passed = position.swap_turn().ok()?;
+    Some(kchess_domain::rules::make_fen(&passed))
+}
+
 /// Checkmate, stalemate, bare kings or a variant's own ending (an exploded king, a king on the
 /// hill…) end the analysis: there is nothing to search.
 fn game_over(position: Option<&VariantPosition>) -> Option<&'static str> {
@@ -158,6 +169,8 @@ pub struct AnalysisPage {
     edits: edits::Edits,
     /// The move whose comment the last change typed, so a comment's typing is one step.
     typing_comment: Option<String>,
+    /// The threat is shown (X): the engine searches the position with the other side to move.
+    threat: bool,
     orientation: Color,
     /// The saved study the board is showing, and its chapter; edits are saved back to it.
     study: String,
@@ -431,6 +444,7 @@ impl AnalysisPage {
             path,
             edits,
             typing_comment: None,
+            threat: false,
             orientation,
             study,
             chapter,
@@ -562,6 +576,42 @@ impl AnalysisPage {
 
     fn context(&self) -> String {
         analysis_context(&self.root.fen, &moves_of(&self.path))
+    }
+
+    /// The position the threat is searched from, while the threat is shown and the side to move
+    /// could pass.
+    fn threat_position(&self) -> Option<String> {
+        self.threat
+            .then(|| threat_fen(self.root.variant(), &self.node().fen))
+            .flatten()
+    }
+
+    /// The position the engine searches: the one shown, or its threat's.
+    fn engine_fen(&self) -> String {
+        self.threat_position()
+            .unwrap_or_else(|| self.node().fen.clone())
+    }
+
+    /// The engine's search and its cache entry: the threat's position stands on its own.
+    fn engine_context(&self) -> String {
+        match self.threat_position() {
+            Some(fen) => analysis_context(&fen, &[]),
+            None => self.context(),
+        }
+    }
+
+    /// Show or hide the opponent's threat (X, as on Lichess).
+    pub(crate) fn toggle_threat(&mut self, cx: &mut Context<Self>) {
+        if self.hides_engine() {
+            return;
+        }
+        self.threat = !self.threat;
+        self.engine_changed(cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn threat_shown(&self) -> Option<String> {
+        self.threat_position()
     }
 
     /// Play a move from the position shown; false when it is not kept (not legal there, or a
@@ -1103,7 +1153,8 @@ impl AnalysisPage {
         if !self.attached {
             return;
         }
-        let fen = self.node().fen.clone();
+        let fen = self.engine_fen();
+        let threat = self.threat_position().is_some();
         self.client_id += 1;
         let request = self.client_id;
         self.engine_error = None;
@@ -1125,7 +1176,7 @@ impl AnalysisPage {
             cx.notify();
             return;
         }
-        let context = self.context();
+        let context = self.engine_context();
         let known = self.evaluations.get(&context);
         if !infinite
             && known.is_some_and(|known| {
@@ -1146,8 +1197,8 @@ impl AnalysisPage {
         let mut asked = json!({
             "fen": fen,
             "clientId": request,
-            "rootFen": self.root.fen,
-            "moves": moves_of(&self.path),
+            "rootFen": if threat { fen.clone() } else { self.root.fen.clone() },
+            "moves": if threat { Vec::new() } else { moves_of(&self.path) },
             "lines": lines.clamp(1, 5),
             "infinite": infinite,
         });
@@ -1187,7 +1238,7 @@ impl AnalysisPage {
         let id = update["id"].as_f64().unwrap_or_default();
         if update["fen"].as_str() != Some(self.wanted.as_str())
             || update["clientId"].as_f64() != Some(self.client_id as f64)
-            || update["context"].as_str() != Some(self.context().as_str())
+            || update["context"].as_str() != Some(self.engine_context().as_str())
             || id < self.latest_id
         {
             return;
@@ -1244,9 +1295,9 @@ impl AnalysisPage {
         if !Self::assistance_allowed(cx) {
             return None;
         }
-        let context = self.context();
+        let context = self.engine_context();
         if let Some(live) = &self.live
-            && live["fen"].as_str() == Some(self.node().fen.as_str())
+            && live["fen"].as_str() == Some(self.engine_fen().as_str())
             && live["context"].as_str() == Some(context.as_str())
         {
             return Some(live);
@@ -1327,7 +1378,20 @@ impl AnalysisPage {
 
     /// Without the local engine, the cloud's lines drive the bar, arrows and line list.
     fn using_cloud(&self, cx: &App) -> bool {
-        (!Self::engine_on(cx) || !self.engine_ready) && !self.cloud_lines(cx).is_empty()
+        (!Self::engine_on(cx) || !self.engine_ready)
+            && self.threat_position().is_none()
+            && !self.cloud_lines(cx).is_empty()
+    }
+
+    /// The evaluation bar's line: the position's own, also while its threat is shown.
+    fn bar_line(&self, cx: &App) -> Option<Value> {
+        if self.threat_position().is_some() {
+            return self.evaluations.get(&self.context())?["lines"]
+                .as_array()?
+                .first()
+                .cloned();
+        }
+        self.lines(cx).first().cloned()
     }
 
     fn lines(&self, cx: &App) -> Vec<Value> {
@@ -1350,7 +1414,8 @@ impl AnalysisPage {
     }
 
     fn play_best(&mut self, cx: &mut Context<Self>) {
-        if self.hides_engine() {
+        // The threat's best move is the opponent's, not one to play here.
+        if self.hides_engine() || self.threat_position().is_some() {
             return;
         }
         let best = self
@@ -1405,18 +1470,22 @@ impl AnalysisPage {
         let engine_shown = (Self::engine_on(cx) || self.using_cloud(cx))
             && crate::prefs::get(cx, ARROWS, true)
             && game_over(Some(&position)).is_none();
+        let threat = self.threat_position().is_some();
         if engine_shown {
             state.arrows = self
                 .lines(cx)
                 .iter()
                 .enumerate()
+                // The threat is the opponent's best move, in red.
+                .take(if threat { 1 } else { usize::MAX })
                 .filter_map(|(rank, line)| {
                     let uci = line["pv"][0].as_str()?;
-                    Some(Arrow::engine(
-                        now_square(uci, 0..2)?,
-                        now_square(uci, 2..4)?,
-                        rank,
-                    ))
+                    let (from, to) = (now_square(uci, 0..2)?, now_square(uci, 2..4)?);
+                    Some(if threat {
+                        Arrow::brush("red", from, to)
+                    } else {
+                        Arrow::engine(from, to, rank)
+                    })
                 })
                 .collect();
         }
@@ -1440,6 +1509,7 @@ impl AnalysisPage {
             "down" | "end" => self.go_to_end(cx),
             "f" => self.flip(cx),
             "l" => self.toggle_engine(cx),
+            "x" => self.toggle_threat(cx),
             "c" => self.focus_notes(window, cx),
             "space"
                 if !cx
@@ -1491,10 +1561,13 @@ impl AnalysisPage {
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
         };
         let setup = json!({ "variant": self.root.variant(), "fen": fen });
-        let best = (Self::assistance_allowed(cx) && !self.hides_engine())
-            .then(|| self.lines(cx).first().cloned())
-            .flatten()
-            .and_then(|line| line["pv"][0].as_str().map(str::to_string));
+        // The threat's best move is the opponent's: "best move" waits for the position's own.
+        let best = (Self::assistance_allowed(cx)
+            && !self.hides_engine()
+            && self.threat_position().is_none())
+        .then(|| self.lines(cx).first().cloned())
+        .flatten()
+        .and_then(|line| line["pv"][0].as_str().map(str::to_string));
         let mut command: Option<String> = None;
         let turn = Turn {
             taking: true,
@@ -2364,8 +2437,13 @@ impl AnalysisPage {
                 "Analysis paused until Lichess game status is verified".into()
             };
         }
+        let threat = if self.threat_position().is_some() {
+            "Threat · "
+        } else {
+            ""
+        };
         let Some(update) = self.evaluation(cx) else {
-            return "Starting…".into();
+            return format!("{threat}Starting…");
         };
         let infinite = crate::prefs::get(cx, INFINITE, false);
         let depth = format!(
@@ -2388,7 +2466,7 @@ impl AnalysisPage {
         } else {
             "…"
         };
-        format!("{depth}{speed}{tail}")
+        format!("{threat}{depth}{speed}{tail}")
     }
 
     /// The engine's head row, the cloud's line and the engine lines (`.ceval`).
@@ -2434,7 +2512,9 @@ impl AnalysisPage {
                     .cloud_eval;
                 let allowed = AnalysisPage::assistance_allowed(cx);
                 let palette = *cx.global::<Palette>();
-                let (on_infinite, on_arrows) = (page.clone(), page.clone());
+                let (on_infinite, on_arrows, on_threat) =
+                    (page.clone(), page.clone(), page.clone());
+                let threat = page.upgrade().is_some_and(|page| page.read(cx).threat);
                 let described = |title: &'static str, hint: Option<&'static str>| {
                     v_flex()
                         .child(div().text_size(px(14.)).child(title))
@@ -2484,6 +2564,25 @@ impl AnalysisPage {
                                     }),
                             )
                             .child(described("Show engine arrows", None)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap(px(8.))
+                            .child(
+                                Switch::new("threat")
+                                    .small()
+                                    .checked(threat)
+                                    .disabled(!engine_on)
+                                    .accessibility_label("Show threat")
+                                    .on_click(move |_, _, cx| {
+                                        let _ =
+                                            on_threat.update(cx, |page, cx| page.toggle_threat(cx));
+                                    }),
+                            )
+                            .child(described(
+                                "Show threat",
+                                Some("The opponent's best move if it were their turn (X)"),
+                            )),
                     )
                     .child(
                         h_flex()
@@ -2572,7 +2671,8 @@ impl AnalysisPage {
                     ),
             )
             .child(settings_button);
-        let cloud_line = (cloud_on && allowed && !using_cloud).then(|| {
+        let threat = self.threat_position().is_some();
+        let cloud_line = (cloud_on && allowed && !using_cloud && !threat).then(|| {
             let cloud_lines = self.cloud_lines(cx);
             let text: AnyElement = match cloud_lines.first() {
                 Some(best) => {
@@ -2655,13 +2755,16 @@ impl AnalysisPage {
                 {
                     let page = cx.entity().downgrade();
                     crate::engine_view::engine_lines(
-                        &self.node().fen,
+                        &self.engine_fen(),
                         self.root.variant(),
                         &lines,
                         if using_cloud { 0 } else { prefs_lines(cx) },
                         over.map(|_| "Nothing to analyse"),
+                        // A threat's line starts from a position that is not on the board.
                         std::rc::Rc::new(move |pv: &[String], at, _: &mut Window, cx: &mut App| {
-                            let _ = page.update(cx, |page, cx| page.play_line(pv, at, cx));
+                            if !threat {
+                                let _ = page.update(cx, |page, cx| page.play_line(pv, at, cx));
+                            }
                         }),
                         palette,
                     )
@@ -3108,7 +3211,7 @@ impl Render for AnalysisPage {
         let allowed = Self::assistance_allowed(cx);
         let using_cloud = self.using_cloud(cx);
         let show_bar = allowed && (Self::engine_on(cx) || using_cloud) && !self.hides_engine();
-        let lines = self.lines(cx);
+        let bar_line = self.bar_line(cx);
         let position = self.position();
         let result = position
             .as_ref()
@@ -3154,7 +3257,11 @@ impl Render for AnalysisPage {
                     .when(show_bar, |row| {
                         // The bar ends where the squares end, above any outside coordinates.
                         row.child(div().pb(crate::board::outside_gutter(cx)).child(
-                            crate::engine_view::eval_bar(lines.first(), self.orientation, result),
+                            crate::engine_view::eval_bar(
+                                bar_line.as_ref(),
+                                self.orientation,
+                                result,
+                            ),
                         ))
                     })
                     .when(!show_bar, |row| row.pl(EVAL_BAR))

@@ -50,6 +50,7 @@ pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
                 ("Undo an edit", format!("{MOD} Z")),
                 ("Redo", redo.to_string()),
                 ("Engine on or off", "L".to_string()),
+                ("Show threat", "X".to_string()),
                 ("Play the best move", "Space".to_string()),
                 ("Comment", "C".to_string()),
             ],

@@ -1003,3 +1003,63 @@ fn a_dragged_file_shows_where_it_will_open(cx: &mut gpui_kit::TestAppContext) {
     settle(&mut app);
     assert!(!app.shows("drop-zone"));
 }
+
+/// X shows the opponent's threat, as on Lichess: the engine searches the position with the other
+/// side to move, Space does not play the threat's move, and X again goes back. In check there is
+/// no threat to show.
+#[gpui_kit::test]
+fn x_shows_the_threat(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    let page = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+                crate::pages::Page::Analysis,
+                cx,
+            )
+            .expect("the analysis board")
+        })
+    };
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.find("tree-e2e4");
+    wait_for_search(&mut app);
+    app.click("chess-board");
+    app.press("x");
+    let analysis = page(&mut app);
+    let threat = app
+        .cx
+        .update(|cx| analysis.read(cx).threat_shown())
+        .expect("a threat to search");
+    // White to move again, en passant forgotten.
+    assert_eq!(
+        threat,
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1"
+    );
+    app.wait_for("the threat to be searched", |_, cx| {
+        analysis
+            .read(cx)
+            .engine_text(cx)
+            .starts_with("Threat · Depth ")
+    });
+    // Space plays the best move of the position shown, never the threat's.
+    app.press("space");
+    settle(&mut app);
+    assert!(!app.shows("tree-e2e4 e7e5"));
+    assert_eq!(
+        app.cx.update(|cx| analysis.read(cx).shown_fen()),
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+    );
+    app.press("x");
+    assert_eq!(app.cx.update(|cx| analysis.read(cx).threat_shown()), None);
+    wait_for_search(&mut app);
+
+    // In check the side to move cannot pass: no threat, the ordinary search.
+    import(
+        &mut app,
+        "rnbqkbnr/ppppp1pp/8/5p1Q/4P3/8/PPPP1PPP/RNB1KBNR b KQkq - 1 2",
+    );
+    app.click("chess-board");
+    app.press("x");
+    assert_eq!(app.cx.update(|cx| analysis.read(cx).threat_shown()), None);
+    wait_for_search(&mut app);
+}
