@@ -213,8 +213,14 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
         )
 }
 
-/// `.player-clock`: a side's time, highlighted while it runs.
+/// A clock's last ten seconds, which `formatClock` alone shows with tenths ("0:09.4").
+fn low_time(text: &str) -> bool {
+    text.starts_with("0:0") && text.contains('.')
+}
+
+/// `.player-clock`: a side's time, highlighted while it runs, and red in its last ten seconds.
 pub fn clock(text: SharedString, active: bool, palette: &Palette) -> Div {
+    let low = low_time(&text);
     div()
         .min_w(px(72.))
         .px(px(8.))
@@ -224,15 +230,15 @@ pub fn clock(text: SharedString, active: bool, palette: &Palette) -> Div {
         .text_size(px(16.))
         .font_weight(FontWeight::MEDIUM)
         .font_features(tabular())
-        .bg(if active {
-            palette.primary
-        } else {
-            palette.accented
+        .bg(match (active, low) {
+            (true, true) => palette.error,
+            (true, false) => palette.primary,
+            (false, _) => palette.accented,
         })
-        .text_color(if active {
-            palette.inverted
-        } else {
-            palette.text_muted
+        .text_color(match (active, low) {
+            (true, _) => palette.inverted,
+            (false, true) => palette.error,
+            (false, false) => palette.text_muted,
         })
         .child(text)
 }
@@ -1656,5 +1662,16 @@ mod tests {
         step(&mut |window, cx| window.focus_next(cx));
         step(&mut |window, cx| window.press("space", cx));
         assert_eq!(chosen.take(), Some(2));
+    }
+
+    /// A clock turns red only in its last ten seconds, when it shows tenths.
+    #[test]
+    fn only_the_last_ten_seconds_are_low() {
+        assert!(super::low_time("0:09.4"));
+        assert!(super::low_time("0:00.0"));
+        assert!(!super::low_time("0:10"));
+        assert!(!super::low_time("1:05"));
+        assert!(!super::low_time("1:00:05"));
+        assert!(!super::low_time("2d 4h"));
     }
 }
