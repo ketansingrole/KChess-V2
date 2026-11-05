@@ -2434,6 +2434,7 @@ impl AnalysisPage {
             .gap(px(8.))
             .child(
                 Switch::new("engine-on")
+                    .large()
                     .checked(engine_on)
                     .disabled(!self.engine_ready || !allowed)
                     .accessibility_label("Engine analysis")

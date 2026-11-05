@@ -1,6 +1,6 @@
 //! Every page's controls at the minimum, a mid and the default window size: each has an accessible
 //! name, lies inside the window across (a page scrolls only down), and overlaps no other control.
-//! Controls under 24 px (WCAG 2.5.8) are counted and may not grow in number.
+//! No control is under 24 px (WCAG 2.5.8).
 
 use std::fmt::Write as _;
 
@@ -9,9 +9,6 @@ use gpui_kit::{Role, px, size};
 
 use super::{Harness, SIZES};
 use crate::pages::Page;
-
-/// Controls under 24 px today; lower it as they grow, never raise it.
-const SMALL_TARGETS: usize = 9;
 
 const CONTROLS: [Role; 7] = [
     Role::Button,
@@ -64,9 +61,8 @@ fn every_page_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
         "controls out of place:\n{report}"
     );
     assert!(
-        findings.small.len() <= SMALL_TARGETS,
-        "{} controls under 24 px, more than {SMALL_TARGETS}:\n  {}",
-        findings.small.len(),
+        findings.small.is_empty(),
+        "controls under 24 px:\n  {}",
         findings.small.join("\n  ")
     );
 }

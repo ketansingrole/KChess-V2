@@ -706,6 +706,40 @@ pub fn material(fen: &str, white: bool, set: &str, palette: &Palette) -> Option<
 }
 
 /// The blindfold and zen mode toggles every game page shows.
+/// A switch with its label beside it: the switch is a 24 px target (WCAG 2.5.8) named by the
+/// label, which takes the row's text size and toggles it too.
+pub fn labelled_switch(
+    id: &'static str,
+    label: &'static str,
+    checked: bool,
+    disabled: bool,
+    on_change: impl Fn(&bool, &mut Window, &mut App) + 'static,
+) -> Div {
+    let on_change = std::rc::Rc::new(on_change);
+    let on_label = std::rc::Rc::clone(&on_change);
+    h_flex()
+        .gap(px(8.))
+        .items_center()
+        .child(
+            gpui_kit::component::switch::Switch::new(id)
+                .large()
+                .checked(checked)
+                .disabled(disabled)
+                .accessibility_label(label)
+                .on_click(move |on, window, cx| on_change(on, window, cx)),
+        )
+        .child(
+            div()
+                .id(SharedString::from(format!("{id}-label")))
+                .min_w_0()
+                .when(!disabled, |label| label.cursor_pointer())
+                .when(!disabled, |label| {
+                    label.on_click(move |_, window, cx| on_label(&!checked, window, cx))
+                })
+                .child(label),
+        )
+}
+
 pub fn view_toggles(blindfold: bool, zen: bool) -> impl IntoElement {
     let toggle =
         |id: &'static str, glyph: gpui_kit::component::Icon, label: &'static str, on: bool| {
