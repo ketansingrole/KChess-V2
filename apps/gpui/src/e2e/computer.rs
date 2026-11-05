@@ -227,6 +227,31 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
         })
     });
     assert_eq!(setup, Some(("crazyhouse".to_string(), fen.to_string())));
+
+    // The dialog opens with that position; another variant, which refuses it, clears it.
+    app.click("game-options");
+    let typed = |app: &mut Harness| {
+        app.with_window(|window, _| {
+            window
+                .try_find_by_label("Crazyhouse start")
+                .or_else(|| window.try_find_by_label("Horde start"))
+                .and_then(|input| input.value().map(str::to_string))
+        })
+    };
+    app.wait_for("the dialog", |window, _| {
+        window.try_find_by_label("Crazyhouse start").is_some()
+    });
+    assert_eq!(typed(&mut app).as_deref(), Some(fen));
+    app.click_label("Choose a variant");
+    // Horde is two above Crazyhouse.
+    app.press("up");
+    app.press("up");
+    app.press("enter");
+    app.wait_for("the Horde start", |window, _| {
+        window.try_find_by_label("Horde start").is_some()
+    });
+    assert!(typed(&mut app).is_none_or(|value| value.is_empty()));
+    assert!(app.enabled("start-game"));
 }
 
 #[gpui_kit::test]

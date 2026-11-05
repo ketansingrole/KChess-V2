@@ -203,8 +203,19 @@ impl GameOptions {
                         .map_or("Variant start".to_string(), |text| {
                             format!("{} start", text.label)
                         });
-                    this.variant_fen
-                        .update(cx, |input, cx| input.set_placeholder(label, window, cx));
+                    // A position the new variant refuses is the old variant's: it goes.
+                    let refused = match (this.variant_text(cx), this.variant_fen(cx)) {
+                        (Some(text), Some(fen)) => {
+                            kchess_domain::rules::setup_start(&text.key, &fen).is_none()
+                        }
+                        _ => false,
+                    };
+                    this.variant_fen.update(cx, |input, cx| {
+                        input.set_placeholder(label, window, cx);
+                        if refused {
+                            input.set_value("", window, cx);
+                        }
+                    });
                     cx.notify()
                 },
             ),
