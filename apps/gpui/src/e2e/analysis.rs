@@ -1082,4 +1082,18 @@ fn the_line_to_a_move_is_copied(cx: &mut gpui_kit::TestAppContext) {
         !copied.contains("c5") && !copied.contains("Nc6"),
         "{copied}"
     );
+
+    // Quick Pick copies the line to the move shown, as the menu does.
+    app.click("tree-e2e4 e7e5");
+    app.press("secondary-k");
+    app.type_text("Copy line");
+    super::palette::wait_for_first(&mut app, "Copy line");
+    app.press("enter");
+    super::palette::wait_until_closed(&mut app);
+    let copied = app
+        .cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default();
+    assert!(copied.contains("1. e4 e5 *"), "{copied}");
 }

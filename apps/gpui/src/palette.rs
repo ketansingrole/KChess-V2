@@ -1132,6 +1132,13 @@ fn analysis_commands() -> Vec<Command> {
         )
         .keywords("game moves clipboard"),
         Command::new(
+            "analysis:copy-line",
+            "Copy line",
+            icon("list-tree"),
+            on_board(|board, window, cx| board.copy_shown_line(window, cx)),
+        )
+        .keywords("variation moves pgn clipboard"),
+        Command::new(
             "analysis:import",
             "Import a position or game…",
             icon("import"),

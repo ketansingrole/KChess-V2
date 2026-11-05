@@ -1682,6 +1682,12 @@ impl AnalysisPage {
         self.copy(pgn, "PGN", window, cx);
     }
 
+    /// Copy the moves to the move shown (Quick Pick).
+    pub(crate) fn copy_shown_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let path = self.path.clone();
+        self.copy_line(&path, window, cx);
+    }
+
     /// Copy the moves from the start to `path` as PGN, without the side lines.
     fn copy_line(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
         let pgn = self.root.line_to(path).to_pgn();
