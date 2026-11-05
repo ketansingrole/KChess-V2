@@ -214,6 +214,11 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
 }
 
 /// A clock's last ten seconds, which `formatClock` alone shows with tenths ("0:09.4").
+/// Escape with no modifier, which takes a detail view (a game, an event, a line) back to its list.
+pub(crate) fn is_escape(event: &KeyDownEvent) -> bool {
+    event.keystroke.key == "escape" && !event.keystroke.modifiers.modified()
+}
+
 pub(crate) fn low_time(text: &str) -> bool {
     text.starts_with("0:0") && text.contains('.')
 }

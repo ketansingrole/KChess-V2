@@ -551,7 +551,7 @@ impl WatchPage {
         .detach();
     }
 
-    fn leave_tour(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn leave_tour(&mut self, cx: &mut Context<Self>) {
         let broadcasts = &mut self.broadcasts;
         broadcasts.redo = None;
         broadcasts.tour = None;

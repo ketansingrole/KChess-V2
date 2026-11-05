@@ -1155,13 +1155,32 @@ impl Render for HistoryPage {
             .px(side_padding(window))
             .pt(PAGE_TOP)
             .child(source_tabs(self.source, cx, &palette));
+        // An open game has no text field: Escape anywhere in it goes back to the list.
         if let Some((game, replay)) = self.open.clone() {
-            return self.render_open(&game, &replay, window, cx, &palette);
+            return div()
+                .size_full()
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                    if widgets::is_escape(event) {
+                        this.close_game(window, cx);
+                        cx.stop_propagation();
+                    }
+                }))
+                .child(self.render_open(&game, &replay, window, cx, &palette))
+                .into_any_element();
         }
         if self.source == Source::Lichess
             && let Some((game, replay)) = self.lichess.open.clone()
         {
-            return self.render_lichess_open(&game, &replay, window, cx, &palette);
+            return div()
+                .size_full()
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                    if widgets::is_escape(event) {
+                        this.close_lichess(window, cx);
+                        cx.stop_propagation();
+                    }
+                }))
+                .child(self.render_lichess_open(&game, &replay, window, cx, &palette))
+                .into_any_element();
         }
         let body = match self.source {
             Source::Lichess => self.render_lichess(window, cx, &palette),

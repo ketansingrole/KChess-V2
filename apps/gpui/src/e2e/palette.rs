@@ -351,6 +351,12 @@ fn a_broadcast_board_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppConte
     wait_until_closed(&mut app);
     app.wait_gone("broadcast-analyse");
 
+    // Escape steps back too: from a board to all boards.
+    open_board(&mut app);
+    app.press("escape");
+    app.wait_gone("broadcast-analyse");
+    app.find("broadcast-back");
+
     open_board(&mut app);
     app.press("secondary-k");
     app.type_text(">Analyse");
@@ -359,6 +365,25 @@ fn a_broadcast_board_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppConte
     wait_until_closed(&mut app);
     assert_eq!(page(&mut app), Some(Page::Analysis));
     assert_eq!(app.find("tree-e2e4 e7e5 g1f3").selected(), Some(true));
+}
+
+/// Escape leaves a broadcast for the list of them, as its back button does.
+#[gpui_kit::test]
+fn escape_leaves_a_broadcast(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::BROADCAST_ROUNDS;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/broadcast/kchess-open/round-1/{}",
+        BROADCAST_ROUNDS[0]
+    ));
+    wait_for_first(&mut app, "Watch this broadcast");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.find("broadcast-back");
+    app.press("escape");
+    app.wait_gone("broadcast-back");
 }
 
 /// A Lichess tournament link opens the event on the Tournaments page, signed in or not.

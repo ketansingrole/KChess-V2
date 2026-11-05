@@ -17,6 +17,9 @@ fn return_in_the_entry_code_joins(cx: &mut gpui_kit::TestAppContext) {
     });
     app.click_label("Tournament entry code");
     app.type_text("open-sesame");
+    // Escape in the field leaves the event open.
+    app.press("escape");
+    assert!(app.shows("tournament-join"));
     app.press("enter");
     let joined = format!("POST /api/tournament/{ARENA}/join");
     app.wait_for("the join to reach Lichess", |_, _| {
@@ -26,4 +29,16 @@ fn return_in_the_entry_code_joins(cx: &mut gpui_kit::TestAppContext) {
             .iter()
             .any(|write| write.starts_with(&joined) && write.contains("password=open-sesame"))
     });
+}
+
+/// Escape goes back from an event to the list, as All tournaments does.
+#[gpui_kit::test]
+fn escape_goes_back_to_all_tournaments(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.online();
+    app.with_window(|window, cx| crate::shell::open_tournament(ARENA, window, cx));
+    app.find("tournament-join");
+    app.press("escape");
+    app.wait_gone("tournament-join");
+    app.find("tournaments-refresh");
 }

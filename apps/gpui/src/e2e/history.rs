@@ -78,6 +78,17 @@ fn an_open_game_is_stepped_through_and_closed_to_the_list(cx: &mut gpui_kit::Tes
     assert!(!app.shows("all-games"));
 }
 
+/// Escape closes an open game to the list, as All games does.
+#[gpui_kit::test]
+fn escape_closes_an_open_game(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = mate_in_history(cx);
+    app.click(("history-row", 0usize));
+    app.wait_for_moves(&SCHOLARS_MATE);
+    app.press("escape");
+    app.wait_gone("all-games");
+    app.find(("history-row", 0usize));
+}
+
 #[gpui_kit::test]
 fn finished_games_are_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppContext) {
     let app = mate_in_history(cx);

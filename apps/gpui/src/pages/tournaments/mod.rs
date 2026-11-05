@@ -654,6 +654,19 @@ impl Render for TournamentsPage {
         div()
             .id("tournaments-page")
             .track_focus(&self.focus)
+            // Escape goes back to the list from an event, while no text field has the keys.
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if this.open.is_some() && this.focus.is_focused(window) && widgets::is_escape(event)
+                {
+                    this.close_event(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .size_full()
             .overflow_y_scroll()
             .child(

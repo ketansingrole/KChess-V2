@@ -243,3 +243,23 @@ fn f_flips_an_openings_board(cx: &mut gpui_kit::TestAppContext) {
     app.press("f");
     assert_eq!(orientation(&mut app), Some(!before));
 }
+
+/// A line opened from the search takes the keys at once: F turns its board, Escape goes back to
+/// all openings.
+#[gpui_kit::test]
+fn escape_goes_back_to_all_openings(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = openings(cx);
+    open_kieseritzky(&mut app);
+    let orientation = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<crate::pages::openings::OpeningsPage>(Page::Openings, cx)
+                .map(|page| page.read(cx).orientation())
+        })
+    };
+    let before = orientation(&mut app).expect("the page");
+    app.press("f");
+    assert_eq!(orientation(&mut app), Some(!before));
+    app.press("escape");
+    app.wait_gone("opening-title");
+    app.click_label("Search openings");
+}

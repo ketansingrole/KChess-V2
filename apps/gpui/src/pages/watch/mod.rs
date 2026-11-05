@@ -925,6 +925,11 @@ impl Render for WatchPage {
             .id("watch-page")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key))
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .size_full()
             .relative()
             .overflow_y_scroll()
@@ -951,11 +956,27 @@ impl WatchPage {
     }
 
     /// ←/→ and ↑/↓ step through the shown game; F turns the board.
-    fn key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if event.keystroke.modifiers.modified() {
             return;
         }
         let key = event.keystroke.key.as_str();
+        // Escape steps back, one board to all boards to all broadcasts, while no text field has
+        // the keys.
+        if key == "escape"
+            && self.tab == Tab::Broadcasts
+            && self.broadcasts.tour.is_some()
+            && self.focus.is_focused(window)
+        {
+            if self.broadcasts.current().is_some() {
+                self.all_boards(cx);
+            } else {
+                self.leave_tour(cx);
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         let handled = match self.tab {
             Tab::Broadcasts if key == "l" => self.toggle_broadcast_engine(cx),
             Tab::Broadcasts => {
