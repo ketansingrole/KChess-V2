@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -73,8 +73,10 @@ impl Session {
 pub struct Handle(Arc<Mutex<Session>>);
 
 impl Handle {
+    /// A test that fails while holding the session must not fail every test after it: the
+    /// server is shared, so a poisoned lock is taken over as it is.
     pub fn lock(&self) -> MutexGuard<'_, Session> {
-        self.0.lock().expect("the session")
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -113,7 +115,7 @@ pub fn play(name: &str, seconds: u64) {
     *server()
         .played
         .lock()
-        .expect("the play times")
+        .unwrap_or_else(PoisonError::into_inner)
         .entry(name.to_lowercase())
         .or_default() += seconds;
 }
@@ -135,7 +137,7 @@ pub fn session(username: &str, game: bool) -> (String, Handle) {
     server
         .sessions
         .lock()
-        .expect("the sessions")
+        .unwrap_or_else(PoisonError::into_inner)
         .insert(code.clone(), session.clone());
     (code, session)
 }
@@ -190,6 +192,8 @@ fn response_complete(response: &[u8]) -> bool {
 struct Request {
     method: String,
     path: String,
+    /// The query, still percent-encoded.
+    query: String,
     login: Option<String>,
     body: String,
 }
@@ -199,7 +203,11 @@ fn read_request(socket: &mut BufReader<TcpStream>) -> Option<Request> {
     socket.read_line(&mut line).ok()?;
     let mut parts = line.split_whitespace();
     let method = parts.next()?.to_string();
-    let path = parts.next()?.split('?').next()?.to_string();
+    let (path, query) = {
+        let target = parts.next()?;
+        let (path, query) = target.split_once('?').unwrap_or((target, ""));
+        (path.to_string(), query.to_string())
+    };
     let (mut length, mut login) = (0usize, None);
     loop {
         let mut header = String::new();
@@ -224,6 +232,7 @@ fn read_request(socket: &mut BufReader<TcpStream>) -> Option<Request> {
     Some(Request {
         method,
         path,
+        query,
         login,
         body: String::from_utf8_lossy(&body).into_owned(),
     })
@@ -247,7 +256,10 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         );
     }
     let session = request.login.as_ref().and_then(|login| {
-        let sessions = server().sessions.lock().expect("the sessions");
+        let sessions = server()
+            .sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         sessions.get(login).cloned()
     });
     // A player's activity is public too: a few weeks of it, which each name staggers.
@@ -260,7 +272,10 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
     }
     // Profiles are public: many at once, by the comma-separated names in the body.
     if request.method == "POST" && request.path == "/api/users" {
-        let played = server().played.lock().expect("the play times");
+        let played = server()
+            .played
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let users: Vec<Value> = request
             .body
             .split(',')
@@ -284,6 +299,22 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         return ndjson(&mut out);
     }
     // Name search is public: a few players whatever is typed, one of them online.
+    // The opening explorer's Lichess database: a Crazyhouse position's drop, or the usual 1. e4.
+    if request.path == "/explorer/lichess" {
+        let crazyhouse = request
+            .query
+            .split('&')
+            .any(|pair| pair == "variant=crazyhouse");
+        let uci = if crazyhouse { "P@e3" } else { "e2e4" };
+        return reply(
+            &mut out,
+            &json!({
+                "white": 70, "draws": 10, "black": 20,
+                "moves": [{ "uci": uci, "white": 70, "draws": 10, "black": 20 }],
+                "topGames": [], "recentGames": [],
+            }),
+        );
+    }
     if request.path == "/api/player/autocomplete" {
         return reply(
             &mut out,
@@ -320,6 +351,94 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             Showcase::History => reply(&mut out, &showcase_history()),
             Showcase::Games(name) => ndjson_lines(&mut out, &showcase_games(&name)),
         };
+    }
+    // Games are public: the one a pasted link can fetch here.
+    if (request.method.as_str(), request.path.as_str()) == ("POST", "/api/games/export/_ids")
+        && request.body.trim() == LINKED_GAME
+    {
+        return pgn(&mut out, LINKED_PGN);
+    }
+    // Puzzles are public too: the one a pasted training link names.
+    if (request.method.as_str(), request.path.as_str())
+        == ("GET", format!("/api/puzzle/{LINKED_PUZZLE}").as_str())
+    {
+        return reply(
+            &mut out,
+            &json!({
+                "game": { "id": LINKED_GAME },
+                "puzzle": {
+                    "id": LINKED_PUZZLE,
+                    "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                    "lastMove": "g8f6",
+                    "solution": ["h5f7"],
+                    "rating": 1100,
+                    "themes": ["mateIn1", "short"],
+                },
+            }),
+        );
+    }
+    // Broadcasts are public: a tournament of two rounds, which a round's link finds.
+    match (request.method.as_str(), request.path.as_str()) {
+        ("GET", path) if path == format!("/api/broadcast/{BROADCAST_TOUR}") => {
+            return reply(
+                &mut out,
+                &json!({
+                    "tour": { "id": BROADCAST_TOUR, "name": "KChess Open" },
+                    "rounds": [
+                        { "id": BROADCAST_ROUNDS[0], "name": "Round 1", "finished": true },
+                        { "id": BROADCAST_ROUNDS[1], "name": "Round 2", "ongoing": true },
+                    ],
+                    "defaultRoundId": BROADCAST_ROUNDS[1],
+                }),
+            );
+        }
+        ("GET", path)
+            if BROADCAST_ROUNDS
+                .iter()
+                .any(|round| path == format!("/api/broadcast/-/-/{round}")) =>
+        {
+            let round = path.rsplit('/').next().unwrap_or_default();
+            return reply(
+                &mut out,
+                &json!({ "tour": { "id": BROADCAST_TOUR }, "round": { "id": round } }),
+            );
+        }
+        // A public arena about to start, which its link opens.
+        ("GET", path) if path == format!("/api/tournament/{ARENA}") => {
+            return reply(
+                &mut out,
+                &json!({
+                    "id": ARENA,
+                    "fullName": "KChess Rapid Arena",
+                    "clock": { "limit": 600, "increment": 0 },
+                    "minutes": 60,
+                    "nbPlayers": 3,
+                    "secondsToStart": 300,
+                    "standing": { "page": 1, "players": [] },
+                }),
+            );
+        }
+        // A public study's chapter, and the whole study (two chapters, the first answering).
+        ("GET", path)
+            if path == format!("/api/study/{STUDY}/{STUDY_CHAPTER}.pgn")
+                || path == format!("/api/study/{STUDY}.pgn") =>
+        {
+            return pgn(&mut out, STUDY_PGN);
+        }
+        ("GET", path) if path == format!("/api/study/{VARIANT_STUDY}.pgn") => {
+            return pgn(
+                &mut out,
+                "[Event \"Drops\"]\n[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 *\n\n\n",
+            );
+        }
+        // The finished first round has one board; the live one has none yet.
+        ("GET", path) if path.starts_with("/api/stream/broadcast/round/") => {
+            if path.contains(BROADCAST_ROUNDS[0]) {
+                return pgn(&mut out, BROADCAST_BOARD);
+            }
+            return pgn(&mut out, "");
+        }
+        _ => {}
     }
     // Nobody signed in: no answer at all.
     let Some(session) = session else {
@@ -501,6 +620,37 @@ fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
     write!(
         out,
         "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )?;
+    answered(out)
+}
+
+/// The game a Lichess link in the analysis board's import names, and its PGN.
+pub const LINKED_GAME: &str = "kchessE2";
+/// A public study, the chapter its link names, and one in a variant the board cannot play.
+pub const ARENA: &str = "kcArena1";
+pub const STUDY: &str = "kcStudy1";
+pub const STUDY_CHAPTER: &str = "kcChap01";
+pub const VARIANT_STUDY: &str = "kcStudy2";
+const STUDY_PGN: &str = "[Event \"KChess study: Queen's Gambit\"]\n[ChapterName \"Queen's Gambit\"]\n\
+[Orientation \"black\"]\n\n1. d4 d5 2. c4 e6 { Declined } *\n\n\n\
+[Event \"KChess study: Second\"]\n\n1. e4 *\n\n\n";
+/// The broadcast a pasted lichess.org/broadcast link opens, and its two rounds.
+pub const BROADCAST_TOUR: &str = "kcTour01";
+pub const BROADCAST_ROUNDS: [&str; 2] = ["kcRound1", "kcRound2"];
+/// The first round's one board.
+pub const BROADCAST_BOARD: &str = "[Event \"KChess Open\"]\n[White \"Ada\"]\n[Black \"Bo\"]\n\
+[Result \"*\"]\n[ChapterURL \"https://lichess.org/broadcast/kchess-open/round-1/kcRound1/kcBoard1\"]\n\n\
+1. e4 e5 2. Nf3 *\n\n\n";
+/// The puzzle a pasted lichess.org/training link opens.
+pub const LINKED_PUZZLE: &str = "KcPz1";
+const LINKED_PGN: &str = "[Event \"Rated rapid game\"]\n[Site \"https://lichess.org/kchessE2\"]\n\
+[White \"alice\"]\n[Black \"Tester\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0\n";
+
+fn pgn(out: &mut TcpStream, body: &str) -> std::io::Result<()> {
+    write!(
+        out,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/x-chess-pgn\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )?;
     answered(out)
@@ -892,7 +1042,10 @@ fn showcase_public(path: &str) -> Option<Showcase> {
             Some(_) => return None,
         }
     };
-    let sessions = server().sessions.lock().expect("the sessions");
+    let sessions = server()
+        .sessions
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     let username = sessions.values().find_map(|session| {
         let session = session.lock();
         (session.showcase && session.username.to_lowercase() == name)

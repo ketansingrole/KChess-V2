@@ -122,6 +122,30 @@ pub fn bundled_engine() -> Option<PathBuf> {
     Some(exe.parent()?.join(name))
 }
 
+/// The Fairy-Stockfish this app ships for variants: `KCHESS_VARIANT_ENGINE_PATH`, else beside
+/// the app's executable (`Contents/MacOS` in the macOS bundle), else (a build in this repository)
+/// the one `cargo xtask fairy-stockfish` builds in `target/fairy-stockfish/bin`.
+pub fn variant_engine() -> Option<PathBuf> {
+    if let Some(path) =
+        std::env::var_os("KCHESS_VARIANT_ENGINE_PATH").filter(|path| !path.is_empty())
+    {
+        return Some(PathBuf::from(path));
+    }
+    let name = if cfg!(windows) {
+        "fairy-stockfish.exe"
+    } else {
+        "fairy-stockfish"
+    };
+    let packaged = std::env::current_exe().ok()?.parent()?.join(name);
+    if packaged.exists() {
+        return Some(packaged);
+    }
+    let built = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/fairy-stockfish/bin")
+        .join(name);
+    built.exists().then_some(built)
+}
+
 #[cfg(test)]
 mod tests {
     /// macOS names a development build after its executable: it read "kchess-gpui" in the menu

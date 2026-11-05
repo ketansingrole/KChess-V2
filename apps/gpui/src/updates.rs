@@ -1631,7 +1631,17 @@ mod tests {
         assert!(package.exists(), "the installer's package stays");
         std::fs::write(&release, "").unwrap();
         assert!(installer.wait().unwrap().success());
-        assert!(InstallLock::take(&root, &install.path).is_ok());
+        // Free once the installer has gone. A process another test thread forks meanwhile holds
+        // a copy of the lock until its own exec closes it: under the load of three test runs at
+        // once that outlasted the installer, so the lock is given a moment.
+        let started = std::time::Instant::now();
+        while InstallLock::take(&root, &install.path).is_err() {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(5),
+                "the installation stays locked after its installer exited"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let _ = std::fs::remove_dir_all(&folder);
     }
 

@@ -105,21 +105,48 @@ fn now_square(uci: &str, range: std::ops::Range<usize>) -> Option<Square> {
     uci.get(range)?.parse().ok()
 }
 
-fn position_of(fen: &str) -> Option<VariantPosition> {
-    kchess_domain::rules::setup_start("standard", fen)
+/// A position of the tree, read by its variant's rules (a Lichess key).
+fn position_of(variant: &str, fen: &str) -> Option<VariantPosition> {
+    kchess_domain::rules::setup_start(variant, fen)
 }
 
-/// Checkmate, stalemate or bare kings end the analysis: there is nothing to search.
+/// Checkmate, stalemate, bare kings or a variant's own ending (an exploded king, a king on the
+/// hill…) end the analysis: there is nothing to search.
 fn game_over(position: Option<&VariantPosition>) -> Option<&'static str> {
     let position = position?;
-    if position.is_checkmate() {
+    let info = kchess_domain::position::info(position);
+    if info.variant_end {
+        Some(match position {
+            VariantPosition::Atomic(_) => "King exploded",
+            VariantPosition::KingOfTheHill(_) => "King reached the centre",
+            VariantPosition::ThreeCheck(_) => "Third check",
+            VariantPosition::RacingKings(_) => "King reached the last rank",
+            VariantPosition::Antichess(_) => "No pieces left",
+            VariantPosition::Horde(_) => "The horde is captured",
+            _ => "Game over",
+        })
+    } else if info.checkmate {
         Some("Checkmate")
-    } else if position.is_stalemate() {
+    } else if info.stalemate {
         Some("Stalemate")
-    } else if position.is_insufficient_material() {
+    } else if info.insufficient {
         Some("Insufficient material")
     } else {
         None
+    }
+}
+
+/// The result of a position that ends the game: "1-0", "0-1" or "½-½".
+fn result_of(position: &VariantPosition) -> &'static str {
+    let info = kchess_domain::position::info(position);
+    match info
+        .outcome
+        .as_ref()
+        .and_then(|outcome| outcome["winner"].as_str())
+    {
+        Some("white") => "1-0",
+        Some("black") => "0-1",
+        _ => "½-½",
     }
 }
 
@@ -163,6 +190,9 @@ pub struct AnalysisPage {
     lines_choice: Entity<SelectState<Vec<SharedString>>>,
     import: Entity<TextareaState>,
     import_error: Option<SharedString>,
+    /// A Lichess game being fetched for the import, by its turn: a later import replaces it.
+    importing: Option<u64>,
+    import_turn: u64,
     /// Shown while the page is open: the engine follows the board.
     attached: bool,
     engine_ready: bool,
@@ -271,7 +301,7 @@ impl AnalysisPage {
         let study_bar = cx.new(|cx| StudyBar::new(page, window, cx));
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &position_of(STANDARD_FEN).unwrap_or_default(),
+                &position_of("standard", STANDARD_FEN).unwrap_or_default(),
                 orientation,
                 None,
                 None,
@@ -423,6 +453,8 @@ impl AnalysisPage {
             lines_choice,
             import,
             import_error: None,
+            importing: None,
+            import_turn: 0,
             attached: false,
             engine_ready: false,
             engine_identity: None,
@@ -473,8 +505,51 @@ impl AnalysisPage {
         self.root.node_at(&self.path)
     }
 
+    /// The FEN of the position shown.
+    #[cfg(test)]
+    pub(crate) fn shown_fen(&self) -> String {
+        self.node().fen.clone()
+    }
+
+    /// The engine's status line.
+    #[cfg(test)]
+    pub(crate) fn engine_text(&self, cx: &App) -> String {
+        self.engine_status(cx)
+    }
+
+    /// The review shown, once it covers the whole main line and is finished, with its summary.
+    #[cfg(test)]
+    pub(crate) fn finished_review(&self, cx: &App) -> Option<(Value, Value)> {
+        let review = self.review(cx).filter(|review| {
+            review["complete"] == json!(true) && review["key"] == json!(self.mainline_key())
+        })?;
+        let (analysis, _) = self.game_analysis(cx)?;
+        Some((review, analysis))
+    }
+
     fn position(&self) -> Option<VariantPosition> {
-        position_of(&self.node().fen)
+        position_of(self.root.variant(), &self.node().fen)
+    }
+
+    /// Whether the game on the board is played by standard rules (standard chess or Chess960):
+    /// cloud evaluation and the editor are theirs.
+    fn standard_rules(&self) -> bool {
+        crate::game::standard_rules(self.root.variant())
+    }
+
+    /// The position shown, as a game to play from: in the game's variant, or (standard chess)
+    /// castling as Chess960 when its rooks need it.
+    fn play_setup(&self) -> Value {
+        let fen = self.node().fen.clone();
+        match self.fairy_variant() {
+            Some(variant) => json!({ "variant": variant, "fen": fen }),
+            None => crate::game::setup_from_fen(&fen),
+        }
+    }
+
+    /// The Lichess key of the game's variant when Fairy-Stockfish analyses and reviews it.
+    pub(super) fn fairy_variant(&self) -> Option<&'static str> {
+        (!self.standard_rules()).then(|| self.root.variant())
     }
 
     fn context(&self) -> String {
@@ -531,7 +606,7 @@ impl AnalysisPage {
         self.go_to(&end, cx);
     }
 
-    fn flip(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn flip(&mut self, cx: &mut Context<Self>) {
         self.orientation = !self.orientation;
         self.changed(cx);
     }
@@ -566,8 +641,11 @@ impl AnalysisPage {
         self.load(Some(fen), cx);
     }
 
-    /// Load a game (`loadPgn`), opened at its start.
+    /// Load a game (`loadPgn`), opened at its start; refused for a variant this board cannot play.
     fn load_pgn(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        if !crate::game::pgn_analysable(text) {
+            return false;
+        }
         let Some(tree) = TreeNode::from_pgn(text) else {
             return false;
         };
@@ -592,6 +670,11 @@ impl AnalysisPage {
     /// The whole tree as PGN (`analysis.pgn()`).
     pub fn pgn(&self) -> String {
         self.root.to_pgn()
+    }
+
+    /// The bar over the board: the study open, or Save as study.
+    pub(crate) fn study_bar(&self) -> Entity<StudyBar> {
+        self.study_bar.clone()
     }
 
     pub fn study_id(&self) -> &str {
@@ -849,7 +932,7 @@ impl AnalysisPage {
         if text.is_empty() {
             return;
         }
-        let setup = json!({ "variant": "standard", "fen": self.node().fen });
+        let setup = json!({ "variant": self.root.variant(), "fen": self.node().fen });
         let typed = self
             .position()
             .and_then(|position| view::typed_uci(&setup, &position, &text));
@@ -1027,17 +1110,19 @@ impl AnalysisPage {
         self.wanted = fen.clone();
         self.live = None;
         self.engine_busy = true;
-        let start = cx.global::<AppCore>().call(
-            "startAnalysis",
-            vec![json!({
-                "fen": fen,
-                "clientId": request,
-                "rootFen": self.root.fen,
-                "moves": moves_of(&self.path),
-                "lines": lines.clamp(1, 5),
-                "infinite": infinite,
-            })],
-        );
+        let mut asked = json!({
+            "fen": fen,
+            "clientId": request,
+            "rootFen": self.root.fen,
+            "moves": moves_of(&self.path),
+            "lines": lines.clamp(1, 5),
+            "infinite": infinite,
+        });
+        // Fairy-Stockfish analyses the other variants.
+        if let Some(variant) = self.fairy_variant() {
+            asked["variant"] = json!(variant);
+        }
+        let start = cx.global::<AppCore>().call("startAnalysis", vec![asked]);
         cx.spawn(async move |this, cx| {
             let started = start.await;
             let _ = this.update(cx, |this, cx| {
@@ -1156,6 +1241,7 @@ impl AnalysisPage {
             .cloud_eval;
         if !self.attached
             || !cloud_on
+            || !self.standard_rules()
             || !Self::assistance_allowed(cx)
             || game_over(self.position().as_ref()).is_some()
         {
@@ -1247,7 +1333,7 @@ impl AnalysisPage {
     fn redraw(&mut self, cx: &mut Context<Self>) {
         self.sync_voice(cx);
         let node = self.node();
-        let position = position_of(&node.fen).unwrap_or_default();
+        let position = position_of(self.root.variant(), &node.fen).unwrap_or_default();
         let last_move = now_square(&node.uci, 0..2).zip(now_square(&node.uci, 2..4));
         let mut state = BoardState::of(
             &position,
@@ -1370,7 +1456,7 @@ impl AnalysisPage {
             }
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
         };
-        let setup = json!({ "variant": "standard", "fen": fen });
+        let setup = json!({ "variant": self.root.variant(), "fen": fen });
         let best = (Self::assistance_allowed(cx) && !self.hides_engine())
             .then(|| self.lines(cx).first().cloned())
             .flatten()
@@ -1458,7 +1544,14 @@ impl AnalysisPage {
             self.path.split(' ').count()
         };
         GameExport {
-            variant: "standard".into(),
+            variant: if self.standard_rules() {
+                crate::game::setup_from_fen(&self.root.fen)["variant"]
+                    .as_str()
+                    .unwrap_or("standard")
+                    .into()
+            } else {
+                self.root.variant().into()
+            },
             fen: self.root.fen.clone(),
             ply: Some(depth.min(mainline.len())),
             moves: mainline,
@@ -1475,6 +1568,18 @@ impl AnalysisPage {
             pgn: Some(self.root.to_pgn()),
             shown: Some(moves_of(&self.path)),
         }
+    }
+
+    /// Copy the position shown.
+    pub(crate) fn copy_fen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let fen = self.node().fen.clone();
+        self.copy(fen, "FEN", window, cx);
+    }
+
+    /// Copy the whole game, its variations and comments with it.
+    pub(crate) fn copy_pgn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pgn = self.root.to_pgn();
+        self.copy(pgn, "PGN", window, cx);
     }
 
     fn copy(&self, text: String, what: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -1507,16 +1612,17 @@ impl AnalysisPage {
         });
     }
 
-    fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.import_error = None;
         self.import
             .update(cx, |text, cx| text.set_value("", window, cx));
         let page = cx.entity().downgrade();
         let import = self.import.clone();
         window.open_dialog(cx, move |dialog, _, cx| {
-            let error = page
-                .upgrade()
-                .and_then(|page| page.read(cx).import_error.clone());
+            let (error, importing) = page.upgrade().map_or((None, false), |page| {
+                let page = page.read(cx);
+                (page.import_error.clone(), page.importing.is_some())
+            });
             let (run, text) = (page.clone(), import.clone());
             dialog.title("Import a position or game").w(px(512.)).child(
                 v_flex()
@@ -1525,13 +1631,22 @@ impl AnalysisPage {
                         div()
                             .text_size(px(14.))
                             .text_color(cx.global::<Palette>().text_muted)
-                            .child("Paste a FEN, or a PGN with or without variations"),
+                            .child("Paste a FEN, a PGN, or a Lichess game or study link"),
                     )
-                    .child(Textarea::new(&import).aria_label("FEN or PGN"))
+                    .child(Textarea::new(&import).aria_label("FEN, PGN or Lichess link"))
                     .children(error.map(|error| {
+                        // Spoken when it appears: a link's fetch fails after Import was pressed.
                         div()
+                            .id("import-error")
+                            .test_support()
+                            .aria_label(error.clone())
+                            .relative()
                             .text_size(px(14.))
                             .text_color(cx.global::<Palette>().error)
+                            .child(crate::widgets::live_region(
+                                "import-error-spoken",
+                                error.clone(),
+                            ))
                             .child(error)
                     }))
                     .child(
@@ -1548,6 +1663,7 @@ impl AnalysisPage {
                                 Button::new("import-run")
                                     .primary()
                                     .label("Import")
+                                    .loading(importing)
                                     .disabled(text.read(cx).value().trim().is_empty())
                                     .on_click(move |_, window, cx| {
                                         let _ =
@@ -1559,12 +1675,20 @@ impl AnalysisPage {
         });
     }
 
-    /// `runImport`: a FEN starts a new analysis there; otherwise the text is read as one PGN game.
+    /// `runImport`: a FEN starts a new analysis there; a Lichess game link fetches that game;
+    /// otherwise the text is read as one PGN game.
     fn run_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.import.read(cx).value().trim().to_string();
         if text.is_empty() {
             return;
         }
+        if let Some(link) = crate::game::game_link(&text) {
+            return self.import_game(link, window, cx);
+        }
+        if let Some((study, chapter)) = crate::game::study_link(&text) {
+            return self.import_study(study, chapter, window, cx);
+        }
+        self.importing = None;
         if let Some(fen) = crate::game::editor_setup(&text)
             .and_then(|setup| crate::game::rules("setupFen", &[setup]).ok())
             .and_then(|fen| fen.as_str().map(str::to_string))
@@ -1575,6 +1699,10 @@ impl AnalysisPage {
                 return;
             }
             self.load(Some(&fen), cx);
+        } else if !crate::game::pgn_analysable(&text) {
+            self.import_error = Some(UNPLAYABLE_VARIANT.into());
+            window.refresh();
+            return;
         } else if !self.load_pgn(&text, cx) {
             self.import_error =
                 Some("Use a valid FEN or one PGN game with legal moves, under 2 MB".into());
@@ -1588,7 +1716,105 @@ impl AnalysisPage {
         self.import_error = None;
         window.close_dialog(cx);
     }
+
+    /// Fetch a Lichess game by its link and open it facing as linked, at the move linked.
+    fn import_game(
+        &mut self,
+        link: crate::game::GameLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let export = cx
+            .global::<AppCore>()
+            .call("exportGame", vec![json!(link.id)]);
+        let pgn = async move {
+            match export.await {
+                Ok(Value::String(pgn)) => Ok(Some(pgn)),
+                Ok(_) => Ok(None),
+                Err(cause) => Err(format!("Could not fetch that game: {}", cause.message)),
+            }
+        };
+        let origin = json!({ "gameId": link.id });
+        // A link without a move opens at the start, as Lichess does.
+        let ply = link.ply.unwrap_or(0);
+        self.import_fetched(pgn, ply, Some(link.orientation), Some(origin), window, cx);
+    }
+
+    /// Fetch a public Lichess study's chapter by its link and open it as the study shows it.
+    fn import_study(
+        &mut self,
+        study: String,
+        chapter: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fetch = cx
+            .global::<AppCore>()
+            .call("lichessStudyChapter", vec![json!(study), json!(chapter)]);
+        let pgn = async move {
+            match fetch.await {
+                Ok(found) => Ok(found["pgn"].as_str().map(str::to_string)),
+                Err(cause) => Err(format!("Could not fetch that study: {}", cause.message)),
+            }
+        };
+        self.import_fetched(pgn, 0, None, None, window, cx);
+    }
+
+    /// Open a game being fetched for the import (`None` when Lichess sent nothing readable).
+    fn import_fetched(
+        &mut self,
+        pgn: impl std::future::Future<Output = Result<Option<String>, String>> + 'static,
+        ply: usize,
+        orientation: Option<Color>,
+        origin: Option<Value>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.import_turn += 1;
+        let turn = self.import_turn;
+        self.importing = Some(turn);
+        self.import_error = None;
+        window.refresh();
+        cx.spawn_in(window, async move |this, cx| {
+            let pgn = pgn.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.importing != Some(turn) {
+                    return;
+                }
+                this.importing = None;
+                let unplayable = matches!(&pgn, Ok(Some(pgn)) if !crate::game::pgn_analysable(pgn));
+                let opened = match pgn {
+                    Ok(Some(pgn)) => {
+                        let orientation =
+                            orientation.or_else(|| crate::game::pgn_orientation(&pgn));
+                        this.open_game(&pgn, ply, orientation, origin, false, cx)
+                    }
+                    Ok(None) => false,
+                    Err(message) => {
+                        this.import_error = Some(message.into());
+                        window.refresh();
+                        return;
+                    }
+                };
+                if opened {
+                    this.import_error = None;
+                    window.close_dialog(cx);
+                } else {
+                    this.import_error = Some(if unplayable {
+                        UNPLAYABLE_VARIANT.into()
+                    } else {
+                        "That game cannot be opened on the analysis board".into()
+                    });
+                    window.refresh();
+                }
+            });
+        })
+        .detach();
+    }
 }
+
+/// Why a game in another variant is not imported.
+const UNPLAYABLE_VARIANT: &str = "KChess doesn't play this variant";
 
 /// The engine lines chosen (1–5, three by default).
 fn prefs_lines(cx: &App) -> usize {
@@ -2060,20 +2286,7 @@ impl AnalysisPage {
         let lines = self.lines(cx);
         let position = self.position();
         let over = game_over(position.as_ref());
-        let result = over.map(|_| {
-            if position
-                .as_ref()
-                .is_some_and(|position| position.is_checkmate())
-            {
-                if position.as_ref().map(|position| position.turn()) == Some(Color::White) {
-                    "0-1"
-                } else {
-                    "1-0"
-                }
-            } else {
-                "½-½"
-            }
-        });
+        let result = over.and(position.as_ref()).map(result_of);
         let score = if !engine_on && !using_cloud {
             "—".to_string()
         } else {
@@ -2090,7 +2303,7 @@ impl AnalysisPage {
             .trigger(
                 Button::new("engine-settings-button")
                     .ghost()
-                    .xsmall()
+                    .small()
                     .icon(icon("settings-2"))
                     .tooltip("Engine settings")
                     .accessibility_label("Engine settings"),
@@ -2251,7 +2464,7 @@ impl AnalysisPage {
                 Some(best) => {
                     let pv: Vec<String> =
                         serde_json::from_value(best["pv"].clone()).unwrap_or_default();
-                    let first = pv_san(&self.node().fen, &pv, 1)
+                    let first = pv_san(&self.node().fen, &pv, 1, self.root.variant())
                         .first()
                         .map(|played| played.san.clone())
                         .unwrap_or_default();
@@ -2329,6 +2542,7 @@ impl AnalysisPage {
                     let page = cx.entity().downgrade();
                     crate::engine_view::engine_lines(
                         &self.node().fen,
+                        self.root.variant(),
                         &lines,
                         if using_cloud { 0 } else { prefs_lines(cx) },
                         over.map(|_| "Nothing to analyse"),
@@ -2439,6 +2653,8 @@ impl AnalysisPage {
         let on_variation = !self.path.is_empty() && !self.root.on_mainline(&self.path);
         // A finished game cannot be played on from its last position.
         let over = game_over(self.position().as_ref()).is_some();
+        // The board editor is standard chess's.
+        let standard = self.standard_rules();
         let page = cx.entity().downgrade();
         let step = |id: &'static str, glyph: &'static str, label: &'static str, disabled: bool| {
             Button::new(id)
@@ -2530,22 +2746,27 @@ impl AnalysisPage {
                                 run(fen, orientation, window, cx);
                             }
                         };
-                        menu.item(PopupMenuItem::new("Copy FEN").icon(icon("copy")).on_click(
-                            action(|page, window, cx| {
-                                let fen = page.node().fen.clone();
-                                page.copy(fen, "FEN", window, cx)
-                            }),
-                        ))
+                        // The same, with the position's setup: its variant and FEN.
+                        let play = |run: fn(Value, &mut Window, &mut App)| {
+                            let page = page.clone();
+                            move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                let Some(page) = page.upgrade() else { return };
+                                let setup = page.read(cx).play_setup();
+                                run(setup, window, cx);
+                            }
+                        };
+                        menu.item(
+                            PopupMenuItem::new("Copy FEN")
+                                .icon(icon("copy"))
+                                .on_click(action(|page, window, cx| page.copy_fen(window, cx))),
+                        )
                         .item(
                             PopupMenuItem::new("Copy PGN")
                                 .icon(icon("file-text"))
-                                .on_click(action(|page, window, cx| {
-                                    let pgn = page.root.to_pgn();
-                                    page.copy(pgn, "PGN", window, cx)
-                                })),
+                                .on_click(action(|page, window, cx| page.copy_pgn(window, cx))),
                         )
                         .item(
-                            PopupMenuItem::new("Import FEN or PGN…")
+                            PopupMenuItem::new("Import a position or game…")
                                 .icon(icon("import"))
                                 .on_click(action(|page, window, cx| page.open_import(window, cx))),
                         )
@@ -2563,28 +2784,26 @@ impl AnalysisPage {
                                 .on_click(action(|page, window, cx| page.ask_remove(window, cx))),
                         )
                         .separator()
-                        .item(
-                            PopupMenuItem::new("Edit this position")
-                                .icon(icon("pencil-ruler"))
-                                .on_click(leave(|fen, orientation, window, cx| {
-                                    crate::shell::edit_position(fen, orientation, window, cx)
-                                })),
-                        )
+                        .when(standard, |menu| {
+                            menu.item(
+                                PopupMenuItem::new("Edit this position")
+                                    .icon(icon("pencil-ruler"))
+                                    .on_click(leave(|fen, orientation, window, cx| {
+                                        crate::shell::edit_position(fen, orientation, window, cx)
+                                    })),
+                            )
+                        })
                         .item(
                             PopupMenuItem::new("Play Stockfish from here")
                                 .icon(icon("cpu"))
                                 .disabled(over)
-                                .on_click(leave(|fen, _, window, cx| {
-                                    crate::shell::play_computer_from(fen, window, cx)
-                                })),
+                                .on_click(play(crate::shell::play_computer_from)),
                         )
                         .item(
                             PopupMenuItem::new("Play a friend from here")
                                 .icon(icon("users-round"))
                                 .disabled(over)
-                                .on_click(leave(|fen, _, window, cx| {
-                                    crate::shell::play_local_from(fen, window, cx)
-                                })),
+                                .on_click(play(crate::shell::play_local_from)),
                         )
                         .separator()
                         .item(
@@ -2695,8 +2914,10 @@ impl AnalysisPage {
                         .into_any_element(),
                     None => {
                         let (fen, opened) = (self.node().fen.clone(), !self.explorer_open);
-                        self.explorer
-                            .update(cx, |explorer, cx| explorer.show(&fen, None, opened, cx));
+                        let variant = self.root.variant().to_string();
+                        self.explorer.update(cx, |explorer, cx| {
+                            explorer.show(Some(&variant), &fen, None, opened, cx)
+                        });
                         div()
                             .id("analysis-explorer")
                             .flex_1()
@@ -2762,20 +2983,10 @@ impl Render for AnalysisPage {
         let show_bar = allowed && (Self::engine_on(cx) || using_cloud) && !self.hides_engine();
         let lines = self.lines(cx);
         let position = self.position();
-        let result = game_over(position.as_ref()).map(|_| {
-            if position
-                .as_ref()
-                .is_some_and(|position| position.is_checkmate())
-            {
-                if position.as_ref().map(|position| position.turn()) == Some(Color::White) {
-                    "0-1"
-                } else {
-                    "1-0"
-                }
-            } else {
-                "½-½"
-            }
-        });
+        let result = position
+            .as_ref()
+            .filter(|position| game_over(Some(position)).is_some())
+            .map(result_of);
         // The column always keeps the eval bar's width beside the board.
         // The column holds the board and the move box under it (`.analysis-surface`).
         let board_size = self.board_size(window);
@@ -2798,10 +3009,17 @@ impl Render for AnalysisPage {
             },
             cx,
         );
+        // A Crazyhouse game's pockets: the far side's above the board, the near side's below.
+        let pocket = |color: Color| {
+            crate::board::pocket(&self.board, color, cx)
+                .map(|pocket| div().pl(EVAL_BAR + EVAL_GAP).child(pocket))
+        };
+        let (top_pocket, bottom_pocket) = (pocket(!self.orientation), pocket(self.orientation));
         let board_column = v_flex()
             .w(board_size + EVAL_BAR + EVAL_GAP)
             .flex_none()
             .gap(widgets::STACK_GAP)
+            .children(top_pocket)
             .child(
                 h_flex()
                     .items_stretch()
@@ -2827,6 +3045,7 @@ impl Render for AnalysisPage {
                             .child(crate::board::cached(&self.board)),
                     ),
             )
+            .children(bottom_pocket)
             .child(
                 v_flex()
                     .pl(EVAL_BAR + EVAL_GAP)

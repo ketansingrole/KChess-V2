@@ -166,15 +166,15 @@ impl Core {
         }
         let pkce = new_pkce()?;
         let (state, nonce) = (new_state()?, new_state()?);
-        let listener = match TcpListener::bind(("127.0.0.1", FIRST_PORT)).await {
+        let listener = match TcpListener::bind(("127.0.0.1", self.ai.callback_port())).await {
             Ok(listener) => listener,
             Err(_) if connection.client_id.is_some() => TcpListener::bind("127.0.0.1:0")
                 .await
                 .map_err(|_| CoreError::new("Could not open the sign-in callback."))?,
             Err(_) => {
-                return Err(CoreError::new(
-                    "Port 1455 is busy. Close what uses it and retry.",
-                ));
+                return Err(CoreError::new(format!(
+                    "Port {FIRST_PORT} is busy. Close what uses it and retry."
+                )));
             }
         };
         let port = listener

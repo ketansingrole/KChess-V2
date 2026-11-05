@@ -98,6 +98,21 @@ fn group(label: Option<&'static str>, commands: Vec<Command>) -> Option<Group> {
     })
 }
 
+/// Each command once, in the first group that has it: a page's own toggle (Zen mode) is also a
+/// setting, and searching listed it twice.
+fn once_each(groups: Vec<Group>) -> Vec<Group> {
+    let mut seen = std::collections::HashSet::new();
+    groups
+        .into_iter()
+        .filter_map(|mut group| {
+            group
+                .items
+                .retain(|(command, _)| seen.insert(command.id.clone()));
+            (!group.items.is_empty()).then_some(group)
+        })
+        .collect()
+}
+
 fn searched(
     label: &'static str,
     text: &str,
@@ -138,7 +153,8 @@ fn current(page: Page, cx: &App) -> Option<String> {
     (crate::shell::current_page(cx) == Some(page)).then(|| "Current".into())
 }
 
-/// The sidebar's pages, Settings, and the Puzzles and Practice tabs (`places`).
+/// The sidebar's pages, Settings, and the Puzzles, Watch, Game history and Practice tabs
+/// (`places`).
 fn places(cx: &App) -> Vec<Command> {
     let pages: [(Page, &str, Icon, &'static str); 16] = [
         (Page::Dashboard, "Home", icon("house"), "start overview"),
@@ -270,6 +286,40 @@ fn places(cx: &App) -> Vec<Command> {
                 crate::shell::open(Page::Puzzles, window, cx);
             })
             .detail("Puzzles")
+            .keywords(keywords),
+        );
+    }
+    list.push(
+        Command::new(
+            "history:lichess",
+            "Lichess games",
+            icon("history"),
+            crate::shell::open_history_lichess,
+        )
+        .detail("Game history")
+        .keywords("synced online played"),
+    );
+    let watch: [(&str, &str, Icon, &'static str); 3] = [
+        ("tv", "Lichess TV", icon("tv"), "channels top rated"),
+        (
+            "friends",
+            "Following games",
+            icon("users"),
+            "friends players live",
+        ),
+        (
+            "broadcasts",
+            "Broadcasts",
+            icon("radio"),
+            "over the board events rounds",
+        ),
+    ];
+    for (tab, label, glyph, keywords) in watch {
+        list.push(
+            Command::new(format!("watch:{tab}"), label, glyph, move |window, cx| {
+                crate::shell::watch_tab(tab, window, cx)
+            })
+            .detail("Watch")
             .keywords(keywords),
         );
     }
@@ -495,9 +545,574 @@ fn page_commands(cx: &App) -> Vec<Command> {
     )
     .kbds("Z");
     match crate::shell::current_page(cx) {
-        Some(Page::Computer | Page::Local | Page::Online) => vec![zen],
+        Some(Page::Computer) => std::iter::once(zen).chain(computer_commands(cx)).collect(),
+        Some(Page::Local) => std::iter::once(zen).chain(local_commands(cx)).collect(),
+        Some(Page::Online) => std::iter::once(zen).chain(live_commands(cx)).collect(),
+        Some(Page::Analysis) => analysis_commands()
+            .into_iter()
+            .chain(study_commands(cx))
+            .collect(),
+        Some(Page::Editor) => editor_commands(cx),
+        Some(Page::Puzzles) => puzzle_commands(cx),
+        Some(Page::Watch) => watch_commands(cx),
+        Some(Page::Studies) => studies_commands(),
+        Some(Page::Openings) => openings_commands(cx),
+        Some(Page::Tournaments) => tournament_commands(cx),
+        Some(Page::Practice) => practice_commands(cx),
+        Some(Page::History) => history_commands(cx),
+        Some(Page::Players) => profile_commands(cx),
+        Some(Page::Friends) => following_commands(cx),
+        Some(Page::Dashboard) => home_commands(cx),
         _ => Vec::new(),
     }
+}
+
+/// Every command Quick Pick can offer now, by id and label: recent entries are found by id.
+#[cfg(test)]
+pub(crate) fn command_ids(cx: &App) -> Vec<(String, String)> {
+    [
+        places(cx),
+        page_commands(cx),
+        play_commands(cx),
+        app_commands(cx),
+        settings_commands(cx),
+        player_commands(cx),
+    ]
+    .concat()
+    .into_iter()
+    .map(|command| (command.id.to_string(), command.label.to_string()))
+    .collect()
+}
+
+/// How Quick Pick names a page's action: its id, label, icon and search keywords.
+type Described = (&'static str, &'static str, &'static str, &'static str);
+
+/// A page's actions as commands, each run by `act` on that page if it is still open.
+fn page_actions<V: 'static, A: Copy + 'static>(
+    page: Page,
+    prefix: &'static str,
+    actions: Vec<A>,
+    describe: fn(A) -> Described,
+    act: fn(&mut V, A, &mut Window, &mut Context<V>),
+) -> Vec<Command> {
+    actions
+        .into_iter()
+        .map(|action| {
+            let (id, label, glyph, keywords) = describe(action);
+            Command::new(
+                format!("{prefix}:{id}"),
+                label,
+                icon(glyph),
+                move |window, cx| {
+                    if let Some(view) = crate::shell::view_of::<V>(page, cx) {
+                        view.update(cx, |view, cx| act(view, action, window, cx));
+                    }
+                },
+            )
+            .keywords(keywords)
+        })
+        .collect()
+}
+
+/// The computer game's actions its buttons allow now.
+fn computer_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::computer::{Action, ComputerPage};
+    let Some(page) = crate::shell::view_of::<ComputerPage>(Page::Computer, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Computer,
+        "computer",
+        page.read(cx).actions(),
+        |action| match action {
+            Action::TakeBack => ("takeback", "Take back", "undo-2", "undo"),
+            Action::Resign => ("resign", "Resign", "flag", "give up"),
+            Action::NewGame => ("new-game", "New game", "rotate-ccw", "restart"),
+            Action::SwitchSides => ("switch-sides", "Switch sides", "repeat", "colour color"),
+            Action::Review => ("review", "Review game", "microscope", "analyse analysis"),
+        },
+        ComputerPage::act,
+    )
+}
+
+/// The live Lichess game's actions, as its buttons offer them.
+fn live_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::online::game::{LiveAction, live_actions, run_live_action};
+    live_actions(crate::online::handle(cx).read(cx))
+        .into_iter()
+        .map(|action| {
+            let (id, label, glyph, keywords) = match action {
+                LiveAction::Berserk => ("berserk", "Berserk", "flame", "arena half time"),
+                LiveAction::Takeback => ("takeback", "Takeback", "undo-2", "undo take back"),
+                LiveAction::OfferDraw => ("draw", "Offer draw", "handshake", "agree"),
+                LiveAction::Resign => ("resign", "Resign", "flag", "give up"),
+                LiveAction::Abort => ("abort", "Abort", "ban", "cancel"),
+                LiveAction::Rematch => ("rematch", "Rematch", "repeat", "again"),
+                LiveAction::Analyse => ("analyse", "Analyse", "microscope", "analysis review"),
+                LiveAction::NewGame => ("new-game", "New game", "plus", "another seek"),
+                LiveAction::CancelSeek => ("cancel-seek", "Cancel seek", "x", "stop waiting"),
+                LiveAction::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            };
+            Command::new(
+                format!("online:{id}"),
+                label,
+                icon(glyph),
+                move |window, cx| run_live_action(action, window, cx),
+            )
+            .keywords(keywords)
+        })
+        .collect()
+}
+
+/// The shown puzzle's actions, as its panel's buttons offer them.
+fn puzzle_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::puzzles::{Action, PuzzlesPage};
+    let Some(page) = crate::shell::view_of::<PuzzlesPage>(Page::Puzzles, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Puzzles,
+        "puzzle",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::Hint => ("hint", "Hint", "lightbulb", "clue help"),
+            Action::Solution => ("solution", "Solution", "eye", "show answer give up"),
+            Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            Action::Next => ("next", "Next puzzle", "arrow-right", "another skip"),
+            Action::Rush(action) => {
+                use crate::pages::puzzles::RushAction;
+                match action {
+                    RushAction::Start => {
+                        ("rush-start", "Start run", "play", "storm streak rush begin")
+                    }
+                    RushAction::Skip => ("rush-skip", "Skip puzzle", "skip-forward", "pass"),
+                    RushAction::End => ("rush-end", "End run", "flag", "stop finish quit"),
+                    RushAction::Again => {
+                        ("rush-again", "Play again", "rotate-ccw", "restart retry")
+                    }
+                    RushAction::Back => ("rush-back", "Back to modes", "arrow-left", "menu"),
+                }
+            }
+        },
+        |page: &mut PuzzlesPage, action, _, cx| page.act(action, cx),
+    )
+}
+
+/// The watched game's actions, as its panel's buttons offer them.
+fn watch_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::watch::{WatchPage, live::Action};
+    let Some(page) = crate::shell::view_of::<WatchPage>(Page::Watch, cx) else {
+        return Vec::new();
+    };
+    let channels = page
+        .read(cx)
+        .other_channels(cx)
+        .into_iter()
+        .map(|(key, name)| {
+            Command::new(
+                format!("watch:channel:{key}"),
+                format!("Watch {name}"),
+                icon("tv"),
+                move |window, cx| crate::shell::watch_channel(key.clone(), window, cx),
+            )
+            .keywords("tv channel")
+        });
+    page_actions(
+        Page::Watch,
+        "watch",
+        page.read(cx).actions(),
+        |action| match action {
+            Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            Action::AllBoards => ("all-boards", "All boards", "layout-grid", "round broadcast"),
+            Action::Analyse => ("analyse", "Analyse", "microscope", "analysis"),
+            Action::Stop => ("stop", "Stop watching", "square", "close end"),
+        },
+        WatchPage::act,
+    )
+    .into_iter()
+    .chain(channels)
+    .collect()
+}
+
+/// An open line's actions on the Openings page.
+fn openings_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::openings::{Action, OpeningsPage};
+    let Some(page) = crate::shell::view_of::<OpeningsPage>(Page::Openings, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Openings,
+        "openings",
+        page.read(cx).actions(),
+        |action| match action {
+            Action::Train => (
+                "train",
+                "Train this line",
+                "graduation-cap",
+                "repertoire drill",
+            ),
+            Action::Analyse => ("analyse", "Analyse", "microscope", "analysis"),
+            Action::Puzzles => ("puzzles", "Train with puzzles", "puzzle", "tactics"),
+            Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            Action::AllOpenings => ("all", "All openings", "arrow-left", "back browse"),
+        },
+        OpeningsPage::act,
+    )
+}
+
+/// The Tournaments page's actions: the schedule's, or the open event's.
+fn tournament_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::tournaments::{Action, TournamentsPage};
+    let Some(page) = crate::shell::view_of::<TournamentsPage>(Page::Tournaments, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Tournaments,
+        "tournaments",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::Refresh => ("refresh", "Refresh", "refresh-cw", "reload schedule"),
+            Action::Create => ("create", "Create arena", "plus", "new tournament host"),
+            Action::Back => ("back", "All tournaments", "arrow-left", "schedule list"),
+            Action::Join => ("join", "Join", "log-in", "enter tournament"),
+            Action::Game => ("game", "Go to your game", "swords", "play pairing"),
+            Action::Pause => ("pause", "Pause", "pause", "leave arena"),
+            Action::Withdraw => ("withdraw", "Withdraw", "log-out", "leave tournament"),
+        },
+        TournamentsPage::run,
+    )
+}
+
+/// The actions of the Practice trainer on screen: an endgame lesson's or drill's, the
+/// repertoire's or the mistakes'.
+fn practice_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::practice::{
+        Action, PracticePage, endgame_drills::DrillAction, endgame_lesson::LessonAction,
+        mistakes::MistakeAction, repertoire::RepertoireAction,
+    };
+    let Some(page) = crate::shell::view_of::<PracticePage>(Page::Practice, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Practice,
+        "practice",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::Drill(DrillAction::Hint) => ("hint", "Hint", "lightbulb", "help best move"),
+            Action::Drill(DrillAction::TakeBack) => ("takeback", "Take back", "undo-2", "undo"),
+            Action::Drill(DrillAction::Flip) => {
+                ("flip", "Flip board", "arrow-up-down", "turn rotate")
+            }
+            Action::Drill(DrillAction::Restart) => ("restart", "Restart", "rotate-ccw", "again"),
+            Action::Lesson(LessonAction::Back) => {
+                ("courses", "All courses", "chevron-left", "back lessons")
+            }
+            Action::Lesson(LessonAction::Hint) => ("lesson-hint", "Hint", "lightbulb", "help"),
+            Action::Lesson(LessonAction::TakeBack) => {
+                ("lesson-takeback", "Take back", "undo-2", "undo")
+            }
+            Action::Lesson(LessonAction::Flip) => {
+                ("lesson-flip", "Flip board", "arrow-up-down", "turn rotate")
+            }
+            Action::Lesson(LessonAction::Retry) => ("retry", "Retry", "rotate-ccw", "again"),
+            Action::Lesson(LessonAction::Previous) => {
+                ("previous", "Previous step", "chevron-left", "back")
+            }
+            Action::Lesson(LessonAction::Next) => ("next-step", "Next", "chevron-right", "step"),
+            Action::Lesson(LessonAction::NextChapter) => {
+                ("next-chapter", "Next chapter", "chevron-right", "lesson")
+            }
+            Action::Repertoire(RepertoireAction::ShowMove) => {
+                ("show-move", "Show move", "lightbulb", "hint answer")
+            }
+            Action::Repertoire(RepertoireAction::Restart) => (
+                "restart-line",
+                "Restart line",
+                "rotate-ccw",
+                "new line again",
+            ),
+            Action::Repertoire(RepertoireAction::Forget) => {
+                ("forget", "Forget mistakes", "eraser", "clear misses")
+            }
+            Action::Repertoire(RepertoireAction::Save) => {
+                ("save", "Save as study", "save", "keep opening")
+            }
+            Action::Mistakes(MistakeAction::Hint) => {
+                ("mistake-hint", "Hint: piece to move", "lightbulb", "help")
+            }
+            Action::Mistakes(MistakeAction::Solution) => {
+                ("solution", "Show solution", "eye", "answer")
+            }
+            Action::Mistakes(MistakeAction::Next) => {
+                ("next", "Next due position", "arrow-right", "mistake")
+            }
+            Action::Mistakes(MistakeAction::Due) => {
+                ("due", "Practice due positions", "target", "mistakes start")
+            }
+            Action::Mistakes(MistakeAction::Early) => {
+                ("early", "Review early", "fast-forward", "mistakes ahead")
+            }
+        },
+        PracticePage::act,
+    )
+}
+
+/// Game history's actions: the open game's, or the synced games'.
+fn history_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::history::{Action, HistoryPage};
+    let Some(page) = crate::shell::view_of::<HistoryPage>(Page::History, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::History,
+        "history",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::AllGames => ("all", "All games", "arrow-left", "back list"),
+            Action::Export => ("export", "Export PGN", "download", "save file"),
+            Action::Analyse => ("analyse", "Open analysis", "chart-line", "analysis board"),
+            Action::Review => ("review", "Review", "chart-line", "analysis accuracy"),
+            Action::Sync => ("sync", "Sync games", "refresh-cw", "lichess download"),
+            Action::ClearFilters => ("clear", "Clear filters", "x", "reset all"),
+        },
+        HistoryPage::act,
+    )
+}
+
+/// The open player's actions on the Players page.
+fn profile_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::players::{Action, PlayersPage};
+    let Some(page) = crate::shell::view_of::<PlayersPage>(Page::Players, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Players,
+        "players",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::Follow => ("follow", "Follow player", "user-plus", "friend add"),
+            Action::Challenge => ("challenge", "Challenge", "swords", "play game invite"),
+            Action::Message => ("message", "Message", "message-circle", "send write"),
+            Action::Watch => ("watch", "Watch", "tv", "spectate game"),
+        },
+        PlayersPage::act,
+    )
+}
+
+/// The Following page's header actions.
+fn following_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::friends::{Action, FriendsPage};
+    let Some(page) = crate::shell::view_of::<FriendsPage>(Page::Friends, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Friends,
+        "following",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::Follow => ("follow", "Follow player", "plus", "friend add"),
+            Action::Import => (
+                "import",
+                "Import from Lichess",
+                "download",
+                "followed players",
+            ),
+            Action::Sync => ("sync", "Sync all", "refresh-cw", "games download"),
+        },
+        FriendsPage::act,
+    )
+}
+
+/// Home's Review: the last game.
+fn home_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::home::{Action, HomePage};
+    let Some(page) = crate::shell::view_of::<HomePage>(Page::Dashboard, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Dashboard,
+        "home",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::Review => ("review", "Review last game", "microscope", "analyse recent"),
+        },
+        HomePage::act,
+    )
+}
+
+/// The Studies page's header actions.
+fn studies_commands() -> Vec<Command> {
+    use crate::pages::studies::StudiesPage;
+    vec![
+        Command::new(
+            "studies:new",
+            "New study",
+            icon("plus"),
+            StudiesPage::create,
+        )
+        .keywords("create chapter"),
+        Command::new(
+            "studies:import",
+            "Import PGN",
+            icon("import"),
+            StudiesPage::open_import,
+        )
+        .keywords("paste games study"),
+    ]
+}
+
+/// The board editor's actions, as its buttons offer them.
+fn editor_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::editor::{Action, EditorPage};
+    let Some(page) = crate::shell::view_of::<EditorPage>(Page::Editor, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Editor,
+        "editor",
+        page.read(cx).actions(),
+        |action| match action {
+            Action::StartPosition => ("start", "Starting position", "rotate-ccw", "reset"),
+            Action::ClearBoard => ("clear", "Clear board", "eraser", "empty"),
+            Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            Action::CopyFen => ("copy-fen", "Copy FEN", "copy", "position clipboard"),
+            Action::Analyse => ("analyse", "Analyse this position", "microscope", "analysis"),
+            Action::PlayStockfish => ("stockfish", "Play Stockfish", "cpu", "computer"),
+            Action::PlayFriend => (
+                "friend",
+                "Play a friend here",
+                "users-round",
+                "over the board local",
+            ),
+        },
+        EditorPage::act,
+    )
+}
+
+/// The game over the board's actions, as its panel's buttons offer them.
+fn local_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::local::{Action, LocalPage};
+    let Some(page) = crate::shell::view_of::<LocalPage>(Page::Local, cx) else {
+        return Vec::new();
+    };
+    page_actions(
+        Page::Local,
+        "local",
+        page.read(cx).actions(cx),
+        |action| match action {
+            Action::TakeBack => ("takeback", "Take back", "undo-2", "undo"),
+            Action::Pause => ("pause", "Pause", "pause", "clock stop"),
+            Action::Resume => ("resume", "Resume", "play", "clock continue"),
+            Action::Draw => ("draw", "Draw", "handshake", "agree"),
+            Action::Resign => ("resign", "Resign", "flag", "give up"),
+            Action::NewGame => ("new-game", "New game", "plus", "restart"),
+            Action::Flip => (
+                "flip",
+                "Flip board",
+                "refresh-cw",
+                "turn rotate orientation",
+            ),
+            Action::CopyPgn => ("copy-pgn", "Copy PGN", "copy", "game moves clipboard"),
+            Action::Analyse => ("analyse", "Analyse", "microscope", "analysis review"),
+        },
+        LocalPage::act,
+    )
+}
+
+/// The study bar's menus over the analysis board: the study's and its chapters' actions.
+fn study_commands(cx: &App) -> Vec<Command> {
+    use crate::pages::analysis::AnalysisPage;
+    use crate::pages::study_bar::StudyAction;
+    let Some(page) = crate::shell::view_of::<AnalysisPage>(Page::Analysis, cx) else {
+        return Vec::new();
+    };
+    let bar = page.read(cx).study_bar();
+    let cloud = bar.read(cx).cloud(cx);
+    bar.read(cx)
+        .actions(cx)
+        .into_iter()
+        .map(|action| {
+            let (id, label, glyph, keywords) = match action {
+                StudyAction::SaveAsStudy => ("save", "Save as study", "book-plus", "keep store"),
+                StudyAction::Details => (
+                    "details",
+                    "Game details",
+                    "file-pen-line",
+                    "headers pgn tags",
+                ),
+                StudyAction::SaveCopy => ("copy", "Save a copy", "copy", "duplicate study"),
+                StudyAction::Close => ("close", "Close study", "book-x", "unsaved analysis"),
+                StudyAction::Remove if cloud => {
+                    ("remove", "Remove offline copy", "trash-2", "lichess study")
+                }
+                StudyAction::Remove => ("remove", "Delete study", "trash-2", "remove"),
+                StudyAction::AddChapter => ("add-chapter", "Add chapter", "plus", "new"),
+                StudyAction::RenameChapter => {
+                    ("rename-chapter", "Rename chapter", "pencil", "name")
+                }
+                StudyAction::DuplicateChapter => {
+                    ("duplicate-chapter", "Duplicate chapter", "copy", "copy")
+                }
+                StudyAction::RemoveChapter => {
+                    ("delete-chapter", "Delete chapter", "trash-2", "remove")
+                }
+            };
+            let bar = bar.downgrade();
+            Command::new(
+                format!("study:{id}"),
+                label,
+                icon(glyph),
+                move |window, cx| {
+                    let _ = bar.update(cx, |bar, cx| bar.act(action, window, cx));
+                },
+            )
+            .keywords(keywords)
+        })
+        .collect()
+}
+
+/// The analysis board's own actions, as its menu and keys offer them.
+fn analysis_commands() -> Vec<Command> {
+    use crate::pages::analysis::AnalysisPage;
+    type Act = fn(&mut AnalysisPage, &mut Window, &mut Context<AnalysisPage>);
+    let on_board = |act: Act| {
+        move |window: &mut Window, cx: &mut App| {
+            if let Some(board) = crate::shell::analysis_board(window, cx) {
+                board.update(cx, |board, cx| act(board, window, cx));
+            }
+        }
+    };
+    vec![
+        Command::new(
+            "analysis:flip",
+            "Flip board",
+            icon("refresh-cw"),
+            on_board(|board, _, cx| board.flip(cx)),
+        )
+        .keywords("turn rotate orientation")
+        .kbds("F"),
+        Command::new(
+            "analysis:copy-fen",
+            "Copy FEN",
+            icon("copy"),
+            on_board(|board, window, cx| board.copy_fen(window, cx)),
+        )
+        .keywords("position clipboard"),
+        Command::new(
+            "analysis:copy-pgn",
+            "Copy PGN",
+            icon("file-text"),
+            on_board(|board, window, cx| board.copy_pgn(window, cx)),
+        )
+        .keywords("game moves clipboard"),
+        Command::new(
+            "analysis:import",
+            "Import a position or game…",
+            icon("import"),
+            on_board(|board, window, cx| board.open_import(window, cx)),
+        )
+        .keywords("paste pgn fen link"),
+    ]
 }
 
 /// Stockfish at each level and side, online games, a new analysis board (`playCommands`).
@@ -602,7 +1217,7 @@ fn play_commands(cx: &App) -> Vec<Command> {
 fn app_commands(cx: &App) -> Vec<Command> {
     let connected = !crate::accounts::handle(cx).read(cx).connected().is_empty();
     let sidebar = crate::shell::sidebar_open(cx);
-    vec![
+    let mut list = vec![
         if connected {
             Command::new(
                 "app:sync",
@@ -637,7 +1252,21 @@ fn app_commands(cx: &App) -> Vec<Command> {
             crate::shell::toggle_sidebar,
         )
         .keywords("toggle navigation"),
-    ]
+    ];
+    // Studies' Lichess tab is there only with an account.
+    if connected {
+        list.push(
+            Command::new(
+                "studies:lichess",
+                "Lichess studies",
+                icon("cloud"),
+                crate::shell::open_studies_lichess,
+            )
+            .detail("Studies")
+            .keywords("account cloud chapters"),
+        );
+    }
+    list
 }
 
 /// Followed players' profiles and challenges (`playerCommands`).
@@ -753,15 +1382,17 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
         .into_iter()
         .flatten()
         .collect(),
-        Mode::Commands => [
-            searched("This page", text, page_commands(cx), 8),
-            searched("Play", text, play_commands(cx), 12),
-            searched("App", text, app_commands(cx), 8),
-            searched("Settings", text, settings_commands(cx), 8),
-        ]
-        .into_iter()
-        .flatten()
-        .collect(),
+        Mode::Commands => once_each(
+            [
+                searched("This page", text, page_commands(cx), 8),
+                searched("Play", text, play_commands(cx), 12),
+                searched("App", text, app_commands(cx), 8),
+                searched("Settings", text, settings_commands(cx), 8),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        ),
         Mode::Settings if text.is_empty() => {
             let all = settings_commands(cx);
             let (sections, toggles): (Vec<Command>, Vec<Command>) =
@@ -851,6 +1482,7 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
             .collect()
         }
         Mode::All => {
+            let pasted = group(Some("Pasted"), pasted(text));
             let mut results: Vec<Group> = [
                 searched("Go to", text, places(cx), 8),
                 searched("This page", text, page_commands(cx), 8),
@@ -863,9 +1495,143 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
             .flatten()
             .collect();
             results.sort_by(|a, b| b.score.total_cmp(&a.score));
-            results
+            // A pasted position or game link is what was meant: its actions come first.
+            once_each(pasted.into_iter().chain(results).collect())
         }
     }
+}
+
+/// What a pasted FEN or Lichess game link can open.
+fn pasted(text: &str) -> Vec<Command> {
+    if let Some((study, chapter)) = crate::game::study_link(text) {
+        return vec![Command::new(
+            format!("pasted:study:{study}:{chapter}"),
+            "Open this study chapter on the analysis board",
+            icon("microscope"),
+            move |window, cx| crate::pages::players::open_study(&study, &chapter, window, cx),
+        )];
+    }
+    if crate::game::broadcast_link(text).is_some() {
+        let text = text.to_string();
+        return vec![Command::new(
+            "pasted:broadcast",
+            "Watch this broadcast",
+            icon("radio"),
+            move |window, cx| {
+                if let Some(link) = crate::game::broadcast_link(&text) {
+                    crate::shell::open_broadcast(link, window, cx);
+                }
+            },
+        )];
+    }
+    if let Some(channel) = kchess_domain::links::tv_link(text) {
+        return vec![Command::new(
+            format!("pasted:tv:{channel}"),
+            "Watch this TV channel",
+            icon("tv"),
+            move |window, cx| crate::shell::watch_channel(channel.clone(), window, cx),
+        )];
+    }
+    if let Some((system, id)) = kchess_domain::links::tournament_link(text) {
+        return vec![Command::new(
+            format!("pasted:tournament:{id}"),
+            "Open this tournament",
+            icon("trophy"),
+            move |window, cx| crate::shell::open_event(system, &id, window, cx),
+        )];
+    }
+    if let Some(name) = crate::game::profile_link(text) {
+        return vec![Command::new(
+            format!("pasted:player:{name}"),
+            format!("Open {name}’s profile"),
+            icon("user-search"),
+            move |window, cx| crate::shell::open_player(&name, window, cx),
+        )];
+    }
+    if let Some(id) = crate::pages::puzzles::puzzle_link(text) {
+        let shown = id.clone();
+        return vec![
+            Command::new(
+                format!("pasted:puzzle:{id}"),
+                "Solve this puzzle",
+                icon("puzzle"),
+                move |window, cx| crate::shell::open_puzzle(id.clone(), window, cx),
+            )
+            .detail(shown),
+        ];
+    }
+    if let Some(link) = crate::game::game_link(text) {
+        let id = link.id.clone();
+        return vec![
+            Command::new(
+                format!("pasted:game:{id}"),
+                "Open this game on the analysis board",
+                icon("microscope"),
+                move |window, cx| crate::pages::players::open_linked(&link, window, cx),
+            )
+            .detail(id),
+        ];
+    }
+    if let Some(pgn) = movetext(text) {
+        return vec![Command::new(
+            "pasted:moves",
+            "Analyse these moves",
+            icon("microscope"),
+            move |window, cx| {
+                let pgn = pgn.clone();
+                crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+                    analysis.open_game(&pgn, usize::MAX, None, None, false, cx)
+                });
+            },
+        )];
+    }
+    let fen = text
+        .contains('/')
+        .then(|| crate::game::editor_setup(text))
+        .flatten();
+    let Some(fen) = fen
+        .and_then(|setup| crate::game::rules("setupFen", &[setup]).ok())
+        .and_then(|fen| fen.as_str().map(str::to_string))
+        .filter(|fen| crate::game::position_problem(fen).is_none())
+    else {
+        return Vec::new();
+    };
+    let orientation = if fen.split(' ').nth(1) == Some("b") {
+        shakmaty::Color::Black
+    } else {
+        shakmaty::Color::White
+    };
+    let (analysed, edited) = (fen.clone(), fen);
+    vec![
+        Command::new(
+            "pasted:analyse",
+            "Analyse this position",
+            icon("microscope"),
+            move |window, cx| {
+                let fen = analysed.clone();
+                crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+                    analysis.load(Some(&fen), cx);
+                    true
+                });
+            },
+        ),
+        Command::new(
+            "pasted:edit",
+            "Edit this position",
+            icon("pencil-ruler"),
+            move |window, cx| crate::shell::edit_position(edited.clone(), orientation, window, cx),
+        ),
+    ]
+}
+
+/// Numbered moves (`1. e4 e5 2. Nf3`, with or without PGN headers) the analysis board can play.
+fn movetext(text: &str) -> Option<String> {
+    let numbered = text.split_whitespace().any(|word| word.starts_with("1."));
+    (numbered && crate::game::pgn_analysable(text))
+        .then(|| crate::game::tree::TreeNode::from_pgn(text))
+        .flatten()
+        .filter(|tree| !tree.children.is_empty())
+        .map(|_| text.to_string())
 }
 
 pub struct CommandPalette {

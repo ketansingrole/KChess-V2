@@ -16,14 +16,14 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use kchess_domain::replay::{ReplayedPosition, replay_positions};
+use kchess_domain::replay::{ReplayedPosition, replay_positions_in};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::status::{engine_identity, engine_status};
+use super::status::{engine_identity, engine_status, fairy_variant, variant_engine_status};
 use super::uci::{UciController, lock, search_cancelled, signal_aborted};
 use super::{EngineContext, after, clear_timer, domain, now_ms, parse_info, replace_timer};
 use crate::error::{CoreError, Result};
@@ -166,6 +166,9 @@ pub struct ReviewRequest {
     pub game_id: Option<String>,
     #[serde(default)]
     pub account: Option<String>,
+    /// The Lichess key of a variant game's variant, which Fairy-Stockfish reviews.
+    #[serde(default)]
+    pub variant: Option<String>,
 }
 
 /// A synced game that may be reviewed automatically (`GameToReview`).
@@ -270,6 +273,9 @@ pub trait ReviewHost: Send + Sync + 'static {
 /// One review job: the moves of a game and where its work stands.
 struct Job {
     key: String,
+    /// The Lichess key of a variant game Fairy-Stockfish reviews; empty for standard chess and
+    /// Chess960.
+    variant: String,
     fen: String,
     moves: Vec<String>,
     positions: Vec<ReplayedPosition>,
@@ -372,13 +378,19 @@ impl Reviews {
     }
 
     /// `getReview(fen, moves)`: the stored review of these moves, if any.
-    pub async fn get_review(&self, fen: &str, moves: &[String]) -> Result<Option<StoredReview>> {
-        let positions = replay_positions(fen, moves);
+    pub async fn get_review(
+        &self,
+        fen: &str,
+        moves: &[String],
+        variant: Option<&str>,
+    ) -> Result<Option<StoredReview>> {
+        let variant = fairy_key(variant);
+        let positions = replay_positions_in(variant, fen, moves);
         if positions.is_empty() {
             return Ok(None);
         }
         let upto = (positions.len() - 1).min(moves.len());
-        let key = review_key(&positions[0].fen, &moves[..upto])?;
+        let key = review_key(&positions[0].fen, &moves[..upto], variant)?;
         self.shared.storage.read_review(&key).await
     }
 
@@ -554,9 +566,21 @@ impl Reviews {
     }
 }
 
-/// `reviewKey(fen, moves)` for a list of moves.
-fn review_key(fen: &str, moves: &[String]) -> Result<String> {
-    let key = domain("reviewKey", vec![json!(fen), json!(moves)])?;
+/// The variant a review plays by: a variant Fairy-Stockfish reviews, or empty for standard chess
+/// and Chess960.
+fn fairy_key(variant: Option<&str>) -> &str {
+    variant
+        .filter(|variant| fairy_variant(variant).is_some())
+        .unwrap_or("")
+}
+
+/// `reviewKey(fen, moves, variant)` for a list of moves.
+fn review_key(fen: &str, moves: &[String], variant: &str) -> Result<String> {
+    let mut args = vec![json!(fen), json!(moves)];
+    if !variant.is_empty() {
+        args.push(json!(variant));
+    }
+    let key = domain("reviewKey", args)?;
     key.as_str()
         .map(str::to_string)
         .ok_or_else(|| CoreError::new("reviewKey returned no key"))
@@ -565,7 +589,8 @@ fn review_key(fen: &str, moves: &[String]) -> Result<String> {
 /// `jobFor(request, background)`: the job for a request, or None when its moves reach no position.
 /// `requested` orders requests (0 for automatic reviews).
 fn job_for(request: &ReviewRequest, background: bool, requested: u64) -> Result<Option<Job>> {
-    let positions = replay_positions(&request.fen, &request.moves);
+    let variant = fairy_key(request.variant.as_deref()).to_string();
+    let positions = replay_positions_in(&variant, &request.fen, &request.moves);
     if positions.len() < 2 {
         return Ok(None);
     }
@@ -582,9 +607,10 @@ fn job_for(request: &ReviewRequest, background: bool, requested: u64) -> Result<
         }
         prefixes.push(format!(" moves {acc}"));
     }
-    let key = review_key(&fen, &moves)?;
+    let key = review_key(&fen, &moves, &variant)?;
     Ok(Some(Job {
         key,
+        variant,
         fen,
         moves,
         positions,
@@ -605,6 +631,10 @@ fn account_in(job: &Job, names: &HashSet<String>) -> bool {
 }
 
 fn empty_review(job: &Job) -> StoredReview {
+    let mut extra = Map::new();
+    if !job.variant.is_empty() {
+        extra.insert("variant".into(), json!(job.variant));
+    }
     StoredReview {
         key: job.key.clone(),
         fen: job.fen.clone(),
@@ -616,7 +646,7 @@ fn empty_review(job: &Job) -> StoredReview {
         complete: false,
         updated_at: now_ms(),
         game_id: job.game_id.clone(),
-        extra: Map::new(),
+        extra,
     }
 }
 
@@ -631,9 +661,9 @@ fn has_score(score: Option<&ReviewEval>) -> bool {
         .unwrap_or(false)
 }
 
-/// `endEval(end)`: the score of a finished game's last position.
-fn end_eval(end: &str) -> Result<ReviewEval> {
-    let score = domain("endEval", vec![json!(end)])?;
+/// `endEval(end, turn)`: the score of a finished game's last position.
+fn end_eval(end: &str, turn: &str) -> Result<ReviewEval> {
+    let score = domain("endEval", vec![json!(end), json!(turn)])?;
     serde_json::from_value(score).map_err(|cause| CoreError::new(cause.to_string()))
 }
 
@@ -805,6 +835,7 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
                 moves,
                 game_id: Some(game.id.clone()),
                 account: Some(game.account.clone()),
+                variant: None,
             };
             match job_for(&request, true, 0)? {
                 Some(job) => {
@@ -1112,7 +1143,12 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
     if job.cancelled.load(Ordering::SeqCst) || host_of(s).is_none() {
         return Ok(());
     }
-    let target = open_engine(s, &settings.engine_path).await?;
+    if !job.variant.is_empty() {
+        review
+            .extra
+            .insert("variant".into(), json!(job.variant.clone()));
+    }
+    let target = open_engine(s, &settings.engine_path, &job.variant).await?;
     if review.engine.as_deref() != Some(target.key.as_str()) {
         review.engine = Some(target.key.clone());
         review.complete = false;
@@ -1130,7 +1166,7 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
         for index in 0..total {
             let known = review.evals[index].clone();
             if let Some(end) = job.positions[index].end {
-                review.evals[index] = Some(end_eval(end)?);
+                review.evals[index] = Some(end_eval(end, job.positions[index].turn)?);
             } else if !has_score(known.as_ref())
                 || known.as_ref().and_then(|known| known.depth).unwrap_or(0.0) < f64::from(depth)
             {
@@ -1179,11 +1215,20 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
 }
 
 /// The review engine for `configured`, started or reused (`openEngine`).
-async fn open_engine(s: &Arc<Shared>, configured: &str) -> Result<ReviewEngine> {
+/// A variant game (`variant`, a Lichess key) gets the bundled Fairy-Stockfish.
+async fn open_engine(s: &Arc<Shared>, configured: &str, variant: &str) -> Result<ReviewEngine> {
     clear_timer(&mut lock(&s.state).idle);
-    let status = engine_status(&*s.ctx.host, &s.ctx.locations, configured).await;
+    let status = if variant.is_empty() {
+        engine_status(&*s.ctx.host, &s.ctx.locations, configured).await
+    } else {
+        variant_engine_status(&*s.ctx.host, &s.ctx.locations).await
+    };
     if !status.ready {
-        return Err(CoreError::new(NO_ENGINE));
+        return Err(CoreError::new(if variant.is_empty() {
+            NO_ENGINE
+        } else {
+            "Fairy-Stockfish, which reviews this variant, is missing."
+        }));
     }
     let key = engine_identity(&status).await?;
     let engine = {
@@ -1274,9 +1319,14 @@ async fn search_once(
                 s.ctx.scheduler.search_threads()
             };
             let threads_text = threads.to_string();
+            // A variant game tells Fairy-Stockfish its variant instead.
+            let rules = match fairy_variant(&job.variant) {
+                Some(name) => ("UCI_Variant", name),
+                None => ("UCI_Chess960", "true"),
+            };
             target
                 .uci
-                .ensure_options(&[("Threads", threads_text.as_str()), ("UCI_Chess960", "true")])
+                .ensure_options(&[("Threads", threads_text.as_str()), rules])
                 .await?;
             if token.is_cancelled() {
                 return Err(signal_aborted());

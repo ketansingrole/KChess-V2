@@ -200,6 +200,8 @@ impl Spectator {
                     "ended",
                     Some("The feed ended. Retry to reconnect."),
                 ),
+                // Stopped, or replaced by another watch: nothing failed.
+                Err(_) if token.is_cancelled() => {}
                 Err(cause) => {
                     let label = match &target {
                         WatchTarget::Channel(channel) => channel.clone(),
@@ -249,6 +251,7 @@ impl Spectator {
                         });
                     }
                 }
+                Err(_) if token.is_cancelled() => {}
                 Err(cause) => {
                     inner.host_log(
                         Level::Warn,

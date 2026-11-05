@@ -149,7 +149,8 @@ pub fn analyse_stored(review: &Value) -> Result<Value> {
 /// `reviewInput`: the fields the review analysis reads (scores without engine lines).
 fn review_input(review: &Value) -> Result<Value> {
     let mut out = Map::new();
-    for key in ["key", "source", "complete", "fen", "moves"] {
+    // `variant`: a variant game's moves replay by its own rules.
+    for key in ["key", "source", "complete", "fen", "moves", "variant"] {
         if let Some(value) = review.get(key) {
             out.insert(key.into(), value.clone());
         }

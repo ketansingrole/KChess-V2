@@ -314,7 +314,8 @@ fn add_mistakes(
 ) -> Result<Value> {
     let mut items = read_mistakes(db)?;
     let review = match super::reviews::read_review(host, db, review_key)? {
-        Some(review) if truthy(review.get("complete")) => review,
+        // Drills are played by standard rules: a variant game's mistakes are not drilled.
+        Some(review) if truthy(review.get("complete")) && review.get("variant").is_none() => review,
         _ => return Ok(json!({ "added": 0, "items": items })),
     };
     let fen = review

@@ -50,6 +50,9 @@ pub struct Config {
     /// The Stockfish executable shipped beside the app. `None` when there is none; the bundled
     /// engine is then not ready.
     pub bundled_engine_path: Option<PathBuf>,
+    /// The Fairy-Stockfish executable shipped beside the app, which analyses variants other than
+    /// Chess960. `None` when there is none; variant analysis is then unavailable.
+    pub variant_engine_path: Option<PathBuf>,
     /// Where the downloaded Stockfish is kept (`CorePlatform.managedEngineDir`); the default is
     /// `engines/stockfish/current` in the data directory.
     pub managed_engine_dir: Option<PathBuf>,
@@ -70,6 +73,7 @@ impl Config {
             data_dir,
             legacy_database_path: None,
             bundled_engine_path: None,
+            variant_engine_path: None,
             managed_engine_dir: None,
             voice_helper_path: None,
             system_credentials: false,

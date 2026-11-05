@@ -121,6 +121,9 @@ fn build() -> Result<PathBuf> {
     if let Err(cause) = crate::voice::stage_if_outdated("debug") {
         say(&format!("Voice input stays off: {cause}"));
     }
+    if let Err(cause) = crate::fairy::build() {
+        say(&format!("Variant analysis stays off: {cause}"));
+    }
     executable(&String::from_utf8_lossy(&out.stdout))
         .ok_or_else(|| "cargo build reported no KChess executable.".into())
 }

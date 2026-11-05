@@ -242,6 +242,22 @@ pub fn legal_moves(pos: &VariantPosition) -> Vec<LegalMove> {
     out
 }
 
+/// Every legal move's SAN: the board's moves as [`legal_moves`] lists them, then the
+/// Crazyhouse drops (`P@e3`), which have no square to come from.
+pub fn legal_sans(pos: &VariantPosition) -> Vec<String> {
+    let mut sans: Vec<String> = legal_moves(pos).into_iter().map(|m| m.san).collect();
+    for (role, squares) in drop_dests(pos) {
+        for to in squares {
+            let mut after = pos.clone();
+            sans.push(rules::san_and_play(
+                &mut after,
+                shakmaty::Move::Put { role, to },
+            ));
+        }
+    }
+    sans
+}
+
 /// A move played: `makeUci` of the move (castling king-to-rook), its SAN and the result.
 #[derive(Debug, Serialize)]
 pub struct Played {

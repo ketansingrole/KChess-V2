@@ -62,8 +62,20 @@ fn result_of(game: &Value) -> &'static str {
     }
 }
 
-/// The PGN's setup and main line, for the replay.
+/// The PGN's setup and main line, for the replay, in the variant its header names.
 fn line_of(pgn: &str) -> Option<(Value, Vec<String>)> {
+    let variant = crate::game::pgn_variant_key(pgn)?;
+    if !crate::game::standard_rules(variant) {
+        // Replayed under the variant's own rules.
+        let line = crate::game::rules("pgnMainline", &[json!(pgn)]).ok()?;
+        let start = line["start"].as_str()?;
+        let moves = line["moves"]
+            .as_array()?
+            .iter()
+            .filter_map(|entry| entry["uci"].as_str().map(str::to_string))
+            .collect();
+        return Some((json!({ "variant": variant, "fen": start }), moves));
+    }
     let tree = TreeNode::from_pgn(pgn)?;
     let mut moves = Vec::new();
     let mut node = &tree;
@@ -71,7 +83,7 @@ fn line_of(pgn: &str) -> Option<(Value, Vec<String>)> {
         moves.push(next.uci.clone());
         node = next;
     }
-    Some((json!({ "variant": "standard", "fen": tree.fen }), moves))
+    Some((json!({ "variant": variant, "fen": tree.fen }), moves))
 }
 
 pub fn new_tab(
@@ -247,7 +259,19 @@ impl HistoryPage {
         self.load_lichess(cx);
     }
 
-    fn clear_lichess_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Sync the chosen account's games, or every account's.
+    pub(super) fn sync_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let account = (self.lichess.account != "all").then(|| self.lichess.account.clone());
+        crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.sync(account, window, cx));
+    }
+
+    /// Whether a filter narrows the synced games.
+    pub(super) fn lichess_filtered(&self) -> bool {
+        let tab = &self.lichess;
+        tab.account != "all" || tab.result != "all" || tab.rated != "all"
+    }
+
+    pub(super) fn clear_lichess_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let tab = &mut self.lichess;
         tab.account = "all".into();
         tab.result = "all";
@@ -372,6 +396,7 @@ impl HistoryPage {
             parts.join(" · ")
         });
         let reviewed = game.clone();
+        let pgn = game["pgn"].as_str().unwrap_or_default();
         let replay_handle = replay.clone();
         v_flex()
             .size_full()
@@ -414,6 +439,7 @@ impl HistoryPage {
                         Button::new("lichess-review")
                             .outline()
                             .small()
+                            .disabled(!crate::game::pgn_analysable(pgn))
                             .icon(icon("chart-line"))
                             .label("Review")
                             .on_click(move |_, window, cx| {
@@ -448,11 +474,7 @@ impl HistoryPage {
             .label("Sync games")
             .loading(busy)
             .disabled(busy)
-            .on_click(cx.listener(|this, _, window, cx| {
-                let account = (this.lichess.account != "all").then(|| this.lichess.account.clone());
-                crate::accounts::handle(cx)
-                    .update(cx, |accounts, cx| accounts.sync(account, window, cx));
-            }));
+            .on_click(cx.listener(|this, _, window, cx| this.sync_lichess(window, cx)));
         if count == 0 {
             let body = if has_accounts {
                 widgets::empty_state(
@@ -498,7 +520,7 @@ impl HistoryPage {
                 .into_any_element();
         }
         let tab = &self.lichess;
-        let filtered = tab.account != "all" || tab.result != "all" || tab.rated != "all";
+        let filtered = self.lichess_filtered();
         let chosen = RESULTS
             .iter()
             .position(|(key, _)| *key == tab.result)
@@ -894,7 +916,7 @@ pub fn game_row(
 
 /// Review a synced game on the analysis board, opened at the move being looked at
 /// (`openGameReview`).
-fn open_review(game: Value, ply: usize, window: &mut Window, cx: &mut App) {
+pub(super) fn open_review(game: Value, ply: usize, window: &mut Window, cx: &mut App) {
     let Some(pgn) = game["pgn"].as_str().map(str::to_string) else {
         return;
     };
@@ -939,5 +961,14 @@ mod tests {
         let (setup, moves) = line_of("1. e4 e5 2. Nf3 (2. Bc4) Nc6 *").unwrap();
         assert_eq!(moves, vec!["e2e4", "e7e5", "g1f3", "b8c6"]);
         assert_eq!(setup["variant"], json!("standard"));
+        // A variant's moves follow its own rules: in Atomic, Qxf7 explodes the king.
+        let (setup, moves) =
+            line_of("[Variant \"Atomic\"]\n\n1. e4 e5 2. Qh5 Nc6 3. Qxf7# *").unwrap();
+        assert_eq!(setup["variant"], json!("atomic"));
+        assert_eq!(moves.len(), 5);
+        let (setup, moves) =
+            line_of("[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 3. P@e3 *").unwrap();
+        assert_eq!(setup["variant"], json!("crazyhouse"));
+        assert_eq!(moves.last().map(String::as_str), Some("P@e3"));
     }
 }

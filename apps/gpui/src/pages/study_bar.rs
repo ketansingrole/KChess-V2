@@ -28,6 +28,21 @@ pub const STUDY_BAR: Pixels = px(48.);
 const CLOCK: Duration = Duration::from_secs(30);
 const RESULTS: [&str; 4] = ["*", "1-0", "0-1", "1/2-1/2"];
 
+/// The study bar's menus and button, as Quick Pick offers them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum StudyAction {
+    SaveAsStudy,
+    Details,
+    SaveCopy,
+    Close,
+    /// Delete the study, or a Lichess study's offline copy.
+    Remove,
+    AddChapter,
+    RenameChapter,
+    DuplicateChapter,
+    RemoveChapter,
+}
+
 pub struct StudyBar {
     analysis: WeakEntity<AnalysisPage>,
     name: Entity<InputState>,
@@ -40,6 +55,55 @@ pub struct StudyBar {
 }
 
 impl StudyBar {
+    /// What the bar's menus allow now: with a study open, its own and its chapters' actions.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<StudyAction> {
+        let Some((study, _)) = self.open(cx) else {
+            return vec![StudyAction::SaveAsStudy, StudyAction::Details];
+        };
+        let count = study["chapters"].as_array().map_or(0, Vec::len);
+        let mut actions = vec![
+            StudyAction::Details,
+            StudyAction::SaveCopy,
+            StudyAction::Close,
+            StudyAction::Remove,
+        ];
+        if count < MAX_CHAPTERS {
+            actions.push(StudyAction::AddChapter);
+        }
+        actions.push(StudyAction::RenameChapter);
+        if count < MAX_CHAPTERS {
+            actions.push(StudyAction::DuplicateChapter);
+        }
+        if count > 1 {
+            actions.push(StudyAction::RemoveChapter);
+        }
+        actions
+    }
+
+    /// Whether the open study is a Lichess study's offline copy, which _Remove_ forgets.
+    pub(crate) fn cloud(&self, cx: &App) -> bool {
+        self.open(cx)
+            .is_some_and(|(study, _)| !study["cloud"].is_null())
+    }
+
+    /// Run an action as its menu item does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: StudyAction, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        match action {
+            StudyAction::SaveAsStudy => self.save_new(window, cx),
+            StudyAction::Details => self.open_details(window, cx),
+            StudyAction::SaveCopy => self.save_copy(window, cx),
+            StudyAction::Close => self.close(cx),
+            StudyAction::Remove => self.remove(window, cx),
+            StudyAction::AddChapter => self.add_chapter(window, cx),
+            StudyAction::RenameChapter => self.rename_chapter(window, cx),
+            StudyAction::DuplicateChapter => self.duplicate_chapter(window, cx),
+            StudyAction::RemoveChapter => self.ask_remove_chapter(window, cx),
+        }
+    }
+
     pub fn new(
         analysis: WeakEntity<AnalysisPage>,
         window: &mut Window,
@@ -584,12 +648,10 @@ impl Render for StudyBar {
         let bar = cx.entity().downgrade();
         let menu_bar = bar.clone();
         let has_study = open.is_some();
-        let cloud = open
-            .as_ref()
-            .is_some_and(|(study, _)| !study["cloud"].is_null());
+        let cloud = self.cloud(cx);
         let menu = Button::new("study-actions")
             .ghost()
-            .xsmall()
+            .small()
             .icon(icon("ellipsis"))
             .accessibility_label("Study actions")
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
@@ -739,7 +801,7 @@ impl Render for StudyBar {
                         Button::new("save-as-study")
                             .flex_none()
                             .ghost()
-                            .xsmall()
+                            .small()
                             .icon(icon("book-plus"))
                             .label("Save as study")
                             .on_click(cx.listener(|this, _, window, cx| this.save_new(window, cx))),
@@ -766,7 +828,7 @@ impl Render for StudyBar {
                     .child(
                         Button::new("all-studies")
                             .ghost()
-                            .xsmall()
+                            .small()
                             .icon(icon("library-big"))
                             .label("All studies")
                             .on_click(|_, window, cx| {

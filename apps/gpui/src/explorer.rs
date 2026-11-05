@@ -42,6 +42,11 @@ const KINDS: [(&str, &str); 4] = [
     ("player", "Player"),
     ("tablebase", "Tablebase"),
 ];
+/// The databases that hold games of other variants: Masters games and the tablebase are standard
+/// chess only.
+fn holds_variants(kind: &str) -> bool {
+    matches!(kind, "opening" | "player")
+}
 /// `EXPLORER_SPEEDS` and their labels.
 const SPEEDS: [(&str, &str); 6] = [
     ("ultraBullet", "UltraBullet"),
@@ -104,14 +109,6 @@ impl Prefs {
         }
         options
     }
-}
-
-/// Lichess usernames: what the player database accepts.
-fn is_username(name: &str) -> bool {
-    (2..=30).contains(&name.len())
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 fn toggled<T: PartialEq + Clone>(list: &[T], value: &T) -> Vec<T> {
@@ -230,6 +227,8 @@ pub struct PositionExplorer {
     accounts: Vec<String>,
     player: Entity<InputState>,
     since: Entity<InputState>,
+    /// The variant whose games are looked up; None is standard chess.
+    variant: Option<String>,
     lookup_task: Option<Task<()>>,
     follow_task: Option<Task<()>>,
     previews: HashMap<String, Entity<ChessBoard>>,
@@ -293,6 +292,7 @@ impl PositionExplorer {
             accounts: Vec::new(),
             player,
             since,
+            variant: None,
             lookup_task: None,
             follow_task: None,
             previews: HashMap::new(),
@@ -305,6 +305,34 @@ impl PositionExplorer {
 
     fn prefs(cx: &App) -> Prefs {
         crate::prefs::get(cx, PREFS, Prefs::default())
+    }
+
+    /// Whether only the databases that hold variants can answer: Chess960 is standard chess
+    /// from another start, so the masters' games and the tablebase still do.
+    fn variants_only(&self) -> bool {
+        self.variant
+            .as_deref()
+            .is_some_and(|variant| variant != "chess960")
+    }
+
+    /// The settings as this position uses them: a variant is looked up in Lichess's database
+    /// when the chosen one holds standard chess only, and the variant goes with the filters.
+    fn shown_prefs(&self, cx: &App) -> Prefs {
+        let mut prefs = Self::prefs(cx);
+        if self.variants_only() && !holds_variants(&prefs.kind) {
+            prefs.kind = "opening".into();
+        }
+        prefs
+    }
+
+    fn options(&self, prefs: &Prefs) -> Value {
+        let mut options = prefs.options();
+        if let Some(variant) = &self.variant
+            && holds_variants(&prefs.kind)
+        {
+            options["variant"] = json!(variant);
+        }
+        options
     }
 
     fn save_prefs(cx: &mut App, prefs: Prefs) {
@@ -353,21 +381,23 @@ impl PositionExplorer {
         self.grid || Self::prefs(cx).follow
     }
 
-    fn needs_player(cx: &App) -> bool {
-        let prefs = Self::prefs(cx);
-        prefs.kind == "player" && !is_username(prefs.player.trim())
+    fn needs_player(&self, cx: &App) -> bool {
+        let prefs = self.shown_prefs(cx);
+        prefs.kind == "player" && !crate::game::is_username(prefs.player.trim())
     }
 
     /// Show a position (`opened`: the explorer just came into view). Following moves looks up
     /// another position once the board settles, and the one shown when the explorer opens.
     pub fn show(
         &mut self,
+        variant: Option<&str>,
         fen: &str,
         moves: Option<Vec<String>>,
         opened: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.fen == fen && self.moves == moves {
+        let variant = variant.filter(|variant| *variant != "standard");
+        if self.fen == fen && self.moves == moves && self.variant.as_deref() == variant {
             if opened
                 && self.following(cx)
                 && self.result.is_none()
@@ -380,6 +410,7 @@ impl PositionExplorer {
         }
         self.fen = fen.to_string();
         self.moves = moves;
+        self.variant = variant.map(str::to_string);
         self.epoch += 1;
         self.result = None;
         self.error.clear();
@@ -415,13 +446,13 @@ impl PositionExplorer {
         cx: &mut Context<Self>,
     ) {
         if let Some(kind) = kind
-            && kind != Self::prefs(cx).kind
+            && kind != self.shown_prefs(cx).kind
         {
             self.update_prefs(cx, |prefs| prefs.kind = kind.to_string());
             self.result = None;
             self.error.clear();
         }
-        if Self::needs_player(cx) {
+        if self.needs_player(cx) {
             self.result = None;
             self.error.clear();
             if asked && let Some(window) = window {
@@ -432,10 +463,10 @@ impl PositionExplorer {
         }
         self.epoch += 1;
         let request = self.epoch;
-        let prefs = Self::prefs(cx);
+        let prefs = self.shown_prefs(cx);
         let call = cx.global::<AppCore>().call(
             "positionLookup",
-            vec![json!(prefs.kind), json!(self.fen), prefs.options()],
+            vec![json!(prefs.kind), json!(self.fen), self.options(&prefs)],
         );
         self.busy = true;
         self.error.clear();
@@ -518,8 +549,8 @@ impl PositionExplorer {
         self.previews
             .entry(key)
             .or_insert_with(|| {
-                let position =
-                    kchess_domain::rules::setup_start("standard", fen).unwrap_or_default();
+                let variant = self.variant.as_deref().unwrap_or("standard");
+                let position = kchess_domain::rules::setup_start(variant, fen).unwrap_or_default();
                 let last = uci
                     .get(0..2)
                     .and_then(|from| from.parse().ok())
@@ -795,6 +826,7 @@ impl PositionExplorer {
                     .child(
                         div()
                             .id(("explorer-move", index))
+                            .test_support()
                             .role(Role::Button)
                             .keyboard_focus(palette.primary)
                             .aria_label(format!("Play {san}"))
@@ -914,16 +946,17 @@ impl PositionExplorer {
 impl Render for PositionExplorer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let prefs = Self::prefs(cx);
+        let prefs = self.shown_prefs(cx);
         let kinds: Vec<(&str, &str)> = KINDS
             .into_iter()
             .filter(|(kind, _)| !self.grid || *kind != "tablebase")
+            .filter(|(kind, _)| !self.variants_only() || holds_variants(kind))
             .collect();
         let chosen = kinds
             .iter()
             .position(|(kind, _)| *kind == prefs.kind)
             .unwrap_or_default();
-        let needs_player = Self::needs_player(cx);
+        let needs_player = self.needs_player(cx);
         let choose_kind = {
             let explorer = cx.entity().downgrade();
             let kinds: Vec<&'static str> = kinds.iter().map(|(kind, _)| *kind).collect();
@@ -1115,7 +1148,8 @@ impl Render for PositionExplorer {
 
 #[cfg(test)]
 mod tests {
-    use super::{Prefs, category, is_username, toggled};
+    use super::{Prefs, category, toggled};
+    use crate::game::is_username;
     use serde_json::json;
 
     #[test]

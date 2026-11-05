@@ -63,19 +63,20 @@ enum ClockLayout {
     Vertical,
 }
 
-/// The variants, with their names and hints (`data/variants.json`).
-#[derive(serde::Deserialize, Clone)]
-struct VariantText {
-    key: String,
-    label: String,
-    hint: String,
-}
+use crate::game::variants;
 
-fn variants() -> Vec<VariantText> {
-    serde_json::from_str(include_str!(
-        "../../../../crates/kchess-domain/data/variants.json"
-    ))
-    .unwrap_or_default()
+/// What the panel's buttons do, for Quick Pick to offer the same.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Action {
+    TakeBack,
+    Pause,
+    Resume,
+    Draw,
+    Resign,
+    NewGame,
+    Flip,
+    CopyPgn,
+    Analyse,
 }
 
 pub struct LocalPage {
@@ -633,8 +634,10 @@ impl LocalPage {
 
     fn open_new_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let page = cx.entity().downgrade();
+        let current = self.setup().clone();
         let form = cx.new(|cx| {
             NewGame::new(
+                &current,
                 move |setup, clock, window, cx| {
                     let _ = page.update(cx, |page, cx| page.replace_game(setup, clock, window, cx));
                 },
@@ -651,14 +654,9 @@ impl LocalPage {
     }
 
     /// A game over the board from a position (the board editor's, the analysis board's), untimed.
-    pub fn start_from(&mut self, fen: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn start_from(&mut self, setup: Value, window: &mut Window, cx: &mut Context<Self>) {
         crate::prefs::set(cx, "kchess:local-mode", Mode::Board);
-        self.replace_game(
-            json!({ "variant": "standard", "fen": fen }),
-            Value::Null,
-            window,
-            cx,
-        );
+        self.replace_game(setup, Value::Null, window, cx);
     }
 
     /// Start a game, asking first when one on the board is still being played.
@@ -719,7 +717,7 @@ impl LocalPage {
         }
     }
 
-    /// Analyse the game on the analysis board at the position shown (standard rules only).
+    /// Analyse the game on the analysis board at the position shown (standard and Chess960).
     fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pgn = rules(
             "setupPgn",
@@ -1372,18 +1370,7 @@ impl LocalPage {
             .clone();
         let timed = !self.game.state["times"].is_null();
         let paused = self.game.state["paused"].as_bool() == Some(true);
-        let variant_label = {
-            let variant = self.setup()["variant"].as_str().unwrap_or("standard");
-            if variant == "standard" {
-                (self.setup()["fen"].as_str() != Some(STANDARD_FEN))
-                    .then(|| "From position".to_string())
-            } else {
-                variants()
-                    .into_iter()
-                    .find(|text| text.key == variant)
-                    .map(|text| text.label)
-            }
-        };
+        let variant_label = crate::game::setup_label(self.setup());
         let clock_label = self.game.state["clock"].as_object().map(|clock| {
             let white = &clock["white"];
             let black = &clock["black"];
@@ -1527,7 +1514,7 @@ impl LocalPage {
                 "local-moves",
                 &sans,
                 shown,
-                view::black_first(self.setup()),
+                view::first_move(self.setup()),
                 "White moves first. The first move starts the clock.".into(),
                 select.clone(),
                 &palette,
@@ -1603,14 +1590,15 @@ impl LocalPage {
                     ),
             )
             .when(!frontend.zen_mode, |panel| {
-                let standard = self.setup()["variant"].as_str().unwrap_or("standard") == "standard";
+                let analysable =
+                    crate::game::analysable(self.setup()["variant"].as_str().unwrap_or("standard"));
                 // `.panel-actions`: Copy PGN, Export and Analyse share the row.
                 panel.child(widgets::panel_actions(
                     narrow,
                     [
                         Button::new("copy-pgn")
                             .ghost()
-                            .xsmall()
+                            .small()
                             .w_full()
                             .icon(icon("copy"))
                             .label("Copy PGN")
@@ -1629,10 +1617,10 @@ impl LocalPage {
                         .into(),
                     ]
                     .into_iter()
-                    .chain(standard.then(|| {
+                    .chain(analysable.then(|| {
                         Button::new("local-analyse")
                             .ghost()
-                            .xsmall()
+                            .small()
                             .w_full()
                             .icon(icon("microscope"))
                             .label("Analyse")
@@ -1672,6 +1660,56 @@ impl LocalPage {
 }
 
 impl LocalPage {
+    /// The actions its buttons allow now. The clock alone has none of the board's.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        if self.mode(cx) == Mode::Clock {
+            return Vec::new();
+        }
+        let now = self.now();
+        let over = self.game.over(now);
+        let played = !self.moves().is_empty();
+        let mut actions = Vec::new();
+        if played && !self.timed_out() {
+            actions.push(Action::TakeBack);
+        }
+        if played && !over && !self.game.state["times"].is_null() {
+            let paused = self.game.state["paused"].as_bool() == Some(true);
+            actions.push(if paused {
+                Action::Resume
+            } else {
+                Action::Pause
+            });
+        }
+        if played && !over {
+            actions.extend([Action::Draw, Action::Resign]);
+        }
+        actions.extend([Action::NewGame, Action::Flip]);
+        if played {
+            actions.push(Action::CopyPgn);
+            if crate::game::analysable(self.setup()["variant"].as_str().unwrap_or("standard")) {
+                actions.push(Action::Analyse);
+            }
+        }
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        match action {
+            Action::TakeBack => self.takeback(cx),
+            Action::Pause | Action::Resume => self.toggle_pause(cx),
+            Action::Draw => self.agree_draw(cx),
+            Action::Resign => self.ask_resign(window, cx),
+            Action::NewGame => self.open_new_game(window, cx),
+            Action::Flip => self.flip(cx),
+            Action::CopyPgn => self.copy_pgn(window, cx),
+            Action::Analyse => self.analyse(window, cx),
+        }
+    }
+
     /// A clock ran out: taking back cannot refill it, so the game stays lost on time.
     fn timed_out(&self) -> bool {
         let times = &self.game.state["times"];
@@ -1696,28 +1734,58 @@ struct NewGame {
 
 impl NewGame {
     fn new(
+        current: &Value,
         on_start: impl Fn(Value, Value, &mut Window, &mut App) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> NewGame {
         let texts = variants();
+        // The form opens on the game being played: its variant, its Chess960 number, or the
+        // position it started from.
+        let current_variant = current["variant"].as_str().unwrap_or("standard");
+        let current_fen = current["fen"].as_str().unwrap_or(STANDARD_FEN).to_string();
+        let row = texts
+            .iter()
+            .position(|text| text.key == current_variant)
+            .unwrap_or(0);
         let variant = cx.new(|cx| {
             SelectState::new(
                 texts
                     .iter()
                     .map(|text| SharedString::from(text.label.clone()))
                     .collect(),
-                Some(IndexPath::new(0)),
+                Some(IndexPath::new(row)),
                 window,
                 cx,
             )
         });
+        let current_number = (current_variant == "chess960")
+            .then(|| (0..960).find(|&n| chess960(n) == current_fen))
+            .flatten();
         let number = cx.new(|cx| {
             let mut input = InputState::new(window, cx);
-            input.set_value(random_960().to_string(), window, cx);
+            let n = current_number.unwrap_or_else(crate::game::random_chess960);
+            input.set_value(n.to_string(), window, cx);
             input
         });
-        let fen = cx.new(|cx| InputState::new(window, cx).placeholder("Standard start"));
+        let usual = match current_variant {
+            "standard" => Some(STANDARD_FEN.to_string()),
+            "chess960" => None,
+            variant => rules("defaultFen", &[json!(variant)])
+                .ok()
+                .and_then(|fen| fen.as_str().map(str::to_string)),
+        };
+        let fen = cx.new(|cx| {
+            let label = format!(
+                "{} start",
+                crate::game::variant_label(texts.get(row).map_or("standard", |text| &text.key))
+            );
+            let mut input = InputState::new(window, cx).placeholder(label);
+            if usual.as_ref().is_some_and(|usual| *usual != current_fen) {
+                input.set_value(current_fen.clone(), window, cx);
+            }
+            input
+        });
         let clock = cx.new(|cx| {
             SelectState::new(
                 CLOCKS
@@ -1738,9 +1806,20 @@ impl NewGame {
             cx.subscribe(&number, refresh),
             cx.subscribe(&fen, refresh),
             cx.subscribe(&odds, refresh),
-            cx.subscribe(&variant, |_, _, _: &SelectEvent<Vec<SharedString>>, cx| {
-                cx.notify()
-            }),
+            // The FEN's placeholder names the start it replaces: "Crazyhouse start".
+            cx.subscribe_in(
+                &variant,
+                window,
+                |this, _, _: &SelectEvent<Vec<SharedString>>, window, cx| {
+                    let label = format!(
+                        "{} start",
+                        crate::game::variant_label(&this.variant_key(cx))
+                    );
+                    this.fen
+                        .update(cx, |input, cx| input.set_placeholder(label, window, cx));
+                    cx.notify()
+                },
+            ),
             cx.subscribe(&clock, |_, _, _: &SelectEvent<Vec<SharedString>>, cx| {
                 cx.notify()
             }),
@@ -1779,8 +1858,14 @@ impl NewGame {
 
     fn fen_problem(&self, cx: &App) -> Option<SharedString> {
         let text = self.fen.read(cx).value().trim().to_string();
-        if self.variant_key(cx) != "standard" || text.is_empty() {
+        let variant = self.variant_key(cx);
+        if variant == "chess960" || text.is_empty() {
             return None;
+        }
+        if variant != "standard" {
+            return kchess_domain::rules::setup_start(&variant, &text)
+                .is_none()
+                .then(|| "Not a legal position".into());
         }
         position_problem(&text).map(SharedString::from).or_else(|| {
             kchess_domain::rules::setup_start("standard", &text)
@@ -1802,7 +1887,13 @@ impl NewGame {
             return self
                 .fen_problem(cx)
                 .is_none()
-                .then(|| json!({ "variant": "standard", "fen": text }));
+                .then(|| crate::game::setup_from_fen(&text));
+        }
+        if !text.is_empty() {
+            return self
+                .fen_problem(cx)
+                .is_none()
+                .then(|| json!({ "variant": variant, "fen": text }));
         }
         let fen = rules("defaultFen", &[json!(variant)]).ok()?;
         Some(json!({ "variant": variant, "fen": fen }))
@@ -1833,22 +1924,14 @@ impl NewGame {
     }
 }
 
-fn random_960() -> u16 {
-    let mut bytes = [0u8; 2];
-    if getrandom::fill(&mut bytes).is_err() {
-        return 518;
-    }
-    u16::from_le_bytes(bytes) % 960
-}
-
 impl Render for NewGame {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let variant = self.variant_key(cx);
         let hint = variants()
-            .into_iter()
+            .iter()
             .find(|text| text.key == variant)
-            .map(|text| text.hint);
+            .map(|text| text.hint.clone());
         let setup = self.setup(cx);
         let no_clock = self
             .clock
@@ -1858,14 +1941,18 @@ impl Render for NewGame {
         v_flex()
             .gap(px(16.))
             .child(
-                widgets::field("Variant", Select::new(&self.variant), None, &palette).children(
-                    hint.map(|hint| {
-                        div()
-                            .text_size(px(13.))
-                            .text_color(palette.text_muted)
-                            .child(hint)
-                    }),
-                ),
+                widgets::field(
+                    "Variant",
+                    Select::new(&self.variant).accessibility_label("Choose a variant"),
+                    None,
+                    &palette,
+                )
+                .children(hint.map(|hint| {
+                    div()
+                        .text_size(px(13.))
+                        .text_color(palette.text_muted)
+                        .child(hint)
+                })),
             )
             .when(variant == "chess960", |form| {
                 form.child(
@@ -1890,14 +1977,18 @@ impl Render for NewGame {
                                 .label("Random")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.number.update(cx, |input, cx| {
-                                        input.set_value(random_960().to_string(), window, cx)
+                                        input.set_value(
+                                            crate::game::random_chess960().to_string(),
+                                            window,
+                                            cx,
+                                        )
                                     });
                                     cx.notify();
                                 })),
                         ),
                 )
             })
-            .when(variant == "standard", |form| {
+            .when(variant != "chess960", |form| {
                 form.child(widgets::field(
                     "Start from a FEN (optional)",
                     Input::new(&self.fen),

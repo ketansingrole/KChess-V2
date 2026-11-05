@@ -80,8 +80,28 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
     }
     let black = session["color"] == "black";
     let side = if black { "Black" } else { "White" };
-    // White moves on even plies.
-    let yours = moves.is_multiple_of(2) != black;
+    // Whose move it is and the move number, from the position reached: a game started from a
+    // position (Black to move, or at move 30) does not count from the usual start.
+    let played: Vec<String> = serde_json::from_value(session["moves"].clone()).unwrap_or_default();
+    let reached = kchess_domain::replay::replay_setup(
+        session["setup"]["variant"].as_str().unwrap_or("standard"),
+        session["setup"]["fen"]
+            .as_str()
+            .unwrap_or(crate::game::STANDARD_FEN),
+        &played,
+    )
+    .map(|replay| replay.fen)
+    .unwrap_or_default();
+    let fields: Vec<&str> = reached.split(' ').collect();
+    // White moves on even plies when the position cannot be replayed.
+    let black_to_move = fields
+        .get(1)
+        .map_or(!moves.is_multiple_of(2), |turn| *turn == "b");
+    let yours = black_to_move == black;
+    let number = fields
+        .get(5)
+        .and_then(|number| number.parse::<usize>().ok())
+        .unwrap_or(moves / 2 + 1);
     let level = rules("engineLevelLabel", &[session["level"].clone()])
         .ok()
         .and_then(|label| label.as_str().map(str::to_string))
@@ -90,18 +110,26 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
         Some((name, strength)) => (name, Some(strength.to_string())),
         None => (level.as_str(), None),
     };
+    // A variant is named first, as the game page names it.
+    let variant = session["setup"]["variant"]
+        .as_str()
+        .filter(|variant| *variant != "standard")
+        .map(crate::game::variant_label);
     Some(Unfinished {
         opponent: (format!("Stockfish · {name}"), strength),
-        state: vec![
-            format!("Move {}", moves / 2 + 1),
-            format!("You play {side}"),
-            if yours {
-                "Your move"
-            } else {
-                "Stockfish to move"
-            }
-            .to_string(),
-        ],
+        state: variant
+            .into_iter()
+            .chain([
+                format!("Move {number}"),
+                format!("You play {side}"),
+                if yours {
+                    "Your move"
+                } else {
+                    "Stockfish to move"
+                }
+                .to_string(),
+            ])
+            .collect(),
     })
 }
 
@@ -113,6 +141,32 @@ fn short_date(millis: f64) -> String {
         .single()
         .map(|date| date.format("%b %-d").to_string())
         .unwrap_or_default()
+}
+
+/// Home's buttons, as Quick Pick offers them; its Sync games is the app's own _Sync Lichess
+/// games_ there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Action {
+    /// The last game, open in Game history.
+    Review,
+}
+
+/// Your saved games, newest first; the chess clock's are not games to show.
+fn played_games(cx: &App) -> Vec<Value> {
+    let mut games: Vec<Value> = cx
+        .global::<PlayedHandle>()
+        .0
+        .read(cx)
+        .games()
+        .iter()
+        .filter(|game| game["source"] != "clock")
+        .cloned()
+        .collect();
+    games.sort_by(|a, b| {
+        let started = |game: &Value| game["startedAt"].as_f64().unwrap_or_default();
+        started(b).total_cmp(&started(a))
+    });
+    games
 }
 
 impl HomePage {
@@ -131,6 +185,37 @@ impl HomePage {
         };
         page.refresh(cx);
         page
+    }
+
+    /// The game _Review_ opens: the last one, unless a computer game is left unfinished.
+    fn reviewable(&self, cx: &App) -> Option<String> {
+        if self.continue_game.is_some() {
+            return None;
+        }
+        played_games(cx).first()?["id"].as_str().map(str::to_string)
+    }
+
+    /// What Home's buttons can do now.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        if self.reviewable(cx).is_some() {
+            vec![Action::Review]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        match action {
+            Action::Review => {
+                if let Some(id) = self.reviewable(cx) {
+                    crate::shell::open_game(&id, window, cx);
+                }
+            }
+        }
     }
 
     /// Read the unfinished computer game and the accounts again (the page was shown).
@@ -302,19 +387,7 @@ impl Render for HomePage {
         }
         let tiles = v_flex().gap(GAP).children(rows);
 
-        let mut games: Vec<Value> = cx
-            .global::<PlayedHandle>()
-            .0
-            .read(cx)
-            .games()
-            .iter()
-            .filter(|game| game["source"] != "clock")
-            .cloned()
-            .collect();
-        games.sort_by(|a, b| {
-            let started = |game: &Value| game["startedAt"].as_f64().unwrap_or_default();
-            started(b).total_cmp(&started(a))
-        });
+        let mut games = played_games(cx);
         // The game you left, else the last one you finished, else the starting position.
         let session = self.continue_game.as_ref().map(|(_, session)| session);
         let latest = games.first().cloned();
@@ -708,6 +781,42 @@ mod tests {
                 "{width}px fits {per_row} tiles"
             );
         }
+    }
+
+    /// The unfinished game's card counts from where it started: a Crazyhouse game from the
+    /// analysis board with Black to move at move 4, and the usual start.
+    #[test]
+    fn an_unfinished_game_says_whose_move_from_its_own_start() {
+        let card = |session: serde_json::Value| {
+            super::continue_line(&session)
+                .expect("an unfinished game")
+                .state
+        };
+        let from_position = json!({
+            "version": 2,
+            "setup": {
+                "variant": "crazyhouse",
+                "fen": "rnb1kbnr/ppp1pppp/8/3q4/8/4P3/PPPP1PPP/RNBQKBNR/P b KQkq - 0 3",
+            },
+            "moves": ["d5e5"],
+            "level": "club",
+            "color": "black",
+        });
+        assert_eq!(
+            card(from_position),
+            [
+                "Crazyhouse",
+                "Move 4",
+                "You play Black",
+                "Stockfish to move"
+            ]
+        );
+        let usual = json!({
+            "moves": ["e2e4", "e7e5", "g1f3"],
+            "level": "club",
+            "color": "black",
+        });
+        assert_eq!(card(usual), ["Move 2", "You play Black", "Your move"]);
     }
 
     #[test]

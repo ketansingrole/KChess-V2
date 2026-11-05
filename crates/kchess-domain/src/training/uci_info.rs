@@ -8,14 +8,16 @@ use serde_json::{Map, Value, json};
 use super::{Out, num_out, text_arg, to_value};
 use crate::js;
 
-/// `/^[a-h][1-8][a-h][1-8][qrbn]?$/`
+/// `/^[a-h][1-8][a-h][1-8][qrbnk]?$/` (`k` promotes to a king in Antichess), or a Crazyhouse
+/// drop such as `P@e4`.
 fn is_uci_move(token: &str) -> bool {
     let square =
         |file: u8, rank: u8| (b'a'..=b'h').contains(&file) && (b'1'..=b'8').contains(&rank);
     match *token.as_bytes() {
+        [role, b'@', file, rank] => b"PNBRQ".contains(&role) && square(file, rank),
         [f1, r1, f2, r2] => square(f1, r1) && square(f2, r2),
         [f1, r1, f2, r2, promotion] => {
-            square(f1, r1) && square(f2, r2) && b"qrbn".contains(&promotion)
+            square(f1, r1) && square(f2, r2) && b"qrbnk".contains(&promotion)
         }
         _ => false,
     }
@@ -142,5 +144,13 @@ mod tests {
         assert!(parse_info("info depth 12 score cp 40 lowerbound nodes 1 pv e2e4", true).is_none());
         assert!(parse_info("info string NNUE evaluation using nn.nnue", true).is_none());
         assert!(parse_info("", true).is_none());
+    }
+
+    #[test]
+    fn variant_lines_keep_their_drops_and_king_promotions() {
+        let line = parse_info("info depth 9 score cp 50 pv b1c3 d5e6 P@b4 e7e8k", true).unwrap();
+        assert_eq!(line["line"]["pv"], json!(["b1c3", "d5e6", "P@b4", "e7e8k"]));
+        let line = parse_info("info depth 9 score cp 50 pv e2e4 K@e5 p@e4", true).unwrap();
+        assert_eq!(line["line"]["pv"], json!(["e2e4"]));
     }
 }

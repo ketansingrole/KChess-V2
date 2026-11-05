@@ -111,13 +111,19 @@ impl Core {
                 self.assistance_allowed(
                     "Review is unavailable until your Lichess game status is verified.",
                 )?;
-                let request = normal(
-                    "assertReviewRequest",
-                    &json!({ "fen": arg(args, 0), "moves": arg(args, 1) }),
-                )?;
+                let mut asked = json!({ "fen": arg(args, 0), "moves": arg(args, 1) });
+                // Standard chess has no variant; `null` is not one.
+                if !arg(args, 2).is_null() {
+                    asked["variant"] = arg(args, 2);
+                }
+                let request = normal("assertReviewRequest", &asked)?;
                 self.inner(
                     "reviews.get",
-                    vec![request["fen"].clone(), request["moves"].clone()],
+                    vec![
+                        request["fen"].clone(),
+                        request["moves"].clone(),
+                        request["variant"].clone(),
+                    ],
                 )
                 .await
             }

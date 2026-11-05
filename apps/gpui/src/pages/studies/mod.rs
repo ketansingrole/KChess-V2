@@ -83,11 +83,16 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
+/// Why an import was refused.
+const INVALID_IMPORT: &str = "Paste valid PGN with up to 64 chapters";
+const VARIANT_IMPORT: &str = "A chapter is in a variant KChess doesn't play";
+
 /// An import's chapters (`pgnGames`): each game named by its `ChapterName`, or numbered.
-fn import_chapters(text: &str) -> Option<Vec<(String, String)>> {
-    let games = crate::game::rules("pgnGames", &[json!(text)]).ok()?;
+fn import_chapters(text: &str) -> Result<Vec<(String, String)>, &'static str> {
+    let games = crate::game::rules("pgnGames", &[json!(text)]).map_err(|_| INVALID_IMPORT)?;
     let chapters: Vec<(String, String)> = games
-        .as_array()?
+        .as_array()
+        .ok_or(INVALID_IMPORT)?
         .iter()
         .enumerate()
         .map(|(index, game)| {
@@ -101,12 +106,23 @@ fn import_chapters(text: &str) -> Option<Vec<(String, String)>> {
             (name, game["pgn"].as_str().unwrap_or_default().to_string())
         })
         .collect();
+    // A game read under rules other than its own would show positions it never had.
+    if chapters
+        .iter()
+        .any(|(_, pgn)| !crate::game::pgn_analysable(pgn))
+    {
+        return Err(VARIANT_IMPORT);
+    }
     let valid = !chapters.is_empty()
         && chapters.len() <= MAX_CHAPTERS
         && chapters
             .iter()
             .all(|(_, pgn)| TreeNode::from_pgn(pgn).is_some());
-    valid.then_some(chapters)
+    if valid {
+        Ok(chapters)
+    } else {
+        Err(INVALID_IMPORT)
+    }
 }
 
 /// An imported study's name when none is given: its players, else its event.
@@ -219,6 +235,13 @@ impl StudiesPage {
         cx.global::<StudyHandle>().0.clone()
     }
 
+    /// Show the Lichess tab, as its pill does.
+    pub fn show_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::prefs::set(cx, TAB, "lichess");
+        self.load_lichess(false, cx);
+        window.refresh();
+    }
+
     fn connected(cx: &App) -> bool {
         !crate::accounts::handle(cx).read(cx).connected().is_empty()
     }
@@ -259,7 +282,7 @@ impl StudiesPage {
     }
 
     /// `New study`: an empty board, kept as a study at once.
-    fn create(window: &mut Window, cx: &mut App) {
+    pub(crate) fn create(window: &mut Window, cx: &mut App) {
         let name = Self::library(cx).read(cx).fresh_name("Untitled study");
         crate::shell::replace_analysis(window, cx, move |analysis, window, cx| {
             analysis.load(None, cx);
@@ -526,7 +549,7 @@ impl StudiesPage {
         .detach();
     }
 
-    fn open_import(window: &mut Window, cx: &mut App) {
+    pub(crate) fn open_import(window: &mut Window, cx: &mut App) {
         let import = cx.new(|cx| ImportStudy::new(window, cx));
         window.open_dialog(cx, move |dialog, _, _| {
             dialog
@@ -767,21 +790,18 @@ impl StudiesPage {
                 .children(error_line)
                 .when(error.is_none(), |page| {
                     page.child(
-                        widgets::card(palette)
-                            .items_center()
-                            .gap(px(12.))
-                            .py(px(48.))
-                            .px(px(24.))
-                            .child(icon("library-big").size(px(40.)).text_color(palette.dimmed))
-                            .child(
-                                div()
-                                    .text_size(px(18.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child("No studies yet"),
+                        widgets::card(palette).child(
+                            widgets::empty_state(
+                                icon("library-big"),
+                                "No studies yet",
+                                None,
+                                palette,
                             )
                             .child(
                                 h_flex()
+                                    .justify_center()
                                     .gap(px(8.))
+                                    .mt(px(8.))
                                     .child(
                                         Button::new("empty-new-study")
                                             .primary()
@@ -799,6 +819,7 @@ impl StudiesPage {
                                             }),
                                     ),
                             ),
+                        ),
                     )
                 })
                 .into_any_element();
@@ -989,10 +1010,13 @@ impl ImportStudy {
 
     fn run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.text.read(cx).value().trim().to_string();
-        let Some(chapters) = import_chapters(&text) else {
-            self.error = Some("Paste valid PGN with up to 64 chapters".into());
-            cx.notify();
-            return;
+        let chapters = match import_chapters(&text) {
+            Ok(chapters) => chapters,
+            Err(problem) => {
+                self.error = Some(problem.into());
+                cx.notify();
+                return;
+            }
         };
         let library = StudiesPage::library(cx);
         let given = self.name.read(cx).value().trim().to_string();
@@ -1102,8 +1126,15 @@ mod tests {
         assert_eq!(chapters[0].0, "Main");
         assert_eq!(chapters[1].0, "Chapter 2");
         assert_eq!(import_name(&chapters[0].1).as_deref(), Some("A – B"));
-        assert!(import_chapters("").is_none());
+        assert!(import_chapters("").is_err());
         // A study holds at most 64 chapters.
-        assert!(import_chapters(&"[Event \"?\"]\n\n1. e4 *\n\n".repeat(65)).is_none());
+        assert!(import_chapters(&"[Event \"?\"]\n\n1. e4 *\n\n".repeat(65)).is_err());
+        // An Atomic chapter is kept in Atomic; a variant KChess does not play is refused.
+        assert!(import_chapters("[Variant \"Atomic\"]\n\n1. e4 d5 2. exd5 *").is_ok());
+        assert_eq!(
+            import_chapters("[Variant \"Bughouse\"]\n\n1. e4 d5 2. exd5 *"),
+            Err(super::VARIANT_IMPORT)
+        );
+        assert!(import_chapters("[Variant \"Chess960\"]\n[FEN \"bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1\"]\n\n1. e4 *").is_ok());
     }
 }

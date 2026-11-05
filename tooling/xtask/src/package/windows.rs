@@ -209,6 +209,7 @@ pub fn package(
         &folder.join(format!("{}.exe", identity.windows_exe)),
     )?;
     copy_program(&built.stockfish, &folder.join("stockfish.exe"))?;
+    copy_program(&built.fairy, &folder.join("fairy-stockfish.exe"))?;
     copy_program(&built.service, &folder.join("kchess-service.exe"))?;
     copy_program(&built.cli, &folder.join("kchess-cli.exe"))?;
     copy_voice(built, &folder)?;

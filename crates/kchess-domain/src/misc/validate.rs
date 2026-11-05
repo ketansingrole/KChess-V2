@@ -346,6 +346,13 @@ fn assert_perf_type(value: J) -> Checked<String> {
     picked(value, PERF_TYPES, Some("Invalid rating category."))
 }
 
+/// A puzzle's id, as a lichess.org/training link names it.
+fn assert_puzzle_id(value: J) -> Checked<String> {
+    let text: String = decode(value, always!("Invalid puzzle."))?;
+    matches(&text, patterns::puzzle_id, Some("Invalid puzzle."), "", "")?;
+    Ok(text)
+}
+
 fn assert_lichess_id(value: J) -> Checked<String> {
     let text: String = decode(value, always!("Invalid id."))?;
     lichess_id(&text, "Invalid id.")?;
@@ -756,6 +763,8 @@ struct InsightsQuery {
     rated: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     days: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
 }
 
 fn assert_insights_query(value: J) -> Checked<InsightsQuery> {
@@ -771,6 +780,9 @@ fn assert_insights_query(value: J) -> Checked<InsightsQuery> {
     }
     if let Some(days) = query.days {
         within(days, 1, 3650, Some("Invalid period."), "days")?;
+    }
+    if let Some(variant) = &query.variant {
+        one_of(variant, VARIANTS, Some("Invalid variant."), "variant")?;
     }
     Ok(query)
 }
@@ -1460,17 +1472,38 @@ struct BestMoveOptions {
     movetime: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     chess960: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
 }
 
 fn assert_best_move_options(value: J) -> Checked<BestMoveOptions> {
     if matches!(value, J::Undef) {
         return Ok(BestMoveOptions::default());
     }
-    let options: BestMoveOptions = decode(value, |keys| match keys {
+    let mut options: BestMoveOptions = decode(value, |keys| match keys {
         ["fen"] => Some("Invalid position."),
         ["movetime"] => Some("Invalid think time."),
+        ["variant"] => Some("Invalid variant."),
         _ => Some("Invalid engine options."),
     })?;
+    // Another variant (Fairy-Stockfish plays it) starts from a position legal by its own rules.
+    if let Some(variant) = options
+        .variant
+        .as_deref()
+        .filter(|variant| !matches!(*variant, "standard" | "chess960"))
+    {
+        one_of(variant, VARIANTS, Some("Invalid variant."), "variant")?;
+        let position = options.fen.as_deref().ok_or("Invalid position.")?;
+        max_chars(position, 120, Some("Invalid position."), "fen")?;
+        if crate::rules::setup_start(variant, position).is_none() {
+            return Err("Invalid position.".into());
+        }
+        if let Some(movetime) = options.movetime {
+            within(movetime, 50, 5000, Some("Invalid think time."), "")?;
+        }
+        return Ok(options);
+    }
+    options.variant = None;
     if let Some(position) = &options.fen {
         fen(position, None, Some("Invalid position."), "fen")?;
         engine_position(position)?;
@@ -1495,6 +1528,30 @@ struct AnalysisRequest {
     moves: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     client_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
+}
+
+/// A variant game's position for analysis: its root under the variant's rules, and its moves
+/// played there to the position asked about. Its FEN may carry what the variant keeps
+/// (Crazyhouse's pockets, Three-check's checks) and Horde's 36 pawns.
+fn variant_analysis_position(request: &AnalysisRequest, variant: &str) -> Checked<()> {
+    let invalid = || "Invalid analysis position or move history.".to_string();
+    for text in std::iter::once(&request.fen).chain(request.root_fen.as_ref()) {
+        max_chars(text, 120, None, "fen")?;
+    }
+    let root = request.root_fen.as_deref().unwrap_or(&request.fen);
+    let moves = request.moves.as_deref().unwrap_or_default();
+    if moves.len() > 600 {
+        return Err("Invalid move list.".into());
+    }
+    let replay = replay::replay_setup(variant, root, moves).ok_or("Invalid position.")?;
+    let asked = replay::replay_setup(variant, &request.fen, &Vec::<&str>::new())
+        .ok_or("Invalid position.")?;
+    if replay.played.len() != moves.len() || replay.fen != asked.fen {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 /// `assertAnalysisRequest`: the request's shape, and a position its moves reach.
@@ -1506,8 +1563,29 @@ fn assert_analysis_request(value: J) -> Checked<AnalysisRequest> {
         ["rootFen"] => None,
         ["moves", rest @ ..] => move_list_messages(rest, Some("Invalid move list.")),
         ["clientId"] => Some("Invalid analysis request."),
+        ["variant"] => Some("Invalid variant."),
         _ => None,
     })?;
+    // Standard chess and Chess960 are checked as they always were, below.
+    if let Some(variant) = request
+        .variant
+        .as_deref()
+        .filter(|variant| !matches!(*variant, "standard" | "chess960"))
+    {
+        one_of(variant, VARIANTS, Some("Invalid variant."), "variant")?;
+        within(
+            request.lines,
+            1,
+            5,
+            Some("Invalid number of engine lines."),
+            "",
+        )?;
+        if let Some(client) = request.client_id {
+            within(client, 1, MAX_SAFE, Some("Invalid analysis request."), "")?;
+        }
+        variant_analysis_position(&request, variant)?;
+        return Ok(request);
+    }
     fen(&request.fen, None, Some("Invalid position."), "fen")?;
     engine_position(&request.fen)?;
     let lines = Some("Invalid number of engine lines.");
@@ -1541,6 +1619,8 @@ struct ReviewRequest {
     fen: String,
     moves: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     game_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     account: Option<String>,
@@ -1553,8 +1633,32 @@ fn assert_review_request(value: J) -> Checked<ReviewRequest> {
         ["moves", rest @ ..] => move_list_messages(rest, Some("Invalid move list.")),
         ["gameId"] => Some("Invalid game id."),
         ["account"] => Some(USERNAME),
+        ["variant"] => Some("Invalid variant."),
         _ => Some("Invalid review request."),
     })?;
+    // A variant game (Fairy-Stockfish reviews it) is replayed by its variant's rules.
+    if let Some(variant) = request
+        .variant
+        .as_deref()
+        .filter(|variant| !matches!(*variant, "standard" | "chess960"))
+    {
+        one_of(variant, VARIANTS, Some("Invalid variant."), "variant")?;
+        max_chars(&request.fen, 120, Some("Invalid position."), "fen")?;
+        move_list(&request.moves)?;
+        if let Some(id) = &request.game_id {
+            game_id(id)?;
+        }
+        if let Some(account) = &request.account {
+            request.account = Some(username(account, "account")?);
+        }
+        if replay::replay_setup_count(variant, &request.fen, &request.moves)
+            != Some(request.moves.len())
+        {
+            return Err("Invalid game position or move history.".into());
+        }
+        return Ok(request);
+    }
+    request.variant = None;
     fen(&request.fen, None, Some("Invalid position."), "fen")?;
     engine_position(&request.fen)?;
     move_list(&request.moves)?;
@@ -1743,6 +1847,8 @@ struct LookupOptions {
     modes: Option<Vec<GameMode>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     since: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1799,6 +1905,9 @@ fn assert_lookup_options(value: J) -> Checked<LookupOptions> {
             "since",
             "a year or a year and month",
         )?;
+    }
+    if let Some(variant) = &options.variant {
+        one_of(variant, VARIANTS, Some("Invalid variant."), "variant")?;
     }
     Ok(options)
 }
@@ -2189,6 +2298,7 @@ validators! {
     "assertInsightsQuery" => assert_insights_query,
     "assertPerfType" => assert_perf_type,
     "assertLichessId" => assert_lichess_id,
+    "assertPuzzleId" => assert_puzzle_id,
     "assertOptionalAccount" => assert_optional_account,
     "assertOnlineOptions" => assert_online_options,
     "assertTheme" => assert_theme,
@@ -2393,6 +2503,29 @@ mod tests {
         assert_eq!(run("assertAnalysisRequest", analysis), refused);
         let search = obj(vec![("fen", J::Str(crowded.into()))]);
         assert_eq!(run("assertBestMoveOptions", search), refused);
+        // Horde's thirty-six pawns are Horde's: Fairy-Stockfish plays them.
+        let horde = "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1";
+        let search = obj(vec![
+            ("fen", J::Str(horde.into())),
+            ("variant", J::Str("horde".into())),
+        ]);
+        assert_eq!(
+            run("assertBestMoveOptions", search),
+            Ok(json!({ "fen": horde, "variant": "horde" }))
+        );
+        let search = obj(vec![
+            ("fen", J::Str(horde.into())),
+            ("variant", J::Str("crazyhouse".into())),
+        ]);
+        assert_eq!(
+            run("assertBestMoveOptions", search),
+            Err("Invalid position.".into())
+        );
+        let search = obj(vec![("variant", J::Str("bughouse".into()))]);
+        assert_eq!(
+            run("assertBestMoveOptions", search),
+            Err("Invalid variant.".into())
+        );
         let review = obj(vec![
             ("fen", J::Str(crowded.into())),
             ("moves", J::Arr(vec![])),

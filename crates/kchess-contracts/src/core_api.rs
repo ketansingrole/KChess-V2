@@ -55,6 +55,11 @@ pub fn methods() -> Vec<Method> {
         ),
         method("lichessStudyChapters", "", vec![req("account"), req("id")]),
         method(
+            "lichessStudyChapter",
+            "One chapter of a public study ({ name, pgn }), its first when chapter is empty.",
+            vec![req("id"), req("chapter")],
+        ),
+        method(
             "syncLichessStudy",
             "Add a PGN as a chapter of a Lichess study (a new private one when `studyId` is empty).",
             vec![req("request")],
@@ -154,8 +159,8 @@ pub fn methods() -> Vec<Method> {
         ),
         method(
             "reviewGet",
-            "The stored review of these moves from this position, if any.",
-            vec![req("fen"), req("moves")],
+            "The stored review of these moves from this position, if any; `variant` is a variant\n   * game's Lichess key.",
+            vec![req("fen"), req("moves"), opt("variant")],
         ),
         method(
             "reviewRequest",
@@ -287,6 +292,11 @@ pub fn methods() -> Vec<Method> {
         method("broadcasts", "", vec![opt("query")]),
         method("broadcastTour", "", vec![req("id")]),
         method(
+            "broadcastRound",
+            "The tournament a broadcast round is in: { tourId, roundId }.",
+            vec![req("id")],
+        ),
+        method(
             "tournaments",
             "Current arenas, and the Swiss events of the account's teams.",
             vec![req("account")],
@@ -351,6 +361,11 @@ pub fn methods() -> Vec<Method> {
             "puzzleDaily",
             "The daily puzzle; public, nothing is recorded.",
             vec![],
+        ),
+        method(
+            "puzzleById",
+            "One puzzle by its Lichess id; public, nothing is recorded.",
+            vec![req("id")],
         ),
         method(
             "puzzleDashboard",

@@ -66,7 +66,7 @@ pub fn facts(detail: &Value) -> Vec<String> {
 }
 
 impl TournamentsPage {
-    fn joined_now(&self, detail: &Value, cx: &App) -> bool {
+    pub(super) fn joined_now(&self, detail: &Value, cx: &App) -> bool {
         if detail["me"].is_object() {
             return detail["me"]["withdraw"] != json!(true);
         }

@@ -97,6 +97,66 @@ fn a_saved_game_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
     app.find("tree-e2e4 e7e5 d1h5 b8c6 f1c4 g8f6 h5f7");
 }
 
+/// An open game's buttons are in Quick Pick: it opens on the analysis board from there.
+#[gpui_kit::test]
+fn an_open_game_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = mate_in_history(cx);
+    app.click(("history-row", 0usize));
+    app.wait_for_moves(&SCHOLARS_MATE);
+    app.press("secondary-k");
+    app.type_text(">");
+    super::palette::wait_for_first(&mut app, "All games");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..6usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert_eq!(&listed[..3], ["All games", "Export PGN", "Open analysis"]);
+    app.type_text("Open analysis");
+    super::palette::wait_for_first(&mut app, "Open analysis");
+    app.press("enter");
+    super::palette::wait_until_closed(&mut app);
+    app.find("tree-e2e4 e7e5 d1h5 b8c6 f1c4 g8f6 h5f7");
+}
+
+/// Home's _Review_ is in Quick Pick: the last game opens in Game history. Home adds no Sync games
+/// of its own there.
+#[gpui_kit::test]
+fn the_last_game_is_reviewed_from_home_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = mate_in_history(cx);
+    app.open("Home");
+    app.find("home-review");
+    app.press("secondary-k");
+    app.type_text(">");
+    super::palette::wait_for_first(&mut app, "Review last game");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..8usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert!(!listed.iter().any(|label| label == "Sync games"));
+    app.press("enter");
+    super::palette::wait_until_closed(&mut app);
+    app.wait_for_moves(&SCHOLARS_MATE);
+    app.find("open-analysis");
+}
+
+/// Game history's Lichess tab is in Quick Pick from any page.
+#[gpui_kit::test]
+fn lichess_games_open_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.press("secondary-k");
+    app.type_text("Lichess games");
+    super::palette::wait_for_first(&mut app, "Lichess games");
+    app.press("enter");
+    super::palette::wait_until_closed(&mut app);
+    assert_eq!(app.find(("history-source", 2usize)).selected(), Some(true));
+}
+
 #[gpui_kit::test]
 fn a_resigned_computer_game_is_listed_with_the_computer_games(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
@@ -185,4 +245,85 @@ fn deleting_a_game_asks_first_and_is_kept_after_a_restart(cx: &mut gpui_kit::Tes
     let mut app = app.restart();
     board_games(&mut app);
     app.find("history-play");
+}
+
+/// A Crazyhouse game in the history shows what each side held in its pocket at the move looked
+/// at, and opens on the analysis board in Crazyhouse.
+#[gpui_kit::test]
+fn a_crazyhouse_game_shows_its_pockets(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::local::LocalPage;
+    let mut app = Harness::start(cx);
+    app.open("Over the board");
+    app.with_window(|window, cx| {
+        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        local.update(cx, |local, cx| {
+            let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+            let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
+            local.replace_game(setup, serde_json::Value::Null, window, cx);
+        });
+    });
+    let moves = ["e4", "d5", "exd5", "Qxd5"];
+    for (played, text) in moves.iter().enumerate() {
+        app.click_label("Enter a chess move in SAN or UCI");
+        app.type_text(text);
+        app.press("enter");
+        app.wait_for_moves(&moves[..=played]);
+    }
+    app.click("local-resign");
+    app.click("ok");
+    board_games(&mut app);
+    app.click(("history-row", 0usize));
+    app.wait_for_moves(&moves);
+    let held = |app: &mut Harness, id: &'static str| app.find(id).label().map(str::to_string);
+    assert!(held(&mut app, "pocket-White-Pawn").is_some_and(|label| label.ends_with(": 1")));
+    assert!(held(&mut app, "pocket-Black-Pawn").is_some_and(|label| label.ends_with(": 1")));
+    // Before Black took back, only White held a pawn.
+    app.click(("move", 2usize));
+    assert!(held(&mut app, "pocket-Black-Pawn").is_some_and(|label| label.ends_with(": 0")));
+    // The analysis board takes the game in Crazyhouse.
+    app.click("open-analysis");
+    app.find("tree-e2e4 d7d5 e4d5 d8d5");
+}
+
+/// Insights offer a Variant choice only once the account has variant games, and choosing one asks
+/// for that variant's games alone.
+#[gpui_kit::test]
+fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::{Page, insights::InsightsPage};
+    use gpui_kit::test::TestQueryExt as _;
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Lichess insights");
+    let page = |app: &mut Harness| {
+        app.cx
+            .update(|cx| crate::shell::view_of::<InsightsPage>(Page::Insights, cx))
+            .expect("the Insights page")
+    };
+    app.wait_for("the first report", |_, cx| page_loaded(cx));
+    assert!(app.with_window(|window, _| window.try_find_by_label("Variant").is_none()));
+
+    // The account turns out to have Chess960 games.
+    let insights = page(&mut app);
+    app.cx
+        .update(|cx| insights.update(cx, |page, cx| page.show_report_variants(&["chess960"], cx)));
+    app.wait_for("the Variant choice", |window, _| {
+        window.try_find_by_label("Variant").is_some()
+    });
+    assert_eq!(
+        app.cx.update(|cx| insights.read(cx).query(cx))["variant"],
+        serde_json::Value::Null,
+        "standard chess until a variant is chosen"
+    );
+    app.with_window(|window, cx| {
+        insights.update(cx, |page, cx| page.choose_variant("chess960", window, cx))
+    });
+    assert_eq!(
+        app.cx.update(|cx| insights.read(cx).query(cx))["variant"],
+        "chess960"
+    );
+
+    fn page_loaded(cx: &gpui_kit::App) -> bool {
+        crate::shell::view_of::<InsightsPage>(Page::Insights, cx)
+            .is_some_and(|page| page.read(cx).loaded())
+    }
 }

@@ -31,6 +31,7 @@ async fn bundled_stockfish_reviews_a_game_with_castling() {
         managed_dir: std::env::temp_dir().join("kchess-no-managed-engine"),
         target: Target::current(),
         bundled: engine,
+        variant: std::path::PathBuf::new(),
     };
     let ctx = EngineContext::new(
         host.clone(),
@@ -55,6 +56,7 @@ async fn bundled_stockfish_reviews_a_game_with_castling() {
             moves: CASTLED.iter().map(|mv| (*mv).to_string()).collect(),
             game_id: None,
             account: None,
+            variant: None,
         })
         .await
         .expect("the request");

@@ -47,6 +47,16 @@ enum Engine {
 /// Work a spoken command leaves for after the phrase is read.
 type Deferred = Box<dyn FnOnce(&mut ComputerPage, &mut Window, &mut Context<ComputerPage>)>;
 
+/// The game's actions Quick Pick offers on this page.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Action {
+    TakeBack,
+    Resign,
+    NewGame,
+    SwitchSides,
+    Review,
+}
+
 /// A question the page asks before it throws a game away.
 #[derive(Clone, Copy, PartialEq)]
 enum Question {
@@ -448,7 +458,6 @@ impl ComputerPage {
         }
     }
 
-    /// Review the game on the analysis board, opened at the move being looked at.
     /// The game an Export saves, named "You" and "Stockfish" (`pgnResult` for its result).
     fn game_export(&self) -> GameExport {
         let user = self.user_color();
@@ -483,6 +492,7 @@ impl ComputerPage {
         }
     }
 
+    /// Review the game on the analysis board, opened at the move being looked at.
     fn review_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pgn = rules(
             "setupPgn",
@@ -534,10 +544,19 @@ impl ComputerPage {
         }
     }
 
-    fn setup_variant(&self) -> String {
+    pub(crate) fn setup_variant(&self) -> String {
         self.game.state["setup"]["variant"]
             .as_str()
             .unwrap_or("standard")
+            .to_string()
+    }
+
+    /// The FEN the game started from.
+    #[cfg(test)]
+    pub(crate) fn setup_fen(&self) -> String {
+        self.game.state["setup"]["fen"]
+            .as_str()
+            .unwrap_or_default()
             .to_string()
     }
 
@@ -829,6 +848,41 @@ impl ComputerPage {
         self.select_level(window, cx);
         self.changed(cx);
         self.computer_turn(cx);
+    }
+
+    /// The actions its buttons allow now.
+    pub(crate) fn actions(&self) -> Vec<Action> {
+        let mut actions = Vec::new();
+        if self.can_takeback() {
+            actions.push(Action::TakeBack);
+        }
+        if self.in_progress() {
+            actions.push(Action::Resign);
+        }
+        actions.extend([Action::NewGame, Action::SwitchSides]);
+        if self.can_review() {
+            actions.push(Action::Review);
+        }
+        actions
+    }
+
+    /// The finished game can be reviewed on the analysis board.
+    fn can_review(&self) -> bool {
+        self.game.result(&self.host()).is_some() && !self.moves().is_empty()
+    }
+
+    /// Run an action as its button does, asking first where the button asks.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
+            Action::TakeBack if self.can_takeback() => self.takeback(cx),
+            Action::TakeBack => {}
+            Action::Resign if self.in_progress() => self.ask(Question::Resign, window, cx),
+            Action::Resign => {}
+            Action::NewGame => self.ask(Question::NewGame, window, cx),
+            Action::SwitchSides => self.ask(Question::SwitchSides, window, cx),
+            Action::Review if self.can_review() => self.review_game(window, cx),
+            Action::Review => {}
+        }
     }
 
     fn new_game(&mut self, cx: &mut Context<Self>) {
@@ -1198,8 +1252,7 @@ impl ComputerPage {
                 |banner, value| banner.detail(value),
             )
             .when_some(
-                // The analysis board and reviews play standard rules (from any position).
-                (!self.moves().is_empty() && self.setup_variant() == "standard").then(|| {
+                self.can_review().then(|| {
                     Button::new("review-game")
                         .outline()
                         .small()
@@ -1339,10 +1392,7 @@ impl Render for ComputerPage {
         let moves = self.moves();
         let ply = self.ply();
         let interactive = self.interactive();
-        let black_first = position.is_some()
-            && self.game.state["setup"]["fen"]
-                .as_str()
-                .is_some_and(|fen| fen.split(' ').nth(1) == Some("b"));
+        let first = crate::game::view::first_move(&self.game.state["setup"]);
         let in_progress = self.in_progress();
         let result = self.game.result(&host);
         let side_of = |color: Color| {
@@ -1496,6 +1546,7 @@ impl Render for ComputerPage {
             .clone();
         let (blindfold, zen) = (frontend.blindfold, frontend.zen_mode);
         let show_opening = frontend.show_opening_name && self.setup_variant() == "standard";
+        let setup_label = crate::game::setup_label(&self.game.state["setup"]);
         let opening = show_opening.then(|| self.opening()).flatten();
         let panel = widgets::side_panel(&palette)
             .relative()
@@ -1510,6 +1561,9 @@ impl Render for ComputerPage {
                     .gap(px(8.))
                     .text_size(px(12.))
                     .text_color(palette.text_muted)
+                    .children(
+                        setup_label.map(|label| div().font_weight(FontWeight::MEDIUM).child(label)),
+                    )
                     .children(clock_label)
                     .child(div().flex_1())
                     .child(
@@ -1549,7 +1603,7 @@ impl Render for ComputerPage {
                 "computer-moves",
                 &sans,
                 ply,
-                black_first,
+                first,
                 "No moves yet".into(),
                 select.clone(),
                 &palette,

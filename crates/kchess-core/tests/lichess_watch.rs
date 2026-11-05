@@ -120,6 +120,24 @@ async fn a_cancelled_watch_reports_nothing_after_it_is_stopped() {
             .all(|state| state.session != second || state.phase != "error")
     );
     assert_ne!(first, second);
+    // Stopping is not failing: the log keeps quiet about the feeds it cut.
+    assert!(!host.logged().contains("failed"), "{}", host.logged());
+}
+
+#[tokio::test]
+async fn a_stopped_broadcast_round_is_not_logged_as_failed() {
+    let fixture = serve(|_| Reply::Hang).await;
+    let host = Arc::new(Recording::default());
+    let sink = Arc::new(Sink::default());
+    let spectator = Spectator::new(
+        service(&fixture.base, &host),
+        Arc::clone(&sink) as Arc<dyn WatchSink>,
+    );
+    spectator.watch_round("Round001");
+    wait_until("the round's connection", || !fixture.requests().is_empty()).await;
+    spectator.stop();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!host.logged().contains("failed"), "{}", host.logged());
 }
 
 #[tokio::test]

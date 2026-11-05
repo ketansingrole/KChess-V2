@@ -78,8 +78,13 @@ pub struct ReplayedPosition {
     pub end: Option<&'static str>,
 }
 
-/// `review.replay`'s `end`: checkmate, or a draw by stalemate or insufficient material.
+/// `review.replay`'s `end`: checkmate, or a draw by stalemate or insufficient material. A
+/// variant's own ending is `checkmate` when the side to move has lost (its king exploded, the
+/// other king reached the hill…), `won` when it has won (Antichess), or a `draw`.
 fn end_of(pos: &VariantPosition) -> Option<&'static str> {
+    if let Some(end) = variant_end_of(pos) {
+        return Some(end);
+    }
     let legal_empty = pos.legal_moves().is_empty();
     let checkmate = !pos.is_variant_end() && pos.is_check() && legal_empty;
     let stalemate = !pos.is_variant_end() && !pos.is_check() && legal_empty;
@@ -100,9 +105,55 @@ fn describe(pos: &VariantPosition) -> ReplayedPosition {
     }
 }
 
+fn variant_end_of(pos: &VariantPosition) -> Option<&'static str> {
+    if matches!(
+        pos,
+        VariantPosition::Chess(_) | VariantPosition::Crazyhouse(_)
+    ) {
+        return None;
+    }
+    let ended = match pos {
+        // Antichess ends when the side to move has no pieces or no moves: it has won.
+        VariantPosition::Antichess(_) => pos.us().is_empty() || pos.legal_moves().is_empty(),
+        _ => pos.is_variant_end(),
+    };
+    if !ended {
+        return None;
+    }
+    if let VariantPosition::Antichess(_) = pos {
+        return Some("won");
+    }
+    Some(match pos.variant_outcome() {
+        shakmaty::Outcome::Known(shakmaty::KnownOutcome::Decisive { winner })
+            if winner == pos.turn() =>
+        {
+            "won"
+        }
+        shakmaty::Outcome::Known(shakmaty::KnownOutcome::Decisive { .. }) => "checkmate",
+        _ => "draw",
+    })
+}
+
+/// The start of a replay: `variant` is a Lichess key, or empty for standard rules.
+pub(crate) fn start_of(variant: &str, fen: &str) -> Option<VariantPosition> {
+    match variant {
+        "" | "standard" | "chess960" => rules::standard_from_fen(fen),
+        variant => rules::setup_start(variant, fen),
+    }
+}
+
 /// `review.replay`: standard rules from `fen`, the start first, as far as the moves are legal.
 pub fn replay_positions<S: AsRef<str>>(fen: &str, moves: &[S]) -> Vec<ReplayedPosition> {
-    let Some(mut pos) = rules::standard_from_fen(fen) else {
+    replay_positions_in("", fen, moves)
+}
+
+/// `replay_positions` by a variant's rules (a Lichess key; empty for standard chess).
+pub fn replay_positions_in<S: AsRef<str>>(
+    variant: &str,
+    fen: &str,
+    moves: &[S],
+) -> Vec<ReplayedPosition> {
+    let Some(mut pos) = start_of(variant, fen) else {
         return Vec::new();
     };
     let mut positions = Vec::with_capacity(moves.len() + 1);
@@ -130,7 +181,17 @@ pub fn replay_turns_with_end<S: AsRef<str>>(
     moves: &[S],
     with_end: bool,
 ) -> Vec<(bool, Option<&'static str>)> {
-    let Some(mut pos) = rules::standard_from_fen(fen) else {
+    replay_turns_in("", fen, moves, with_end)
+}
+
+/// `replay_turns_with_end` by a variant's rules (a Lichess key; empty for standard chess).
+pub fn replay_turns_in<S: AsRef<str>>(
+    variant: &str,
+    fen: &str,
+    moves: &[S],
+    with_end: bool,
+) -> Vec<(bool, Option<&'static str>)> {
+    let Some(mut pos) = start_of(variant, fen) else {
         return Vec::new();
     };
     let state = |pos: &VariantPosition| {
@@ -258,5 +319,32 @@ mod tests {
             replay_positions_count(START, &["f2f3", "e7e5", "g2g4", "d8h4"]),
             5
         );
+    }
+}
+
+#[cfg(test)]
+mod variant_tests {
+    use super::*;
+
+    #[test]
+    fn a_variant_replay_ends_where_its_rules_do() {
+        // Atomic: Qxf7 explodes Black's king, so Black, to move, has lost.
+        let fen = "rnbqkbnr/pppp1ppp/8/4p2Q/8/4P3/PPPP1PPP/RNB1KBNR w KQkq - 0 3";
+        let atomic = replay_positions_in("atomic", fen, &["h5f7"]);
+        assert_eq!(atomic.len(), 2);
+        assert_eq!(atomic[1].end, Some("checkmate"));
+        // Standard rules see an ordinary capture.
+        assert_eq!(replay_positions(fen, &["h5f7"])[1].end, None);
+        // Antichess: White must take Black's last piece, and Black, left with none, has won.
+        let last = "8/8/8/8/8/1p6/P7/8 w - - 0 1";
+        let antichess = replay_positions_in("antichess", last, &["a2b3"]);
+        assert_eq!(antichess[1].end, Some("won"));
+        assert_eq!(antichess[1].turn, "black");
+        let score = crate::api::call("endEval", r#"["won", "black"]"#).unwrap();
+        assert_eq!(score, r#"{"mate":-1}"#);
+        // A drop replays in Crazyhouse and not in standard chess.
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[P] w KQkq - 0 1";
+        assert_eq!(replay_positions_in("crazyhouse", start, &["P@e4"]).len(), 2);
+        assert_eq!(replay_positions(start, &["P@e4"]).len(), 1);
     }
 }

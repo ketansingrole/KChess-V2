@@ -142,31 +142,34 @@ impl Render for GameReplay {
                 self.opponent.clone()
             }
         };
-        let line = |color: Color| {
-            widgets::player_line(
-                h_flex()
-                    .gap(px(8.))
-                    .child(widgets::avatar(
-                        icon("user"),
-                        if color == Color::White {
-                            Side::White
-                        } else {
-                            Side::Black
-                        },
-                        turn == color && !over,
-                        &palette,
-                    ))
-                    .child(name(color))
-                    .children(widgets::material(
-                        &fen,
-                        color == Color::White,
-                        &set,
-                        &palette,
-                    )),
-                None,
-                None,
-            )
-        };
+        // A Crazyhouse game shows each side's pocket where the material difference would be.
+        let mut pockets = [
+            crate::board::pocket(&self.board, Color::White, cx),
+            crate::board::pocket(&self.board, Color::Black, cx),
+        ];
+        let mut line =
+            |color: Color| {
+                widgets::player_line(
+                    h_flex()
+                        .gap(px(8.))
+                        .child(widgets::avatar(
+                            icon("user"),
+                            if color == Color::White {
+                                Side::White
+                            } else {
+                                Side::Black
+                            },
+                            turn == color && !over,
+                            &palette,
+                        ))
+                        .child(name(color))
+                        .children(pockets[usize::from(color == Color::Black)].take().or_else(
+                            || widgets::material(&fen, color == Color::White, &set, &palette),
+                        )),
+                    None,
+                    None,
+                )
+            };
         let board_size = self.layout.board_size(window);
         let board_column = v_flex()
             .w(board_size)
@@ -200,7 +203,7 @@ impl Render for GameReplay {
                 "replay-moves",
                 &self.sans,
                 self.ply,
-                view::black_first(&self.setup),
+                view::first_move(&self.setup),
                 "No moves to review".into(),
                 select.clone(),
                 &palette,

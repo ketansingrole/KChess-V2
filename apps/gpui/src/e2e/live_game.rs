@@ -28,7 +28,13 @@ fn past_the_opening(cx: &mut gpui_kit::TestAppContext) -> (Harness, Handle) {
 fn a_game_lichess_keeps_from_apps_is_offered_to_watch(cx: &mut gpui_kit::TestAppContext) {
     // A game started on another device that the Board API cannot play once opened Play on
     // Lichess on "Connection interrupted" with Lichess's 400 and a Reconnect that never worked.
-    let (app, lichess) = Harness::signed_in(cx, true);
+    let (mut app, lichess) = Harness::signed_in(cx, true);
+    // This launch's own game stream opens first: under load it once arrived after the count
+    // below was reset, and was counted against the next launch.
+    let first = lichess.clone();
+    app.wait_for("this launch's game stream", move |_, _| {
+        first.lock().board_streams > 0
+    });
     {
         // From the next launch on, the game is one Lichess keeps from apps.
         let mut session = lichess.lock();
@@ -287,4 +293,117 @@ fn a_crazyhouse_pawn_is_dropped_from_the_pocket(cx: &mut gpui_kit::TestAppContex
         writes(&lichess),
         ["POST /api/board/game/E2eGame1/move/P%40e3"]
     );
+}
+
+/// Quick Pick offers the game's own actions: a draw offer goes to Lichess as the button sends
+/// it, and resigning asks first there too.
+#[gpui_kit::test]
+fn quick_pick_offers_a_draw_and_asks_before_resigning(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = past_the_opening(cx);
+    let run = |app: &mut Harness, label: &str| {
+        app.press("secondary-k");
+        app.type_text(&format!(">{label}"));
+        super::palette::wait_for_first(app, label);
+        app.press("enter");
+    };
+    run(&mut app, "Offer draw");
+    let offered = lichess.clone();
+    app.wait_for("the draw offer to reach Lichess", move |_, _| {
+        offered
+            .lock()
+            .writes
+            .contains(&"POST /api/board/game/E2eGame1/draw/yes".to_string())
+    });
+    run(&mut app, "Resign");
+    app.click("cancel");
+    app.wait_gone("cancel");
+    assert!(
+        !writes(&lichess)
+            .iter()
+            .any(|write| write.ends_with("/resign")),
+        "{:?}",
+        writes(&lichess)
+    );
+    assert!(app.shows("online-resign"));
+
+    // The board turns round from there as its button turns it.
+    run(&mut app, "Flip board");
+    app.wait_for("the board to turn round", |_, cx| {
+        crate::online::handle(cx).read(cx).flipped
+    });
+}
+
+/// Help stays out of Quick Pick during the game; once it is over, Analyse there opens it.
+#[gpui_kit::test]
+fn a_finished_game_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let (mut app, _lichess) = past_the_opening(cx);
+    let listed = |app: &mut Harness| -> Vec<String> {
+        app.press("secondary-k");
+        app.type_text(">");
+        super::palette::wait_for_first(app, "Zen mode");
+        let labels = app.with_window(|window, _| {
+            (0..8usize)
+                .filter_map(|index| window.try_find(("palette-item", index)))
+                .filter_map(|item| item.label().map(str::to_string))
+                .collect()
+        });
+        app.press("escape");
+        super::palette::wait_until_closed(app);
+        labels
+    };
+    let playing = listed(&mut app);
+    assert!(!playing.contains(&"Analyse".to_string()), "{playing:?}");
+    app.click("online-resign");
+    app.click("ok");
+    app.find("online-analyse");
+    let over = listed(&mut app);
+    assert!(over.contains(&"New game".to_string()), "{over:?}");
+    assert!(over.contains(&"Rematch".to_string()), "{over:?}");
+    // While a rematch is being sent, Quick Pick cannot send another.
+    app.with_window(|_, cx| {
+        crate::online::handle(cx).update(cx, |online, cx| {
+            online.busy = true;
+            cx.notify();
+        })
+    });
+    let sending = listed(&mut app);
+    assert!(!sending.contains(&"Rematch".to_string()), "{sending:?}");
+    app.with_window(|_, cx| {
+        crate::online::handle(cx).update(cx, |online, cx| {
+            online.busy = false;
+            cx.notify();
+        })
+    });
+    app.press("secondary-k");
+    app.type_text(">Analyse");
+    super::palette::wait_for_first(&mut app, "Analyse");
+    app.press("enter");
+    app.wait_for("the analysis board", |_, cx| {
+        crate::shell::current_page(cx) == Some(crate::pages::Page::Analysis)
+    });
+}
+
+/// While a seek waits for an opponent, Quick Pick cancels it as the page's Cancel does.
+#[gpui_kit::test]
+fn a_seek_is_cancelled_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use crate::online::Phase;
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Play on Lichess");
+    app.wait_for("the startup check to finish", |_, cx| {
+        crate::online::handle(cx).read(cx).phase != Phase::Checking
+    });
+    app.with_window(|_, cx| {
+        crate::online::handle(cx).update(cx, |online, cx| {
+            online.phase = Phase::Seeking;
+            cx.notify();
+        })
+    });
+    app.press("secondary-k");
+    app.type_text(">Cancel seek");
+    super::palette::wait_for_first(&mut app, "Cancel seek");
+    app.press("enter");
+    app.wait_for("the seek to end", |_, cx| {
+        crate::online::handle(cx).read(cx).phase != Phase::Seeking
+    });
 }

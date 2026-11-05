@@ -26,7 +26,7 @@ fn wait_until_listed(app: &mut Harness, name: &str) {
 }
 
 /// Wait until the best result is named `name`.
-fn wait_for_first(app: &mut Harness, name: &str) {
+pub(super) fn wait_for_first(app: &mut Harness, name: &str) {
     app.wait_for(&format!("{name:?} as the first result"), |window, _| {
         window
             .try_find(("palette-item", 0usize))
@@ -35,7 +35,7 @@ fn wait_for_first(app: &mut Harness, name: &str) {
 }
 
 /// Wait until the palette is closed.
-fn wait_until_closed(app: &mut Harness) {
+pub(super) fn wait_until_closed(app: &mut Harness) {
     app.wait_for("the palette to close", |window, _| {
         window.try_find(("palette-item", 0usize)).is_none()
     });
@@ -223,4 +223,506 @@ fn the_interface_zoom_steps_with_the_keys_and_is_kept(cx: &mut gpui_kit::TestApp
     app.press("secondary-0");
     wait_for_setting(&mut app, Setting::Auto);
     assert_eq!(saved(&app)["zoom"], json!("auto"));
+}
+
+/// A FEN typed or pasted into Quick Pick is analysed or edited from there; a Lichess game link
+/// or numbered moves open that game, and a profile link that player.
+#[gpui_kit::test]
+fn a_pasted_position_or_game_link_opens_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
+    wait_for_first(&mut app, "Analyse this position");
+    assert!(lists(&mut app, "Edit this position"));
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert_eq!(page(&mut app), Some(Page::Analysis));
+    // Only this position's king reaches d2.
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Kd2");
+    app.press("enter");
+    app.find("tree-e1d2");
+
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "lichess.org/{}#2",
+        super::fake_lichess::LINKED_GAME
+    ));
+    wait_for_first(&mut app, "Open this game on the analysis board");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    // The board held unsaved moves, so it asks first.
+    app.click("ok");
+    app.find("tree-e2e4 e7e5 g1f3 b8c6 f1b5 a7a6");
+    assert_eq!(app.find("tree-e2e4 e7e5").selected(), Some(true));
+
+    // A profile link opens that player.
+    app.press("secondary-k");
+    app.type_text("https://lichess.org/@/SomeIm/perf/blitz");
+    wait_for_first(&mut app, "Open SomeIm’s profile");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert_eq!(page(&mut app), Some(Page::Players));
+
+    // Numbered moves open as a game, at its last move.
+    app.press("secondary-k");
+    app.type_text("1. d4 d5 2. c4");
+    wait_for_first(&mut app, "Analyse these moves");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.click("ok");
+    assert_eq!(app.find("tree-d2d4 d7d5 c2c4").selected(), Some(true));
+}
+
+/// A Lichess broadcast link opens on Watch → Broadcasts: a round's link at that round, though
+/// the tournament would open at its live one.
+#[gpui_kit::test]
+fn a_pasted_broadcast_link_opens_its_round(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::{BROADCAST_ROUNDS, BROADCAST_TOUR};
+    let mut app = Harness::start(cx);
+    app.online();
+    let wait_for_round = |app: &mut Harness, wanted: &str| {
+        let wanted = wanted.to_string();
+        app.wait_for(&format!("round {wanted}"), move |_, cx| {
+            crate::shell::view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx)
+                .is_some_and(|watch| watch.read(cx).broadcast_round() == wanted)
+        });
+    };
+
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/broadcast/kchess-open/round-1/{}",
+        BROADCAST_ROUNDS[0]
+    ));
+    wait_for_first(&mut app, "Watch this broadcast");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert_eq!(page(&mut app), Some(Page::Watch));
+    wait_for_round(&mut app, BROADCAST_ROUNDS[0]);
+    assert_eq!(app.find(("watch-tabs", 2usize)).selected(), Some(true));
+
+    // The tournament's own link opens it at its live round.
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "lichess.org/broadcast/kchess-open/{BROADCAST_TOUR}"
+    ));
+    wait_for_first(&mut app, "Watch this broadcast");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    wait_for_round(&mut app, BROADCAST_ROUNDS[1]);
+}
+
+/// A broadcast's open board offers its buttons in Quick Pick: back to all boards, and on to the
+/// analysis board, which leaves Watch while its page is the one acting.
+#[gpui_kit::test]
+fn a_broadcast_board_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::BROADCAST_ROUNDS;
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/broadcast/kchess-open/round-1/{}",
+        BROADCAST_ROUNDS[0]
+    ));
+    wait_for_first(&mut app, "Watch this broadcast");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    let open_board = |app: &mut Harness| {
+        app.click(("broadcast-cell", 0usize));
+        app.find("broadcast-analyse");
+    };
+    open_board(&mut app);
+
+    app.press("secondary-k");
+    app.type_text(">");
+    wait_for_first(&mut app, "Flip board");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..6usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert_eq!(&listed[..3], ["Flip board", "All boards", "Analyse"]);
+    app.type_text("All boards");
+    wait_for_first(&mut app, "All boards");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.wait_gone("broadcast-analyse");
+
+    open_board(&mut app);
+    app.press("secondary-k");
+    app.type_text(">Analyse");
+    wait_for_first(&mut app, "Analyse");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert_eq!(page(&mut app), Some(Page::Analysis));
+    assert_eq!(app.find("tree-e2e4 e7e5 g1f3").selected(), Some(true));
+}
+
+/// A Lichess tournament link opens the event on the Tournaments page, signed in or not.
+#[gpui_kit::test]
+fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::ARENA;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text(&format!("https://lichess.org/tournament/{ARENA}"));
+    wait_for_first(&mut app, "Open this tournament");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert_eq!(page(&mut app), Some(Page::Tournaments));
+    app.find("tournament-join");
+    // The event's own actions are in Quick Pick too, with the header's.
+    app.press("secondary-k");
+    app.type_text(">");
+    wait_for_first(&mut app, "All tournaments");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..6usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert!(
+        listed.iter().any(|label| label == "Create arena"),
+        "{listed:?}"
+    );
+    app.press("escape");
+    wait_until_closed(&mut app);
+    app.press("secondary-k");
+    app.type_text(">All tournaments");
+    wait_for_first(&mut app, "All tournaments");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.wait_gone("tournament-join");
+    app.find("tournaments-refresh");
+}
+
+/// A Lichess TV link opens that channel on Watch → TV, from whichever tab was showing.
+#[gpui_kit::test]
+fn a_pasted_tv_link_watches_its_channel(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.online();
+    app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
+    app.click(("watch-tabs", 2usize));
+    app.press("secondary-k");
+    app.type_text("https://lichess.org/tv/racingKings");
+    wait_for_first(&mut app, "Watch this TV channel");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert_eq!(page(&mut app), Some(Page::Watch));
+    assert_eq!(app.find(("watch-tabs", 0usize)).selected(), Some(true));
+    app.wait_for("the channel to be kept", |_, cx| {
+        crate::prefs::get::<String>(cx, crate::pages::watch::CHANNEL_KEY, String::new())
+            == "racingKings"
+    });
+}
+
+/// On the analysis board, Quick Pick copies the position and flips the board, as its menu and F do.
+#[gpui_kit::test]
+fn the_analysis_boards_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Analysis board");
+    app.find("chess-board");
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    let run = |app: &mut Harness, label: &str| {
+        app.press("secondary-k");
+        app.type_text(label);
+        wait_for_first(app, label);
+        app.press("enter");
+        wait_until_closed(app);
+    };
+    run(&mut app, "Copy FEN");
+    assert_eq!(
+        app.cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref(),
+        Some("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1")
+    );
+    run(&mut app, "Flip board");
+    // Black's pawn is now at the board's bottom.
+    app.click_square("e7", false);
+    app.click_square("e5", false);
+    assert_eq!(app.find("tree-e2e4 e7e5").selected(), Some(true));
+}
+
+/// On Play with computer, Quick Pick takes back a move only when the Take back button would.
+#[gpui_kit::test]
+fn a_computer_game_takes_back_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Play with computer");
+    app.wait_for("the game to take moves", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .try_find_by_label("Enter a chess move in SAN or UCI")
+            .is_some_and(|entry| entry.disabled() != Some(true))
+    });
+    // Before a move there is nothing to take back: the page's actions lead the list without it.
+    let shown = |app: &mut Harness| {
+        app.press("secondary-k");
+        app.type_text(">");
+        wait_for_first(app, "Zen mode");
+        let labels: Vec<String> = app.with_window(|window, _| {
+            (0..6usize)
+                .filter_map(|index| window.try_find(("palette-item", index)))
+                .filter_map(|item| item.label().map(str::to_string))
+                .collect()
+        });
+        app.press("escape");
+        wait_until_closed(app);
+        labels
+    };
+    let before = shown(&mut app);
+    assert!(before.contains(&"New game".to_string()), "{before:?}");
+    assert!(!before.contains(&"Take back".to_string()), "{before:?}");
+
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.wait_for_moves(&["e4"]);
+    app.press("secondary-k");
+    app.type_text(">Take back");
+    wait_for_first(&mut app, "Take back");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.wait_for_moves(&[]);
+    assert!(!app.enabled("takeback"));
+}
+
+/// Over the board, Quick Pick offers the panel's actions as they apply, and runs them.
+#[gpui_kit::test]
+fn a_game_over_the_board_is_drawn_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Over the board");
+    app.find("chess-board");
+    let shown = |app: &mut Harness| {
+        app.press("secondary-k");
+        app.type_text(">");
+        wait_for_first(app, "Zen mode");
+        let labels: Vec<String> = app.with_window(|window, _| {
+            (0..10usize)
+                .filter_map(|index| window.try_find(("palette-item", index)))
+                .filter_map(|item| item.label().map(str::to_string))
+                .collect()
+        });
+        app.press("escape");
+        wait_until_closed(app);
+        labels
+    };
+    let before = shown(&mut app);
+    assert!(before.contains(&"Flip board".to_string()), "{before:?}");
+    assert!(!before.contains(&"Draw".to_string()), "{before:?}");
+    assert!(!before.contains(&"Take back".to_string()), "{before:?}");
+
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.wait_for_moves(&["e4"]);
+    let during = shown(&mut app);
+    for label in ["Take back", "Draw", "Resign", "Copy PGN"] {
+        assert!(during.contains(&label.to_string()), "{label}: {during:?}");
+    }
+    app.press("secondary-k");
+    app.type_text(">Draw");
+    wait_for_first(&mut app, "Draw");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.wait_gone("local-draw");
+    let after = shown(&mut app);
+    assert!(!after.contains(&"Draw".to_string()), "{after:?}");
+}
+
+/// While a TV game is watched, Quick Pick offers its panel's actions, and Stop ends it.
+#[gpui_kit::test]
+fn a_watched_game_is_stopped_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::watch::WatchPage;
+    let mut app = Harness::start(cx);
+    app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
+    let listed = |app: &mut Harness| -> Vec<String> {
+        app.press("secondary-k");
+        app.type_text(">");
+        app.wait_for("the commands", |window, _| {
+            window.try_find(("palette-item", 0usize)).is_some()
+        });
+        let labels = app.with_window(|window, _| {
+            (0..6usize)
+                .filter_map(|index| window.try_find(("palette-item", index)))
+                .filter_map(|item| item.label().map(str::to_string))
+                .collect()
+        });
+        app.press("escape");
+        wait_until_closed(app);
+        labels
+    };
+    assert!(!listed(&mut app).contains(&"Stop watching".to_string()));
+    app.with_window(|_, cx| {
+        let page = crate::shell::view_of::<WatchPage>(Page::Watch, cx).expect("Watch");
+        page.update(cx, |page, cx| {
+            page.show_frame(
+                serde_json::json!({
+                    "source": "tv", "channel": "atomic", "variant": "atomic", "gameId": "tv1",
+                    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                    "white": { "name": "A" }, "black": { "name": "B" },
+                }),
+                cx,
+            )
+        });
+    });
+    // An Atomic game goes to the analysis board too.
+    let watching = listed(&mut app);
+    assert!(watching.contains(&"Flip board".to_string()), "{watching:?}");
+    assert!(watching.contains(&"Analyse".to_string()), "{watching:?}");
+    app.press("secondary-k");
+    app.type_text(">Stop watching");
+    wait_for_first(&mut app, "Stop watching");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert!(!listed(&mut app).contains(&"Stop watching".to_string()));
+}
+
+/// A page's own toggle that is also a setting is listed once when searched for, not under both
+/// This page and Settings.
+#[gpui_kit::test]
+fn zen_mode_is_found_once(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Play with computer");
+    for query in [">zen", "zen"] {
+        app.press("secondary-k");
+        app.type_text(query);
+        wait_for_first(&mut app, "Zen mode");
+        let listed: Vec<String> = app.with_window(|window, _| {
+            (0..12usize)
+                .filter_map(|index| window.try_find(("palette-item", index)))
+                .filter_map(|item| item.label().map(str::to_string))
+                .collect()
+        });
+        assert_eq!(
+            listed.iter().filter(|label| *label == "Zen mode").count(),
+            1,
+            "{query}: {listed:?}"
+        );
+        app.press("escape");
+        wait_until_closed(&mut app);
+    }
+}
+
+/// On every page, and every Practice trainer, no two different commands share an id: a recently
+/// used entry is found again by its id, so a shared one would run the other command.
+#[gpui_kit::test]
+fn every_command_has_its_own_id_on_every_page(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    let labels: Vec<&str> = crate::shell::nav()
+        .iter()
+        .map(|(_, name, _)| *name)
+        .collect();
+    let check = |app: &mut Harness, place: &str| {
+        let commands = app.cx.update(|cx| crate::palette::command_ids(cx));
+        let mut seen = std::collections::HashMap::new();
+        for (id, label) in &commands {
+            let first = seen.entry(id.clone()).or_insert_with(|| label.clone());
+            assert_eq!(first, label, "{place}: {id} names two commands");
+        }
+    };
+    for label in labels {
+        app.open(label);
+        check(&mut app, label);
+    }
+    app.open("Practice");
+    for tab in 0..6usize {
+        app.click(("practice-tabs", tab));
+        check(&mut app, &format!("Practice tab {tab}"));
+    }
+}
+
+/// Watch's tabs are in Quick Pick from any page, and switch an open Watch page too.
+#[gpui_kit::test]
+fn watch_tabs_open_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let run = |app: &mut Harness, label: &str| {
+        app.press("secondary-k");
+        app.type_text(label);
+        wait_for_first(app, label);
+        app.press("enter");
+        wait_until_closed(app);
+    };
+    run(&mut app, "Broadcasts");
+    assert_eq!(page(&mut app), Some(Page::Watch));
+    assert_eq!(app.find(("watch-tabs", 2usize)).selected(), Some(true));
+    run(&mut app, "Lichess TV");
+    assert_eq!(app.find(("watch-tabs", 0usize)).selected(), Some(true));
+}
+
+/// Watch's TV channels are in Quick Pick, but for the one already on.
+#[gpui_kit::test]
+fn a_tv_channel_is_chosen_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::watch::{CHANNEL_KEY, WatchPage};
+    let mut app = Harness::start(cx);
+    app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
+    app.with_window(|_, cx| {
+        let page = crate::shell::view_of::<WatchPage>(Page::Watch, cx).expect("Watch");
+        page.update(cx, |page, cx| {
+            page.show_channels(
+                vec![
+                    serde_json::json!({ "key": "best", "label": "Top rated" }),
+                    serde_json::json!({ "key": "blitz", "label": "Blitz" }),
+                ],
+                cx,
+            )
+        });
+    });
+    app.press("secondary-k");
+    app.type_text(">Watch Blitz");
+    wait_for_first(&mut app, "Watch Blitz");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.wait_for("the Blitz channel", |_, cx| {
+        crate::prefs::get::<String>(cx, CHANNEL_KEY, String::new()) == "blitz"
+    });
+    app.press("secondary-k");
+    app.type_text(">Watch");
+    wait_for_first(&mut app, "Watch Top rated");
+    assert!(!lists(&mut app, "Watch Blitz"));
+}
+
+/// A watched standard game opens on the analysis board, from its button and from Quick Pick:
+/// leaving Watch tells the Watch page it is hidden, which must not happen while it runs the action.
+#[gpui_kit::test]
+fn a_watched_game_is_analysed_from_its_button_and_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::watch::WatchPage;
+    let mut app = Harness::start(cx);
+    let watch = |app: &mut Harness| {
+        app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
+        app.with_window(|_, cx| {
+            let page = crate::shell::view_of::<WatchPage>(Page::Watch, cx).expect("Watch");
+            page.update(cx, |page, cx| {
+                page.show_frame(
+                    serde_json::json!({
+                        "source": "tv", "channel": "rapid", "variant": "standard", "gameId": "tv2",
+                        "startFen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                        "moves": ["e2e4", "c7c5"],
+                        "fen": "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+                        "white": { "name": "A" }, "black": { "name": "B" },
+                    }),
+                    cx,
+                )
+            });
+        });
+    };
+    watch(&mut app);
+    app.click("watch-analyse");
+    app.find("tree-e2e4 c7c5");
+
+    watch(&mut app);
+    app.press("secondary-k");
+    app.type_text(">Analyse");
+    wait_for_first(&mut app, "Analyse");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    // The first game is still on the analysis board, unsaved.
+    app.click("ok");
+    app.wait_for("the analysis board", |_, cx| {
+        crate::shell::current_page(cx) == Some(Page::Analysis)
+    });
+    app.find("tree-e2e4 c7c5");
 }

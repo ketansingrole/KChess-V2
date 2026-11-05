@@ -22,6 +22,11 @@ impl Core {
             }
             "lichessStudies" => self.inner("studies.list", args.to_vec()).await,
             "lichessStudyChapters" => self.inner("studies.chapters", args.to_vec()).await,
+            "lichessStudyChapter" => {
+                let id = normal("assertLichessId", &arg(args, 0))?;
+                let chapter = normal("assertStudyId", &arg(args, 1))?;
+                self.inner("studies.publicChapter", vec![id, chapter]).await
+            }
             "syncLichessStudy" => {
                 let request = normal("assertStudySyncRequest", &arg(args, 0))?;
                 self.inner("studies.sync", vec![request]).await

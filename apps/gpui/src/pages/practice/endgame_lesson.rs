@@ -92,6 +92,19 @@ fn goal(task: &Value, side: &str) -> String {
     }
 }
 
+/// A lesson's actions, as its buttons offer them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum LessonAction {
+    Back,
+    Hint,
+    TakeBack,
+    Flip,
+    Retry,
+    Previous,
+    Next,
+    NextChapter,
+}
+
 pub struct EndgameLesson {
     course: Course,
     summary: Value,
@@ -226,6 +239,60 @@ impl EndgameLesson {
 
     fn player(&self) -> Color {
         color_of(self.status()["player"].as_str().unwrap_or("white"))
+    }
+
+    /// What the lesson's buttons can do now.
+    pub(crate) fn actions(&self) -> Vec<LessonAction> {
+        let thinking = self.engine.thinking;
+        let mut actions = vec![LessonAction::Back];
+        if self.playable() {
+            if self.your_turn() && !thinking {
+                actions.push(LessonAction::Hint);
+            }
+            if self.step().task["kind"] == json!("play") && !self.moves.is_empty() && !thinking {
+                actions.push(LessonAction::TakeBack);
+            }
+            actions.push(LessonAction::Flip);
+            if !self.moves.is_empty() {
+                actions.push(LessonAction::Retry);
+            }
+        }
+        if self.step > 0 {
+            actions.push(LessonAction::Previous);
+        }
+        if !self.last_step() {
+            actions.push(LessonAction::Next);
+        } else if self.chapter + 1 < self.course.chapters.len() {
+            actions.push(LessonAction::NextChapter);
+        }
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: LessonAction, cx: &mut Context<Self>) {
+        if !self.actions().contains(&action) {
+            return;
+        }
+        match action {
+            LessonAction::Back => self.back(cx),
+            LessonAction::Hint => self.show_hint(cx),
+            LessonAction::TakeBack => self.takeback(cx),
+            LessonAction::Flip => self.flip(cx),
+            LessonAction::Retry => self.open_step(self.step, self.chapter, cx),
+            LessonAction::Previous => self.open_step(self.step - 1, self.chapter, cx),
+            LessonAction::Next | LessonAction::NextChapter => self.next(cx),
+        }
+    }
+
+    fn back(&mut self, cx: &mut Context<Self>) {
+        self.engine.cancel(cx);
+        self.reply = None;
+        cx.emit(TrainerEvent::Back);
+    }
+
+    fn flip(&mut self, cx: &mut Context<Self>) {
+        self.flipped = !self.flipped;
+        self.redraw(cx);
     }
 
     fn open_step(&mut self, index: usize, chapter: usize, cx: &mut Context<Self>) {
@@ -519,11 +586,7 @@ impl EndgameLesson {
                             .small()
                             .icon(icon("chevron-left"))
                             .accessibility_label("All courses")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.engine.cancel(cx);
-                                this.reply = None;
-                                cx.emit(TrainerEvent::Back);
-                            })),
+                            .on_click(cx.listener(|this, _, _, cx| this.back(cx))),
                     )
                     .child(widgets::heading(self.course.title.clone(), palette).truncate()),
             )
@@ -660,10 +723,7 @@ impl EndgameLesson {
                             .icon(icon("arrow-up-down"))
                             .tooltip("Flip board")
                             .accessibility_label("Flip board")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.flipped = !this.flipped;
-                                this.redraw(cx);
-                            })),
+                            .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     )
                     .child(
                         Button::new("lesson-retry")

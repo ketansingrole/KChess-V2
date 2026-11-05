@@ -1,4 +1,5 @@
-//! `play` and `local`: a game against Stockfish, or two people at one terminal, with UCI moves.
+//! `play` and `local`: a game against Stockfish, or two people at one terminal, with moves in SAN
+//! or UCI.
 //! The rules run both (`kchess-games`); the session and Game history entry are saved in the
 //! core's library as the app saves them, so either can carry the game on.
 
@@ -109,6 +110,68 @@ impl Session<'_> {
             .unwrap_or_else(|| fen.to_string())
     }
 
+    /// A typed move as UCI: SAN ("Nf3", "O-O", "exd8=Q") is read in the position on the board;
+    /// UCI, and anything that is not a legal move, are passed on as typed for the rules to judge.
+    fn typed_uci(&self, text: &str) -> String {
+        let bytes = text.as_bytes();
+        let is_uci = bytes.len() >= 4
+            && bytes[0].is_ascii_lowercase()
+            && bytes[1].is_ascii_digit()
+            && bytes[2].is_ascii_lowercase()
+            && bytes[3].is_ascii_digit();
+        if is_uci {
+            return text.to_lowercase();
+        }
+        let variant = self.state()["setup"]["variant"]
+            .as_str()
+            .unwrap_or("standard");
+        kchess_domain::rules::setup_start(variant, &self.fen())
+            .and_then(|position| kchess_domain::position::play_san(&position, text))
+            .map_or_else(|| text.to_string(), |played| played.uci)
+    }
+
+    /// The game as PGN, with its result, as the app's Copy PGN writes it.
+    fn pgn(&self) -> Result<String, String> {
+        let result = match self.result() {
+            None => "*",
+            Some(result) => match result["winner"].as_str() {
+                Some("white") => "1-0",
+                Some("black") => "0-1",
+                _ => "1/2-1/2",
+            },
+        };
+        let (white, black) = match &self.game {
+            Game::Local(_) => ("White".to_string(), "Black".to_string()),
+            Game::Computer(_) => {
+                let player = if self.state()["color"] == json!("black") {
+                    "black"
+                } else {
+                    "white"
+                };
+                let engine = "Stockfish".to_string();
+                if player == "white" {
+                    ("You".to_string(), engine)
+                } else {
+                    (engine, "You".to_string())
+                }
+            }
+        };
+        let headers = json!({
+            "Event": if self.kind() == "computer" { "Computer game (KChess)" } else { "Over the board (KChess)" },
+            "White": white,
+            "Black": black,
+            "Result": result,
+        });
+        kchess_games::rules(
+            "setupPgn",
+            &[self.state()["setup"].clone(), json!(self.moves()), headers],
+        )
+        .map_err(|cause| cause.to_string())?
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "The game could not be written as PGN.".to_string())
+    }
+
     fn show(&self) {
         println!(
             "{}",
@@ -173,6 +236,82 @@ impl Session<'_> {
         let identity = self.history.identity();
         self.save("saveSession", vec![json!(self.archive_kind()), identity])
             .await;
+    }
+
+    /// Play as `color` (`white`, `black` or `random`): a new game, as the app's New game starts
+    /// one, unless the game on the board is still being played.
+    async fn choose_color(&mut self, color: &str) -> Result<(), String> {
+        let color = match color {
+            "random" if kchess_games::random_unit() < 0.5 => "white",
+            "random" => "black",
+            chosen => chosen,
+        };
+        // The game on the board is already that: kept, unless it is over.
+        if self.state()["color"].as_str().unwrap_or("white") == color && !self.over() {
+            return Ok(());
+        }
+        if !self.moves().is_empty() && !self.over() {
+            return Err(
+                "A game is in progress: finish it, or type new, before choosing a colour.".into(),
+            );
+        }
+        self.reset_history().await;
+        let host = self.host();
+        let Game::Computer(game) = &mut self.game else {
+            return Ok(());
+        };
+        game.state["color"] = json!(color);
+        let effects = game.start(None, None, &host)?;
+        self.computer_effects(effects).await;
+        self.persist().await;
+        Ok(())
+    }
+
+    /// Start a game over the board in `variant`, as the app's New game does: Chess960 from a
+    /// random position, the others from their usual start, the clock as it was.
+    /// Start a game in `variant`, from its usual start or from `fen`.
+    async fn choose_setup(&mut self, variant: &str, fen: Option<&str>) -> Result<(), String> {
+        let now = self.now();
+        if fen.is_none()
+            && self.state()["setup"]["variant"]
+                .as_str()
+                .unwrap_or("standard")
+                == variant
+            && !self.over()
+        {
+            return Ok(());
+        }
+        if !self.moves().is_empty() && !self.over() {
+            return Err(
+                "A game is in progress: finish it, or type new, before choosing a variant.".into(),
+            );
+        }
+        let fen = if let Some(fen) = fen {
+            playable_fen(variant, fen)?
+        } else if variant == "chess960" {
+            json!(kchess_domain::rules::chess960_fen(
+                (kchess_games::random_unit() * 960.0) as i64
+            ))
+        } else {
+            kchess_games::rules("defaultFen", &[json!(variant)])
+                .map_err(|cause| cause.to_string())?
+        };
+        self.reset_history().await;
+        let setup = json!({ "variant": variant, "fen": fen });
+        let host = self.host();
+        match &mut self.game {
+            Game::Local(game) => {
+                let clock = game.state["clock"].clone();
+                game.start(setup, clock, now)?;
+            }
+            // Fairy-Stockfish plays the other variants.
+            Game::Computer(game) => {
+                let clock = game.state["clock"].clone();
+                game.start(Some(setup), Some(clock), &host)?;
+            }
+        }
+        self.persist().await;
+        Ok(())
     }
 
     /// A new game gets its own Game history entry.
@@ -264,6 +403,7 @@ impl Session<'_> {
 
     /// One typed command; false when it was not understood or not legal.
     async fn command(&mut self, command: &str) -> Result<bool, String> {
+        let typed = self.typed_uci(command);
         let host = self.host();
         let now = self.now();
         match &mut self.game {
@@ -278,8 +418,8 @@ impl Session<'_> {
                         };
                         game.start(None, None, &host)?
                     }
-                    uci => {
-                        let (legal, effects) = game.play(uci, &host)?;
+                    _ => {
+                        let (legal, effects) = game.play(&typed, &host)?;
                         if !legal {
                             return Ok(false);
                         }
@@ -318,8 +458,8 @@ impl Session<'_> {
                     let (setup, clock) = (game.state["setup"].clone(), game.state["clock"].clone());
                     game.start(setup, clock, now)?;
                 }
-                uci => {
-                    let (san, _) = game.play(uci, now)?;
+                _ => {
+                    let (san, _) = game.play(&typed, now)?;
                     if san.is_none() {
                         return Ok(false);
                     }
@@ -354,11 +494,103 @@ fn wall_now() -> f64 {
         .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0)
 }
 
+/// What `play` was given: a level, a colour and a variant.
+pub type Choices = (Option<String>, Option<String>, Option<String>);
+
+/// `play`'s level, colour and variant, in any order: `play 5 black`, `play black crazyhouse`.
+pub fn choices(words: &[String]) -> Result<Choices, String> {
+    let (mut level, mut color, mut variant) = (None, None, None);
+    for word in words {
+        let known = kchess_domain::misc::constants::VARIANTS
+            .iter()
+            .find(|key| key.eq_ignore_ascii_case(word));
+        match (word.as_str(), known) {
+            ("white" | "black" | "random", _) if color.is_none() => color = Some(word.clone()),
+            (_, Some(key)) if variant.is_none() => variant = Some((*key).to_string()),
+            (other, Some(_)) => return Err(format!("Unexpected argument {other}.")),
+            _ if level.is_none() => level = Some(word.clone()),
+            (other, _) => return Err(format!("Unexpected argument {other}.")),
+        }
+    }
+    Ok((level, color, variant))
+}
+
+/// `--fen <FEN>` among a command's words, quoted or as its six fields: the position to start
+/// from, and the other words.
+pub fn take_fen(words: &[String]) -> Result<(Option<String>, Vec<String>), String> {
+    let Some(at) = words.iter().position(|word| word == "--fen") else {
+        return Ok((None, words.to_vec()));
+    };
+    let field = |index: usize, word: &str| match index {
+        1 => matches!(word, "w" | "b"),
+        2 => word
+            .chars()
+            .all(|c| c == '-' || "KQkqABCDEFGHabcdefgh".contains(c)),
+        3 => word == "-" || (word.len() == 2 && word.as_bytes()[1].is_ascii_digit()),
+        _ => word.parse::<u32>().is_ok(),
+    };
+    // The first word is the board (or the whole quoted FEN); each next one a further field.
+    let mut fields: Vec<&str> = Vec::new();
+    let mut taken = 1;
+    for word in &words[at + 1..] {
+        if fields.is_empty() {
+            fields.extend(word.split_whitespace());
+        } else if fields.len() < 6 && field(fields.len(), word) {
+            fields.push(word);
+        } else {
+            break;
+        }
+        taken += 1;
+    }
+    if fields.is_empty() {
+        return Err("--fen needs a position.".into());
+    }
+    let mut rest = words.to_vec();
+    rest.drain(at..at + taken);
+    Ok((Some(fields.join(" ")), rest))
+}
+
+/// A position a game can start from in `variant`, as the app's "Play from here" checks it.
+fn playable_fen(variant: &str, fen: &str) -> Result<Value, String> {
+    let fen = fen.trim();
+    let playable = if matches!(variant, "standard" | "chess960") {
+        kchess_domain::position::fen_problem(fen).is_none()
+    } else {
+        kchess_domain::rules::setup_start(variant, fen).is_some()
+    };
+    if playable {
+        Ok(json!(fen))
+    } else {
+        Err(format!("Not a playable position: {fen}"))
+    }
+}
+
+/// `local [variant]`: a variant as Lichess keys it, in any case (`crazyhouse`, `kingOfTheHill`).
+pub fn local_variant(words: &[String]) -> Result<Option<String>, String> {
+    match words {
+        [] => Ok(None),
+        [word] => kchess_domain::misc::constants::VARIANTS
+            .iter()
+            .find(|key| key.eq_ignore_ascii_case(word))
+            .map(|key| Some((*key).to_string()))
+            .ok_or_else(|| {
+                format!(
+                    "Unknown variant {word}. Choose one of {}.",
+                    kchess_domain::misc::constants::VARIANTS.join(", ")
+                )
+            }),
+        [_, other, ..] => Err(format!("Unexpected argument {other}.")),
+    }
+}
+
 pub async fn interactive(
     core: &CoreClient,
     events: &mut UnboundedReceiver<Event>,
     computer: bool,
     level: Option<String>,
+    color: Option<String>,
+    variant: Option<String>,
+    fen: Option<String>,
 ) -> Result<(), String> {
     let library = core.call("library", vec![]).await?;
     let sessions = &library["sessions"];
@@ -376,10 +608,15 @@ pub async fn interactive(
             }
             saved["level"] = json!(level);
         }
+
         // The core still refuses engine help during a live game on every search.
         core.call("resumeOnline", vec![]).await?;
+        // Fairy-Stockfish plays the other variants; the core says so if it is missing.
+        let fairy = variant
+            .as_deref()
+            .is_some_and(|variant| !matches!(variant, "standard" | "chess960"));
         let engine = core.call("engineStatus", vec![]).await?;
-        if engine["ready"] != json!(true) {
+        if !fairy && engine["ready"] != json!(true) {
             return Err("Stockfish is unavailable. Install an engine or pass --engine.".into());
         }
         let host = computer::Host {
@@ -421,6 +658,13 @@ pub async fn interactive(
         started,
         failed: false,
     };
+    if let Some(color) = color.filter(|_| computer) {
+        session.choose_color(&color).await?;
+    }
+    if variant.is_some() || fen.is_some() {
+        let variant = variant.as_deref().unwrap_or("standard");
+        session.choose_setup(variant, fen.as_deref()).await?;
+    }
     session.show();
     session.computer_turn(events).await;
 
@@ -451,6 +695,13 @@ pub async fn interactive(
                     "" => continue,
                     "quit" => break,
                     "status" => {}
+                    "pgn" => {
+                        match session.pgn() {
+                            Ok(pgn) => println!("{}", json!({ "pgn": pgn })),
+                            Err(cause) => eprintln!("{cause}"),
+                        }
+                        continue;
+                    }
                     command => match session.command(command).await {
                         Ok(true) => {}
                         Ok(false) => eprintln!("Illegal move or game unavailable."),
@@ -471,4 +722,82 @@ pub async fn interactive(
         return Err("Some changes could not be saved.".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::choices;
+
+    fn words(list: &[&str]) -> Vec<String> {
+        list.iter().map(|word| (*word).to_string()).collect()
+    }
+
+    #[test]
+    fn local_takes_a_variant_in_any_case() {
+        use super::local_variant;
+        assert_eq!(local_variant(&[]), Ok(None));
+        assert_eq!(
+            local_variant(&words(&["CrazyHouse"])),
+            Ok(Some("crazyhouse".into()))
+        );
+        assert_eq!(
+            local_variant(&words(&["kingofthehill"])),
+            Ok(Some("kingOfTheHill".into()))
+        );
+        assert!(local_variant(&words(&["bughouse"])).is_err());
+        assert!(local_variant(&words(&["atomic", "horde"])).is_err());
+    }
+
+    /// A game starts from a position given quoted or as its six words, among the other choices;
+    /// the position must be playable in its variant.
+    #[test]
+    fn a_game_takes_a_starting_position() {
+        use super::{playable_fen, take_fen};
+        let fen = "4k3/8/8/8/8/8/4P3/4K3 b - - 0 40";
+        assert_eq!(
+            take_fen(&words(&["club", "--fen", fen, "black"])),
+            Ok((Some(fen.to_string()), words(&["club", "black"])))
+        );
+        let mut split = vec!["--fen"];
+        split.extend(fen.split(' '));
+        split.push("crazyhouse");
+        assert_eq!(
+            take_fen(&words(&split)),
+            Ok((Some(fen.to_string()), words(&["crazyhouse"])))
+        );
+        // A FEN with fewer fields stops at the first word that is not one.
+        assert_eq!(
+            take_fen(&words(&["--fen", "4k3/8/8/8/8/8/4P3/4K3", "w", "black"])),
+            Ok((
+                Some("4k3/8/8/8/8/8/4P3/4K3 w".to_string()),
+                words(&["black"])
+            ))
+        );
+        assert_eq!(take_fen(&words(&["club"])), Ok((None, words(&["club"]))));
+        assert!(take_fen(&words(&["--fen"])).is_err());
+        assert_eq!(playable_fen("standard", fen), Ok(serde_json::json!(fen)));
+        assert!(playable_fen("standard", "8/8/8/8/8/8/8/8 w - - 0 1").is_err());
+        let zh = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
+        assert!(playable_fen("crazyhouse", zh).is_ok());
+        assert!(playable_fen("horde", zh).is_err());
+    }
+
+    #[test]
+    fn play_takes_a_level_a_colour_and_a_variant_in_any_order() {
+        let some = |text: &str| Some(text.to_string());
+        assert_eq!(choices(&words(&[])), Ok((None, None, None)));
+        assert_eq!(choices(&words(&["club"])), Ok((some("club"), None, None)));
+        assert_eq!(choices(&words(&["black"])), Ok((None, some("black"), None)));
+        assert_eq!(
+            choices(&words(&["random", "club"])),
+            Ok((some("club"), some("random"), None))
+        );
+        // A variant, in any case and anywhere among them, is played by Fairy-Stockfish.
+        assert_eq!(
+            choices(&words(&["CrazyHouse", "black", "club"])),
+            Ok((some("club"), some("black"), some("crazyhouse")))
+        );
+        assert!(choices(&words(&["club", "black", "extra"])).is_err());
+        assert!(choices(&words(&["atomic", "horde"])).is_err());
+    }
 }

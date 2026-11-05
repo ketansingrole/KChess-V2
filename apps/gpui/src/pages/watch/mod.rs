@@ -20,13 +20,13 @@ use crate::widgets::{self, KeyboardFocus as _, Look, Pill};
 
 mod broadcast_engine;
 mod broadcasts;
-mod live;
+pub(crate) mod live;
 
 use broadcasts::Broadcasts;
 use live::Live;
 
-const TAB_KEY: &str = "kchess:watch-tab";
-const CHANNEL_KEY: &str = "kchess:watch-channel";
+pub(crate) const TAB_KEY: &str = "kchess:watch-tab";
+pub(crate) const CHANNEL_KEY: &str = "kchess:watch-channel";
 /// Clocks are redrawn this often while something is being watched.
 const TICK: Duration = Duration::from_millis(500);
 /// The tabs' row and the gap under it, above the board.
@@ -333,6 +333,11 @@ impl WatchPage {
         }
     }
 
+    /// Show a tab by its key (`tv`, `friends` or `broadcasts`), as its pill does.
+    pub fn show_tab(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.choose_tab(Tab::of(key), window, cx);
+    }
+
     fn choose_tab(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {
         if tab == self.tab {
             return;
@@ -343,6 +348,60 @@ impl WatchPage {
         self.resume(window, cx);
         self.engine_changed(cx);
         cx.notify();
+    }
+
+    /// Open a Lichess broadcast link on the Broadcasts tab: its tournament, or its round (and
+    /// board), found by asking Lichess which tournament the round is in.
+    pub fn open_broadcast(
+        &mut self,
+        link: crate::game::BroadcastLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.tab != Tab::Broadcasts {
+            self.tab = Tab::Broadcasts;
+            crate::prefs::set(cx, TAB_KEY, Tab::Broadcasts.key());
+            self.engine_changed(cx);
+        }
+        let (round, game) = match link {
+            crate::game::BroadcastLink::Tour(tour) => {
+                return self.open_tour_at(tour, None, String::new(), window, cx);
+            }
+            crate::game::BroadcastLink::Round { round, game } => (round, game),
+        };
+        self.stop(cx);
+        self.error = None;
+        let epoch = self.epoch;
+        let found = cx
+            .global::<AppCore>()
+            .call("broadcastRound", vec![json!(round)]);
+        cx.spawn_in(window, async move |this, cx| {
+            let answer = found.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.epoch != epoch {
+                    return;
+                }
+                match answer {
+                    Ok(found) => {
+                        let tour = found["tourId"].as_str().unwrap_or_default().to_string();
+                        this.open_tour_at(tour, Some(round), game, window, cx);
+                    }
+                    Err(cause) => this.error = Some(cause.message.into()),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Watch a Lichess TV channel, as its link names it, on the TV tab.
+    pub fn open_channel(&mut self, channel: String, window: &mut Window, cx: &mut Context<Self>) {
+        crate::prefs::set(cx, CHANNEL_KEY, channel.clone());
+        if self.tab != Tab::Tv {
+            self.choose_tab(Tab::Tv, window, cx);
+        } else if !Self::playing_own_game(cx) {
+            self.watch_channel(channel, cx);
+        }
     }
 
     /// Watch a live game (`watchGame`): the Following tab, streaming it.
@@ -521,6 +580,32 @@ impl WatchPage {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn show_channels(&mut self, channels: Vec<Value>, cx: &mut Context<Self>) {
+        self.channels = channels;
+        cx.notify();
+    }
+
+    /// The TV channels Quick Pick can switch to, by key and name: all but the one on the TV tab,
+    /// and none while your own game is on.
+    pub(crate) fn other_channels(&self, cx: &App) -> Vec<(String, String)> {
+        if Self::playing_own_game(cx) {
+            return Vec::new();
+        }
+        let current = match (&self.target, self.tab) {
+            (Some(Target::Channel(channel)), Tab::Tv) => Some(channel.as_str()),
+            _ => None,
+        };
+        self.channels
+            .iter()
+            .filter_map(|channel| {
+                let key = channel["key"].as_str()?;
+                let name = channel["label"].as_str()?;
+                (current != Some(key)).then(|| (key.to_string(), name.to_string()))
+            })
+            .collect()
+    }
+
     fn channel_list(&self, cx: &mut Context<Self>, palette: &Palette) -> Div {
         let disabled = Self::playing_own_game(cx);
         let current = match &self.target {
@@ -534,7 +619,7 @@ impl WatchPage {
             .child(
                 Button::new("watch-channels-refresh")
                     .ghost()
-                    .xsmall()
+                    .small()
                     .icon(icon("refresh-cw"))
                     .accessibility_label("Refresh channels")
                     .on_click(cx.listener(|this, _, _, cx| this.load_channels(cx))),
@@ -764,7 +849,7 @@ impl WatchPage {
                 h_flex()
                     .child(
                         Button::new("watch-retry")
-                            .xsmall()
+                            .small()
                             .outline()
                             .label("Retry feed")
                             .on_click(

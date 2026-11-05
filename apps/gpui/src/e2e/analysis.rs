@@ -47,7 +47,7 @@ pub(super) fn settle(app: &mut Harness) {
 /// Import a FEN or PGN through the analysis board's dialog, and let it close if it will.
 pub(super) fn import(app: &mut Harness, text: &str) {
     app.click("analysis-import");
-    fill_in_dialog(app, "FEN or PGN", text);
+    fill_in_dialog(app, "FEN, PGN or Lichess link", text);
     app.click("import-run");
     settle(app);
 }
@@ -149,7 +149,7 @@ fn an_import_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     assert!(app.shows("import-run"), "the dialog stays for a correction");
     fill_in_dialog(
         &mut app,
-        "FEN or PGN",
+        "FEN, PGN or Lichess link",
         "rnbqkbnr/pppppppp/8/8/3q4/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     );
     app.click("import-run");
@@ -158,7 +158,11 @@ fn an_import_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.shows("tree-e2e4"));
 
     // A valid position closes it, and play goes on from there: only this king can reach d2.
-    fill_in_dialog(&mut app, "FEN or PGN", "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
+    fill_in_dialog(
+        &mut app,
+        "FEN, PGN or Lichess link",
+        "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
+    );
     app.click("import-run");
     // The dialog closes on the core's answer, which a loaded runner gives after any fixed wait.
     app.wait_gone("import-run");
@@ -307,6 +311,24 @@ fn the_editor_starts_from_the_standard_position(cx: &mut gpui_kit::TestAppContex
     }
 }
 
+/// The spare pieces are buttons a screen reader names, chosen as the tools beside them are.
+#[gpui_kit::test]
+fn a_spare_piece_is_a_named_button_that_is_chosen(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = editor(cx);
+    let queen = app.find("spare-White-Queen");
+    assert_eq!(queen.role(), Some(gpui_kit::Role::Button));
+    assert_eq!(queen.label(), Some("White queen"));
+    assert_eq!(queen.selected(), Some(false));
+    app.click("spare-White-Queen");
+    app.wait_for("the queen to be chosen", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("spare-White-Queen")
+            .is_some_and(|queen| queen.selected() == Some(true))
+    });
+    assert_eq!(app.find("spare-Black-Queen").selected(), Some(false));
+}
+
 #[gpui_kit::test]
 fn an_empty_board_is_no_position_to_analyse(cx: &mut gpui_kit::TestAppContext) {
     let mut app = editor(cx);
@@ -384,6 +406,38 @@ fn the_side_to_move_and_castling_rights_show_in_the_fen(cx: &mut gpui_kit::TestA
         &mut app,
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b Qk - 0 1",
     );
+}
+
+/// A pasted Chess960 position keeps its castling; a king moved off e1 in a standard one loses
+/// White's, rather than castling Chess960-style from d1.
+#[gpui_kit::test]
+fn chess960_castling_is_kept_and_a_moved_king_drops_its_own(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = editor(cx);
+    app.drag_square("e1", "d1", true);
+    wait_for_fen(
+        &mut app,
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBK1BNR w kq - 0 1",
+    );
+    // Castling from d1 is allowed in Chess960, and offered, but not ticked for you.
+    assert!(app.enabled("castling-Q"));
+    assert_eq!(app.find("castling-Q").checked(), Some(false));
+
+    app.click_label("FEN");
+    app.press("secondary-a");
+    app.type_text("bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1");
+    app.press("enter");
+    wait_for_fen(
+        &mut app,
+        "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w KQkq - 0 1",
+    );
+    for key in ["K", "Q", "k", "q"] {
+        assert_eq!(
+            app.find(format!("castling-{key}")).checked(),
+            Some(true),
+            "{key}"
+        );
+    }
+    assert_eq!(app.status(), "Ready to analyse");
 }
 
 #[gpui_kit::test]
@@ -479,4 +533,218 @@ fn a_png_shows_the_position_in_the_variation_shown(cx: &mut gpui_kit::TestAppCon
     app.click("tree-e2e4 c7c5");
     let on_main_line = export(&mut app, "PNG of this position", "main.png");
     assert!(in_variation == on_main_line, "the PNG shows 1... c5");
+}
+
+/// A Lichess game link pasted into the import fetches that game, opened from the side and at the
+/// move the link names.
+#[gpui_kit::test]
+fn a_lichess_game_link_imports_the_game(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    app.online();
+    import(
+        &mut app,
+        &format!(
+            "https://lichess.org/{}/black#3",
+            super::fake_lichess::LINKED_GAME
+        ),
+    );
+    app.wait_gone("import-run");
+    app.find("tree-e2e4 e7e5 g1f3 b8c6 f1b5 a7a6");
+    assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
+}
+
+/// The FEN of the position the analysis board shows.
+fn shown_fen(app: &mut Harness) -> String {
+    app.with_window(|_, cx| {
+        let page = crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+            crate::pages::Page::Analysis,
+            cx,
+        )
+        .expect("the analysis board");
+        page.read(cx).shown_fen()
+    })
+}
+
+/// Wait until the engine searches the position shown: a request standard rules refuse (one
+/// sent without its variant) shows an error instead.
+fn wait_for_search(app: &mut Harness) {
+    app.wait_for("the engine to search", |_, cx| {
+        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+            crate::pages::Page::Analysis,
+            cx,
+        )
+        .is_some_and(|page| page.read(cx).engine_text(cx).starts_with("Depth "))
+    });
+}
+
+/// An Atomic game is played by Atomic's rules: its capture explodes, which standard chess would
+/// not show. A variant KChess does not play is refused.
+#[gpui_kit::test]
+fn a_variant_game_is_played_by_its_own_rules(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "[Variant \"Bughouse\"]\n\n1. e4 d5 2. exd5 *");
+    assert!(app.shows("import-run"), "the dialog stays");
+    assert!(!app.shows("tree-e2e4"));
+    fill_in_dialog(
+        &mut app,
+        "FEN, PGN or Lichess link",
+        "[Variant \"Atomic\"]\n\n1. e4 d5 2. exd5 *",
+    );
+    app.click("import-run");
+    app.wait_gone("import-run");
+    app.click("tree-e2e4 d7d5 e4d5");
+    // The capturing pawn exploded with the one it took.
+    assert_eq!(
+        shown_fen(&mut app),
+        "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
+    );
+    // Fairy-Stockfish reviews the game; Lichess's database holds Atomic games too.
+    assert!(app.shows("Review"));
+    assert!(app.shows("Explorer"));
+    wait_for_search(&mut app);
+}
+
+/// A Crazyhouse game shows its pockets by the board; a drop from one is played and analysed.
+#[gpui_kit::test]
+fn a_crazyhouse_drop_is_played_from_the_pocket(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(
+        &mut app,
+        "[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 *",
+    );
+    app.wait_gone("import-run");
+    app.click("tree-e2e4 d7d5 e4d5 d8d5");
+    app.find("pocket-White-Pawn");
+    app.find("pocket-Black-Pawn");
+    app.click("pocket-White-Pawn");
+    app.click_square("e3", true);
+    app.find("tree-e2e4 d7d5 e4d5 d8d5 P@e3");
+    assert_eq!(selected(&mut app, "e2e4 d7d5 e4d5 d8d5 P@e3"), Some(true));
+    // The drop's position goes to the engine by Crazyhouse's rules, which standard rules refuse.
+    wait_for_search(&mut app);
+    // The game keeps its variant in its PGN; the standard board editor is not offered.
+    app.click("analysis-more");
+    app.wait_for("the menu", |window, _| {
+        window.try_find_by_label("Copy PGN").is_some()
+    });
+    assert!(
+        app.with_window(|window, _| { window.try_find_by_label("Edit this position").is_none() })
+    );
+    app.click_label("Copy PGN");
+    let pgn = clipboard(&mut app).expect("a copied PGN");
+    assert!(pgn.contains("[Variant \"Crazyhouse\"]"), "{pgn}");
+    assert!(pgn.contains("3. P@e3"), "{pgn}");
+    // The computer plays on from the drop, in Crazyhouse, as White; the player takes Black.
+    app.click("analysis-more");
+    app.wait_for("the menu", |window, _| {
+        window
+            .try_find_by_label("Play Stockfish from here")
+            .is_some()
+    });
+    app.click_label("Play Stockfish from here");
+    app.wait_for("a Crazyhouse game from the drop", |_, cx| {
+        crate::shell::view_of::<crate::pages::computer::ComputerPage>(
+            crate::pages::Page::Computer,
+            cx,
+        )
+        .is_some_and(|page| {
+            let page = page.read(cx);
+            page.setup_variant() == "crazyhouse"
+                && page
+                    .setup_fen()
+                    .starts_with("rnb1kbnr/ppp1pppp/8/3q4/8/4P3/PPPP1PPP/")
+        })
+    });
+}
+
+/// The explorer looks a variant's position up in Lichess's games of that variant, offers only the
+/// databases that hold them, and plays a drop it lists.
+#[gpui_kit::test]
+fn the_explorer_looks_up_a_crazyhouse_position_in_its_variant(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Analysis board");
+    app.find("chess-board");
+    import(
+        &mut app,
+        "[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 *",
+    );
+    app.wait_gone("import-run");
+    app.click("tree-e2e4 d7d5 e4d5 d8d5");
+    app.click("Explorer");
+    app.click("explorer-lookup");
+    app.wait_for("the Crazyhouse continuation", |window, _| {
+        window.try_find_by_label("Play P@e3").is_some()
+    });
+    assert!(app.with_window(|window, _| window.try_find_by_label("Masters").is_none()));
+    app.click_label("Play P@e3");
+    app.click("Moves");
+    assert_eq!(selected(&mut app, "e2e4 d7d5 e4d5 d8d5 P@e3"), Some(true));
+
+    // Chess960 is standard chess from another start: the masters' games and the tablebase
+    // still answer it.
+    import(
+        &mut app,
+        "[Variant \"Chess960\"]\n[FEN \"bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1\"]\n\n1. e4 *",
+    );
+    app.wait_gone("import-run");
+    app.click("tree-e2e4");
+    app.click("Explorer");
+    app.wait_for("every database", |window, _| {
+        window.try_find_by_label("Masters").is_some()
+            && window.try_find_by_label("Tablebase").is_some()
+    });
+}
+
+/// A public Lichess study's link imports the chapter it names, or the study's first, in its own
+/// variant.
+#[gpui_kit::test]
+fn a_lichess_study_link_imports_its_chapter(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::{STUDY, STUDY_CHAPTER, VARIANT_STUDY};
+    let mut app = analysis(cx);
+    app.online();
+    import(
+        &mut app,
+        &format!("https://lichess.org/study/{STUDY}/{STUDY_CHAPTER}"),
+    );
+    app.wait_gone("import-run");
+    app.find("tree-d2d4 d7d5 c2c4 e7e6");
+
+    import(&mut app, &format!("lichess.org/study/{VARIANT_STUDY}"));
+    app.wait_gone("import-run");
+    app.find("tree-e2e4 d7d5 e4d5 d8d5");
+    app.find("pocket-White-Pawn");
+}
+
+/// Quick Pick runs the editor's buttons: the board is cleared from it, and the actions an
+/// unplayable position cannot take are left out until it is playable again.
+#[gpui_kit::test]
+fn the_editors_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = editor(cx);
+    let run = |app: &mut Harness, label: &str| {
+        app.press("secondary-k");
+        app.type_text(&format!(">{label}"));
+        super::palette::wait_for_first(app, label);
+        app.press("enter");
+        settle(app);
+    };
+    run(&mut app, "Clear board");
+    wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
+    // No kings: nothing can be played or analysed from here.
+    app.press("secondary-k");
+    app.type_text(">Analyse this position");
+    settle(&mut app);
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..10usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert!(
+        !listed.iter().any(|label| label == "Analyse this position"),
+        "{listed:?}"
+    );
+    app.press("escape");
+    settle(&mut app);
+    run(&mut app, "Starting position");
+    wait_for_fen(&mut app, START_FEN);
 }

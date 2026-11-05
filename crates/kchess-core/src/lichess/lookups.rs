@@ -244,6 +244,8 @@ pub struct LookupOptions {
     pub color: Option<String>,
     pub modes: Option<Vec<String>>,
     pub since: Option<String>,
+    /// The Lichess database's variant; None is standard chess.
+    pub variant: Option<String>,
 }
 
 /// One move of a lookup: the database's counts and the SAN checked against the position.
@@ -566,20 +568,22 @@ impl PositionLookups {
             .as_str()
             .and_then(Kind::parse)
             .ok_or_else(|| CoreError::new("Invalid position lookup kind."))?;
-        let analysis = misc::call(
-            "assertAnalysisRequest",
-            &[no_lossless(), json!({ "fen": raw_fen, "lines": 1 })],
-        )
-        .ok_or_else(|| CoreError::new("Unknown validator."))?
-        .map_err(CoreError::new)?;
+        let options = assert_options(raw_options)?;
+        let options = normalize_options(kind, &options)?;
+        let variant = options.variant.as_deref().unwrap_or("standard");
+        let mut request = json!({ "fen": raw_fen, "lines": 1 });
+        if let Some(variant) = &options.variant {
+            request["variant"] = json!(variant);
+        }
+        let analysis = misc::call("assertAnalysisRequest", &[no_lossless(), request])
+            .ok_or_else(|| CoreError::new("Unknown validator."))?
+            .map_err(CoreError::new)?;
         let fen = analysis
             .get("fen")
             .and_then(Value::as_str)
             .ok_or_else(|| CoreError::new("Invalid analysis request."))?
             .to_string();
-        let options = assert_options(raw_options)?;
-        let options = normalize_options(kind, &options)?;
-        if !is_legal_position(&fen) {
+        if !is_legal_position(variant, &fen) {
             return Err(CoreError::new("That position is not legal."));
         }
         if kind == Kind::Tablebase {
@@ -602,10 +606,9 @@ impl PositionLookups {
         let saved = candidate.filter(|candidate| {
             candidate.fen == fen
                 && candidate.kind == kind.name()
-                && candidate
-                    .moves
-                    .iter()
-                    .all(|entry| legal_san(&fen, &entry.uci).as_deref() == Some(entry.san.as_str()))
+                && candidate.moves.iter().all(|entry| {
+                    legal_san(variant, &fen, &entry.uci).as_deref() == Some(entry.san.as_str())
+                })
         });
         if let Some(saved) = &saved
             && (self.now)() - saved.fetched_at < kind.fresh_ms()
@@ -677,7 +680,13 @@ impl PositionLookups {
             let result = if kind == Kind::Tablebase {
                 tablebase_result(fen, (self.now)(), &raw)?
             } else {
-                explorer_result(kind, fen, (self.now)(), &raw)?
+                explorer_result(
+                    kind,
+                    options.variant.as_deref().unwrap_or("standard"),
+                    fen,
+                    (self.now)(),
+                    &raw,
+                )?
             };
             self.cache
                 .write(
@@ -729,7 +738,7 @@ impl PositionLookups {
             }
             match kind {
                 Kind::Opening => {
-                    query.append_pair("variant", "standard");
+                    query.append_pair("variant", options.variant.as_deref().unwrap_or("standard"));
                     query.append_pair(
                         "speeds",
                         &options.speeds.clone().unwrap_or_default().join(","),
@@ -751,6 +760,9 @@ impl PositionLookups {
                 Kind::Player => {
                     query.append_pair("player", options.player.as_deref().unwrap_or(""));
                     query.append_pair("color", options.color.as_deref().unwrap_or("white"));
+                    if let Some(variant) = &options.variant {
+                        query.append_pair("variant", variant);
+                    }
                     if let Some(speeds) = options.speeds.as_ref().filter(|s| !s.is_empty()) {
                         query.append_pair("speeds", &speeds.join(","));
                     }
@@ -911,12 +923,22 @@ fn assert_options(raw: Option<&Value>) -> CoreResult<LookupOptions> {
             .get("since")
             .and_then(Value::as_str)
             .map(str::to_string),
+        variant: value
+            .get("variant")
+            .and_then(Value::as_str)
+            .filter(|variant| *variant != "standard")
+            .map(str::to_string),
     })
 }
 
 /// `normalizeOptions(kind, options)`: the filters each database understands, in a fixed order.
 fn normalize_options(kind: Kind, options: &LookupOptions) -> CoreResult<LookupOptions> {
     let nonempty = |list: &Option<Vec<String>>| list.as_ref().filter(|l| !l.is_empty()).cloned();
+    if options.variant.is_some() && matches!(kind, Kind::Masters | Kind::Tablebase) {
+        return Err(CoreError::new(
+            "Masters games and tablebases are standard chess only.",
+        ));
+    }
     match kind {
         Kind::Tablebase => Ok(LookupOptions::default()),
         Kind::Masters => Ok(LookupOptions {
@@ -951,6 +973,7 @@ fn normalize_options(kind: Kind, options: &LookupOptions) -> CoreResult<LookupOp
                         .collect()
                 }),
             since: options.since.clone(),
+            variant: options.variant.clone(),
             ..LookupOptions::default()
         }),
         Kind::Player => {
@@ -969,6 +992,7 @@ fn normalize_options(kind: Kind, options: &LookupOptions) -> CoreResult<LookupOp
                 }),
                 modes: nonempty(&options.modes),
                 since: options.since.clone(),
+                variant: options.variant.clone(),
                 ..LookupOptions::default()
             })
         }
@@ -1018,6 +1042,9 @@ fn filters_json(kind: Kind, options: &LookupOptions) -> String {
             }
         }
     }
+    if let Some(variant) = &options.variant {
+        fields.push(text("variant", json!(variant)));
+    }
     format!("{{{}}}", fields.join(","))
 }
 
@@ -1031,8 +1058,12 @@ fn join_numbers(values: &[f64]) -> String {
 }
 
 /// `Position.fromFen` accepts the FEN: a legal standard position.
-fn is_legal_position(fen: &str) -> bool {
-    position::fen_problem(fen).is_none()
+fn is_legal_position(variant: &str, fen: &str) -> bool {
+    if variant == "standard" {
+        position::fen_problem(fen).is_none()
+    } else {
+        kchess_domain::rules::setup_start(variant, fen).is_some()
+    }
 }
 
 /// The piece count and whether any castling right remains, for the tablebase limits.
@@ -1048,8 +1079,8 @@ fn material(fen: &str) -> (usize, bool) {
 }
 
 /// The SAN of a legal move from `fen`, or None when it is not legal there.
-fn legal_san(fen: &str, uci: &str) -> Option<String> {
-    let replay = replay::replay_setup("standard", fen, &[uci])?;
+fn legal_san(variant: &str, fen: &str, uci: &str) -> Option<String> {
+    let replay = replay::replay_setup(variant, fen, &[uci])?;
     replay.played.first().map(|played| played.san.clone())
 }
 
@@ -1163,7 +1194,7 @@ fn tablebase_result(fen: &str, now: i64, raw: &Value) -> CoreResult<Cached> {
         .ok_or_else(unreadable)?;
     let mut moves = Vec::with_capacity(tablebase.moves.len());
     for item in tablebase.moves {
-        let san = legal_san(fen, &item.uci)
+        let san = legal_san("standard", fen, &item.uci)
             .ok_or_else(|| CoreError::new("Position lookup returned an illegal move."))?;
         moves.push(LookupMove {
             uci: item.uci.into(),
@@ -1186,7 +1217,13 @@ fn tablebase_result(fen: &str, now: i64, raw: &Value) -> CoreResult<Cached> {
     })
 }
 
-fn explorer_result(kind: Kind, fen: &str, now: i64, raw: &Value) -> CoreResult<Cached> {
+fn explorer_result(
+    kind: Kind,
+    variant: &str,
+    fen: &str,
+    now: i64,
+    raw: &Value,
+) -> CoreResult<Cached> {
     let unreadable = || CoreError::new("Position lookup returned unreadable data.");
     let explorer = read::<RawExplorer>(raw)
         .filter(|explorer| {
@@ -1202,7 +1239,7 @@ fn explorer_result(kind: Kind, fen: &str, now: i64, raw: &Value) -> CoreResult<C
         .map(|opening| format!("{} · {}", opening.eco, opening.name));
     let mut moves = Vec::with_capacity(explorer.moves.len());
     for item in explorer.moves {
-        let san = legal_san(fen, &item.uci)
+        let san = legal_san(variant, fen, &item.uci)
             .ok_or_else(|| CoreError::new("Position lookup returned an illegal move."))?;
         moves.push(LookupMove {
             uci: item.uci.into(),
@@ -1226,7 +1263,7 @@ fn explorer_result(kind: Kind, fen: &str, now: i64, raw: &Value) -> CoreResult<C
     listed.truncate(12);
     let games = listed
         .iter()
-        .map(|game| explorer_game(game, fen).ok_or_else(unreadable))
+        .map(|game| explorer_game(game, variant, fen).ok_or_else(unreadable))
         .collect::<CoreResult<Vec<_>>>()?;
     let total = [explorer.white, explorer.draws, explorer.black]
         .into_iter()
@@ -1246,7 +1283,7 @@ fn explorer_result(kind: Kind, fen: &str, now: i64, raw: &Value) -> CoreResult<C
 }
 
 /// A game the explorer lists, or None when it is not readable.
-fn explorer_game(game: &Value, fen: &str) -> Option<ExplorerGame> {
+fn explorer_game(game: &Value, variant: &str, fen: &str) -> Option<ExplorerGame> {
     let game: RawExplorerGame = read(game)?;
     let id_ok = game.id.len() == 8 && game.id.bytes().all(|b| b.is_ascii_alphanumeric());
     let names_ok = [&game.white.name, &game.black.name]
@@ -1270,7 +1307,7 @@ fn explorer_game(game: &Value, fen: &str) -> Option<ExplorerGame> {
             .uci
             .0
             .filter(|uci| uci.len() <= 5)
-            .and_then(|uci| legal_san(fen, &uci)),
+            .and_then(|uci| legal_san(variant, fen, &uci)),
         year: game.year.0,
         month: game.month.0,
     })

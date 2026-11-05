@@ -54,10 +54,15 @@ pub fn tree_from_pgn(text: &str) -> Option<TreeNode> {
     }
     let game = games.pop()?;
     let start = starting_position(&game)?;
-    // `newTree` re-reads the start under standard rules, falling back to the usual start.
+    // `newTree` re-reads the start under standard rules, falling back to the usual start. A
+    // variant's start is its own (a Crazyhouse pocket, Three-check's checks are in its FEN).
     let start_fen = rules::make_fen(&start);
-    let root_pos = rules::standard_from_fen(&start_fen)
-        .unwrap_or_else(|| rules::default_position(shakmaty::variant::Variant::Chess));
+    let root_pos = if rules::variant_of(&start) == shakmaty::variant::Variant::Chess {
+        rules::standard_from_fen(&start_fen)
+            .unwrap_or_else(|| rules::default_position(shakmaty::variant::Variant::Chess))
+    } else {
+        start.clone()
+    };
     let mut root = TreeNode {
         uci: String::new(),
         san: String::new(),
@@ -162,6 +167,21 @@ fn check(game: &Game, from: usize, pos: &VariantPosition, depth: usize, count: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_crazyhouse_tree_starts_with_pockets_and_keeps_its_drops() {
+        let tree =
+            tree_from_pgn("[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 3. Nc3 Qa5 4. P@d4 *")
+                .unwrap();
+        assert!(tree.fen.contains("[]"), "{}", tree.fen);
+        let mut node = &tree;
+        while let Some(child) = node.children.first() {
+            node = child;
+        }
+        assert_eq!(node.uci, "P@d4");
+        assert_eq!(node.san, "P@d4");
+        assert!(node.fen.contains("[p]"), "{}", node.fen);
+    }
 
     #[test]
     fn builds_a_tree_with_variations() {

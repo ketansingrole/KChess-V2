@@ -656,14 +656,12 @@ fn legal_drop(pos: &VariantPosition, role: Role, to: Square) -> Option<Move> {
         .find(|m| *m == Move::Put { role, to })
 }
 
-/// `makeSanWithoutSuffix`.
+/// `makeSanWithoutSuffix`, except that a pawn drop names its pawn (`P@e4`), as Lichess writes it.
 fn san_without_suffix(pos: &VariantPosition, m: &Move) -> String {
     let board = pos.board();
     if let Move::Put { role, to } = *m {
         let mut san = String::with_capacity(4);
-        if role != Role::Pawn {
-            san.push(role.upper_char());
-        }
+        san.push(role.upper_char());
         san.push('@');
         san.push_str(&to.to_string());
         return san;
@@ -1037,6 +1035,42 @@ mod chess960_tests {
             let rooks = at('r');
             let king = at('k')[0];
             assert!(rooks[0] < king && king < rooks[1], "{n}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod drop_tests {
+    use super::{parse_san, san_and_play};
+    use shakmaty::fen::Fen;
+    use shakmaty::variant::{Variant, VariantPosition};
+    use shakmaty::{CastlingMode, Move, Role, Square};
+
+    fn crazyhouse(fen: &str) -> VariantPosition {
+        let setup = fen.parse::<Fen>().expect("a FEN").into_setup();
+        VariantPosition::from_setup(Variant::Crazyhouse, setup, CastlingMode::Standard)
+            .expect("a legal position")
+    }
+
+    /// Drops are written as Lichess writes them, pawns included; `@e4` from older games still reads.
+    #[test]
+    fn a_drop_names_its_piece_and_either_pawn_form_reads() {
+        // 1. e4 d5 2. exd5 Qxd5: a pawn each in hand.
+        let start = crazyhouse("rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3");
+        // A knight each in hand instead.
+        let knights = crazyhouse("r1bqkbnr/pppppppp/8/8/8/8/PPPPPPPP/R1BQKBNR[Nn] w KQkq - 0 1");
+        let pawn = Move::Put {
+            role: Role::Pawn,
+            to: Square::E4,
+        };
+        let knight = Move::Put {
+            role: Role::Knight,
+            to: Square::E4,
+        };
+        assert_eq!(san_and_play(&mut start.clone(), pawn), "P@e4");
+        assert_eq!(san_and_play(&mut knights.clone(), knight), "N@e4");
+        for written in ["P@e4", "@e4", "p@e4"] {
+            assert_eq!(parse_san(&start, written), Some(pawn), "{written}");
         }
     }
 }

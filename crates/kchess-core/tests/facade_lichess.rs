@@ -81,6 +81,12 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
         ),
         ("puzzleDaily", vec![], vec!["GET /api/puzzle/daily"], false),
         (
+            "puzzleById",
+            vec![json!("FPFg0")],
+            vec!["GET /api/puzzle/FPFg0"],
+            false,
+        ),
+        (
             "puzzleDashboard",
             vec![json!("Alice"), json!(30)],
             vec!["GET /api/puzzle/dashboard/30"],
@@ -112,6 +118,14 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
             ],
             true,
         ),
+        (
+            "lichessStudyChapter",
+            vec![json!("abcdEFGH"), json!("chap1234")],
+            vec![
+                "GET /api/study/abcdEFGH/chap1234.pgn?comments=true&variations=true&clocks=false&orientation=true",
+            ],
+            false,
+        ),
         ("tvChannels", vec![], vec!["GET /api/tv/channels"], false),
         (
             "broadcasts",
@@ -123,6 +137,12 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
             "broadcastTour",
             vec![json!("abcdEFGH")],
             vec!["GET /api/broadcast/abcdEFGH"],
+            false,
+        ),
+        (
+            "broadcastRound",
+            vec![json!("abcdEFGH")],
+            vec!["GET /api/broadcast/-/-/abcdEFGH"],
             false,
         ),
         (

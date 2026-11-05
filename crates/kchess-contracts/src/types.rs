@@ -564,6 +564,9 @@ pub struct InsightsQuery {
     pub rated: Option<bool>,
     /// Only games from the last this-many days.
     pub days: Option<f64>,
+    /// A Lichess variant key; standard chess when left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -649,6 +652,9 @@ pub struct InsightsReport {
     pub streaks: Streaks,
     /// From reviewed games only.
     pub accuracy: Option<InsightsAccuracy>,
+    /// The variants other than standard the account has games in, to choose between.
+    #[serde(default)]
+    pub variants: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -1886,6 +1892,9 @@ pub struct AnalysisRequest {
     pub lines: f64,
     /// Keep searching until stopped instead of stopping at a sensible depth.
     pub infinite: Option<bool>,
+    /// The Lichess variant key (`crazyhouse`, `atomic`…) when the position is not standard chess;
+    /// those go to Fairy-Stockfish.
+    pub variant: Option<String>,
 }
 
 /// One engine line. Scores are from White's point of view, like Lichess shows them.
@@ -1989,6 +1998,9 @@ pub struct ReviewRequest {
     /// A Lichess game: its own analysis is fetched first when it has one.
     pub game_id: Option<String>,
     pub account: Option<String>,
+    /// The Lichess key of a variant game's variant (`crazyhouse`, `atomic`…), which
+    /// Fairy-Stockfish reviews.
+    pub variant: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

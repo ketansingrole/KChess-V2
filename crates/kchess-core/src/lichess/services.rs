@@ -192,6 +192,10 @@ impl Services {
                 Err(cause) => Err(cause),
             },
             "lichess.puzzleDaily" => super::puzzles::puzzle_daily(&self.lichess).await,
+            "lichess.puzzleById" => match text(args, 0) {
+                Ok(id) => super::puzzles::puzzle_by_id(&self.lichess, &id).await,
+                Err(cause) => Err(cause),
+            },
             "lichess.puzzleDashboard" => match parse::<AccountDays>(args, 0, "request") {
                 Ok(request) => reply_json(
                     super::puzzles::puzzle_dashboard(&self.lichess, &request.account, request.days)
@@ -451,6 +455,12 @@ impl Services {
                 }
                 Err(cause) => Err(cause),
             },
+            "studies.publicChapter" => match (text(args, 0), text(args, 1)) {
+                (Ok(id), Ok(chapter)) => to_json(
+                    super::studies::public_study_chapter(&self.lichess, &id, &chapter).await,
+                ),
+                (Err(cause), _) | (_, Err(cause)) => Err(cause),
+            },
             "studies.chapters" => match (text(args, 0), text(args, 1)) {
                 (Ok(account), Ok(id)) => reply_json(
                     super::studies::lichess_study_chapters(&self.lichess, &account, &id).await,
@@ -499,6 +509,10 @@ impl Services {
                 let query = optional_text(args, 0);
                 to_json(super::watch::broadcasts(&self.lichess, query.as_deref()).await)
             }
+            "spectate.broadcastRound" => match text(args, 0) {
+                Ok(id) => super::watch::broadcast_round(&self.lichess, &id).await,
+                Err(cause) => Err(cause),
+            },
             "spectate.broadcastTour" => match text(args, 0) {
                 Ok(id) => to_json(super::watch::broadcast_tour(&self.lichess, &id).await),
                 Err(cause) => Err(cause),

@@ -243,3 +243,36 @@ fn many_opening_families_keep_first_seen_order_for_equal_counts() {
         assert_eq!(opening["asWhite"], json!(2));
     }
 }
+
+/// Variant games stay out of the standard figures, are listed to choose, and each variant reports
+/// its own games.
+#[test]
+fn variant_games_are_counted_apart_from_standard_chess() {
+    let store = fresh();
+    save_games(
+        &store,
+        vec![
+            game("Standard01", &[]),
+            game("Standard02", &[("winner", json!("black"))]),
+            game("House00001", &[("perf", json!("crazyhouse"))]),
+            game("Nine600001", &[("perf", json!("chess960"))]),
+            game("Nine600002", &[("perf", json!("chess960"))]),
+        ],
+    );
+    let standard = insights(&store);
+    assert_eq!(standard["total"], json!(2));
+    assert_eq!(standard["record"]["loss"], json!(1));
+    // In KChess's order, whichever came first.
+    assert_eq!(standard["variants"], json!(["chess960", "crazyhouse"]));
+
+    let only = |variant: &str| {
+        store.ok(
+            "store.insights.insights",
+            vec![json!({ "account": "Alice", "variant": variant })],
+        )
+    };
+    assert_eq!(only("chess960")["total"], json!(2));
+    assert_eq!(only("crazyhouse")["total"], json!(1));
+    assert_eq!(only("standard")["total"], json!(2));
+    assert_eq!(only("atomic")["total"], json!(0));
+}

@@ -101,3 +101,129 @@ fn the_chosen_tab_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppContex
     assert_eq!(app.find(("puzzle-tabs", 4usize)).selected(), Some(true));
     app.find("puzzle-history-train");
 }
+
+/// A lichess.org/training link pasted into Quick Pick opens its puzzle on the Daily tab, and
+/// Today's puzzle goes back to the puzzle of the day.
+#[gpui_kit::test]
+fn a_pasted_puzzle_link_opens_the_puzzle(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/training/{}",
+        super::fake_lichess::LINKED_PUZZLE
+    ));
+    {
+        use gpui_kit::test::TestWindowExt as _;
+        app.wait_for("the puzzle to be offered", |window, _| {
+            window
+                .try_find(("palette-item", 0usize))
+                .is_some_and(|item| item.label() == Some("Solve this puzzle"))
+        });
+    }
+    app.press("enter");
+    app.find("daily-today");
+    assert_eq!(app.find(("puzzle-tabs", 1usize)).selected(), Some(true));
+    // Scholar's mate: the queen takes f7.
+    {
+        use gpui_kit::test::TestWindowExt as _;
+        app.wait_for("the puzzle's board", |window, _| {
+            window.try_find("chess-board").is_some()
+        });
+    }
+    app.click_square("h5", true);
+    app.click_square("f7", true);
+    app.wait_for("the puzzle to be solved", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.try_find_by_label("Puzzle solved").is_some()
+    });
+
+    app.click("daily-today");
+    app.wait_gone("daily-today");
+}
+
+/// Quick Pick shows the solution of the puzzle on the board, offering only what the panel does.
+#[gpui_kit::test]
+fn quick_pick_shows_the_solution(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/training/{}",
+        super::fake_lichess::LINKED_PUZZLE
+    ));
+    super::palette::wait_for_first(&mut app, "Solve this puzzle");
+    app.press("enter");
+    app.find("daily-today");
+    app.wait_for("the puzzle to be playable", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_some_and(|hint| hint.disabled() != Some(true))
+    });
+    super::palette::wait_until_closed(&mut app);
+    app.press("secondary-k");
+    app.type_text(">");
+    super::palette::wait_for_first(&mut app, "Hint");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..6usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    // Daily puzzles have no next one: Today's puzzle is the way back.
+    assert!(listed.contains(&"Solution".to_string()), "{listed:?}");
+    assert!(!listed.contains(&"Next puzzle".to_string()), "{listed:?}");
+    app.type_text("Solution");
+    super::palette::wait_for_first(&mut app, "Solution");
+    app.press("enter");
+    app.wait_for("the solution to be shown", |window, _| {
+        window
+            .try_find_by_label("Solution shown — not counted as solved")
+            .is_some()
+    });
+}
+
+/// A Storm run starts, ends and goes back to the modes from Quick Pick, offering only what its
+/// buttons do: Storm has no skips.
+#[gpui_kit::test]
+fn quick_pick_starts_and_ends_a_storm_run(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start_with(cx, |profile| {
+        // A mate in one, at every rating the run's ladder climbs through.
+        let rows: Vec<_> = (0..40)
+            .map(|index| kchess_core::puzzles::queries::DbPuzzle {
+                id: format!("fixture{index:02}"),
+                fen: "6k1/5ppp/8/8/8/8/5PPP/3R2K1 b - - 0 1".into(),
+                moves: "g8h8 d1d8".into(),
+                rating: 800. + f64::from(index) * 50.,
+                plays: Some(100.),
+                themes: "mateIn1 backRankMate".into(),
+                openings: String::new(),
+                game_id: String::new(),
+            })
+            .collect();
+        kchess_core::puzzles::write_database(profile, &rows).expect("the fixture's puzzles");
+    });
+    app.open("Puzzles");
+    tab(&mut app, 2);
+    app.wait_for("the downloaded puzzles", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("rush-start")
+            .is_some_and(|start| start.disabled() != Some(true))
+    });
+    let run = |app: &mut Harness, label: &str| {
+        app.press("secondary-k");
+        app.type_text(&format!(">{label}"));
+        super::palette::wait_for_first(app, label);
+        app.press("enter");
+        super::palette::wait_until_closed(app);
+    };
+    run(&mut app, "Start run");
+    app.find("rush-end");
+    assert!(!app.shows("rush-skip"));
+    run(&mut app, "End run");
+    app.find("rush-again");
+    run(&mut app, "Back to modes");
+    app.find("rush-start");
+}

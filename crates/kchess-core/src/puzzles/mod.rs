@@ -83,6 +83,19 @@ impl Phase {
     }
 }
 
+/// Write `rows` as the downloaded puzzle database in `data_dir`, as a finished download leaves it:
+/// for test profiles and fixtures, which cannot reach Lichess's database.
+pub fn write_database(data_dir: &Path, rows: &[queries::DbPuzzle]) -> Result<usize> {
+    let db = Connection::open(data_dir.join("puzzles.db"))
+        .map_err(|e| CoreError::wrap("Could not open the puzzle database", e))?;
+    queries::create_schema(&db)?;
+    attempts::create_schema(&db)?;
+    let count = queries::store_sample(&db, rows, &|| false)?;
+    db.execute_batch("INSERT OR IGNORE INTO worker_meta VALUES (1)")
+        .map_err(|e| CoreError::new(e.to_string()))?;
+    Ok(count)
+}
+
 /// The schema, permissions and one-time import from the old main database.
 fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
     let path = config.data_dir.join("puzzles.db");

@@ -61,6 +61,7 @@ fn request(list: &[&str]) -> ReviewRequest {
         moves: moves(list),
         game_id: None,
         account: None,
+        variant: None,
     }
 }
 

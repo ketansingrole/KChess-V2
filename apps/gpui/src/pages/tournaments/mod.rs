@@ -51,6 +51,18 @@ struct Open {
     epoch: u64,
 }
 
+/// The page's actions, as its buttons offer them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Action {
+    Refresh,
+    Create,
+    Back,
+    Join,
+    Game,
+    Pause,
+    Withdraw,
+}
+
 pub struct TournamentsPage {
     /// Only what KChess can play (`playable`), or everything.
     playable_only: bool,
@@ -413,6 +425,72 @@ impl TournamentsPage {
         );
     }
 
+    /// What the page's buttons can do now: the schedule's, or the open event's.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        let Some(open) = &self.open else {
+            let mut actions = Vec::new();
+            if !self.loading {
+                actions.push(Action::Refresh);
+            }
+            actions.push(Action::Create);
+            return actions;
+        };
+        // Create arena stays in the header while an event is open.
+        let mut actions = vec![Action::Back];
+        actions.extend(self.event_actions(open.detail.as_ref(), cx));
+        actions.push(Action::Create);
+        actions
+    }
+
+    /// The open event's own actions: join it, or go to your game and leave it.
+    fn event_actions(&self, detail: Option<&Value>, cx: &App) -> Vec<Action> {
+        let Some(detail) = detail else {
+            return Vec::new();
+        };
+        if detail["status"] == json!("finished") || self.busy {
+            return Vec::new();
+        }
+        if !self.joined_now(detail, cx) {
+            let open =
+                detail["playable"] == json!(true) && detail["verdicts"]["accepted"] != json!(false);
+            return if open { vec![Action::Join] } else { Vec::new() };
+        }
+        let mut actions = Vec::new();
+        if detail["me"]["gameId"].is_string() {
+            actions.push(Action::Game);
+        }
+        actions.push(if detail["system"] == json!("arena") {
+            Action::Pause
+        } else {
+            Action::Withdraw
+        });
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn run(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        match action {
+            Action::Refresh => self.refresh(cx),
+            Action::Create => self.start_create(window, cx),
+            Action::Back => self.close_event(cx),
+            Action::Join => self.join(window, cx),
+            Action::Game => {
+                let game = self
+                    .open
+                    .as_ref()
+                    .and_then(|open| open.detail.as_ref())
+                    .and_then(|detail| detail["me"]["gameId"].as_str().map(str::to_string));
+                if let Some(id) = game {
+                    crate::shell::open_online_game(&id, window, cx);
+                }
+            }
+            Action::Pause | Action::Withdraw => self.leave(window, cx),
+        }
+    }
+
     fn start_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(account) = Self::account(cx) else {
             Self::ask_connect(window, cx);
@@ -486,49 +564,59 @@ impl Render for TournamentsPage {
         let header = h_flex()
             .gap(px(8.))
             .flex_wrap()
+            // The key keeps room for two of its entries a line; when the controls leave it less,
+            // they wrap below it rather than squeezing it into a column.
             .child(div().flex_1().min_w_0().when(!showing_event, |lead| {
-                lead.child(timeline::legend(&palette))
+                lead.min_w(px(320.)).child(timeline::legend(&palette))
             }))
-            .when(!showing_event, |row| {
-                row.child(widgets::pills(
-                    "tournaments-filter",
-                    vec![
-                        Pill {
-                            icon: None,
-                            label: "Playable here".into(),
-                            badge: None,
-                            disabled: false,
-                        },
-                        Pill {
-                            icon: None,
-                            label: "All".into(),
-                            badge: None,
-                            disabled: false,
-                        },
-                    ],
-                    usize::from(!self.playable_only),
-                    choose,
-                    true,
-                    &palette,
-                ))
-                .child(
-                    Button::new("tournaments-refresh")
-                        .small()
-                        .outline()
-                        .icon(icon("refresh-cw"))
-                        .label("Refresh")
-                        .loading(self.loading)
-                        .disabled(self.loading)
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-                )
-            })
+            // The controls wrap as one group.
             .child(
-                Button::new("tournaments-create")
-                    .small()
-                    .primary()
-                    .icon(icon("plus"))
-                    .label("Create arena")
-                    .on_click(cx.listener(|this, _, window, cx| this.start_create(window, cx))),
+                h_flex()
+                    .gap(px(8.))
+                    .items_center()
+                    .when(!showing_event, |row| {
+                        row.child(widgets::pills(
+                            "tournaments-filter",
+                            vec![
+                                Pill {
+                                    icon: None,
+                                    label: "Playable here".into(),
+                                    badge: None,
+                                    disabled: false,
+                                },
+                                Pill {
+                                    icon: None,
+                                    label: "All".into(),
+                                    badge: None,
+                                    disabled: false,
+                                },
+                            ],
+                            usize::from(!self.playable_only),
+                            choose,
+                            true,
+                            &palette,
+                        ))
+                        .child(
+                            Button::new("tournaments-refresh")
+                                .small()
+                                .outline()
+                                .icon(icon("refresh-cw"))
+                                .label("Refresh")
+                                .loading(self.loading)
+                                .disabled(self.loading)
+                                .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                        )
+                    })
+                    .child(
+                        Button::new("tournaments-create")
+                            .small()
+                            .primary()
+                            .icon(icon("plus"))
+                            .label("Create arena")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.start_create(window, cx)),
+                            ),
+                    ),
             );
         let reconnect = self.reconnect_notice(cx);
         let body = if showing_event {

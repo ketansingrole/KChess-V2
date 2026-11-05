@@ -29,6 +29,7 @@ use crate::theme::{Palette, radii, tint};
 mod daily;
 mod history;
 mod rush;
+pub(crate) use rush::RushAction;
 mod stats;
 
 use crate::widgets::{self, Choice, Pill, Tone};
@@ -167,6 +168,17 @@ fn theme_name(key: &str, themes: &[Theme]) -> String {
         }
     }
     name
+}
+
+/// What the puzzle panel's buttons do, for Quick Pick to offer the same.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Action {
+    Hint,
+    Solution,
+    Flip,
+    Next,
+    /// A Storm, Streak or Rush run's own buttons.
+    Rush(RushAction),
 }
 
 pub struct PuzzlesPage {
@@ -1211,8 +1223,8 @@ impl PuzzlesPage {
                 })
                 .child(
                     Button::new("puzzle-reset")
-                        .text()
-                        .xsmall()
+                        .ghost()
+                        .small()
                         .label("Reset")
                         .on_click(cx.listener(|this, _, _, cx| this.reset_session(cx))),
                 ),
@@ -1500,6 +1512,116 @@ impl PuzzlesPage {
     }
 }
 
+/// The puzzle id a lichess.org/training link names (`lichess.org/training/FPFg0`); `None` for
+/// anything else, a theme's or the daily puzzle's page included.
+pub fn puzzle_link(text: &str) -> Option<String> {
+    let id = kchess_domain::links::training_link(text)?;
+    static KEYS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let keys = KEYS.get_or_init(|| themes().into_iter().map(|theme| theme.key).collect());
+    let theme = |key: &str| key == "daily" || keys.iter().any(|known| known == key);
+    (!theme(&id)).then_some(id)
+}
+
+impl PuzzlesPage {
+    /// The Daily tab's view, made when first shown.
+    fn daily_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<daily::DailyPuzzle> {
+        if let Some(daily) = &self.daily {
+            return daily.clone();
+        }
+        let themes = self.theme_list.clone();
+        let daily = cx.new(|cx| daily::DailyPuzzle::new(themes, window, cx));
+        self._subscriptions.push(cx.subscribe_in(
+            &daily,
+            window,
+            |this, _, event: &daily::DailyEvent, window, cx| match event {
+                daily::DailyEvent::UseDownloaded => this.use_downloaded(window, cx),
+            },
+        ));
+        self.daily = Some(daily.clone());
+        daily
+    }
+
+    /// The puzzle board of the tab shown, while it shows a puzzle, and whether it is Train's.
+    fn shown_board(&self, cx: &App) -> Option<(Entity<PuzzleBoard>, bool)> {
+        match crate::prefs::get::<String>(cx, TAB, "train".into()).as_str() {
+            "train" => (self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == "ready")
+                .then(|| (self.puzzle.clone(), true)),
+            "daily" => self
+                .daily
+                .as_ref()
+                .and_then(|daily| daily.read(cx).shown_board())
+                .map(|board| (board, false)),
+            _ => None,
+        }
+    }
+
+    /// The Storm · Streak · Rush view, while its tab is shown.
+    fn shown_rush(&self, cx: &App) -> Option<Entity<rush::PuzzleRush>> {
+        (crate::prefs::get::<String>(cx, TAB, "train".into()) == "rush")
+            .then(|| self.rush.clone())
+            .flatten()
+    }
+
+    /// The actions the shown puzzle's buttons allow now.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        if let Some(rush) = self.shown_rush(cx) {
+            return rush
+                .read(cx)
+                .actions(cx)
+                .into_iter()
+                .map(Action::Rush)
+                .collect();
+        }
+        let Some((board, train)) = self.shown_board(cx) else {
+            return Vec::new();
+        };
+        let mut actions = Vec::new();
+        if board.read(cx).playing() {
+            actions.extend([Action::Hint, Action::Solution]);
+        }
+        actions.push(Action::Flip);
+        if train {
+            actions.push(Action::Next);
+        }
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        if let Action::Rush(action) = action {
+            if let Some(rush) = self.shown_rush(cx) {
+                rush.update(cx, |rush, cx| rush.act(action, cx));
+            }
+            return;
+        }
+        let Some((board, _)) = self.shown_board(cx) else {
+            return;
+        };
+        match action {
+            Action::Hint => board.update(cx, |board, cx| board.hint(cx)),
+            Action::Solution => board.update(cx, |board, cx| board.show_solution(cx)),
+            Action::Flip => board.update(cx, |board, cx| board.flip(cx)),
+            Action::Next => self.load_next(cx),
+            Action::Rush(_) => {}
+        }
+    }
+
+    /// Show a linked puzzle on the Daily tab's board.
+    pub fn open_puzzle(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        crate::prefs::set(cx, TAB, "daily");
+        self.daily_view(window, cx)
+            .update(cx, |daily, cx| daily.open(id, cx));
+        cx.notify();
+    }
+}
+
 impl Render for PuzzlesPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
@@ -1538,23 +1660,7 @@ impl Render for PuzzlesPage {
         let body = if tab == "train" {
             self.render_train(window, cx, &palette)
         } else if tab == "daily" {
-            let daily = match &self.daily {
-                Some(daily) => daily.clone(),
-                None => {
-                    let themes = self.theme_list.clone();
-                    let daily = cx.new(|cx| daily::DailyPuzzle::new(themes, window, cx));
-                    self._subscriptions.push(cx.subscribe_in(
-                        &daily,
-                        window,
-                        |this, _, event: &daily::DailyEvent, window, cx| match event {
-                            daily::DailyEvent::UseDownloaded => this.use_downloaded(window, cx),
-                        },
-                    ));
-                    self.daily = Some(daily.clone());
-                    daily
-                }
-            };
-            daily.into_any_element()
+            self.daily_view(window, cx).into_any_element()
         } else if tab == "history" {
             let history = match &self.history {
                 Some(history) => history.clone(),
@@ -1678,5 +1784,28 @@ mod tests {
         assert_eq!(list[0].name, "Healthy mix");
         assert_eq!(theme_name("mateIn2", &list), "Mate in 2");
         assert_eq!(theme_name("someNewTheme", &list), "Some New Theme");
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::puzzle_link;
+
+    #[test]
+    fn a_training_link_names_its_puzzle() {
+        for (text, id) in [
+            ("https://lichess.org/training/FPFg0", Some("FPFg0")),
+            ("lichess.org/training/K69di/", Some("K69di")),
+            ("www.lichess.org/training/00008?x=1", Some("00008")),
+            // A theme's page, the daily puzzle's page and games are not puzzles.
+            ("https://lichess.org/training/short", None),
+            ("https://lichess.org/training/daily", None),
+            ("https://lichess.org/training/fork", None),
+            ("https://lichess.org/training/mateIn2", None),
+            ("https://lichess.org/abcdefgh", None),
+            ("FPFg0", None),
+        ] {
+            assert_eq!(puzzle_link(text).as_deref(), id, "{text}");
+        }
     }
 }

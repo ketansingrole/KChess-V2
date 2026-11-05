@@ -412,8 +412,26 @@ impl WatchPage {
         }));
     }
 
+    /// The broadcast round being followed, for the tests.
+    #[cfg(test)]
+    pub fn broadcast_round(&self) -> String {
+        self.broadcasts.round.clone()
+    }
+
     /// `openTour`: the tournament, at its default round (or the live one, or the last).
     fn open_tour(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_tour_at(id, None, String::new(), window, cx);
+    }
+
+    /// The tournament at `round` when it has that round (a link's), with `game` selected.
+    pub(super) fn open_tour_at(
+        &mut self,
+        id: String,
+        wanted: Option<String>,
+        game: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.broadcasts.redo = None;
         self.stop(cx);
         let epoch = self.epoch;
@@ -429,9 +447,11 @@ impl WatchPage {
                 match answer {
                     Ok(tour) => {
                         let rounds = tour["rounds"].as_array().cloned().unwrap_or_default();
-                        let round = rounds
-                            .iter()
-                            .find(|r| r["id"] == tour["defaultRoundId"])
+                        let linked = wanted.as_ref().and_then(|wanted| {
+                            rounds.iter().find(|r| r["id"].as_str() == Some(wanted))
+                        });
+                        let round = linked
+                            .or_else(|| rounds.iter().find(|r| r["id"] == tour["defaultRoundId"]))
                             .or_else(|| rounds.iter().find(|r| r["ongoing"] == json!(true)))
                             .or(rounds.last())
                             .and_then(|r| r["id"].as_str().map(str::to_string));
@@ -457,7 +477,12 @@ impl WatchPage {
                             .update(cx, |select, cx| select.set_items(items, window, cx));
                         this.broadcasts.tour = Some(tour);
                         if let Some(round) = round {
-                            this.open_round(round, String::new(), window, cx);
+                            let game = if linked.is_some() {
+                                game.clone()
+                            } else {
+                                String::new()
+                            };
+                            this.open_round(round, game, window, cx);
                         }
                     }
                     Err(cause) => this.error = Some(cause.message.into()),
@@ -700,6 +725,7 @@ impl WatchPage {
                 };
                 v_flex()
                     .id(("broadcast-cell", index))
+                    .test_support()
                     .role(Role::Button)
                     .keyboard_focus(palette.primary)
                     .aria_label(format!(
@@ -1001,6 +1027,28 @@ impl WatchPage {
             .into_any_element()
     }
 
+    /// Back from the board open to the round's boards.
+    pub(super) fn all_boards(&mut self, cx: &mut Context<Self>) {
+        self.broadcasts.selected.clear();
+        self.broadcasts.redo = None;
+        self.broadcasts.return_to_game();
+        self.engine_changed(cx);
+    }
+
+    /// The board open, on the analysis board at the move shown; once this page is no longer being
+    /// updated, as leaving Watch tells it it is hidden.
+    pub(super) fn analyse_broadcast(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(game) = self.broadcasts.current() else {
+            return;
+        };
+        let pgn = game["pgn"].as_str().unwrap_or_default().to_string();
+        let origin = json!({ "white": game["white"]["name"], "black": game["black"]["name"] });
+        let (ply, orientation) = (self.broadcasts.shown_ply(), self.broadcasts.orientation);
+        window.defer(cx, move |window, cx| {
+            analyse_board(pgn, ply, orientation, origin, window, cx)
+        });
+    }
+
     /// One board followed: players and clocks, the moves, All boards and Analyse.
     fn broadcast_game(
         &mut self,
@@ -1141,7 +1189,7 @@ impl WatchPage {
                 "broadcast-moves",
                 &sans,
                 ply,
-                view::black_first(&setup),
+                view::first_move(&setup),
                 "No moves yet".into(),
                 select.clone(),
                 palette,
@@ -1163,12 +1211,7 @@ impl WatchPage {
                             .outline()
                             .icon(icon("layout-grid"))
                             .label("All boards")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.broadcasts.selected.clear();
-                                this.broadcasts.redo = None;
-                                this.broadcasts.return_to_game();
-                                this.engine_changed(cx);
-                            })),
+                            .on_click(cx.listener(|this, _, _, cx| this.all_boards(cx))),
                     )
                     .child(
                         Button::new("broadcast-analyse")
@@ -1176,21 +1219,14 @@ impl WatchPage {
                             .icon(icon("microscope"))
                             .label("Analyse")
                             .on_click(move |_, window, cx| {
-                                let (pgn, origin) = (pgn.clone(), origin.clone());
-                                crate::shell::replace_analysis(
+                                analyse_board(
+                                    pgn.clone(),
+                                    ply,
+                                    orientation,
+                                    origin.clone(),
                                     window,
                                     cx,
-                                    move |analysis, _, cx| {
-                                        analysis.open_game(
-                                            &pgn,
-                                            ply,
-                                            Some(orientation),
-                                            Some(origin.clone()),
-                                            false,
-                                            cx,
-                                        )
-                                    },
-                                );
+                                )
                             }),
                     ),
             );
@@ -1210,6 +1246,27 @@ impl WatchPage {
             .child(panel)
             .into_any_element()
     }
+}
+
+/// A broadcast's board on the analysis board, at `ply`.
+fn analyse_board(
+    pgn: String,
+    ply: usize,
+    orientation: Color,
+    origin: Value,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+        analysis.open_game(
+            &pgn,
+            ply,
+            Some(orientation),
+            Some(origin.clone()),
+            false,
+            cx,
+        )
+    });
 }
 
 #[cfg(test)]

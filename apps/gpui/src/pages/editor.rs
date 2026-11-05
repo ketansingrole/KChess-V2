@@ -25,7 +25,7 @@ use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii, tint};
 use crate::voice::control::{BarSpec, Control};
 use crate::voice::{Attempt, VoiceEvent};
-use crate::widgets::{self, Pill, Tone};
+use crate::widgets::{self, KeyboardFocus as _, Pill, Tone};
 
 const EMPTY_BOARD: &str = "8/8/8/8/8/8/8/8";
 /// The spare rows above and below the board, and the voice bar, take this much of its height.
@@ -64,6 +64,49 @@ fn setup_fen(setup: &Value) -> String {
         .unwrap_or_default()
 }
 
+/// The files (0 = a) of the king and of the outermost rook on the side `key` castles to, on that
+/// colour's back rank: what a castling right in X-FEN names.
+fn castling_pieces(board: &str, key: &str) -> (Option<usize>, Option<usize>) {
+    let white = key.chars().all(|c| c.is_ascii_uppercase());
+    let row = if white {
+        board.split('/').nth(7)
+    } else {
+        board.split('/').next()
+    };
+    let mut rank = [None; 8];
+    let mut file = 0;
+    for c in row.unwrap_or_default().chars() {
+        match c.to_digit(10) {
+            Some(skip) => file += skip as usize,
+            None => {
+                if let Some(slot) = rank.get_mut(file) {
+                    *slot = Some(c);
+                }
+                file += 1;
+            }
+        }
+    }
+    let (king, rook) = if white { ('K', 'R') } else { ('k', 'r') };
+    let king_file = rank.iter().position(|piece| *piece == Some(king));
+    let rook_file = king_file.and_then(|king_file| {
+        let rooks = (0..8).filter(|file| rank[*file] == Some(rook));
+        if key.eq_ignore_ascii_case("k") {
+            rooks.filter(|file| *file > king_file).max()
+        } else {
+            rooks.filter(|file| *file < king_file).min()
+        }
+    });
+    (king_file, rook_file)
+}
+
+/// The king on e and the rook on h (short) or a (long), as the standard start has them.
+fn standard_castling_pieces(key: &str) -> (Option<usize>, Option<usize>) {
+    (
+        Some(4),
+        Some(if key.eq_ignore_ascii_case("k") { 7 } else { 0 }),
+    )
+}
+
 fn role_name(role: Role) -> &'static str {
     match role {
         Role::King => "king",
@@ -73,6 +116,18 @@ fn role_name(role: Role) -> &'static str {
         Role::Knight => "knight",
         Role::Pawn => "pawn",
     }
+}
+
+/// What the editor's buttons do, for Quick Pick to offer the same.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Action {
+    StartPosition,
+    ClearBoard,
+    Flip,
+    CopyFen,
+    Analyse,
+    PlayStockfish,
+    PlayFriend,
 }
 
 pub struct EditorPage {
@@ -118,8 +173,7 @@ impl EditorPage {
         let subscriptions = vec![
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
                 if let BoardEvent::Edited(placement) = event {
-                    this.setup["board"] = json!(placement);
-                    this.changed(cx);
+                    this.set_board(json!(placement), cx);
                 }
             }),
             cx.subscribe_in(&fen_input, window, |this, _, event: &InputEvent, _, cx| {
@@ -202,6 +256,22 @@ impl EditorPage {
         }
     }
 
+    /// A piece placed, moved or removed. A castling right whose king or rook now stands
+    /// elsewhere than the standard start is unticked: Chess960 castling is ticked on purpose, or
+    /// comes with a pasted FEN.
+    fn set_board(&mut self, board: Value, cx: &mut Context<Self>) {
+        let before = self.setup["board"].as_str().unwrap_or_default().to_string();
+        let after = board.as_str().unwrap_or_default();
+        for key in ["K", "Q", "k", "q"] {
+            let (was, now) = (castling_pieces(&before, key), castling_pieces(after, key));
+            if was != now && now != standard_castling_pieces(key) {
+                self.setup["castling"][key] = json!(false);
+            }
+        }
+        self.setup["board"] = board;
+        self.changed(cx);
+    }
+
     /// The position changed: the board, the FEN box and the en passant choices follow.
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.fen_error = None;
@@ -282,6 +352,47 @@ impl EditorPage {
         self.changed(cx);
     }
 
+    /// The actions its buttons allow now: a position that cannot be played is only edited.
+    pub(crate) fn actions(&self) -> Vec<Action> {
+        let mut actions = vec![
+            Action::StartPosition,
+            Action::ClearBoard,
+            Action::Flip,
+            Action::CopyFen,
+        ];
+        if self.problem().is_none() {
+            actions.extend([Action::Analyse, Action::PlayStockfish, Action::PlayFriend]);
+        }
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions().contains(&action) {
+            return;
+        }
+        match action {
+            Action::StartPosition => self.start_position(cx),
+            Action::ClearBoard => self.clear_board(cx),
+            Action::Flip => self.flip(cx),
+            Action::CopyFen => self.copy_fen(window, cx),
+            Action::Analyse => self.analyse(window, cx),
+            Action::PlayStockfish => crate::shell::play_computer_from(
+                crate::game::setup_from_fen(&self.fen()),
+                window,
+                cx,
+            ),
+            Action::PlayFriend => {
+                crate::shell::play_local_from(crate::game::setup_from_fen(&self.fen()), window, cx)
+            }
+        }
+    }
+
+    fn copy_fen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(self.fen()));
+        window.push_notification("FEN copied", cx);
+    }
+
     fn start_position(&mut self, cx: &mut Context<Self>) {
         self.setup = start_setup();
         self.changed(cx);
@@ -356,8 +467,7 @@ impl EditorPage {
                 let piece = json!({ "color": color, "role": role });
                 let board = self.setup["board"].clone();
                 if let Ok(board) = rules("withPiece", &[board, json!(square), piece]) {
-                    self.setup["board"] = board;
-                    self.changed(cx);
+                    self.set_board(board, cx);
                 }
                 format!("{} {role} on {}", side(&color), square.to_uppercase())
             }
@@ -365,8 +475,7 @@ impl EditorPage {
                 let square = text("square");
                 let board = self.setup["board"].clone();
                 if let Ok(board) = rules("withPiece", &[board, json!(square), Value::Null]) {
-                    self.setup["board"] = board;
-                    self.changed(cx);
+                    self.set_board(board, cx);
                 }
                 format!("Cleared {}", square.to_uppercase())
             }
@@ -434,6 +543,7 @@ impl EditorPage {
                 .id(SharedString::from(format!("{id}-{color:?}")))
                 .test_support()
                 .role(gpui_kit::Role::Button)
+                .keyboard_focus(palette.primary)
                 .aria_label(label)
                 .aria_selected(selected)
                 .flex_1()
@@ -480,6 +590,10 @@ impl EditorPage {
             div()
                 .id(SharedString::from(format!("spare-{color:?}-{role:?}")))
                 .test_support()
+                .role(gpui_kit::Role::Button)
+                .keyboard_focus(palette.primary)
+                .aria_label(label.clone())
+                .aria_selected(selected)
                 .flex_1()
                 .h(cell)
                 .flex()
@@ -502,6 +616,10 @@ impl EditorPage {
                 // Pressing a spare piece chooses it, and dragging it puts a new one on the board.
                 .on_mouse_down(
                     MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| this.choose_tool(EditTool::Place(piece), cx)),
+                )
+                // Enter or Space on the focused piece chooses it too.
+                .on_click(
                     cx.listener(move |this, _, _, cx| this.choose_tool(EditTool::Place(piece), cx)),
                 )
                 .on_drag(SparePiece(piece), move |_, _, _, cx| {
@@ -604,10 +722,12 @@ impl Render for EditorPage {
             let allowed = available[key] == json!(true);
             Checkbox::new(SharedString::from(format!("castling-{key}")))
                 .label(text)
+                .min_h(px(24.))
+                .items_center()
                 .checked(self.setup["castling"][key] == json!(true) && allowed)
                 .disabled(!allowed)
                 .when(!allowed, |checkbox| {
-                    checkbox.tooltip("The king or rook is not on its starting square")
+                    checkbox.tooltip("Needs the king on its back rank and a rook on that side")
                 })
                 .on_click(cx.listener(move |this, checked: &bool, _, cx| {
                     this.setup["castling"][key] = json!(*checked);
@@ -640,10 +760,7 @@ impl Render for EditorPage {
                             .icon(icon("copy"))
                             .tooltip("Copy FEN")
                             .accessibility_label("Copy FEN")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(this.fen()));
-                                window.push_notification("FEN copied", cx);
-                            })),
+                            .on_click(cx.listener(|this, _, window, cx| this.copy_fen(window, cx))),
                     ),
             )
             .children(self.fen_error.clone().map(|error| {
@@ -811,7 +928,11 @@ impl Render for EditorPage {
                                     .label("Play Stockfish")
                                     .disabled(problem.is_some())
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        crate::shell::play_computer_from(this.fen(), window, cx)
+                                        crate::shell::play_computer_from(
+                                            crate::game::setup_from_fen(&this.fen()),
+                                            window,
+                                            cx,
+                                        )
                                     })),
                             )
                             .child(
@@ -822,7 +943,11 @@ impl Render for EditorPage {
                                     .label("Play a friend here")
                                     .disabled(problem.is_some())
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        crate::shell::play_local_from(this.fen(), window, cx)
+                                        crate::shell::play_local_from(
+                                            crate::game::setup_from_fen(&this.fen()),
+                                            window,
+                                            cx,
+                                        )
                                     })),
                             ),
                     ),
@@ -839,7 +964,7 @@ impl Render for EditorPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{setup_fen, start_setup};
+    use super::{castling_pieces, setup_fen, standard_castling_pieces, start_setup};
     use serde_json::json;
 
     #[test]
@@ -853,5 +978,25 @@ mod tests {
         setup["board"] = json!("4k3/8/8/8/8/8/8/4K3");
         setup["turn"] = json!("black");
         assert_eq!(setup_fen(&setup), "4k3/8/8/8/8/8/8/4K3 b - - 0 1");
+    }
+
+    /// What a castling right names: the king's file and the outermost rook's on that side.
+    #[test]
+    fn a_castling_right_names_its_king_and_rook() {
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+        for key in ["K", "Q", "k", "q"] {
+            assert_eq!(
+                castling_pieces(start, key),
+                standard_castling_pieces(key),
+                "{key}"
+            );
+        }
+        // Chess960 start 0: king on g, rooks on f and h.
+        let shuffled = "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR";
+        assert_eq!(castling_pieces(shuffled, "K"), (Some(6), Some(7)));
+        assert_eq!(castling_pieces(shuffled, "q"), (Some(6), Some(5)));
+        // The king stepped to d1: no longer the standard pieces, so that tick is cleared.
+        let moved = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBK1BNR";
+        assert_ne!(castling_pieces(moved, "Q"), standard_castling_pieces("Q"));
     }
 }

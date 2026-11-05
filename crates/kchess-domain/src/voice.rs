@@ -816,14 +816,25 @@ fn with_piece_call(args: &[Value]) -> Result<Value> {
 }
 
 /// The castling rights `[K, Q, k, q]` the king and rook squares still allow.
+/// Which castling rights the pieces allow, by the Chess960 rule that includes the standard one:
+/// the king on its back rank (b to g), and a rook on that rank on the side castled to. The FEN
+/// writes them as X-FEN's `KQkq`, which name the outermost rook on each side.
 fn castling_available(board: &str) -> [bool; 4] {
-    let at = |square: &str, piece: char| piece_on(board, square) == Some(piece);
-    [
-        at("e1", 'K') && at("h1", 'R'),
-        at("e1", 'K') && at("a1", 'R'),
-        at("e8", 'k') && at("h8", 'r'),
-        at("e8", 'k') && at("a8", 'r'),
-    ]
+    let side = |rank: char, king: char, rook: char| {
+        let at = |file: usize, piece: char| {
+            piece_on(board, &format!("{}{rank}", FILES[file])) == Some(piece)
+        };
+        let Some(king_file) = (1..7).find(|file| at(*file, king)) else {
+            return [false, false];
+        };
+        [
+            (king_file + 1..8).any(|file| at(file, rook)),
+            (0..king_file).any(|file| at(file, rook)),
+        ]
+    };
+    let [white_short, white_long] = side('1', 'K', 'R');
+    let [black_short, black_long] = side('8', 'k', 'r');
+    [white_short, white_long, black_short, black_long]
 }
 
 fn castling_available_json(board: &str) -> Value {

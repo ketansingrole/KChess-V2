@@ -4,6 +4,7 @@ mod app;
 mod app_icon;
 mod bench;
 mod check;
+mod fairy;
 mod fake_lichess;
 mod icons;
 mod licenses;
@@ -42,6 +43,8 @@ const HELP: &str = "cargo xtask <command>
   icons [--check]       Write the icons the app names (or check they match)
   licenses <file>       Write the license texts of every crate compiled into the app
   voice-runtime [profile]  Stage the speech helper with libvosk (target/voice-runtime)
+  fairy-stockfish       Build the pinned Fairy-Stockfish, the variant engine
+                        (target/fairy-stockfish/bin)
   package [--skip-build] [--snap|--mas]
                         Package the app for this machine (apps/gpui/dist): .dmg and .zip,
                         the NSIS installer, or the AppImage and .deb; --snap makes the Snap,
@@ -75,6 +78,7 @@ fn main() -> ExitCode {
         Some("voice-runtime") => {
             voice::stage(rest.first().map_or("release", String::as_str)).map(|_| ())
         }
+        Some("fairy-stockfish") => fairy::build().map(|_| ()),
         Some("package") => package::run(rest),
         None | Some("help" | "--help" | "-h") => {
             print!("{HELP}");

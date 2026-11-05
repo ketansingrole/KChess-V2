@@ -21,13 +21,9 @@ use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 
-/// The player may touch pieces: the game is on, at its last move, in a variant shown here.
+/// The player may touch pieces: the game is on, at its last move.
 pub fn can_play(online: &OnlineState) -> bool {
-    online.phase == Phase::Playing
-        && online.view_ply.is_none()
-        && online.model()["onlineUnsupported"]
-            .as_str()
-            .is_none_or(str::is_empty)
+    online.phase == Phase::Playing && online.view_ply.is_none()
 }
 
 fn color_name(color: Color) -> &'static str {
@@ -40,6 +36,121 @@ fn color_name(color: Color) -> &'static str {
 
 fn action(name: &'static str) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| crate::online::handle(cx).update(cx, |online, cx| online.action(name, cx))
+}
+
+/// What the live game's buttons do, for Quick Pick to offer the same.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum LiveAction {
+    Berserk,
+    Takeback,
+    OfferDraw,
+    Resign,
+    Abort,
+    Rematch,
+    Analyse,
+    NewGame,
+    CancelSeek,
+    Flip,
+}
+
+/// The actions the game's buttons allow now: while it is sought, played, or once it is over.
+pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
+    match online.phase {
+        Phase::Playing => playing_actions(online),
+        Phase::Seeking => vec![LiveAction::CancelSeek],
+        Phase::Finished => {
+            let model = online.model();
+            let mut actions = Vec::new();
+            let tournament = model["onlineTournament"]
+                .as_str()
+                .is_some_and(|tournament| !tournament.is_empty());
+            // A rematch on its way is not sent twice: its button shows it loading meanwhile.
+            if model["lastGame"].is_object() && !tournament && !online.busy {
+                actions.push(LiveAction::Rematch);
+            }
+            if crate::game::analysable(online.setup()["variant"].as_str().unwrap_or("standard")) {
+                actions.push(LiveAction::Analyse);
+            }
+            actions.extend([LiveAction::NewGame, LiveAction::Flip]);
+            actions
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn playing_actions(online: &OnlineState) -> Vec<LiveAction> {
+    let model = online.model();
+    // Before each side has moved the game is aborted, not resigned.
+    let started = view::sans(&online.setup(), &online.moves()).len() >= 2;
+    let berserk = model["onlineTournament"]
+        .as_str()
+        .is_some_and(|tournament| !tournament.is_empty())
+        && model["onlineClockConfig"].is_object()
+        && model["berserked"] != json!(true)
+        && online.view()["ownMoves"].as_f64() == Some(0.);
+    let mut actions = Vec::new();
+    if berserk {
+        actions.push(LiveAction::Berserk);
+    }
+    if started && model["takebackOffer"].as_str().unwrap_or("none") == "none" {
+        actions.push(LiveAction::Takeback);
+    }
+    if started && model["drawOffer"].as_str().unwrap_or("none") == "none" {
+        actions.push(LiveAction::OfferDraw);
+    }
+    actions.push(if started {
+        LiveAction::Resign
+    } else {
+        LiveAction::Abort
+    });
+    actions.push(LiveAction::Flip);
+    actions
+}
+
+/// Run an action as its button does, if the game still allows it; resigning asks first.
+pub(crate) fn run_live_action(action: LiveAction, window: &mut Window, cx: &mut App) {
+    let online = crate::online::handle(cx);
+    if !live_actions(online.read(cx)).contains(&action) {
+        return;
+    }
+    let name = match action {
+        LiveAction::Resign => return ask_resign(window, cx),
+        LiveAction::Analyse => return analyse(window, cx),
+        LiveAction::Rematch => return online.update(cx, |online, cx| online.rematch(cx)),
+        LiveAction::NewGame | LiveAction::CancelSeek => {
+            return online.update(cx, |online, cx| online.stop(cx));
+        }
+        LiveAction::Flip => return flip(cx),
+        LiveAction::Berserk => "berserk",
+        LiveAction::Takeback => "takeback",
+        LiveAction::OfferDraw => "offerDraw",
+        LiveAction::Abort => "abort",
+    };
+    online.update(cx, |online, cx| online.action(name, cx));
+}
+
+/// The board turned round, as its button does.
+fn flip(cx: &mut App) {
+    crate::online::handle(cx).update(cx, |online, cx| {
+        online.flipped = !online.flipped;
+        cx.notify();
+    });
+}
+
+fn ask_resign(window: &mut Window, cx: &mut App) {
+    window.open_alert_dialog(cx, |dialog: AlertDialog, _, _| {
+        dialog
+            .title("Resign this game?")
+            .description("Your opponent will be awarded the win")
+            .ok_text("Resign")
+            .ok_variant(ButtonVariant::Danger)
+            .cancel_text("Cancel")
+            .show_cancel(true)
+            .on_ok(|_, _, cx| {
+                crate::online::handle(cx).update(cx, |online, cx| online.action("resign", cx));
+                true
+            })
+    });
 }
 
 /// An offer or a notice above the moves (`.offer-banner`).
@@ -587,31 +698,15 @@ impl OnlinePage {
             .as_str()
             .unwrap_or("Opponent")
             .to_string();
-        let unsupported = model["onlineUnsupported"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let reviewing = playing && !can_play(online) && unsupported.is_empty();
+        let reviewing = playing && !can_play(online);
         let variant = setup["variant"].as_str().unwrap_or("standard");
-        let variant_name = (variant != "standard").then(|| {
-            super::variants()
-                .into_iter()
-                .find(|(key, _, _)| key == variant)
-                .map_or(variant.to_string(), |(_, label, _)| label)
-        });
+        let variant_name = (variant != "standard").then(|| crate::game::variant_label(variant));
         let rated = model["onlineGameRated"] == json!(true);
         let status = model["onlineStatus"]
             .as_str()
             .unwrap_or_default()
             .to_string();
-        let banner: Option<(&'static str, String, String)> = if !unsupported.is_empty() {
-            Some((
-                "triangle-alert",
-                format!("{unsupported} is not supported yet"),
-                "KChess cannot show this variant’s board. You can still resign or abort it here."
-                    .into(),
-            ))
-        } else if reviewing {
+        let banner: Option<(&'static str, String, String)> = if reviewing {
             Some((
                 "history",
                 "Reviewing an earlier position".into(),
@@ -783,28 +878,18 @@ impl OnlinePage {
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
             crate::online::handle(cx).update(cx, |online, cx| online.view_ply(ply, cx));
         };
-        let flip: widgets::ClickHandler = Box::new(move |_, _, cx| {
-            crate::online::handle(cx).update(cx, |online, cx| {
-                online.flipped = !online.flipped;
-                cx.notify();
-            });
-        });
-        let can_takeback = playing && sans.len() >= 2;
+        let flip: widgets::ClickHandler = Box::new(move |_, _, cx| flip(cx));
+        let live = live_actions(online);
         let tournament = model["onlineTournament"]
             .as_str()
             .unwrap_or_default()
             .to_string();
-        let can_berserk = playing
-            && !tournament.is_empty()
-            && model["onlineClockConfig"].is_object()
-            && model["berserked"] != json!(true)
-            && online.view()["ownMoves"].as_f64() == Some(0.);
         let last_game = model["lastGame"].is_object();
         let actions = if playing {
             h_flex()
                 .flex_wrap()
                 .gap(px(8.))
-                .when(can_berserk, |row| {
+                .when(live.contains(&LiveAction::Berserk), |row| {
                     row.child(
                         Button::new("online-berserk")
                             .warning()
@@ -813,7 +898,7 @@ impl OnlinePage {
                             .on_click(action("berserk")),
                     )
                 })
-                .when(can_takeback && takeback == "none", |row| {
+                .when(live.contains(&LiveAction::Takeback), |row| {
                     row.child(
                         Button::new("online-takeback")
                             .outline()
@@ -822,7 +907,7 @@ impl OnlinePage {
                             .on_click(action("takeback")),
                     )
                 })
-                .when(can_takeback && draw == "none", |row| {
+                .when(live.contains(&LiveAction::OfferDraw), |row| {
                     row.child(
                         Button::new("online-draw")
                             .outline()
@@ -831,28 +916,13 @@ impl OnlinePage {
                             .on_click(action("offerDraw")),
                     )
                 })
-                .child(if can_takeback {
+                .child(if live.contains(&LiveAction::Resign) {
                     Button::new("online-resign")
                         .outline()
                         .danger()
                         .icon(icon("flag"))
                         .label("Resign")
-                        .on_click(|_, window, cx| {
-                            window.open_alert_dialog(cx, |dialog: AlertDialog, _, _| {
-                                dialog
-                                    .title("Resign this game?")
-                                    .description("Your opponent will be awarded the win")
-                                    .ok_text("Resign")
-                                    .ok_variant(ButtonVariant::Danger)
-                                    .cancel_text("Cancel")
-                                    .show_cancel(true)
-                                    .on_ok(|_, _, cx| {
-                                        crate::online::handle(cx)
-                                            .update(cx, |online, cx| online.action("resign", cx));
-                                        true
-                                    })
-                            })
-                        })
+                        .on_click(|_, window, cx| ask_resign(window, cx))
                 } else {
                     Button::new("online-abort")
                         .outline()
@@ -873,12 +943,11 @@ impl OnlinePage {
                     )
                 })
         } else {
-            let can_analyse = finished && variant == "standard";
             let export = finished.then(|| self.game_export(online, model));
             h_flex()
                 .flex_wrap()
                 .gap(px(8.))
-                .when(last_game && finished && tournament.is_empty(), |row| {
+                .when(live.contains(&LiveAction::Rematch), |row| {
                     row.child(
                         Button::new("online-rematch")
                             .primary()
@@ -891,7 +960,7 @@ impl OnlinePage {
                             }),
                     )
                 })
-                .when(can_analyse, |row| {
+                .when(live.contains(&LiveAction::Analyse), |row| {
                     row.child(
                         Button::new("online-analyse")
                             .outline()
@@ -984,7 +1053,7 @@ impl OnlinePage {
                 "online-moves",
                 &sans,
                 ply,
-                view::black_first(&setup),
+                view::first_move(&setup),
                 "No moves yet".into(),
                 select,
                 palette,

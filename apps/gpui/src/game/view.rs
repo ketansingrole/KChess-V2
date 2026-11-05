@@ -35,9 +35,18 @@ pub fn last_move(moves: &[String], ply: usize) -> Option<(Square, Square)> {
     crate::board::last_squares(moves.get(ply.checked_sub(1)?)?)
 }
 
-/// Whether the game began with Black to move (the move list then starts with "1. …").
-pub fn black_first(setup: &Value) -> bool {
-    setup_parts(setup).1.split(' ').nth(1) == Some("b")
+/// The game's first move: its number and whether Black plays it (the move list then starts
+/// with "30. …" for a game set up at Black's 30th move).
+pub fn first_move(setup: &Value) -> crate::widgets::FirstMove {
+    let fields: Vec<&str> = setup_parts(setup).1.split(' ').collect();
+    crate::widgets::FirstMove {
+        number: fields
+            .get(5)
+            .and_then(|number| number.parse().ok())
+            .filter(|number| *number > 0)
+            .unwrap_or(1),
+        black: fields.get(1) == Some(&"b"),
+    }
 }
 
 /// A move typed as SAN or UCI, as UCI when it is legal here (`keyboardMove`).

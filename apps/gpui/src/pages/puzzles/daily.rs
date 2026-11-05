@@ -1,6 +1,8 @@
 //! Puzzles → Daily: Lichess's puzzle of the day on its
 //! own board, with the status panel the Train tab uses. A later UTC day brings the next one.
+//! A lichess.org/training link opens its puzzle here instead, until Today's puzzle.
 
+use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -28,6 +30,10 @@ pub struct DailyPuzzle {
     loading: bool,
     /// The UTC day the puzzle was fetched on.
     day: String,
+    /// The id of a linked puzzle shown instead of the daily one.
+    linked: Option<String>,
+    /// The latest fetch: an answer to an earlier one is dropped.
+    request: u64,
     board: Entity<PuzzleBoard>,
     themes: Vec<Theme>,
     layout: PlayLayout,
@@ -39,6 +45,11 @@ fn utc_day() -> String {
 }
 
 impl DailyPuzzle {
+    /// The board, while it shows a puzzle.
+    pub(super) fn shown_board(&self) -> Option<Entity<PuzzleBoard>> {
+        self.puzzle.as_ref().map(|_| self.board.clone())
+    }
+
     pub fn new(themes: Vec<Theme>, window: &mut Window, cx: &mut Context<Self>) -> DailyPuzzle {
         let board = cx.new(|cx| PuzzleBoard::new(true, window, cx));
         DailyPuzzle {
@@ -46,6 +57,8 @@ impl DailyPuzzle {
             error: None,
             loading: false,
             day: String::new(),
+            linked: None,
+            request: 0,
             _subscriptions: vec![cx.observe(&board, |_, _, cx| cx.notify())],
             board,
             themes,
@@ -57,6 +70,7 @@ impl DailyPuzzle {
     pub fn load(&mut self, force: bool, cx: &mut Context<Self>) {
         // A failed fetch stays on screen for Try again: the page draws this on every frame.
         if self.loading
+            || self.linked.is_some()
             || (!force && self.error.is_some())
             || (self.puzzle.is_some() && !force && self.day == utc_day())
         {
@@ -67,9 +81,51 @@ impl DailyPuzzle {
         cx.notify();
         let day = utc_day();
         let daily = cx.global::<AppCore>().call("puzzleDaily", Vec::new());
+        self.fetch(daily, day, cx);
+    }
+
+    /// Show the puzzle a lichess.org/training link names.
+    pub fn open(&mut self, id: String, cx: &mut Context<Self>) {
+        self.linked = Some(id.clone());
+        self.loading = true;
+        self.error = None;
+        self.puzzle = None;
+        cx.notify();
+        let puzzle = cx.global::<AppCore>().call("puzzleById", vec![id.into()]);
+        self.fetch(puzzle, String::new(), cx);
+    }
+
+    /// Back to the puzzle of the day.
+    fn today(&mut self, cx: &mut Context<Self>) {
+        self.linked = None;
+        self.puzzle = None;
+        // A linked puzzle still on its way is dropped when it arrives (`request`).
+        self.loading = false;
+        self.load(true, cx);
+    }
+
+    fn retry(&mut self, cx: &mut Context<Self>) {
+        match self.linked.clone() {
+            Some(id) => self.open(id, cx),
+            None => self.load(true, cx),
+        }
+    }
+
+    fn fetch(
+        &mut self,
+        request: impl std::future::Future<Output = Result<Value, kchess_core::CoreError>> + 'static,
+        day: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.request += 1;
+        let asked = self.request;
         cx.spawn(async move |this, cx| {
-            let daily = daily.await;
+            let daily = request.await;
             let _ = this.update(cx, |this, cx| {
+                // An answer for a puzzle no longer asked for.
+                if this.request != asked {
+                    return;
+                }
                 this.loading = false;
                 match daily {
                     Ok(puzzle) => {
@@ -82,7 +138,7 @@ impl DailyPuzzle {
                         crate::log::write(
                             kchess_core::Level::Warn,
                             "puzzles",
-                            &format!("loading daily puzzle failed: {}", cause.message),
+                            &format!("loading a puzzle failed: {}", cause.message),
                         );
                         this.error = Some(cause.message);
                     }
@@ -109,7 +165,11 @@ impl Render for DailyPuzzle {
             let content = match &self.error {
                 Some(error) => widgets::empty_state(
                     icon("triangle-alert"),
-                    "Couldn’t get the daily puzzle",
+                    if self.linked.is_some() {
+                        "Couldn’t get the puzzle"
+                    } else {
+                        "Couldn’t get the daily puzzle"
+                    },
                     Some(error.clone().into()),
                     &palette,
                 )
@@ -130,7 +190,7 @@ impl Render for DailyPuzzle {
                                 .primary()
                                 .icon(icon("rotate-cw"))
                                 .label("Try again")
-                                .on_click(cx.listener(|this, _, _, cx| this.load(true, cx))),
+                                .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
                         ),
                 )
                 .into_any_element(),
@@ -138,7 +198,11 @@ impl Render for DailyPuzzle {
                     .gap(px(8.))
                     .text_color(palette.text_muted)
                     .child(icon("loader-circle").size(px(16.)))
-                    .child("Fetching today’s puzzle…")
+                    .child(if self.linked.is_some() {
+                        "Fetching the puzzle…"
+                    } else {
+                        "Fetching today’s puzzle…"
+                    })
                     .into_any_element(),
             };
             v_flex()
@@ -161,6 +225,16 @@ impl Render for DailyPuzzle {
             .min_w(PANEL_MIN)
             .max_w(PANEL_MAX)
             .gap(px(12.))
+            .when(self.linked.is_some(), |panel| {
+                panel.child(
+                    Button::new("daily-today")
+                        .ghost()
+                        .small()
+                        .icon(icon("calendar-days"))
+                        .label("Today’s puzzle")
+                        .on_click(cx.listener(|this, _, _, cx| this.today(cx))),
+                )
+            })
             .when_some(self.puzzle.as_ref(), |panel, _| {
                 panel.child(status_panel(
                     &self.board,

@@ -108,6 +108,34 @@ fn a_local_game_is_played_through_stdin_and_kept_in_the_library() {
     assert!(lines(&status)[0].get("engine").is_some());
 }
 
+/// Moves are typed in SAN as readily as in UCI, read in the position on the board.
+#[test]
+fn moves_are_typed_in_san_or_uci() {
+    let profile = tempfile::tempdir().expect("profile");
+    let played = cli(
+        profile.path(),
+        &["local"],
+        "Nf3\nd7d5\ng3\nNc6\nBg2\nBf5\nO-O\nNf3\npgn\nquit\n",
+    );
+    assert!(played.status.success(), "{played:?}");
+    let mut states = lines(&played);
+    // `pgn` prints the game so far, and nothing else.
+    let pgn = states.pop().expect("the PGN");
+    assert!(
+        pgn["pgn"]
+            .as_str()
+            .is_some_and(|pgn| pgn.contains("1. Nf3 d5 2. g3 Nc6 3. Bg2 Bf5 4. O-O *")),
+        "{pgn}"
+    );
+    let last = states.pop().expect("a state");
+    assert_eq!(
+        last["moves"],
+        json!(["g1f3", "d7d5", "g2g3", "b8c6", "f1g2", "c8f5", "e1h1"])
+    );
+    // Black has no knight that reaches f3.
+    assert!(String::from_utf8_lossy(&played.stderr).contains("Illegal move or game unavailable."));
+}
+
 #[test]
 fn help_and_methods_need_no_core_and_bad_commands_fail() {
     let profile = tempfile::tempdir().expect("profile");
@@ -131,7 +159,23 @@ fn help_and_methods_need_no_core_and_bad_commands_fail() {
             vec!["call", "library", "{}"],
             "Arguments must be a JSON array.",
         ),
-        (vec!["analyze"], "analyze requires a FEN."),
+        (vec!["analyze"], "analyze requires a FEN or moves."),
+        (
+            vec!["analyze", "e4", "Ke7"],
+            "Move 1 (Ke7) is not legal there.",
+        ),
+        (
+            vec!["review"],
+            "review requires a game: a Lichess link, a PGN file or moves.",
+        ),
+        (
+            vec!["review", "1. e4 e5 2. Ke3"],
+            "Move 2 (Ke3) is not legal there.",
+        ),
+        (
+            vec!["pgn", "https://lichess.org/training/FPFg0"],
+            "pgn takes a lichess.org game or study link.",
+        ),
         (
             vec!["--browser", "never"],
             "--browser must be open or print.",

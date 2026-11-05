@@ -132,6 +132,11 @@ pub struct InsightsPage {
     speed: Choices,
     period: Choices,
     rated: Choices,
+    /// Standard chess, or one of the variants the account has played.
+    variant: Choices,
+    /// The variant keys the select lists now; refilled when a report names others, on the next
+    /// frame, where there is a window.
+    variant_keys: Vec<String>,
     report: Option<Value>,
     error: Option<SharedString>,
     loading: bool,
@@ -158,9 +163,15 @@ impl InsightsPage {
         let speed = select(choices(&SPEEDS));
         let period = select(choices(&PERIODS));
         let rated = select(choices(&RATED));
+        let variant = cx.new(|cx| {
+            let mut state =
+                SelectState::new(vec![Choice::new("standard", "Standard")], None, window, cx);
+            state.set_selected_value(&SharedString::from("standard"), window, cx);
+            state
+        });
         let account_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let accounts = crate::accounts::handle(cx);
-        let mut subscriptions: Vec<Subscription> = [&speed, &period, &rated]
+        let mut subscriptions: Vec<Subscription> = [&speed, &period, &rated, &variant]
             .into_iter()
             .map(|select| {
                 cx.subscribe(select, |this, _, _: &SelectEvent<Vec<Choice>>, cx| {
@@ -187,6 +198,8 @@ impl InsightsPage {
             speed,
             period,
             rated,
+            variant,
+            variant_keys: vec!["standard".into()],
             report: None,
             error: None,
             loading: false,
@@ -239,7 +252,7 @@ impl InsightsPage {
     }
 
     /// `InsightsQuery`: unset filters are left out.
-    fn query(&self, cx: &App) -> Value {
+    pub(crate) fn query(&self, cx: &App) -> Value {
         let mut query = json!({ "account": self.account });
         let speed = Self::chosen(&self.speed, cx);
         if speed != "all" {
@@ -252,6 +265,10 @@ impl InsightsPage {
         }
         if let Ok(days) = Self::chosen(&self.period, cx).parse::<f64>() {
             query["days"] = json!(days);
+        }
+        let variant = Self::chosen(&self.variant, cx);
+        if variant != "standard" && variant != "all" {
+            query["variant"] = json!(variant);
         }
         query
     }
@@ -284,6 +301,67 @@ impl InsightsPage {
             });
         })
         .detach();
+    }
+
+    /// Standard, the variants the report names and the one chosen, refilled into the select when
+    /// they changed.
+    fn sync_variants(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let chosen = Self::chosen(&self.variant, cx);
+        let mut keys = vec!["standard".to_string()];
+        for key in self
+            .report
+            .as_ref()
+            .and_then(|report| report["variants"].as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .chain((chosen != "standard" && chosen != "all").then_some(chosen.clone()))
+        {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        if keys == self.variant_keys {
+            return;
+        }
+        let items: Vec<Choice> = keys
+            .iter()
+            .map(|key| Choice::new(key.clone(), crate::game::variant_label(key)))
+            .collect();
+        self.variant.update(cx, |select, cx| {
+            select.set_items(items, window, cx);
+            select.set_selected_value(&SharedString::from(chosen), window, cx);
+        });
+        self.variant_keys = keys;
+    }
+
+    /// A report has come in and none is loading.
+    #[cfg(test)]
+    pub(crate) fn loaded(&self) -> bool {
+        self.report.is_some() && !self.loading
+    }
+
+    /// As if the last report had named `variants` as played.
+    #[cfg(test)]
+    pub(crate) fn show_report_variants(&mut self, variants: &[&str], cx: &mut Context<Self>) {
+        if let Some(report) = &mut self.report {
+            report["variants"] = json!(variants);
+        }
+        cx.notify();
+    }
+
+    /// Choose a variant as the select does.
+    #[cfg(test)]
+    pub(crate) fn choose_variant(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let key = SharedString::from(key.to_string());
+        self.variant
+            .update(cx, |select, cx| select.set_selected_value(&key, window, cx));
     }
 
     /// The page was shown: games may have been synced since.
@@ -446,6 +524,8 @@ impl Render for InsightsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let names = Self::names(cx);
+        self.sync_variants(window, cx);
+        let variant_label = crate::game::variant_label(&Self::chosen(&self.variant, cx));
         let filters = h_flex()
             .gap(px(8.))
             .flex_wrap()
@@ -478,7 +558,19 @@ impl Render for InsightsPage {
                         .small()
                         .accessibility_label("Rated or casual"),
                 ),
-            );
+            )
+            // Only for an account with variant games.
+            .when(self.variant_keys.len() > 1, |row| {
+                row.child(
+                    div()
+                        .w(px(variant_label.chars().count() as f32 * 7. + 40.))
+                        .child(
+                            Select::new(&self.variant)
+                                .small()
+                                .accessibility_label("Variant"),
+                        ),
+                )
+            });
         let report = self.report.clone();
         let total = report
             .as_ref()

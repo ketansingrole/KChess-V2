@@ -70,14 +70,6 @@ const PERFS: [(&str, &str); 14] = [
     ("crazyhouse", "Crazyhouse"),
 ];
 
-/// `USERNAME`: what Lichess accepts as a name.
-fn is_username(name: &str) -> bool {
-    (2..=30).contains(&name.len())
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-}
-
 /// `playedPerfs`: the speeds a player has games in, most played first.
 fn played_perfs(profile: &Value) -> Vec<(&'static str, &'static str)> {
     let games = |key: &str| profile["perfs"][key]["games"].as_f64().unwrap_or_default();
@@ -185,6 +177,22 @@ fn name_chip(
 
 fn message_of(cause: &kchess_core::CoreError) -> SharedString {
     cause.message.clone().into()
+}
+
+/// The open player's actions, as their buttons offer them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Action {
+    Follow,
+    Challenge,
+    Message,
+    Watch,
+}
+
+/// Follow a player with the active account.
+fn follow(name: String, window: &mut Window, cx: &mut App) {
+    crate::accounts::handle(cx).update(cx, |accounts, cx| {
+        accounts.follow(name, window, cx, |_, _, _| {})
+    });
 }
 
 pub struct PlayersPage {
@@ -421,7 +429,11 @@ impl PlayersPage {
         let shown = self
             .username()
             .is_some_and(|name| name.eq_ignore_ascii_case(&term));
-        if term.chars().count() < 3 || !is_username(&term) || shown || !crate::network::online(cx) {
+        if term.chars().count() < 3
+            || !crate::game::is_username(&term)
+            || shown
+            || !crate::network::online(cx)
+        {
             self.matches.clear();
             cx.notify();
             return;
@@ -469,7 +481,7 @@ impl PlayersPage {
     /// `lookup`: the profile first, then everything else about the player at once.
     fn lookup(&mut self, name: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let name = name.unwrap_or_else(|| self.input.read(cx).value().trim().to_string());
-        if !is_username(&name) {
+        if !crate::game::is_username(&name) {
             self.error = Some(if name.is_empty() {
                 "Enter a Lichess username".into()
             } else {
@@ -856,6 +868,68 @@ impl PlayersPage {
         );
     }
 
+    /// What the open player's buttons can do now.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        let Some(username) = self.username() else {
+            return Vec::new();
+        };
+        let accounts = crate::accounts::handle(cx).read(cx);
+        let followed = accounts.all().iter().any(|account| {
+            account["username"]
+                .as_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case(&username))
+        });
+        let not_me = accounts
+            .active(cx)
+            .as_deref()
+            .is_none_or(|me| !me.eq_ignore_ascii_case(&username));
+        let mut actions = Vec::new();
+        if !followed && !accounts.busy {
+            actions.push(Action::Follow);
+        }
+        if !accounts.connected().is_empty() && not_me {
+            actions.extend([Action::Challenge, Action::Message]);
+        }
+        if self
+            .status
+            .as_ref()
+            .is_some_and(|status| status["playingId"].is_string())
+        {
+            actions.push(Action::Watch);
+        }
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        let Some(username) = self.username() else {
+            return;
+        };
+        match action {
+            Action::Follow => follow(username, window, cx),
+            Action::Challenge => crate::shell::challenge(&username, window, cx),
+            Action::Message => self.open_message(window, cx),
+            Action::Watch => {
+                let playing = self
+                    .status
+                    .as_ref()
+                    .and_then(|status| status["playingId"].as_str().map(str::to_string));
+                if let Some(id) = playing {
+                    crate::shell::watch_game(&id, window, cx);
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn show_profile(&mut self, profile: Value, cx: &mut Context<Self>) {
+        self.profile = Some(profile);
+        cx.notify();
+    }
+
     fn open_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(username), Some(account)) = (self.username(), Self::active_account(cx)) else {
             return;
@@ -1112,13 +1186,7 @@ impl PlayersPage {
                                         .label("Follow player")
                                         .disabled(busy)
                                         .on_click(move |_, window, cx| {
-                                            let name = follow_name.clone();
-                                            crate::accounts::handle(cx).update(
-                                                cx,
-                                                |accounts, cx| {
-                                                    accounts.follow(name, window, cx, |_, _, _| {})
-                                                },
-                                            )
+                                            follow(follow_name.clone(), window, cx)
                                         }),
                                 )
                             })
@@ -1611,27 +1679,97 @@ pub fn open_exported(
     window: &mut Window,
     cx: &mut App,
 ) {
+    open_exported_at(id, white, black, orientation, 0, window, cx);
+}
+
+/// A Lichess game by its link (`crate::game::game_link`), from the side and at the move it names.
+pub fn open_linked(link: &crate::game::GameLink, window: &mut Window, cx: &mut App) {
+    open_exported_at(
+        &link.id,
+        Value::Null,
+        Value::Null,
+        link.orientation,
+        link.ply.unwrap_or(0),
+        window,
+        cx,
+    );
+}
+
+fn open_exported_at(
+    id: &str,
+    white: Value,
+    black: Value,
+    orientation: shakmaty::Color,
+    ply: usize,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let export = cx.global::<AppCore>().call("exportGame", vec![json!(id)]);
     let origin = json!({ "white": white, "black": black, "gameId": id });
+    let pgn = async move {
+        match export.await {
+            Ok(Value::String(pgn)) => Ok(pgn),
+            Ok(_) => Err("That game could not be read".to_string()),
+            Err(cause) => Err(format!("Could not open the game: {}", cause.message)),
+        }
+    };
+    open_fetched(pgn, Some(orientation), ply, Some(origin), window, cx);
+}
+
+/// A public Lichess study's chapter (its first when `chapter` is empty), from the side the study
+/// shows it.
+pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App) {
+    let fetch = cx
+        .global::<AppCore>()
+        .call("lichessStudyChapter", vec![json!(study), json!(chapter)]);
     window
         .spawn(cx, async move |cx| {
-            let pgn = export.await;
+            let pgn = match fetch.await {
+                Ok(found) => found["pgn"].as_str().map(str::to_string),
+                Err(cause) => {
+                    let message = format!("Could not open the study: {}", cause.message);
+                    let _ = cx.update(|window, cx| window.push_notification(message, cx));
+                    return;
+                }
+            };
+            let _ = cx.update(|window, cx| {
+                let orientation = pgn.as_deref().and_then(crate::game::pgn_orientation);
+                let pgn =
+                    async move { pgn.ok_or_else(|| "That study could not be read".to_string()) };
+                open_fetched(pgn, orientation, 0, None, window, cx);
+            });
+        })
+        .detach();
+}
+
+/// Open a game fetched from Lichess on the analysis board (asking first when the board holds
+/// unsaved work), or say why it cannot be opened.
+pub fn open_fetched(
+    pgn: impl std::future::Future<Output = Result<String, String>> + 'static,
+    orientation: Option<shakmaty::Color>,
+    ply: usize,
+    origin: Option<Value>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window
+        .spawn(cx, async move |cx| {
+            let pgn = pgn.await;
             let _ = cx.update(|window, cx| match pgn {
-                Ok(Value::String(pgn)) => {
+                // A variant the analysis board cannot play (Crazyhouse, Atomic…): say so before
+                // asking to replace anything.
+                Ok(pgn)
+                    if !crate::game::pgn_analysable(&pgn)
+                        || crate::game::tree::TreeNode::from_pgn(&pgn).is_none() =>
+                {
+                    window.push_notification("The analysis board cannot open this game", cx)
+                }
+                Ok(pgn) => {
                     crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
-                        analysis.open_game(
-                            &pgn,
-                            0,
-                            Some(orientation),
-                            Some(origin.clone()),
-                            false,
-                            cx,
-                        )
+                        analysis.open_game(&pgn, ply, orientation, origin.clone(), false, cx)
                     });
                 }
-                Ok(_) => window.push_notification("That game could not be read", cx),
-                Err(cause) => window
-                    .push_notification(format!("Could not open the game: {}", cause.message), cx),
+                Err(message) => window.push_notification(message, cx),
             });
         })
         .detach();
@@ -1887,7 +2025,8 @@ impl Render for MessageDialog {
 
 #[cfg(test)]
 mod tests {
-    use super::{hours, is_username, played_perfs, suggestions, title_choices, title_shown};
+    use super::{hours, played_perfs, suggestions, title_choices, title_shown};
+    use crate::game::is_username;
     use serde_json::json;
 
     #[test]

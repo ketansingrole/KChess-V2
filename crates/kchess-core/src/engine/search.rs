@@ -20,7 +20,10 @@ use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::status::{EngineStatus, EngineTrust, computer_playing, engine_identity, engine_status};
+use super::status::{
+    EngineStatus, EngineTrust, computer_playing, engine_identity, engine_status, fairy_variant,
+    variant_engine_status,
+};
 use super::uci::{
     UciController, error_summary, lock, search_cancelled, signal_aborted, truncate_for_log,
 };
@@ -48,6 +51,9 @@ struct MoveOptions {
     movetime: Option<f64>,
     #[serde(default)]
     chess960: bool,
+    /// Another variant's Lichess key; Fairy-Stockfish plays it.
+    #[serde(default)]
+    variant: Option<String>,
 }
 
 /// `EngineLevelInfo` for the level asked for.
@@ -69,6 +75,8 @@ struct Request {
     fen: Option<String>,
     movetime: Option<f64>,
     chess960: bool,
+    /// Fairy-Stockfish's name of the variant (`UCI_Variant`), for a variant game.
+    variant: Option<&'static str>,
     level: String,
     configured: String,
 }
@@ -358,14 +366,27 @@ fn prepare(moves: Value, options: Value, level: &str, configured: &str) -> Resul
         serde_json::from_value(super::domain_client::assert_best_move_options(&options)?)
             .map_err(|cause| CoreError::new(cause.to_string()))?;
     let start = options.fen.as_deref().unwrap_or(INITIAL_FEN);
-    // The rules write castling king-takes-rook; with `UCI_Chess960` off the engine rejects that.
-    let moves = kchess_domain::replay::engine_line(start, &moves, options.chess960)
-        .ok_or_else(|| CoreError::new("Invalid computer position or move history."))?;
+    let invalid = || CoreError::new("Invalid computer position or move history.");
+    let variant = options.variant.as_deref().and_then(fairy_variant);
+    let moves = match (&options.variant, variant) {
+        // Another variant's moves (drops among them) replay by its rules, and go as they are.
+        (Some(key), Some(_)) => {
+            kchess_domain::replay::replay_setup_count(key, start, &moves)
+                .filter(|count| *count == moves.len())
+                .ok_or_else(invalid)?;
+            moves
+        }
+        // The rules write castling king-takes-rook; with `UCI_Chess960` off the engine rejects
+        // that.
+        _ => kchess_domain::replay::engine_line(start, &moves, options.chess960)
+            .ok_or_else(invalid)?,
+    };
     Ok(Request {
         moves,
         fen: options.fen,
         movetime: options.movetime,
         chess960: options.chess960,
+        variant,
         level: level.to_string(),
         configured: configured.to_string(),
     })
@@ -417,16 +438,22 @@ async fn attempt(
     if token.is_cancelled() {
         return Err(signal_aborted());
     }
-    let status = engine_status(
-        &*shared.ctx.host,
-        &shared.ctx.locations,
-        &request.configured,
-    )
-    .await;
+    let status = match request.variant {
+        Some(_) => variant_engine_status(&*shared.ctx.host, &shared.ctx.locations).await,
+        None => {
+            engine_status(
+                &*shared.ctx.host,
+                &shared.ctx.locations,
+                &request.configured,
+            )
+            .await
+        }
+    };
     if !status.ready {
-        return Err(CoreError::new(
-            "Stockfish could not be found. Choose an engine in Settings.",
-        ));
+        return Err(CoreError::new(match request.variant {
+            Some(_) => "Fairy-Stockfish, which plays this variant, is missing.",
+            None => "Stockfish could not be found. Choose an engine in Settings.",
+        }));
     }
     *key = engine_identity(&status).await?;
     if epoch != lock(&shared.state).generation {
@@ -476,15 +503,18 @@ async fn search_under_lease(
     };
     let chess960 = request.chess960.to_string();
     let limit = elo.is_some().to_string();
-    target
-        .ensure_options(&[
-            ("Threads", threads.as_str()),
-            ("Hash", "64"),
-            ("UCI_Chess960", chess960.as_str()),
-            ("UCI_LimitStrength", limit.as_str()),
-            (strength.0, strength.1.as_str()),
-        ])
-        .await?;
+    let mut options = vec![
+        ("Threads", threads.as_str()),
+        ("Hash", "64"),
+        ("UCI_Chess960", chess960.as_str()),
+        ("UCI_LimitStrength", limit.as_str()),
+        (strength.0, strength.1.as_str()),
+    ];
+    // The variant first: a warm Fairy-Stockfish keeps the one it played last.
+    if let Some(variant) = request.variant {
+        options.insert(0, ("UCI_Variant", variant));
+    }
+    target.ensure_options(&options).await?;
     if token.is_cancelled() {
         return Err(signal_aborted());
     }
@@ -541,9 +571,40 @@ fn perft_move(line: &str) -> Option<String> {
     let bytes = mv.as_bytes();
     let square =
         |file: u8, rank: u8| (b'a'..=b'h').contains(&file) && (b'1'..=b'8').contains(&rank);
-    let shaped = (bytes.len() == 4 || (bytes.len() == 5 && b"nbrq".contains(&bytes[4])))
-        && square(bytes[0], bytes[1])
-        && square(bytes[2], bytes[3]);
+    // A move, a promotion (to a king in Antichess), or a Crazyhouse drop (`P@e3`).
+    let shaped = match bytes {
+        [piece, b'@', file, rank] => b"PNBRQ".contains(piece) && square(*file, *rank),
+        [from_file, from_rank, to_file, to_rank, rest @ ..] => {
+            square(*from_file, *from_rank)
+                && square(*to_file, *to_rank)
+                && matches!(rest, [] | [b'n' | b'b' | b'r' | b'q' | b'k'])
+        }
+        _ => false,
+    };
     let counted = !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit());
     (shaped && counted).then(|| mv.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::perft_move;
+
+    /// The weakest levels pick from `go perft 1`'s moves: drops and Antichess's king promotions
+    /// are among them.
+    #[test]
+    fn perft_lists_moves_drops_and_promotions() {
+        assert_eq!(perft_move("e2e4: 1").as_deref(), Some("e2e4"));
+        assert_eq!(perft_move("P@e3: 1").as_deref(), Some("P@e3"));
+        assert_eq!(perft_move("a7a8q: 1").as_deref(), Some("a7a8q"));
+        assert_eq!(perft_move("a7a8k: 1").as_deref(), Some("a7a8k"));
+        for line in [
+            "K@e3: 1",
+            "e2e9: 1",
+            "a7a8x: 1",
+            "Nodes searched: 20",
+            "e2e4: x",
+        ] {
+            assert_eq!(perft_move(line), None, "{line}");
+        }
+    }
 }

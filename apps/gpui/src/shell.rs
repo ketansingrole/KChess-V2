@@ -432,6 +432,23 @@ pub fn open_player(username: &str, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Watch a Lichess TV channel.
+pub fn watch_channel(channel: String, window: &mut Window, cx: &mut App) {
+    open(Page::Watch, window, cx);
+    if let Some(watch) = view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx) {
+        watch.update(cx, |watch, cx| watch.open_channel(channel, window, cx));
+    }
+}
+
+/// Watch at one of its tabs (`tv`, `friends` or `broadcasts`); a Watch page made now opens there.
+pub fn watch_tab(tab: &'static str, window: &mut Window, cx: &mut App) {
+    crate::prefs::set(cx, crate::pages::watch::TAB_KEY, tab);
+    open(Page::Watch, window, cx);
+    if let Some(watch) = view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx) {
+        watch.update(cx, |watch, cx| watch.show_tab(tab, window, cx));
+    }
+}
+
 /// Watch a game being played on Lichess (`watchGame`).
 pub fn watch_game(id: &str, window: &mut Window, cx: &mut App) {
     open(Page::Watch, window, cx);
@@ -469,6 +486,15 @@ pub fn open_tournament(id: &str, window: &mut Window, cx: &mut App) {
     {
         let id = id.to_string();
         page.update(cx, |page, cx| page.show_known_event(&id, cx));
+    }
+}
+
+/// A tournament named by its system (`arena` or `swiss`) and id, as a pasted link names it.
+pub fn open_event(system: &str, id: &str, window: &mut Window, cx: &mut App) {
+    open(Page::Tournaments, window, cx);
+    if let Some(page) = view_of::<crate::pages::tournaments::TournamentsPage>(Page::Tournaments, cx)
+    {
+        page.update(cx, |page, cx| page.show_event(system, id, cx));
     }
 }
 
@@ -554,6 +580,14 @@ pub fn open_history_lichess(window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Studies at its Lichess tab: the connected account's own studies.
+pub fn open_studies_lichess(window: &mut Window, cx: &mut App) {
+    open(Page::Studies, window, cx);
+    if let Some(studies) = view_of::<crate::pages::studies::StudiesPage>(Page::Studies, cx) {
+        studies.update(cx, |studies, cx| studies.show_lichess(window, cx));
+    }
+}
+
 /// Open a synced Lichess game in Game history (`openReview`).
 pub fn open_lichess_game(game: serde_json::Value, window: &mut Window, cx: &mut App) {
     open(Page::History, window, cx);
@@ -605,6 +639,22 @@ pub fn view_of<V: 'static>(page: Page, cx: &App) -> Option<Entity<V>> {
     workspace.read(cx).pages.view_of::<V>(page)
 }
 
+/// Open a Lichess broadcast link on Watch → Broadcasts.
+pub fn open_broadcast(link: crate::game::BroadcastLink, window: &mut Window, cx: &mut App) {
+    open(Page::Watch, window, cx);
+    if let Some(watch) = view_of::<crate::pages::watch::WatchPage>(Page::Watch, cx) {
+        watch.update(cx, |watch, cx| watch.open_broadcast(link, window, cx));
+    }
+}
+
+/// Open a Lichess puzzle by its id on Puzzles → Daily.
+pub fn open_puzzle(id: String, window: &mut Window, cx: &mut App) {
+    open(Page::Puzzles, window, cx);
+    if let Some(puzzles) = view_of::<crate::pages::puzzles::PuzzlesPage>(Page::Puzzles, cx) {
+        puzzles.update(cx, |puzzles, cx| puzzles.open_puzzle(id, window, cx));
+    }
+}
+
 /// Open a played game in Game history (Home's recent games).
 pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
     open(Page::History, window, cx);
@@ -627,33 +677,45 @@ pub fn analysis_board(window: &mut Window, cx: &mut App) -> Option<Entity<Analys
     page_view::<AnalysisPage>(Page::Analysis, window, cx)
 }
 
-/// Play Stockfish from a position, as the side to move (`startComputerFrom`).
-pub fn play_computer_from(fen: String, window: &mut Window, cx: &mut App) {
-    let color = if fen.split(' ').nth(1) == Some("b") {
+/// Whether a game can start from `setup` (`{ variant, fen }`): a standard position the engine
+/// takes (not one with too many pieces), or a legal one in its variant.
+fn playable(setup: &serde_json::Value) -> bool {
+    let variant = setup["variant"].as_str().unwrap_or("standard");
+    let fen = setup["fen"].as_str().unwrap_or_default();
+    if crate::game::standard_rules(variant) {
+        crate::game::position_problem(fen).is_none()
+    } else {
+        kchess_domain::rules::setup_start(variant, fen).is_some()
+    }
+}
+
+/// Play Stockfish (Fairy-Stockfish in another variant) from a setup's position, as the side to
+/// move (`startComputerFrom`).
+pub fn play_computer_from(setup: serde_json::Value, window: &mut Window, cx: &mut App) {
+    let color = if setup["fen"].as_str().and_then(|fen| fen.split(' ').nth(1)) == Some("b") {
         shakmaty::Color::Black
     } else {
         shakmaty::Color::White
     };
     open(Page::Computer, window, cx);
-    // A position Stockfish refuses (one with too many pieces) only opens the page.
-    if crate::game::position_problem(&fen).is_some() {
+    // A position that cannot be played only opens the page.
+    if !playable(&setup) {
         return;
     }
     if let Some(page) = view_of::<ComputerPage>(Page::Computer, cx) {
-        let setup = serde_json::json!({ "variant": "standard", "fen": fen });
         page.update(cx, |page, cx| page.start_from(setup, color, window, cx));
     }
 }
 
-/// A game over the board from a position (`/local?fen=`).
-pub fn play_local_from(fen: String, window: &mut Window, cx: &mut App) {
+/// A game over the board from a setup's position (`/local?fen=`).
+pub fn play_local_from(setup: serde_json::Value, window: &mut Window, cx: &mut App) {
     open(Page::Local, window, cx);
     // As the page does with `?fen=`: a position that cannot be played only opens it.
-    if crate::game::position_problem(&fen).is_some() {
+    if !playable(&setup) {
         return;
     }
     if let Some(page) = view_of::<LocalPage>(Page::Local, cx) {
-        page.update(cx, |page, cx| page.start_from(&fen, window, cx));
+        page.update(cx, |page, cx| page.start_from(setup, window, cx));
     }
 }
 

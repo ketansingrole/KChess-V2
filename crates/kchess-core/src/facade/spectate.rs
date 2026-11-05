@@ -35,6 +35,10 @@ impl Core {
                 let query = normal("assertBroadcastQuery", &arg(args, 0))?;
                 self.inner("spectate.broadcasts", vec![query]).await
             }
+            "broadcastRound" => {
+                let id = normal("assertLichessId", &arg(args, 0))?;
+                self.inner("spectate.broadcastRound", vec![id]).await
+            }
             "broadcastTour" => {
                 let id = normal("assertLichessId", &arg(args, 0))?;
                 self.inner("spectate.broadcastTour", vec![id]).await

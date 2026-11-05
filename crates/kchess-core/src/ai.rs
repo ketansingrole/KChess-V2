@@ -289,6 +289,9 @@ pub struct Ai {
     auth: String,
     api: String,
     lifetime: CancellationToken,
+    /// Where the sign-in callback listens first: OpenAI's registered port, or any free one
+    /// under test, so test runs side by side do not fight over it.
+    callback_port: u16,
     /// Refresh tokens rotate: two refreshes at once would burn the sign-in.
     pub refreshing: AsyncMutex<()>,
 }
@@ -301,11 +304,16 @@ impl Ai {
             .map_err(|cause| CoreError::new(format!("Could not start HTTP: {cause}")))?;
         Ok(Ai {
             client,
+            callback_port: if origin.is_some() { 0 } else { FIRST_PORT },
             auth: origin.clone().unwrap_or_else(|| AUTH.to_string()),
             api: origin.unwrap_or_else(|| API.to_string()),
             lifetime,
             refreshing: AsyncMutex::new(()),
         })
+    }
+
+    pub fn callback_port(&self) -> u16 {
+        self.callback_port
     }
 
     pub fn issuer(&self) -> &str {
@@ -564,6 +572,16 @@ mod tests {
             "iss": AUTH, "aud": "oaiapp_1", "exp": 2000, "nonce": "n",
             "sub": "user", "email": "a@example.test"
         })
+    }
+
+    /// The sign-in callback waits on OpenAI's registered port, and on any free one under test:
+    /// two test binaries both holding 1455 once failed whichever started second.
+    #[tokio::test]
+    async fn only_a_real_sign_in_waits_on_the_registered_port() {
+        let real = Ai::new(None, CancellationToken::new()).unwrap();
+        assert_eq!(real.callback_port(), FIRST_PORT);
+        let fixture = Ai::new(Some("http://127.0.0.1:9".into()), CancellationToken::new()).unwrap();
+        assert_eq!(fixture.callback_port(), 0);
     }
 
     /// OpenAI refused a bare random string (`invalid_authorize_request`, `ext_agent_host_id`).

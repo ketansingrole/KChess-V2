@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -118,10 +118,11 @@ pub fn info_line(frame: &Value, channels: &[Value]) -> String {
                     .and_then(|c| c["label"].as_str().map(str::to_string))
             })
     } else {
+        // A game's variant comes as Lichess's key ("kingOfTheHill"): shown by its name.
         frame["variant"]
             .as_str()
             .filter(|variant| *variant != "standard")
-            .map(str::to_string)
+            .map(crate::game::variant_label)
     };
     let mut parts = Vec::new();
     if let (Some(initial), Some(increment)) = (
@@ -718,7 +719,7 @@ impl WatchPage {
                 "watch-moves",
                 &sans,
                 self.live.shown_ply(),
-                setup.as_ref().is_some_and(view::black_first),
+                setup.as_ref().map(view::first_move).unwrap_or_default(),
                 empty.into(),
                 select.clone(),
                 palette,
@@ -744,6 +745,9 @@ impl WatchPage {
                             .w_full()
                             .icon(icon("microscope"))
                             .label("Analyse")
+                            .disabled(!crate::game::analysable(
+                                frame["variant"].as_str().unwrap_or("standard"),
+                            ))
                             .on_click(cx.listener(|this, _, window, cx| this.analyse(window, cx)))
                             .into_any_element()
                             .into(),
@@ -816,11 +820,7 @@ impl WatchPage {
                 .child(list)
                 .child(widgets::card(palette).flex_1().child(widgets::empty_state(
                     icon("tv"),
-                    if self.target.is_some() {
-                        "Connecting…"
-                    } else {
-                        "Pick something to watch"
-                    },
+                    placeholder(self.target.is_some(), self.phase.as_deref()),
                     None,
                     palette,
                 )))
@@ -949,6 +949,58 @@ impl WatchPage {
             .into_any_element()
     }
 
+    /// The actions the watched game's panel allows now, or the open broadcast board's; none
+    /// without either.
+    pub(crate) fn actions(&self) -> Vec<Action> {
+        if self.tab == super::Tab::Broadcasts {
+            return if self.broadcasts.current().is_some() {
+                vec![Action::Flip, Action::AllBoards, Action::Analyse]
+            } else {
+                Vec::new()
+            };
+        }
+        let Some(frame) = &self.live.frame else {
+            return Vec::new();
+        };
+        let mut actions = vec![Action::Flip];
+        if crate::game::analysable(frame["variant"].as_str().unwrap_or("standard")) {
+            actions.push(Action::Analyse);
+        }
+        actions.push(Action::Stop);
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions().contains(&action) {
+            return;
+        }
+        let broadcast = self.tab == super::Tab::Broadcasts;
+        match action {
+            Action::Flip if broadcast => {
+                self.broadcasts.orientation = !self.broadcasts.orientation;
+                self.broadcasts.redraw(cx);
+                cx.notify();
+            }
+            Action::Flip => {
+                self.live.flipped = !self.live.flipped;
+                self.live.redraw(cx);
+                cx.notify();
+            }
+            Action::AllBoards => self.all_boards(cx),
+            Action::Analyse if broadcast => self.analyse_broadcast(window, cx),
+            Action::Analyse => self.analyse(window, cx),
+            Action::Stop => self.stop(cx),
+        }
+    }
+
+    /// A game on the board as the feed would send it, for the end-to-end tests.
+    #[cfg(test)]
+    pub(crate) fn show_frame(&mut self, frame: Value, cx: &mut Context<Self>) {
+        self.live.set_frame(frame, cx);
+        cx.notify();
+    }
+
     /// `analyseTv`: the game so far on the analysis board, at the move looked at.
     fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(frame) = self.live.frame.clone() else {
@@ -971,32 +1023,64 @@ impl WatchPage {
             );
             if let Ok(Value::String(pgn)) = pgn {
                 let ply = self.live.shown_ply();
-                crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
-                    analysis.open_game(
-                        &pgn,
-                        ply,
-                        Some(orientation),
-                        Some(origin.clone()),
-                        false,
-                        cx,
-                    )
+                // Once this page is no longer being updated: leaving Watch tells it it is hidden.
+                window.defer(cx, move |window, cx| {
+                    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+                        analysis.open_game(
+                            &pgn,
+                            ply,
+                            Some(orientation),
+                            Some(origin.clone()),
+                            false,
+                            cx,
+                        )
+                    });
                 });
                 return;
             }
         }
-        crate::pages::players::open_exported(
-            frame["gameId"].as_str().unwrap_or_default(),
-            frame["white"]["name"].clone(),
-            frame["black"]["name"].clone(),
-            orientation,
-            window,
-            cx,
-        );
+        window.defer(cx, move |window, cx| {
+            crate::pages::players::open_exported(
+                frame["gameId"].as_str().unwrap_or_default(),
+                frame["white"]["name"].clone(),
+                frame["black"]["name"].clone(),
+                orientation,
+                window,
+                cx,
+            );
+        });
+    }
+}
+
+/// What the watched game's buttons do, for Quick Pick to offer the same.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Action {
+    Flip,
+    /// Back from a broadcast's board to the round's boards.
+    AllBoards,
+    Analyse,
+    Stop,
+}
+
+/// What the board's place says before a game arrives: a failed feed is not still connecting.
+fn placeholder(target: bool, phase: Option<&str>) -> &'static str {
+    match (target, phase) {
+        (false, _) => "Pick something to watch",
+        (true, Some("error")) => "Not connected",
+        (true, _) => "Connecting…",
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_failed_feed_does_not_say_it_is_connecting() {
+        use super::placeholder;
+        assert_eq!(placeholder(false, None), "Pick something to watch");
+        assert_eq!(placeholder(true, None), "Connecting…");
+        assert_eq!(placeholder(true, Some("error")), "Not connected");
+    }
+
     use super::{base_minutes, info_line, past_result, past_score, points, result_line};
     use serde_json::json;
 
@@ -1021,6 +1105,17 @@ mod tests {
         });
         let channels = vec![json!({ "key": "atomic", "label": "Atomic" })];
         assert_eq!(info_line(&frame, &channels), "3+2 · Rated · Blitz · Atomic");
+        // A watched game (not TV) names its variant, not Lichess's key for it.
+        let game = json!({
+            "source": "game", "variant": "kingOfTheHill", "speed": "rapid", "rated": false,
+            "clock": { "initial": 600, "increment": 5 },
+        });
+        assert_eq!(
+            info_line(&game, &channels),
+            "10+5 · Casual · Rapid · King of the Hill"
+        );
+        let standard = json!({ "source": "game", "variant": "standard", "speed": "rapid" });
+        assert_eq!(info_line(&standard, &channels), "Rapid");
         assert_eq!(base_minutes(30.), "½");
         assert_eq!(base_minutes(90.), "1.5");
     }

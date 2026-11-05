@@ -451,7 +451,7 @@ fn a_crazyhouse_capture_can_be_dropped_back(cx: &mut gpui_kit::TestAppContext) {
     type_moves(&mut app, &["e4", "d5", "exd5", "Qxd5"]);
     app.click("pocket-White-Pawn");
     app.click_square("e3", true);
-    app.wait_for_moves(&["e4", "d5", "exd5", "Qxd5", "@e3"]);
+    app.wait_for_moves(&["e4", "d5", "exd5", "Qxd5", "P@e3"]);
     assert_eq!(app.status(), "Black to move");
     // Black's pawn is still in hand; White's was spent.
     assert!(
@@ -464,4 +464,71 @@ fn a_crazyhouse_capture_can_be_dropped_back(cx: &mut gpui_kit::TestAppContext) {
             .label()
             .is_some_and(|label| label.ends_with(": 0"))
     );
+}
+
+/// A new game starts from a FEN in any variant, read by that variant's rules: a Crazyhouse
+/// position's pocket pawn drops at once.
+#[gpui_kit::test]
+fn a_new_game_starts_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = board(cx);
+    app.click("local-new");
+    app.wait_for("the variant choice to stop moving", {
+        use gpui_kit::test::TestQueryExt as _;
+        let mut last = None;
+        move |window, _| {
+            let bounds = window
+                .try_find_by_label("Choose a variant")
+                .map(|select| select.bounds());
+            let still = bounds.is_some() && bounds == last;
+            last = bounds;
+            still
+        }
+    });
+    app.click_label("Choose a variant");
+    // Crazyhouse is the last of the nine.
+    for _ in 0..8 {
+        app.press("down");
+    }
+    app.press("enter");
+    fill_in_dialog(
+        &mut app,
+        "Crazyhouse start",
+        "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3",
+    );
+    app.click("start-local");
+    app.click("pocket-White-Pawn");
+    app.click_square("e3", true);
+    app.wait_for_moves(&["P@e3"]);
+    assert_eq!(app.status(), "Black to move");
+    // The next new game opens on this one: Crazyhouse, from that position.
+    app.click("local-new");
+    app.wait_for("the position to come back", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .try_find_by_label("Crazyhouse start")
+            .and_then(|input| input.value().map(str::to_string))
+            .as_deref()
+            == Some("rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3")
+    });
+}
+
+/// A Chess960 game goes to the analysis board too, its castling (king takes rook) included, and
+/// the position is played on from there as Chess960.
+#[gpui_kit::test]
+fn a_chess960_game_can_be_taken_to_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::local::LocalPage;
+    let mut app = board(cx);
+    app.with_window(|window, cx| {
+        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        local.update(cx, |local, cx| {
+            let fen = "1rk4r/pppppppp/8/8/8/8/PPPPPPPP/1RK4R w HBhb - 0 1";
+            let setup = serde_json::json!({ "variant": "chess960", "fen": fen });
+            local.replace_game(setup, serde_json::Value::Null, window, cx);
+        });
+    });
+    type_moves(&mut app, &["O-O-O", "e5"]);
+    app.click("local-analyse");
+    app.find("tree-c1b1");
+    assert_eq!(app.find("tree-c1b1 e7e5").selected(), Some(true));
 }

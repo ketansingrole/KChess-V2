@@ -101,10 +101,11 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
     .flex_none()
 }
 
-/// Each line's score and its moves from `fen`, a click playing the line
-/// up to the move (`on_play`); `pending` rows wait for lines still to come.
+/// Each line's score and its moves from `fen` (in `variant`, a Lichess key), a click playing the
+/// line up to the move (`on_play`); `pending` rows wait for lines still to come.
 pub fn engine_lines(
     fen: &str,
+    variant: &str,
     lines: &[Value],
     pending: usize,
     ended: Option<&'static str>,
@@ -124,7 +125,7 @@ pub fn engine_lines(
     } else {
         for (index, line) in lines.iter().enumerate() {
             let pv: Vec<String> = serde_json::from_value(line["pv"].clone()).unwrap_or_default();
-            let moves = pv_san(fen, &pv, 12);
+            let moves = pv_san(fen, &pv, 12, variant);
             let eval_pv = pv.clone();
             rows.push(
                 h_flex()

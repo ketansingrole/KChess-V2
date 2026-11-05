@@ -235,6 +235,16 @@ fn catalog() -> Arc<Catalog> {
         .clone()
 }
 
+/// An open line's actions, as its buttons offer them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Action {
+    Train,
+    Analyse,
+    Puzzles,
+    Flip,
+    AllOpenings,
+}
+
 pub struct OpeningsPage {
     catalog: Arc<Catalog>,
     search: Entity<InputState>,
@@ -444,7 +454,7 @@ impl OpeningsPage {
             .map_or_else(|| STANDARD_FEN.to_string(), |(_, _, fen)| fen.clone());
         let shown = line.clone();
         self.explorer.update(cx, |explorer, cx| {
-            explorer.show(&fen, Some(shown), false, cx)
+            explorer.show(None, &fen, Some(shown), false, cx)
         });
         self.line = Some(line);
         self.redraw(cx);
@@ -521,6 +531,52 @@ impl OpeningsPage {
             moves.push(uci);
             self.show_line(Some(moves), cx);
         }
+    }
+
+    /// What the open line's buttons can do now; nothing while the browser is shown.
+    pub(crate) fn actions(&self) -> Vec<Action> {
+        let Some(line) = &self.line else {
+            return Vec::new();
+        };
+        let mut actions = Vec::new();
+        if !line_of(line).is_empty() {
+            actions.push(Action::Train);
+        }
+        actions.push(Action::Analyse);
+        if opening_at(line).is_some() {
+            actions.push(Action::Puzzles);
+        }
+        actions.extend([Action::Flip, Action::AllOpenings]);
+        actions
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions().contains(&action) {
+            return;
+        }
+        let line = self.line.clone().unwrap_or_default();
+        let opening = opening_at(&line);
+        match action {
+            Action::Train => {
+                let name =
+                    opening.map_or_else(|| "Starting position".to_string(), |(name, _)| name);
+                Self::train(OpeningChoice { name, moves: line }, window, cx);
+            }
+            Action::Analyse => crate::shell::open_analysis_line(line, window, cx),
+            Action::Puzzles => {
+                if let Some((name, _)) = opening {
+                    crate::shell::open_opening_puzzles(&name, window, cx);
+                }
+            }
+            Action::Flip => self.flip(cx),
+            Action::AllOpenings => self.show_line(None, cx),
+        }
+    }
+
+    fn flip(&mut self, cx: &mut Context<Self>) {
+        self.orientation = !self.orientation;
+        self.redraw(cx);
     }
 
     /// `useTrainOpening`: Practice → Repertoire on an opening.
@@ -1049,10 +1105,7 @@ impl OpeningsPage {
                             .icon(icon("arrow-up-down"))
                             .tooltip("Flip board")
                             .accessibility_label("Flip board")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.orientation = !this.orientation;
-                                this.redraw(cx);
-                            })),
+                            .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     ),
             )
             .child(

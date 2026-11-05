@@ -109,6 +109,7 @@ pub fn locations() -> EngineLocations {
         managed_dir: std::env::temp_dir().join("kchess-no-managed-engine"),
         target: Target::current(),
         bundled: PathBuf::from("/nonexistent/kchess-bundled-stockfish"),
+        variant: PathBuf::from("/nonexistent/kchess-fairy-stockfish"),
     }
 }
 
@@ -144,6 +145,23 @@ pub async fn wait_until<T>(
         }
         assert!(started.elapsed() < timeout, "timed out waiting for {what}");
         tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// Fairy-Stockfish for the tests that analyse a variant with it: `KCHESS_VARIANT_ENGINE_PATH`
+/// (`cargo xtask fairy-stockfish` builds it in `target/fairy-stockfish/bin`). None, with a note,
+/// when it is not set, so the test is skipped.
+#[allow(dead_code)]
+pub fn fairy_stockfish() -> Option<PathBuf> {
+    let path = std::env::var_os("KCHESS_VARIANT_ENGINE_PATH")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    match path {
+        Some(path) if path.is_file() => Some(path),
+        _ => {
+            eprintln!("skipping: set KCHESS_VARIANT_ENGINE_PATH to Fairy-Stockfish");
+            None
+        }
     }
 }
 

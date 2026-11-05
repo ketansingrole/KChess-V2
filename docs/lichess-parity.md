@@ -22,7 +22,7 @@ whatever that API does not offer cannot be built in the app.
 | Lifetime score              | Your lifetime score against the opponent (crosstable) shows beside the board.                                                                                                                                                                            | —                                                                           |
 | Variants                    | Seeks and challenges in Chess960, King of the Hill, Three-check, Antichess, Atomic, Horde, Racing Kings and Crazyhouse. Boards replay every variant with chessops rules, and Chess960 castles king onto rook. Crazyhouse pockets sit beside each player; pick a piece and a square, or drag it, to drop it.                                                        | Play Online → _Variant_                                                     |
 | Correspondence              | Seeks and challenges with 1–14 days per move. _Your games_ lists ongoing games with mini boards and _Your move_ flags; _Play_ opens one on the board and _Close game_ frees the board again. KChess checks for your turn on a timer and notifies you.    | Settings → Online play → _Check correspondence games_                       |
-| Finished games              | _Analyse_ (standard rules) and _Export_ (GIF, PNG, PGN).                                                                                                                                                                                                 | —                                                                           |
+| Finished games              | _Analyse_ (every variant) and _Export_ (GIF, PNG, PGN; Crazyhouse pictures show the pockets).                                                                                                                                                                                                 | —                                                                           |
 
 Engine help, reviews, the explorer and cloud evaluation stay unavailable while a game is on the
 board, as before; this includes an open correspondence game. Closing the correspondence game
@@ -35,7 +35,8 @@ panel shows its entry conditions, an entry-code field, standings that update eve
 your rank, and Join / Withdraw. Paired games open on the board automatically, as on Lichess.
 While you are in a tournament, the event stream stays open even if _Receive challenges_ is off.
 Joining needs the `tournament:write` permission, so accounts connected earlier are asked to
-connect again.
+connect again. A lichess.org tournament or Swiss link pasted into Quick Pick (⌘K) opens that
+event's panel.
 
 ### Watching
 
@@ -47,6 +48,10 @@ The Watch page has three tabs:
 - **Broadcasts**: live, upcoming and past broadcasts. Follow a round's live PGN feed as a grid
   of boards; any board opens with its move list and clocks, and _Analyse_ sends it to the
   analysis board.
+
+A lichess.org broadcast link pasted into Quick Pick (⌘K) opens there too: a tournament's at
+its live round, a round's at that round, with the board it names selected. A TV link
+(`lichess.org/tv/rapid`) opens that channel.
 
 Only one stream runs at a time, and watching stops while you play your own game.
 
@@ -62,25 +67,58 @@ can add them as a friend, challenge them or watch their current game.
 - **Opening explorer** with the Lichess, **Masters** and **Player** databases, and the
   tablebase. Filters: speeds, rating groups, player and colour, and a since date. The Masters
   and Player databases list notable games, which open on the analysis board. A _Follow moves_
-  switch refreshes the explorer as you move.
+  switch refreshes the explorer as you move. A variant game is looked up in Lichess's games of
+  that variant (the Lichess and Player databases).
 - **Lichess cloud evaluation**: Lichess's stored deep evaluation of the position, shown beside
   the local engine, or in its place when Stockfish is off. It is off by default because every
   position is sent to Lichess. Settings → Analysis, or the cloud button in the engine panel.
+- **Variant analysis**: Crazyhouse, Atomic, Antichess, Horde, King of the Hill, Racing Kings and
+  Three-check games open on the analysis board in their own rules, with the Crazyhouse pockets
+  beside the board, and the bundled Fairy-Stockfish analyses and reviews them (accuracy, faulted
+  moves and the eval chart, judged by the variant's own wins). Cloud evaluation and mistake drills
+  cover standard chess and Chess960. On the command line,
+  `kchess-cli analyze --variant crazyhouse <fen|moves>` and `kchess-cli review` (a PGN with its
+  `Variant` header) do the same.
 - **Opening names** from Lichess's CC0 opening list, bundled with the app, in every game view.
   Settings → Gameplay → _Show opening names_.
 - **Lichess studies**: list your studies, open a chapter, save all chapters to the local study
   library, or send the current analysis to an existing study or a new private one. This needs
-  the `study:read` and `study:write` permissions.
+  the `study:read` and `study:write` permissions. A public study's link (a chapter's, or the
+  study's for its first chapter), pasted into the command palette or Analysis → Import, opens
+  that chapter on the analysis board without signing in.
+- **Import a game by link**: paste a lichess.org game link (with `/black` or `#move` if you
+  like) into the analysis board's import, and the game opens there. On the command line,
+  `kchess-cli pgn <link>` prints a game's or a public study chapter's PGN, and
+  `kchess-cli review <link|file|moves>` reviews a game (in any variant) with the engine, printing each
+  side's accuracy and the inaccuracies, mistakes and blunders.
+  `kchess-cli explore [masters|opening|tablebase] <fen|moves>` prints the explorer's moves for a
+  position, from the tablebase when it has seven pieces or fewer (`--variant crazyhouse` looks
+  up Lichess's games of a variant), and
+  `kchess-cli opening <fen|moves>` names the opening it reaches, offline, and
+  `kchess-cli position [--variant name] <fen|moves>` prints whose turn it is, check or mate, and the
+  legal moves (with the Crazyhouse drops).
+  `kchess-cli watch [channel|link]` streams a Lichess TV channel, a game or a broadcast as JSON lines.
 - **Export**: animated GIF of the main line, PNG of the position, or PGN. The images are drawn
   locally with your board theme and piece set; no image service is involved.
+
+### Puzzles
+
+- **Open a puzzle by link**: paste a lichess.org/training link into Quick Pick (⌘K) and the
+  puzzle opens on Puzzles → Daily; _Today’s puzzle_ goes back. The command line takes one too:
+  `kchess-cli puzzle [id|link]`, where `hint` names the piece to move and `solution` shows the rest.
 
 ### Playing without Lichess
 
 - **Computer games**: _Game options_ starts from the standard position, a Chess960 position
-  (numbered, or random) or any FEN, with an optional clock (the engine's thinking time is kept
-  within its clock), a colour and a strength. The editor and analysis board both have _Play
-  Stockfish from here_.
-- **Over the board**: two players at one computer in any supported variant. It has optional
+  (numbered, or random), another variant (King of the Hill, Three-check, Antichess, Atomic,
+  Horde, Racing Kings or Crazyhouse, played by the bundled Fairy-Stockfish, from its usual start or
+  a FEN) or any FEN, with an
+  optional clock (the engine's thinking time is kept within its clock), a colour and a strength.
+  The editor and analysis board both have _Play Stockfish from here_; on the analysis board it
+  plays on in the game's variant. On the command line, `kchess-cli play [level] [colour]
+  [variant] [--fen FEN]`, and `kchess-cli local [variant] [--fen FEN]` over the board.
+- **Over the board**: two players at one computer in any supported variant, from its usual start
+  or a FEN (Chess960 by its number). It has optional
   clocks with time odds, _Turn the board_, takeback, draw and resign, and PGN, GIF and analysis
   export. The **Chess clock** mode is a full-screen clock for a real board (Space presses it,
   P pauses).
@@ -95,8 +133,9 @@ can add them as a friend, challenge them or watch their current game.
   mistakes are remembered on this computer.
 - **Insights**: results by colour, speed, opening family, day of week, time of day, opponent
   rating gap, game length and how games ended. It also shows streaks and average accuracy,
-  inaccuracies, mistakes and blunders from reviewed games. Everything is worked out locally
-  from synced games.
+  inaccuracies, mistakes and blunders from reviewed games. Variant games are counted apart from
+  standard chess, with a Variant choice once you have played one. Everything is worked out
+  locally from synced games.
 
 ## Not possible, and why
 
@@ -104,7 +143,6 @@ can add them as a friend, challenge them or watch their current game.
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Bullet and UltraBullet games, and Blitz seeks                 | Lichess's Board API, which third-party clients must use, refuses them. Public seeks need Rapid or slower; direct challenges allow Blitz. | The time-control form explains the limit. Tournaments list only arenas whose games the Board API can play.                                           |
 | Most arenas                                                   | Most arenas are Bullet or Blitz, which the Board API cannot play.                                                                        | _Playable here_ filters to Rapid and Classical events; _All_ shows the rest, marked.                                                                 |
-| Playing variants against the computer (except Chess960)       | The bundled Stockfish plays only standard chess and Chess960. Other variants need Fairy-Stockfish, which is not bundled.                 | Play them online or over the board.                                                                                                                  |
 | Cancelling a public correspondence seek                       | The API creates the seek but has no endpoint to withdraw it.                                                                             | The form warns about this; a direct correspondence challenge can be withdrawn.                                                                       |
 | Notifications for correspondence moves while KChess is closed | Lichess cannot reach a closed desktop app, and the event stream sends no correspondence moves.                                           | KChess checks while open (every 2–60 minutes, as set).                                                                                               |
 | Lichess's rematch button                                      | The API has no rematch endpoint.                                                                                                         | _Rematch_ sends a challenge with the same settings and colours swapped. The opponent sees an ordinary challenge. Incoming rematch offers work fully. |
