@@ -1691,6 +1691,20 @@ impl AnalysisPage {
         });
     }
 
+    /// Import `text` as the import dialog would, from a file dropped on the window: the dialog
+    /// closes once the board has it, or stays open with the text and why it was refused.
+    pub(crate) fn import_text(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_import(window, cx);
+        self.import
+            .update(cx, |field, cx| field.set_value(text, window, cx));
+        self.run_import(window, cx);
+    }
+
     /// `runImport`: a FEN starts a new analysis there; a Lichess game link fetches that game;
     /// otherwise the text is read as one PGN game.
     fn run_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {

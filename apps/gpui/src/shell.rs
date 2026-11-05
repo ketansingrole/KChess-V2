@@ -789,6 +789,45 @@ pub fn replace_analysis(
     });
 }
 
+/// The largest file a drop reads: the import's own limit for a PGN.
+const DROPPED_MAX: u64 = 2 * 1024 * 1024;
+
+/// A PGN or FEN file dropped on the window opens on the analysis board, as if pasted into its
+/// import; anything else is refused with a notice.
+pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
+    let Some(path) = paths.paths().first() else {
+        return;
+    };
+    let readable = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["pgn", "fen", "txt"].contains(&extension.to_ascii_lowercase().as_str())
+        });
+    let text = readable
+        .then(|| {
+            std::fs::metadata(path)
+                .ok()
+                .filter(|meta| meta.len() <= DROPPED_MAX)
+                .and_then(|_| std::fs::read_to_string(path).ok())
+        })
+        .flatten();
+    let Some(text) = text else {
+        window.push_notification(
+            gpui_kit::component::notification::Notification::error(
+                "Drop a PGN or FEN file under 2 MB",
+            )
+            .title("Could not open that file"),
+            cx,
+        );
+        return;
+    };
+    replace_analysis(window, cx, move |analysis, window, cx| {
+        analysis.import_text(text.clone(), window, cx);
+        true
+    });
+}
+
 /// Practise a reviewed game's positions on the analysis board (`usePracticeGame`); another game
 /// replaces the board's only after asking, when that would lose unsaved analysis.
 pub fn practise_game(
@@ -2034,6 +2073,10 @@ impl Render for Workspace {
                             .relative()
                             .overflow_hidden()
                             .on_scroll(cx.listener(Self::scrolled))
+                            // A PGN or FEN file dropped here opens on the analysis board.
+                            .on_drop(|paths: &ExternalPaths, window, cx| {
+                                open_dropped(paths, window, cx)
+                            })
                             // A mouse's back and forward buttons go as a swipe does.
                             .on_mouse_down(
                                 MouseButton::Navigate(NavigationDirection::Back),

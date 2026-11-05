@@ -830,3 +830,54 @@ fn the_editors_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     run(&mut app, "Starting position");
     wait_for_fen(&mut app, START_FEN);
 }
+
+/// Drop `name` holding `text` on the window, as Finder or Explorer would.
+fn drop_file(app: &mut Harness, name: &str, text: &str) -> tempfile::TempDir {
+    let folder = tempfile::tempdir().expect("a folder");
+    let path = folder.path().join(name);
+    std::fs::write(&path, text).expect("the file");
+    app.with_window(|window, cx| {
+        let paths = gpui_kit::ExternalPaths(std::iter::once(path).collect());
+        crate::shell::open_dropped(&paths, window, cx);
+    });
+    settle(app);
+    folder
+}
+
+/// A PGN file dropped on the window opens on the analysis board, from any page; over unsaved
+/// analysis it asks first.
+#[gpui_kit::test]
+fn a_dropped_pgn_file_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Puzzles");
+    let _file = drop_file(&mut app, "game.pgn", "1. e4 e5 2. Nf3 *");
+    app.find("tree-e2e4 e7e5 g1f3");
+    assert_eq!(
+        app.cx.update(|cx| crate::shell::current_page(cx)),
+        Some(crate::pages::Page::Analysis)
+    );
+    assert!(!app.shows("import-run"));
+    // The board now holds unsaved moves: another file asks before replacing them.
+    let _file = drop_file(&mut app, "other.PGN", "1. d4 d5 *");
+    app.click("ok");
+    settle(&mut app);
+    app.find("tree-d2d4 d7d5");
+    assert!(!app.shows("tree-e2e4"));
+    assert!(!app.shows("import-run"));
+}
+
+/// A dropped FEN opens that position; a file the import cannot read keeps the dialog open with
+/// the reason, and a file that is not a game is refused.
+#[gpui_kit::test]
+fn a_dropped_file_that_is_no_game_is_refused(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    let fen = "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1";
+    let _file = drop_file(&mut app, "ending.fen", fen);
+    assert_eq!(shown_fen(&mut app), fen);
+    let _file = drop_file(&mut app, "notes.txt", "not a game");
+    app.find("import-error");
+    app.click("import-cancel");
+    settle(&mut app);
+    let _file = drop_file(&mut app, "board.png", "png");
+    assert!(!app.shows("import-run"));
+}
