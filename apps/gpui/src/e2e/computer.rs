@@ -378,3 +378,14 @@ fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     app.click("game-options");
     assert_eq!(app.find(("start", 2usize)).selected(), Some(true));
 }
+
+/// ⌘Z (Ctrl+Z) takes back as the button does, once the page has the keys.
+#[gpui_kit::test]
+fn undo_takes_back(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.wait_for_moves(&["e4"]);
+    app.press("secondary-z");
+    app.wait_for_moves(&[]);
+}

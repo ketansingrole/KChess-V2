@@ -587,3 +587,19 @@ fn the_wheel_over_the_board_steps_through_the_moves(cx: &mut gpui_kit::TestAppCo
     wheel(&mut app, -60.);
     assert!(!app.enabled("skip-forward"));
 }
+
+/// ⌘Z (Ctrl+Z) takes back as the button does once the board has the keys; in the move box it
+/// undoes the typing instead.
+#[gpui_kit::test]
+fn undo_takes_back_outside_the_move_box(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = board(cx);
+    type_moves(&mut app, &["e4", "e5"]);
+    // An empty square takes the keys from the move box.
+    app.click_square("a3", true);
+    app.press("secondary-z");
+    app.wait_for_moves(&["e4"]);
+    app.press("secondary-z");
+    app.wait_for_moves(&[]);
+    app.press("secondary-z");
+    assert!(app.moves().is_empty());
+}

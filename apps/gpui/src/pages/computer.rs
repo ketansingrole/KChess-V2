@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState, Undo};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
     Disableable as _, IndexPath, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -1713,6 +1713,10 @@ impl Render for ComputerPage {
         self.layout
             .render("computer-page", board_column, panel, window, cx)
             .track_focus(&self.focus)
+            // ⌘Z outside the move box takes back, as the button does.
+            .on_action(
+                cx.listener(|this, _: &Undo, window, cx| this.act(Action::TakeBack, window, cx)),
+            )
             // A click anywhere on the page gives the keys back to it, before a text field (the
             // move box) takes them for itself, as on the analysis board.
             .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {

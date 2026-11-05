@@ -42,6 +42,10 @@ pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
                 ("Previous / next move", "← →".to_string()),
                 ("First / last move", "Home End".to_string()),
                 ("Flip board", "F".to_string()),
+                (
+                    "Take back, against the computer or over the board",
+                    format!("{MOD} Z"),
+                ),
                 ("Zen mode", "Z".to_string()),
             ],
         ),
