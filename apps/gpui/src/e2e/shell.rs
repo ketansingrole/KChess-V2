@@ -326,7 +326,13 @@ fn a_rating_card_puts_its_speed_on_the_chart(cx: &mut gpui_kit::TestAppContext) 
     let (mut app, _lichess) = Harness::signed_in_showcase(cx);
     app.find("home-perf-bullet");
     app.find("home-record");
-    assert!(app.enabled("home-sync"));
+    // Signing in syncs the account's games once, with Sync games disabled meanwhile.
+    app.wait_for("Sync games", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find(gpui_kit::ElementId::from("home-sync"))
+            .is_some_and(|sync| sync.disabled() != Some(true))
+    });
     assert_eq!(app.find("home-perf-blitz").selected(), Some(true));
     app.click("home-perf-puzzle");
     app.wait_for("Puzzles to be chosen", |window, _| {
@@ -390,24 +396,19 @@ fn quitting_during_a_live_game_asks_first(cx: &mut gpui_kit::TestAppContext) {
     app.wait_for("the startup check to finish", |_, cx| {
         crate::online::handle(cx).read(cx).phase != crate::online::Phase::Checking
     });
-    app.cx.update(|cx| {
-        crate::online::handle(cx).update(cx, |online, cx| online.set_phase("playing", cx))
+    // The phase is set where the key is pressed: a later snapshot of the core's replaces it.
+    app.with_window(|window, cx| {
+        use gpui_kit::test::TestWindowExt as _;
+        crate::online::handle(cx).update(cx, |online, cx| online.set_phase("playing", cx));
+        assert!(crate::online::handle(cx).read(cx).live_game_on(), "on");
+        window.press("secondary-q", cx);
     });
-    assert!(
-        app.cx
-            .update(|cx| crate::online::handle(cx).read(cx).live_game_on()),
-        "on"
-    );
-    app.press("secondary-q");
     app.cx.run_until_parked();
     assert!(app.cx.has_pending_prompt(), "asked before quitting");
     app.cx.simulate_prompt_answer("Cancel");
     app.cx.run_until_parked();
     assert!(!app.cx.has_pending_prompt());
-    // Still open, and the game still on.
+    // Still open.
     app.open("Home");
-    assert!(
-        app.cx
-            .update(|cx| crate::online::handle(cx).read(cx).live_game_on())
-    );
+    app.find("home-play");
 }
