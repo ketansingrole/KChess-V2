@@ -1719,6 +1719,23 @@ pub fn open_pasted(window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Copy outside a text field: the page's game as PGN, or its position as FEN where it has no
+/// game (the board editor), as its own Copy command would. Under a dialog, or on a page with
+/// nothing to copy, nothing happens.
+pub fn copy_shown(window: &mut Window, cx: &mut App) {
+    use gpui_kit::component::WindowExt as _;
+    if window.has_active_dialog(cx) {
+        return;
+    }
+    let commands = page_commands(cx);
+    let copy = [":copy-pgn", ":copy-fen"]
+        .into_iter()
+        .find_map(|kind| commands.iter().find(|command| command.id.ends_with(kind)));
+    if let Some(command) = copy {
+        (command.run)(window, cx);
+    }
+}
+
 /// Numbered moves (`1. e4 e5 2. Nf3`, with or without PGN headers) the analysis board can play.
 fn movetext(text: &str) -> Option<String> {
     let numbered = text.split_whitespace().any(|word| word.starts_with("1."));

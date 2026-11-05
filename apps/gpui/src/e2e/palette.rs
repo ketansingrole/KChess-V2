@@ -794,3 +794,54 @@ fn a_copied_game_is_opened_with_paste(cx: &mut gpui_kit::TestAppContext) {
     app.click_square("d5", true);
     app.find("tree-d7d5");
 }
+
+/// Copy outside a text field copies the board: the analysis board's game as PGN, the board
+/// editor's position as FEN; a page with no board leaves the clipboard alone.
+#[gpui_kit::test]
+fn copy_outside_a_text_field_copies_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let copy = |app: &mut Harness, text: &str| {
+        app.cx
+            .write_to_clipboard(gpui_kit::ClipboardItem::new_string(text.to_string()))
+    };
+    let copied = |app: &mut Harness| {
+        app.cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap_or_default()
+    };
+
+    app.open("Puzzles");
+    copy(&mut app, "kept");
+    app.press("secondary-c");
+    app.tick();
+    assert_eq!(copied(&mut app), "kept");
+
+    copy(&mut app, "1. e4 e5 2. Nf3");
+    app.press("secondary-v");
+    app.find("tree-e2e4 e7e5 g1f3");
+    copy(&mut app, "kept");
+    app.press("secondary-c");
+    app.tick();
+    assert!(
+        copied(&mut app).contains("1. e4 e5 2. Nf3"),
+        "{}",
+        copied(&mut app)
+    );
+
+    app.open("Board editor");
+    app.press("secondary-c");
+    app.tick();
+    assert_eq!(
+        copied(&mut app),
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    );
+
+    // A text field copies its own text.
+    app.press("secondary-k");
+    app.type_text("knight");
+    app.press("secondary-a");
+    app.press("secondary-c");
+    app.tick();
+    assert_eq!(copied(&mut app), "knight");
+}
