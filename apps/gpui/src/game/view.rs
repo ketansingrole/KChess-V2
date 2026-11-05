@@ -85,14 +85,31 @@ pub fn turn(position: Option<&VariantPosition>) -> Color {
     position.map_or(Color::White, |position| position.turn())
 }
 
-/// Where an arrow key moves a move list's position (←/→ one ply, ↑/↓ first/last), as
+/// Where an arrow key moves a move list's position (←/→ one ply, ↑/↓ or Home/End first/last), as
 /// `navigatePly` does; `None` for other keys.
 pub fn navigate(key: &str, ply: usize, max: usize) -> Option<usize> {
     match key {
         "left" => Some(ply.saturating_sub(1)),
         "right" => Some((ply + 1).min(max)),
-        "up" => Some(0),
-        "down" => Some(max),
+        "up" | "home" => Some(0),
+        "down" | "end" => Some(max),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::navigate;
+
+    /// The arrows, Home and End move through a move list on every board page that uses it.
+    #[test]
+    fn home_and_end_go_to_the_first_and_last_move() {
+        assert_eq!(navigate("home", 5, 9), Some(0));
+        assert_eq!(navigate("end", 5, 9), Some(9));
+        assert_eq!(navigate("up", 5, 9), Some(0));
+        assert_eq!(navigate("down", 5, 9), Some(9));
+        assert_eq!(navigate("left", 0, 9), Some(0));
+        assert_eq!(navigate("right", 9, 9), Some(9));
+        assert_eq!(navigate("pageup", 5, 9), None);
     }
 }

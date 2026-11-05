@@ -1416,7 +1416,8 @@ impl AnalysisPage {
 
     /* ── Keys, wheel, menus ───────────────────────────────────────────── */
 
-    /// ← → ↑ ↓ step, F flips, L turns the engine on or off, Space plays the best move.
+    /// ← → ↑ ↓ (and Home, End) step, F flips, L turns the engine on or off, Space plays the best
+    /// move.
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus.is_focused(window) || event.keystroke.modifiers.modified() {
             return;
@@ -1424,8 +1425,8 @@ impl AnalysisPage {
         match event.keystroke.key.as_str() {
             "left" => self.back(cx),
             "right" => self.forward(cx),
-            "up" => self.go_to_start(cx),
-            "down" => self.go_to_end(cx),
+            "up" | "home" => self.go_to_start(cx),
+            "down" | "end" => self.go_to_end(cx),
             "f" => self.flip(cx),
             "l" => self.toggle_engine(cx),
             "c" => self.focus_notes(window, cx),

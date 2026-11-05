@@ -120,6 +120,11 @@ fn the_arrow_keys_step_through_the_moves(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
     app.press("up");
     assert!(!app.enabled("analysis-back"));
+    // End and Home do the same.
+    app.press("end");
+    assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
+    app.press("home");
+    assert!(!app.enabled("analysis-back"));
 }
 
 #[gpui_kit::test]
