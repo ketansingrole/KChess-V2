@@ -250,6 +250,11 @@ impl Focusable for PlayersPage {
 }
 
 impl PlayersPage {
+    /// Its username field, for Find (`shell::find_on_page`).
+    pub(crate) fn search_fields(&self) -> Vec<Entity<InputState>> {
+        vec![self.input.clone()]
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> PlayersPage {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Lichess username"));
         let perf_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));

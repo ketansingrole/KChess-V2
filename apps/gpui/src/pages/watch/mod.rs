@@ -166,6 +166,11 @@ impl Focusable for WatchPage {
 }
 
 impl WatchPage {
+    /// The broadcasts' search field, for Find (`shell::find_on_page`).
+    pub(crate) fn search_fields(&self) -> Vec<Entity<gpui_kit::component::input::InputState>> {
+        vec![self.broadcasts.query.clone()]
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> WatchPage {
         let events = cx.global::<AppCore>().events.clone();
         let online = cx.global::<OnlineHandle>().0.clone();

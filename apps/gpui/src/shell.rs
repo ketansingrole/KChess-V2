@@ -658,6 +658,47 @@ pub fn view_of<V: 'static>(page: Page, cx: &App) -> Option<Entity<V>> {
     workspace.read(cx).pages.view_of::<V>(page)
 }
 
+/// Find: the page's own search field, focused with its text selected, when the page shows one
+/// (History's, Studies', Openings', Watch's broadcasts', Players' username). It is `false`
+/// on a page without one, for Quick Pick to search instead.
+pub fn find_on_page(window: &mut Window, cx: &mut App) -> bool {
+    use crate::pages::{history, openings, players, studies, watch};
+    use gpui_kit::component::input::InputState;
+    fn fields_of<V: Focusable>(
+        page: Page,
+        fields: fn(&V) -> Vec<Entity<InputState>>,
+        cx: &App,
+    ) -> Option<(FocusHandle, Vec<Entity<InputState>>)> {
+        let view = view_of::<V>(page, cx)?;
+        let view = view.read(cx);
+        Some((view.focus_handle(cx), fields(view)))
+    }
+    let found = match current_page(cx) {
+        Some(Page::History) => fields_of(Page::History, history::HistoryPage::search_fields, cx),
+        Some(Page::Studies) => fields_of(Page::Studies, studies::StudiesPage::search_fields, cx),
+        Some(Page::Openings) => {
+            fields_of(Page::Openings, openings::OpeningsPage::search_fields, cx)
+        }
+        Some(Page::Watch) => fields_of(Page::Watch, watch::WatchPage::search_fields, cx),
+        Some(Page::Players) => fields_of(Page::Players, players::PlayersPage::search_fields, cx),
+        _ => None,
+    };
+    let Some((page, fields)) = found else {
+        return false;
+    };
+    // Only a field the page draws now: History's other tab, or Watch away from Broadcasts,
+    // has its field but does not show it.
+    let Some(field) = fields
+        .into_iter()
+        .find(|field| page.contains(&field.read(cx).focus_handle(cx), window))
+    else {
+        return false;
+    };
+    field.update(cx, |field, cx| field.focus(window, cx));
+    window.dispatch_action(Box::new(gpui_kit::component::input::SelectAll), cx);
+    true
+}
+
 /// Open a Lichess broadcast link on Watch → Broadcasts.
 pub fn open_broadcast(link: crate::game::BroadcastLink, window: &mut Window, cx: &mut App) {
     open(Page::Watch, window, cx);

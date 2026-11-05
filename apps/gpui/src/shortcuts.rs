@@ -25,6 +25,7 @@ pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
             "App",
             vec![
                 ("Search", format!("{MOD} K")),
+                ("Search this page", format!("{MOD} F")),
                 ("Run a command", run_command.to_string()),
                 ("Open a copied game, FEN or link", format!("{MOD} V")),
                 ("Copy the board's game or position", format!("{MOD} C")),

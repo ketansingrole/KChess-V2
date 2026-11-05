@@ -122,7 +122,7 @@ pub struct Broadcasts {
     list: Option<Vec<Value>>,
     loading: bool,
     error: Option<SharedString>,
-    query: Entity<InputState>,
+    pub(super) query: Entity<InputState>,
     results: Vec<Value>,
     searching: bool,
     search_error: Option<SharedString>,

@@ -845,3 +845,34 @@ fn copy_outside_a_text_field_copies_the_board(cx: &mut gpui_kit::TestAppContext)
     app.tick();
     assert_eq!(copied(&mut app), "knight");
 }
+
+/// Find (⌘F) searches the page: on Openings it goes to the page's own search field, with what
+/// was typed before selected so it is typed over; a page not showing one opens Quick Pick.
+#[gpui_kit::test]
+fn find_searches_the_page_or_opens_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let field = "Search openings";
+    let typed = |app: &mut Harness| {
+        app.with_window(|window, _| {
+            use gpui_kit::test::TestQueryExt as _;
+            window
+                .try_find_by_label(field)
+                .and_then(|field| field.value().map(str::to_string))
+        })
+    };
+    app.open("Openings");
+    app.press("secondary-f");
+    app.type_text("Sicilian");
+    app.tick();
+    assert_eq!(typed(&mut app).as_deref(), Some("Sicilian"));
+    app.press("secondary-f");
+    app.type_text("French");
+    app.tick();
+    assert_eq!(typed(&mut app).as_deref(), Some("French"));
+
+    // Watch keeps its broadcasts' field while TV is shown, but does not draw it.
+    app.open("Watch");
+    app.press("secondary-f");
+    app.type_text("puzzles");
+    wait_for_first(&mut app, "Puzzles");
+}

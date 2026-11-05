@@ -24,7 +24,8 @@ gpui_kit::actions!(
         GoBack,
         GoForward,
         ShowShortcuts,
-        ToggleSidebar
+        ToggleSidebar,
+        Find
     ]
 );
 
@@ -145,6 +146,7 @@ pub fn init(cx: &mut App) {
         bind("cmd-m", Minimize, cx),
         bind("ctrl-cmd-f", ToggleFullScreen, cx),
         bind("secondary-k", Search, cx),
+        bind("secondary-f", Find, cx),
         bind("shift-secondary-p", Commands, cx),
         bind("secondary-,", OpenSettings, cx),
         // Interface size, as Electron takes them: with or without Shift, and the keypad's.
@@ -221,6 +223,19 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &ZoomOut, cx| zoom(-1, cx));
     cx.on_action(|_: &ActualSize, cx| zoom(0, cx));
     cx.on_action(|_: &Search, cx| show_palette("", cx));
+    // Find searches the page where it has a search field of its own, and everything elsewhere.
+    cx.on_action(|_: &Find, cx| {
+        cx.defer(|cx| {
+            let found = cx.active_window().is_some_and(|window| {
+                window
+                    .update(cx, |_, window, cx| crate::shell::find_on_page(window, cx))
+                    .unwrap_or(false)
+            });
+            if !found {
+                show_palette("", cx);
+            }
+        })
+    });
     cx.on_action(|_: &Commands, cx| show_palette(">", cx));
     cx.on_action(|_: &OpenSettings, cx| {
         cx.defer(|cx| {
@@ -282,6 +297,7 @@ pub fn init(cx: &mut App) {
         ]),
         Menu::new("View").items([
             MenuItem::action("Search…", Search),
+            MenuItem::action("Find on Page", Find),
             MenuItem::action("Run a Command…", Commands),
             MenuItem::separator(),
             MenuItem::action("Toggle Sidebar", ToggleSidebar),

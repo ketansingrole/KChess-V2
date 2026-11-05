@@ -284,6 +284,11 @@ impl Focusable for HistoryPage {
 }
 
 impl HistoryPage {
+    /// Its search fields, on either tab, for Find (`shell::find_on_page`).
+    pub(crate) fn search_fields(&self) -> Vec<Entity<InputState>> {
+        vec![self.search_input.clone(), self.lichess.search_input.clone()]
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> HistoryPage {
         let played = cx.global::<PlayedHandle>().0.clone();
         let (lichess, mut subscriptions) = lichess::new_tab(window, cx);

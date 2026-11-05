@@ -284,6 +284,11 @@ impl Focusable for OpeningsPage {
 }
 
 impl OpeningsPage {
+    /// Its search field, for Find (`shell::find_on_page`).
+    pub(crate) fn search_fields(&self) -> Vec<Entity<InputState>> {
+        vec![self.search.clone()]
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> OpeningsPage {
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search openings or ECO codes"));
