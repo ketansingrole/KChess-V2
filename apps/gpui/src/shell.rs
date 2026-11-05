@@ -789,6 +789,42 @@ pub fn replace_analysis(
     });
 }
 
+/// Where a dragged file goes, over the pages: hidden until a file from outside the app is over it,
+/// so the drop has somewhere to land before it is let go. It takes no clicks or scrolls; the page
+/// area underneath opens the file.
+fn drop_zone(palette: &Palette) -> impl IntoElement {
+    div()
+        .id("drop-zone")
+        .test_support()
+        .absolute()
+        .inset_0()
+        .p(px(8.))
+        .flex()
+        .bg(palette.bg)
+        .child(
+            v_flex()
+                .flex_1()
+                .rounded(crate::theme::radii::XL)
+                .border_2()
+                .border_dashed()
+                .border_color(palette.primary)
+                .bg(crate::theme::tint(palette.primary, 4.))
+                .items_center()
+                .justify_center()
+                .gap(px(8.))
+                .text_color(palette.primary)
+                .child(icon("download").size(px(28.)))
+                .child(
+                    div()
+                        .text_size(px(15.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("Open on the analysis board"),
+                ),
+        )
+        .invisible()
+        .drag_over::<ExternalPaths>(|style, _, _, _| style.visible())
+}
+
 /// The largest file a drop reads: the import's own limit for a PGN.
 const DROPPED_MAX: u64 = 2 * 1024 * 1024;
 
@@ -2105,7 +2141,8 @@ impl Render for Workspace {
                                     .left(px(self.swipe_shift))
                                     .child(self.pages.view().cached(page_style())),
                             )
-                            .children(self.swipe_edge(cx)),
+                            .children(self.swipe_edge(cx))
+                            .child(drop_zone(cx.global::<Palette>())),
                     ),
             )
             .when(!zen, |shell| {

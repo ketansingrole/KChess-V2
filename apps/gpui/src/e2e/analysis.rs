@@ -971,3 +971,35 @@ fn the_import_opens_a_pgn_file(cx: &mut gpui_kit::TestAppContext) {
     app.find("tree-c2c4 e7e5");
     assert!(!app.shows("import-run"));
 }
+
+/// A file dragged over the window shows where it will go, and only a file from outside the app:
+/// the zone is hidden before the drag, while it is over the window, and after it leaves.
+#[gpui_kit::test]
+fn a_dragged_file_shows_where_it_will_open(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::InputEvent as _;
+    let mut app = Harness::start(cx);
+    app.open("Puzzles");
+    assert!(!app.shows("drop-zone"));
+    let position = app.with_window(|window, _| {
+        let size = window.viewport_size();
+        gpui_kit::point(size.width * 0.6, size.height * 0.5)
+    });
+    let paths = gpui_kit::ExternalPaths(std::iter::once("game.pgn".into()).collect());
+    app.with_window(|window, cx| {
+        window.dispatch_event(
+            gpui_kit::FileDropEvent::Entered { position, paths }.to_platform_input(),
+            cx,
+        );
+        window.dispatch_event(
+            gpui_kit::FileDropEvent::Pending { position }.to_platform_input(),
+            cx,
+        );
+    });
+    settle(&mut app);
+    assert!(app.shows("drop-zone"));
+    app.with_window(|window, cx| {
+        window.dispatch_event(gpui_kit::FileDropEvent::Exited.to_platform_input(), cx)
+    });
+    settle(&mut app);
+    assert!(!app.shows("drop-zone"));
+}

@@ -710,6 +710,51 @@ fn import_dialog() {
     }
 }
 
+/// A PGN file dragged over Puzzles, in both appearances:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::drop_zone -- --ignored`
+/// writes `<dir>/drop/<appearance>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn drop_zone() {
+    use gpui_kit::InputEvent as _;
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("drop");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (appearance, name) in [(Appearance::Dark, "dark"), (Appearance::Light, "light")] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (width, height) = SIZES[0];
+        let (mut cx, window) = start(profile.path(), width, height);
+        cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Puzzles, window, cx)
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            let position = gpui_kit::point(gpui_kit::px(width * 0.6), gpui_kit::px(height * 0.5));
+            let paths = gpui_kit::ExternalPaths(std::iter::once("game.pgn".into()).collect());
+            window.dispatch_event(
+                gpui_kit::FileDropEvent::Entered { position, paths }.to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(
+                gpui_kit::FileDropEvent::Pending { position }.to_platform_input(),
+                cx,
+            );
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{name}.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::core::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
 /// Connect the stand-in Lichess's showcase account as a person would, and sync its games.
 fn connect_showcase(
     cx: &mut HeadlessAppContext,
