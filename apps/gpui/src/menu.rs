@@ -133,6 +133,8 @@ pub fn init(cx: &mut App) {
             bind("alt-right", GoForward, cx),
         ]
     });
+    // ? lists the shortcuts as on Lichess, but only outside a text field, where it is typed.
+    cx.bind_keys([KeyBinding::new("?", ShowShortcuts, Some("!Input"))]);
     // Ctrl+Y redoes too, as text fields take it outside macOS.
     if !cfg!(target_os = "macos") {
         cx.bind_keys([bind("ctrl-y", Redo, cx)]);

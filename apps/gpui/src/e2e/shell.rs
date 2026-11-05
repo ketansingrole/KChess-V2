@@ -93,6 +93,34 @@ fn the_keyboard_shortcuts_are_listed(cx: &mut gpui_kit::TestAppContext) {
     app.find("shortcuts");
 }
 
+/// ? lists the shortcuts too, as on Lichess, but a text field still takes it as text.
+#[gpui_kit::test]
+fn a_question_mark_lists_the_shortcuts_outside_a_text_field(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.press("?");
+    app.find("shortcuts");
+    app.press("escape");
+    app.wait_gone("shortcuts");
+    // In Quick Pick's field it is typed: ? lists the ways to search, and nothing else.
+    app.press("secondary-k");
+    app.press("?");
+    app.wait_for("Quick Pick's help", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        let listed: Vec<String> = (0..8usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect();
+        window.try_find("shortcuts").is_none()
+            && listed
+                == [
+                    "Go to page",
+                    "Run a command",
+                    "Find a player",
+                    "Change a setting",
+                ]
+    });
+}
+
 /// The sidebar marks your move in a Lichess game beside Play; collapsed to its rail it had no room
 /// for the mark and dropped it, so a correspondence move went unseen there.
 #[gpui_kit::test]

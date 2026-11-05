@@ -33,7 +33,7 @@ pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
                 ("Back to the list", "Esc".to_string()),
                 ("Zoom in / out", format!("{MOD} + −")),
                 ("Actual size", format!("{MOD} 0")),
-                ("Keyboard shortcuts", format!("{MOD} /")),
+                ("Keyboard shortcuts", format!("{MOD} / ?")),
             ],
         ),
         (
