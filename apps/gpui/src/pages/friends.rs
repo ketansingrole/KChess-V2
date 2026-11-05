@@ -816,7 +816,7 @@ impl Render for FriendsPage {
                             widgets::format_bytes(stored),
                             widgets::format_bytes(downloaded)
                         ))
-                        .when(self.loading, |row| row.child(icon("loader-circle").size(px(14.)))),
+                        .when(self.loading, |row| row.child(crate::widgets::spinner(px(14.)))),
                 )
                 .child(
                     widgets::card(&palette)
@@ -1025,7 +1025,7 @@ impl Render for ImportDialog {
             h_flex()
                 .gap(px(8.))
                 .text_color(palette.text_muted)
-                .child(icon("loader-circle").size(px(14.)))
+                .child(crate::widgets::spinner(px(14.)))
                 .child("Asking Lichess…")
                 .into_any_element()
         } else if self.report.is_some() {

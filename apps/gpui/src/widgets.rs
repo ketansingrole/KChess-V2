@@ -213,12 +213,22 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
         )
 }
 
-/// A clock's last ten seconds, which `formatClock` alone shows with tenths ("0:09.4").
+/// Something under way: the loader turning, at `size`, in the text's color unless given one.
+/// Every wait in the app uses it; a still `loader-circle` icon reads as stuck.
+pub fn spinner(size: Pixels) -> gpui_kit::component::spinner::Spinner {
+    gpui_kit::component::spinner::Spinner::new()
+        .icon(icon("loader-circle"))
+        .with_size(size)
+        // An even turn: easing in and out reads as a stutter on a ring of dots.
+        .ease(|delta| delta)
+}
+
 /// Escape with no modifier, which takes a detail view (a game, an event, a line) back to its list.
 pub(crate) fn is_escape(event: &KeyDownEvent) -> bool {
     event.keystroke.key == "escape" && !event.keystroke.modifiers.modified()
 }
 
+/// A clock's last ten seconds, which `formatClock` alone shows with tenths ("0:09.4").
 pub(crate) fn low_time(text: &str) -> bool {
     text.starts_with("0:0") && text.contains('.')
 }
@@ -281,6 +291,8 @@ pub enum Tone {
 pub struct StatusBanner {
     tone: Tone,
     glyph: Option<Icon>,
+    /// Something is under way: the spinner in place of the glyph.
+    busy: bool,
     title: SharedString,
     detail: Option<SharedString>,
     extra: Option<AnyElement>,
@@ -292,6 +304,7 @@ impl StatusBanner {
         StatusBanner {
             tone,
             glyph: Some(glyph),
+            busy: false,
             title,
             detail: None,
             extra: None,
@@ -299,11 +312,18 @@ impl StatusBanner {
         }
     }
 
+    /// Show the spinner in place of the glyph while `busy`.
+    pub fn busy(mut self, busy: bool) -> StatusBanner {
+        self.busy = busy;
+        self
+    }
+
     /// The game going on as usual: its title and detail on one plain line, no surface or icon.
     pub fn turn(title: SharedString) -> StatusBanner {
         StatusBanner {
             tone: Tone::Plain,
             glyph: None,
+            busy: false,
             title,
             detail: None,
             extra: None,
@@ -363,10 +383,20 @@ impl RenderOnce for StatusBanner {
             .when(self.announce, |banner| {
                 banner.child(live_region("status-live", self.title.clone()))
             })
-            .children(
-                self.glyph
-                    .map(|glyph| glyph.size(px(16.)).flex_none().text_color(icon_color)),
-            )
+            .children(self.glyph.map(|glyph| {
+                if self.busy {
+                    div()
+                        .flex_none()
+                        .child(spinner(px(16.)).color(icon_color))
+                        .into_any_element()
+                } else {
+                    glyph
+                        .size(px(16.))
+                        .flex_none()
+                        .text_color(icon_color)
+                        .into_any_element()
+                }
+            }))
             .child(
                 div()
                     .flex()
@@ -1546,6 +1576,33 @@ mod tests {
     };
 
     use crate::theme::{Palette, colors};
+
+    /// Every wait turns: the loader icon appears only inside `spinner`, never as a still glyph
+    /// (the Lichess seek card once showed one that never moved).
+    #[test]
+    fn every_loader_is_the_turning_spinner() {
+        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).expect("the source folder") {
+                let path = entry.expect("an entry").path();
+                if path.is_dir() {
+                    walk(&path, found);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let text = std::fs::read_to_string(&path).expect("a source file");
+                    let uses = text.matches("icon(\"loader-circle\")").count();
+                    let allowed = usize::from(path.ends_with("src/widgets.rs"));
+                    if uses > allowed {
+                        found.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        assert!(found.is_empty(), "a still loader in {found:?}");
+    }
 
     /// A move list in a window whose page holds the keys, as a game page's does.
     struct Page {

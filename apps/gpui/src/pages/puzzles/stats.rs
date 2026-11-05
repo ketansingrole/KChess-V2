@@ -796,7 +796,7 @@ impl PuzzleStats {
                         .gap(px(8.))
                         .text_size(px(13.))
                         .text_color(palette.text_muted)
-                        .child(icon("loader-circle").size(px(14.)))
+                        .child(crate::widgets::spinner(px(14.)))
                         .child("Loading from Lichess…"),
                 )
                 .into_any_element();

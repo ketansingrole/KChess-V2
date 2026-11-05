@@ -1137,7 +1137,7 @@ impl PuzzlesPage {
             _ => h_flex()
                 .gap(px(8.))
                 .text_color(palette.text_muted)
-                .child(icon("loader-circle").size(px(16.)))
+                .child(crate::widgets::spinner(px(16.)))
                 .child("Finding a puzzle…")
                 .into_any_element(),
         };

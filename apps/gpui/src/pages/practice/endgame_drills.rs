@@ -407,7 +407,7 @@ impl Render for EndgameDrills {
         } else if thinking {
             (
                 Tone::Plain,
-                icon("loader-circle"),
+                icon("cpu"),
                 "Stockfish is thinking…".to_string(),
                 None,
             )
@@ -483,6 +483,7 @@ impl Render for EndgameDrills {
             ))
             .child(
                 widgets::StatusBanner::new(tone, glyph, title.into())
+                    .busy(thinking && !missing && !over)
                     .announce()
                     .when_some(detail.map(SharedString::from), |banner, value| {
                         banner.detail(value)

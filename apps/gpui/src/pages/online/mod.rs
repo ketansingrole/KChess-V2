@@ -685,11 +685,7 @@ impl OnlinePage {
                 .w(px(420.))
                 .items_center()
                 .gap(px(12.))
-                .child(
-                    icon("loader-circle")
-                        .size(px(28.))
-                        .text_color(palette.primary),
-                )
+                .child(widgets::spinner(px(28.)).color(palette.primary))
                 .child(widgets::heading(status, palette))
                 .child(widgets::hint(
                     summary(&online.form, label.as_deref()),

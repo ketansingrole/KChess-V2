@@ -1687,7 +1687,7 @@ impl Workspace {
                         .gap(px(8.))
                         .text_size(px(14.))
                         .text_color(cx.theme().muted_foreground)
-                        .child(icon("loader-circle").size(px(16.)))
+                        .child(crate::widgets::spinner(px(16.)))
                         .child("Working…"),
                 )
             })

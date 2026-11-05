@@ -2566,7 +2566,7 @@ impl AnalysisPage {
                                 palette.text_muted
                             })
                             .when(engine_on && self.engine_busy, |row| {
-                                row.child(icon("loader-circle").size(px(12.)))
+                                row.child(crate::widgets::spinner(px(12.)))
                             })
                             .child(div().truncate().child(status)),
                     ),

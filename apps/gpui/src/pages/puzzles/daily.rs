@@ -197,7 +197,7 @@ impl Render for DailyPuzzle {
                 None => gpui_kit::component::h_flex()
                     .gap(px(8.))
                     .text_color(palette.text_muted)
-                    .child(icon("loader-circle").size(px(16.)))
+                    .child(crate::widgets::spinner(px(16.)))
                     .child(if self.linked.is_some() {
                         "Fetching the puzzle…"
                     } else {

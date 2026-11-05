@@ -639,6 +639,7 @@ impl EndgameLesson {
             .frontend
             .clone();
         let banner = playable.then(|| {
+            let mut busy = false;
             let (tone, glyph, title, detail) = if over {
                 (
                     if success { Tone::Win } else { Tone::Loss },
@@ -673,13 +674,10 @@ impl EndgameLesson {
                     Some(goal(&step.task, side)),
                 )
             } else {
+                busy = thinking;
                 (
                     Tone::Plain,
-                    if thinking {
-                        icon("loader-circle")
-                    } else {
-                        icon("mouse-pointer-click")
-                    },
+                    icon("mouse-pointer-click"),
                     if thinking {
                         "Stockfish is thinking…".to_string()
                     } else {
@@ -689,6 +687,7 @@ impl EndgameLesson {
                 )
             };
             widgets::StatusBanner::new(tone, glyph, title.into())
+                .busy(busy)
                 .announce()
                 .when_some(detail.map(SharedString::from), |banner, value| {
                     banner.detail(value)
