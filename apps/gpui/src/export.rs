@@ -1,6 +1,6 @@
 //! Exporting a game: the Export menu under a game's moves, for an animated GIF
-//! of the game, a PNG of the position shown or a PGN file; and saving an export (`saveExport`),
-//! where the person picks the place, starting in Downloads.
+//! of the game, a PNG of the position shown, a PGN file, or the PGN or position's FEN copied; and
+//! saving an export (`saveExport`), where the person picks the place, starting in Downloads.
 
 use std::future::Future;
 use std::path::PathBuf;
@@ -121,6 +121,42 @@ fn game_pgn(game: &GameExport) -> Option<String> {
     .ok()?
     .as_str()
     .map(str::to_string)
+}
+
+/// The FEN of the position shown: a variation's end when it is off the moves, else the move
+/// at `ply` (the last by default), with a Crazyhouse game's pockets.
+fn shown_fen(game: &GameExport) -> Option<String> {
+    let setup = json!({ "variant": game.variant, "fen": game.fen });
+    let moves = match &game.shown {
+        Some(shown) => shown.clone(),
+        None => game.moves[..game.ply.unwrap_or(game.moves.len()).min(game.moves.len())].to_vec(),
+    };
+    let position = crate::game::view::position_at(&setup, &moves, moves.len())?;
+    Some(shakmaty::fen::Fen::from_position(&position, shakmaty::EnPassantMode::Legal).to_string())
+}
+
+/// Copy `text` and say so, or say what could not be copied.
+fn copy(text: Option<String>, what: &str, window: &mut Window, cx: &mut App) {
+    match text {
+        Some(text) => {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            window.push_notification(SharedString::from(format!("{what} copied")), cx);
+        }
+        None => window.push_notification(
+            Notification::error(format!("Could not copy the {what}")),
+            cx,
+        ),
+    }
+}
+
+/// Copy the game as its PGN file has it.
+pub fn copy_pgn(game: &GameExport, window: &mut Window, cx: &mut App) {
+    copy(game_pgn(game), "PGN", window, cx);
+}
+
+/// Copy the position shown as a FEN.
+pub fn copy_fen(game: &GameExport, window: &mut Window, cx: &mut App) {
+    copy(shown_fen(game), "FEN", window, cx);
 }
 
 /// An export under way: its progress, and how to stop it.
@@ -311,12 +347,13 @@ impl Exporter {
 }
 
 /// The Export menu, opening towards `anchor`, and while an export runs, its progress and a way
-/// to cancel it.
+/// to cancel it. `copy` adds Copy PGN and Copy FEN, for a page that has no copy of its own.
 pub fn export_menu(
     id: &'static str,
     exporter: &Entity<Exporter>,
     game: GameExport,
     anchor: Anchor,
+    copy: bool,
     cx: &App,
 ) -> impl IntoElement {
     let state = exporter.read(cx);
@@ -375,9 +412,23 @@ pub fn export_menu(
                             })
                     };
                     let (upload_target, upload_game) = (target.clone(), game.clone());
+                    let (pgn_game, fen_game) = (game.clone(), game.clone());
                     menu.item(item("Animated GIF of the game", icon("film"), Kind::Gif))
                         .item(item("PNG of this position", icon("image"), Kind::Png))
                         .item(item("PGN file", icon("file-text"), Kind::Pgn))
+                        .when(copy, |menu| {
+                            menu.separator()
+                                .item(
+                                    PopupMenuItem::new("Copy PGN").icon(icon("copy")).on_click(
+                                        move |_, window, cx| copy_pgn(&pgn_game, window, cx),
+                                    ),
+                                )
+                                .item(
+                                    PopupMenuItem::new("Copy FEN").icon(icon("copy")).on_click(
+                                        move |_, window, cx| copy_fen(&fen_game, window, cx),
+                                    ),
+                                )
+                        })
                         .separator()
                         .item(
                             PopupMenuItem::new("Lichess link")
@@ -395,8 +446,49 @@ pub fn export_menu(
 
 #[cfg(test)]
 mod tests {
-    use super::{GameExport, game_file_name, game_pgn};
+    use super::{GameExport, game_file_name, game_pgn, shown_fen};
     use shakmaty::Color;
+
+    fn game(variant: &str, fen: &str, moves: &[&str], ply: Option<usize>) -> GameExport {
+        GameExport {
+            variant: variant.into(),
+            fen: fen.into(),
+            moves: moves.iter().map(|uci| uci.to_string()).collect(),
+            orientation: Color::White,
+            white: "White".into(),
+            black: "Black".into(),
+            ply,
+            result: None,
+            lichess_id: None,
+            pgn: None,
+            shown: None,
+        }
+    }
+
+    /// Copy FEN copies the position shown: the last by default, an earlier move's, a variation's,
+    /// and a Crazyhouse position with its pockets.
+    #[test]
+    fn the_fen_is_the_position_shown() {
+        let standard = crate::game::STANDARD_FEN;
+        let moves = ["e2e4", "e7e5"];
+        assert_eq!(
+            shown_fen(&game("standard", standard, &moves, None)).as_deref(),
+            Some("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2")
+        );
+        assert_eq!(
+            shown_fen(&game("standard", standard, &moves, Some(0))).as_deref(),
+            Some(standard)
+        );
+        let mut variation = game("standard", standard, &moves, None);
+        variation.shown = Some(vec!["d2d4".into()]);
+        assert_eq!(
+            shown_fen(&variation).as_deref(),
+            Some("rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1")
+        );
+        let pocket = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
+        let fen = shown_fen(&game("crazyhouse", pocket, &["P@e3"], None)).expect("a FEN");
+        assert!(fen.contains("[p]"), "{fen}");
+    }
 
     #[test]
     fn a_pgn_names_its_players_and_result() {

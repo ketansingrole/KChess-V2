@@ -998,6 +998,7 @@ impl OnlinePage {
                         &self.exporter,
                         export,
                         Anchor::BottomLeft,
+                        true,
                         cx,
                     )
                 }))

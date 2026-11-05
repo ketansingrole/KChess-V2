@@ -1639,6 +1639,7 @@ impl LocalPage {
                             &self.exporter,
                             self.game_export(cx),
                             Anchor::BottomCenter,
+                            false,
                             cx,
                         )
                         .into_any_element()

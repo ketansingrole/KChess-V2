@@ -1627,6 +1627,7 @@ impl Render for ComputerPage {
                             &self.exporter,
                             self.game_export(),
                             Anchor::TopRight,
+                            true,
                             cx,
                         ))
                     })

@@ -61,6 +61,31 @@ fn the_arrows_step_the_moves_after_a_typed_move(cx: &mut gpui_kit::TestAppContex
     assert!(app.enabled("skip-back"));
 }
 
+/// The Export menu copies the game's PGN and the position shown as a FEN.
+#[gpui_kit::test]
+fn the_export_menu_copies_the_pgn_and_the_fen(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Nf3");
+    app.press("enter");
+    app.wait_for_moves(&["Nf3"]);
+    let copied = |app: &mut Harness, item: &str| {
+        app.click("computer-export");
+        app.wait_for("the menu", |window, _| {
+            use gpui_kit::test::TestQueryExt as _;
+            window.try_find_by_label(item).is_some()
+        });
+        app.click_label(item);
+        app.cx.read_from_clipboard().and_then(|item| item.text())
+    };
+    let pgn = copied(&mut app, "Copy PGN").expect("a copied PGN");
+    assert!(pgn.contains("1. Nf3"), "{pgn}");
+    assert_eq!(
+        copied(&mut app, "Copy FEN").as_deref(),
+        Some("rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1")
+    );
+}
+
 #[gpui_kit::test]
 fn an_illegal_move_is_not_played(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);

@@ -2719,6 +2719,7 @@ impl AnalysisPage {
                 &self.exporter,
                 self.game_export(),
                 Anchor::BottomRight,
+                false,
                 cx,
             ))
             .child(
