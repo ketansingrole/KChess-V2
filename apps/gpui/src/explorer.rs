@@ -307,11 +307,19 @@ impl PositionExplorer {
         crate::prefs::get(cx, PREFS, Prefs::default())
     }
 
+    /// Whether only the databases that hold variants can answer: Chess960 is standard chess
+    /// from another start, so the masters' games and the tablebase still do.
+    fn variants_only(&self) -> bool {
+        self.variant
+            .as_deref()
+            .is_some_and(|variant| variant != "chess960")
+    }
+
     /// The settings as this position uses them: a variant is looked up in Lichess's database
     /// when the chosen one holds standard chess only, and the variant goes with the filters.
     fn shown_prefs(&self, cx: &App) -> Prefs {
         let mut prefs = Self::prefs(cx);
-        if self.variant.is_some() && !holds_variants(&prefs.kind) {
+        if self.variants_only() && !holds_variants(&prefs.kind) {
             prefs.kind = "opening".into();
         }
         prefs
@@ -942,7 +950,7 @@ impl Render for PositionExplorer {
         let kinds: Vec<(&str, &str)> = KINDS
             .into_iter()
             .filter(|(kind, _)| !self.grid || *kind != "tablebase")
-            .filter(|(kind, _)| self.variant.is_none() || holds_variants(kind))
+            .filter(|(kind, _)| !self.variants_only() || holds_variants(kind))
             .collect();
         let chosen = kinds
             .iter()

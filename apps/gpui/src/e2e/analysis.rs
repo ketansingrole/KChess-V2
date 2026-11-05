@@ -679,6 +679,20 @@ fn the_explorer_looks_up_a_crazyhouse_position_in_its_variant(cx: &mut gpui_kit:
     app.click_label("Play P@e3");
     app.click("Moves");
     assert_eq!(selected(&mut app, "e2e4 d7d5 e4d5 d8d5 P@e3"), Some(true));
+
+    // Chess960 is standard chess from another start: the masters' games and the tablebase
+    // still answer it.
+    import(
+        &mut app,
+        "[Variant \"Chess960\"]\n[FEN \"bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1\"]\n\n1. e4 *",
+    );
+    app.wait_gone("import-run");
+    app.click("tree-e2e4");
+    app.click("Explorer");
+    app.wait_for("every database", |window, _| {
+        window.try_find_by_label("Masters").is_some()
+            && window.try_find_by_label("Tablebase").is_some()
+    });
 }
 
 /// A public Lichess study's link imports the chapter it names, or the study's first, in its own
