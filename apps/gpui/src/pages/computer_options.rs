@@ -55,6 +55,8 @@ pub struct Chosen {
 pub struct GameOptions {
     start: Start,
     variant: Entity<SelectState<Vec<SharedString>>>,
+    /// The variant game's position, when not its usual start.
+    variant_fen: Entity<InputState>,
     number: Entity<InputState>,
     fen: Entity<InputState>,
     clock: Entity<SelectState<Vec<SharedString>>>,
@@ -125,6 +127,21 @@ impl GameOptions {
             }
             input
         });
+        // A variant game from another position (the analysis board's "Play from here") opens
+        // with that position.
+        let default_fen = crate::game::rules("defaultFen", &[json!(variant)])
+            .ok()
+            .and_then(|fen| fen.as_str().map(str::to_string));
+        let variant_fen = cx.new(|cx| {
+            let label = fairy_variants()
+                .nth(variant_row)
+                .map_or("Variant", |text| text.label.as_str());
+            let mut input = InputState::new(window, cx).placeholder(format!("{label} start"));
+            if start == Start::Variant && default_fen.as_deref() != Some(fen.as_str()) {
+                input.set_value(fen.clone(), window, cx);
+            }
+            input
+        });
         let clock_text = current.clock.as_object().map(|clock| {
             format!(
                 "{}+{}",
@@ -176,14 +193,31 @@ impl GameOptions {
                     this.refresh_preview(cx);
                 }
             }),
-            cx.subscribe(
+            // The FEN's placeholder names the start it replaces: "Crazyhouse start".
+            cx.subscribe_in(
                 &variant_select,
-                |_, _, _: &SelectEvent<Vec<SharedString>>, cx| cx.notify(),
+                window,
+                |this, _, _: &SelectEvent<Vec<SharedString>>, window, cx| {
+                    let label = this
+                        .variant_text(cx)
+                        .map_or("Variant start".to_string(), |text| {
+                            format!("{} start", text.label)
+                        });
+                    this.variant_fen
+                        .update(cx, |input, cx| input.set_placeholder(label, window, cx));
+                    cx.notify()
+                },
             ),
+            cx.subscribe(&variant_fen, |_, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
         ];
         let mut options = GameOptions {
             start,
             variant: variant_select,
+            variant_fen,
             number,
             fen: fen_input,
             clock,
@@ -234,7 +268,20 @@ impl GameOptions {
         cx.notify();
     }
 
+    /// The variant's FEN when one is typed: None while it is empty.
+    fn variant_fen(&self, cx: &App) -> Option<String> {
+        let text = self.variant_fen.read(cx).value().trim().to_string();
+        (!text.is_empty()).then_some(text)
+    }
+
     fn fen_problem(&self, cx: &App) -> Option<SharedString> {
+        if self.start == Start::Variant {
+            let variant = self.variant_text(cx)?;
+            let fen = self.variant_fen(cx)?;
+            return kchess_domain::rules::setup_start(&variant.key, &fen)
+                .is_none()
+                .then(|| "That FEN is not a legal position".into());
+        }
         if self.start != Start::Fen {
             return None;
         }
@@ -266,10 +313,12 @@ impl GameOptions {
                 let variant = self
                     .variant_text(cx)
                     .map_or("crazyhouse", |text| text.key.as_str());
-                let fen = crate::game::rules("defaultFen", &[json!(variant)])
-                    .ok()
-                    .and_then(|fen| fen.as_str().map(str::to_string))
-                    .unwrap_or_default();
+                let fen = self.variant_fen(cx).unwrap_or_else(|| {
+                    crate::game::rules("defaultFen", &[json!(variant)])
+                        .ok()
+                        .and_then(|fen| fen.as_str().map(str::to_string))
+                        .unwrap_or_default()
+                });
                 json!({ "variant": variant, "fen": fen })
             }
             // A Chess960 position pasted here castles as Chess960 (`setup_from_fen`).
@@ -412,15 +461,25 @@ impl Render for GameOptions {
             })
             .when(self.start == Start::Variant, |form| {
                 form.child(
-                    widgets::field("Variant", Select::new(&self.variant), None, &palette).children(
-                        hint.map(|hint| {
-                            div()
-                                .text_size(px(13.))
-                                .text_color(palette.text_muted)
-                                .child(hint)
-                        }),
-                    ),
+                    widgets::field(
+                        "Variant",
+                        Select::new(&self.variant).accessibility_label("Choose a variant"),
+                        None,
+                        &palette,
+                    )
+                    .children(hint.map(|hint| {
+                        div()
+                            .text_size(px(13.))
+                            .text_color(palette.text_muted)
+                            .child(hint)
+                    })),
                 )
+                .child(widgets::field(
+                    "Start from a FEN (optional)",
+                    Input::new(&self.variant_fen),
+                    fen_problem.clone(),
+                    &palette,
+                ))
             })
             .when(self.start == Start::Fen, |form| {
                 form.child(widgets::field(

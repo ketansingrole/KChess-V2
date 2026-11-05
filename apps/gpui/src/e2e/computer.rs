@@ -185,6 +185,50 @@ fn a_finished_game_is_reviewed_from_quick_pick(cx: &mut gpui_kit::TestAppContext
 
 /// Game options start a game in another variant, which the engine plays by its rules: the
 /// variant's start, and the computer's move from it.
+/// A variant game starts from a FEN read by that variant's rules (a Crazyhouse position with
+/// its pockets), and a FEN it refuses keeps the game from starting.
+#[gpui_kit::test]
+fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestQueryExt as _;
+    let mut app = computer(cx);
+    app.click("game-options");
+    app.click(("start", 2usize));
+    let mut last = None;
+    app.wait_for("the variant choice to stop moving", |window, _| {
+        let bounds = window
+            .try_find_by_label("Variant")
+            .map(|select| select.bounds());
+        let still = bounds.is_some() && bounds == last;
+        last = bounds;
+        still
+    });
+    app.click_label("Choose a variant");
+    // Crazyhouse is the last of the seven Fairy-Stockfish plays.
+    for _ in 0..6 {
+        app.press("down");
+    }
+    app.press("enter");
+    let fen = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
+    app.click_label("Crazyhouse start");
+    app.type_text("not-a-fen");
+    assert!(!app.enabled("start-game"));
+    app.press("secondary-a");
+    app.type_text(fen);
+    app.click("start-game");
+    app.wait_gone("start-game");
+    let setup = app.cx.update(|cx| {
+        crate::shell::view_of::<crate::pages::computer::ComputerPage>(
+            crate::pages::Page::Computer,
+            cx,
+        )
+        .map(|page| {
+            let page = page.read(cx);
+            (page.setup_variant(), page.setup_fen())
+        })
+    });
+    assert_eq!(setup, Some(("crazyhouse".to_string(), fen.to_string())));
+}
+
 #[gpui_kit::test]
 fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);

@@ -257,6 +257,16 @@ fn computer_variant() {
             .expect("a screenshot")
             .save(out.join(format!("{width}.png")))
             .expect("the screenshot saves");
+        // The game options open on the variant game, its FEN field under the variant.
+        cx.update_window(window, |_, window, cx| {
+            window.click(gpui_kit::ElementId::from("game-options"), cx);
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("options-{width}.png")))
+            .expect("the screenshot saves");
         let quit = cx.update(crate::core::quit);
         cx.foreground_executor().block_test(quit);
         crate::profile::TEST_DATA_DIR.set(None);

@@ -1911,7 +1911,7 @@ impl Render for NewGame {
             .child(
                 widgets::field(
                     "Variant",
-                    Select::new(&self.variant).accessibility_label("Variant"),
+                    Select::new(&self.variant).accessibility_label("Choose a variant"),
                     None,
                     &palette,
                 )

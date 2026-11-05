@@ -477,14 +477,14 @@ fn a_new_game_starts_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContext
         let mut last = None;
         move |window, _| {
             let bounds = window
-                .try_find_by_label("Variant")
+                .try_find_by_label("Choose a variant")
                 .map(|select| select.bounds());
             let still = bounds.is_some() && bounds == last;
             last = bounds;
             still
         }
     });
-    app.click_label("Variant");
+    app.click_label("Choose a variant");
     // Crazyhouse is the last of the nine.
     for _ in 0..8 {
         app.press("down");
