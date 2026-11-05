@@ -23,7 +23,8 @@ gpui_kit::actions!(
         ActualSize,
         GoBack,
         GoForward,
-        ShowShortcuts
+        ShowShortcuts,
+        ToggleSidebar
     ]
 );
 
@@ -172,6 +173,12 @@ pub fn init(cx: &mut App) {
             bind("alt-right", GoForward, cx),
         ]
     });
+    // The sidebar as macOS apps take it (View > Show Sidebar), and as editors do elsewhere.
+    cx.bind_keys([if cfg!(target_os = "macos") {
+        bind("ctrl-cmd-s", ToggleSidebar, cx)
+    } else {
+        bind("ctrl-b", ToggleSidebar, cx)
+    }]);
     // ? lists the shortcuts as on Lichess, but only outside a text field, where it is typed.
     cx.bind_keys([KeyBinding::new("?", ShowShortcuts, Some("!Input"))]);
     // Ctrl+Y redoes too, as text fields take it outside macOS.
@@ -189,6 +196,13 @@ pub fn init(cx: &mut App) {
         cx.defer(|cx| {
             if let Some(window) = cx.active_window() {
                 let _ = window.update(cx, |_, window, cx| crate::palette::open_pasted(window, cx));
+            }
+        })
+    });
+    cx.on_action(|_: &ToggleSidebar, cx| {
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, cx| crate::shell::toggle_sidebar(window, cx));
             }
         })
     });
@@ -260,6 +274,8 @@ pub fn init(cx: &mut App) {
         Menu::new("View").items([
             MenuItem::action("Search…", Search),
             MenuItem::action("Run a Command…", Commands),
+            MenuItem::separator(),
+            MenuItem::action("Toggle Sidebar", ToggleSidebar),
             MenuItem::separator(),
             MenuItem::action("Back", GoBack),
             MenuItem::action("Forward", GoForward),

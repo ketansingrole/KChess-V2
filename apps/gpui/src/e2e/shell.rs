@@ -239,6 +239,23 @@ fn the_sidebar_collapses_and_is_kept_collapsed(cx: &mut gpui_kit::TestAppContext
     assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
 }
 
+/// The sidebar shows and hides from the keyboard too: ⌃⌘S on macOS, as its apps take it, and
+/// Ctrl+B elsewhere.
+#[gpui_kit::test]
+fn the_keyboard_shows_and_hides_the_sidebar(cx: &mut gpui_kit::TestAppContext) {
+    let key = if cfg!(target_os = "macos") {
+        "ctrl-cmd-s"
+    } else {
+        "ctrl-b"
+    };
+    let mut app = Harness::start(cx);
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Hide sidebar"));
+    app.press(key);
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
+    app.press(key);
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Hide sidebar"));
+}
+
 /// A narrow window gives the page the room: the sidebar shows as its rail there, opens for the
 /// moment from its toggle, and a wider window shows it as kept.
 #[gpui_kit::test]

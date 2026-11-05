@@ -15,10 +15,10 @@ const MOD: &str = if cfg!(target_os = "macos") {
 
 /// Each group's heading and its rows: what a key does, and the keys (space-separated chips).
 pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
-    let (back, forward, run_command, redo) = if cfg!(target_os = "macos") {
-        ("⌘ [", "⌘ ]", "⇧ ⌘ P", "⇧ ⌘ Z")
+    let (back, forward, run_command, redo, sidebar) = if cfg!(target_os = "macos") {
+        ("⌘ [", "⌘ ]", "⇧ ⌘ P", "⇧ ⌘ Z", "⌃ ⌘ S")
     } else {
-        ("Alt ←", "Alt →", "Ctrl ⇧ P", "Ctrl Y")
+        ("Alt ←", "Alt →", "Ctrl ⇧ P", "Ctrl Y", "Ctrl B")
     };
     vec![
         (
@@ -30,6 +30,7 @@ pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
                 ("Settings", format!("{MOD} ,")),
                 ("Back", back.to_string()),
                 ("Forward", forward.to_string()),
+                ("Show / hide the sidebar", sidebar.to_string()),
                 ("Back to the list", "Esc".to_string()),
                 ("Zoom in / out", format!("{MOD} + −")),
                 ("Actual size", format!("{MOD} 0")),
