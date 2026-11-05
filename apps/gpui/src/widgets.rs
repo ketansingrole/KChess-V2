@@ -541,7 +541,14 @@ pub fn moves_list(
         .line_height(px(20.))
         .font_features(tabular())
         .when(sans.is_empty(), |list| {
-            list.child(div().text_color(palette.text_muted).child(empty))
+            list.child(
+                div()
+                    .id("moves-empty")
+                    .test_support()
+                    .aria_label(empty.clone())
+                    .text_color(palette.text_muted)
+                    .child(empty),
+            )
         })
         .when(!sans.is_empty(), |list| {
             list.border_t_1().border_color(palette.border)

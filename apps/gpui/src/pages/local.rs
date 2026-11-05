@@ -1563,7 +1563,11 @@ impl LocalPage {
                 &sans,
                 shown,
                 view::first_move(self.setup()),
-                "White moves first. The first move starts the clock.".into(),
+                if self.game.state["times"].is_null() {
+                    "No moves yet".into()
+                } else {
+                    "The first move starts the clock".into()
+                },
                 select.clone(),
                 crate::notation::figurine(cx),
                 &palette,

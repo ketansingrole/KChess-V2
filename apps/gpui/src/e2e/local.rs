@@ -73,6 +73,34 @@ fn a_timed_games_clock_runs_for_the_side_to_move(cx: &mut gpui_kit::TestAppConte
 const SCHOLARS_MATE: [&str; 7] = ["e4", "e5", "Qh5", "Nc6", "Bc4", "Nf6", "Qxf7#"];
 
 #[gpui_kit::test]
+fn an_empty_move_list_mentions_the_clock_only_in_a_timed_game(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::local::LocalPage;
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = board(cx);
+    assert_eq!(app.find("moves-empty").label(), Some("No moves yet"));
+    app.with_window(|window, cx| {
+        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        local.update(cx, |local, cx| {
+            let setup =
+                serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+            let clock = serde_json::json!({
+                "white": { "minutes": 5, "increment": 0 },
+                "black": { "minutes": 5, "increment": 0 },
+            });
+            local.replace_game(setup, clock, window, cx);
+        });
+    });
+    app.wait_for("the clock's hint", |window, _| {
+        window
+            .try_find("moves-empty")
+            .and_then(|empty| empty.label().map(str::to_string))
+            .as_deref()
+            == Some("The first move starts the clock")
+    });
+}
+
+#[gpui_kit::test]
 fn the_players_take_turns_at_one_board(cx: &mut gpui_kit::TestAppContext) {
     let mut app = board(cx);
     assert_eq!(app.status(), "White to move");
