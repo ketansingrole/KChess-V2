@@ -377,3 +377,56 @@ fn a_finished_puzzle_is_stepped_through(cx: &mut gpui_kit::TestAppContext) {
     app.press("end");
     assert_eq!(viewing(&mut app), None);
 }
+
+/// A finished puzzle opens on the analysis board, the wrong try kept as a side line.
+#[gpui_kit::test]
+fn a_finished_puzzle_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.cx.update(|cx| {
+        crate::prefs::set(
+            cx,
+            "kchess:puzzle-angle",
+            super::fake_lichess::TRAINED_THEME,
+        );
+        crate::settings::change(cx, |settings| settings.frontend.puzzle_auto_next = false);
+    });
+    app.open("Puzzles");
+    app.wait_for("the puzzle to be playable", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_some_and(|hint| hint.disabled() != Some(true))
+    });
+    assert!(!app.shows("puzzle-analyse"), "not while it is being solved");
+    let play = |app: &mut Harness, san: &str| {
+        app.click_label("Enter a chess move in SAN or UCI");
+        app.type_text(san);
+        app.press("enter");
+    };
+    play(&mut app, "Qh4");
+    play(&mut app, "Qxf7#");
+    app.wait_for("the puzzle to be solved", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_none_or(|hint| hint.disabled() == Some(true))
+    });
+    app.click("puzzle-analyse");
+    let pgn = |cx: &gpui_kit::App| {
+        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+            crate::pages::Page::Analysis,
+            cx,
+        )
+        .map(|page| page.read(cx).pgn())
+        .unwrap_or_default()
+    };
+    app.wait_for("the puzzle on the analysis board", |_, cx| {
+        pgn(cx).contains("Qxf7#")
+    });
+    let pgn = app.cx.update(|cx| pgn(cx));
+    assert!(pgn.contains("Qxf7#"), "{pgn}");
+    assert!(
+        pgn.contains("Qh4 {Your move}") || pgn.contains("Qh4 { Your move }"),
+        "{pgn}"
+    );
+}

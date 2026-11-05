@@ -60,6 +60,10 @@ pub struct PuzzleBoard {
     hinted: bool,
     /// The player's last wrong move here (UCI), until the next try.
     last_wrong: Option<String>,
+    /// The first wrong try at each of the player's moves, as the attempt log keeps them
+    /// (`{index, uci}`, `index` along the solution), so the finished puzzle opens on the
+    /// analysis board with them.
+    tried: Vec<Value>,
     /// Explanations of this board's puzzle.
     explainer: Entity<crate::ai::Explainer>,
     /// A hint was shown at some point: `hinted` itself clears after each move.
@@ -149,6 +153,7 @@ impl PuzzleBoard {
             revealed: false,
             hinted: false,
             last_wrong: None,
+            tried: Vec::new(),
             explainer: cx.new(|_| crate::ai::Explainer::new()),
             hint_used: false,
             nudged: false,
@@ -179,6 +184,7 @@ impl PuzzleBoard {
         self.mistakes = u32::from(outcome == Some(false));
         self.revealed = false;
         self.last_wrong = None;
+        self.tried.clear();
         self.hinted = false;
         self.hint_used = false;
         self.nudged = false;
@@ -236,6 +242,11 @@ impl PuzzleBoard {
 
     pub fn last_wrong(&self) -> Option<&str> {
         self.last_wrong.as_deref()
+    }
+
+    /// The first wrong try at each of the player's moves (`{index, uci}`).
+    pub fn wrong_moves(&self) -> &[Value] {
+        &self.tried
     }
 
     /// Asking a coach for a nudge costs more than a hint: the solve is not counted.
@@ -388,6 +399,11 @@ impl PuzzleBoard {
         let index = board.index() / 2;
         let (correct, reply) = board.player_move(uci);
         self.last_wrong = (!correct).then(|| uci.to_string());
+        // The player moves first, so their move `index` is the solution's `2 × index`.
+        let ply = 2 * index;
+        if !correct && !self.tried.iter().any(|tried| tried["index"] == ply) {
+            self.tried.push(json!({ "index": ply, "uci": uci }));
+        }
         if !correct {
             self.mistakes += 1;
             self.feedback = Feedback::Wrong;

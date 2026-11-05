@@ -911,55 +911,72 @@ pub(crate) fn status_panel(
             cx,
             palette,
         ))
-        // `.panel-actions`: Hint, Solution, Flip and Next share the row.
+        // `.panel-actions`: Hint, Solution, Flip and Next share the row; once the puzzle is over,
+        // Hint and Solution give way to the analysis board, its wrong tries as side lines.
         .child(widgets::panel_actions(
             false,
-            [
-                Button::new("puzzle-hint")
-                    .w_full()
-                    .when(hinted, |button| button.primary())
-                    .when(!hinted, |button| button.outline())
-                    .icon(icon("lightbulb"))
-                    .label("Hint")
-                    .when(rated, |button| button.tooltip("Makes this puzzle unrated"))
-                    .disabled(!playing)
-                    .on_click({
-                        let board = board_entity.downgrade();
-                        move |_, _, cx| {
-                            let _ = board.update(cx, |board, cx| board.hint(cx));
-                        }
-                    })
-                    .into_any_element()
-                    .into(),
-                Button::new("puzzle-solution")
-                    .w_full()
-                    .outline()
-                    .icon(icon("eye"))
-                    .label("Solution")
-                    .disabled(!playing)
-                    .on_click({
-                        let board = board_entity.downgrade();
-                        move |_, _, cx| {
-                            let _ = board.update(cx, |board, cx| board.show_solution(cx));
-                        }
-                    })
-                    .into_any_element()
-                    .into(),
-                widgets::fit(
-                    Button::new("puzzle-flip")
-                        .ghost()
-                        .icon(icon("arrow-up-down"))
-                        .tooltip("Flip board (F)")
-                        .accessibility_label("Flip board")
+            (if finished {
+                let (studied, wrong) = (puzzle.clone(), shown.wrong_moves().to_vec());
+                vec![
+                    Button::new("puzzle-analyse")
+                        .w_full()
+                        .outline()
+                        .icon(icon("microscope"))
+                        .label("Analysis board")
+                        .on_click(move |_, window, cx| {
+                            crate::shell::analyse_puzzle(studied.clone(), wrong.clone(), window, cx)
+                        })
+                        .into_any_element()
+                        .into(),
+                ]
+            } else {
+                vec![
+                    Button::new("puzzle-hint")
+                        .w_full()
+                        .when(hinted, |button| button.primary())
+                        .when(!hinted, |button| button.outline())
+                        .icon(icon("lightbulb"))
+                        .label("Hint")
+                        .when(rated, |button| button.tooltip("Makes this puzzle unrated"))
+                        .disabled(!playing)
                         .on_click({
                             let board = board_entity.downgrade();
                             move |_, _, cx| {
-                                let _ = board.update(cx, |board, cx| board.flip(cx));
+                                let _ = board.update(cx, |board, cx| board.hint(cx));
                             }
-                        }),
-                ),
-            ]
+                        })
+                        .into_any_element()
+                        .into(),
+                    Button::new("puzzle-solution")
+                        .w_full()
+                        .outline()
+                        .icon(icon("eye"))
+                        .label("Solution")
+                        .disabled(!playing)
+                        .on_click({
+                            let board = board_entity.downgrade();
+                            move |_, _, cx| {
+                                let _ = board.update(cx, |board, cx| board.show_solution(cx));
+                            }
+                        })
+                        .into_any_element()
+                        .into(),
+                ]
+            })
             .into_iter()
+            .chain([widgets::fit(
+                Button::new("puzzle-flip")
+                    .ghost()
+                    .icon(icon("arrow-up-down"))
+                    .tooltip("Flip board (F)")
+                    .accessibility_label("Flip board")
+                    .on_click({
+                        let board = board_entity.downgrade();
+                        move |_, _, cx| {
+                            let _ = board.update(cx, |board, cx| board.flip(cx));
+                        }
+                    }),
+            )])
             .chain(next.map(|next| {
                 Button::new("puzzle-next")
                     .w_full()

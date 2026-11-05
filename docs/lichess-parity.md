@@ -108,6 +108,8 @@ can add them as a friend, challenge them or watch their current game.
 - **Open a puzzle by link**: paste a lichess.org/training link into Quick Pick (⌘K) and the
   puzzle opens on Puzzles → Daily; _Today’s puzzle_ goes back. The command line takes one too:
   `kchess-cli puzzle [id|link]`, where `hint` names the piece to move and `solution` shows the rest.
+- **Analysis board after a puzzle**: a finished puzzle opens there, its solution as the main line
+  and each wrong try as a side line marked _Your move_.
 
 ### Playing without Lichess
 
