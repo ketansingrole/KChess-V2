@@ -513,14 +513,7 @@ fn settings_commands(cx: &App) -> Vec<Command> {
                 (section == Section::Updates)
                     .then(|| crate::updates::client_version(&crate::updates::current_version())),
             )
-            // Their names in the Electron app, and what they hold.
-            .keywords(match section {
-                Section::Updates => "version about upgrade",
-                Section::Themes => "app theme colors",
-                Section::Analysis => "analysis lichess",
-                Section::Accounts => "my accounts lichess sign in log in",
-                _ => "",
-            }),
+            .keywords(crate::pages::settings::section_keywords(section)),
         );
     }
     list
