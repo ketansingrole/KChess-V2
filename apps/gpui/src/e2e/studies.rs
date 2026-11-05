@@ -471,3 +471,26 @@ fn chapters_move_up_and_down(cx: &mut gpui_kit::TestAppContext) {
     wait_for_value(&mut app, "Study chapter", "1. Chapter 1");
     app.find("tree-e2e4");
 }
+
+/// A study's menu saves its PGN, every chapter with its notes, as a file.
+#[gpui_kit::test]
+fn a_study_is_saved_as_a_pgn_file(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
+    wait_for_listed(&mut app, &["Pawn openings"]);
+    app.click_label("Actions for Pawn openings");
+    app.click_label("Save PGN…");
+    let started = std::time::Instant::now();
+    while !app.cx.did_prompt_for_new_path() {
+        assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
+        app.tick();
+    }
+    let folder = tempfile::tempdir().expect("a folder to save in");
+    let path = folder.path().join("Pawn openings.pgn");
+    let chosen = path.clone();
+    app.cx.simulate_new_path_selection(move |_| Some(chosen));
+    app.wait_for("the file", |_, _| path.exists());
+    let saved = std::fs::read_to_string(&path).expect("the saved PGN");
+    assert!(saved.contains("Offline notes"), "{saved}");
+    assert_eq!(saved.matches("[Event ").count(), 2, "{saved}");
+}

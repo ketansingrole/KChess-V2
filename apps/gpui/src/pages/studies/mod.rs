@@ -408,6 +408,35 @@ impl StudiesPage {
         window.push_notification("PGN copied", cx);
     }
 
+    /// Save a study's PGN, every chapter, as a file where the player picks.
+    fn save_pgn(study: &Value, window: &mut Window, cx: &mut App) {
+        let name: String = study["name"]
+            .as_str()
+            .unwrap_or("study")
+            .chars()
+            .filter(|c| c.is_alphanumeric() || " _.()+-".contains(*c))
+            .take(80)
+            .collect();
+        let name = if name.trim().is_empty() {
+            "study".to_string()
+        } else {
+            name.trim().to_string()
+        };
+        let saved = crate::export::save_text(&format!("{name}.pgn"), document_pgn(study), cx);
+        window
+            .spawn(cx, async move |cx| {
+                let note = match saved.await {
+                    Some(Ok(())) => Notification::new().title("PGN saved"),
+                    Some(Err(cause)) => {
+                        Notification::error(format!("Couldn't save the PGN: {cause}"))
+                    }
+                    None => return,
+                };
+                let _ = cx.update(|window, cx| window.push_notification(note, cx));
+            })
+            .detach();
+    }
+
     /// Upload a study to Lichess: its changes to the cloud copy it came from, or as a new study.
     fn upload(&mut self, id: String, copy: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(account) = crate::accounts::handle(cx).read(cx).active(cx) else {
@@ -593,11 +622,12 @@ impl StudiesPage {
             .icon(icon("ellipsis-vertical"))
             .accessibility_label(format!("Actions for {name}"))
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                let (open, drill, rename, duplicate, copy, upload, remove) = (
+                let (open, drill, rename, duplicate, copy, save, upload, remove) = (
                     id.clone(),
                     id.clone(),
                     study.clone(),
                     id.clone(),
+                    study.clone(),
                     study.clone(),
                     id.clone(),
                     id.clone(),
@@ -633,6 +663,11 @@ impl StudiesPage {
                         PopupMenuItem::new("Copy PGN")
                             .icon(icon("file-text"))
                             .on_click(move |_, window, cx| Self::copy_pgn(&copy, window, cx)),
+                    )
+                    .item(
+                        PopupMenuItem::new("Save PGN…")
+                            .icon(icon("download"))
+                            .on_click(move |_, window, cx| Self::save_pgn(&save, window, cx)),
                     );
                 let menu = if can_copy {
                     menu.item(
