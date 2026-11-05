@@ -462,3 +462,35 @@ fn a_lichess_game_steps_to_the_next_and_previous(cx: &mut gpui_kit::TestAppConte
     wait_open(&mut app, 1);
     assert!(open(&mut app).0.is_some());
 }
+
+/// The computer and board games are searched by opponent or opening, as the Lichess games are.
+#[gpui_kit::test]
+fn board_games_are_searched_by_opponent_or_opening(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = mate_in_history(cx);
+    // A second game, 1. e4 alone: a King's Pawn Game, but no Wayward Queen Attack.
+    app.open("Over the board");
+    app.click("local-new");
+    app.click("start-local");
+    app.wait_for_moves(&[]);
+    play_over_the_board(&mut app, &["e4"]);
+    app.open("Game history");
+    app.find(("history-row", 1usize));
+
+    app.click_label("Search by opponent or opening");
+    app.type_text("wayward");
+    app.wait_for("one game found", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find(("history-row", 1usize)).is_none()
+    });
+    app.click(("history-row", 0usize));
+    app.wait_for_moves(&SCHOLARS_MATE);
+    app.click("all-games");
+
+    // Nothing found: Show all games clears the search.
+    app.click_label("Search by opponent or opening");
+    app.type_text(" gambit");
+    app.find("show-all");
+    assert!(!app.shows(("history-row", 0usize)));
+    app.click("show-all");
+    app.find(("history-row", 1usize));
+}

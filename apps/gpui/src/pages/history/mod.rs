@@ -1,9 +1,11 @@
 //! Game history: the games played against the
-//! computer and over the board, filtered by result, twenty to a page, each opened to go through
+//! computer and over the board, filtered by result and searched by opponent or opening, twenty to a
+//! page, each opened to go through
 //! move by move, exported as PGN or deleted.
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex};
@@ -233,6 +235,12 @@ pub struct HistoryPage {
     open: Option<(Value, Entity<GameReplay>)>,
     message: Option<SharedString>,
     redo: Option<Redo>,
+    /// Part of an opponent's or an opening's name the computer and board games are searched
+    /// for; blank is none.
+    search: String,
+    search_input: Entity<InputState>,
+    /// Each game's opening (`openingAt`), by its id and length, worked out once.
+    openings: std::cell::RefCell<std::collections::HashMap<(String, usize), Option<String>>>,
     /// The Lichess tab: synced games, their filters and the game open.
     lichess: lichess::LichessTab,
     /// The Bookmarks tab: the games, once read, or why they are not.
@@ -255,10 +263,27 @@ impl HistoryPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> HistoryPage {
         let played = cx.global::<PlayedHandle>().0.clone();
         let (lichess, mut subscriptions) = lichess::new_tab(window, cx);
+        let search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Opponent or opening"));
+        subscriptions.push(
+            cx.subscribe(&search_input, |this, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let search = input.read(cx).value().trim().to_string();
+                    if search != this.search {
+                        this.search = search;
+                        this.page = 0;
+                        cx.notify();
+                    }
+                }
+            }),
+        );
         subscriptions.push(cx.observe(&played, |this, _, cx| {
             // A deleted game closes; the pages left shrink with the list.
             if let Some((game, _)) = &this.open
-                && !this.games(cx).iter().any(|entry| entry["id"] == game["id"])
+                && !this
+                    .all_games(cx)
+                    .iter()
+                    .any(|entry| entry["id"] == game["id"])
             {
                 this.open = None;
             }
@@ -271,6 +296,9 @@ impl HistoryPage {
             open: None,
             message: None,
             redo: None,
+            search: String::new(),
+            search_input,
+            openings: Default::default(),
             lichess,
             bookmarks: None,
             bookmarks_error: None,
@@ -282,8 +310,54 @@ impl HistoryPage {
         }
     }
 
-    /// The games of the source shown, newest first.
+    /// A game's opening, as `C40 King's Knight Opening`, in standard chess.
+    fn opening(&self, game: &Value) -> Option<String> {
+        if game["setup"]["variant"].as_str().unwrap_or("standard") != "standard" {
+            return None;
+        }
+        let moves = game["moves"].as_array().map_or(0, Vec::len);
+        let key = (text(game, "id").to_string(), moves);
+        self.openings
+            .borrow_mut()
+            .entry(key)
+            .or_insert_with(|| {
+                let opening =
+                    rules("openingAt", &[game["setup"].clone(), game["moves"].clone()]).ok()?;
+                Some(format!(
+                    "{} {}",
+                    opening["eco"].as_str()?,
+                    opening["name"].as_str()?
+                ))
+            })
+            .clone()
+    }
+
+    /// Whether a game's opponent (or players) or opening has the searched text in it.
+    fn found(&self, game: &Value) -> bool {
+        if self.search.is_empty() {
+            return true;
+        }
+        let wanted = self.search.to_lowercase();
+        [
+            Some(text(game, "white").to_string()),
+            Some(text(game, "black").to_string()),
+            self.opening(game),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|name| name.to_lowercase().contains(&wanted))
+    }
+
+    /// The games of the source shown, newest first, that the search finds.
     fn games(&self, cx: &App) -> Vec<Value> {
+        self.all_games(cx)
+            .into_iter()
+            .filter(|game| self.found(game))
+            .collect()
+    }
+
+    /// Every game of the source shown, newest first.
+    fn all_games(&self, cx: &App) -> Vec<Value> {
         let mut games: Vec<Value> = cx
             .global::<PlayedHandle>()
             .0
@@ -523,6 +597,12 @@ impl HistoryPage {
                 }))
                 .into_any_element(),
         }
+    }
+
+    fn clear_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.clear();
+        self.search_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
     }
 
     fn choose_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
@@ -879,7 +959,7 @@ impl HistoryPage {
 
     fn render_list(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
         let games = self.games(cx);
-        if games.is_empty() {
+        if games.is_empty() && self.all_games(cx).is_empty() {
             let (label, page) = if self.source == Source::Computer {
                 ("Play the computer", Page::Computer)
             } else {
@@ -1007,7 +1087,13 @@ impl HistoryPage {
                 let id = text(&game, "id").to_string();
                 let clock = text(&game, "source") == "clock";
                 let side = player_side(&game);
-                let details = details(&game);
+                // Why it ended, and the opening it reached, as a Lichess game's line has.
+                let details = [Some(details(&game)), self.opening(&game)]
+                    .into_iter()
+                    .flatten()
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ");
                 let variant = game["setup"]["variant"].as_str().unwrap_or("standard");
                 let mut kind = time_label(text(&game, "timeControl"));
                 if variant != "standard" {
@@ -1145,13 +1231,14 @@ impl HistoryPage {
                             div()
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(palette.highlighted)
-                                .child("No games match this filter"),
+                                .child("No games match"),
                         )
                         .child(
                             Button::new("show-all")
                                 .outline()
                                 .label("Show all games")
-                                .on_click(cx.listener(|this, _, _, cx| {
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.clear_search(window, cx);
                                     this.choose_filter(Filter::All, cx)
                                 })),
                         ),
@@ -1160,7 +1247,17 @@ impl HistoryPage {
             .when(pages > 1, |card| card.child(self.pager(current, pages, cx)));
         v_flex()
             .gap(px(16.))
-            .child(h_flex().child(filter_tabs))
+            .child(
+                h_flex().flex_wrap().gap(px(12.)).child(filter_tabs).child(
+                    div().w(px(200.)).child(
+                        Input::new(&self.search_input)
+                            .small()
+                            .cleanable(true)
+                            .prefix(icon("search").size(px(14.)))
+                            .aria_label("Search by opponent or opening"),
+                    ),
+                ),
+            )
             .child(list)
             .into_any_element()
     }
