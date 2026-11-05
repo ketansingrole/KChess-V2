@@ -24,7 +24,8 @@ Commands:
   call <method> --args-file <path> Read arguments from a JSON file
   analyze [--variant name] <fen|startpos|moves>
                                    Stream engine analysis as JSON lines until Ctrl-C
-  play [level] [white|black|random] Play Stockfish; type moves in SAN or UCI
+  play [level] [white|black|random] [variant]
+                                   Play Stockfish; type moves in SAN or UCI
   local [variant]                  Play over the board (chess960, crazyhouse, atomic…)
   puzzle [id|link]                 Solve the daily puzzle, or that one (hint, solution)
   pgn <link>                       Print a Lichess game's PGN, or a public study chapter's
@@ -266,10 +267,10 @@ async fn run(argv: &[String]) -> Result<(), String> {
             }
             "play" | "local" => {
                 let computer = command == "play";
-                let ((level, color), variant) = if computer {
-                    (play::choices(&args[1..])?, None)
+                let (level, color, variant) = if computer {
+                    play::choices(&args[1..])?
                 } else {
-                    ((None, None), play::local_variant(&args[1..])?)
+                    (None, None, play::local_variant(&args[1..])?)
                 };
                 play::interactive(&core, &mut events, computer, level, color, variant).await?;
             }

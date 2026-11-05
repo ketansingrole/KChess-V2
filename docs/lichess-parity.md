@@ -108,9 +108,11 @@ can add them as a friend, challenge them or watch their current game.
 
 - **Computer games**: _Game options_ starts from the standard position, a Chess960 position
   (numbered, or random), another variant (King of the Hill, Three-check, Antichess, Atomic,
-  Horde, Racing Kings or Crazyhouse, played by the bundled Fairy-Stockfish) or any FEN, with an optional clock (the engine's thinking time is kept
-  within its clock), a colour and a strength. The editor and analysis board both have _Play
-  Stockfish from here_.
+  Horde, Racing Kings or Crazyhouse, played by the bundled Fairy-Stockfish) or any FEN, with an
+  optional clock (the engine's thinking time is kept within its clock), a colour and a strength.
+  The editor and analysis board both have _Play Stockfish from here_; on the analysis board it
+  plays on in the game's variant. On the command line, `kchess-cli play [level] [colour]
+  [variant]`.
 - **Over the board**: two players at one computer in any supported variant. It has optional
   clocks with time odds, _Turn the board_, takeback, draw and resign, and PGN, GIF and analysis
   export. The **Chess clock** mode is a full-screen clock for a real board (Space presses it,

@@ -293,11 +293,19 @@ impl Session<'_> {
                 .map_err(|cause| cause.to_string())?
         };
         self.reset_history().await;
-        let Game::Local(game) = &mut self.game else {
-            return Ok(());
-        };
-        let clock = game.state["clock"].clone();
-        game.start(json!({ "variant": variant, "fen": fen }), clock, now)?;
+        let setup = json!({ "variant": variant, "fen": fen });
+        let host = self.host();
+        match &mut self.game {
+            Game::Local(game) => {
+                let clock = game.state["clock"].clone();
+                game.start(setup, clock, now)?;
+            }
+            // Fairy-Stockfish plays the other variants.
+            Game::Computer(game) => {
+                let clock = game.state["clock"].clone();
+                game.start(Some(setup), Some(clock), &host)?;
+            }
+        }
         self.persist().await;
         Ok(())
     }
@@ -482,17 +490,25 @@ fn wall_now() -> f64 {
         .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0)
 }
 
-/// `play`'s level and colour, in either order: `play 5 black`, `play black`.
-pub fn choices(words: &[String]) -> Result<(Option<String>, Option<String>), String> {
-    let (mut level, mut color) = (None, None);
+/// What `play` was given: a level, a colour and a variant.
+pub type Choices = (Option<String>, Option<String>, Option<String>);
+
+/// `play`'s level, colour and variant, in any order: `play 5 black`, `play black crazyhouse`.
+pub fn choices(words: &[String]) -> Result<Choices, String> {
+    let (mut level, mut color, mut variant) = (None, None, None);
     for word in words {
-        match word.as_str() {
-            "white" | "black" | "random" if color.is_none() => color = Some(word.clone()),
+        let known = kchess_domain::misc::constants::VARIANTS
+            .iter()
+            .find(|key| key.eq_ignore_ascii_case(word));
+        match (word.as_str(), known) {
+            ("white" | "black" | "random", _) if color.is_none() => color = Some(word.clone()),
+            (_, Some(key)) if variant.is_none() => variant = Some((*key).to_string()),
+            (other, Some(_)) => return Err(format!("Unexpected argument {other}.")),
             _ if level.is_none() => level = Some(word.clone()),
-            other => return Err(format!("Unexpected argument {other}.")),
+            (other, _) => return Err(format!("Unexpected argument {other}.")),
         }
     }
-    Ok((level, color))
+    Ok((level, color, variant))
 }
 
 /// `local [variant]`: a variant as Lichess keys it, in any case (`crazyhouse`, `kingOfTheHill`).
@@ -540,8 +556,12 @@ pub async fn interactive(
 
         // The core still refuses engine help during a live game on every search.
         core.call("resumeOnline", vec![]).await?;
+        // Fairy-Stockfish plays the other variants; the core says so if it is missing.
+        let fairy = variant
+            .as_deref()
+            .is_some_and(|variant| !matches!(variant, "standard" | "chess960"));
         let engine = core.call("engineStatus", vec![]).await?;
-        if engine["ready"] != json!(true) {
+        if !fairy && engine["ready"] != json!(true) {
             return Err("Stockfish is unavailable. Install an engine or pass --engine.".into());
         }
         let host = computer::Host {
@@ -586,7 +606,7 @@ pub async fn interactive(
     if let Some(color) = color.filter(|_| computer) {
         session.choose_color(&color).await?;
     }
-    if let Some(variant) = variant.filter(|_| !computer) {
+    if let Some(variant) = variant {
         session.choose_variant(&variant).await?;
     }
     session.show();
@@ -673,15 +693,21 @@ mod tests {
     }
 
     #[test]
-    fn play_takes_a_level_and_a_colour_in_either_order() {
+    fn play_takes_a_level_a_colour_and_a_variant_in_any_order() {
         let some = |text: &str| Some(text.to_string());
-        assert_eq!(choices(&words(&[])), Ok((None, None)));
-        assert_eq!(choices(&words(&["club"])), Ok((some("club"), None)));
-        assert_eq!(choices(&words(&["black"])), Ok((None, some("black"))));
+        assert_eq!(choices(&words(&[])), Ok((None, None, None)));
+        assert_eq!(choices(&words(&["club"])), Ok((some("club"), None, None)));
+        assert_eq!(choices(&words(&["black"])), Ok((None, some("black"), None)));
         assert_eq!(
             choices(&words(&["random", "club"])),
-            Ok((some("club"), some("random")))
+            Ok((some("club"), some("random"), None))
+        );
+        // A variant, in any case and anywhere among them, is played by Fairy-Stockfish.
+        assert_eq!(
+            choices(&words(&["CrazyHouse", "black", "club"])),
+            Ok((some("club"), some("black"), some("crazyhouse")))
         );
         assert!(choices(&words(&["club", "black", "extra"])).is_err());
+        assert!(choices(&words(&["atomic", "horde"])).is_err());
     }
 }

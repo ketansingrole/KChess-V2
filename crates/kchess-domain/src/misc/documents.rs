@@ -271,11 +271,16 @@ fn decode_computer(raw: &J) -> Option<J> {
     let raw = object_or_none(raw)?;
     let version = integer_of(raw.get("version"));
     let setup_source = raw.get("setup").filter(|s| s.truthy());
+    // Another variant's FEN (Crazyhouse's pockets) may run as long as an over-the-board game's.
+    let limit = match variant_of(setup_source) {
+        Some("standard" | "chess960") | None => 100,
+        Some(_) => 120,
+    };
     // Version 1 games began at the standard start and had no clock.
     let (variant, fen) = match (
         version,
         variant_of(setup_source),
-        setup_source.and_then(|s| text_of(s.get("fen"), 100)),
+        setup_source.and_then(|s| text_of(s.get("fen"), limit)),
     ) {
         (Some(2.0), Some(variant), Some(fen)) => (variant, fen),
         _ => ("standard", STANDARD_FEN),
@@ -283,9 +288,7 @@ fn decode_computer(raw: &J) -> Option<J> {
     if !matches!(version, Some(v) if v == 1.0 || v == 2.0) {
         return None;
     }
-    if !(variant == "standard" || variant == "chess960") {
-        return None;
-    }
+    // Every variant: Fairy-Stockfish plays the others.
     let moves = playable(variant, fen, raw.get("moves"))?;
     let level = raw
         .get("level")
@@ -579,6 +582,37 @@ mod tests {
         assert_eq!(
             encode_session("archive:board", &identity).into_value(),
             identity.clone().into_value()
+        );
+    }
+
+    /// A computer game in another variant is kept (Fairy-Stockfish plays it), its moves checked
+    /// by that variant's rules: a Crazyhouse drop is a move, and the same drop in standard chess
+    /// is not. Such a game once could not be saved at all.
+    #[test]
+    fn a_computer_game_in_a_variant_is_kept_by_its_rules() {
+        let session = |variant: &str, fen: &str| {
+            serde_json::json!({
+                "setup": { "variant": variant, "fen": fen },
+                "moves": ["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"],
+                "ply": 5,
+                "level": "club",
+                "color": "white",
+            })
+        };
+        let zh = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+        let check = |value: serde_json::Value| {
+            assert_session(vec![
+                J::Str("computer".into()),
+                crate::misc::from_json(&value),
+            ])
+            .map(J::into_value)
+        };
+        let kept = check(session("crazyhouse", zh)).expect("a Crazyhouse game is kept");
+        assert_eq!(kept["setup"]["variant"], "crazyhouse");
+        assert_eq!(kept["moves"].as_array().map(Vec::len), Some(5));
+        assert_eq!(
+            check(session("standard", STANDARD_FEN)),
+            Err("This session cannot be saved.".into())
         );
     }
 

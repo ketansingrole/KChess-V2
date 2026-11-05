@@ -231,6 +231,11 @@ fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     app.click("ok");
     app.wait_for_moves(&["e4"]);
     assert_eq!(variant(&mut app).as_deref(), Some("crazyhouse"));
+    // The unfinished Crazyhouse game is kept (it once could not be saved).
+    let mut app = app.restart();
+    app.open("Play with computer");
+    app.wait_for_moves(&["e4"]);
+    assert_eq!(variant(&mut app).as_deref(), Some("crazyhouse"));
     // The dialog opens on the variant game being played.
     app.click("game-options");
     assert_eq!(app.find(("start", 2usize)).selected(), Some(true));
