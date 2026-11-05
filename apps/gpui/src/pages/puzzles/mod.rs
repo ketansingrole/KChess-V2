@@ -1166,10 +1166,7 @@ impl PuzzlesPage {
                 h_flex()
                     .gap(px(8.))
                     .child(
-                        Button::new("try-again")
-                            .primary()
-                            .icon(icon("rotate-cw"))
-                            .label("Try again")
+                        crate::widgets::try_again("try-again")
                             .on_click(cx.listener(|this, _, _, cx| this.load_next(cx))),
                     )
                     .when(Self::mode(cx) != "offline", |row| {

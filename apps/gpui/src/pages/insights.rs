@@ -636,10 +636,7 @@ impl Render for InsightsPage {
                 )
                 .child(
                     h_flex().child(
-                        Button::new("insights-retry")
-                            .primary()
-                            .icon(icon("rotate-cw"))
-                            .label("Try again")
+                        crate::widgets::try_again("insights-retry")
                             .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
                     ),
                 )

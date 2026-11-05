@@ -186,10 +186,7 @@ impl Render for DailyPuzzle {
                                 ),
                         )
                         .child(
-                            Button::new("daily-retry")
-                                .primary()
-                                .icon(icon("rotate-cw"))
-                                .label("Try again")
+                            crate::widgets::try_again("daily-retry")
                                 .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
                         ),
                 )

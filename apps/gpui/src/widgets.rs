@@ -672,6 +672,14 @@ pub fn text_button(id: impl Into<ElementId>) -> Button {
     Button::new(id).text().xsmall().min_h(px(24.))
 }
 
+/// The way out of a failed load that fills its place: one primary Try again.
+pub fn try_again(id: impl Into<ElementId>) -> Button {
+    Button::new(id)
+        .primary()
+        .icon(icon("rotate-cw"))
+        .label("Try again")
+}
+
 /// A load that failed inside a card: what went wrong, in `color`, and a small Try again.
 pub fn retry_line(
     id: &'static str,

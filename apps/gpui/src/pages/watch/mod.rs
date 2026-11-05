@@ -1002,17 +1002,15 @@ impl WatchPage {
             .child(
                 widgets::empty_state(icon("triangle-alert"), message, None, palette).child(
                     h_flex().justify_center().mt(px(8.)).child(
-                        Button::new("watch-try-again")
-                            .primary()
-                            .icon(icon("rotate-cw"))
-                            .label("Try again")
-                            .on_click(cx.listener(|this, _, window, cx| {
+                        crate::widgets::try_again("watch-try-again").on_click(cx.listener(
+                            |this, _, window, cx| {
                                 this.error = None;
                                 this.channels_error = None;
                                 this.load_channels(cx);
                                 this.stop(cx);
                                 this.resume(window, cx);
-                            })),
+                            },
+                        )),
                     ),
                 ),
             )

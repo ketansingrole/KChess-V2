@@ -2,11 +2,9 @@
 //! the core reads from the profile; when the core cannot read them, starting with defaults would
 //! write them over the profile at the next save, so the window says why instead, with Try again.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
 
-use crate::assets::icon;
 use crate::core::AppCore;
 
 /// The reads every model starts from.
@@ -109,10 +107,7 @@ impl Render for StartupScreen {
                     .child(self.error.clone()),
             )
             .child(
-                Button::new("startup-retry")
-                    .primary()
-                    .icon(icon("rotate-cw"))
-                    .label("Try again")
+                crate::widgets::try_again("startup-retry")
                     .on_click(cx.listener(|this, _, window, cx| this.retry(window, cx))),
             )
     }

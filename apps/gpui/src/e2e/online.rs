@@ -68,6 +68,10 @@ fn a_tournament_list_that_cannot_load_can_be_refreshed(cx: &mut gpui_kit::TestAp
     // The failure takes the list's place, without the key to a schedule that is not there.
     app.find("tournaments-error");
     assert!(!app.shows("tournaments-legend"));
+    // It offers to try again in its place, as the other pages' failed loads do.
+    app.click("tournaments-try-again");
+    wait_until_enabled(&mut app, "tournaments-refresh");
+    app.find("tournaments-try-again");
     app.click("tournaments-refresh");
     wait_until_enabled(&mut app, "tournaments-refresh");
 

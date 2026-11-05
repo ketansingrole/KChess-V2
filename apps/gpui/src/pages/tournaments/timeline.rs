@@ -1,6 +1,7 @@
 //! The arena schedule: one row per series, a bar per arena coloured by
 //! kind, the hours along the top and a line for now, scrolled to now when it opens.
 
+use gpui_kit::component::Disableable as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -234,17 +235,22 @@ impl TournamentsPage {
         palette: &Palette,
     ) -> AnyElement {
         let mut body = v_flex().gap(px(12.));
-        // With nothing listed, the failure takes the list's place; Refresh above asks again.
+        // With nothing listed, the failure takes the list's place, with the way to ask again.
         if let (None, Some(error)) = (&self.list, &self.error) {
             return widgets::card(palette)
                 .id("tournaments-error")
                 .test_support()
-                .child(widgets::empty_state(
-                    icon("triangle-alert"),
-                    error.clone(),
-                    None,
-                    palette,
-                ))
+                .child(
+                    widgets::empty_state(icon("triangle-alert"), error.clone(), None, palette)
+                        .child(
+                            h_flex().justify_center().mt(px(8.)).child(
+                                widgets::try_again("tournaments-try-again")
+                                    .loading(self.loading)
+                                    .disabled(self.loading)
+                                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                            ),
+                        ),
+                )
                 .into_any_element();
         }
         if let Some(error) = &self.error {
