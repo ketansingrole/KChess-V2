@@ -45,6 +45,16 @@ fn training() -> Training {
     })
 }
 
+/// What a run's buttons do, as Quick Pick offers them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum RushAction {
+    Start,
+    Skip,
+    End,
+    Again,
+    Back,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Stage {
     Menu,
@@ -875,10 +885,7 @@ impl PuzzleRush {
                                 .on_click(cx.listener(|this, _, _, cx| this.start(cx))),
                         )
                         .child(Button::new("rush-back").outline().label("Back").on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.stage = Stage::Menu;
-                                cx.notify();
-                            }),
+                            cx.listener(|this, _, _, cx| this.act(RushAction::Back, cx)),
                         )),
                 );
         }
@@ -898,6 +905,52 @@ impl PuzzleRush {
                 self.render_menu(storm, window, cx, &palette)
             }
             Stage::Running | Stage::Over => self.render_run(window, cx, &palette),
+        }
+    }
+
+    /// The buttons shown now that would do something.
+    pub(crate) fn actions(&self, cx: &App) -> Vec<RushAction> {
+        match self.stage {
+            Stage::Menu => {
+                let ready = cx
+                    .global::<crate::puzzle_db::PuzzleDbHandle>()
+                    .0
+                    .read(cx)
+                    .installed();
+                if ready {
+                    vec![RushAction::Start]
+                } else {
+                    Vec::new()
+                }
+            }
+            Stage::Loading => Vec::new(),
+            Stage::Running => {
+                let skips = self.config()["skips"].as_f64().unwrap_or_default();
+                let left = self.state["skipsLeft"].as_f64().unwrap_or_default();
+                let mut actions = Vec::new();
+                if skips > 0. && left > 0. && !self.locked {
+                    actions.push(RushAction::Skip);
+                }
+                actions.push(RushAction::End);
+                actions
+            }
+            Stage::Over => vec![RushAction::Again, RushAction::Back],
+        }
+    }
+
+    /// Run an action as its button does, if it is still allowed.
+    pub(crate) fn act(&mut self, action: RushAction, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&action) {
+            return;
+        }
+        match action {
+            RushAction::Start | RushAction::Again => self.start(cx),
+            RushAction::Skip => self.skip(cx),
+            RushAction::End => self.end_run(cx),
+            RushAction::Back => {
+                self.stage = Stage::Menu;
+                cx.notify();
+            }
         }
     }
 

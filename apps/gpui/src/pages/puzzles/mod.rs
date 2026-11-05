@@ -29,6 +29,7 @@ use crate::theme::{Palette, radii, tint};
 mod daily;
 mod history;
 mod rush;
+pub(crate) use rush::RushAction;
 mod stats;
 
 use crate::widgets::{self, Choice, Pill, Tone};
@@ -176,6 +177,8 @@ pub(crate) enum Action {
     Solution,
     Flip,
     Next,
+    /// A Storm, Streak or Rush run's own buttons.
+    Rush(RushAction),
 }
 
 pub struct PuzzlesPage {
@@ -1556,8 +1559,23 @@ impl PuzzlesPage {
         }
     }
 
+    /// The Storm · Streak · Rush view, while its tab is shown.
+    fn shown_rush(&self, cx: &App) -> Option<Entity<rush::PuzzleRush>> {
+        (crate::prefs::get::<String>(cx, TAB, "train".into()) == "rush")
+            .then(|| self.rush.clone())
+            .flatten()
+    }
+
     /// The actions the shown puzzle's buttons allow now.
     pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
+        if let Some(rush) = self.shown_rush(cx) {
+            return rush
+                .read(cx)
+                .actions(cx)
+                .into_iter()
+                .map(Action::Rush)
+                .collect();
+        }
         let Some((board, train)) = self.shown_board(cx) else {
             return Vec::new();
         };
@@ -1577,6 +1595,12 @@ impl PuzzlesPage {
         if !self.actions(cx).contains(&action) {
             return;
         }
+        if let Action::Rush(action) = action {
+            if let Some(rush) = self.shown_rush(cx) {
+                rush.update(cx, |rush, cx| rush.act(action, cx));
+            }
+            return;
+        }
         let Some((board, _)) = self.shown_board(cx) else {
             return;
         };
@@ -1585,6 +1609,7 @@ impl PuzzlesPage {
             Action::Solution => board.update(cx, |board, cx| board.show_solution(cx)),
             Action::Flip => board.update(cx, |board, cx| board.flip(cx)),
             Action::Next => self.load_next(cx),
+            Action::Rush(_) => {}
         }
     }
 

@@ -679,6 +679,20 @@ fn puzzle_commands(cx: &App) -> Vec<Command> {
             Action::Solution => ("solution", "Solution", "eye", "show answer give up"),
             Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
             Action::Next => ("next", "Next puzzle", "arrow-right", "another skip"),
+            Action::Rush(action) => {
+                use crate::pages::puzzles::RushAction;
+                match action {
+                    RushAction::Start => {
+                        ("rush-start", "Start run", "play", "storm streak rush begin")
+                    }
+                    RushAction::Skip => ("rush-skip", "Skip puzzle", "skip-forward", "pass"),
+                    RushAction::End => ("rush-end", "End run", "flag", "stop finish quit"),
+                    RushAction::Again => {
+                        ("rush-again", "Play again", "rotate-ccw", "restart retry")
+                    }
+                    RushAction::Back => ("rush-back", "Back to modes", "arrow-left", "menu"),
+                }
+            }
         },
         |page: &mut PuzzlesPage, action, _, cx| page.act(action, cx),
     )

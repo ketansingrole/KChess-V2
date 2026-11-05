@@ -183,3 +183,47 @@ fn quick_pick_shows_the_solution(cx: &mut gpui_kit::TestAppContext) {
             .is_some()
     });
 }
+
+/// A Storm run starts, ends and goes back to the modes from Quick Pick, offering only what its
+/// buttons do: Storm has no skips.
+#[gpui_kit::test]
+fn quick_pick_starts_and_ends_a_storm_run(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start_with(cx, |profile| {
+        // A mate in one, at every rating the run's ladder climbs through.
+        let rows: Vec<_> = (0..40)
+            .map(|index| kchess_core::puzzles::queries::DbPuzzle {
+                id: format!("fixture{index:02}"),
+                fen: "6k1/5ppp/8/8/8/8/5PPP/3R2K1 b - - 0 1".into(),
+                moves: "g8h8 d1d8".into(),
+                rating: 800. + f64::from(index) * 50.,
+                plays: Some(100.),
+                themes: "mateIn1 backRankMate".into(),
+                openings: String::new(),
+                game_id: String::new(),
+            })
+            .collect();
+        kchess_core::puzzles::write_database(profile, &rows).expect("the fixture's puzzles");
+    });
+    app.open("Puzzles");
+    tab(&mut app, 2);
+    app.wait_for("the downloaded puzzles", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("rush-start")
+            .is_some_and(|start| start.disabled() != Some(true))
+    });
+    let run = |app: &mut Harness, label: &str| {
+        app.press("secondary-k");
+        app.type_text(&format!(">{label}"));
+        super::palette::wait_for_first(app, label);
+        app.press("enter");
+        super::palette::wait_until_closed(app);
+    };
+    run(&mut app, "Start run");
+    app.find("rush-end");
+    assert!(!app.shows("rush-skip"));
+    run(&mut app, "End run");
+    app.find("rush-again");
+    run(&mut app, "Back to modes");
+    app.find("rush-start");
+}
