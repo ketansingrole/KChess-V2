@@ -2903,7 +2903,7 @@ impl AnalysisPage {
                 .text_size(px(13.))
                 .text_center()
                 .text_color(palette.text_muted)
-                .child("Make a move on the board, or import a game. Variations are kept as you explore.")
+                .child("Make a move on the board, or import a game")
                 .into_any_element();
         }
         let view = TreeView {
@@ -2923,10 +2923,48 @@ impl AnalysisPage {
         };
         let mut pieces = Vec::new();
         view.line(&self.root, "", None, 0, &mut pieces);
-        flow(pieces)
-            .text_size(px(13.))
-            .line_height(relative(1.9))
+        v_flex()
+            .children(self.opening(cx).map(|opening| {
+                div()
+                    .id("analysis-opening")
+                    .test_support()
+                    .px(px(4.))
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(palette.text_muted)
+                    .aria_label(opening.clone())
+                    .child(opening)
+            }))
+            .child(flow(pieces).text_size(px(13.)).line_height(relative(1.9)))
             .into_any_element()
+    }
+
+    /// The opening the moves up to the one shown reached, as the game pages name it
+    /// (`openingAt`): only in standard chess, and while Settings show opening names.
+    fn opening(&self, cx: &App) -> Option<String> {
+        let shown = cx
+            .global::<SettingsHandle>()
+            .0
+            .read(cx)
+            .settings
+            .frontend
+            .show_opening_name;
+        if !shown || self.root.variant() != "standard" {
+            return None;
+        }
+        let opening = rules(
+            "openingAt",
+            &[
+                json!({ "variant": "standard", "fen": self.root.fen }),
+                json!(moves_of(&self.path)),
+            ],
+        )
+        .ok()?;
+        Some(format!(
+            "{} {}",
+            opening["eco"].as_str()?,
+            opening["name"].as_str()?
+        ))
     }
 
     /// First, previous, next and last move, flip, import, and the rest in a menu.

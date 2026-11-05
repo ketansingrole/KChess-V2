@@ -69,6 +69,33 @@ fn clipboard(app: &mut Harness) -> Option<String> {
     app.cx.read_from_clipboard().and_then(|item| item.text())
 }
 
+/// The move list names the opening the moves up to the shown one reached, as the game pages do,
+/// and not once Settings hide opening names.
+#[gpui_kit::test]
+fn the_move_list_names_the_opening(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.drag_square("e7", "e5", true);
+    app.drag_square("g1", "f3", true);
+    assert_eq!(
+        app.find("analysis-opening").label(),
+        Some("C40 King's Knight Opening")
+    );
+    // Back a move: the opening as it stood then.
+    app.press("left");
+    assert_eq!(
+        app.find("analysis-opening").label(),
+        Some("C20 King's Pawn Game")
+    );
+    app.cx
+        .update(|cx| crate::settings::change(cx, |s| s.frontend.show_opening_name = false));
+    app.wait_for("the name to go", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find("analysis-opening").is_none()
+    });
+}
+
 #[gpui_kit::test]
 fn moves_played_on_the_board_fill_the_move_list(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
