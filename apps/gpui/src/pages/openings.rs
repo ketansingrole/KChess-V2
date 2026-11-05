@@ -454,7 +454,7 @@ impl OpeningsPage {
             .map_or_else(|| STANDARD_FEN.to_string(), |(_, _, fen)| fen.clone());
         let shown = line.clone();
         self.explorer.update(cx, |explorer, cx| {
-            explorer.show(&fen, Some(shown), false, cx)
+            explorer.show(None, &fen, Some(shown), false, cx)
         });
         self.line = Some(line);
         self.redraw(cx);

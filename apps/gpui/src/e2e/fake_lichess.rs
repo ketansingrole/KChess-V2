@@ -192,6 +192,8 @@ fn response_complete(response: &[u8]) -> bool {
 struct Request {
     method: String,
     path: String,
+    /// The query, still percent-encoded.
+    query: String,
     login: Option<String>,
     body: String,
 }
@@ -201,7 +203,11 @@ fn read_request(socket: &mut BufReader<TcpStream>) -> Option<Request> {
     socket.read_line(&mut line).ok()?;
     let mut parts = line.split_whitespace();
     let method = parts.next()?.to_string();
-    let path = parts.next()?.split('?').next()?.to_string();
+    let (path, query) = {
+        let target = parts.next()?;
+        let (path, query) = target.split_once('?').unwrap_or((target, ""));
+        (path.to_string(), query.to_string())
+    };
     let (mut length, mut login) = (0usize, None);
     loop {
         let mut header = String::new();
@@ -226,6 +232,7 @@ fn read_request(socket: &mut BufReader<TcpStream>) -> Option<Request> {
     Some(Request {
         method,
         path,
+        query,
         login,
         body: String::from_utf8_lossy(&body).into_owned(),
     })
@@ -292,6 +299,22 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         return ndjson(&mut out);
     }
     // Name search is public: a few players whatever is typed, one of them online.
+    // The opening explorer's Lichess database: a Crazyhouse position's drop, or the usual 1. e4.
+    if request.path == "/explorer/lichess" {
+        let crazyhouse = request
+            .query
+            .split('&')
+            .any(|pair| pair == "variant=crazyhouse");
+        let uci = if crazyhouse { "P@e3" } else { "e2e4" };
+        return reply(
+            &mut out,
+            &json!({
+                "white": 70, "draws": 10, "black": 20,
+                "moves": [{ "uci": uci, "white": 70, "draws": 10, "black": 20 }],
+                "topGames": [], "recentGames": [],
+            }),
+        );
+    }
     if request.path == "/api/player/autocomplete" {
         return reply(
             &mut out,

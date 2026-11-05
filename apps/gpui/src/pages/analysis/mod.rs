@@ -532,7 +532,7 @@ impl AnalysisPage {
     }
 
     /// Whether the game on the board is played by standard rules (standard chess or Chess960):
-    /// the explorer, cloud evaluation, the editor and games started from a position are theirs.
+    /// cloud evaluation and the editor are theirs.
     fn standard_rules(&self) -> bool {
         crate::game::standard_rules(self.root.variant())
     }
@@ -2567,14 +2567,11 @@ impl AnalysisPage {
 
     /// `.panel-tabs`: the tool under the engine, one at a time.
     fn render_tabs(&self, tool: Tool, palette: &Palette) -> impl IntoElement {
-        let mut tabs = vec![
+        let tabs = [
             (Tool::Moves, "Moves", icon("list-tree")),
             (Tool::Review, "Review", icon("chart-line")),
+            (Tool::Explorer, "Explorer", icon("book-open-text")),
         ];
-        // The opening explorer is standard chess's.
-        if self.standard_rules() {
-            tabs.push((Tool::Explorer, "Explorer", icon("book-open-text")));
-        }
         h_flex()
             .flex_none()
             .gap(px(4.))
@@ -2825,10 +2822,7 @@ impl AnalysisPage {
     /// or the move box redrawing reuses it.
     fn render_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let palette = *cx.global::<Palette>();
-        let tool = match Tool::of(&crate::prefs::get::<String>(cx, TOOL, "moves".into())) {
-            Tool::Explorer if !self.standard_rules() => Tool::Moves,
-            tool => tool,
-        };
+        let tool = Tool::of(&crate::prefs::get::<String>(cx, TOOL, "moves".into()));
         let allowed = Self::assistance_allowed(cx);
         let board_size = self.board_size(window);
         let tool_body: AnyElement = match tool {
@@ -2920,8 +2914,10 @@ impl AnalysisPage {
                         .into_any_element(),
                     None => {
                         let (fen, opened) = (self.node().fen.clone(), !self.explorer_open);
-                        self.explorer
-                            .update(cx, |explorer, cx| explorer.show(&fen, None, opened, cx));
+                        let variant = self.root.variant().to_string();
+                        self.explorer.update(cx, |explorer, cx| {
+                            explorer.show(Some(&variant), &fen, None, opened, cx)
+                        });
                         div()
                             .id("analysis-explorer")
                             .flex_1()

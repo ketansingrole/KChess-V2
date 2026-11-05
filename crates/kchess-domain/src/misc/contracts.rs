@@ -532,6 +532,24 @@ pub fn check(scope: Scope, method: &str, args: &[J]) -> Result<(), String> {
         )
         .map(|_| ());
     }
+    // `positionLookup(kind, fen, { variant })`: a variant's position is checked by its own rules.
+    if method == "positionLookup"
+        && let Some(J::Obj(options)) = args.get(2)
+        && let Some((_, J::Str(variant))) = options.iter().find(|(key, _)| key == "variant")
+        && variant != "standard"
+    {
+        run_check(Valid("assertLookupKind"), &args[0])?;
+        run_check(Valid("assertLookupOptions"), &args[2])?;
+        return apply(
+            "assertAnalysisRequest",
+            vec![J::Obj(vec![
+                ("fen".into(), args[1].clone()),
+                ("lines".into(), J::Num(1.0)),
+                ("variant".into(), J::Str(variant.clone())),
+            ])],
+        )
+        .map(|_| ());
+    }
     let absent = J::Undef;
     for (index, check) in checks.iter().enumerate() {
         run_check(*check, args.get(index).unwrap_or(&absent))?;
@@ -647,6 +665,30 @@ mod tests {
         assert_eq!(
             check(Scope::Ipc, "unknownMethod", &[]),
             Err("Invalid argument count for unknownMethod.".into())
+        );
+    }
+
+    /// A variant's position is looked up by its own rules: a Crazyhouse FEN with its pockets
+    /// passes with its variant and is refused without one; an unknown variant is refused.
+    #[test]
+    fn a_position_lookup_checks_a_variant_position_by_its_rules() {
+        let zh = json!("rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3");
+        let lookup = |fen: &Value, options: Value| {
+            validate_arguments("positionLookup", &[json!("opening"), fen.clone(), options])
+        };
+        assert_eq!(
+            lookup(&zh, json!({ "variant": "crazyhouse" })),
+            Some(Ok(()))
+        );
+        assert!(matches!(lookup(&zh, json!({})), Some(Err(_))));
+        assert!(matches!(
+            lookup(&zh, json!({ "variant": "bughouse" })),
+            Some(Err(_))
+        ));
+        let start = json!("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        assert_eq!(
+            lookup(&start, json!({ "variant": "standard" })),
+            Some(Ok(()))
         );
     }
 

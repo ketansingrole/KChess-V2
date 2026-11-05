@@ -598,9 +598,9 @@ fn a_variant_game_is_played_by_its_own_rules(cx: &mut gpui_kit::TestAppContext) 
         shown_fen(&mut app),
         "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
     );
-    // Fairy-Stockfish reviews the game; the opening explorer is standard chess's.
+    // Fairy-Stockfish reviews the game; Lichess's database holds Atomic games too.
     assert!(app.shows("Review"));
-    assert!(!app.shows("Explorer"));
+    assert!(app.shows("Explorer"));
     wait_for_search(&mut app);
 }
 
@@ -655,6 +655,30 @@ fn a_crazyhouse_drop_is_played_from_the_pocket(cx: &mut gpui_kit::TestAppContext
                     .starts_with("rnb1kbnr/ppp1pppp/8/3q4/8/4P3/PPPP1PPP/")
         })
     });
+}
+
+/// The explorer looks a variant's position up in Lichess's games of that variant, offers only the
+/// databases that hold them, and plays a drop it lists.
+#[gpui_kit::test]
+fn the_explorer_looks_up_a_crazyhouse_position_in_its_variant(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Analysis board");
+    app.find("chess-board");
+    import(
+        &mut app,
+        "[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 *",
+    );
+    app.wait_gone("import-run");
+    app.click("tree-e2e4 d7d5 e4d5 d8d5");
+    app.click("Explorer");
+    app.click("explorer-lookup");
+    app.wait_for("the Crazyhouse continuation", |window, _| {
+        window.try_find_by_label("Play P@e3").is_some()
+    });
+    assert!(app.with_window(|window, _| window.try_find_by_label("Masters").is_none()));
+    app.click_label("Play P@e3");
+    app.click("Moves");
+    assert_eq!(selected(&mut app, "e2e4 d7d5 e4d5 d8d5 P@e3"), Some(true));
 }
 
 /// A public Lichess study's link imports the chapter it names, or the study's first, in its own

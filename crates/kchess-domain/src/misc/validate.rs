@@ -1847,6 +1847,8 @@ struct LookupOptions {
     modes: Option<Vec<GameMode>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     since: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1903,6 +1905,9 @@ fn assert_lookup_options(value: J) -> Checked<LookupOptions> {
             "since",
             "a year or a year and month",
         )?;
+    }
+    if let Some(variant) = &options.variant {
+        one_of(variant, VARIANTS, Some("Invalid variant."), "variant")?;
     }
     Ok(options)
 }

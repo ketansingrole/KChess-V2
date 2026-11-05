@@ -67,15 +67,16 @@ can add them as a friend, challenge them or watch their current game.
 - **Opening explorer** with the Lichess, **Masters** and **Player** databases, and the
   tablebase. Filters: speeds, rating groups, player and colour, and a since date. The Masters
   and Player databases list notable games, which open on the analysis board. A _Follow moves_
-  switch refreshes the explorer as you move.
+  switch refreshes the explorer as you move. A variant game is looked up in Lichess's games of
+  that variant (the Lichess and Player databases).
 - **Lichess cloud evaluation**: Lichess's stored deep evaluation of the position, shown beside
   the local engine, or in its place when Stockfish is off. It is off by default because every
   position is sent to Lichess. Settings → Analysis, or the cloud button in the engine panel.
 - **Variant analysis**: Crazyhouse, Atomic, Antichess, Horde, King of the Hill, Racing Kings and
   Three-check games open on the analysis board in their own rules, with the Crazyhouse pockets
   beside the board, and the bundled Fairy-Stockfish analyses and reviews them (accuracy, faulted
-  moves and the eval chart, judged by the variant's own wins). The explorer, cloud evaluation and
-  mistake drills cover standard chess and Chess960. On the command line,
+  moves and the eval chart, judged by the variant's own wins). Cloud evaluation and mistake drills
+  cover standard chess and Chess960. On the command line,
   `kchess-cli analyze --variant crazyhouse <fen|moves>` and `kchess-cli review` (a PGN with its
   `Variant` header) do the same.
 - **Opening names** from Lichess's CC0 opening list, bundled with the app, in every game view.

@@ -584,6 +584,113 @@ async fn reads_the_last_snapshot_of_the_player_database_and_keys_its_cache_by_fi
     assert!(error.message.contains("whose games"));
 }
 
+/// The Lichess database answers for every variant: a Crazyhouse position is asked in its
+/// variant, its drops are checked by Crazyhouse rules, and it is cached apart from standard chess.
+#[tokio::test]
+async fn asks_the_lichess_database_in_a_variant_and_checks_its_moves_by_that_variant() {
+    const ZH: &str = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[P] w KQkq - 0 3";
+    let fixture = serve(|seen: &Seen| {
+        let body = if seen.query("variant").as_deref() == Some("crazyhouse") {
+            json!({
+                "moves": [
+                    { "uci": "P@e4", "white": 5, "draws": 0, "black": 1 },
+                    { "uci": "b1c3", "white": 9, "draws": 1, "black": 3 },
+                ],
+                "recentGames": [],
+            })
+        } else {
+            opening_body()
+        };
+        Reply::Json(200, body.to_string())
+    })
+    .await;
+    let lookups = lookups(&fixture.base, 1_000);
+    let zh = lookups
+        .service
+        .lookup(
+            &json!("opening"),
+            &json!(ZH),
+            Some(&json!({ "variant": "crazyhouse" })),
+        )
+        .await
+        .unwrap();
+    let sans: Vec<&str> = zh
+        .data
+        .moves
+        .iter()
+        .map(|entry| entry.san.as_str())
+        .collect();
+    assert_eq!(sans, ["P@e4", "Nc3"]);
+    let url = &fixture.requests()[0];
+    assert_eq!(url.query("variant").as_deref(), Some("crazyhouse"));
+    // Read again from the cache, under its own key.
+    let again = lookups
+        .service
+        .lookup(
+            &json!("opening"),
+            &json!(ZH),
+            Some(&json!({ "variant": "crazyhouse" })),
+        )
+        .await
+        .unwrap();
+    assert!(again.cached);
+    let standard = lookups
+        .service
+        .lookup(
+            &json!("opening"),
+            &json!(INITIAL),
+            Some(&json!({ "variant": "standard" })),
+        )
+        .await
+        .unwrap();
+    assert_eq!(standard.data.moves[0].san, "e4");
+    assert_eq!(
+        fixture.requests()[1].query("variant").as_deref(),
+        Some("standard")
+    );
+    let keys: Vec<String> = lookups
+        .cache
+        .values
+        .lock()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    assert!(keys.contains(&format!("opening:{INITIAL}")), "{keys:?}");
+    assert!(
+        keys.iter()
+            .any(|key| key.contains("\"variant\":\"crazyhouse\"")),
+        "{keys:?}"
+    );
+    // Masters games and tablebases are standard chess only, and nothing is asked for them.
+    let masters = lookups
+        .service
+        .lookup(
+            &json!("masters"),
+            &json!(ZH),
+            Some(&json!({ "variant": "crazyhouse" })),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        masters.message.contains("standard chess only"),
+        "{}",
+        masters.message
+    );
+    assert!(
+        lookups
+            .service
+            .lookup(
+                &json!("opening"),
+                &json!(ZH),
+                Some(&json!({ "variant": "bughouse" }))
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(fixture.requests().len(), 2);
+}
+
 #[tokio::test]
 async fn rejects_unknown_filters() {
     let fixture = serve(|_| Reply::Json(200, "{}".into())).await;
