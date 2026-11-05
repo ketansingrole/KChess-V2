@@ -110,18 +110,26 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
         Some((name, strength)) => (name, Some(strength.to_string())),
         None => (level.as_str(), None),
     };
+    // A variant is named first, as the game page names it.
+    let variant = session["setup"]["variant"]
+        .as_str()
+        .filter(|variant| *variant != "standard")
+        .map(crate::game::variant_label);
     Some(Unfinished {
         opponent: (format!("Stockfish · {name}"), strength),
-        state: vec![
-            format!("Move {number}"),
-            format!("You play {side}"),
-            if yours {
-                "Your move"
-            } else {
-                "Stockfish to move"
-            }
-            .to_string(),
-        ],
+        state: variant
+            .into_iter()
+            .chain([
+                format!("Move {number}"),
+                format!("You play {side}"),
+                if yours {
+                    "Your move"
+                } else {
+                    "Stockfish to move"
+                }
+                .to_string(),
+            ])
+            .collect(),
     })
 }
 
@@ -796,7 +804,12 @@ mod tests {
         });
         assert_eq!(
             card(from_position),
-            ["Move 4", "You play Black", "Stockfish to move"]
+            [
+                "Crazyhouse",
+                "Move 4",
+                "You play Black",
+                "Stockfish to move"
+            ]
         );
         let usual = json!({
             "moves": ["e2e4", "e7e5", "g1f3"],
