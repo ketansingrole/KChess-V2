@@ -118,10 +118,11 @@ pub fn info_line(frame: &Value, channels: &[Value]) -> String {
                     .and_then(|c| c["label"].as_str().map(str::to_string))
             })
     } else {
+        // A game's variant comes as Lichess's key ("kingOfTheHill"): shown by its name.
         frame["variant"]
             .as_str()
             .filter(|variant| *variant != "standard")
-            .map(str::to_string)
+            .map(crate::game::variant_label)
     };
     let mut parts = Vec::new();
     if let (Some(initial), Some(increment)) = (
@@ -1104,6 +1105,17 @@ mod tests {
         });
         let channels = vec![json!({ "key": "atomic", "label": "Atomic" })];
         assert_eq!(info_line(&frame, &channels), "3+2 · Rated · Blitz · Atomic");
+        // A watched game (not TV) names its variant, not Lichess's key for it.
+        let game = json!({
+            "source": "game", "variant": "kingOfTheHill", "speed": "rapid", "rated": false,
+            "clock": { "initial": 600, "increment": 5 },
+        });
+        assert_eq!(
+            info_line(&game, &channels),
+            "10+5 · Casual · Rapid · King of the Hill"
+        );
+        let standard = json!({ "source": "game", "variant": "standard", "speed": "rapid" });
+        assert_eq!(info_line(&standard, &channels), "Rapid");
         assert_eq!(base_minutes(30.), "½");
         assert_eq!(base_minutes(90.), "1.5");
     }
