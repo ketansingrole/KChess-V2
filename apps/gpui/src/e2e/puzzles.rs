@@ -528,3 +528,53 @@ fn history_shows_the_puzzles_not_solved(cx: &mut gpui_kit::TestAppContext) {
     app.click(("puzzle-history-result", 0usize));
     app.find(("puzzle-retry", 2usize));
 }
+
+/// Puzzle history's rows fit the page at every window size: a 1024-wide window once squeezed the
+/// themes column to nothing and pushed each row's buttons past the list's edge.
+#[gpui_kit::test]
+fn puzzle_history_rows_fit_every_window(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::{px, size};
+    let mut app = Harness::start(cx);
+    let day = crate::game::puzzle::local_day();
+    let attempt = serde_json::json!({
+        "puzzle": {
+            "id": "aaaaa",
+            "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 2 4",
+            "solution": ["f3f7", "e8f7"],
+            "rating": 1500,
+            "themes": ["mateIn1", "short", "opening"],
+        },
+        "mode": "practice",
+        "retry": false,
+        "win": false,
+        "revealed": false,
+        "hinted": false,
+        "found": 1,
+        "wrong": 1,
+        "total": 2,
+        "day": day,
+    });
+    let saved = app.cx.update(|cx| {
+        cx.global::<crate::core::AppCore>()
+            .call("recordPuzzleAttempt", vec![attempt])
+    });
+    app.cx
+        .foreground_executor()
+        .block_test(saved)
+        .expect("the attempt is kept");
+    app.open("Puzzles");
+    tab(&mut app, 4);
+    for (width, height) in super::SIZES {
+        app.cx
+            .simulate_window_resize(app.window, size(px(width), px(height)));
+        for _ in 0..20 {
+            app.tick();
+        }
+        let page = app.find(("puzzle-tabs", 4usize)).bounds();
+        let analyse = app.find(("puzzle-analyse", 0usize)).bounds();
+        assert!(
+            analyse.right() <= page.right(),
+            "at {width}×{height}: {analyse:?} past {page:?}"
+        );
+    }
+}
