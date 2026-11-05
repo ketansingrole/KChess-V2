@@ -448,7 +448,7 @@ impl Render for GameOptions {
                         .child(
                             widgets::field(
                                 "Position number (0–959)",
-                                Input::new(&self.number),
+                                Input::new(&self.number).aria_label("Position number (0–959)"),
                                 number_problem.clone(),
                                 &palette,
                             )
@@ -487,7 +487,7 @@ impl Render for GameOptions {
                 )
                 .child(widgets::field(
                     "Start from a FEN (optional)",
-                    Input::new(&self.variant_fen),
+                    Input::new(&self.variant_fen).aria_label("Start from a FEN (optional)"),
                     fen_problem.clone(),
                     &palette,
                 ))
@@ -495,7 +495,7 @@ impl Render for GameOptions {
             .when(self.start == Start::Fen, |form| {
                 form.child(widgets::field(
                     "FEN",
-                    Input::new(&self.fen),
+                    Input::new(&self.fen).aria_label("FEN"),
                     fen_problem.clone(),
                     &palette,
                 ))
@@ -504,16 +504,27 @@ impl Render for GameOptions {
                 h_flex()
                     .gap(px(12.))
                     .child(
-                        widgets::field("Clock", Select::new(&self.clock), None, &palette).flex_1(),
+                        widgets::field(
+                            "Clock",
+                            Select::new(&self.clock).accessibility_label("Clock"),
+                            None,
+                            &palette,
+                        )
+                        .flex_1(),
                     )
                     .child(
-                        widgets::field("You play", Select::new(&self.color), None, &palette)
-                            .flex_1(),
+                        widgets::field(
+                            "You play",
+                            Select::new(&self.color).accessibility_label("You play"),
+                            None,
+                            &palette,
+                        )
+                        .flex_1(),
                     ),
             )
             .child(widgets::field(
                 "Stockfish strength",
-                Select::new(&self.level),
+                Select::new(&self.level).accessibility_label("Stockfish strength"),
                 None,
                 &palette,
             ))

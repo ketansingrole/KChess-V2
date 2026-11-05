@@ -211,7 +211,7 @@ fn a_new_game_needs_a_valid_start_and_asks_before_replacing_one(cx: &mut gpui_ki
     let mut app = board(cx);
     type_moves(&mut app, &["e4"]);
     app.click("local-new");
-    fill_in_dialog(&mut app, "Standard start", "not-a-fen");
+    fill_in_dialog(&mut app, "Start from a FEN (optional)", "not-a-fen");
     app.wait_for("Start to be refused", |window, _| {
         use gpui_kit::test::TestWindowExt as _;
         window
@@ -225,7 +225,7 @@ fn a_new_game_needs_a_valid_start_and_asks_before_replacing_one(cx: &mut gpui_ki
     app.click("local-new");
     fill_in_dialog(
         &mut app,
-        "Standard start",
+        "Start from a FEN (optional)",
         "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
     );
     app.click("start-local");
@@ -235,7 +235,7 @@ fn a_new_game_needs_a_valid_start_and_asks_before_replacing_one(cx: &mut gpui_ki
     app.click("local-new");
     fill_in_dialog(
         &mut app,
-        "Standard start",
+        "Start from a FEN (optional)",
         "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
     );
     app.click("start-local");
@@ -520,7 +520,7 @@ fn a_new_game_starts_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContext
     app.press("enter");
     fill_in_dialog(
         &mut app,
-        "Crazyhouse start",
+        "Start from a FEN (optional)",
         "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3",
     );
     app.click("start-local");
@@ -533,7 +533,7 @@ fn a_new_game_starts_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContext
     app.wait_for("the position to come back", |window, _| {
         use gpui_kit::test::TestQueryExt as _;
         window
-            .try_find_by_label("Crazyhouse start")
+            .try_find_by_label("Start from a FEN (optional)")
             .and_then(|input| input.value().map(str::to_string))
             .as_deref()
             == Some("rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3")

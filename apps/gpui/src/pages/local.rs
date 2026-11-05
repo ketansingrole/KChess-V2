@@ -2021,7 +2021,7 @@ impl Render for NewGame {
                         .child(
                             widgets::field(
                                 "Position number (0–959)",
-                                Input::new(&self.number),
+                                Input::new(&self.number).aria_label("Position number (0–959)"),
                                 self.number960(cx)
                                     .is_none()
                                     .then(|| "Enter a number from 0 to 959".into()),
@@ -2050,7 +2050,7 @@ impl Render for NewGame {
             .when(variant != "chess960", |form| {
                 form.child(widgets::field(
                     "Start from a FEN (optional)",
-                    Input::new(&self.fen),
+                    Input::new(&self.fen).aria_label("Start from a FEN (optional)"),
                     self.fen_problem(cx),
                     &palette,
                 ))
@@ -2060,12 +2060,20 @@ impl Render for NewGame {
                     .gap(px(12.))
                     .items_start()
                     .child(
-                        widgets::field("Clock", Select::new(&self.clock), None, &palette).flex_1(),
+                        widgets::field(
+                            "Clock",
+                            Select::new(&self.clock).accessibility_label("Clock"),
+                            None,
+                            &palette,
+                        )
+                        .flex_1(),
                     )
                     .child(
                         widgets::field(
                             "Black's minutes (odds)",
-                            Input::new(&self.odds).disabled(no_clock),
+                            Input::new(&self.odds)
+                                .aria_label("Black's minutes (odds)")
+                                .disabled(no_clock),
                             None,
                             &palette,
                         )

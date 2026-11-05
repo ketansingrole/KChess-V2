@@ -322,6 +322,84 @@ fn every_tab_and_settings_section_lays_out_its_controls(cx: &mut gpui_kit::TestA
     );
 }
 
+/// The dialogs a fresh profile opens: the computer's game options, a new game over the board,
+/// the import dialogs and the shortcut list, each opened in the largest window and then checked at
+/// every size while it stays open.
+#[gpui_kit::test]
+fn every_dialog_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let mut findings = Findings::default();
+    let settle = |app: &mut Harness| {
+        for _ in 0..20 {
+            app.tick();
+        }
+    };
+    let dialogs: [(Page, &str, &str); 5] = [
+        (Page::Computer, "game-options", "Game options"),
+        (Page::Local, "local-new", "New game over the board"),
+        (
+            Page::Analysis,
+            "analysis-import",
+            "Import into the analysis board",
+        ),
+        (Page::Studies, "empty-import", "Import a study"),
+        (Page::Dashboard, "?", "Keyboard shortcuts"),
+    ];
+    let (widest, tallest) = SIZES[SIZES.len() - 1];
+    for (page, opener, label) in dialogs {
+        app.cx
+            .simulate_window_resize(app.window, size(px(widest), px(tallest)));
+        app.with_window(|window, cx| crate::shell::open(page, window, cx));
+        settle(&mut app);
+        if opener == "?" {
+            app.press("?");
+        } else {
+            app.click(opener);
+        }
+        for (width, height) in SIZES {
+            app.cx
+                .simulate_window_resize(app.window, size(px(width), px(height)));
+            settle(&mut app);
+            // Only the dialog's own controls: the page under its overlay takes no clicks.
+            let controls: Vec<ElementSnapshot> = app.with_window(|window, _| {
+                window
+                    .elements()
+                    .into_iter()
+                    .filter(|e| {
+                        e.path()
+                            .iter()
+                            .any(|part| *part == gpui_kit::ElementId::from("dialog"))
+                    })
+                    .collect()
+            });
+            assert!(!controls.is_empty(), "{label} opens a dialog");
+            check(
+                &format!("{label} at {width}×{height}"),
+                width,
+                &controls,
+                &mut findings,
+            );
+        }
+        app.press("escape");
+        settle(&mut app);
+    }
+    findings.problems.sort();
+    findings.problems.dedup();
+    findings.small.sort();
+    findings.small.dedup();
+    assert!(
+        findings.problems.is_empty() && findings.small.is_empty(),
+        "in a dialog:\n  {}",
+        findings
+            .problems
+            .iter()
+            .chain(&findings.small)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+}
+
 /// Games, a puzzle attempt and a study, kept by the core before the pages are opened.
 fn seed(app: &mut Harness) {
     let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";

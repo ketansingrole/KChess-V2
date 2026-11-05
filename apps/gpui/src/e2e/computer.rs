@@ -278,7 +278,7 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
     }
     app.press("enter");
     let fen = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
-    app.click_label("Crazyhouse start");
+    app.click_label("Start from a FEN (optional)");
     app.type_text("not-a-fen");
     assert!(!app.enabled("start-game"));
     app.press("secondary-a");
@@ -302,13 +302,17 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
     let typed = |app: &mut Harness| {
         app.with_window(|window, _| {
             window
-                .try_find_by_label("Crazyhouse start")
-                .or_else(|| window.try_find_by_label("Horde start"))
+                .try_find_by_label("Start from a FEN (optional)")
                 .and_then(|input| input.value().map(str::to_string))
         })
     };
+    let variant = |window: &mut gpui_kit::Window| {
+        window
+            .try_find_by_label("Choose a variant")
+            .and_then(|select| select.value().map(str::to_string))
+    };
     app.wait_for("the dialog", |window, _| {
-        window.try_find_by_label("Crazyhouse start").is_some()
+        variant(window).as_deref() == Some("Crazyhouse")
     });
     assert_eq!(typed(&mut app).as_deref(), Some(fen));
     app.click_label("Choose a variant");
@@ -317,7 +321,7 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
     app.press("up");
     app.press("enter");
     app.wait_for("the Horde start", |window, _| {
-        window.try_find_by_label("Horde start").is_some()
+        variant(window).as_deref() == Some("Horde")
     });
     assert!(typed(&mut app).is_none_or(|value| value.is_empty()));
     assert!(app.enabled("start-game"));
