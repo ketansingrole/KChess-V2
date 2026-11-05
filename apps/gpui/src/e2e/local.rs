@@ -466,6 +466,42 @@ fn a_crazyhouse_capture_can_be_dropped_back(cx: &mut gpui_kit::TestAppContext) {
     );
 }
 
+/// A new game starts from a FEN in any variant, read by that variant's rules: a Crazyhouse
+/// position's pocket pawn drops at once.
+#[gpui_kit::test]
+fn a_new_game_starts_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = board(cx);
+    app.click("local-new");
+    app.wait_for("the variant choice to stop moving", {
+        use gpui_kit::test::TestQueryExt as _;
+        let mut last = None;
+        move |window, _| {
+            let bounds = window
+                .try_find_by_label("Variant")
+                .map(|select| select.bounds());
+            let still = bounds.is_some() && bounds == last;
+            last = bounds;
+            still
+        }
+    });
+    app.click_label("Variant");
+    // Crazyhouse is the last of the nine.
+    for _ in 0..8 {
+        app.press("down");
+    }
+    app.press("enter");
+    fill_in_dialog(
+        &mut app,
+        "Crazyhouse start",
+        "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3",
+    );
+    app.click("start-local");
+    app.click("pocket-White-Pawn");
+    app.click_square("e3", true);
+    app.wait_for_moves(&["P@e3"]);
+    assert_eq!(app.status(), "Black to move");
+}
+
 /// A Chess960 game goes to the analysis board too, its castling (king takes rook) included, and
 /// the position is played on from there as Chess960.
 #[gpui_kit::test]

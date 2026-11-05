@@ -1774,9 +1774,20 @@ impl NewGame {
             cx.subscribe(&number, refresh),
             cx.subscribe(&fen, refresh),
             cx.subscribe(&odds, refresh),
-            cx.subscribe(&variant, |_, _, _: &SelectEvent<Vec<SharedString>>, cx| {
-                cx.notify()
-            }),
+            // The FEN's placeholder names the start it replaces: "Crazyhouse start".
+            cx.subscribe_in(
+                &variant,
+                window,
+                |this, _, _: &SelectEvent<Vec<SharedString>>, window, cx| {
+                    let label = format!(
+                        "{} start",
+                        crate::game::variant_label(&this.variant_key(cx))
+                    );
+                    this.fen
+                        .update(cx, |input, cx| input.set_placeholder(label, window, cx));
+                    cx.notify()
+                },
+            ),
             cx.subscribe(&clock, |_, _, _: &SelectEvent<Vec<SharedString>>, cx| {
                 cx.notify()
             }),
@@ -1815,8 +1826,14 @@ impl NewGame {
 
     fn fen_problem(&self, cx: &App) -> Option<SharedString> {
         let text = self.fen.read(cx).value().trim().to_string();
-        if self.variant_key(cx) != "standard" || text.is_empty() {
+        let variant = self.variant_key(cx);
+        if variant == "chess960" || text.is_empty() {
             return None;
+        }
+        if variant != "standard" {
+            return kchess_domain::rules::setup_start(&variant, &text)
+                .is_none()
+                .then(|| "Not a legal position".into());
         }
         position_problem(&text).map(SharedString::from).or_else(|| {
             kchess_domain::rules::setup_start("standard", &text)
@@ -1839,6 +1856,12 @@ impl NewGame {
                 .fen_problem(cx)
                 .is_none()
                 .then(|| crate::game::setup_from_fen(&text));
+        }
+        if !text.is_empty() {
+            return self
+                .fen_problem(cx)
+                .is_none()
+                .then(|| json!({ "variant": variant, "fen": text }));
         }
         let fen = rules("defaultFen", &[json!(variant)]).ok()?;
         Some(json!({ "variant": variant, "fen": fen }))
@@ -1886,14 +1909,18 @@ impl Render for NewGame {
         v_flex()
             .gap(px(16.))
             .child(
-                widgets::field("Variant", Select::new(&self.variant), None, &palette).children(
-                    hint.map(|hint| {
-                        div()
-                            .text_size(px(13.))
-                            .text_color(palette.text_muted)
-                            .child(hint)
-                    }),
-                ),
+                widgets::field(
+                    "Variant",
+                    Select::new(&self.variant).accessibility_label("Variant"),
+                    None,
+                    &palette,
+                )
+                .children(hint.map(|hint| {
+                    div()
+                        .text_size(px(13.))
+                        .text_color(palette.text_muted)
+                        .child(hint)
+                })),
             )
             .when(variant == "chess960", |form| {
                 form.child(
@@ -1929,7 +1956,7 @@ impl Render for NewGame {
                         ),
                 )
             })
-            .when(variant == "standard", |form| {
+            .when(variant != "chess960", |form| {
                 form.child(widgets::field(
                     "Start from a FEN (optional)",
                     Input::new(&self.fen),
