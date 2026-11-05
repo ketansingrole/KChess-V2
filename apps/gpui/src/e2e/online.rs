@@ -118,6 +118,8 @@ fn watch_shows_its_feed_failing_and_the_following_and_broadcast_tabs(
     app.click(("watch-tabs", 2usize));
     assert_eq!(app.find(("watch-tabs", 2usize)).selected(), Some(true));
     assert!(app.enabled("broadcasts-retry"));
+    // TV's failure stays on TV: Broadcasts says only its own.
+    assert!(!app.shows("watch-error"));
 
     app.click(("watch-tabs", 0usize));
     assert!(app.enabled("watch-try-again"));

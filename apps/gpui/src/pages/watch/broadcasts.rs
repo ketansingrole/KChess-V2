@@ -915,7 +915,7 @@ impl WatchPage {
                             Button::new("broadcasts-retry")
                                 .small()
                                 .outline()
-                                .label("Retry broadcasts")
+                                .label("Try again")
                                 .on_click(cx.listener(|this, _, _, cx| this.broadcasts.load(cx))),
                         ),
                 )

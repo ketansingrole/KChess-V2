@@ -456,7 +456,7 @@ impl Render for RatingSpeeds {
                                     .text()
                                     .xsmall()
                                     .icon(icon("rotate-cw"))
-                                    .label("Retry")
+                                    .label("Try again")
                                     .disabled(!crate::network::online(cx))
                                     .on_click(move |_, window, cx| retry(window, cx))
                             })),

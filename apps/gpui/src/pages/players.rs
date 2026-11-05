@@ -1646,7 +1646,7 @@ impl PlayersPage {
                             .text()
                             .xsmall()
                             .icon(icon("rotate-cw"))
-                            .label("Retry")
+                            .label("Try again")
                             .on_click(cx.listener(|this, _, _, cx| this.load_activity(cx))),
                     ),
             );
