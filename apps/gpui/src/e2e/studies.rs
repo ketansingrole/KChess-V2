@@ -287,13 +287,15 @@ fn chapters_are_added_renamed_duplicated_and_deleted(cx: &mut gpui_kit::TestAppC
     wait_for_value(&mut app, "Study chapter", "3. King pawn (copy)");
     app.find("tree-e2e4");
 
+    // Deleting asks nothing: its notice's Undo puts the chapter back in its place, opened.
     app.click("chapter-actions");
     app.click_label("Delete chapter");
-    app.click("cancel");
+    wait_for_value(&mut app, "Study chapter", "2. Chapter 2");
+    app.click("undo-delete-chapter");
     wait_for_value(&mut app, "Study chapter", "3. King pawn (copy)");
+    app.find("tree-e2e4");
     app.click("chapter-actions");
     app.click_label("Delete chapter");
-    app.click("ok");
     wait_for_value(&mut app, "Study chapter", "2. Chapter 2");
 }
 

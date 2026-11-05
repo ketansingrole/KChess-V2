@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
@@ -100,7 +100,7 @@ impl StudyBar {
             StudyAction::AddChapter => self.add_chapter(window, cx),
             StudyAction::RenameChapter => self.rename_chapter(window, cx),
             StudyAction::DuplicateChapter => self.duplicate_chapter(window, cx),
-            StudyAction::RemoveChapter => self.ask_remove_chapter(window, cx),
+            StudyAction::RemoveChapter => self.remove_chapter(window, cx),
         }
     }
 
@@ -367,7 +367,8 @@ impl StudyBar {
     }
 
     /// Delete the chapter shown: the board lets go of it first, so a pending save cannot bring it
-    /// back; the next chapter opens, or this one again when it could not be deleted.
+    /// back; the next chapter opens, or this one again when it could not be deleted. The notice's
+    /// Undo puts the chapter back where it was and opens it.
     fn remove_chapter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(analysis) = self.analysis.upgrade() else {
             return;
@@ -386,23 +387,42 @@ impl StudyBar {
                 });
                 return;
             }
-            let Ok(answer) = this.update(cx, |_, cx| {
-                library.read(cx).command(json!({
+            // The chapter as the board left it, and its place, for Undo.
+            let Ok((answer, removed)) = this.update(cx, |_, cx| {
+                let library = library.read(cx);
+                let removed = library.study(&id).and_then(|study| {
+                    let chapters = study["chapters"].as_array()?;
+                    let index = chapters
+                        .iter()
+                        .position(|entry| entry["id"] == json!(chapter))?;
+                    Some((index, chapters[index].clone()))
+                });
+                let answer = library.command(json!({
                     "op": "removeChapter",
                     "id": id,
                     "chapterId": chapter,
-                }))
+                }));
+                (answer, removed)
             }) else {
                 return;
             };
             let result = answer.await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 let next = match &result {
                     Ok(result) => {
                         library.update(cx, |library, cx| {
                             library.apply(result);
                             cx.notify();
                         });
+                        if let Some((index, removed)) = removed.clone() {
+                            Self::offer_undo_remove(
+                                (&library, &analysis),
+                                id.clone(),
+                                (index, removed),
+                                window,
+                                cx,
+                            );
+                        }
                         result["id"].as_str().map(str::to_string)
                     }
                     Err(cause) => {
@@ -422,36 +442,67 @@ impl StudyBar {
         .detach();
     }
 
-    fn ask_remove_chapter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((study, chapter)) = self.open(cx) else {
-            return;
+    /// The notice of a deleted chapter, whose Undo puts it back at `index` and opens it.
+    fn offer_undo_remove(
+        (library, analysis): (&Entity<crate::studies::StudyLibrary>, &Entity<AnalysisPage>),
+        id: String,
+        (index, chapter): (usize, Value),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let name = chapter["name"].as_str().unwrap_or_default().to_string();
+        let cloud = library
+            .read(cx)
+            .study(&id)
+            .is_some_and(|study| !study["cloud"].is_null());
+        let note = Notification::new().title(format!("Deleted “{name}”"));
+        let note = if cloud {
+            note.message("The Lichess copy is unchanged")
+        } else {
+            note
         };
-        let name = study["chapters"]
-            .as_array()
-            .and_then(|chapters| chapters.iter().find(|entry| entry["id"] == json!(chapter)))
-            .and_then(|entry| entry["name"].as_str())
-            .unwrap_or_default()
-            .to_string();
-        let cloud = !study["cloud"].is_null();
-        let bar = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |dialog, _, _| {
-            let bar = bar.clone();
-            dialog
-                .title(format!("Delete “{name}”?"))
-                .description(if cloud {
-                    "Removes this chapter from the offline study. The Lichess copy is unchanged."
-                } else {
-                    "Removes this chapter and all of its moves, comments, and variations"
-                })
-                .ok_text("Delete chapter")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, window, cx| {
-                    let _ = bar.update(cx, |bar, cx| bar.remove_chapter(window, cx));
-                    true
-                })
-        });
+        let (library, analysis) = (library.clone(), analysis.clone());
+        window.push_notification(
+            crate::widgets::action_notification(
+                note,
+                "undo-delete-chapter",
+                "Undo",
+                move |window, cx| {
+                    let answer = library.read(cx).command(json!({
+                        "op": "restoreChapter",
+                        "id": id,
+                        "chapter": chapter,
+                        "index": index,
+                    }));
+                    let (library, analysis, id) = (library.clone(), analysis.clone(), id.clone());
+                    window
+                        .spawn(cx, async move |cx| {
+                            let result = answer.await;
+                            let _ = cx.update(|window, cx| match result {
+                                Ok(result) => {
+                                    library.update(cx, |library, cx| {
+                                        library.apply(&result);
+                                        cx.notify();
+                                    });
+                                    let chapter = result["id"].as_str().map(str::to_string);
+                                    // The board saves the chapter it shows before it changes.
+                                    let opened = analysis.update(cx, |analysis, cx| {
+                                        analysis.open_study(&id, chapter.as_deref(), cx)
+                                    });
+                                    if let Err(cause) = opened {
+                                        window.push_notification(Notification::error(cause), cx);
+                                    }
+                                }
+                                Err(cause) => {
+                                    window.push_notification(Notification::error(cause), cx)
+                                }
+                            });
+                        })
+                        .detach();
+                },
+            ),
+            cx,
+        );
     }
 
     fn save_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -731,7 +782,7 @@ impl Render for StudyBar {
                                 PopupMenuItem::new("Delete chapter")
                                     .icon(icon("trash-2"))
                                     .disabled(count <= 1)
-                                    .on_click(action(StudyBar::ask_remove_chapter)),
+                                    .on_click(action(StudyBar::remove_chapter)),
                             )
                         });
                     let saved = study["updatedAt"].as_f64().unwrap_or(0.);

@@ -2026,6 +2026,24 @@ struct StudyChapter {
     chapter_id: String,
 }
 
+/// `restoreChapter`: a removed chapter (its id, name and PGN) back at its place in the study.
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct RestoreChapter {
+    op: String,
+    id: String,
+    chapter: ChapterEntry,
+    index: u32,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct ChapterEntry {
+    id: String,
+    name: String,
+    pgn: String,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", expecting = "an object")]
 struct MarkCloud {
@@ -2067,6 +2085,16 @@ fn assert_study_command_shape(value: J) -> Checked<Value> {
     if !value.is_object() {
         let error = decode::<SaveStudy>(value, plain).err();
         return Err(error.unwrap_or_else(|| "invalid type, expected an object".into()));
+    }
+    // Undo's command, newer than the recorded ones: told apart before them, so their answers
+    // (an unknown command lists theirs) stay as recorded.
+    if value.get("op").and_then(J::str) == Some("restoreChapter") {
+        let restore: RestoreChapter = decode(value, plain)?;
+        local_id(&restore.id, "id")?;
+        local_id(&restore.chapter.id, "chapter.id")?;
+        study_name(&restore.chapter.name, "chapter.name")?;
+        study_pgn(&restore.chapter.pgn, "chapter.pgn")?;
+        return out(&restore);
     }
     let tag = value.get("op").cloned().unwrap_or(J::Undef);
     let op: StudyOp = decode(tag, plain).map_err(|error| format!("op: {error}"))?;
@@ -2365,6 +2393,41 @@ mod tests {
 
     fn run(method: &str, value: J) -> Checked<Value> {
         validator(method).expect(method)(vec![value])
+    }
+
+    fn restore_chapter(pgn: &str) -> J {
+        let chapter = obj(vec![
+            ("id", J::Str("c1".into())),
+            ("name", J::Str("Rook endings".into())),
+            ("pgn", J::Str(pgn.into())),
+        ]);
+        obj(vec![
+            ("op", J::Str("restoreChapter".into())),
+            ("id", J::Str("s1".into())),
+            ("chapter", chapter),
+            ("index", J::Num(1.0)),
+            ("extra", J::Str("dropped".into())),
+        ])
+    }
+
+    /// Undo's `restoreChapter` takes the chapter whole and its place (the core reads its PGN).
+    #[test]
+    fn a_chapter_to_restore_is_checked() {
+        assert_eq!(
+            run("assertStudyCommandShape", restore_chapter("1. e4 *")),
+            Ok(json!({
+                "op": "restoreChapter",
+                "id": "s1",
+                "chapter": { "id": "c1", "name": "Rook endings", "pgn": "1. e4 *" },
+                "index": 1,
+            }))
+        );
+        let without_chapter = obj(vec![
+            ("op", J::Str("restoreChapter".into())),
+            ("id", J::Str("s1".into())),
+            ("index", J::Num(0.0)),
+        ]);
+        assert!(run("assertStudyCommandShape", without_chapter).is_err());
     }
 
     fn settings() -> Vec<(&'static str, J)> {
