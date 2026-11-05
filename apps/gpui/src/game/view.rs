@@ -97,9 +97,46 @@ pub fn navigate(key: &str, ply: usize, max: usize) -> Option<usize> {
     }
 }
 
+/// The mouse wheel over a board, gathered until it has turned far enough for one move: Lichess
+/// steps through the moves this way.
+#[derive(Default)]
+pub struct Wheel(f32);
+
+impl Wheel {
+    /// How far the wheel turns for one move, in pixels.
+    const STEP: f32 = 40.;
+
+    /// The key the turn so far stands for: "right" a move on (the wheel towards the user, as
+    /// `deltaY > 0` in the browser), "left" a move back. Sideways scrolls are left alone.
+    pub fn turn(&mut self, delta: gpui_kit::Point<gpui_kit::Pixels>) -> Option<&'static str> {
+        if delta.x.abs() > delta.y.abs() {
+            return None;
+        }
+        self.0 -= delta.y.as_f32();
+        if self.0.abs() < Self::STEP {
+            return None;
+        }
+        let key = if self.0 > 0. { "right" } else { "left" };
+        self.0 = 0.;
+        Some(key)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::navigate;
+    use super::{Wheel, navigate};
+    use gpui_kit::{point, px};
+
+    /// A wheel's small turns add up to one move; down goes on, up goes back, sideways neither.
+    #[test]
+    fn the_wheel_steps_one_move_at_a_time() {
+        let mut wheel = Wheel::default();
+        assert_eq!(wheel.turn(point(px(0.), px(-25.))), None);
+        assert_eq!(wheel.turn(point(px(0.), px(-25.))), Some("right"));
+        assert_eq!(wheel.turn(point(px(0.), px(-30.))), None);
+        assert_eq!(wheel.turn(point(px(0.), px(80.))), Some("left"));
+        assert_eq!(wheel.turn(point(px(-100.), px(10.))), None);
+    }
 
     /// The arrows, Home and End move through a move list on every board page that uses it.
     #[test]

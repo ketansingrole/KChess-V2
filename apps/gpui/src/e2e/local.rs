@@ -563,3 +563,27 @@ fn f_flips_the_board(cx: &mut gpui_kit::TestAppContext) {
     app.press("enter");
     app.wait_for_moves(&["e4", "e5", "Nf3"]);
 }
+
+/// The mouse wheel over the board steps through the moves, as on the analysis board: up goes
+/// back, down goes on.
+#[gpui_kit::test]
+fn the_wheel_over_the_board_steps_through_the_moves(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = board(cx);
+    type_moves(&mut app, &["e4", "e5"]);
+    let wheel = |app: &mut Harness, by: f32| {
+        app.with_window(|window, cx| {
+            let by = gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(by));
+            window.scroll("chess-board", gpui_kit::ScrollDelta::Pixels(by), cx);
+        });
+        app.cx.run_until_parked();
+    };
+    wheel(&mut app, 60.);
+    wheel(&mut app, 60.);
+    assert!(!app.enabled("skip-back"));
+    wheel(&mut app, -60.);
+    assert!(app.enabled("skip-back"));
+    assert!(app.enabled("skip-forward"));
+    wheel(&mut app, -60.);
+    assert!(!app.enabled("skip-forward"));
+}

@@ -115,6 +115,8 @@ pub struct LocalPage {
     /// What the game's clock faces showed at its last tick (`ticked` is the chess clock's).
     faces_ticked: Option<[String; 2]>,
     focus: FocusHandle,
+    /// The mouse wheel over the board, which steps through the moves.
+    wheel: crate::game::view::Wheel,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -258,6 +260,7 @@ impl LocalPage {
             faces_ticked: None,
             exporter: cx.new(|_| Exporter::default()),
             focus: cx.focus_handle(),
+            wheel: Default::default(),
             _subscriptions: subscriptions,
         };
         let (source, has_play) = (page.game.archive_snapshot(0.), page.has_play());
@@ -1315,6 +1318,19 @@ impl Render for LocalPage {
             .gap(widgets::STACK_GAP)
             .child(line(!orientation, None))
             .child(crate::board::cached(&self.board))
+            // The mouse wheel over the board steps through the moves.
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                let Some(key) = this
+                    .wheel
+                    .turn(event.delta.pixel_delta(window.line_height()))
+                else {
+                    return;
+                };
+                if let Some(ply) = view::navigate(key, this.shown_ply(), this.moves().len()) {
+                    this.show_ply(ply, cx);
+                }
+                cx.stop_propagation();
+            }))
             .child(line(orientation, Some(widgets::move_row(entry, voice))))
             .children(voice_line)
             .children(self.move_message.clone().map(|message| {

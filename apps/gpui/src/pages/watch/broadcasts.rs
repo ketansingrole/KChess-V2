@@ -1145,6 +1145,20 @@ impl WatchPage {
                             .child(crate::board::cached(&broadcasts.board)),
                     ),
             )
+            // The mouse wheel over the board steps through the moves.
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                let Some(key) = this
+                    .wheel
+                    .turn(event.delta.pixel_delta(window.line_height()))
+                else {
+                    return;
+                };
+                if this.broadcasts.key(key, cx) {
+                    this.engine_changed(cx);
+                    cx.notify();
+                }
+                cx.stop_propagation();
+            }))
             .child(div().pl(bar_room).child(line(orientation)));
         let sans = view::sans(&setup, &moves);
         let page = cx.entity().downgrade();

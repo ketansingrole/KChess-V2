@@ -906,6 +906,19 @@ impl WatchPage {
             .gap(widgets::STACK_GAP)
             .child(line(!orientation, 0))
             .child(crate::board::cached(&self.live.board))
+            // The mouse wheel over the board steps through the moves.
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                let Some(key) = this
+                    .wheel
+                    .turn(event.delta.pixel_delta(window.line_height()))
+                else {
+                    return;
+                };
+                if this.live.key(key, cx) {
+                    cx.notify();
+                }
+                cx.stop_propagation();
+            }))
             .child(line(orientation, 1));
 
         // Beside the board the panel is its own cached view; under it, part of the page.

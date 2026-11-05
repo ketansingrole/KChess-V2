@@ -99,6 +99,8 @@ pub struct ComputerPage {
     /// The side panel, measured for `.panel-actions`' narrow rule.
     panel_area: Measured,
     focus: FocusHandle,
+    /// The mouse wheel over the board, which steps through the moves.
+    wheel: crate::game::view::Wheel,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -210,6 +212,7 @@ impl ComputerPage {
             panel_area: Measured::default(),
             exporter: cx.new(|_| Exporter::default()),
             focus: cx.focus_handle(),
+            wheel: Default::default(),
             _subscriptions: subscriptions,
         };
         page.load(window, cx);
@@ -1530,6 +1533,20 @@ impl Render for ComputerPage {
             .gap(widgets::STACK_GAP)
             .child(computer_line)
             .child(crate::board::cached(&self.board))
+            // The mouse wheel over the board steps through the moves.
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                let Some(key) = this
+                    .wheel
+                    .turn(event.delta.pixel_delta(window.line_height()))
+                else {
+                    return;
+                };
+                if let Some(ply) = crate::game::view::navigate(key, this.ply(), this.moves().len())
+                {
+                    this.show_ply(ply, cx);
+                }
+                cx.stop_propagation();
+            }))
             .child(you_line)
             .children(voice_line)
             .children(self.move_message.clone().map(|message| {

@@ -576,6 +576,24 @@ impl OnlinePage {
         board_column = board_column
             .child(line(!orientation))
             .child(crate::board::cached(&self.board))
+            // The mouse wheel over the board steps through the moves.
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                let Some(key) = this
+                    .wheel
+                    .turn(event.delta.pixel_delta(window.line_height()))
+                else {
+                    return;
+                };
+                let online = crate::online::handle(cx);
+                let (ply, count) = {
+                    let online = online.read(cx);
+                    (online.ply(), online.moves().len())
+                };
+                if let Some(next) = view::navigate(key, ply, count) {
+                    online.update(cx, |online, cx| online.view_ply(next, cx));
+                }
+                cx.stop_propagation();
+            }))
             .child(line(orientation));
 
         self.layout

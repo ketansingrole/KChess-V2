@@ -151,6 +151,8 @@ pub struct WatchPage {
     layout: PlayLayout,
     shown: bool,
     focus: FocusHandle,
+    /// The mouse wheel over the board, which steps through the moves.
+    wheel: crate::game::view::Wheel,
     _tick: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -225,6 +227,7 @@ impl WatchPage {
             layout: PlayLayout::default(),
             shown: false,
             focus: cx.focus_handle(),
+            wheel: Default::default(),
             _tick: None,
             _subscriptions: subscriptions,
         }

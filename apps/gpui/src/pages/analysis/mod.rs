@@ -213,7 +213,7 @@ pub struct AnalysisPage {
     cloud_request: u64,
     cloud_task: Option<Task<()>>,
     save: Option<Task<()>>,
-    wheel: f32,
+    wheel: crate::game::view::Wheel,
     focus: FocusHandle,
     /// Spoken moves, and “back”, “next”, “best move”, “flip board”.
     voice: VoiceMoves,
@@ -472,7 +472,7 @@ impl AnalysisPage {
             cloud_request: 0,
             cloud_task: None,
             save: None,
-            wheel: 0.,
+            wheel: Default::default(),
             focus: cx.focus_handle(),
             voice: VoiceMoves::new("analysis", cx),
             tried_labels: Vec::new(),
@@ -1539,21 +1539,14 @@ impl AnalysisPage {
 
     /// Lichess steps through moves with the mouse wheel over the board.
     fn scroll(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let delta = event.delta.pixel_delta(window.line_height());
-        if delta.x.abs() > delta.y.abs() {
-            return;
+        match self
+            .wheel
+            .turn(event.delta.pixel_delta(window.line_height()))
+        {
+            Some("right") => self.forward(cx),
+            Some(_) => self.back(cx),
+            None => return,
         }
-        // Down (towards the user) goes forward, as `deltaY > 0` does in the browser.
-        self.wheel -= delta.y.as_f32();
-        if self.wheel.abs() < 40. {
-            return;
-        }
-        if self.wheel > 0. {
-            self.forward(cx);
-        } else {
-            self.back(cx);
-        }
-        self.wheel = 0.;
         cx.stop_propagation();
     }
 

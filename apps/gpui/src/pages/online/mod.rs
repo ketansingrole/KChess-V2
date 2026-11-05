@@ -84,6 +84,8 @@ pub struct OnlinePage {
     game_panel: Entity<crate::part::Part<OnlinePage>>,
     layout: PlayLayout,
     focus: FocusHandle,
+    /// The mouse wheel over the board, which steps through the moves.
+    wheel: crate::game::view::Wheel,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -206,6 +208,7 @@ impl OnlinePage {
             ),
             layout: PlayLayout::default(),
             focus: cx.focus_handle(),
+            wheel: Default::default(),
             _subscriptions: subscriptions,
         };
         page.sync_accounts(window, cx);
