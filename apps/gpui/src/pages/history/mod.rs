@@ -1158,8 +1158,11 @@ impl HistoryPage {
                 let id = text(&game, "id").to_string();
                 let clock = text(&game, "source") == "clock";
                 let side = player_side(&game);
-                // Why it ended, and the opening it reached, as a Lichess game's line has.
+                let variant = game["setup"]["variant"].as_str().unwrap_or("standard");
+                // Why it ended, and the opening it reached, as a Lichess game's line has; in a
+                // narrow list, which leaves the game's column out, its variant first.
                 let details = [
+                    (narrow && variant != "standard").then(|| crate::game::variant_label(variant)),
                     Some(details(&game)),
                     self.opening(&game).filter(|_| opening_names_shown(cx)),
                 ]
@@ -1168,7 +1171,6 @@ impl HistoryPage {
                 .filter(|part| !part.is_empty())
                 .collect::<Vec<_>>()
                 .join(" · ");
-                let variant = game["setup"]["variant"].as_str().unwrap_or("standard");
                 let mut kind = time_label(text(&game, "timeControl"));
                 if variant != "standard" {
                     kind.push_str(&format!(" · {}", crate::game::variant_label(variant)));
