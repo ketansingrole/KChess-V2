@@ -451,7 +451,7 @@ fn a_crazyhouse_capture_can_be_dropped_back(cx: &mut gpui_kit::TestAppContext) {
     type_moves(&mut app, &["e4", "d5", "exd5", "Qxd5"]);
     app.click("pocket-White-Pawn");
     app.click_square("e3", true);
-    app.wait_for_moves(&["e4", "d5", "exd5", "Qxd5", "@e3"]);
+    app.wait_for_moves(&["e4", "d5", "exd5", "Qxd5", "P@e3"]);
     assert_eq!(app.status(), "Black to move");
     // Black's pawn is still in hand; White's was spent.
     assert!(
