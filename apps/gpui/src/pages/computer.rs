@@ -287,11 +287,12 @@ impl ComputerPage {
         .detach();
     }
 
-    /// Look for the engine again (`recheckEngine`); the game resumes once it is there.
+    /// Look for the engine that plays this game's variant again (`recheckEngine`): Stockfish, or
+    /// Fairy-Stockfish for the variants it cannot play. The game resumes once it is there.
     fn check_engine(&mut self, cx: &mut Context<Self>) {
         self.engine = Engine::Checking;
         cx.notify();
-        let status = Self::core(cx).call("engineStatus", Vec::new());
+        let status = Self::core(cx).call("engineStatus", vec![json!(self.setup_variant())]);
         cx.spawn(async move |this, cx| {
             let ready =
                 matches!(status.await, Ok(status) if status["ready"].as_bool() == Some(true));
@@ -847,7 +848,8 @@ impl ComputerPage {
         self.perform(effects, cx);
         self.select_level(window, cx);
         self.changed(cx);
-        self.computer_turn(cx);
+        // A variant may need the other engine.
+        self.check_engine(cx);
     }
 
     /// The actions its buttons allow now.
@@ -1207,26 +1209,38 @@ impl ComputerPage {
         let host = self.host();
         if self.engine == Engine::Missing {
             let checking = self.engine == Engine::Checking;
-            return widgets::StatusBanner::new(
+            let standard = crate::game::standard_rules(&self.setup_variant());
+            let banner = widgets::StatusBanner::new(
                 Tone::Alert,
                 icon("triangle-alert"),
-                "Stockfish not found".into(),
-            )
-            .detail("Install or choose an engine in Settings to play".into())
-            .extra(
-                h_flex()
-                    .gap(px(12.))
-                    .child(
-                        Button::new("check-engine")
-                            .link()
-                            .xsmall()
-                            .label("Check again")
-                            .loading(checking)
-                            .on_click(cx.listener(|this, _, _, cx| this.check_engine(cx))),
-                    )
-                    .into_any_element(),
-            )
-            .into_any_element();
+                if standard {
+                    "Stockfish not found"
+                } else {
+                    "Fairy-Stockfish not found"
+                }
+                .into(),
+            );
+            // Fairy-Stockfish comes with KChess; Settings cannot install it.
+            let banner = if standard {
+                banner.detail("Install or choose an engine in Settings to play".into())
+            } else {
+                banner
+            };
+            return banner
+                .extra(
+                    h_flex()
+                        .gap(px(12.))
+                        .child(
+                            Button::new("check-engine")
+                                .link()
+                                .xsmall()
+                                .label("Check again")
+                                .loading(checking)
+                                .on_click(cx.listener(|this, _, _, cx| this.check_engine(cx))),
+                        )
+                        .into_any_element(),
+                )
+                .into_any_element();
         }
         if let Some(result) = self.game.result(&host) {
             let kind = result["kind"].as_str().unwrap_or_default();

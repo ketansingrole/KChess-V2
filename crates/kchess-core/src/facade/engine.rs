@@ -11,11 +11,16 @@ impl Core {
     pub(crate) async fn run_engine(&self, method: &str, args: &[Value]) -> Result<Value> {
         match method {
             "engineStatus" => {
-                let configured = self.get_settings().await?["enginePath"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string();
-                let mut status = self.inner("engine.status", vec![json!(configured)]).await?;
+                let variant = args.first().and_then(Value::as_str).unwrap_or("standard");
+                let mut status = if crate::engine::status::fairy_variant(variant).is_some() {
+                    self.inner("engine.variantStatus", vec![]).await?
+                } else {
+                    let configured = self.get_settings().await?["enginePath"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    self.inner("engine.status", vec![json!(configured)]).await?
+                };
                 if status["ready"].as_bool() == Some(true) {
                     let identity = self.inner("engine.identity", vec![status.clone()]).await?;
                     status["identity"] = identity;

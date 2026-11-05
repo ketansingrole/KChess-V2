@@ -342,6 +342,11 @@ fn assert_tournament_password(value: J) -> Checked<Option<String>> {
     Ok(Some(text))
 }
 
+/// A variant KChess plays (`VARIANTS`).
+fn assert_variant(value: J) -> Checked<String> {
+    picked(value, VARIANTS, Some("Invalid variant."))
+}
+
 fn assert_perf_type(value: J) -> Checked<String> {
     picked(value, PERF_TYPES, Some("Invalid rating category."))
 }
@@ -2297,6 +2302,7 @@ validators! {
     "assertExport" => assert_export,
     "assertInsightsQuery" => assert_insights_query,
     "assertPerfType" => assert_perf_type,
+    "assertVariant" => assert_variant,
     "assertLichessId" => assert_lichess_id,
     "assertPuzzleId" => assert_puzzle_id,
     "assertOptionalAccount" => assert_optional_account,

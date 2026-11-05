@@ -136,7 +136,7 @@ const CORE: &[Row] = &[
     ("profile", 1, &[Valid("assertUsername")]),
     ("ratingHistory", 1, &[Valid("assertUsername")]),
     ("connectLichess", 0, &[Any]),
-    ("engineStatus", 0, &[]),
+    ("engineStatus", 0, &[Optional("assertVariant")]),
     ("installEngine", 0, &[]),
     ("deleteEngine", 0, &[]),
     ("stopEngine", 0, &[]),
