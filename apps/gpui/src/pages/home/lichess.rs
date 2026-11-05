@@ -25,6 +25,8 @@ pub struct LichessActivity {
     /// `gameLibraryOverview`: wins, losses and draws by account.
     overview: Value,
     recent: Vec<Value>,
+    /// The saved games have been read once for this account, so an empty list means none.
+    loaded: bool,
     epoch: u64,
 }
 
@@ -43,8 +45,14 @@ impl LichessActivity {
             }),
             overview: Value::Null,
             recent: Vec::new(),
+            loaded: false,
             epoch: 0,
         }
+    }
+
+    /// "No synced games yet": only once the saved games are known to be none, not while they load.
+    pub(crate) fn shows_empty(&self) -> bool {
+        self.loaded && self.recent.is_empty()
     }
 
     /// Show `account`, or read it again (`loadProfile` and the game history's account data).
@@ -55,6 +63,7 @@ impl LichessActivity {
             self.history
                 .update(cx, |history, cx| history.set(Value::Null, Value::Null, cx));
             self.recent.clear();
+            self.loaded = false;
         }
         self.epoch += 1;
         let epoch = self.epoch;
@@ -91,6 +100,7 @@ impl LichessActivity {
                 if let Ok(recent) = recent {
                     this.recent = recent["games"].as_array().cloned().unwrap_or_default();
                 }
+                this.loaded = true;
                 if let Ok(fallback) = fallback {
                     this.history
                         .update(cx, |history, cx| history.set_fallback(fallback, cx));
@@ -356,7 +366,7 @@ impl Render for LichessActivity {
                         )
                     }),
             )
-            .when(self.recent.is_empty(), |card| {
+            .when(self.shows_empty(), |card| {
                 card.child(
                     widgets::empty_state(icon("history"), "No synced games yet", None, &palette)
                         .py(px(24.))
@@ -414,7 +424,7 @@ impl Render for LichessActivity {
 mod tests {
     use serde_json::json;
 
-    use super::{grouped, shown_perfs};
+    use super::{LichessActivity, grouped, shown_perfs};
 
     #[test]
     fn counts_are_grouped_by_thousands() {
@@ -443,5 +453,26 @@ mod tests {
             .map(|(key, _)| key)
             .collect();
         assert_eq!(unknown, ["blitz", "rapid"]);
+    }
+
+    use crate::e2e::Harness;
+    use gpui_kit::AppContext as _;
+
+    /// The empty state waits for the saved games: it does not flash before them.
+    #[gpui_kit::test]
+    fn no_synced_games_shows_only_once_they_are_read(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = Harness::start(cx);
+        let activity = app.with_window(|window, cx| {
+            let activity = cx.new(|cx| LichessActivity::new(window, cx));
+            activity.update(cx, |activity, cx| activity.load("nobody", cx));
+            assert!(
+                !activity.read(cx).shows_empty(),
+                "still reading the saved games"
+            );
+            activity
+        });
+        app.wait_for("the saved games to be read", |_, cx| {
+            activity.read(cx).shows_empty()
+        });
     }
 }
