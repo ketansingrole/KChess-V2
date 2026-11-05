@@ -967,6 +967,7 @@ fn start(profile: &Path, width: f32, height: f32) -> (HeadlessAppContext, AnyWin
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::menu::init(cx);
+        crate::notifications::init(cx);
     });
     cx.update(|cx| crate::core::start(profile.to_path_buf(), cx))
         .expect("the core opens the profile");

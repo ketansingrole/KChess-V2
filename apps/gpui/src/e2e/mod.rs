@@ -181,6 +181,7 @@ impl Harness {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::menu::init(cx);
+            crate::notifications::init(cx);
             // Dialogs and popovers appear at rest: their entrance runs on the real clock, so a
             // click could otherwise land on a dialog still sliding in and be lost (seen once
             // dependencies were optimized and the tests outran the 250 ms slide).

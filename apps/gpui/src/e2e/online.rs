@@ -387,9 +387,9 @@ fn watch_says_when_no_followed_player_is_playing(cx: &mut gpui_kit::TestAppConte
     app.wait_for("the follow", |_, cx| {
         !crate::accounts::handle(cx).read(cx).tracked().is_empty()
     });
-    // Straight to the Following tab: the follow's toasts cover the tab pills.
-    app.with_window(|_, cx| crate::prefs::set(cx, crate::pages::watch::TAB_KEY, "friends"));
+    // The follow's toasts are still up; they leave the page's tabs in reach.
     app.open("Watch");
+    app.click(("watch-tabs", 1usize));
     assert_eq!(app.find(("watch-tabs", 1usize)).selected(), Some(true));
     app.find("watch-friends-none");
 }

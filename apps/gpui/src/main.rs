@@ -108,6 +108,7 @@ fn main() {
     app.run(move |cx| {
         gpui_kit::init(cx);
         menu::init(cx);
+        notifications::init(cx);
         if let Err(message) = core::start(data_dir, cx) {
             log::write(Level::Error, "app", &message);
             explain_and_quit(message, cx);

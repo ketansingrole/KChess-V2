@@ -7,6 +7,14 @@ use kchess_contracts::types::Settings;
 
 use crate::pages::Page;
 
+/// Toasts rise from the bottom right: the top right holds each page's tabs and menus, which a
+/// toast there would cover for as long as it shows.
+pub fn init(cx: &mut App) {
+    gpui_kit::component::Theme::global_mut(cx)
+        .notification
+        .placement = gpui_kit::Anchor::BottomRight;
+}
+
 /// Why an alert was not shown, or how it was.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
