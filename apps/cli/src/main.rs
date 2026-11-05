@@ -37,6 +37,7 @@ Commands:
                                    Print whose turn, check or mate, and the legal moves
   watch [channel|link]             Stream Lichess TV, a game or a broadcast as JSON lines
   methods                          List available CoreApi methods
+  version                          Print the CLI's version (also --version)
 
 Options:
   --data-dir <path>                Use another profile (default: the app's)
@@ -184,6 +185,43 @@ async fn until_interrupted(
     }
 }
 
+/// Every command `run` knows, for a mistyped one's suggestion.
+const COMMANDS: [&str; 17] = [
+    "help", "methods", "opening", "position", "library", "status", "login", "call", "analyze",
+    "play", "local", "puzzle", "pgn", "review", "watch", "explore", "version",
+];
+
+/// An unknown command's message, naming the command it was probably meant to be.
+fn unknown_command(command: &str) -> String {
+    let nearest = COMMANDS
+        .iter()
+        .map(|known| (edit_distance(command, known), *known))
+        .min()
+        .filter(|(distance, known)| *distance <= 2.min(known.len() / 2));
+    match nearest {
+        Some((_, known)) => format!("Unknown command: {command}. Did you mean {known}?"),
+        None => format!("Unknown command: {command}. Run --help."),
+    }
+}
+
+/// The Levenshtein distance between `a` and `b`, by characters.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, x) in a.chars().enumerate() {
+        let mut diagonal = row[0];
+        row[0] = i + 1;
+        for (j, y) in b.iter().enumerate() {
+            let above = row[j + 1];
+            row[j + 1] = (above + 1)
+                .min(row[j] + 1)
+                .min(diagonal + usize::from(x != *y));
+            diagonal = above;
+        }
+    }
+    row[b.len()]
+}
+
 async fn run(argv: &[String]) -> Result<(), String> {
     let Cli {
         options,
@@ -196,6 +234,12 @@ async fn run(argv: &[String]) -> Result<(), String> {
             print!("{HELP}");
             return Ok(());
         }
+        "version" | "--version" | "-V" => {
+            println!("kchess-cli {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        // Refused before the core opens, which takes a moment.
+        other if !COMMANDS.contains(&other) => return Err(unknown_command(other)),
         "methods" => {
             print(&json!(method_names()));
             return Ok(());
@@ -319,7 +363,7 @@ async fn run(argv: &[String]) -> Result<(), String> {
                         .await?,
                 );
             }
-            other => return Err(format!("Unknown command: {other}. Run --help.")),
+            other => return Err(unknown_command(other)),
         }
         Ok(())
     }
@@ -672,6 +716,26 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mistyped_command_names_the_nearest_one() {
+        assert_eq!(edit_distance("kitten", "sitting"), 3);
+        assert_eq!(edit_distance("", "pgn"), 3);
+        assert_eq!(
+            unknown_command("anaylze"),
+            "Unknown command: anaylze. Did you mean analyze?"
+        );
+        assert_eq!(
+            unknown_command("pgm"),
+            "Unknown command: pgm. Did you mean pgn?"
+        );
+        // Too far from every command to guess.
+        assert_eq!(unknown_command("xyz"), "Unknown command: xyz. Run --help.");
+        assert_eq!(
+            unknown_command("bogus"),
+            "Unknown command: bogus. Run --help."
+        );
+    }
 
     #[test]
     fn watch_follows_a_channel_a_game_or_a_broadcast() {
