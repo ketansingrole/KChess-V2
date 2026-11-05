@@ -112,7 +112,7 @@ pub fn engine_lines(
     ended: Option<&'static str>,
     on_play: PlayLine,
     palette: &Palette,
-    figurine: bool,
+    figurine: crate::notation::Figurine,
 ) -> Div {
     let mut rows: Vec<AnyElement> = Vec::new();
     if let Some(ended) = ended {
@@ -175,7 +175,12 @@ pub fn engine_lines(
                                 .cursor_pointer()
                                 .hover(|chip| chip.bg(tint(palette.primary, 24.)))
                                 .on_click(move |_, window, cx| on_play(&pv, at, window, cx))
-                                .child(crate::notation::shown(&played.label, figurine))
+                                .child(crate::notation::shown(
+                                    &played.label,
+                                    &figurine
+                                        .as_ref()
+                                        .map(|figurine| figurine.in_color(palette.toned)),
+                                ))
                         }),
                     ))
                     .into_any_element(),

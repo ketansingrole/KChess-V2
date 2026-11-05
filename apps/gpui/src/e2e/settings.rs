@@ -136,7 +136,7 @@ fn moves_can_be_shown_with_piece_symbols(cx: &mut gpui_kit::TestAppContext) {
     app.click(symbols);
     assert_eq!(app.find(symbols).selected(), Some(true));
     app.wait_for_saved("figurineNotation", json!(true));
-    assert!(app.cx.update(|cx| crate::notation::figurine(cx)));
+    assert!(app.cx.update(|cx| crate::notation::figurine(cx)).is_some());
     // Only what is shown changes: a screen reader still hears the move in letters.
     app.click("0-0");
     app.open("Analysis board");

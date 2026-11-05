@@ -903,11 +903,11 @@ impl SettingsPage {
                 palette,
             )
             .row(
-                "Moves",
+                "Piece notation",
                 None,
                 choice(
                     "notation",
-                    &[(false, "Nf3", None), (true, "♘f3", None)],
+                    &[(false, "Letters", None), (true, "Symbols", None)],
                     frontend.figurine_notation,
                     |s, value| s.frontend.figurine_notation = value,
                     palette,

@@ -223,6 +223,63 @@ fn crazyhouse() {
     }
 }
 
+/// Moves written with figurines over the board and in Settings, in both appearances:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::figurines -- --ignored`
+/// writes `<dir>/figurines/<appearance>-<page>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn figurines() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("figurines");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), 1320., 880.);
+        cx.update(|cx| {
+            crate::settings::change(cx, move |s| {
+                s.frontend.appearance = appearance;
+                s.frontend.figurine_notation = true;
+            })
+        });
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Local, window, cx);
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            let local = crate::shell::view_of::<crate::pages::local::LocalPage>(Page::Local, cx)
+                .expect("the page");
+            local.update(cx, |local, cx| {
+                for uci in [
+                    "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5c6", "d7c6", "e1g1", "f7f6",
+                    "d2d4", "c8g4", "d4e5", "d8d1", "f1d1",
+                ] {
+                    local.play(uci, window, cx);
+                }
+            });
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{name}-board.png")))
+            .expect("the screenshot saves");
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Settings, window, cx);
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{name}-settings.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::core::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
 /// A Crazyhouse game against the computer, named above the board, wide and at the narrowest
 /// window: `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::computer_variant --
 /// --ignored` writes `<dir>/computer-variant/<width>.png`.

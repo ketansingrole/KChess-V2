@@ -2199,7 +2199,7 @@ struct TreeView<'a> {
     reveal: std::rc::Rc<std::cell::Cell<bool>>,
     scroll: ScrollHandle,
     /// Moves shown with piece symbols.
-    figurine: bool,
+    figurine: crate::notation::Figurine,
 }
 
 impl TreeView<'_> {
@@ -2293,7 +2293,7 @@ impl TreeView<'_> {
                         .child(number),
                 )
             })
-            .child(crate::notation::shown(&node.san, self.figurine))
+            .child(crate::notation::shown(&node.san, &self.figurine))
             .children(glyph.map(|(glyph, _)| {
                 div()
                     .ml(px(1.))

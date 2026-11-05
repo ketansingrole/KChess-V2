@@ -470,7 +470,7 @@ pub fn moves_list(
     first: FirstMove,
     empty: SharedString,
     select: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
-    figurine: bool,
+    figurine: crate::notation::Figurine,
     palette: &Palette,
 ) -> impl IntoElement {
     let number_cell = |text: String| {
@@ -526,7 +526,7 @@ pub fn moves_list(
                 })
                 .hover(|cell| cell.bg(palette.accented))
                 .on_click(move |_, window, cx| select(index + 1, window, cx))
-                .child(crate::notation::shown(san, figurine))
+                .child(crate::notation::shown(san, &figurine))
                 .into_any_element(),
         );
     }
@@ -1647,7 +1647,7 @@ mod tests {
                     super::FirstMove::default(),
                     "No moves".into(),
                     move |ply, _, _| chosen.set(Some(ply)),
-                    false,
+                    None,
                     &palette,
                 ))
         }

@@ -782,7 +782,7 @@ impl PositionExplorer {
                                 .items_baseline()
                                 .gap(px(8.))
                                 .child(div().font_weight(FontWeight::MEDIUM).child(
-                                    crate::notation::shown(&san, crate::notation::figurine(cx)),
+                                    crate::notation::shown(&san, &crate::notation::figurine(cx)),
                                 ))
                                 .child(
                                     div()
@@ -842,7 +842,7 @@ impl PositionExplorer {
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(ExplorerEvent::Play(uci.clone()))
                             }))
-                            .child(crate::notation::shown(&san, figurine)),
+                            .child(crate::notation::shown(&san, &figurine)),
                     )
                     .when(!tablebase, |row| {
                         row.child(

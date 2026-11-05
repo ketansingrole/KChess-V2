@@ -1006,7 +1006,7 @@ impl OpeningsPage {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.show_line(Some(upto.clone()), cx)
                             }))
-                            .child(crate::notation::shown(san, figurine)),
+                            .child(crate::notation::shown(san, &figurine)),
                     )
             }));
         let train_choice = OpeningChoice {
