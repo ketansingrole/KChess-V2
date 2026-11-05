@@ -650,6 +650,12 @@ fn live_commands(cx: &App) -> Vec<Command> {
                 LiveAction::Resign => ("resign", "Resign", "flag", "give up"),
                 LiveAction::Abort => ("abort", "Abort", "ban", "cancel"),
                 LiveAction::Rematch => ("rematch", "Rematch", "repeat", "again"),
+                LiveAction::NewOpponent => (
+                    "new-opponent",
+                    "New opponent",
+                    "users",
+                    "seek again same time control",
+                ),
                 LiveAction::Analyse => ("analyse", "Analyse", "microscope", "analysis review"),
                 LiveAction::NewGame => ("new-game", "New game", "plus", "another seek"),
                 LiveAction::CancelSeek => ("cancel-seek", "Cancel seek", "x", "stop waiting"),

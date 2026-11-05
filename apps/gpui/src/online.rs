@@ -504,6 +504,39 @@ impl OnlineState {
         }
     }
 
+    /// The last game's kind as a seek against anyone (Lichess's _New opponent_): its clock,
+    /// rating and variant, either colour. None for one a seek cannot repeat: correspondence, or
+    /// from a set-up position.
+    pub fn new_opponent_form(&self) -> Option<Form> {
+        let options = self.view()["rematch"].clone();
+        if !options.is_object() || !options["days"].is_null() || !options["fen"].is_null() {
+            return None;
+        }
+        Some(Form {
+            minutes: options["minutes"].as_f64()?,
+            increment: options["increment"].as_f64().unwrap_or_default(),
+            target: String::new(),
+            color: "random".into(),
+            rated: options["rated"] == json!(true),
+            variant: options["variant"]
+                .as_str()
+                .unwrap_or("standard")
+                .to_string(),
+            correspondence: false,
+            days: self.form.days,
+        })
+    }
+
+    /// Seek the last game's kind again; the form is left as it was.
+    pub fn new_opponent(&mut self, cx: &mut Context<Self>) {
+        let Some(form) = self.new_opponent_form() else {
+            return;
+        };
+        let kept = std::mem::replace(&mut self.form, form);
+        self.start(None, cx);
+        self.form = kept;
+    }
+
     pub fn reconnect(&mut self, cx: &mut Context<Self>) {
         self.run_busy("reconnect", Value::Null, cx).detach();
     }

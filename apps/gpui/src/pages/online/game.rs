@@ -47,6 +47,7 @@ pub(crate) enum LiveAction {
     Resign,
     Abort,
     Rematch,
+    NewOpponent,
     Analyse,
     NewGame,
     CancelSeek,
@@ -67,6 +68,9 @@ pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
             // A rematch on its way is not sent twice: its button shows it loading meanwhile.
             if model["lastGame"].is_object() && !tournament && !online.busy {
                 actions.push(LiveAction::Rematch);
+                if online.new_opponent_form().is_some() {
+                    actions.push(LiveAction::NewOpponent);
+                }
             }
             if crate::game::analysable(online.setup()["variant"].as_str().unwrap_or("standard")) {
                 actions.push(LiveAction::Analyse);
@@ -117,6 +121,9 @@ pub(crate) fn run_live_action(action: LiveAction, window: &mut Window, cx: &mut 
         LiveAction::Resign => return ask_resign(window, cx),
         LiveAction::Analyse => return analyse(window, cx),
         LiveAction::Rematch => return online.update(cx, |online, cx| online.rematch(cx)),
+        LiveAction::NewOpponent => {
+            return online.update(cx, |online, cx| online.new_opponent(cx));
+        }
         LiveAction::NewGame | LiveAction::CancelSeek => {
             return online.update(cx, |online, cx| online.stop(cx));
         }
@@ -1033,6 +1040,18 @@ impl OnlinePage {
                             .on_click(|_, _, cx| {
                                 crate::online::handle(cx)
                                     .update(cx, |online, cx| online.rematch(cx))
+                            }),
+                    )
+                })
+                .when(live.contains(&LiveAction::NewOpponent), |row| {
+                    row.child(
+                        Button::new("online-new-opponent")
+                            .outline()
+                            .icon(icon("users"))
+                            .label("New opponent")
+                            .on_click(|_, _, cx| {
+                                crate::online::handle(cx)
+                                    .update(cx, |online, cx| online.new_opponent(cx))
                             }),
                     )
                 })

@@ -457,3 +457,41 @@ fn a_correspondence_move_waits_for_confirm(cx: &mut gpui_kit::TestAppContext) {
     app.wait_for_moves(&["e4", "e5", "Nf3", "Nc6"]);
     assert!(!app.shows("move-confirm"));
 }
+
+/// Once a game is over, New opponent seeks the same kind of game against anyone, as on Lichess:
+/// a seek, not a challenge to the last opponent, and the form is left as it was.
+#[gpui_kit::test]
+fn new_opponent_seeks_the_same_game_against_anyone(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = past_the_opening(cx);
+    assert!(!app.shows("online-new-opponent"), "not during the game");
+    let form = app
+        .cx
+        .update(|cx| crate::online::handle(cx).read(cx).form.clone());
+    app.click("online-resign");
+    app.click("ok");
+    app.click("online-new-opponent");
+    app.wait_for("a seek", |_, _| {
+        writes(&lichess)
+            .iter()
+            .any(|write| write.starts_with("POST /api/board/seek"))
+    });
+    // The game's own 10+5, either colour.
+    assert!(
+        writes(&lichess)
+            .contains(&"POST /api/board/seek time=10&increment=5&rated=false&color=random".into()),
+        "{:?}",
+        writes(&lichess)
+    );
+    assert!(
+        !writes(&lichess)
+            .iter()
+            .any(|write| write.contains("/api/challenge/")),
+        "{:?}",
+        writes(&lichess)
+    );
+    assert_eq!(
+        app.cx
+            .update(|cx| crate::online::handle(cx).read(cx).form.clone()),
+        form
+    );
+}

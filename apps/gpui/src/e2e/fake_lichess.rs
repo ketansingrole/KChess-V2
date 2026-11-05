@@ -567,6 +567,14 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             write_game(&session, p);
             reply(&mut out, &json!({ "ok": true }))
         }
+        // A seek is recorded with what it asks for; nobody takes it up.
+        ("POST", "/api/board/seek") => {
+            session
+                .lock()
+                .writes
+                .push(format!("POST /api/board/seek {}", request.body));
+            reply(&mut out, &json!({}))
+        }
         ("GET", "/api/challenge") => reply(&mut out, &json!({ "in": [], "out": [] })),
         ("GET", "/api/users/status") => reply(&mut out, &json!([])),
         ("GET", "/api/timeline") => reply(&mut out, &json!({ "entries": [], "users": {} })),
