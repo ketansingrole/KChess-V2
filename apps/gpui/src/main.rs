@@ -51,6 +51,7 @@ mod replay;
 mod reviews;
 mod settings;
 mod shell;
+mod shortcuts;
 mod sound;
 mod startup;
 mod studies;

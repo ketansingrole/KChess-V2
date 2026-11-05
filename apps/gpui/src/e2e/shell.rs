@@ -78,6 +78,21 @@ fn the_keyboard_goes_back_and_forward_through_the_pages(cx: &mut gpui_kit::TestA
     assert_eq!(shown(&mut app), Some(Page::Studies));
 }
 
+/// The keyboard shortcuts open from their key and from Quick Pick, and Escape closes them.
+#[gpui_kit::test]
+fn the_keyboard_shortcuts_are_listed(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.press("secondary-/");
+    app.find("shortcuts");
+    app.press("escape");
+    app.wait_gone("shortcuts");
+    app.press("secondary-k");
+    app.type_text("keyboard shortcuts");
+    super::palette::wait_for_first(&mut app, "Keyboard shortcuts");
+    app.press("enter");
+    app.find("shortcuts");
+}
+
 /// The sidebar marks your move in a Lichess game beside Play; collapsed to its rail it had no room
 /// for the mark and dropped it, so a correspondence move went unseen there.
 #[gpui_kit::test]

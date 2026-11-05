@@ -559,6 +559,37 @@ fn account_menu() {
     }
 }
 
+/// The keyboard shortcuts dialog in both appearances, at the default and the smallest size:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::shortcuts -- --ignored`
+/// writes `<dir>/shortcuts/<appearance>-<width>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn shortcuts() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("shortcuts");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        for (width, height) in [SIZES[2], SIZES[0]] {
+            let profile = tempfile::tempdir().expect("a temporary profile");
+            let (mut cx, window) = start(profile.path(), width, height);
+            cx.update(|cx| {
+                crate::settings::change(cx, move |s| s.frontend.appearance = appearance)
+            });
+            cx.update_window(window, |_, window, cx| crate::shortcuts::open(window, cx))
+                .expect("the window");
+            settle(&mut cx, window);
+            cx.capture_screenshot(window)
+                .expect("a screenshot")
+                .save(out.join(format!("{name}-{width}.png")))
+                .expect("the screenshot saves");
+            let quit = cx.update(crate::core::quit);
+            cx.foreground_executor().block_test(quit);
+            crate::profile::TEST_DATA_DIR.set(None);
+        }
+    }
+}
+
 /// Connect the stand-in Lichess's showcase account as a person would, and sync its games.
 fn connect_showcase(
     cx: &mut HeadlessAppContext,

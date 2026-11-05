@@ -1278,6 +1278,18 @@ fn app_commands(cx: &App) -> Vec<Command> {
             crate::shell::toggle_sidebar,
         )
         .keywords("toggle navigation"),
+        Command::new(
+            "app:shortcuts",
+            "Keyboard shortcuts",
+            icon("keyboard"),
+            crate::shortcuts::open,
+        )
+        .keywords("keys hotkeys help")
+        .kbds(if cfg!(target_os = "macos") {
+            "⌘ /"
+        } else {
+            "Ctrl /"
+        }),
     ];
     // Studies' Lichess tab is there only with an account.
     if connected {
@@ -2077,7 +2089,7 @@ impl Render for CommandPalette {
 }
 
 /// A shortcut's keys as `UKbd` chips (size sm).
-fn kbd(keys: &'static str, palette: &Palette) -> impl IntoElement {
+pub(crate) fn kbd(keys: &str, palette: &Palette) -> impl IntoElement {
     h_flex()
         .flex_none()
         .gap(px(2.))

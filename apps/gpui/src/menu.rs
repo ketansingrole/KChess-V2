@@ -22,7 +22,8 @@ gpui_kit::actions!(
         ZoomOut,
         ActualSize,
         GoBack,
-        GoForward
+        GoForward,
+        ShowShortcuts
     ]
 );
 
@@ -113,6 +114,7 @@ pub fn init(cx: &mut App) {
         bind("secondary--", ZoomOut, cx),
         bind("secondary-shift--", ZoomOut, cx),
         bind("secondary-0", ActualSize, cx),
+        bind("secondary-/", ShowShortcuts, cx),
     ];
     cx.bind_keys(bindings);
     // Back and forward through the pages, as a browser takes them: ⌘[ and ⌘] on macOS, Alt
@@ -124,6 +126,13 @@ pub fn init(cx: &mut App) {
             bind("alt-left", GoBack, cx),
             bind("alt-right", GoForward, cx),
         ]
+    });
+    cx.on_action(|_: &ShowShortcuts, cx| {
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, cx| crate::shortcuts::open(window, cx));
+            }
+        })
     });
     cx.on_action(|_: &GoBack, cx| go(-1, cx));
     cx.on_action(|_: &GoForward, cx| go(1, cx));
@@ -200,6 +209,8 @@ pub fn init(cx: &mut App) {
             MenuItem::action("Zoom Out", ZoomOut),
             MenuItem::separator(),
             MenuItem::action("Toggle Full Screen", ToggleFullScreen),
+            MenuItem::separator(),
+            MenuItem::action("Keyboard Shortcuts", ShowShortcuts),
         ]),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),
