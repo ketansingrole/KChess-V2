@@ -74,9 +74,15 @@ pub fn main_line(pgn: &str) -> Result<Line, String> {
         }
     };
     if moves.len() < sans.len() {
+        let fields: Vec<&str> = fen.split(' ').collect();
+        let first: usize = fields
+            .get(5)
+            .and_then(|number| number.parse().ok())
+            .unwrap_or(1);
+        let half = moves.len() + usize::from(fields.get(1) == Some(&"b"));
         return Err(format!(
             "Move {} ({}) is not legal there.",
-            moves.len() / 2 + 1,
+            first + half / 2,
             sans[moves.len()]
         ));
     }
@@ -217,6 +223,13 @@ mod tests {
         assert_eq!(
             main_line("1. e4 e5 2. Ke3 *"),
             Err("Move 2 (Ke3) is not legal there.".into())
+        );
+        // Counted from the game's own start: Black's 30th move, then White's 31st.
+        assert_eq!(
+            main_line(
+                "[FEN \"4k3/8/8/8/8/8/8/4K3 b - - 0 30\"]\n[SetUp \"1\"]\n\n30... Kd7 31. Ke3 *"
+            ),
+            Err("Move 31 (Ke3) is not legal there.".into())
         );
         assert_eq!(
             main_line("[Event \"x\"]\n\n*"),
