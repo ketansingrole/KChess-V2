@@ -369,6 +369,28 @@ fn moves_are_deleted_from_here_and_a_new_analysis_starts_empty(cx: &mut gpui_kit
     });
 }
 
+/// Backspace (or Delete) on the board deletes from the move shown, as the move's menu does, and
+/// ⌘Z brings the moves back.
+#[gpui_kit::test]
+fn backspace_deletes_from_the_move_shown(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 2. Nf3 *");
+    app.click("tree-e2e4 e7e5");
+    app.press("backspace");
+    app.wait_for("the deleted moves to go", |window, _| {
+        window.try_find("tree-e2e4 e7e5").is_none()
+    });
+    app.find("tree-e2e4");
+    app.press("secondary-z");
+    app.find("tree-e2e4 e7e5 g1f3");
+    app.click("tree-e2e4 e7e5 g1f3");
+    app.press("delete");
+    app.wait_for("the last move to go", |window, _| {
+        window.try_find("tree-e2e4 e7e5 g1f3").is_none()
+    });
+    app.find("tree-e2e4 e7e5");
+}
+
 #[gpui_kit::test]
 fn a_variation_can_be_made_the_main_line(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);

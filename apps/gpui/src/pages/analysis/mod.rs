@@ -1525,7 +1525,8 @@ impl AnalysisPage {
     /* ── Keys, wheel, menus ───────────────────────────────────────────── */
 
     /// ← → ↑ ↓ (and Home, End) step, Shift → and Shift ← go into and out of a variation, F flips,
-    /// L turns the engine on or off, E shows the explorer, Space plays the best move.
+    /// L turns the engine on or off, E shows the explorer, Space plays the best move, Delete or
+    /// Backspace deletes from the move shown (its notice's Undo, or ⌘Z, brings it back).
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus.is_focused(window) {
             return;
@@ -1553,6 +1554,7 @@ impl AnalysisPage {
             "x" => self.toggle_threat(cx),
             "c" => self.focus_notes(window, cx),
             "e" => self.toggle_explorer(window, cx),
+            "delete" | "backspace" => self.delete_from_here(window, cx),
             "space"
                 if !cx
                     .global::<SettingsHandle>()
