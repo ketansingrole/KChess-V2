@@ -223,6 +223,46 @@ fn crazyhouse() {
     }
 }
 
+/// A Crazyhouse game against the computer, named above the board, wide and at the narrowest
+/// window: `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::computer_variant --
+/// --ignored` writes `<dir>/computer-variant/<width>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn computer_variant() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("computer-variant");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (width, height) in [(1320., 880.), SIZES[0]] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), width, height);
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Computer, window, cx);
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            let page =
+                crate::shell::view_of::<crate::pages::computer::ComputerPage>(Page::Computer, cx)
+                    .expect("the page");
+            page.update(cx, |page, cx| {
+                let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+                let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
+                page.start_from(setup, shakmaty::Color::White, window, cx);
+            });
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{width}.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::core::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
 /// Home as a new person, someone with games played here, and a connected Lichess account with
 /// years of history, in both appearances, wide and narrow:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::home -- --ignored` writes

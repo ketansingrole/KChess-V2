@@ -1368,15 +1368,7 @@ impl LocalPage {
             .clone();
         let timed = !self.game.state["times"].is_null();
         let paused = self.game.state["paused"].as_bool() == Some(true);
-        let variant_label = {
-            let variant = self.setup()["variant"].as_str().unwrap_or("standard");
-            if variant == "standard" {
-                (self.setup()["fen"].as_str() != Some(STANDARD_FEN))
-                    .then(|| "From position".to_string())
-            } else {
-                Some(crate::game::variant_label(variant))
-            }
-        };
+        let variant_label = crate::game::setup_label(self.setup());
         let clock_label = self.game.state["clock"].as_object().map(|clock| {
             let white = &clock["white"];
             let black = &clock["black"];

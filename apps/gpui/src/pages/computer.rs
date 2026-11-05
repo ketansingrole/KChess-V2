@@ -1549,6 +1549,7 @@ impl Render for ComputerPage {
             .clone();
         let (blindfold, zen) = (frontend.blindfold, frontend.zen_mode);
         let show_opening = frontend.show_opening_name && self.setup_variant() == "standard";
+        let setup_label = crate::game::setup_label(&self.game.state["setup"]);
         let opening = show_opening.then(|| self.opening()).flatten();
         let panel = widgets::side_panel(&palette)
             .relative()
@@ -1563,6 +1564,9 @@ impl Render for ComputerPage {
                     .gap(px(8.))
                     .text_size(px(12.))
                     .text_color(palette.text_muted)
+                    .children(
+                        setup_label.map(|label| div().font_weight(FontWeight::MEDIUM).child(label)),
+                    )
                     .children(clock_label)
                     .child(div().flex_1())
                     .child(

@@ -349,8 +349,42 @@ pub fn variant_label(key: &str) -> String {
         .map_or_else(|| key.to_string(), |text| text.label.clone())
 }
 
+/// What a game page names its start by: the variant ("Crazyhouse"), or "From position" for
+/// standard chess from another position; nothing for the ordinary game.
+pub fn setup_label(setup: &Value) -> Option<String> {
+    let variant = setup["variant"].as_str().unwrap_or("standard");
+    if variant == "standard" {
+        (setup["fen"].as_str() != Some(STANDARD_FEN)).then(|| "From position".to_string())
+    } else {
+        Some(variant_label(variant))
+    }
+}
+
 #[cfg(test)]
 mod variant_tests {
+    use serde_json::json;
+
+    /// The game pages name a variant, or a standard game's other start, and not the usual game.
+    #[test]
+    fn a_setup_is_named_by_its_variant_or_its_start() {
+        let label = |variant: &str, fen: &str| {
+            super::setup_label(&json!({ "variant": variant, "fen": fen }))
+        };
+        assert_eq!(label("standard", super::STANDARD_FEN), None);
+        assert_eq!(
+            label("standard", "4k3/8/8/8/8/8/8/4K2R w K - 0 1").as_deref(),
+            Some("From position")
+        );
+        assert_eq!(
+            label("kingOfTheHill", super::STANDARD_FEN).as_deref(),
+            Some("King of the Hill")
+        );
+        assert_eq!(
+            label("chess960", super::STANDARD_FEN).as_deref(),
+            Some("Chess960")
+        );
+    }
+
     #[test]
     fn every_variant_has_a_name_and_a_hint() {
         let all = super::variants();
