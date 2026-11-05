@@ -92,7 +92,8 @@ can add them as a friend, challenge them or watch their current game.
   `kchess-cli review <link|file|moves>` reviews a game (in any variant) with the engine, printing each
   side's accuracy and the inaccuracies, mistakes and blunders.
   `kchess-cli explore [masters|opening|tablebase] <fen|moves>` prints the explorer's moves for a
-  position, from the tablebase when it has seven pieces or fewer, and
+  position, from the tablebase when it has seven pieces or fewer (`--variant crazyhouse` looks
+  up Lichess's games of a variant), and
   `kchess-cli opening <fen|moves>` names the opening it reaches, offline, and
   `kchess-cli position <fen|moves>` prints whose turn it is, check or mate, and the legal moves.
   `kchess-cli watch [channel|link]` streams a Lichess TV channel, a game or a broadcast as JSON lines.

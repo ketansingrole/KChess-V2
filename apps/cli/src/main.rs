@@ -30,7 +30,7 @@ Commands:
   puzzle [id|link]                 Solve the daily puzzle, or that one (hint, solution)
   pgn <link>                       Print a Lichess game's PGN, or a public study chapter's
   review <link|file|moves>         Review a game with the engine: accuracy and faulted moves
-  explore [masters|opening|tablebase] <fen|startpos|moves>
+  explore [masters|opening|tablebase] [--variant name] <fen|startpos|moves>
                                    Look a position up (the tablebase for 7 pieces or fewer)
   opening <fen|startpos|moves>     Name the opening a position or line reaches (ECO)
   position <fen|startpos|moves>    Print whose turn, check or mate, and the legal moves
@@ -305,11 +305,15 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 watched?;
             }
             "explore" => {
-                let (kind, fen) = explore_request(&args[1..])?;
+                let (kind, fen, variant) = explore_request(&args[1..])?;
+                let options = match variant {
+                    Some(variant) => json!({ "variant": variant }),
+                    None => json!({}),
+                };
                 core.call("resumeOnline", vec![]).await?;
                 print(
                     &core
-                        .call("positionLookup", vec![json!(kind), json!(fen), json!({})])
+                        .call("positionLookup", vec![json!(kind), json!(fen), options])
                         .await?,
                 );
             }
@@ -598,17 +602,22 @@ fn position_info(words: &[String]) -> Result<Value, String> {
 }
 
 /// What `explore` looks up: the database named first, else the tablebase when it covers the
-/// position (seven pieces or fewer, no castling rights) and the masters' games when not.
-fn explore_request(words: &[String]) -> Result<(&'static str, String), String> {
+/// position (seven pieces or fewer, no castling rights) and the masters' games when not. A
+/// variant's position (`--variant`, or a PGN's header) is looked up in Lichess's games of it.
+fn explore_request(words: &[String]) -> Result<(&'static str, String, Option<String>), String> {
     const KINDS: [&str; 3] = ["masters", "opening", "tablebase"];
     let named = words
         .first()
         .and_then(|word| KINDS.iter().find(|kind| **kind == word.as_str()));
     let words = if named.is_some() { &words[1..] } else { words };
-    let fen = analysis_request(words).map_err(|cause| cause.replace("analyze", "explore"))?["fen"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
+    let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "explore"))?;
+    let fen = request["fen"].as_str().unwrap_or_default().to_string();
+    if let Some(variant) = request["variant"].as_str() {
+        return match named.copied() {
+            None | Some("opening") => Ok(("opening", fen, Some(variant.to_string()))),
+            Some(_) => Err("Masters games and tablebases are standard chess only.".into()),
+        };
+    }
     let kind = named.copied().unwrap_or_else(|| {
         let mut fields = fen.split(' ');
         let pieces = fields
@@ -624,7 +633,7 @@ fn explore_request(words: &[String]) -> Result<(&'static str, String), String> {
             "masters"
         }
     });
-    Ok((kind, fen))
+    Ok((kind, fen, None))
 }
 
 /// The core's advice names the app's Settings; here the same fix is a command or an option.
@@ -829,28 +838,29 @@ mod tests {
         let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         assert_eq!(
             explore_request(&strings(&["startpos"])),
-            Ok(("masters", start.to_string()))
+            Ok(("masters", start.to_string(), None))
         );
         assert_eq!(
             explore_request(&strings(&["opening", "startpos"])),
-            Ok(("opening", start.to_string()))
+            Ok(("opening", start.to_string(), None))
         );
         let ending = "8/8/8/8/8/3k4/8/K6Q w - - 0 1";
         assert_eq!(
             explore_request(&strings(&ending.split(' ').collect::<Vec<_>>())),
-            Ok(("tablebase", ending.to_string()))
+            Ok(("tablebase", ending.to_string(), None))
         );
         // Castling rights keep a few-piece position out of the tablebase.
         let castling = "4k3/8/8/8/8/8/8/4K2R w K - 0 1";
         assert_eq!(
             explore_request(&strings(&[castling])),
-            Ok(("masters", castling.to_string()))
+            Ok(("masters", castling.to_string(), None))
         );
         assert_eq!(
             explore_request(&strings(&["opening", "1.", "e4", "c5"])),
             Ok((
                 "opening",
-                "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2".to_string()
+                "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2".to_string(),
+                None
             ))
         );
         assert_eq!(
@@ -860,6 +870,16 @@ mod tests {
         assert_eq!(
             explore_request(&strings(&["8/8/8/8/8/3k4/8/K4Q2 w - - 0 1"])),
             Err("Not a legal position or moves: 8/8/8/8/8/3k4/8/K4Q2 w - - 0 1".into())
+        );
+        // A variant's position is looked up in Lichess's games of it, which only that database holds.
+        let zh = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+        assert_eq!(
+            explore_request(&strings(&["--variant", "crazyhouse", "startpos"])),
+            Ok(("opening", zh.to_string(), Some("crazyhouse".to_string())))
+        );
+        assert_eq!(
+            explore_request(&strings(&["masters", "--variant", "atomic", "startpos"])),
+            Err("Masters games and tablebases are standard chess only.".into())
         );
     }
 
