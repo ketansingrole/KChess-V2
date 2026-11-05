@@ -500,6 +500,16 @@ fn a_new_game_starts_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContext
     app.click_square("e3", true);
     app.wait_for_moves(&["P@e3"]);
     assert_eq!(app.status(), "Black to move");
+    // The next new game opens on this one: Crazyhouse, from that position.
+    app.click("local-new");
+    app.wait_for("the position to come back", |window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window
+            .try_find_by_label("Crazyhouse start")
+            .and_then(|input| input.value().map(str::to_string))
+            .as_deref()
+            == Some("rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3")
+    });
 }
 
 /// A Chess960 game goes to the analysis board too, its castling (king takes rook) included, and

@@ -634,8 +634,10 @@ impl LocalPage {
 
     fn open_new_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let page = cx.entity().downgrade();
+        let current = self.setup().clone();
         let form = cx.new(|cx| {
             NewGame::new(
+                &current,
                 move |setup, clock, window, cx| {
                     let _ = page.update(cx, |page, cx| page.replace_game(setup, clock, window, cx));
                 },
@@ -1732,28 +1734,58 @@ struct NewGame {
 
 impl NewGame {
     fn new(
+        current: &Value,
         on_start: impl Fn(Value, Value, &mut Window, &mut App) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> NewGame {
         let texts = variants();
+        // The form opens on the game being played: its variant, its Chess960 number, or the
+        // position it started from.
+        let current_variant = current["variant"].as_str().unwrap_or("standard");
+        let current_fen = current["fen"].as_str().unwrap_or(STANDARD_FEN).to_string();
+        let row = texts
+            .iter()
+            .position(|text| text.key == current_variant)
+            .unwrap_or(0);
         let variant = cx.new(|cx| {
             SelectState::new(
                 texts
                     .iter()
                     .map(|text| SharedString::from(text.label.clone()))
                     .collect(),
-                Some(IndexPath::new(0)),
+                Some(IndexPath::new(row)),
                 window,
                 cx,
             )
         });
+        let current_number = (current_variant == "chess960")
+            .then(|| (0..960).find(|&n| chess960(n) == current_fen))
+            .flatten();
         let number = cx.new(|cx| {
             let mut input = InputState::new(window, cx);
-            input.set_value(crate::game::random_chess960().to_string(), window, cx);
+            let n = current_number.unwrap_or_else(crate::game::random_chess960);
+            input.set_value(n.to_string(), window, cx);
             input
         });
-        let fen = cx.new(|cx| InputState::new(window, cx).placeholder("Standard start"));
+        let usual = match current_variant {
+            "standard" => Some(STANDARD_FEN.to_string()),
+            "chess960" => None,
+            variant => rules("defaultFen", &[json!(variant)])
+                .ok()
+                .and_then(|fen| fen.as_str().map(str::to_string)),
+        };
+        let fen = cx.new(|cx| {
+            let label = format!(
+                "{} start",
+                crate::game::variant_label(texts.get(row).map_or("standard", |text| &text.key))
+            );
+            let mut input = InputState::new(window, cx).placeholder(label);
+            if usual.as_ref().is_some_and(|usual| *usual != current_fen) {
+                input.set_value(current_fen.clone(), window, cx);
+            }
+            input
+        });
         let clock = cx.new(|cx| {
             SelectState::new(
                 CLOCKS
