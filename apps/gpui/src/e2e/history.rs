@@ -158,6 +158,15 @@ fn the_last_game_is_reviewed_from_home_in_quick_pick(cx: &mut gpui_kit::TestAppC
         app.find("home-opening").label(),
         Some("C20 King's Pawn Game: Wayward Queen Attack")
     );
+    // Not while opening names are turned off.
+    app.cx
+        .update(|cx| crate::settings::change(cx, |s| s.frontend.show_opening_name = false));
+    app.wait_for("the opening to go", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find("home-opening").is_none()
+    });
+    app.cx
+        .update(|cx| crate::settings::change(cx, |s| s.frontend.show_opening_name = true));
     app.press("secondary-k");
     app.type_text(">");
     super::palette::wait_for_first(&mut app, "Review last game");
@@ -481,6 +490,9 @@ fn board_games_are_searched_by_opponent_or_opening(cx: &mut gpui_kit::TestAppCon
     app.open("Game history");
     app.find(("history-row", 1usize));
 
+    // Openings are searched even while their names are not shown.
+    app.cx
+        .update(|cx| crate::settings::change(cx, |s| s.frontend.show_opening_name = false));
     app.click_label("Search by opponent or opening");
     app.type_text("wayward");
     app.wait_for("one game found", |window, _| {

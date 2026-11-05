@@ -174,6 +174,8 @@ fn played_games(cx: &App) -> Vec<Value> {
 impl HomePage {
     pub fn new(cx: &mut Context<Self>) -> HomePage {
         let played = cx.global::<PlayedHandle>().0.clone();
+        // The last game's opening shows only while opening names are.
+        let settings = cx.global::<crate::settings::SettingsHandle>().0.clone();
         let mut page = HomePage {
             continue_game: None,
             board: None,
@@ -184,6 +186,7 @@ impl HomePage {
             _subscriptions: vec![
                 cx.observe(&played, |_, _, cx| cx.notify()),
                 cx.observe(&crate::accounts::handle(cx), |_, _, cx| cx.notify()),
+                cx.observe(&settings, |_, _, cx| cx.notify()),
             ],
         };
         page.refresh(cx);
@@ -444,7 +447,8 @@ impl Render for HomePage {
                 let opening = self
                     .last_opening
                     .as_ref()
-                    .and_then(|(_, name)| name.clone());
+                    .and_then(|(_, name)| name.clone())
+                    .filter(|_| crate::pages::history::opening_names_shown(cx));
                 (
                     Some((crate::pages::history::opponent(game), None)),
                     Some(

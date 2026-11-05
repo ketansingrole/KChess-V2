@@ -63,6 +63,16 @@ fn filter_of(outcome: &str) -> Option<Filter> {
 }
 
 /// `archivedOutcome`, shared with the Electron app.
+/// Whether openings are named (Settings → Gameplay → _Show opening names_).
+pub(crate) fn opening_names_shown(cx: &App) -> bool {
+    cx.global::<crate::settings::SettingsHandle>()
+        .0
+        .read(cx)
+        .settings
+        .frontend
+        .show_opening_name
+}
+
 /// A played game's opening, with its ECO code ("C20 King's Pawn Game"); none for a variant or a
 /// line no opening names.
 pub(crate) fn opening_name(game: &Value) -> Option<String> {
@@ -291,6 +301,9 @@ impl HistoryPage {
                 }
             }),
         );
+        // Rows name their openings only while opening names are shown.
+        let settings = cx.global::<crate::settings::SettingsHandle>().0.clone();
+        subscriptions.push(cx.observe(&settings, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&played, |this, _, cx| {
             // A deleted game closes; the pages left shrink with the list.
             if let Some((game, _)) = &this.open
@@ -1146,12 +1159,15 @@ impl HistoryPage {
                 let clock = text(&game, "source") == "clock";
                 let side = player_side(&game);
                 // Why it ended, and the opening it reached, as a Lichess game's line has.
-                let details = [Some(details(&game)), self.opening(&game)]
-                    .into_iter()
-                    .flatten()
-                    .filter(|part| !part.is_empty())
-                    .collect::<Vec<_>>()
-                    .join(" · ");
+                let details = [
+                    Some(details(&game)),
+                    self.opening(&game).filter(|_| opening_names_shown(cx)),
+                ]
+                .into_iter()
+                .flatten()
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join(" · ");
                 let variant = game["setup"]["variant"].as_str().unwrap_or("standard");
                 let mut kind = time_label(text(&game, "timeControl"));
                 if variant != "standard" {
