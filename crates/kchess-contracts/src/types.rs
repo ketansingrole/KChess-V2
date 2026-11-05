@@ -564,6 +564,9 @@ pub struct InsightsQuery {
     pub rated: Option<bool>,
     /// Only games from the last this-many days.
     pub days: Option<f64>,
+    /// A Lichess variant key; standard chess when left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -649,6 +652,9 @@ pub struct InsightsReport {
     pub streaks: Streaks,
     /// From reviewed games only.
     pub accuracy: Option<InsightsAccuracy>,
+    /// The variants other than standard the account has games in, to choose between.
+    #[serde(default)]
+    pub variants: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

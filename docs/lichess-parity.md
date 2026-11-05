@@ -118,8 +118,9 @@ can add them as a friend, challenge them or watch their current game.
   mistakes are remembered on this computer.
 - **Insights**: results by colour, speed, opening family, day of week, time of day, opponent
   rating gap, game length and how games ended. It also shows streaks and average accuracy,
-  inaccuracies, mistakes and blunders from reviewed games. Everything is worked out locally
-  from synced games.
+  inaccuracies, mistakes and blunders from reviewed games. Variant games are counted apart from
+  standard chess, with a Variant choice once you have played one. Everything is worked out
+  locally from synced games.
 
 ## Not possible, and why
 

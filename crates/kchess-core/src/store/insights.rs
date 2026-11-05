@@ -10,6 +10,7 @@ use super::library::{db_err, now_ms, num, truthy};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::js;
+use kchess_domain::misc::constants::VARIANTS;
 
 const NEG_INF: f64 = f64::NEG_INFINITY;
 const INF: f64 = f64::INFINITY;
@@ -134,9 +135,43 @@ fn clauses(query: &Value, prefix: &str, now: f64) -> Result<(Vec<String>, Vec<Sq
         clauses.push(format!("{prefix}createdAt >= ?"));
         params.push(Sql::Real(now - days * DAY_MS));
     }
+    // Lichess files a variant game under the variant (`perf`): standard chess, by default, leaves
+    // them out, so their results and openings do not mix into it.
+    match query.get("variant").and_then(Value::as_str) {
+        Some(variant) if variant != "standard" => {
+            clauses.push(format!("{prefix}perf = ?"));
+            params.push(Sql::Text(variant.to_string()));
+        }
+        _ => {
+            let others = &VARIANTS[1..];
+            let marks = vec!["?"; others.len()].join(", ");
+            clauses.push(format!("{prefix}perf NOT IN ({marks})"));
+            params.extend(others.iter().map(|key| Sql::Text((*key).to_string())));
+        }
+    }
     // In-progress games have no result yet.
     clauses.push(format!("{prefix}status NOT IN ('created', 'started')"));
     Ok((clauses, params))
+}
+
+/// The variants other than standard the account has finished games in, in KChess's order.
+fn played_variants(db: &Connection, query: &Value) -> Result<Vec<&'static str>> {
+    let mut statement = db
+        .prepare(
+            "SELECT DISTINCT perf FROM games
+             WHERE account = ? AND status NOT IN ('created', 'started')",
+        )
+        .map_err(db_err)?;
+    let played: Vec<String> = statement
+        .query_map([sql_of(query.get("account"))], |row| row.get(0))
+        .map_err(db_err)?
+        .collect::<std::result::Result<_, _>>()
+        .map_err(db_err)?;
+    Ok(VARIANTS[1..]
+        .iter()
+        .copied()
+        .filter(|key| played.iter().any(|perf| perf == key))
+        .collect())
 }
 
 /// `insights(query)`.
@@ -349,6 +384,7 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
     if let Some(accuracy) = accuracy_report(host, db, query, now)? {
         report.insert("accuracy".into(), accuracy);
     }
+    report.insert("variants".into(), json!(played_variants(db, query)?));
     Ok(Value::Object(report))
 }
 

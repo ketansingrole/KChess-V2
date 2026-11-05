@@ -283,3 +283,45 @@ fn a_crazyhouse_game_shows_its_pockets(cx: &mut gpui_kit::TestAppContext) {
     assert!(held(&mut app, "pocket-Black-Pawn").is_some_and(|label| label.ends_with(": 0")));
     assert!(!app.enabled("open-analysis"));
 }
+
+/// Insights offer a Variant choice only once the account has variant games, and choosing one asks
+/// for that variant's games alone.
+#[gpui_kit::test]
+fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::{Page, insights::InsightsPage};
+    use gpui_kit::test::TestQueryExt as _;
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Lichess insights");
+    let page = |app: &mut Harness| {
+        app.cx
+            .update(|cx| crate::shell::view_of::<InsightsPage>(Page::Insights, cx))
+            .expect("the Insights page")
+    };
+    app.wait_for("the first report", |_, cx| page_loaded(cx));
+    assert!(app.with_window(|window, _| window.try_find_by_label("Variant").is_none()));
+
+    // The account turns out to have Chess960 games.
+    let insights = page(&mut app);
+    app.cx
+        .update(|cx| insights.update(cx, |page, cx| page.show_report_variants(&["chess960"], cx)));
+    app.wait_for("the Variant choice", |window, _| {
+        window.try_find_by_label("Variant").is_some()
+    });
+    assert_eq!(
+        app.cx.update(|cx| insights.read(cx).query(cx))["variant"],
+        serde_json::Value::Null,
+        "standard chess until a variant is chosen"
+    );
+    app.with_window(|window, cx| {
+        insights.update(cx, |page, cx| page.choose_variant("chess960", window, cx))
+    });
+    assert_eq!(
+        app.cx.update(|cx| insights.read(cx).query(cx))["variant"],
+        "chess960"
+    );
+
+    fn page_loaded(cx: &gpui_kit::App) -> bool {
+        crate::shell::view_of::<InsightsPage>(Page::Insights, cx)
+            .is_some_and(|page| page.read(cx).loaded())
+    }
+}

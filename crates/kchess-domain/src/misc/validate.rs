@@ -763,6 +763,8 @@ struct InsightsQuery {
     rated: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     days: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
 }
 
 fn assert_insights_query(value: J) -> Checked<InsightsQuery> {
@@ -778,6 +780,9 @@ fn assert_insights_query(value: J) -> Checked<InsightsQuery> {
     }
     if let Some(days) = query.days {
         within(days, 1, 3650, Some("Invalid period."), "days")?;
+    }
+    if let Some(variant) = &query.variant {
+        one_of(variant, VARIANTS, Some("Invalid variant."), "variant")?;
     }
     Ok(query)
 }
