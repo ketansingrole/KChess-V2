@@ -278,6 +278,7 @@ struct GamePageQuery {
     account: Option<String>,
     result: Option<String>,
     rated: Option<bool>,
+    search: Option<String>,
     // Validated whole numbers; the validator hands them back as JSON numbers, which may be floats.
     offset: f64,
     limit: f64,
@@ -830,6 +831,19 @@ fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
         clauses.push("rated = ?".into());
         params.push(SqlValue::Integer(i64::from(rated)));
     }
+    if let Some(search) = &query.search {
+        // Any part of the opponent's name or the opening's, any case; `%` and `_` are literal.
+        let escaped = search
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
+        clauses.push(
+            "(opponent LIKE ? ESCAPE '\\' OR COALESCE(opening, '') LIKE ? ESCAPE '\\')".into(),
+        );
+        params.push(SqlValue::Text(pattern.clone()));
+        params.push(SqlValue::Text(pattern));
+    }
     let filter = if clauses.is_empty() {
         String::new()
     } else {
@@ -839,7 +853,7 @@ fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
     // The same filters are re-counted on every page and result toggle, so keep the total until a
     // call that can change the games runs.
     let count_key = format!(
-        "{}|{}|{}",
+        "{}|{}|{}|{}",
         query
             .account
             .as_deref()
@@ -852,7 +866,8 @@ fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
             .unwrap_or(""),
         query
             .rated
-            .map_or("any".to_string(), |rated| rated.to_string())
+            .map_or("any".to_string(), |rated| rated.to_string()),
+        query.search.as_deref().unwrap_or("")
     );
     let total: i64 = match ctx.cache.count(&count_key) {
         Some(total) => total,

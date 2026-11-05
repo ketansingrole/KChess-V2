@@ -1,6 +1,7 @@
 //! Game history: finished games listed, opened and kept.
 
 use super::Harness;
+use crate::pages::Page;
 
 const SCHOLARS_MATE: [&str; 7] = ["e4", "e5", "Qh5", "Nc6", "Bc4", "Nf6", "Qxf7#"];
 
@@ -341,4 +342,40 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
         crate::shell::view_of::<InsightsPage>(Page::Insights, cx)
             .is_some_and(|page| page.read(cx).loaded())
     }
+}
+
+/// The Lichess tab's games, once listed: the total and each game's opening.
+fn lichess_listed(app: &mut Harness, what: &str, ready: impl Fn(usize, &[String]) -> bool) {
+    app.wait_for(what, |_, cx| {
+        crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+            .and_then(|page| page.read(cx).lichess_listed())
+            .is_some_and(|(total, openings)| ready(total, &openings))
+    });
+}
+
+/// Hundreds of synced games are found by opponent or opening: the search narrows the list and
+/// its total, and Clear filters empties it.
+#[gpui_kit::test]
+fn lichess_games_are_searched_by_opponent_or_opening(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    app.with_window(|window, cx| crate::shell::open(Page::History, window, cx));
+    app.click(("history-source", 2usize));
+    lichess_listed(&mut app, "the synced games", |total, _| total == 40);
+
+    app.click_label("Search by opponent or opening");
+    app.type_text("najdorf");
+    lichess_listed(&mut app, "the Najdorf games", |total, openings| {
+        total == 10
+            && !openings.is_empty()
+            && openings.iter().all(|opening| opening.contains("Najdorf"))
+    });
+
+    app.click("lichess-clear");
+    lichess_listed(&mut app, "every game again", |total, _| total == 40);
+    // A name is found in any case.
+    app.click_label("Search by opponent or opening");
+    app.type_text("TACTICALTOM");
+    lichess_listed(&mut app, "TacticalTom's games", |total, _| {
+        total > 0 && total < 40
+    });
 }

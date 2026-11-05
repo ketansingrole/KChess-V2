@@ -313,6 +313,37 @@ impl HistoryPage {
         self.set_lichess_account(account, window, cx);
     }
 
+    /// The Lichess tab once loaded: its total and the openings of the games listed.
+    #[cfg(test)]
+    pub(crate) fn lichess_listed(&self) -> Option<(usize, Vec<String>)> {
+        let tab = &self.lichess;
+        (!tab.loading).then(|| {
+            let openings = tab
+                .games
+                .iter()
+                .map(|game| game["opening"].as_str().unwrap_or_default().to_string())
+                .collect();
+            (tab.total, openings)
+        })
+    }
+
+    /// The Lichess tab searched for `text`, as typed in its field (screenshots).
+    #[cfg(test)]
+    pub(crate) fn search_lichess(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.choose_source(Source::Lichess, cx);
+        self.lichess.search_input.update(cx, |input, cx| {
+            input.set_value(text.to_string(), window, cx)
+        });
+        self.lichess.search = text.to_string();
+        self.lichess.page = 0;
+        self.load_lichess(cx);
+    }
+
     /// Show the Lichess tab's list (Home's View all).
     pub fn show_lichess(&mut self, cx: &mut Context<Self>) {
         self.choose_source(Source::Lichess, cx);

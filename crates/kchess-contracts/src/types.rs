@@ -536,6 +536,9 @@ pub struct GamePageQuery {
     pub account: Option<String>,
     pub result: Option<GameResultFilter>,
     pub rated: Option<bool>,
+    /// Part of an opponent's name or an opening's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<String>,
     pub offset: f64,
     pub limit: f64,
 }

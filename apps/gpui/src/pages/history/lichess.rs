@@ -1,8 +1,9 @@
 //! Game history → Lichess: the synced games of the connected and followed accounts, a page at a time,
-//! filtered by account, result and rating; each with its review's accuracy; opened to go through
+//! filtered by account, result and rating and searched by opponent or opening; each with its review's accuracy; opened to go through
 //! move by move or to review on the analysis board.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -37,6 +38,8 @@ pub struct LichessTab {
     pub account: String,
     pub result: &'static str,
     pub rated: &'static str,
+    /// Part of an opponent's or an opening's name; blank is none.
+    pub search: String,
     pub page: usize,
     pub page_size: usize,
     pub games: Vec<Value>,
@@ -49,6 +52,7 @@ pub struct LichessTab {
     pub account_select: Entity<SelectState<Vec<Choice>>>,
     pub rated_select: Entity<SelectState<Vec<Choice>>>,
     pub size_select: Entity<SelectState<Vec<Choice>>>,
+    pub search_input: Entity<InputState>,
     /// The game open, its review's side, and its board.
     pub open: Option<(Value, Entity<GameReplay>)>,
 }
@@ -104,6 +108,7 @@ pub fn new_tab(
         .map(|size| Choice::new(size.to_string(), format!("{size} per page")))
         .collect();
     let size_select = cx.new(|cx| SelectState::new(sizes, None, window, cx));
+    let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Opponent or opening"));
     for (select, value) in [
         (&account_select, "all".to_string()),
         (&rated_select, "all".to_string()),
@@ -114,6 +119,16 @@ pub fn new_tab(
         });
     }
     let subscriptions = vec![
+        cx.subscribe(&search_input, |this, input, event: &InputEvent, cx| {
+            if let InputEvent::Change = event {
+                let search = input.read(cx).value().trim().to_string();
+                if search != this.lichess.search {
+                    this.lichess.search = search;
+                    this.lichess.page = 0;
+                    this.load_lichess(cx);
+                }
+            }
+        }),
         cx.subscribe(
             &account_select,
             |this, _, event: &SelectEvent<Vec<Choice>>, cx| {
@@ -157,6 +172,7 @@ pub fn new_tab(
             account: "all".into(),
             result: "all",
             rated: "all",
+            search: String::new(),
             page: 0,
             page_size: 20,
             games: Vec::new(),
@@ -168,6 +184,7 @@ pub fn new_tab(
             account_select,
             rated_select,
             size_select,
+            search_input,
             open: None,
         },
         subscriptions,
@@ -195,6 +212,9 @@ impl HistoryPage {
         }
         if tab.rated != "all" {
             query["rated"] = json!(tab.rated == "rated");
+        }
+        if !tab.search.is_empty() {
+            query["search"] = json!(tab.search);
         }
         let core = cx.global::<AppCore>().clone();
         let page = core.call("gamePage", vec![query]);
@@ -268,7 +288,7 @@ impl HistoryPage {
     /// Whether a filter narrows the synced games.
     pub(super) fn lichess_filtered(&self) -> bool {
         let tab = &self.lichess;
-        tab.account != "all" || tab.result != "all" || tab.rated != "all"
+        tab.account != "all" || tab.result != "all" || tab.rated != "all" || !tab.search.is_empty()
     }
 
     pub(super) fn clear_lichess_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -276,7 +296,10 @@ impl HistoryPage {
         tab.account = "all".into();
         tab.result = "all";
         tab.rated = "all";
+        tab.search.clear();
         tab.page = 0;
+        tab.search_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
         for select in [&tab.account_select, &tab.rated_select] {
             select.update(cx, |state, cx| {
                 state.set_selected_value(&SharedString::from("all"), window, cx)
@@ -563,6 +586,15 @@ impl HistoryPage {
                     .w(px(160.))
                     .child(Select::new(&tab.rated_select).small()),
             )
+            .child(
+                div().w(px(200.)).child(
+                    Input::new(&tab.search_input)
+                        .small()
+                        .cleanable(true)
+                        .prefix(icon("search").size(px(14.)))
+                        .aria_label("Search by opponent or opening"),
+                ),
+            )
             .when(filtered, |row| {
                 row.child(
                     Button::new("lichess-clear")
@@ -677,7 +709,7 @@ impl HistoryPage {
             .into_any_element()
     }
 
-    /// Result, opponent and opening, mode, rating change, accuracy, date.
+    /// The page buttons: previous, the pages, next.
     fn lichess_pager(
         &self,
         current: usize,

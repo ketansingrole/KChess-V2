@@ -1768,6 +1768,9 @@ struct GamePageQuery {
     result: Option<GameResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rated: Option<bool>,
+    /// Part of an opponent's name or an opening's; blank is no search.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search: Option<String>,
     offset: u64,
     limit: u64,
 }
@@ -1780,15 +1783,25 @@ enum GameResult {
     Draw,
 }
 
+const GAME_SEARCH: &str = "Invalid game search.";
+
 fn assert_game_page_query(value: J) -> Checked<GamePageQuery> {
     let mut query: GamePageQuery = decode(value, |keys| match keys {
         ["account"] => Some(USERNAME),
         ["offset"] => Some("Invalid game offset."),
         ["limit"] => Some("Invalid game page size."),
+        ["search"] => Some(GAME_SEARCH),
         _ => None,
     })?;
     if let Some(account) = &query.account {
         query.account = Some(username(account, "account")?);
+    }
+    if let Some(search) = query.search.take() {
+        let search = search.trim();
+        if search.chars().count() > 100 {
+            return Err(GAME_SEARCH.into());
+        }
+        query.search = (!search.is_empty()).then(|| search.to_string());
     }
     within(query.offset, 0, MAX_SAFE, Some("Invalid game offset."), "")?;
     within(query.limit, 1, 100, Some("Invalid game page size."), "")?;

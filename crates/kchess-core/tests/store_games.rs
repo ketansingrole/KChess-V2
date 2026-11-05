@@ -799,3 +799,48 @@ fn the_database_and_its_write_ahead_files_are_private() {
         assert_eq!(mode & 0o777, 0o600, "{name}");
     }
 }
+
+/// History's search: any part of the opponent's or the opening's name, in any case, with `%`
+/// and `_` taken literally; a blank search is none, and the total counts the matches.
+#[test]
+fn a_page_is_searched_by_opponent_and_opening() {
+    let store = fresh();
+    let game = |id: &str, opponent: &str, opening: Value, at: i64| {
+        library_game(
+            id,
+            &[
+                ("opponent", json!(opponent)),
+                ("opening", opening),
+                ("createdAt", json!(at)),
+            ],
+        )
+    };
+    save_games(
+        &store,
+        "Alice",
+        &[
+            game("Game0001", "Bob", json!("Sicilian Defense: Najdorf"), 4),
+            game("Game0002", "Carol", json!("French Defense"), 3),
+            game("Game0003", "bobby_fischer", Value::Null, 2),
+            game("Game0004", "Dave", json!("Ruy Lopez"), 1),
+        ],
+        SYNCED_AT,
+    );
+    let search = |text: &str| {
+        page(
+            &store,
+            json!({ "account": "Alice", "search": text, "offset": 0, "limit": 20 }),
+        )
+    };
+    assert_eq!(ids(&search("BOB")), ["Game0001", "Game0003"]);
+    assert_eq!(ids(&search("defense")), ["Game0001", "Game0002"]);
+    assert_eq!(search("defense")["total"], json!(2));
+    assert_eq!(ids(&search("najdorf")), ["Game0001"]);
+    // `_` is a character to find, not any character.
+    assert_eq!(ids(&search("y_f")), ["Game0003"]);
+    assert_eq!(ids(&search("o%")), Vec::<String>::new());
+    assert_eq!(ids(&search("  ")).len(), 4);
+    assert!(
+        check_page_query(&json!({ "search": "x".repeat(101), "offset": 0, "limit": 20 })).is_err()
+    );
+}

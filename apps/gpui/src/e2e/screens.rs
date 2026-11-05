@@ -432,6 +432,51 @@ fn players_search() {
     }
 }
 
+/// Game history's Lichess tab searched for an opening, in both appearances, wide and narrow:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::lichess_history_search --
+/// --ignored` writes `<dir>/lichess-history/<state>-<appearance>-<width>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn lichess_history_search() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("lichess-history");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (state, search) in [("all", ""), ("searched", "najdorf"), ("none", "nobody")] {
+        for (appearance, name) in [(Appearance::Dark, "dark"), (Appearance::Light, "light")] {
+            for (width, height) in [(1320., 900.), (760., 900.)] {
+                let profile = tempfile::tempdir().expect("a temporary profile");
+                let (mut cx, window) = start(profile.path(), width, height);
+                cx.update(|cx| {
+                    crate::settings::change(cx, move |s| s.frontend.appearance = appearance)
+                });
+                connect_showcase(&mut cx, window, profile.path(), "Rattiestword5");
+                cx.update_window(window, |_, window, cx| {
+                    crate::shell::open(Page::History, window, cx);
+                    if let Some(page) = crate::shell::view_of::<crate::pages::history::HistoryPage>(
+                        Page::History,
+                        cx,
+                    ) {
+                        page.update(cx, |page, cx| page.search_lichess(search, window, cx));
+                    }
+                })
+                .expect("the window");
+                for _ in 0..8 {
+                    std::thread::sleep(Duration::from_millis(60));
+                    settle(&mut cx, window);
+                }
+                cx.capture_screenshot(window)
+                    .expect("a screenshot")
+                    .save(out.join(format!("{state}-{name}-{width}.png")))
+                    .expect("the screenshot saves");
+                let quit = cx.update(crate::core::quit);
+                cx.foreground_executor().block_test(quit);
+                crate::profile::TEST_DATA_DIR.set(None);
+            }
+        }
+    }
+}
+
 /// The window sizes Home is shot at: wide and narrow, or `KCHESS_HOME_SIZES` ("1920x1100,760x1400").
 fn home_sizes() -> Vec<(f32, f32)> {
     let sizes: Vec<(f32, f32)> = std::env::var("KCHESS_HOME_SIZES")
