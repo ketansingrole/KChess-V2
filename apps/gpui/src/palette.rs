@@ -1619,7 +1619,10 @@ fn pasted(text: &str) -> Vec<Command> {
             "pasted:edit",
             "Edit this position",
             icon("pencil-ruler"),
-            move |window, cx| crate::shell::edit_position(edited.clone(), orientation, window, cx),
+            move |window, cx| {
+                let setup = crate::game::setup_from_fen(&edited);
+                crate::shell::edit_position(setup, orientation, window, cx)
+            },
         ),
     ]
 }

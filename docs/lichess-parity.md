@@ -75,8 +75,9 @@ can add them as a friend, challenge them or watch their current game.
 - **Variant analysis**: Crazyhouse, Atomic, Antichess, Horde, King of the Hill, Racing Kings and
   Three-check games open on the analysis board in their own rules, with the Crazyhouse pockets
   beside the board, and the bundled Fairy-Stockfish analyses and reviews them (accuracy, faulted
-  moves and the eval chart, judged by the variant's own wins). Cloud evaluation and mistake drills
-  cover standard chess and Chess960. On the command line,
+  moves and the eval chart, judged by the variant's own wins), synced games too, in the
+  background. Their mistakes become drills, played by the variant's rules (Crazyhouse drills
+  with the pockets). Cloud evaluation covers standard chess and Chess960. On the command line,
   `kchess-cli analyze --variant crazyhouse <fen|moves>` and `kchess-cli review` (a PGN with its
   `Variant` header) do the same.
 - **Opening names** from Lichess's CC0 opening list, bundled with the app, in every game view.
@@ -114,8 +115,8 @@ can add them as a friend, challenge them or watch their current game.
   Horde, Racing Kings or Crazyhouse, played by the bundled Fairy-Stockfish, from its usual start or
   a FEN) or any FEN, with an
   optional clock (the engine's thinking time is kept within its clock), a colour and a strength.
-  The editor and analysis board both have _Play Stockfish from here_; on the analysis board it
-  plays on in the game's variant. On the command line, `kchess-cli play [level] [colour]
+  The editor and analysis board both have _Play Stockfish from here_, in the position's variant
+  (the editor sets up positions in any of them; a Crazyhouse FEN keeps its pockets). On the command line, `kchess-cli play [level] [colour]
   [variant] [--fen FEN]`, and `kchess-cli local [variant] [--fen FEN]` over the board.
 - **Over the board**: two players at one computer in any supported variant, from its usual start
   or a FEN (Chess960 by its number). It has optional

@@ -9,7 +9,6 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
-use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
     Disableable as _, IndexPath, Sizable as _, WindowExt as _, h_flex, v_flex,
 };
@@ -1493,15 +1492,19 @@ impl LocalPage {
                     )
                     .children(clock_label)
                     .child(div().flex_1())
-                    .child(
-                        Switch::new("auto-flip")
-                            .xsmall()
-                            .checked(auto_flip)
-                            .label("Flip after each move")
-                            .on_click(
-                                cx.listener(|this, on: &bool, _, cx| this.set_auto_flip(*on, cx)),
-                            ),
-                    )
+                    .child({
+                        let page = cx.entity().downgrade();
+                        widgets::labelled_switch(
+                            "auto-flip",
+                            "Flip after each move",
+                            auto_flip,
+                            false,
+                            move |on, _, cx| {
+                                let _ = page.update(cx, |this, cx| this.set_auto_flip(*on, cx));
+                            },
+                        )
+                        .text_size(px(12.))
+                    })
                     .child(widgets::view_toggles(frontend.blindfold, frontend.zen_mode)),
             )
             .child(banner)

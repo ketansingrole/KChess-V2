@@ -1,7 +1,8 @@
 //! The board editor: set up any position, as on Lichess.
 //! Drag pieces anywhere (off the board removes them), drag new ones in from the spare rows, or
 //! pick a spare piece (or the bin) and click squares; choose the side to move, castling rights
-//! and en passant, or type a FEN. Then analyse the position or play it.
+//! and en passant, or type a FEN, in any variant KChess plays (a Crazyhouse FEN keeps its
+//! pockets, a Three-check one its checks). Then analyse the position or play it.
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -14,12 +15,12 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
-use shakmaty::{Color, Piece, Role};
+use shakmaty::{ByColor, ByRole, Color, Piece, RemainingChecks, Role};
 
 use crate::assets::icon;
 use crate::board::looks;
 use crate::board::{BoardEvent, BoardState, ChessBoard, EditTool, PieceGhost, SparePiece};
-use crate::game::{STANDARD_FEN, editor_setup, position_problem, rules};
+use crate::game::{STANDARD_FEN, editor_setup, position_problem, rules, standard_rules, variants};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii, tint};
@@ -62,6 +63,25 @@ fn setup_fen(setup: &Value) -> String {
         .ok()
         .and_then(|fen| fen.as_str().map(str::to_string))
         .unwrap_or_default()
+}
+
+/// The FEN of `fen` (the editor's standard one) in `variant`: Crazyhouse adds the pockets and
+/// Three-check the checks left, as pasted (empty pockets, three checks each, otherwise).
+fn variant_fen(
+    variant: &str,
+    fen: &str,
+    pockets: Option<ByColor<ByRole<u8>>>,
+    checks: Option<ByColor<RemainingChecks>>,
+) -> String {
+    let Some(mut setup) = kchess_domain::rules::parse_fen(fen) else {
+        return fen.to_string();
+    };
+    match variant {
+        "crazyhouse" => setup.pockets = Some(pockets.unwrap_or_default()),
+        "threeCheck" => setup.remaining_checks = Some(checks.unwrap_or_default()),
+        _ => return fen.to_string(),
+    }
+    kchess_domain::rules::make_setup_fen(&setup)
 }
 
 /// The files (0 = a) of the king and of the outermost rook on the side `key` castles to, on that
@@ -132,6 +152,12 @@ pub(crate) enum Action {
 
 pub struct EditorPage {
     setup: Value,
+    /// The variant the position is played in (a Lichess key).
+    variant: String,
+    variant_select: Entity<SelectState<Vec<SharedString>>>,
+    /// A Crazyhouse position's pockets and a Three-check one's checks left, from its FEN.
+    pockets: Option<ByColor<ByRole<u8>>>,
+    checks: Option<ByColor<RemainingChecks>>,
     orientation: Color,
     tool: EditTool,
     board: Entity<ChessBoard>,
@@ -169,6 +195,17 @@ impl EditorPage {
         });
         let fen_input = cx.new(|cx| InputState::new(window, cx));
         let ep_select = cx.new(|cx| SelectState::new(Vec::<SharedString>::new(), None, window, cx));
+        let variant_select = cx.new(|cx| {
+            SelectState::new(
+                variants()
+                    .iter()
+                    .map(|text| SharedString::from(text.label.clone()))
+                    .collect(),
+                Some(IndexPath::new(0)),
+                window,
+                cx,
+            )
+        });
         let settings = cx.global::<SettingsHandle>().0.clone();
         let subscriptions = vec![
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
@@ -197,6 +234,21 @@ impl EditorPage {
                     this.changed(cx);
                 },
             ),
+            cx.subscribe(
+                &variant_select,
+                |this, state, _: &SelectEvent<Vec<SharedString>>, cx| {
+                    let row = state
+                        .read(cx)
+                        .selected_index(cx)
+                        .map_or(0, |index| index.row);
+                    if let Some(text) = variants().get(row)
+                        && text.key != this.variant
+                    {
+                        this.variant = text.key.clone();
+                        this.changed(cx);
+                    }
+                },
+            ),
             cx.subscribe(&settings, |this, _, _: &SettingsChanged, cx| {
                 this.redraw(cx)
             }),
@@ -209,6 +261,10 @@ impl EditorPage {
         ];
         let mut page = EditorPage {
             setup: start_setup(),
+            variant: "standard".into(),
+            variant_select,
+            pockets: None,
+            checks: None,
             orientation: Color::White,
             tool: EditTool::Pointer,
             board,
@@ -227,25 +283,81 @@ impl EditorPage {
         page
     }
 
-    /// `editPosition`: the editor on a position (the analysis board's), facing the same way.
+    /// `editPosition`: the editor on a position (the analysis board's, in its variant), facing
+    /// the same way.
     pub fn set_position(
         &mut self,
+        variant: &str,
         fen: &str,
         orientation: Color,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.setup = editor_setup(fen).unwrap_or_else(start_setup);
+        if !self.read_fen(fen) {
+            self.setup = start_setup();
+        }
+        if kchess_domain::rules::lichess_variant(variant).is_some() {
+            self.variant = variant.to_string();
+        }
         self.orientation = orientation;
         self.changed(cx);
     }
 
-    fn fen(&self) -> String {
-        setup_fen(&self.setup)
+    /// Take a FEN: its board, side, castling and en passant, and a variant FEN's pockets or
+    /// checks, which name its variant. False when it is no FEN.
+    fn read_fen(&mut self, text: &str) -> bool {
+        let Some(mut parsed) = kchess_domain::rules::parse_fen(text.trim()) else {
+            return false;
+        };
+        let (pockets, checks) = (parsed.pockets.take(), parsed.remaining_checks.take());
+        let Some(setup) = editor_setup(&kchess_domain::rules::make_setup_fen(&parsed)) else {
+            return false;
+        };
+        self.setup = setup;
+        self.pockets = pockets;
+        self.checks = checks;
+        if pockets.is_some() {
+            self.variant = "crazyhouse".into();
+        } else if checks.is_some() {
+            self.variant = "threeCheck".into();
+        }
+        true
     }
 
-    fn problem(&self) -> Option<&'static str> {
-        position_problem(&self.fen())
+    /// The position's FEN, in its variant.
+    fn fen(&self) -> String {
+        variant_fen(
+            &self.variant,
+            &setup_fen(&self.setup),
+            self.pockets,
+            self.checks,
+        )
+    }
+
+    /// The position as a game starts from it (`{ variant, fen }`).
+    pub(crate) fn game_setup(&self) -> Value {
+        if standard_rules(&self.variant) {
+            crate::game::setup_from_fen(&self.fen())
+        } else {
+            json!({ "variant": self.variant, "fen": self.fen() })
+        }
+    }
+
+    /// Why the position cannot be played yet: standard chess's reasons, or another variant's
+    /// rules refusing it.
+    fn problem(&self) -> Option<String> {
+        let fen = self.fen();
+        if standard_rules(&self.variant) {
+            return position_problem(&fen).map(str::to_string);
+        }
+        kchess_domain::rules::setup_start(&self.variant, &fen)
+            .is_none()
+            .then(|| {
+                format!(
+                    "Not a legal {} position",
+                    crate::game::variant_label(&self.variant)
+                )
+            })
     }
 
     fn turn(&self) -> Color {
@@ -287,7 +399,7 @@ impl EditorPage {
             None,
         );
         // An unfinished position is no legal one: the board draws the pieces as they stand.
-        state.fen = self.fen();
+        state.fen = setup_fen(&self.setup);
         state.edit = Some(self.tool);
         self.board
             .update(cx, |board, cx| board.set_state(state, cx));
@@ -300,15 +412,11 @@ impl EditorPage {
         if text.trim() == self.fen() {
             return;
         }
-        match editor_setup(&text) {
-            Some(setup) => {
-                self.setup = setup;
-                self.changed(cx);
-            }
-            None => {
-                self.fen_error = Some("That is not a valid FEN".into());
-                cx.notify();
-            }
+        if self.read_fen(&text) {
+            self.changed(cx);
+        } else {
+            self.fen_error = Some("That is not a valid FEN".into());
+            cx.notify();
         }
     }
 
@@ -325,6 +433,13 @@ impl EditorPage {
         let items: Vec<SharedString> = std::iter::once(SharedString::from("None"))
             .chain(self.ep_squares.iter().map(|square| square.clone().into()))
             .collect();
+        let row = variants()
+            .iter()
+            .position(|text| text.key == self.variant)
+            .unwrap_or(0);
+        self.variant_select.update(cx, |select, cx| {
+            select.set_selected_index(Some(IndexPath::new(row)), window, cx)
+        });
         let chosen = self.setup["ep"].as_str().unwrap_or_default();
         let index = self
             .ep_squares
@@ -377,14 +492,10 @@ impl EditorPage {
             Action::Flip => self.flip(cx),
             Action::CopyFen => self.copy_fen(window, cx),
             Action::Analyse => self.analyse(window, cx),
-            Action::PlayStockfish => crate::shell::play_computer_from(
-                crate::game::setup_from_fen(&self.fen()),
-                window,
-                cx,
-            ),
-            Action::PlayFriend => {
-                crate::shell::play_local_from(crate::game::setup_from_fen(&self.fen()), window, cx)
+            Action::PlayStockfish => {
+                crate::shell::play_computer_from(self.game_setup(), window, cx)
             }
+            Action::PlayFriend => crate::shell::play_local_from(self.game_setup(), window, cx),
         }
     }
 
@@ -393,8 +504,19 @@ impl EditorPage {
         window.push_notification("FEN copied", cx);
     }
 
+    /// The variant's usual start (Horde's, Racing Kings'), or standard chess's.
     fn start_position(&mut self, cx: &mut Context<Self>) {
-        self.setup = start_setup();
+        let usual = (!standard_rules(&self.variant))
+            .then(|| rules("defaultFen", &[json!(self.variant)]).ok())
+            .flatten()
+            .and_then(|fen| fen.as_str().map(str::to_string));
+        let variant = self.variant.clone();
+        if !usual.is_some_and(|fen| self.read_fen(&fen)) {
+            self.setup = start_setup();
+            self.pockets = None;
+            self.checks = None;
+        }
+        self.variant = variant;
         self.changed(cx);
     }
 
@@ -413,10 +535,9 @@ impl EditorPage {
         if self.problem().is_some() {
             return;
         }
-        let (fen, orientation) = (self.fen(), self.orientation);
+        let (setup, orientation) = (self.game_setup(), self.orientation);
         crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
-            analysis.analyse_setup(&fen, orientation, cx);
-            true
+            analysis.analyse_setup(&setup, orientation, cx)
         });
     }
 
@@ -799,7 +920,7 @@ impl Render for EditorPage {
                 )
                 .detail(
                     problem
-                        .map(str::to_string)
+                        .clone()
                         .unwrap_or_else(|| {
                             format!(
                                 "{} to move",
@@ -811,6 +932,13 @@ impl Render for EditorPage {
                             )
                         })
                         .into(),
+                ),
+            )
+            .child(
+                v_flex().gap(px(8.)).child(label("Variant")).child(
+                    Select::new(&self.variant_select)
+                        .small()
+                        .accessibility_label("Choose a variant"),
                 ),
             )
             .child(

@@ -43,7 +43,7 @@ fn a_finished_review_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCon
 }
 
 /// A Crazyhouse game is reviewed in Crazyhouse, drops and all: the review is asked for in its
-/// variant and kept under it, and no standard-chess mistake drill is offered from it.
+/// variant and kept under it, and its mistakes are offered for practice.
 #[gpui_kit::test]
 fn a_crazyhouse_game_is_reviewed_in_its_variant(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
@@ -82,5 +82,7 @@ fn a_crazyhouse_game_is_reviewed_in_its_variant(cx: &mut gpui_kit::TestAppContex
         Some(5),
         "{analysis}"
     );
-    assert!(!app.shows("practice-review-mistakes"));
+    // Its mistakes may be practised, in Crazyhouse (`store::library` and `e2e::practice` play
+    // them; the scripted engine's lines are not legal here, so it makes no drill).
+    assert!(app.shows("practice-review-mistakes"));
 }

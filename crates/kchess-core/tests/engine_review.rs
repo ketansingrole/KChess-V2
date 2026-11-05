@@ -34,7 +34,11 @@ fn rig_on(scheduler: Arc<Scheduler>, mode: &str, name: &str, auto: &str, on_batt
     let store = MemoryStore::new();
     let recording = support::host();
     let log = log_path(name);
-    let ctx = context(&recording, scheduler, mode, &log);
+    let mut ctx = context(&recording, scheduler, mode, &log);
+    // The scripted engine stands in for Fairy-Stockfish too (the command ignores the path).
+    let mut locations = support::locations();
+    locations.variant = PathBuf::from(fake_path());
+    ctx.locations = Arc::new(locations);
     let reviews = Reviews::new(ctx, store.clone());
     let host = ScriptedHost::new(store.clone(), settings(auto, on_battery));
     reviews.setup_reviews(host.clone());
@@ -157,7 +161,7 @@ async fn a_request_for_a_finished_review_answers_from_the_store() {
 }
 
 #[tokio::test]
-async fn automatic_reviews_ask_lichess_first_and_leave_variants_alone() {
+async fn automatic_reviews_ask_lichess_first_and_review_variants_by_their_rules() {
     let rig = rig("review", "auto", false, "recent", true);
     rig.store.add_game(GameRow {
         id: "scholar1".into(),
@@ -167,33 +171,53 @@ async fn automatic_reviews_ask_lichess_first_and_leave_variants_alone() {
         perf: "blitz".into(),
         created_at: now_ms(),
     });
+    // Crazyhouse, with a drop that standard rules would stop at; Fairy-Stockfish reviews it.
     rig.store.add_game(GameRow {
-        id: "variant1".into(),
+        id: "zh1".into(),
+        account: "tester".into(),
+        moves: "e4 d5 exd5 Qxd5 Nc3 Qa5 P@d4".into(),
+        pgn: None,
+        perf: "crazyhouse".into(),
+        created_at: now_ms() - 1,
+    });
+    // Chess960, which Stockfish reviews.
+    rig.store.add_game(GameRow {
+        id: "c960".into(),
         account: "tester".into(),
         moves: "e4 e5".into(),
         pgn: None,
         perf: "chess960".into(),
-        created_at: now_ms(),
+        created_at: now_ms() - 2,
     });
     rig.reviews.reviews_changed();
-    let done = wait_until(WAIT, "the automatic review", || {
-        rig.host
-            .complete_updates()
-            .into_iter()
-            .find(|review| review.game_id.as_deref() == Some("scholar1"))
-    })
-    .await;
+    let host = rig.host.clone();
+    let reviewed = |id: &'static str| {
+        let host = host.clone();
+        move || {
+            host.complete_updates()
+                .into_iter()
+                .find(|review| review.game_id.as_deref() == Some(id))
+        }
+    };
+    let done = wait_until(WAIT, "the automatic review", reviewed("scholar1")).await;
+    assert!(rig.store.linked("scholar1", &done.key));
+    let crazyhouse = wait_until(WAIT, "the Crazyhouse review", reviewed("zh1")).await;
+    assert_eq!(crazyhouse.moves.len(), 7, "every move, the drop too");
+    assert_eq!(crazyhouse.moves.last().map(String::as_str), Some("P@d4"));
+    assert!(crazyhouse.fen.contains('['), "{}", crazyhouse.fen);
+    let chess960 = wait_until(WAIT, "the Chess960 review", reviewed("c960")).await;
+    assert_eq!(chess960.moves, moves(&["e2e4", "e7e5"]));
+    // Lichess is asked first, for all of them at once.
     assert_eq!(
         *rig.host.fetched.lock().expect("fetched"),
-        vec![("tester".to_string(), vec!["scholar1".to_string()])]
-    );
-    assert!(rig.store.linked("scholar1", &done.key));
-    assert!(
-        rig.host
-            .complete_updates()
-            .iter()
-            .all(|review| review.game_id.as_deref() != Some("variant1")),
-        "variants are not reviewed"
+        vec![(
+            "tester".to_string(),
+            vec![
+                "scholar1".to_string(),
+                "zh1".to_string(),
+                "c960".to_string()
+            ]
+        )]
     );
     rig.reviews.stop_reviews().await;
 }

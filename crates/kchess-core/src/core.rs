@@ -29,7 +29,9 @@ use crate::engine::managed::{
 use crate::engine::review::{ReviewRequest, Reviews};
 use crate::engine::scheduler::Scheduler;
 use crate::engine::search::Search;
-use crate::engine::status::{EngineLocations, EngineStatus, engine_identity, engine_status};
+use crate::engine::status::{
+    EngineLocations, EngineStatus, engine_identity, engine_status, variant_engine_status,
+};
 use crate::engine::uci::EngineHub;
 use crate::error::{CoreError, Result};
 use crate::facade::{GatedHost, ProfileClaim};
@@ -492,6 +494,9 @@ impl Core {
             "engine.status" => {
                 let configured: String = optional(args, 0, "configured")?;
                 json(engine_status(self.host.as_ref(), &self.ctx.locations, &configured).await)
+            }
+            "engine.variantStatus" => {
+                json(variant_engine_status(self.host.as_ref(), &self.ctx.locations).await)
             }
             "engine.identity" => {
                 let status: EngineStatus = arg(args, 0, "status")?;

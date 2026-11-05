@@ -636,9 +636,31 @@ impl AnalysisPage {
     }
 
     /// Analyse a position set up in the board editor, facing as it did there (`analyseSetup`).
-    pub fn analyse_setup(&mut self, fen: &str, orientation: Color, cx: &mut Context<Self>) {
-        self.orientation = orientation;
-        self.load(Some(fen), cx);
+    /// The board editor's position (`{ variant, fen }`), in its variant. False when the board
+    /// cannot take it.
+    pub fn analyse_setup(
+        &mut self,
+        setup: &Value,
+        orientation: Color,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let variant = setup["variant"].as_str().unwrap_or("standard");
+        let fen = setup["fen"].as_str().unwrap_or(STANDARD_FEN);
+        if crate::game::standard_rules(variant) {
+            self.orientation = orientation;
+            self.load(Some(fen), cx);
+            return true;
+        }
+        // Another variant opens as a game of it from that position.
+        let pgn = format!(
+            "[Variant \"{}\"]\n[FEN \"{fen}\"]\n[SetUp \"1\"]\n\n*",
+            crate::game::variant_label(variant)
+        );
+        let loaded = self.load_pgn(&pgn, cx);
+        if loaded {
+            self.orientation = orientation;
+        }
+        loaded
     }
 
     /// Load a game (`loadPgn`), opened at its start; refused for a variant this board cannot play.
@@ -2412,6 +2434,7 @@ impl AnalysisPage {
             .gap(px(8.))
             .child(
                 Switch::new("engine-on")
+                    .large()
                     .checked(engine_on)
                     .disabled(!self.engine_ready || !allowed)
                     .accessibility_label("Engine analysis")
@@ -2653,8 +2676,6 @@ impl AnalysisPage {
         let on_variation = !self.path.is_empty() && !self.root.on_mainline(&self.path);
         // A finished game cannot be played on from its last position.
         let over = game_over(self.position().as_ref()).is_some();
-        // The board editor is standard chess's.
-        let standard = self.standard_rules();
         let page = cx.entity().downgrade();
         let step = |id: &'static str, glyph: &'static str, label: &'static str, disabled: bool| {
             Button::new(id)
@@ -2735,15 +2756,15 @@ impl AnalysisPage {
                         // Leaving for another page takes the position and orientation first: the
                         // switch stops this page's engine, which must not happen inside an update
                         // of this page.
-                        let leave = |run: fn(String, Color, &mut Window, &mut App)| {
+                        let leave = |run: fn(Value, Color, &mut Window, &mut App)| {
                             let page = page.clone();
                             move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                                 let Some(page) = page.upgrade() else { return };
-                                let (fen, orientation) = {
+                                let (setup, orientation) = {
                                     let page = page.read(cx);
-                                    (page.node().fen.clone(), page.orientation)
+                                    (page.play_setup(), page.orientation)
                                 };
-                                run(fen, orientation, window, cx);
+                                run(setup, orientation, window, cx);
                             }
                         };
                         // The same, with the position's setup: its variant and FEN.
@@ -2784,15 +2805,13 @@ impl AnalysisPage {
                                 .on_click(action(|page, window, cx| page.ask_remove(window, cx))),
                         )
                         .separator()
-                        .when(standard, |menu| {
-                            menu.item(
-                                PopupMenuItem::new("Edit this position")
-                                    .icon(icon("pencil-ruler"))
-                                    .on_click(leave(|fen, orientation, window, cx| {
-                                        crate::shell::edit_position(fen, orientation, window, cx)
-                                    })),
-                            )
-                        })
+                        .item(
+                            PopupMenuItem::new("Edit this position")
+                                .icon(icon("pencil-ruler"))
+                                .on_click(leave(|setup, orientation, window, cx| {
+                                    crate::shell::edit_position(setup, orientation, window, cx)
+                                })),
+                        )
                         .item(
                             PopupMenuItem::new("Play Stockfish from here")
                                 .icon(icon("cpu"))

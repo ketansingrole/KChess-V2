@@ -5,7 +5,6 @@
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -535,15 +534,18 @@ impl Coordinates {
         disabled: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        Switch::new(id)
-            .small()
-            .checked(crate::prefs::get(cx, key, false))
-            .disabled(disabled)
-            .label(label)
-            .on_click(cx.listener(move |this, on: &bool, _, cx| {
+        let page = cx.entity().downgrade();
+        widgets::labelled_switch(
+            id,
+            label,
+            crate::prefs::get(cx, key, false),
+            disabled,
+            move |on, _, cx| {
                 crate::prefs::set(cx, key, *on);
-                this.redraw(cx);
-            }))
+                let _ = page.update(cx, |this, cx| this.redraw(cx));
+            },
+        )
+        .text_size(px(14.))
     }
 
     fn file_rank_row(

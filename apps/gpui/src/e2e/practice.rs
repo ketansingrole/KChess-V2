@@ -262,6 +262,45 @@ fn an_empty_repertoire_and_empty_mistakes_lead_elsewhere(cx: &mut gpui_kit::Test
     assert_eq!(page(&mut app), Some(Page::History));
 }
 
+/// A mistake from a Crazyhouse game is drilled by Crazyhouse's rules: the pockets are beside the
+/// board, and the answer is a drop.
+#[gpui_kit::test]
+fn a_crazyhouse_mistake_is_solved_with_a_drop(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, 5);
+    app.find("review-a-game");
+    let mistakes = app.cx.update(|cx| {
+        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+            .and_then(|page| page.read(cx).mistakes())
+            .expect("the mistakes trainer")
+    });
+    app.cx.update(|cx| {
+        mistakes.update(cx, |mistakes, cx| {
+            mistakes.seed(
+                vec![serde_json::json!({
+                    "id": "zh-drop",
+                    "fen": "rnb1kbnr/ppp1pppp/8/q7/8/2N5/PPPP1PPP/R1BQKBNR[Pp] w KQkq - 2 4",
+                    "solution": ["P@d4"],
+                    "variant": "crazyhouse",
+                    "dueAt": 0,
+                })],
+                cx,
+            )
+        });
+    });
+    app.click("practice-due");
+    app.click("pocket-White-Pawn");
+    app.click_square("d4", true);
+    let status = |app: &mut Harness| {
+        app.cx
+            .update(|cx| mistakes.read(cx).board().read(cx).status().to_string())
+    };
+    app.wait_for("the drop to solve the drill", |_, cx| {
+        mistakes.read(cx).board().read(cx).status() == "solved"
+    });
+    assert_eq!(status(&mut app), "solved");
+}
+
 /// A saved mistake is practised from Quick Pick, as the trainer's buttons do.
 #[gpui_kit::test]
 fn a_mistake_is_practised_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {

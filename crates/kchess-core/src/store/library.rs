@@ -314,9 +314,18 @@ fn add_mistakes(
 ) -> Result<Value> {
     let mut items = read_mistakes(db)?;
     let review = match super::reviews::read_review(host, db, review_key)? {
-        // Drills are played by standard rules: a variant game's mistakes are not drilled.
-        Some(review) if truthy(review.get("complete")) && review.get("variant").is_none() => review,
+        Some(review) if truthy(review.get("complete")) => review,
         _ => return Ok(json!({ "added": 0, "items": items })),
+    };
+    // A variant game's drills are played by its rules (Fairy-Stockfish reviewed it).
+    let variant = review
+        .get("variant")
+        .and_then(Value::as_str)
+        .filter(|variant| kchess_domain::library::known_variant(variant))
+        .map(str::to_string);
+    let replay = |fen: &str, moves: &[String]| match &variant {
+        Some(variant) => kchess_domain::replay::replay_positions_in(variant, fen, moves),
+        None => kchess_domain::replay::replay_positions(fen, moves),
     };
     let fen = review
         .get("fen")
@@ -324,7 +333,7 @@ fn add_mistakes(
         .unwrap_or_default()
         .to_string();
     let moves = string_list(review.get("moves"));
-    let positions = kchess_domain::replay::replay_positions(&fen, &moves);
+    let positions = replay(&fen, &moves);
     let analysis = super::reviews::analyse_stored(&review)?;
     let source = review
         .get("source")
@@ -378,7 +387,7 @@ fn add_mistakes(
             }
             _ => vec![best.to_string()],
         };
-        let playable = kchess_domain::replay::replay_positions(&position, &solution).len();
+        let playable = replay(&position, &solution).len();
         solution.truncate(playable.saturating_sub(1));
         if solution.len().is_multiple_of(2) {
             solution.pop();
@@ -390,7 +399,7 @@ fn add_mistakes(
         if items.iter().any(|item| id_of(item) == Some(id.as_str())) {
             continue;
         }
-        items.push(json!({
+        let mut drill = json!({
             "id": id,
             "fen": position,
             "solution": solution,
@@ -398,7 +407,11 @@ fn add_mistakes(
             "dueAt": num(now),
             "streak": 0,
             "attempts": 0,
-        }));
+        });
+        if let Some(variant) = &variant {
+            drill["variant"] = json!(variant);
+        }
+        items.push(drill);
         added += 1;
     }
     let items = keep_last(items, MAX_MISTAKES);
@@ -1216,6 +1229,56 @@ mod tests {
         .expect("answer");
         assert_eq!(unknown[0]["attempts"].as_f64(), Some(3.0));
         assert_eq!(unknown[0]["dueAt"].as_f64(), Some(10.0 + 600_000.0));
+    }
+
+    /// A Crazyhouse game's mistake is drilled by Crazyhouse's rules: its answer is a drop, and
+    /// the drill keeps the variant to be played in.
+    #[test]
+    fn a_variant_games_mistake_becomes_a_drill_in_its_variant() {
+        let db = drills_db();
+        let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+        let moves = json!(["e2e4", "d7d5", "e4d5", "d8d5", "g1f3"]);
+        let key: Value = serde_json::from_str(
+            &kchess_domain::api::call("reviewKey", &json!([fen, moves, "crazyhouse"]).to_string())
+                .expect("key"),
+        )
+        .expect("key json");
+        let mut evals: Vec<Value> = (0..4)
+            .map(|_| json!({ "cp": 30, "depth": 20, "best": "a2a3" }))
+            .collect();
+        evals.push(json!({ "cp": 30, "depth": 20, "best": "P@e4", "pv": ["P@e4"] }));
+        evals.push(json!({ "cp": -500, "depth": 20 }));
+        run(
+            &db,
+            "store.reviewStore.writeReview",
+            &[json!({
+                "key": key, "fen": fen, "moves": moves, "source": "local", "variant": "crazyhouse",
+                "complete": true, "depth": 20, "updatedAt": 7, "evals": evals,
+            })],
+        )
+        .expect("write review");
+        let added = run(
+            &db,
+            "store.library.addMistakes",
+            &[key.clone(), json!("white"), json!(1)],
+        )
+        .expect("add");
+        assert_eq!(added["added"], json!(1), "{added}");
+        let drill = &added["items"][0];
+        assert_eq!(drill["solution"], json!(["P@e4"]));
+        assert_eq!(drill["variant"], json!("crazyhouse"));
+        assert!(
+            drill["fen"].as_str().is_some_and(|fen| fen.contains('[')),
+            "{drill}"
+        );
+        // The drill is kept, variant and all, as the document is read back.
+        let answered = run(
+            &db,
+            "store.library.answerMistake",
+            &[drill["id"].clone(), json!(true), json!(2)],
+        )
+        .expect("answer");
+        assert_eq!(answered[0]["variant"], json!("crazyhouse"), "{answered}");
     }
 
     #[test]

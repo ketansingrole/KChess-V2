@@ -868,9 +868,63 @@ pub fn lichess_line(
     (fen, uci)
 }
 
+/// `lichess_line` for a game of `variant` (a Lichess key such as `crazyhouse`), played by that
+/// variant's rules from its own start (Horde's, Racing Kings') unless a FEN is given. None for a
+/// variant KChess does not play or a start its rules refuse.
+pub fn lichess_line_in(
+    variant: &str,
+    moves: &str,
+    pgn: Option<&str>,
+    initial_fen: Option<&str>,
+) -> Option<(String, Vec<String>)> {
+    let tagged = pgn.filter(|p| !p.is_empty()).and_then(fen_tag);
+    let mut pos = match initial_fen.or(tagged) {
+        Some(fen) => rules::setup_start(variant, fen)?,
+        None => rules::default_position(rules::lichess_variant(variant)?),
+    };
+    let fen = rules::make_fen(&pos);
+    let mut uci = Vec::new();
+    for san in moves.split(crate::js::is_space).filter(|s| !s.is_empty()) {
+        let Some(m) = rules::parse_san(&pos, san) else {
+            break;
+        };
+        uci.push(rules::make_uci(&m));
+        pos.play_unchecked(m);
+    }
+    Some((fen, uci))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_variant_lichess_lines() {
+        // Crazyhouse: a drop, read from the variant's start with its (empty) pockets.
+        let (fen, moves) =
+            lichess_line_in("crazyhouse", "e4 d5 exd5 Qxd5 Nc3 Qa5 P@d4", None, None).unwrap();
+        assert!(
+            fen.contains('['),
+            "a Crazyhouse FEN keeps its pockets: {fen}"
+        );
+        assert_eq!(moves.last().map(String::as_str), Some("P@d4"));
+        assert_eq!(moves.len(), 7);
+        // Horde starts from its own position, where White has no king.
+        let (fen, moves) = lichess_line_in("horde", "e5 f6", None, None).unwrap();
+        assert!(
+            fen.starts_with("rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/"),
+            "{fen}"
+        );
+        assert_eq!(moves, ["e4e5", "f7f6"]);
+        // Standard rules would stop at the drop.
+        assert_eq!(
+            lichess_line("e4 d5 exd5 Qxd5 Nc3 Qa5 P@d4", None, None)
+                .1
+                .len(),
+            6
+        );
+        assert!(lichess_line_in("bughouse", "e4", None, None).is_none());
+    }
 
     fn sacrifice_review() -> Value {
         json!({

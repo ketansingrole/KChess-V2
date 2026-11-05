@@ -667,6 +667,19 @@ fn end_eval(end: &str, turn: &str) -> Result<ReviewEval> {
     serde_json::from_value(score).map_err(|cause| CoreError::new(cause.to_string()))
 }
 
+/// The variant a synced game of `perf` is reviewed in, if it is reviewed automatically: standard
+/// chess for the standard speeds, else the variant its perf names (Stockfish reviews Chess960,
+/// Fairy-Stockfish the others).
+fn synced_variant(perf: &str) -> Result<Option<&str>> {
+    Ok(if is_reviewable_perf(perf)? {
+        Some("standard")
+    } else if perf == "chess960" || fairy_variant(perf).is_some() {
+        Some(perf)
+    } else {
+        None
+    })
+}
+
 /// `isReviewablePerf(perf)`: standard speeds only.
 fn is_reviewable_perf(perf: &str) -> Result<bool> {
     Ok(domain("isReviewablePerf", vec![json!(perf)])?
@@ -775,7 +788,7 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
         let skipped = lock(&s.state).skipped.clone();
         let mut games = Vec::new();
         for game in s.storage.games_to_review(&accounts, since).await? {
-            if !skipped.contains(&game.id) && is_reviewable_perf(&game.perf)? {
+            if !skipped.contains(&game.id) && synced_variant(&game.perf)?.is_some() {
                 games.push(game);
             }
         }
@@ -828,14 +841,25 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
             continue;
         }
         for game in games {
-            let (fen, moves) =
-                kchess_domain::review::lichess_line(&game.moves, game.pgn.as_deref(), None);
+            let (fen, moves) = match synced_variant(&game.perf)? {
+                Some("standard") | None => {
+                    kchess_domain::review::lichess_line(&game.moves, game.pgn.as_deref(), None)
+                }
+                Some(variant) => kchess_domain::review::lichess_line_in(
+                    variant,
+                    &game.moves,
+                    game.pgn.as_deref(),
+                    None,
+                )
+                .unwrap_or_default(),
+            };
+            let variant = fairy_variant(&game.perf).map(|_| game.perf.clone());
             let request = ReviewRequest {
                 fen,
                 moves,
                 game_id: Some(game.id.clone()),
                 account: Some(game.account.clone()),
-                variant: None,
+                variant,
             };
             match job_for(&request, true, 0)? {
                 Some(job) => {

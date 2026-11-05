@@ -130,7 +130,11 @@ pub fn methods() -> Vec<Method> {
             "Sign in through the browser. `username` is the account Lichess authorised.",
             vec![opt("look")],
         ),
-        method("engineStatus", "", vec![]),
+        method(
+            "engineStatus",
+            "The engine that plays `variant` (standard chess when omitted): Stockfish, or for the\n   * variants it cannot play, the bundled Fairy-Stockfish.",
+            vec![opt("variant")],
+        ),
         method(
             "installEngine",
             "Download and verify the latest official Stockfish build into KChess's own folder.\n   * `updated` is false when the installed copy was already the latest and nothing was downloaded.",

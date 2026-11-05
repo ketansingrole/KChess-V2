@@ -368,10 +368,6 @@ impl AnalysisPage {
 
     /// Your mistakes in a reviewed game you played are saved for practice once its review is done.
     fn save_player_mistakes(&mut self, cx: &mut Context<Self>) {
-        // Mistake drills are standard chess.
-        if self.fairy_variant().is_some() {
-            return;
-        }
         let Some(review) = self.review(cx) else {
             return;
         };
@@ -443,10 +439,6 @@ impl AnalysisPage {
     /// The sides whose labelled moves the review puts into practice: yours, or both in a game you
     /// did not play.
     fn practice_sides(&self, analysis: &Value) -> Vec<&'static str> {
-        // Drills are standard chess: another variant's mistakes are only shown.
-        if self.fairy_variant().is_some() {
-            return Vec::new();
-        }
         let player = self
             .review
             .origin

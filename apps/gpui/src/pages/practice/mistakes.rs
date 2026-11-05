@@ -47,6 +47,7 @@ fn puzzle(item: &Value) -> Value {
         "id": item["id"],
         "fen": item["fen"],
         "solution": item["solution"],
+        "variant": item.get("variant").cloned().unwrap_or(Value::Null),
         "rating": 0,
         "themes": [],
     })
@@ -217,6 +218,12 @@ impl Mistakes {
             .iter()
             .filter(|item| due_at(item) <= self.now)
             .collect()
+    }
+
+    /// The board the drills are played on.
+    #[cfg(test)]
+    pub(crate) fn board(&self) -> &Entity<PuzzleBoard> {
+        &self.puzzle
     }
 
     #[cfg(test)]
