@@ -80,8 +80,28 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
     }
     let black = session["color"] == "black";
     let side = if black { "Black" } else { "White" };
-    // White moves on even plies.
-    let yours = moves.is_multiple_of(2) != black;
+    // Whose move it is and the move number, from the position reached: a game started from a
+    // position (Black to move, or at move 30) does not count from the usual start.
+    let played: Vec<String> = serde_json::from_value(session["moves"].clone()).unwrap_or_default();
+    let reached = kchess_domain::replay::replay_setup(
+        session["setup"]["variant"].as_str().unwrap_or("standard"),
+        session["setup"]["fen"]
+            .as_str()
+            .unwrap_or(crate::game::STANDARD_FEN),
+        &played,
+    )
+    .map(|replay| replay.fen)
+    .unwrap_or_default();
+    let fields: Vec<&str> = reached.split(' ').collect();
+    // White moves on even plies when the position cannot be replayed.
+    let black_to_move = fields
+        .get(1)
+        .map_or(!moves.is_multiple_of(2), |turn| *turn == "b");
+    let yours = black_to_move == black;
+    let number = fields
+        .get(5)
+        .and_then(|number| number.parse::<usize>().ok())
+        .unwrap_or(moves / 2 + 1);
     let level = rules("engineLevelLabel", &[session["level"].clone()])
         .ok()
         .and_then(|label| label.as_str().map(str::to_string))
@@ -93,7 +113,7 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
     Some(Unfinished {
         opponent: (format!("Stockfish · {name}"), strength),
         state: vec![
-            format!("Move {}", moves / 2 + 1),
+            format!("Move {number}"),
             format!("You play {side}"),
             if yours {
                 "Your move"
@@ -753,6 +773,37 @@ mod tests {
                 "{width}px fits {per_row} tiles"
             );
         }
+    }
+
+    /// The unfinished game's card counts from where it started: a Crazyhouse game from the
+    /// analysis board with Black to move at move 4, and the usual start.
+    #[test]
+    fn an_unfinished_game_says_whose_move_from_its_own_start() {
+        let card = |session: serde_json::Value| {
+            super::continue_line(&session)
+                .expect("an unfinished game")
+                .state
+        };
+        let from_position = json!({
+            "version": 2,
+            "setup": {
+                "variant": "crazyhouse",
+                "fen": "rnb1kbnr/ppp1pppp/8/3q4/8/4P3/PPPP1PPP/RNBQKBNR/P b KQkq - 0 3",
+            },
+            "moves": ["d5e5"],
+            "level": "club",
+            "color": "black",
+        });
+        assert_eq!(
+            card(from_position),
+            ["Move 4", "You play Black", "Stockfish to move"]
+        );
+        let usual = json!({
+            "moves": ["e2e4", "e7e5", "g1f3"],
+            "level": "club",
+            "color": "black",
+        });
+        assert_eq!(card(usual), ["Move 2", "You play Black", "Your move"]);
     }
 
     #[test]
