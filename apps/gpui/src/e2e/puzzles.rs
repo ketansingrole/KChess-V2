@@ -378,7 +378,8 @@ fn a_finished_puzzle_is_stepped_through(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(viewing(&mut app), None);
 }
 
-/// A finished puzzle opens on the analysis board, the wrong try kept as a side line.
+/// A finished puzzle opens on the analysis board (from Quick Pick, as from its button), the wrong
+/// try kept as a side line.
 #[gpui_kit::test]
 fn a_finished_puzzle_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
@@ -411,7 +412,12 @@ fn a_finished_puzzle_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppConte
             .try_find("puzzle-hint")
             .is_none_or(|hint| hint.disabled() == Some(true))
     });
-    app.click("puzzle-analyse");
+    assert!(app.shows("puzzle-analyse"));
+    // Quick Pick offers it as the page's own action, and opens it as the button does.
+    app.press("secondary-k");
+    app.type_text(">analysis board");
+    super::palette::wait_for_first(&mut app, "Analysis board");
+    app.press("enter");
     let pgn = |cx: &gpui_kit::App| {
         crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
             crate::pages::Page::Analysis,

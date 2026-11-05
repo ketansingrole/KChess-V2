@@ -681,6 +681,12 @@ fn puzzle_commands(cx: &App) -> Vec<Command> {
             Action::Hint => ("hint", "Hint", "lightbulb", "clue help"),
             Action::Solution => ("solution", "Solution", "eye", "show answer give up"),
             Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            Action::Analyse => (
+                "analyse",
+                "Analysis board",
+                "microscope",
+                "analyse study review",
+            ),
             Action::Next => ("next", "Next puzzle", "arrow-right", "another skip"),
             Action::Rush(action) => {
                 use crate::pages::puzzles::RushAction;
@@ -697,7 +703,10 @@ fn puzzle_commands(cx: &App) -> Vec<Command> {
                 }
             }
         },
-        |page: &mut PuzzlesPage, action, _, cx| page.act(action, cx),
+        |page: &mut PuzzlesPage, action, window, cx| match action {
+            Action::Analyse => page.analyse(window, cx),
+            action => page.act(action, cx),
+        },
     )
     .into_iter()
     .map(flip_key)

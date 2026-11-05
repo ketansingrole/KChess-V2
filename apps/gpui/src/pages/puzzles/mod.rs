@@ -176,6 +176,8 @@ pub(crate) enum Action {
     Hint,
     Solution,
     Flip,
+    /// A finished puzzle on the analysis board.
+    Analyse,
     Next,
     /// A Storm, Streak or Rush run's own buttons.
     Rush(RushAction),
@@ -1620,6 +1622,9 @@ impl PuzzlesPage {
             actions.extend([Action::Hint, Action::Solution]);
         }
         actions.push(Action::Flip);
+        if matches!(board.read(cx).status(), "solved" | "revealed" | "failed") {
+            actions.push(Action::Analyse);
+        }
         if train {
             actions.push(Action::Next);
         }
@@ -1645,8 +1650,27 @@ impl PuzzlesPage {
             Action::Solution => board.update(cx, |board, cx| board.show_solution(cx)),
             Action::Flip => board.update(cx, |board, cx| board.flip(cx)),
             Action::Next => self.load_next(cx),
-            Action::Rush(_) => {}
+            Action::Analyse | Action::Rush(_) => {}
         }
+    }
+
+    /// The finished puzzle on the analysis board, as its button opens it; after this update,
+    /// since opening another page leaves this one.
+    pub(crate) fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&Action::Analyse) {
+            return;
+        }
+        let Some((board, _)) = self.shown_board(cx) else {
+            return;
+        };
+        let board = board.read(cx);
+        let Some(puzzle) = board.puzzle().map(|shown| shown.puzzle.clone()) else {
+            return;
+        };
+        let wrong = board.wrong_moves().to_vec();
+        window.defer(cx, move |window, cx| {
+            crate::shell::analyse_puzzle(puzzle, wrong, window, cx)
+        });
     }
 
     /// F turns the board, as its button does, while no text field has the keys; Return or Space
