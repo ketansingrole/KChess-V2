@@ -211,7 +211,7 @@ pub(crate) enum Action {
     ClearFilters,
 }
 
-/// Whether the analysis board plays the saved game: standard chess and Chess960 only.
+/// Whether the analysis board plays the saved game.
 fn analysable(game: &Value) -> bool {
     crate::game::analysable(game["setup"]["variant"].as_str().unwrap_or("standard"))
 }
@@ -788,7 +788,6 @@ impl HistoryPage {
                             .primary()
                             .icon(icon("chart-line"))
                             .label("Open analysis")
-                            // The analysis board plays standard chess and Chess960 only.
                             .disabled(!analysable(game))
                             .on_click(move |_, window, cx| analyse(&opened, window, cx))
                     })

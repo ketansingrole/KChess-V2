@@ -294,6 +294,10 @@ impl AnalysisPage {
 
     /// Review the main line now (`requestReview`); the engine makes way for it.
     pub fn request_review(&mut self, cx: &mut Context<Self>) {
+        // Another variant's game has its engine lines, not a review.
+        if !self.reviewable() {
+            return;
+        }
         crate::prefs::set(cx, TOOL, "review");
         self.review.request_error = None;
         let moves = self.mainline();

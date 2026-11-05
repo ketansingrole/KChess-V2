@@ -233,7 +233,8 @@ fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
         }
         "pvSan" => {
             let max = arg(args, 2).and_then(Value::as_u64).unwrap_or(12) as usize;
-            pv_san(text(args, 0, "fen")?, &texts(args, 1, "pv")?, max)
+            let variant = arg(args, 3).and_then(Value::as_str).unwrap_or_default();
+            pv_san(text(args, 0, "fen")?, &texts(args, 1, "pv")?, max, variant)
         }
         "playMove" => play_move(text(args, 0, "fen")?, text(args, 1, "uci")?),
         "startNode" => start_node(text(args, 0, "fen")?),
@@ -390,8 +391,13 @@ fn move_number(ply: u32, always: bool) -> String {
 }
 
 /// `pvSan`: a principal variation in SAN with move numbers, stopping at the first illegal move.
-fn pv_san(fen: &str, pv: &[&str], max: usize) -> Value {
-    let Some(mut pos) = rules::standard_from_fen(fen) else {
+/// `variant` is a Lichess key, empty for standard chess.
+fn pv_san(fen: &str, pv: &[&str], max: usize, variant: &str) -> Value {
+    let position = match variant {
+        "" => rules::standard_from_fen(fen),
+        variant => rules::setup_start(variant, fen),
+    };
+    let Some(mut pos) = position else {
         return json!([]);
     };
     let mut moves = Vec::new();
@@ -459,7 +465,22 @@ fn tree_to_pgn(root: &Value, headers: Option<&Value>) -> Result<String> {
         .get("fen")
         .and_then(Value::as_str)
         .ok_or_else(|| DomainError::Message("root.fen".to_string()))?;
-    if fen != INITIAL_FEN
+    // A variant game (Crazyhouse, Atomic…) keeps its Variant header, and its FEN unless it starts
+    // where that variant does.
+    let variant = rules::pgn_variant(game.header("Variant"))
+        .filter(|variant| *variant != shakmaty::variant::Variant::Chess);
+    if let Some(variant) = variant {
+        if let Some(pos) =
+            rules::parse_fen(fen).and_then(|setup| rules::setup_position(variant, setup))
+        {
+            let start = rules::make_fen(&pos);
+            if start == rules::make_fen(&rules::default_position(variant)) {
+                game.remove_header("FEN");
+            } else {
+                game.put_header("FEN", start);
+            }
+        }
+    } else if fen != INITIAL_FEN
         && let Some(pos) = rules::standard_from_fen(fen)
     {
         // setStartingPosition: standard rules, so no Variant header; FEN unless the usual start.
@@ -742,6 +763,32 @@ mod tests {
     fn accepts_the_depth_limit_on_a_small_stack() {
         let result = on_small_stack(|| call("pathOf", &nested(MAX_JSON_DEPTH)));
         assert_ne!(result, Err("arguments nest too deeply".to_string()));
+    }
+
+    /// A variant game's tree is written with its Variant header, and its FEN only when it starts
+    /// elsewhere than its variant does, so it reads back in that variant.
+    #[test]
+    fn a_variant_tree_is_written_in_its_variant() {
+        let written = |pgn: &str| {
+            let tree = call("treeFromPgn", &serde_json::to_string(&[pgn]).unwrap()).unwrap();
+            let tree: Value = serde_json::from_str(&tree).unwrap();
+            let headers = tree["headers"].clone();
+            let pgn = call(
+                "treeToPgn",
+                &serde_json::to_string(&json!([tree, headers])).unwrap(),
+            );
+            serde_json::from_str::<String>(&pgn.unwrap()).unwrap()
+        };
+        let pgn = written("[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 3. P@e3 *");
+        assert!(pgn.contains("[Variant \"Crazyhouse\"]"), "{pgn}");
+        assert!(!pgn.contains("[FEN"), "{pgn}");
+        assert!(pgn.contains("3. P@e3"), "{pgn}");
+        let held = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[Pp] w KQkq - 0 1";
+        let pgn = written(&format!(
+            "[Variant \"Crazyhouse\"]\n[FEN \"{held}\"]\n\n1. P@e4 *"
+        ));
+        assert!(pgn.contains(&format!("[FEN \"{held}\"]")), "{pgn}");
+        assert!(pgn.contains("[Variant \"Crazyhouse\"]"), "{pgn}");
     }
 
     /// A 1024-ply tree, the deepest the rules build, round-trips through `call` on a small stack

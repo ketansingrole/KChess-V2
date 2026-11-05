@@ -139,23 +139,32 @@ pub fn position_problem(fen: &str) -> Option<&'static str> {
     })
 }
 
-/// Whether the analysis board, its reviews and the computer can take a game in this variant:
-/// standard chess, and Chess960, which they play with king-takes-rook castling.
+/// Whether the analysis board can take a game in this variant: every variant KChess plays. A
+/// variant other than standard chess and Chess960 is analysed by Fairy-Stockfish.
 pub fn analysable(variant: &str) -> bool {
+    kchess_domain::rules::lichess_variant(variant).is_some()
+}
+
+/// Whether a game in this variant can be reviewed and its mistakes practised: standard chess, and
+/// Chess960, which reviews play with king-takes-rook castling.
+pub fn reviewable(variant: &str) -> bool {
     matches!(variant, "standard" | "chess960")
 }
 
-/// Whether a PGN's `Variant` header names a game the analysis board can play: standard chess or
-/// Chess960 (both read as standard rules with Chess960 castling), or none at all. An Atomic or
-/// Crazyhouse game read that way would show positions the game never had.
+/// Whether a PGN's `Variant` header names a game the analysis board can play (any variant KChess
+/// knows, or none at all).
 pub fn pgn_analysable(pgn: &str) -> bool {
     pgn_variant_key(pgn).is_some_and(analysable)
+}
+
+/// Whether a PGN's game can be reviewed (`reviewable`).
+pub fn pgn_reviewable(pgn: &str) -> bool {
+    pgn_variant_key(pgn).is_some_and(reviewable)
 }
 
 /// The Lichess key of the variant a PGN's `Variant` header names ("atomic", "chess960"), standard
 /// without one; `None` for a variant KChess does not know.
 pub fn pgn_variant_key(pgn: &str) -> Option<&'static str> {
-    use shakmaty::variant::Variant;
     // The tags before the moves, one per line or (pasted into a one-line field) side by side.
     let mut name = None;
     let mut rest = pgn.trim_start();
@@ -169,6 +178,13 @@ pub fn pgn_variant_key(pgn: &str) -> Option<&'static str> {
         }
         rest = tag[end + 1..].trim_start();
     }
+    variant_key(name)
+}
+
+/// The Lichess key of the variant a PGN `Variant` header value names, standard without one;
+/// `None` for a variant KChess does not know.
+pub fn variant_key(name: Option<&str>) -> Option<&'static str> {
+    use shakmaty::variant::Variant;
     Some(match kchess_domain::rules::pgn_variant(name)? {
         Variant::Chess => {
             let name = name.unwrap_or_default().to_lowercase();
@@ -221,25 +237,27 @@ fn chess960_castling(fen: &str) -> bool {
 
 #[cfg(test)]
 mod pgn_tests {
-    use super::pgn_analysable;
+    use super::{pgn_analysable, pgn_reviewable};
 
     #[test]
-    fn only_standard_and_chess960_games_are_analysable() {
-        assert!(pgn_analysable("1. e4 e5 *"));
-        assert!(pgn_analysable("[Event \"x\"]\n\n1. e4 *"));
-        assert!(pgn_analysable("[Variant \"Standard\"]\n\n1. e4 *"));
-        assert!(pgn_analysable(
-            "[Variant \"Chess960\"]\n[FEN \"x\"]\n\n1. e4 *"
-        ));
-        assert!(!pgn_analysable("[Variant \"Atomic\"]\n\n1. e4 *"));
-        assert!(!pgn_analysable(
-            "[Event \"x\"]\n[Variant \"Crazyhouse\"]\n\n1. e4 *"
-        ));
+    fn known_variants_are_analysable_and_standard_ones_reviewable() {
+        for pgn in [
+            "1. e4 e5 *",
+            "[Event \"x\"]\n\n1. e4 *",
+            "[Variant \"Standard\"]\n\n1. e4 *",
+            "[Variant \"Chess960\"]\n[FEN \"x\"]\n\n1. e4 *",
+        ] {
+            assert!(pgn_analysable(pgn) && pgn_reviewable(pgn), "{pgn}");
+        }
+        for pgn in [
+            "[Variant \"Atomic\"]\n\n1. e4 *",
+            "[Event \"x\"]\n[Variant \"Crazyhouse\"]\n\n1. e4 *",
+            // Pasted into a one-line field, the tags sit side by side.
+            "[Event \"x\"] [Variant \"Crazyhouse\"] 1. e4 *",
+        ] {
+            assert!(pgn_analysable(pgn) && !pgn_reviewable(pgn), "{pgn}");
+        }
         assert!(!pgn_analysable("[Variant \"Something else\"]\n\n1. e4 *"));
-        // Pasted into a one-line field, the tags sit side by side.
-        assert!(!pgn_analysable(
-            "[Event \"x\"] [Variant \"Crazyhouse\"] 1. e4 *"
-        ));
         assert_eq!(super::pgn_variant_key("1. e4 *"), Some("standard"));
         assert_eq!(
             super::pgn_variant_key("[Variant \"Chess960\"]\n\n*"),

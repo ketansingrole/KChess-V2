@@ -248,7 +248,7 @@ fn deleting_a_game_asks_first_and_is_kept_after_a_restart(cx: &mut gpui_kit::Tes
 }
 
 /// A Crazyhouse game in the history shows what each side held in its pocket at the move looked
-/// at, and does not offer the analysis board, which cannot play drops.
+/// at, and opens on the analysis board in Crazyhouse.
 #[gpui_kit::test]
 fn a_crazyhouse_game_shows_its_pockets(cx: &mut gpui_kit::TestAppContext) {
     use crate::pages::Page;
@@ -281,7 +281,9 @@ fn a_crazyhouse_game_shows_its_pockets(cx: &mut gpui_kit::TestAppContext) {
     // Before Black took back, only White held a pawn.
     app.click(("move", 2usize));
     assert!(held(&mut app, "pocket-Black-Pawn").is_some_and(|label| label.ends_with(": 0")));
-    assert!(!app.enabled("open-analysis"));
+    // The analysis board takes the game in Crazyhouse.
+    app.click("open-analysis");
+    app.find("tree-e2e4 d7d5 e4d5 d8d5");
 }
 
 /// Insights offer a Variant choice only once the account has variant games, and choosing one asks

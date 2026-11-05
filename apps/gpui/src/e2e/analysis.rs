@@ -553,23 +553,98 @@ fn a_lichess_game_link_imports_the_game(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
 }
 
-/// An Atomic game whose moves standard chess also allows is still refused: read under standard
-/// rules its captures would not explode, and the board would show positions it never had.
-#[gpui_kit::test]
-fn a_game_in_a_variant_the_board_cannot_play_is_refused(cx: &mut gpui_kit::TestAppContext) {
-    let mut app = analysis(cx);
-    import(&mut app, "[Variant \"Atomic\"]\n\n1. e4 d5 2. exd5 *");
-    assert!(app.shows("import-run"), "the dialog stays");
-    assert!(!app.shows("tree-e2e4"));
-    // Without the header the same moves are an ordinary game.
-    fill_in_dialog(&mut app, "FEN, PGN or Lichess link", "1. e4 d5 2. exd5 *");
-    app.click("import-run");
-    app.wait_gone("import-run");
-    app.find("tree-e2e4 d7d5 e4d5");
+/// The FEN of the position the analysis board shows.
+fn shown_fen(app: &mut Harness) -> String {
+    app.with_window(|_, cx| {
+        let page = crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+            crate::pages::Page::Analysis,
+            cx,
+        )
+        .expect("the analysis board");
+        page.read(cx).shown_fen()
+    })
 }
 
-/// A public Lichess study's link imports the chapter it names, or the study's first; a study in
-/// a variant the board cannot play is refused.
+/// Wait until the engine searches the position shown: a request standard rules refuse (one
+/// sent without its variant) shows an error instead.
+fn wait_for_search(app: &mut Harness) {
+    app.wait_for("the engine to search", |_, cx| {
+        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+            crate::pages::Page::Analysis,
+            cx,
+        )
+        .is_some_and(|page| page.read(cx).engine_text(cx).starts_with("Depth "))
+    });
+}
+
+/// An Atomic game is played by Atomic's rules: its capture explodes, which standard chess would
+/// not show. A variant KChess does not play is refused.
+#[gpui_kit::test]
+fn a_variant_game_is_played_by_its_own_rules(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "[Variant \"Bughouse\"]\n\n1. e4 d5 2. exd5 *");
+    assert!(app.shows("import-run"), "the dialog stays");
+    assert!(!app.shows("tree-e2e4"));
+    fill_in_dialog(
+        &mut app,
+        "FEN, PGN or Lichess link",
+        "[Variant \"Atomic\"]\n\n1. e4 d5 2. exd5 *",
+    );
+    app.click("import-run");
+    app.wait_gone("import-run");
+    app.click("tree-e2e4 d7d5 e4d5");
+    // The capturing pawn exploded with the one it took.
+    assert_eq!(
+        shown_fen(&mut app),
+        "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
+    );
+    // Reviews and the opening explorer are standard chess's; the engine lines are not.
+    assert!(!app.shows("Review"));
+    assert!(!app.shows("Explorer"));
+    wait_for_search(&mut app);
+}
+
+/// A Crazyhouse game shows its pockets by the board; a drop from one is played and analysed.
+#[gpui_kit::test]
+fn a_crazyhouse_drop_is_played_from_the_pocket(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(
+        &mut app,
+        "[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 *",
+    );
+    app.wait_gone("import-run");
+    app.click("tree-e2e4 d7d5 e4d5 d8d5");
+    app.find("pocket-White-Pawn");
+    app.find("pocket-Black-Pawn");
+    app.click("pocket-White-Pawn");
+    app.click_square("e3", true);
+    app.find("tree-e2e4 d7d5 e4d5 d8d5 P@e3");
+    assert_eq!(selected(&mut app, "e2e4 d7d5 e4d5 d8d5 P@e3"), Some(true));
+    // The drop's position goes to the engine by Crazyhouse's rules, which standard rules refuse.
+    wait_for_search(&mut app);
+    // The game keeps its variant in its PGN; the standard editor and games are not offered.
+    app.click("analysis-more");
+    app.wait_for("the menu", |window, _| {
+        window.try_find_by_label("Copy PGN").is_some()
+    });
+    for label in [
+        "Edit this position",
+        "Play Stockfish from here",
+        "Play a friend from here",
+    ] {
+        assert!(
+            app.with_window(|window, _| { window.try_find_by_label(label).is_none() }),
+            "{label}"
+        );
+    }
+    app.click_label("Copy PGN");
+    let pgn = clipboard(&mut app).expect("a copied PGN");
+    assert!(pgn.contains("[Variant \"Crazyhouse\"]"), "{pgn}");
+    assert!(pgn.contains("3. P@e3"), "{pgn}");
+}
+
+/// A public Lichess study's link imports the chapter it names, or the study's first, in its own
+/// variant.
 #[gpui_kit::test]
 fn a_lichess_study_link_imports_its_chapter(cx: &mut gpui_kit::TestAppContext) {
     use super::fake_lichess::{STUDY, STUDY_CHAPTER, VARIANT_STUDY};
@@ -583,22 +658,9 @@ fn a_lichess_study_link_imports_its_chapter(cx: &mut gpui_kit::TestAppContext) {
     app.find("tree-d2d4 d7d5 c2c4 e7e6");
 
     import(&mut app, &format!("lichess.org/study/{VARIANT_STUDY}"));
-    {
-        use gpui_kit::test::TestWindowExt as _;
-        let error = std::cell::RefCell::new(None);
-        app.wait_for("the variant to be refused", |window, _| {
-            *error.borrow_mut() = window
-                .try_find("import-error")
-                .and_then(|error| error.label().map(str::to_string));
-            error.borrow().is_some()
-        });
-        assert_eq!(
-            error.into_inner().as_deref(),
-            Some("The analysis board plays standard chess and Chess960 only")
-        );
-    }
-    assert!(app.shows("import-run"), "the dialog stays");
-    assert!(app.shows("tree-d2d4"), "the chapter stays on the board");
+    app.wait_gone("import-run");
+    app.find("tree-e2e4 d7d5 e4d5 d8d5");
+    app.find("pocket-White-Pawn");
 }
 
 /// Quick Pick runs the editor's buttons: the board is cleared from it, and the actions an

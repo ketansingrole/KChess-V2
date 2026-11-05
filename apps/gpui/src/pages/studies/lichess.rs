@@ -236,7 +236,7 @@ impl StudiesPage {
                     .flatten()
                     .map(|chapter| json!({ "name": chapter["name"], "pgn": chapter["pgn"] }))
                     .collect();
-                // A study in Atomic, Crazyhouse… would be replayed with positions it never had.
+                // A chapter in a variant KChess does not play cannot be replayed.
                 if chapters
                     .iter()
                     .any(|chapter| !crate::game::pgn_analysable(chapter["pgn"].as_str().unwrap_or_default()))

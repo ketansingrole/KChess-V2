@@ -90,7 +90,8 @@ cargo xtask package             # KChess for this platform, with the update mani
 ```
 
 macOS makes a `.dmg` and `.zip` (Apple Silicon), Windows a per-user NSIS installer, Linux an
-AppImage and a `.deb` (`--snap` makes the Snap). Each carries the app's own Stockfish, the core
+AppImage and a `.deb` (`--snap` makes the Snap). Each carries the app's own Stockfish, Fairy-Stockfish
+(built from source by `cargo xtask fairy-stockfish`, for variant analysis), the core
 service, the command line, the voice runtime and `THIRD_PARTY_LICENSES.txt`. `--skip-build`
 reuses the release binaries already built. Release packages come from the Release workflow.
 
@@ -184,7 +185,7 @@ beside the macOS window buttons to the window's left edge, in line with the side
 - `Cmd+K` (or `Ctrl+K`) for the command palette: navigate, sync, or start a game (against Stockfish, or an online game, or challenge a friend); open a pasted Lichess game, player, study, puzzle, tournament, broadcast or TV link; and run the open page's own actions (take back, resign, offer a draw, flip the board, hint, copy FEN or PGN…) under _This page_. `Cmd+,` opens Settings.
 - Online extras: draw offers, chat, incoming challenges with accept/decline, rematch, claim victory, berserk, correspondence games, variants (Chess960, King of the Hill, Three-check, Antichess, Atomic, Horde, Racing Kings) and tournaments (arenas and your teams' Swiss events).
 - Watch Lichess TV, friends' live games and broadcasts; look up any player's ratings, records and your score against them.
-- Analysis extras: Masters and Player explorer databases with filters, opt-in Lichess cloud evaluation, opening names, Lichess study import and export, and GIF/PNG/PGN export.
+- Analysis extras: variant games (Crazyhouse, Atomic and the rest) analysed by the bundled Fairy-Stockfish, Masters and Player explorer databases with filters, opt-in Lichess cloud evaluation, opening names, Lichess study import and export, and GIF/PNG/PGN export.
 - Computer games from Chess960 or any position, with clocks; two players at one computer, a chess clock for real boards, blindfold and zen mode; an opening trainer; and Insights from your synced games.
 - What KChess cannot do that Lichess does, and why, is in [`docs/lichess-parity.md`](docs/lichess-parity.md).
 

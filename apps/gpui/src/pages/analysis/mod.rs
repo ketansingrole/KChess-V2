@@ -105,21 +105,48 @@ fn now_square(uci: &str, range: std::ops::Range<usize>) -> Option<Square> {
     uci.get(range)?.parse().ok()
 }
 
-fn position_of(fen: &str) -> Option<VariantPosition> {
-    kchess_domain::rules::setup_start("standard", fen)
+/// A position of the tree, read by its variant's rules (a Lichess key).
+fn position_of(variant: &str, fen: &str) -> Option<VariantPosition> {
+    kchess_domain::rules::setup_start(variant, fen)
 }
 
-/// Checkmate, stalemate or bare kings end the analysis: there is nothing to search.
+/// Checkmate, stalemate, bare kings or a variant's own ending (an exploded king, a king on the
+/// hill…) end the analysis: there is nothing to search.
 fn game_over(position: Option<&VariantPosition>) -> Option<&'static str> {
     let position = position?;
-    if position.is_checkmate() {
+    let info = kchess_domain::position::info(position);
+    if info.variant_end {
+        Some(match position {
+            VariantPosition::Atomic(_) => "King exploded",
+            VariantPosition::KingOfTheHill(_) => "King reached the centre",
+            VariantPosition::ThreeCheck(_) => "Third check",
+            VariantPosition::RacingKings(_) => "King reached the last rank",
+            VariantPosition::Antichess(_) => "No pieces left",
+            VariantPosition::Horde(_) => "The horde is captured",
+            _ => "Game over",
+        })
+    } else if info.checkmate {
         Some("Checkmate")
-    } else if position.is_stalemate() {
+    } else if info.stalemate {
         Some("Stalemate")
-    } else if position.is_insufficient_material() {
+    } else if info.insufficient {
         Some("Insufficient material")
     } else {
         None
+    }
+}
+
+/// The result of a position that ends the game: "1-0", "0-1" or "½-½".
+fn result_of(position: &VariantPosition) -> &'static str {
+    let info = kchess_domain::position::info(position);
+    match info
+        .outcome
+        .as_ref()
+        .and_then(|outcome| outcome["winner"].as_str())
+    {
+        Some("white") => "1-0",
+        Some("black") => "0-1",
+        _ => "½-½",
     }
 }
 
@@ -274,7 +301,7 @@ impl AnalysisPage {
         let study_bar = cx.new(|cx| StudyBar::new(page, window, cx));
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &position_of(STANDARD_FEN).unwrap_or_default(),
+                &position_of("standard", STANDARD_FEN).unwrap_or_default(),
                 orientation,
                 None,
                 None,
@@ -478,8 +505,26 @@ impl AnalysisPage {
         self.root.node_at(&self.path)
     }
 
+    /// The FEN of the position shown.
+    #[cfg(test)]
+    pub(crate) fn shown_fen(&self) -> String {
+        self.node().fen.clone()
+    }
+
+    /// The engine's status line.
+    #[cfg(test)]
+    pub(crate) fn engine_text(&self, cx: &App) -> String {
+        self.engine_status(cx)
+    }
+
     fn position(&self) -> Option<VariantPosition> {
-        position_of(&self.node().fen)
+        position_of(self.root.variant(), &self.node().fen)
+    }
+
+    /// Whether the game on the board can be reviewed (standard chess or Chess960): other variants
+    /// have their engine lines only.
+    fn reviewable(&self) -> bool {
+        crate::game::reviewable(self.root.variant())
     }
 
     fn context(&self) -> String {
@@ -862,7 +907,7 @@ impl AnalysisPage {
         if text.is_empty() {
             return;
         }
-        let setup = json!({ "variant": "standard", "fen": self.node().fen });
+        let setup = json!({ "variant": self.root.variant(), "fen": self.node().fen });
         let typed = self
             .position()
             .and_then(|position| view::typed_uci(&setup, &position, &text));
@@ -1040,17 +1085,19 @@ impl AnalysisPage {
         self.wanted = fen.clone();
         self.live = None;
         self.engine_busy = true;
-        let start = cx.global::<AppCore>().call(
-            "startAnalysis",
-            vec![json!({
-                "fen": fen,
-                "clientId": request,
-                "rootFen": self.root.fen,
-                "moves": moves_of(&self.path),
-                "lines": lines.clamp(1, 5),
-                "infinite": infinite,
-            })],
-        );
+        let mut asked = json!({
+            "fen": fen,
+            "clientId": request,
+            "rootFen": self.root.fen,
+            "moves": moves_of(&self.path),
+            "lines": lines.clamp(1, 5),
+            "infinite": infinite,
+        });
+        // Fairy-Stockfish analyses the other variants.
+        if !self.reviewable() {
+            asked["variant"] = json!(self.root.variant());
+        }
+        let start = cx.global::<AppCore>().call("startAnalysis", vec![asked]);
         cx.spawn(async move |this, cx| {
             let started = start.await;
             let _ = this.update(cx, |this, cx| {
@@ -1169,6 +1216,7 @@ impl AnalysisPage {
             .cloud_eval;
         if !self.attached
             || !cloud_on
+            || !self.reviewable()
             || !Self::assistance_allowed(cx)
             || game_over(self.position().as_ref()).is_some()
         {
@@ -1260,7 +1308,7 @@ impl AnalysisPage {
     fn redraw(&mut self, cx: &mut Context<Self>) {
         self.sync_voice(cx);
         let node = self.node();
-        let position = position_of(&node.fen).unwrap_or_default();
+        let position = position_of(self.root.variant(), &node.fen).unwrap_or_default();
         let last_move = now_square(&node.uci, 0..2).zip(now_square(&node.uci, 2..4));
         let mut state = BoardState::of(
             &position,
@@ -1383,7 +1431,7 @@ impl AnalysisPage {
             }
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
         };
-        let setup = json!({ "variant": "standard", "fen": fen });
+        let setup = json!({ "variant": self.root.variant(), "fen": fen });
         let best = (Self::assistance_allowed(cx) && !self.hides_engine())
             .then(|| self.lines(cx).first().cloned())
             .flatten()
@@ -1471,10 +1519,14 @@ impl AnalysisPage {
             self.path.split(' ').count()
         };
         GameExport {
-            variant: crate::game::setup_from_fen(&self.root.fen)["variant"]
-                .as_str()
-                .unwrap_or("standard")
-                .into(),
+            variant: if self.reviewable() {
+                crate::game::setup_from_fen(&self.root.fen)["variant"]
+                    .as_str()
+                    .unwrap_or("standard")
+                    .into()
+            } else {
+                self.root.variant().into()
+            },
             fen: self.root.fen.clone(),
             ply: Some(depth.min(mainline.len())),
             moves: mainline,
@@ -1737,7 +1789,7 @@ impl AnalysisPage {
 }
 
 /// Why a game in another variant is not imported.
-const UNPLAYABLE_VARIANT: &str = "The analysis board plays standard chess and Chess960 only";
+const UNPLAYABLE_VARIANT: &str = "KChess doesn't play this variant";
 
 /// The engine lines chosen (1–5, three by default).
 fn prefs_lines(cx: &App) -> usize {
@@ -2209,20 +2261,7 @@ impl AnalysisPage {
         let lines = self.lines(cx);
         let position = self.position();
         let over = game_over(position.as_ref());
-        let result = over.map(|_| {
-            if position
-                .as_ref()
-                .is_some_and(|position| position.is_checkmate())
-            {
-                if position.as_ref().map(|position| position.turn()) == Some(Color::White) {
-                    "0-1"
-                } else {
-                    "1-0"
-                }
-            } else {
-                "½-½"
-            }
-        });
+        let result = over.and(position.as_ref()).map(result_of);
         let score = if !engine_on && !using_cloud {
             "—".to_string()
         } else {
@@ -2400,7 +2439,7 @@ impl AnalysisPage {
                 Some(best) => {
                     let pv: Vec<String> =
                         serde_json::from_value(best["pv"].clone()).unwrap_or_default();
-                    let first = pv_san(&self.node().fen, &pv, 1)
+                    let first = pv_san(&self.node().fen, &pv, 1, self.root.variant())
                         .first()
                         .map(|played| played.san.clone())
                         .unwrap_or_default();
@@ -2478,6 +2517,7 @@ impl AnalysisPage {
                     let page = cx.entity().downgrade();
                     crate::engine_view::engine_lines(
                         &self.node().fen,
+                        self.root.variant(),
                         &lines,
                         if using_cloud { 0 } else { prefs_lines(cx) },
                         over.map(|_| "Nothing to analyse"),
@@ -2502,11 +2542,14 @@ impl AnalysisPage {
 
     /// `.panel-tabs`: the tool under the engine, one at a time.
     fn render_tabs(&self, tool: Tool, palette: &Palette) -> impl IntoElement {
-        let tabs = [
-            (Tool::Moves, "Moves", icon("list-tree")),
-            (Tool::Review, "Review", icon("chart-line")),
-            (Tool::Explorer, "Explorer", icon("book-open-text")),
-        ];
+        let mut tabs = vec![(Tool::Moves, "Moves", icon("list-tree"))];
+        // Reviews and the opening explorer are standard chess's.
+        if self.reviewable() {
+            tabs.extend([
+                (Tool::Review, "Review", icon("chart-line")),
+                (Tool::Explorer, "Explorer", icon("book-open-text")),
+            ]);
+        }
         h_flex()
             .flex_none()
             .gap(px(4.))
@@ -2588,6 +2631,8 @@ impl AnalysisPage {
         let on_variation = !self.path.is_empty() && !self.root.on_mainline(&self.path);
         // A finished game cannot be played on from its last position.
         let over = game_over(self.position().as_ref()).is_some();
+        // The editor and the games started from a position are standard chess's.
+        let standard = self.reviewable();
         let page = cx.entity().downgrade();
         let step = |id: &'static str, glyph: &'static str, label: &'static str, disabled: bool| {
             Button::new(id)
@@ -2707,30 +2752,37 @@ impl AnalysisPage {
                                 .disabled(at_start)
                                 .on_click(action(|page, window, cx| page.ask_remove(window, cx))),
                         )
-                        .separator()
-                        .item(
-                            PopupMenuItem::new("Edit this position")
-                                .icon(icon("pencil-ruler"))
-                                .on_click(leave(|fen, orientation, window, cx| {
-                                    crate::shell::edit_position(fen, orientation, window, cx)
-                                })),
-                        )
-                        .item(
-                            PopupMenuItem::new("Play Stockfish from here")
-                                .icon(icon("cpu"))
-                                .disabled(over)
-                                .on_click(leave(|fen, _, window, cx| {
-                                    crate::shell::play_computer_from(fen, window, cx)
-                                })),
-                        )
-                        .item(
-                            PopupMenuItem::new("Play a friend from here")
-                                .icon(icon("users-round"))
-                                .disabled(over)
-                                .on_click(leave(|fen, _, window, cx| {
-                                    crate::shell::play_local_from(fen, window, cx)
-                                })),
-                        )
+                        .when(standard, |menu| {
+                            menu.separator()
+                                .item(
+                                    PopupMenuItem::new("Edit this position")
+                                        .icon(icon("pencil-ruler"))
+                                        .on_click(leave(|fen, orientation, window, cx| {
+                                            crate::shell::edit_position(
+                                                fen,
+                                                orientation,
+                                                window,
+                                                cx,
+                                            )
+                                        })),
+                                )
+                                .item(
+                                    PopupMenuItem::new("Play Stockfish from here")
+                                        .icon(icon("cpu"))
+                                        .disabled(over)
+                                        .on_click(leave(|fen, _, window, cx| {
+                                            crate::shell::play_computer_from(fen, window, cx)
+                                        })),
+                                )
+                                .item(
+                                    PopupMenuItem::new("Play a friend from here")
+                                        .icon(icon("users-round"))
+                                        .disabled(over)
+                                        .on_click(leave(|fen, _, window, cx| {
+                                            crate::shell::play_local_from(fen, window, cx)
+                                        })),
+                                )
+                        })
                         .separator()
                         .item(
                             PopupMenuItem::new("New analysis")
@@ -2748,7 +2800,10 @@ impl AnalysisPage {
     /// or the move box redrawing reuses it.
     fn render_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let palette = *cx.global::<Palette>();
-        let tool = Tool::of(&crate::prefs::get::<String>(cx, TOOL, "moves".into()));
+        let tool = match Tool::of(&crate::prefs::get::<String>(cx, TOOL, "moves".into())) {
+            _ if !self.reviewable() => Tool::Moves,
+            tool => tool,
+        };
         let allowed = Self::assistance_allowed(cx);
         let board_size = self.board_size(window);
         let tool_body: AnyElement = match tool {
@@ -2907,20 +2962,10 @@ impl Render for AnalysisPage {
         let show_bar = allowed && (Self::engine_on(cx) || using_cloud) && !self.hides_engine();
         let lines = self.lines(cx);
         let position = self.position();
-        let result = game_over(position.as_ref()).map(|_| {
-            if position
-                .as_ref()
-                .is_some_and(|position| position.is_checkmate())
-            {
-                if position.as_ref().map(|position| position.turn()) == Some(Color::White) {
-                    "0-1"
-                } else {
-                    "1-0"
-                }
-            } else {
-                "½-½"
-            }
-        });
+        let result = position
+            .as_ref()
+            .filter(|position| game_over(Some(position)).is_some())
+            .map(result_of);
         // The column always keeps the eval bar's width beside the board.
         // The column holds the board and the move box under it (`.analysis-surface`).
         let board_size = self.board_size(window);
@@ -2943,10 +2988,17 @@ impl Render for AnalysisPage {
             },
             cx,
         );
+        // A Crazyhouse game's pockets: the far side's above the board, the near side's below.
+        let pocket = |color: Color| {
+            crate::board::pocket(&self.board, color, cx)
+                .map(|pocket| div().pl(EVAL_BAR + EVAL_GAP).child(pocket))
+        };
+        let (top_pocket, bottom_pocket) = (pocket(!self.orientation), pocket(self.orientation));
         let board_column = v_flex()
             .w(board_size + EVAL_BAR + EVAL_GAP)
             .flex_none()
             .gap(widgets::STACK_GAP)
+            .children(top_pocket)
             .child(
                 h_flex()
                     .items_stretch()
@@ -2972,6 +3024,7 @@ impl Render for AnalysisPage {
                             .child(crate::board::cached(&self.board)),
                     ),
             )
+            .children(bottom_pocket)
             .child(
                 v_flex()
                     .pl(EVAL_BAR + EVAL_GAP)

@@ -22,7 +22,8 @@ Commands:
   login                            Connect a Lichess account in your browser
   call <method> '[arguments]'      Invoke any CoreApi method (JSON argument array)
   call <method> --args-file <path> Read arguments from a JSON file
-  analyze <fen|startpos|moves>     Stream engine analysis as JSON lines until Ctrl-C
+  analyze [--variant name] <fen|startpos|moves>
+                                   Stream engine analysis as JSON lines until Ctrl-C
   play [level] [white|black|random] Play Stockfish; type moves in SAN or UCI
   local [variant]                  Play over the board (chess960, crazyhouse, atomic…)
   puzzle [id|link]                 Solve the daily puzzle, or that one (hint, solution)
@@ -457,8 +458,81 @@ async fn review_input(core: &CoreClient, words: &[String]) -> Result<String, Str
 }
 
 /// What `analyze` searches: a position, or the one a game's moves (SAN or a PGN) reach, sent
-/// with its history so repetitions count.
+/// with its history so repetitions count. `--variant crazyhouse` (or a PGN's `Variant` header)
+/// reads them in that variant, which Fairy-Stockfish analyses.
 fn analysis_request(words: &[String]) -> Result<Value, String> {
+    let (variant, words) = match words {
+        [flag, name, rest @ ..] if flag == "--variant" => {
+            (play::local_variant(std::slice::from_ref(name))?, rest)
+        }
+        [flag] if flag == "--variant" => return Err("--variant needs a variant.".into()),
+        words => (None, words),
+    };
+    let text = words.join(" ");
+    let header = kchess_domain::pgn::parse_pgn(&text)
+        .first()
+        .and_then(|game| game.header("Variant").map(str::to_string));
+    let variant = match (variant, header) {
+        (Some(variant), _) => Some(variant),
+        (None, Some(name)) => Some(variant_key(&name)?.to_string()),
+        (None, None) => None,
+    };
+    match variant.as_deref() {
+        Some(variant) if !matches!(variant, "standard" | "chess960") => {
+            variant_analysis_request(variant, &text)
+        }
+        _ => standard_analysis_request(words),
+    }
+}
+
+/// The Lichess key of a PGN `Variant` header's variant.
+fn variant_key(name: &str) -> Result<&'static str, String> {
+    let variant = kchess_domain::rules::pgn_variant(Some(name))
+        .ok_or_else(|| format!("Unknown variant {name}."))?;
+    kchess_domain::misc::constants::VARIANTS
+        .iter()
+        .copied()
+        .find(|key| kchess_domain::rules::lichess_variant(key) == Some(variant))
+        .ok_or_else(|| format!("Unknown variant {name}."))
+}
+
+/// A position in another variant, or the one its moves reach, read by that variant's rules.
+fn variant_analysis_request(variant: &str, text: &str) -> Result<Value, String> {
+    use kchess_domain::rules;
+    let start = rules::lichess_variant(variant).ok_or("Unknown variant.")?;
+    let text = text.trim();
+    let fen = match text {
+        "" => return Err("analyze requires a FEN or moves.".into()),
+        "startpos" => Some(rules::make_fen(&rules::default_position(start))),
+        text => rules::setup_start(variant, text).map(|position| rules::make_fen(&position)),
+    };
+    if let Some(fen) = fen {
+        return Ok(json!({ "fen": fen, "lines": 3, "variant": variant }));
+    }
+    let pgn = if text.starts_with('[') {
+        text.to_string()
+    } else {
+        format!("[Variant \"{variant}\"]\n\n{text}")
+    };
+    let tree = kchess_domain::tree::tree_from_pgn(&pgn)
+        .ok_or_else(|| format!("Not a legal {variant} position or moves: {text}"))?;
+    let mut moves = Vec::new();
+    let mut node = &tree;
+    while let Some(next) = node.children.first() {
+        moves.push(next.uci.clone());
+        node = next;
+    }
+    Ok(json!({
+        "fen": node.fen,
+        "rootFen": tree.fen,
+        "moves": moves,
+        "lines": 3,
+        "variant": variant,
+    }))
+}
+
+/// A standard (or Chess960) position, or the one a game's moves reach.
+fn standard_analysis_request(words: &[String]) -> Result<Value, String> {
     if let Ok(fen) = analysis_fen(words) {
         return Ok(json!({ "fen": fen, "lines": 3 }));
     }
@@ -797,6 +871,55 @@ mod tests {
             explore_request(&strings(&["8/8/8/8/8/3k4/8/K4Q2 w - - 0 1"])),
             Err("Not a legal position or moves: 8/8/8/8/8/3k4/8/K4Q2 w - - 0 1".into())
         );
+    }
+
+    #[test]
+    fn analyze_reads_a_variant_by_its_own_rules() {
+        // A drop in Crazyhouse, which standard chess cannot read.
+        let request = analysis_request(&strings(&[
+            "--variant",
+            "crazyhouse",
+            "1.",
+            "e4",
+            "d5",
+            "2.",
+            "exd5",
+            "Qxd5",
+            "3.",
+            "P@e3",
+        ]))
+        .unwrap();
+        assert_eq!(request["variant"], "crazyhouse");
+        assert_eq!(
+            request["moves"],
+            json!(["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"])
+        );
+        assert!(
+            request["fen"].as_str().unwrap().contains("[p]"),
+            "{request}"
+        );
+        // A PGN names its own variant: the Atomic capture explodes.
+        let request = analysis_request(&strings(&[
+            "[Variant \"Atomic\"]",
+            "1.",
+            "e4",
+            "d5",
+            "2.",
+            "exd5",
+        ]))
+        .unwrap();
+        assert_eq!(request["variant"], "atomic");
+        assert_eq!(
+            request["fen"],
+            "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
+        );
+        let start = analysis_request(&strings(&["--variant", "horde", "startpos"])).unwrap();
+        assert_eq!(start["variant"], "horde");
+        assert!(start["fen"].as_str().unwrap().contains("PPPPPPPP/PPPPPPPP"));
+        assert!(analysis_request(&strings(&["--variant", "bughouse", "startpos"])).is_err());
+        // Standard chess and Chess960 stay with Stockfish.
+        let request = analysis_request(&strings(&["--variant", "chess960", "e4"])).unwrap();
+        assert!(request.get("variant").is_none());
     }
 
     #[test]

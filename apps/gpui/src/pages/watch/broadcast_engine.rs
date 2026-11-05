@@ -572,6 +572,7 @@ impl WatchPage {
                 };
                 panel.child(crate::engine_view::engine_lines(
                     &fen,
+                    "standard",
                     &broadcasts.engine.engine.lines(),
                     crate::prefs::get::<usize>(cx, LINES, 3).clamp(1, 5),
                     terminal.map(|_| "Nothing to analyse"),

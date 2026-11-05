@@ -65,8 +65,8 @@ fn result_of(game: &Value) -> &'static str {
 /// The PGN's setup and main line, for the replay, in the variant its header names.
 fn line_of(pgn: &str) -> Option<(Value, Vec<String>)> {
     let variant = crate::game::pgn_variant_key(pgn)?;
-    if !crate::game::analysable(variant) {
-        // Replayed under the variant's own rules, which the analysis tree does not know.
+    if !crate::game::reviewable(variant) {
+        // Replayed under the variant's own rules.
         let line = crate::game::rules("pgnMainline", &[json!(pgn)]).ok()?;
         let start = line["start"].as_str()?;
         let moves = line["moves"]
@@ -396,6 +396,7 @@ impl HistoryPage {
             parts.join(" · ")
         });
         let reviewed = game.clone();
+        let pgn = game["pgn"].as_str().unwrap_or_default();
         let replay_handle = replay.clone();
         v_flex()
             .size_full()
@@ -438,12 +439,14 @@ impl HistoryPage {
                         Button::new("lichess-review")
                             .outline()
                             .small()
-                            // The analysis board plays standard chess and Chess960 only.
-                            .disabled(!crate::game::pgn_analysable(
-                                reviewed["pgn"].as_str().unwrap_or_default(),
-                            ))
+                            .disabled(!crate::game::pgn_analysable(pgn))
                             .icon(icon("chart-line"))
-                            .label("Review")
+                            // Another variant's game is analysed, not reviewed.
+                            .label(if crate::game::pgn_reviewable(pgn) {
+                                "Review"
+                            } else {
+                                "Analyse"
+                            })
                             .on_click(move |_, window, cx| {
                                 let ply = replay_handle.read(cx).ply();
                                 open_review(reviewed.clone(), ply, window, cx);

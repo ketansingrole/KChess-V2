@@ -81,13 +81,22 @@ pub struct PvMove {
     pub label: String,
 }
 
-/// A principal variation in SAN with move numbers, stopping at the first illegal move.
-pub fn pv_san(fen: &str, pv: &[String], max: usize) -> Vec<PvMove> {
+/// A principal variation in SAN with move numbers, stopping at the first illegal move; `variant`
+/// is the Lichess key of the rules it is played by.
+pub fn pv_san(fen: &str, pv: &[String], max: usize, variant: &str) -> Vec<PvMove> {
     let pv = &pv[..pv.len().min(max)];
-    rules("pvSan", &[json!(fen), json!(pv), json!(pv.len())])
-        .ok()
-        .and_then(|moves| serde_json::from_value(moves).ok())
-        .unwrap_or_default()
+    let variant = if super::reviewable(variant) {
+        ""
+    } else {
+        variant
+    };
+    rules(
+        "pvSan",
+        &[json!(fen), json!(pv), json!(pv.len()), json!(variant)],
+    )
+    .ok()
+    .and_then(|moves| serde_json::from_value(moves).ok())
+    .unwrap_or_default()
 }
 
 /// "1.", "1…", or nothing: the number to print before a move at `ply`.
@@ -123,6 +132,17 @@ impl TreeNode {
             ply: start["ply"].as_f64().unwrap_or_default(),
             ..TreeNode::default()
         }
+    }
+
+    /// The Lichess key of the variant the tree is played in (its `Variant` header), standard
+    /// without one.
+    pub fn variant(&self) -> &'static str {
+        let name = self
+            .headers
+            .as_ref()
+            .and_then(|headers| headers.get("Variant"))
+            .and_then(Value::as_str);
+        super::variant_key(name).unwrap_or("standard")
     }
 
     /// One bounded PGN document, or `None` when it cannot be imported without loss.
@@ -215,6 +235,8 @@ impl TreeNode {
                 "fen": parent.fen,
                 "ply": parent.ply,
                 "childUcis": parent.children.iter().map(|child| child.uci.clone()).collect::<Vec<_>>(),
+                // Standard rules read Chess960 castling too.
+                "variant": if super::reviewable(self.variant()) { "" } else { self.variant() },
             })],
         )
         .ok()?;

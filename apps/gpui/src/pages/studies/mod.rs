@@ -85,7 +85,7 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// Why an import was refused.
 const INVALID_IMPORT: &str = "Paste valid PGN with up to 64 chapters";
-const VARIANT_IMPORT: &str = "Studies hold standard chess and Chess960 games only";
+const VARIANT_IMPORT: &str = "A chapter is in a variant KChess doesn't play";
 
 /// An import's chapters (`pgnGames`): each game named by its `ChapterName`, or numbered.
 fn import_chapters(text: &str) -> Result<Vec<(String, String)>, &'static str> {
@@ -106,7 +106,7 @@ fn import_chapters(text: &str) -> Result<Vec<(String, String)>, &'static str> {
             (name, game["pgn"].as_str().unwrap_or_default().to_string())
         })
         .collect();
-    // Read under standard rules, an Atomic or Crazyhouse game would show positions it never had.
+    // A game read under rules other than its own would show positions it never had.
     if chapters
         .iter()
         .any(|(_, pgn)| !crate::game::pgn_analysable(pgn))
@@ -1129,9 +1129,10 @@ mod tests {
         assert!(import_chapters("").is_err());
         // A study holds at most 64 chapters.
         assert!(import_chapters(&"[Event \"?\"]\n\n1. e4 *\n\n".repeat(65)).is_err());
-        // Standard rules cannot replay an Atomic game, though these moves are legal in both.
+        // An Atomic chapter is kept in Atomic; a variant KChess does not play is refused.
+        assert!(import_chapters("[Variant \"Atomic\"]\n\n1. e4 d5 2. exd5 *").is_ok());
         assert_eq!(
-            import_chapters("[Variant \"Atomic\"]\n\n1. e4 d5 2. exd5 *"),
+            import_chapters("[Variant \"Bughouse\"]\n\n1. e4 d5 2. exd5 *"),
             Err(super::VARIANT_IMPORT)
         );
         assert!(import_chapters("[Variant \"Chess960\"]\n[FEN \"bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1\"]\n\n1. e4 *").is_ok());

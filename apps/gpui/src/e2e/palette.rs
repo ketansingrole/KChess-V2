@@ -569,10 +569,10 @@ fn a_watched_game_is_stopped_from_quick_pick(cx: &mut gpui_kit::TestAppContext) 
             )
         });
     });
-    // Atomic cannot go to the analysis board, so Analyse is left out.
+    // An Atomic game goes to the analysis board too.
     let watching = listed(&mut app);
     assert!(watching.contains(&"Flip board".to_string()), "{watching:?}");
-    assert!(!watching.contains(&"Analyse".to_string()), "{watching:?}");
+    assert!(watching.contains(&"Analyse".to_string()), "{watching:?}");
     app.press("secondary-k");
     app.type_text(">Stop watching");
     wait_for_first(&mut app, "Stop watching");

@@ -526,7 +526,9 @@ fn environment() {
         // SAFETY: set once, before any test's core starts reading the environment.
         unsafe {
             std::env::set_var("KCHESS_CORE_MODE", "embedded");
-            std::env::set_var("KCHESS_ENGINE_PATH", engine);
+            std::env::set_var("KCHESS_ENGINE_PATH", &engine);
+            // Never a Fairy-Stockfish this checkout built: the scripted engine stands in for it.
+            std::env::set_var("KCHESS_VARIANT_ENGINE_PATH", &engine);
             std::env::set_var("KCHESS_FAKE_UCI_MODE", "search");
             // The core's test switch: credentials in a key file in the profile, never the OS
             // credential store, and the test Lichess origin below honoured.

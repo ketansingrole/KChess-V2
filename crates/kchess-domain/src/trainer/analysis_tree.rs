@@ -283,7 +283,12 @@ fn add_move_plan(input: Option<&Value>) -> Out {
     let text = |key: &str| input.get(key).and_then(Value::as_str).unwrap_or("");
     let path = text("path");
     let uci = text("uci");
-    let Some(mut pos) = rules::standard_from_fen(text("fen")) else {
+    // A variant game's tree (`variant`, a Lichess key) plays by that variant's rules.
+    let position = match text("variant") {
+        "" => rules::standard_from_fen(text("fen")),
+        variant => rules::setup_start(variant, text("fen")),
+    };
+    let Some(mut pos) = position else {
         return Ok(Value::Null);
     };
     let Some(played) = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u)) else {
@@ -341,6 +346,17 @@ fn promote_plan(indices: &[u64]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_move_is_played_by_its_trees_variant() {
+        // White holds a pawn: legal to drop in Crazyhouse, unreadable in standard chess.
+        let fen = "rnb1kbnr/ppp1pppp/8/q7/8/2N5/PPPP1PPP/R1BQKBNR[P] w KQkq - 2 4";
+        let input = |variant: &str| json!({ "path": "", "uci": "P@d4", "fen": fen, "ply": 6, "childUcis": [], "variant": variant });
+        let plan = add_move_plan(Some(&input("crazyhouse"))).unwrap();
+        assert_eq!(plan["child"]["san"], "P@d4");
+        assert_eq!(plan["childPath"], "P@d4");
+        assert!(add_move_plan(Some(&input(""))).unwrap().is_null());
+    }
 
     #[test]
     fn a_comment_reads_without_its_commands() {

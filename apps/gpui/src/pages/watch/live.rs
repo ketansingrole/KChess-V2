@@ -744,7 +744,6 @@ impl WatchPage {
                             .w_full()
                             .icon(icon("microscope"))
                             .label("Analyse")
-                            // The analysis board plays standard chess and Chess960 only.
                             .disabled(!crate::game::analysable(
                                 frame["variant"].as_str().unwrap_or("standard"),
                             ))
