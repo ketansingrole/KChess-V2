@@ -719,11 +719,18 @@ pub fn play_local_from(setup: serde_json::Value, window: &mut Window, cx: &mut A
     }
 }
 
-/// The board editor on a position (`editPosition`).
-pub fn edit_position(fen: String, orientation: shakmaty::Color, window: &mut Window, cx: &mut App) {
+/// The board editor on a position (`editPosition`): a setup's (`{ variant, fen }`).
+pub fn edit_position(
+    setup: serde_json::Value,
+    orientation: shakmaty::Color,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let variant = setup["variant"].as_str().unwrap_or("standard");
+    let fen = setup["fen"].as_str().unwrap_or_default();
     if let Some(editor) = page_view::<EditorPage>(Page::Editor, window, cx) {
         editor.update(cx, |editor, cx| {
-            editor.set_position(&fen, orientation, window, cx)
+            editor.set_position(variant, fen, orientation, window, cx)
         });
     }
     open(Page::Editor, window, cx);

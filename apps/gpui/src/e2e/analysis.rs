@@ -311,6 +311,56 @@ fn the_editor_starts_from_the_standard_position(cx: &mut gpui_kit::TestAppContex
     }
 }
 
+/// The editor sets up positions in the other variants: Horde's start, read by Horde's rules and
+/// analysed as a Horde game; a pasted Crazyhouse FEN brings its variant and keeps its pockets.
+#[gpui_kit::test]
+fn the_editor_sets_up_a_variant_position(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = editor(cx);
+    app.click_label("Choose a variant");
+    // Horde is sixth after standard chess.
+    for _ in 0..6 {
+        app.press("down");
+    }
+    app.press("enter");
+    app.click("start-position");
+    wait_for_fen(
+        &mut app,
+        "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1",
+    );
+    // White has no king, which only Horde allows.
+    assert_eq!(app.status(), "Ready to analyse");
+    app.click("analyse-position");
+    app.wait_for("the Horde game on the analysis board", |_, cx| {
+        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+            crate::pages::Page::Analysis,
+            cx,
+        )
+        .is_some_and(|page| {
+            let page = page.read(cx);
+            page.header("Variant") == "Horde"
+                && page.shown_fen().starts_with("rnbqkbnr/pppppppp/8/1PP2PP1")
+        })
+    });
+
+    app.open("Board editor");
+    let crazyhouse = "rnb1kbnr/ppp1pppp/8/q7/8/2N5/PPPP1PPP/R1BQKBNR[Pp] w KQkq - 2 4";
+    app.click_label("FEN");
+    app.press("secondary-a");
+    app.type_text(crazyhouse);
+    app.press("enter");
+    // The editor starts the move counters again, as for any position.
+    wait_for_fen(
+        &mut app,
+        "rnb1kbnr/ppp1pppp/8/q7/8/2N5/PPPP1PPP/R1BQKBNR[Pp] w KQkq - 0 1",
+    );
+    assert_eq!(app.status(), "Ready to analyse");
+    let variant = app.cx.update(|cx| {
+        crate::shell::view_of::<crate::pages::editor::EditorPage>(crate::pages::Page::Editor, cx)
+            .map(|page| page.read(cx).game_setup())
+    });
+    assert_eq!(variant.expect("the editor")["variant"], "crazyhouse");
+}
+
 /// The spare pieces are buttons a screen reader names, chosen as the tools beside them are.
 #[gpui_kit::test]
 fn a_spare_piece_is_a_named_button_that_is_chosen(cx: &mut gpui_kit::TestAppContext) {
@@ -622,14 +672,11 @@ fn a_crazyhouse_drop_is_played_from_the_pocket(cx: &mut gpui_kit::TestAppContext
     assert_eq!(selected(&mut app, "e2e4 d7d5 e4d5 d8d5 P@e3"), Some(true));
     // The drop's position goes to the engine by Crazyhouse's rules, which standard rules refuse.
     wait_for_search(&mut app);
-    // The game keeps its variant in its PGN; the standard board editor is not offered.
+    // The game keeps its variant in its PGN.
     app.click("analysis-more");
     app.wait_for("the menu", |window, _| {
         window.try_find_by_label("Copy PGN").is_some()
     });
-    assert!(
-        app.with_window(|window, _| { window.try_find_by_label("Edit this position").is_none() })
-    );
     app.click_label("Copy PGN");
     let pgn = clipboard(&mut app).expect("a copied PGN");
     assert!(pgn.contains("[Variant \"Crazyhouse\"]"), "{pgn}");
@@ -655,6 +702,17 @@ fn a_crazyhouse_drop_is_played_from_the_pocket(cx: &mut gpui_kit::TestAppContext
                     .starts_with("rnb1kbnr/ppp1pppp/8/3q4/8/4P3/PPPP1PPP/")
         })
     });
+    // The board editor takes the position in Crazyhouse, pockets and all.
+    app.open("Analysis board");
+    app.click("analysis-more");
+    app.wait_for("the menu", |window, _| {
+        window.try_find_by_label("Edit this position").is_some()
+    });
+    app.click_label("Edit this position");
+    wait_for_fen(
+        &mut app,
+        "rnb1kbnr/ppp1pppp/8/3q4/8/4P3/PPPP1PPP/RNBQKBNR[p] b KQkq - 0 1",
+    );
 }
 
 /// The explorer looks a variant's position up in Lichess's games of that variant, offers only the

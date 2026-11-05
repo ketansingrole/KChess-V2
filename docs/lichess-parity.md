@@ -115,8 +115,8 @@ can add them as a friend, challenge them or watch their current game.
   Horde, Racing Kings or Crazyhouse, played by the bundled Fairy-Stockfish, from its usual start or
   a FEN) or any FEN, with an
   optional clock (the engine's thinking time is kept within its clock), a colour and a strength.
-  The editor and analysis board both have _Play Stockfish from here_; on the analysis board it
-  plays on in the game's variant. On the command line, `kchess-cli play [level] [colour]
+  The editor and analysis board both have _Play Stockfish from here_, in the position's variant
+  (the editor sets up positions in any of them; a Crazyhouse FEN keeps its pockets). On the command line, `kchess-cli play [level] [colour]
   [variant] [--fen FEN]`, and `kchess-cli local [variant] [--fen FEN]` over the board.
 - **Over the board**: two players at one computer in any supported variant, from its usual start
   or a FEN (Chess960 by its number). It has optional
