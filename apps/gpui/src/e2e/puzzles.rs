@@ -529,8 +529,9 @@ fn history_shows_the_puzzles_not_solved(cx: &mut gpui_kit::TestAppContext) {
     app.find(("puzzle-retry", 2usize));
 }
 
-/// Puzzle history's rows fit the page at every window size: a 1024-wide window once squeezed the
-/// themes column to nothing and pushed each row's buttons past the list's edge.
+/// Puzzle history's rows fit the page at every window size: their fixed columns once squeezed the
+/// themes to nothing in a 1024-wide window, and pushed each row's buttons past the list's edge in
+/// the smallest one.
 #[gpui_kit::test]
 fn puzzle_history_rows_fit_every_window(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::{px, size};
