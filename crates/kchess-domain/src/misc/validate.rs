@@ -2060,6 +2060,16 @@ struct RestoreChapter {
     index: u32,
 }
 
+/// `moveChapter`: a study's chapter to its new place.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", expecting = "an object")]
+struct MoveChapter {
+    op: String,
+    id: String,
+    chapter_id: String,
+    index: u32,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(expecting = "an object")]
 struct ChapterEntry {
@@ -2110,8 +2120,8 @@ fn assert_study_command_shape(value: J) -> Checked<Value> {
         let error = decode::<SaveStudy>(value, plain).err();
         return Err(error.unwrap_or_else(|| "invalid type, expected an object".into()));
     }
-    // Undo's command, newer than the recorded ones: told apart before them, so their answers
-    // (an unknown command lists theirs) stay as recorded.
+    // Commands newer than the recorded ones (Undo's restore, moving a chapter): told apart
+    // before them, so their answers (an unknown command lists theirs) stay as recorded.
     if value.get("op").and_then(J::str) == Some("restoreChapter") {
         let restore: RestoreChapter = decode(value, plain)?;
         local_id(&restore.id, "id")?;
@@ -2119,6 +2129,12 @@ fn assert_study_command_shape(value: J) -> Checked<Value> {
         study_name(&restore.chapter.name, "chapter.name")?;
         study_pgn(&restore.chapter.pgn, "chapter.pgn")?;
         return out(&restore);
+    }
+    if value.get("op").and_then(J::str) == Some("moveChapter") {
+        let moved: MoveChapter = decode(value, plain)?;
+        local_id(&moved.id, "id")?;
+        local_id(&moved.chapter_id, "chapterId")?;
+        return out(&moved);
     }
     let tag = value.get("op").cloned().unwrap_or(J::Undef);
     let op: StudyOp = decode(tag, plain).map_err(|error| format!("op: {error}"))?;
@@ -2452,6 +2468,28 @@ mod tests {
             ("index", J::Num(0.0)),
         ]);
         assert!(run("assertStudyCommandShape", without_chapter).is_err());
+    }
+
+    /// `moveChapter` takes a chapter and its new place.
+    #[test]
+    fn a_chapter_to_move_is_checked() {
+        let moved = obj(vec![
+            ("op", J::Str("moveChapter".into())),
+            ("id", J::Str("s1".into())),
+            ("chapterId", J::Str("c1".into())),
+            ("index", J::Num(2.0)),
+            ("extra", J::Str("dropped".into())),
+        ]);
+        assert_eq!(
+            run("assertStudyCommandShape", moved),
+            Ok(json!({ "op": "moveChapter", "id": "s1", "chapterId": "c1", "index": 2 }))
+        );
+        let without_place = obj(vec![
+            ("op", J::Str("moveChapter".into())),
+            ("id", J::Str("s1".into())),
+            ("chapterId", J::Str("c1".into())),
+        ]);
+        assert!(run("assertStudyCommandShape", without_place).is_err());
     }
 
     fn settings() -> Vec<(&'static str, J)> {

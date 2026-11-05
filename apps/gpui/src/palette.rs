@@ -1087,6 +1087,18 @@ fn study_commands(cx: &App) -> Vec<Command> {
                 StudyAction::DuplicateChapter => {
                     ("duplicate-chapter", "Duplicate chapter", "copy", "copy")
                 }
+                StudyAction::MoveChapterUp => (
+                    "move-chapter-up",
+                    "Move chapter up",
+                    "chevron-up",
+                    "reorder",
+                ),
+                StudyAction::MoveChapterDown => (
+                    "move-chapter-down",
+                    "Move chapter down",
+                    "chevron-down",
+                    "reorder",
+                ),
                 StudyAction::RemoveChapter => {
                     ("delete-chapter", "Delete chapter", "trash-2", "remove")
                 }

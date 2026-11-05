@@ -438,3 +438,36 @@ fn quick_pick_steps_through_the_chapters(cx: &mut gpui_kit::TestAppContext) {
     wait_for_value(&mut app, "Study chapter", "1. Chapter 1");
     app.find("tree-e2e4");
 }
+
+/// A chapter moves down from its menu and back up from Quick Pick, and stays open meanwhile.
+#[gpui_kit::test]
+fn chapters_move_up_and_down(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
+    wait_for_listed(&mut app, &["Pawn openings"]);
+    app.click("open-imported");
+    wait_for_value(&mut app, "Study chapter", "1. Chapter 1");
+
+    app.click("chapter-actions");
+    app.click_label("Move down");
+    wait_for_value(&mut app, "Study chapter", "2. Chapter 1");
+    app.find("tree-e2e4");
+    // The last chapter cannot move further down.
+    app.press("shift-secondary-p");
+    app.type_text("Move chapter");
+    super::palette::wait_for_first(&mut app, "Move chapter up");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..12usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert!(
+        !listed.contains(&"Move chapter down".to_string()),
+        "{listed:?}"
+    );
+    app.press("enter");
+    super::palette::wait_until_closed(&mut app);
+    wait_for_value(&mut app, "Study chapter", "1. Chapter 1");
+    app.find("tree-e2e4");
+}

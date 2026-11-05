@@ -277,6 +277,14 @@ pub enum StudyCommandInput {
     #[serde(rename = "removeChapter")]
     #[serde(rename_all = "camelCase")]
     RemoveChapter { id: String, chapter_id: String },
+    /// A chapter moved to `index` (the last place when past the end).
+    #[serde(rename = "moveChapter")]
+    #[serde(rename_all = "camelCase")]
+    MoveChapter {
+        id: String,
+        chapter_id: String,
+        index: u32,
+    },
     /// A removed chapter back at `index` (Undo); nothing when the study already has it.
     #[serde(rename = "restoreChapter")]
     RestoreChapter {

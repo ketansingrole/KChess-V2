@@ -40,6 +40,8 @@ pub(crate) enum StudyAction {
     AddChapter,
     RenameChapter,
     DuplicateChapter,
+    MoveChapterUp,
+    MoveChapterDown,
     RemoveChapter,
     PreviousChapter,
     NextChapter,
@@ -76,10 +78,16 @@ impl StudyBar {
         if count < MAX_CHAPTERS {
             actions.push(StudyAction::DuplicateChapter);
         }
+        let (before, after) = self.neighbours(cx);
+        if before.is_some() {
+            actions.push(StudyAction::MoveChapterUp);
+        }
+        if after.is_some() {
+            actions.push(StudyAction::MoveChapterDown);
+        }
         if count > 1 {
             actions.push(StudyAction::RemoveChapter);
         }
-        let (before, after) = self.neighbours(cx);
         if before.is_some() {
             actions.push(StudyAction::PreviousChapter);
         }
@@ -129,6 +137,8 @@ impl StudyBar {
             StudyAction::AddChapter => self.add_chapter(window, cx),
             StudyAction::RenameChapter => self.rename_chapter(window, cx),
             StudyAction::DuplicateChapter => self.duplicate_chapter(window, cx),
+            StudyAction::MoveChapterUp => self.move_chapter(-1, window, cx),
+            StudyAction::MoveChapterDown => self.move_chapter(1, window, cx),
             StudyAction::RemoveChapter => self.remove_chapter(window, cx),
             StudyAction::PreviousChapter | StudyAction::NextChapter => {
                 let (before, after) = self.neighbours(cx);
@@ -403,6 +413,26 @@ impl StudyBar {
             return;
         };
         let command = json!({ "op": "duplicateChapter", "id": study["id"], "chapterId": chapter });
+        self.chapter_command(command, None, window, cx);
+    }
+
+    /// Move the chapter shown one place earlier (`-1`) or later (`1`); it stays open.
+    fn move_chapter(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((study, chapter)) = self.open(cx) else {
+            return;
+        };
+        let ids: Vec<String> = crate::studies::chapter_items(&study)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let Some(index) = ids.iter().position(|id| *id == chapter) else {
+            return;
+        };
+        let Some(to) = index.checked_add_signed(by).filter(|to| *to < ids.len()) else {
+            return;
+        };
+        let command =
+            json!({ "op": "moveChapter", "id": study["id"], "chapterId": chapter, "index": to });
         self.chapter_command(command, None, window, cx);
     }
 
@@ -787,6 +817,8 @@ impl Render for StudyBar {
                 Some((study, _)) => {
                     let count = study["chapters"].as_array().map_or(0, Vec::len);
                     let chapter_bar = bar.clone();
+                    let (before, after) = self.neighbours(cx);
+                    let movable = (before.is_some(), after.is_some());
                     let chapter_menu = Button::new("chapter-actions")
                         .ghost()
                         .small()
@@ -816,6 +848,22 @@ impl Render for StudyBar {
                                     .icon(icon("copy"))
                                     .disabled(count >= MAX_CHAPTERS)
                                     .on_click(action(StudyBar::duplicate_chapter)),
+                            )
+                            .item(
+                                PopupMenuItem::new("Move up")
+                                    .icon(icon("chevron-up"))
+                                    .disabled(!movable.0)
+                                    .on_click(action(|bar, window, cx| {
+                                        bar.move_chapter(-1, window, cx)
+                                    })),
+                            )
+                            .item(
+                                PopupMenuItem::new("Move down")
+                                    .icon(icon("chevron-down"))
+                                    .disabled(!movable.1)
+                                    .on_click(action(|bar, window, cx| {
+                                        bar.move_chapter(1, window, cx)
+                                    })),
                             )
                             .separator()
                             .item(
