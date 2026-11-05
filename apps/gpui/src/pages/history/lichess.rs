@@ -580,8 +580,7 @@ impl HistoryPage {
         let body = if tab.loading && tab.games.is_empty() {
             div()
                 .p(px(24.))
-                .text_color(palette.text_muted)
-                .child("Loading games…")
+                .child(widgets::loading("Loading games…", palette))
                 .into_any_element()
         } else if let Some(error) = &tab.error {
             div()

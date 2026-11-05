@@ -408,7 +408,7 @@ impl HistoryPage {
         }
         match &self.bookmarks {
             None => card
-                .child(widgets::hint("Loading…", palette))
+                .child(widgets::loading("Loading…", palette))
                 .into_any_element(),
             Some(games) if games.is_empty() => card
                 .items_center()

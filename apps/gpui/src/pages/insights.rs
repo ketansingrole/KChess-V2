@@ -644,7 +644,7 @@ impl Render for InsightsPage {
                 )
                 .into_any_element()
         } else if self.loading && report.is_none() {
-            widgets::hint("Loading insights…", &palette).into_any_element()
+            widgets::loading("Loading insights…", &palette).into_any_element()
         } else if let Some(report) = report.filter(|_| total <= 0.) {
             let _ = report;
             widgets::card(&palette)

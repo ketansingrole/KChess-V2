@@ -415,13 +415,7 @@ impl Render for PuzzleHistory {
             });
         let now = chrono::Local::now();
         let body: AnyElement = if self.loading && rows.is_empty() {
-            h_flex()
-                .gap(px(8.))
-                .text_size(px(13.))
-                .text_color(palette.text_muted)
-                .child(crate::widgets::spinner(px(14.)))
-                .child("Loading from Lichess…")
-                .into_any_element()
+            crate::widgets::loading("Loading from Lichess…", &palette).into_any_element()
         } else if any && rows.is_empty() {
             let label = mode_look(if filter == "all" { "practice" } else { &filter }).0;
             div()

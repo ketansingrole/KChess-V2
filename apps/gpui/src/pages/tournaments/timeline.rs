@@ -243,7 +243,7 @@ impl TournamentsPage {
         let Some(list) = &self.list else {
             return body
                 .when(self.error.is_none(), |body| {
-                    body.child(widgets::hint("Loading…", palette))
+                    body.child(widgets::loading("Loading…", palette))
                 })
                 .into_any_element();
         };

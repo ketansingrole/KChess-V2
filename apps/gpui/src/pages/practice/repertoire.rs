@@ -1060,7 +1060,7 @@ impl Render for Repertoire {
                 &palette,
             ))
             .when(drills_opening && self.preparing, |panel| {
-                panel.child(div().text_size(px(14.)).child("Loading popular replies…"))
+                panel.child(widgets::loading("Loading popular replies…", &palette))
             })
             .when(
                 drills_opening && !self.preparing && !self.note.is_empty(),

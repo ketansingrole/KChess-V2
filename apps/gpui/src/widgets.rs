@@ -657,6 +657,17 @@ pub fn hint(text: impl Into<SharedString>, palette: &Palette) -> Div {
         .child(text.into())
 }
 
+/// Something loading: the turning spinner and a muted line ("Loading…"), as a hint reads.
+pub fn loading(text: impl Into<SharedString>, palette: &Palette) -> Div {
+    h_flex()
+        .gap(px(8.))
+        .text_size(px(12.))
+        .line_height(relative(1.5))
+        .text_color(palette.text_muted)
+        .child(spinner(px(12.)))
+        .child(text.into())
+}
+
 /// "Move 3 · You play White · Your move": parts joined by middle dots that wrap whole, so a
 /// line never ends on a dot or breaks inside a part.
 pub fn dotted(parts: impl IntoIterator<Item = impl Into<SharedString>>) -> Div {
@@ -1578,7 +1589,8 @@ mod tests {
     use crate::theme::{Palette, colors};
 
     /// Every wait turns: the loader icon appears only inside `spinner`, never as a still glyph
-    /// (the Lichess seek card once showed one that never moved).
+    /// (the Lichess seek card once showed one that never moved), and "Loading…" lines come
+    /// with it through `loading`.
     #[test]
     fn every_loader_is_the_turning_spinner() {
         fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
@@ -1590,7 +1602,9 @@ mod tests {
                     let text = std::fs::read_to_string(&path).expect("a source file");
                     let uses = text.matches("icon(\"loader-circle\")").count();
                     let allowed = usize::from(path.ends_with("src/widgets.rs"));
-                    if uses > allowed {
+                    // A wait written as a plain hint has no spinner: `loading` has one.
+                    let still_text = text.contains("hint(\"Loading");
+                    if uses > allowed || still_text {
                         found.push(path.display().to_string());
                     }
                 }

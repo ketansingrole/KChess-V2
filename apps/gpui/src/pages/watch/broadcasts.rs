@@ -894,7 +894,13 @@ impl WatchPage {
                     .text_color(palette.error)
                     .child(error)
             }))
-            .children(status.map(|status| widgets::hint(status, palette)))
+            .children(status.map(|status| {
+                if broadcasts.searching || broadcasts.loading {
+                    widgets::loading(status, palette)
+                } else {
+                    widgets::hint(status, palette)
+                }
+            }))
             .when(!searching && broadcasts.error.is_some(), |body| {
                 body.child(
                     h_flex()

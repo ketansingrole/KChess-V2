@@ -888,7 +888,7 @@ impl FriendsPage {
                     .text_color(palette.error)
                     .child(error.clone()),
             ),
-            (None, None) => card.child(widgets::hint("Loading…", palette)),
+            (None, None) => card.child(widgets::loading("Loading…", palette)),
             (None, Some(entries)) if entries.is_empty() => {
                 card.child(widgets::hint("Nothing new", palette))
             }

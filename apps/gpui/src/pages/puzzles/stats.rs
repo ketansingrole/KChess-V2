@@ -791,14 +791,7 @@ impl PuzzleStats {
             return widgets::card(palette)
                 .gap(px(12.))
                 .child(widgets::heading("Your results on Lichess", palette))
-                .child(
-                    h_flex()
-                        .gap(px(8.))
-                        .text_size(px(13.))
-                        .text_color(palette.text_muted)
-                        .child(crate::widgets::spinner(px(14.)))
-                        .child("Loading from Lichess…"),
-                )
+                .child(crate::widgets::loading("Loading from Lichess…", palette))
                 .into_any_element();
         }
         storm_card(&self.storm, &self.profile, palette).into_any_element()

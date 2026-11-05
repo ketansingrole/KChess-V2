@@ -1133,7 +1133,7 @@ impl Render for PositionExplorer {
                     &palette,
                 ))
             })
-            .children(status.map(|status| div().text_size(px(13.)).child(status)))
+            .children(status.map(|status| widgets::loading(status, &palette)))
             .when(!self.error.is_empty(), |explorer| {
                 explorer.child(
                     div()

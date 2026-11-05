@@ -95,7 +95,7 @@ impl TournamentsPage {
                     .child(error)
                     .into_any_element(),
                 None => widgets::card(palette)
-                    .child(widgets::hint("Loading…", palette))
+                    .child(widgets::loading("Loading…", palette))
                     .into_any_element(),
             };
             return v_flex()

@@ -1346,7 +1346,7 @@ impl PlayersPage {
             );
         }
         let Some(stats) = &self.stats else {
-            return card.child(widgets::hint("Loading…", palette));
+            return card.child(widgets::loading("Loading…", palette));
         };
         let count = |key: &str| stats["count"][key].as_f64().unwrap_or_default();
         let mark = |key: &str| match stats[key]["rating"].as_f64() {
@@ -1488,7 +1488,7 @@ impl PlayersPage {
             );
         }
         let Some(board) = &self.board else {
-            return card.child(widgets::hint("Loading…", palette));
+            return card.child(widgets::loading("Loading…", palette));
         };
         let filter = self.board_title.as_str();
         let shown: Vec<(usize, &Value)> = board
@@ -1617,7 +1617,7 @@ impl PlayersPage {
             ));
         }
         match &self.days {
-            None => card.child(widgets::hint("Loading…", palette)),
+            None => card.child(widgets::loading("Loading…", palette)),
             Some(days) if days.is_empty() => {
                 card.child(widgets::hint("No recent activity", palette))
             }
@@ -1652,7 +1652,7 @@ impl PlayersPage {
             );
         }
         match &self.games {
-            None => card.child(widgets::hint("Loading…", palette)),
+            None => card.child(widgets::loading("Loading…", palette)),
             Some(games) if games.is_empty() => card.child(widgets::hint("No games yet", palette)),
             Some(games) => card.children(games.iter().enumerate().map(|(index, game)| {
                 let chosen = game.clone();
