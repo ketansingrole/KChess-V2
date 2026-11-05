@@ -310,6 +310,17 @@ impl TreeNode {
             .collect()
     }
 
+    /// Where the variation shown at `path` branched off: the position before its last move that
+    /// is not a first child. `None` on the main line.
+    pub fn fork_before(&self, path: &str) -> Option<String> {
+        let moves = moves_of(&self.existing_path(path));
+        let last = self
+            .indices_along(path)
+            .iter()
+            .rposition(|&index| index > 0)?;
+        Some(path_of(&moves[..last]))
+    }
+
     /// True when every move on `path` is a first child.
     pub fn on_mainline(&self, path: &str) -> bool {
         rules("onMainline", &[json!(self.indices_along(path))])
@@ -385,6 +396,22 @@ mod tests {
         let path = tree.add_move("", "e2e4").unwrap();
         let line = tree.line_to(&path).to_pgn();
         assert!(line.contains(fen) && line.contains("1. e4"), "{line}");
+    }
+
+    #[test]
+    fn a_variation_is_left_where_it_branched_off() {
+        let tree = TreeNode::from_pgn("1. e4 e5 (1... c5 2. Nf3 (2. c3 d5) d6) 2. Nf3 *").unwrap();
+        assert_eq!(tree.fork_before("e2e4 e7e5 g1f3"), None);
+        assert_eq!(
+            tree.fork_before("e2e4 c7c5 g1f3 d7d6").as_deref(),
+            Some("e2e4")
+        );
+        // From a variation inside a variation, out to the inner one's fork first.
+        assert_eq!(
+            tree.fork_before("e2e4 c7c5 c2c3 d7d5").as_deref(),
+            Some("e2e4 c7c5")
+        );
+        assert_eq!(tree.fork_before("e2e4 c7c5").as_deref(), Some("e2e4"));
     }
 
     #[test]

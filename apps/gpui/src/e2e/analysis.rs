@@ -128,6 +128,35 @@ fn the_arrow_keys_step_through_the_moves(cx: &mut gpui_kit::TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn shift_and_the_arrows_go_into_and_out_of_a_variation(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 (1... c5 2. Nf3 d6) 2. Nf3 *");
+    app.click("tree-e2e4");
+    app.press("shift-right");
+    assert_eq!(selected(&mut app, "e2e4 c7c5"), Some(true));
+    app.press("right");
+    app.press("right");
+    assert_eq!(selected(&mut app, "e2e4 c7c5 g1f3 d7d6"), Some(true));
+    app.press("shift-left");
+    assert_eq!(selected(&mut app, "e2e4"), Some(true));
+    // On the main line there is nothing to leave.
+    app.press("right");
+    app.press("shift-left");
+    assert_eq!(selected(&mut app, "e2e4 e7e5"), Some(true));
+}
+
+#[gpui_kit::test]
+fn e_shows_the_explorer_and_the_moves_again(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 *");
+    app.click("tree-e2e4");
+    app.press("e");
+    assert_eq!(app.find("Explorer").selected(), Some(true));
+    app.press("e");
+    assert_eq!(app.find("Moves").selected(), Some(true));
+}
+
+#[gpui_kit::test]
 fn variations_are_kept_and_a_move_into_one_starts_another(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
     import(&mut app, "1. e4 e5 (1... c5 2. Nf3) 2. Nf3 Nc6 *");

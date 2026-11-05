@@ -655,6 +655,34 @@ impl AnalysisPage {
         }
     }
 
+    /// Into the first variation from here (Shift →), as Lichess's analysis board does.
+    fn enter_variation(&mut self, cx: &mut Context<Self>) {
+        if let Some(child) = self.node().children.get(1) {
+            let next = child_path(&self.path, &child.uci);
+            self.go_to(&next, cx);
+        }
+    }
+
+    /// Out of the variation shown, back to where it branched off (Shift ←).
+    fn exit_variation(&mut self, cx: &mut Context<Self>) {
+        if let Some(fork) = self.root.fork_before(&self.path) {
+            self.go_to(&fork, cx);
+        }
+    }
+
+    /// E shows the explorer, or the moves again.
+    fn toggle_explorer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let shown = Tool::of(&crate::prefs::get::<String>(cx, TOOL, "moves".into()));
+        let next = if shown == Tool::Explorer {
+            Tool::Moves
+        } else {
+            Tool::Explorer
+        };
+        crate::prefs::set(cx, TOOL, next.key());
+        window.refresh();
+        cx.notify();
+    }
+
     pub(crate) fn go_to_start(&mut self, cx: &mut Context<Self>) {
         self.go_to("", cx);
     }
@@ -1496,10 +1524,23 @@ impl AnalysisPage {
 
     /* ── Keys, wheel, menus ───────────────────────────────────────────── */
 
-    /// ← → ↑ ↓ (and Home, End) step, F flips, L turns the engine on or off, Space plays the best
-    /// move.
+    /// ← → ↑ ↓ (and Home, End) step, Shift → and Shift ← go into and out of a variation, F flips,
+    /// L turns the engine on or off, E shows the explorer, Space plays the best move.
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+        if !self.focus.is_focused(window) {
+            return;
+        }
+        let modifiers = &event.keystroke.modifiers;
+        if modifiers.shift && !modifiers.control && !modifiers.platform && !modifiers.alt {
+            match event.keystroke.key.as_str() {
+                "right" => self.enter_variation(cx),
+                "left" => self.exit_variation(cx),
+                _ => return,
+            }
+            cx.stop_propagation();
+            return;
+        }
+        if modifiers.modified() {
             return;
         }
         match event.keystroke.key.as_str() {
@@ -1511,6 +1552,7 @@ impl AnalysisPage {
             "l" => self.toggle_engine(cx),
             "x" => self.toggle_threat(cx),
             "c" => self.focus_notes(window, cx),
+            "e" => self.toggle_explorer(window, cx),
             "space"
                 if !cx
                     .global::<SettingsHandle>()
