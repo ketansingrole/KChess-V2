@@ -126,6 +126,9 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         "store.library.clearRepertoireMisses" => {
             str_arg(args, 0, "key").and_then(|key| clear_repertoire_misses(host, db, key))
         }
+        "store.library.restoreRepertoireMisses" => str_arg(args, 0, "key").and_then(|key| {
+            restore_repertoire_misses(host, db, key, args.get(1).unwrap_or(&Value::Null))
+        }),
         _ => return None,
     };
     Some(result)
@@ -697,6 +700,35 @@ fn record_repertoire_miss(host: &dyn Host, db: &Connection, key: &str, fen: &str
 fn clear_repertoire_misses(host: &dyn Host, db: &Connection, key: &str) -> Result<Value> {
     let mut misses = object(&read_misses(host, db)?, "repertoire misses")?.clone();
     misses.shift_remove(key);
+    let misses = Value::Object(misses);
+    write_document(db, MISSES, &misses, "Too many repertoire notes are saved.")?;
+    Ok(misses)
+}
+
+/// Undo of a clear: the cleared table's counts, added to any missed since.
+fn restore_repertoire_misses(
+    host: &dyn Host,
+    db: &Connection,
+    key: &str,
+    restored: &Value,
+) -> Result<Value> {
+    let restored = restored
+        .as_object()
+        .ok_or_else(|| CoreError::new("misses must be an object"))?;
+    let mut misses = object(&read_misses(host, db)?, "repertoire misses")?.clone();
+    let table = misses
+        .entry(key.to_string())
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| CoreError::new("repertoire table must be an object"))?;
+    for (fen, count) in restored {
+        let count = count
+            .as_f64()
+            .filter(|count| count.is_finite() && *count > 0.0)
+            .ok_or_else(|| CoreError::new("a miss count must be a positive number"))?;
+        let now = table.get(fen).and_then(Value::as_f64).unwrap_or(0.0);
+        table.insert(fen.clone(), num(now + count));
+    }
     let misses = Value::Object(misses);
     write_document(db, MISSES, &misses, "Too many repertoire notes are saved.")?;
     Ok(misses)
@@ -1387,6 +1419,26 @@ mod tests {
         )
         .expect("clear");
         assert_eq!(cleared, json!({ "black": { "fen2": 1 } }));
+        // Undo puts the cleared table back, adding to a miss recorded since.
+        miss("white", "fen3");
+        let restored = run(
+            &db,
+            "store.library.restoreRepertoireMisses",
+            &[json!("white"), json!({ "fen1": 2, "fen3": 1 })],
+        )
+        .expect("restore");
+        assert_eq!(
+            restored,
+            json!({ "black": { "fen2": 1 }, "white": { "fen3": 2, "fen1": 2 } })
+        );
+        assert!(
+            run(
+                &db,
+                "store.library.restoreRepertoireMisses",
+                &[json!("white"), json!({ "fen1": -1 })],
+            )
+            .is_err()
+        );
         assert!(run(&db, "store.library.recordRepertoireMiss", &[json!("white")]).is_err());
     }
 }

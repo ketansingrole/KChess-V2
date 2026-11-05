@@ -210,21 +210,51 @@ fn a_drilled_line_is_saved_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
             .filter_map(|item| item.label().map(str::to_string))
             .collect()
     });
-    assert_eq!(
-        &listed[..4],
-        [
-            "Show move",
-            "Restart line",
-            "Forget mistakes",
-            "Save as study"
-        ]
-    );
+    // Nothing missed yet: there are no mistakes to forget.
+    assert_eq!(&listed[..3], ["Show move", "Restart line", "Save as study"]);
     app.type_text("Save as study");
     super::palette::wait_for_first(&mut app, "Save as study");
     app.press("enter");
     super::palette::wait_until_closed(&mut app);
     let studies = loop_until_saved(&mut app);
     assert!(studies.contains("King's Gambit"), "{studies}");
+}
+
+/// A move off the line is remembered; Forget mistakes drops it at once and Undo brings it back.
+#[gpui_kit::test]
+fn forgotten_mistakes_come_back_with_undo(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = openings(cx);
+    open_kieseritzky(&mut app);
+    app.click("train-line");
+    assert_eq!(app.find("forget-mistakes").disabled(), Some(true));
+    // The line starts 1. e4; 1. d4 is not in it.
+    app.click_square("d2", true);
+    app.click_square("d4", true);
+    wait_for_status(&mut app, "Not in your repertoire");
+    let core = app
+        .cx
+        .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
+    let misses = move || {
+        core.call_now("library", Vec::new())
+            .map(|library| library["repertoireMisses"].to_string())
+            .unwrap_or_default()
+    };
+    app.wait_for("the miss to be kept", |_, _| misses().contains("rnbqkbnr"));
+    app.click("forget-mistakes");
+    app.wait_for("the misses to be forgotten", |_, _| {
+        !misses().contains("rnbqkbnr")
+    });
+    assert_eq!(app.find("forget-mistakes").disabled(), Some(true));
+    app.click("undo-forget-mistakes");
+    app.wait_for("the misses to come back", |_, _| {
+        misses().contains("rnbqkbnr")
+    });
+    app.wait_for("Forget mistakes to be offered again", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("forget-mistakes")
+            .is_some_and(|button| button.disabled() != Some(true))
+    });
 }
 
 /// F turns an opening's board, as its button does.

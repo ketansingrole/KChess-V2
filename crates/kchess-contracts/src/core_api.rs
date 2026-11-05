@@ -516,6 +516,11 @@ pub fn methods() -> Vec<Method> {
         method("recordRepertoireMiss", "", vec![req("key"), req("fen")]),
         method("clearRepertoireMisses", "", vec![req("key")]),
         method(
+            "restoreRepertoireMisses",
+            "Put back a cleared repertoire's misses (Undo), added to any recorded since.",
+            vec![req("key"), req("misses")],
+        ),
+        method(
             "customThemes",
             "The user's own app themes from the profile's themes folder, with a line per file that could not be used.",
             vec![],
