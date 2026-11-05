@@ -1507,9 +1507,7 @@ impl PlayersPage {
                     .items_center()
                     .child(widgets::hint(none, palette))
                     .child(
-                        Button::new("players-board-all")
-                            .text()
-                            .xsmall()
+                        widgets::text_button("players-board-all")
                             .label("Show all players")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.show_titles("all".to_string(), cx)

@@ -666,6 +666,12 @@ pub fn hint(text: impl Into<SharedString>, palette: &Palette) -> Div {
         .child(text.into())
 }
 
+/// A button that reads as text (`variant="link"`): small, but still a 24 px target (WCAG 2.5.8),
+/// which its text alone is not.
+pub fn text_button(id: impl Into<ElementId>) -> Button {
+    Button::new(id).text().xsmall().min_h(px(24.))
+}
+
 /// A load that failed inside a card: what went wrong, in `color`, and a small Try again.
 pub fn retry_line(
     id: &'static str,
@@ -680,9 +686,7 @@ pub fn retry_line(
         .text_color(color)
         .child(message.into())
         .child(
-            Button::new(id)
-                .text()
-                .xsmall()
+            text_button(id)
                 .icon(icon("rotate-cw"))
                 .label("Try again")
                 .on_click(retry),

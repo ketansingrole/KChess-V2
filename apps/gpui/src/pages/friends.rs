@@ -909,8 +909,7 @@ impl FriendsPage {
                 .when(entries.len() > self.timeline_shown, |card| {
                     card.child(
                         h_flex().child(
-                            Button::new("friends-timeline-more")
-                                .text()
+                            widgets::text_button("friends-timeline-more")
                                 .small()
                                 .label("Show more")
                                 .on_click(cx.listener(|this, _, _, cx| {

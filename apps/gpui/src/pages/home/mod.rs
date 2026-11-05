@@ -3,7 +3,7 @@
 //! It reads the unfinished computer game and the accounts again each time it is shown.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::Value;
@@ -619,9 +619,7 @@ impl Render for HomePage {
                     .child(widgets::heading("Recent games", &palette))
                     .child(
                         // The arrow trails the label (`trailing-icon`).
-                        Button::new("home-view-all")
-                            .text()
-                            .xsmall()
+                        widgets::text_button("home-view-all")
                             .accessibility_label("View all")
                             .child(
                                 h_flex()

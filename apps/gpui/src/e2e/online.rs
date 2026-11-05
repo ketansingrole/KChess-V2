@@ -268,6 +268,9 @@ fn a_failed_timeline_can_be_tried_again(cx: &mut gpui_kit::TestAppContext) {
     app.click_label("Lichess username to follow");
     app.type_text("frank");
     app.click("friends-follow");
+    // A text button is still a 24 px target (WCAG 2.5.8).
+    let retry = app.find("friends-timeline-retry").bounds();
+    assert!(retry.size.height >= gpui_kit::px(24.), "{retry:?}");
     app.click("friends-timeline-retry");
     app.find(gpui_kit::ElementId::NamedInteger(
         "friends-timeline-player".into(),

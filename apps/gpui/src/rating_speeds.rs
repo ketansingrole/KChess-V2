@@ -452,9 +452,7 @@ impl Render for RatingSpeeds {
                             .text_color(palette.text_muted)
                             .child(text)
                             .children(retry.map(|retry| {
-                                Button::new("rating-speeds-retry")
-                                    .text()
-                                    .xsmall()
+                                crate::widgets::text_button("rating-speeds-retry")
                                     .icon(icon("rotate-cw"))
                                     .label("Try again")
                                     .disabled(!crate::network::online(cx))

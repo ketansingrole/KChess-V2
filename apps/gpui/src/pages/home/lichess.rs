@@ -2,7 +2,7 @@
 //! its latest synced games. What was saved last time shows at once; Lichess's answer follows.
 
 use crate::widgets::KeyboardFocus as _;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::Button;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -351,9 +351,7 @@ impl Render for LichessActivity {
                     .child(widgets::heading("Games", &palette))
                     .when(!self.recent.is_empty(), |header| {
                         header.child(
-                            Button::new("home-lichess-all")
-                                .text()
-                                .xsmall()
+                            crate::widgets::text_button("home-lichess-all")
                                 .child(
                                     h_flex()
                                         .gap(px(4.))
