@@ -29,6 +29,8 @@ pub struct EngineLocations {
     pub target: Target,
     /// The Stockfish executable shipped beside the app.
     pub bundled: PathBuf,
+    /// The Fairy-Stockfish executable shipped beside the app, for variants other than Chess960.
+    pub variant: PathBuf,
 }
 
 /// What `engine_status` reports (`EngineStatus` in the TypeScript contracts).
@@ -87,6 +89,44 @@ pub async fn engine_status(
         bundled: false,
         managed,
         can_download,
+    }
+}
+
+/// Fairy-Stockfish's `UCI_Variant` for a Lichess variant key; `None` for standard chess and
+/// Chess960, which Stockfish analyses.
+pub fn fairy_variant(variant: &str) -> Option<&'static str> {
+    Some(match variant {
+        "crazyhouse" => "crazyhouse",
+        "atomic" => "atomic",
+        "antichess" => "antichess",
+        "horde" => "horde",
+        "kingOfTheHill" => "kingofthehill",
+        "racingKings" => "racingkings",
+        "threeCheck" => "3check",
+        _ => return None,
+    })
+}
+
+/// The bundled Fairy-Stockfish, which analyses the other variants: ready when it is executable.
+/// Its identity is its path, size and modification time, so caches never mix it with Stockfish.
+pub async fn variant_engine_status(host: &dyn Host, locations: &EngineLocations) -> EngineStatus {
+    let ready = is_executable_file(host, &locations.variant).await;
+    if !ready {
+        host.log(
+            Level::Debug,
+            "engine",
+            &format!(
+                "Variant engine check failed: {} is not executable",
+                locations.variant.display()
+            ),
+        );
+    }
+    EngineStatus {
+        ready,
+        path: locations.variant.clone(),
+        bundled: false,
+        managed: managed_engine(host, &locations.managed_dir).await,
+        can_download: false,
     }
 }
 
@@ -219,6 +259,7 @@ mod tests {
                 arch: "x64",
             },
             bundled: dir.join("stockfish"),
+            variant: dir.join("fairy-stockfish"),
         }
     }
 

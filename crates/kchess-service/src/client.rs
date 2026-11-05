@@ -296,6 +296,8 @@ impl Client {
 pub struct ServiceConfig {
     pub legacy_database_path: Option<PathBuf>,
     pub bundled_engine_path: Option<PathBuf>,
+    #[serde(default)]
+    pub variant_engine_path: Option<PathBuf>,
     pub managed_engine_dir: Option<PathBuf>,
     pub voice_helper_path: Option<PathBuf>,
     #[serde(default)]
@@ -308,6 +310,7 @@ impl ServiceConfig {
         Config {
             legacy_database_path: self.legacy_database_path,
             bundled_engine_path: self.bundled_engine_path,
+            variant_engine_path: self.variant_engine_path,
             managed_engine_dir: self.managed_engine_dir,
             voice_helper_path: self.voice_helper_path,
             system_credentials: self.system_credentials,

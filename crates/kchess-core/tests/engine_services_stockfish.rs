@@ -22,6 +22,7 @@ async fn bundled_stockfish_answers_a_move_for_the_position() {
         managed_dir: std::env::temp_dir().join("kchess-no-managed-engine"),
         target: Target::current(),
         bundled: engine,
+        variant: std::path::PathBuf::new(),
     };
     let ctx = EngineContext::new(
         host.clone(),

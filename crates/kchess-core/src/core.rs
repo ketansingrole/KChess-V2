@@ -178,6 +178,7 @@ fn engine_locations(config: &Config) -> EngineLocations {
         managed_dir: default_dir(&config.data_dir, config.managed_engine_dir.as_deref()),
         target: Target::current(),
         bundled: config.bundled_engine_path.clone().unwrap_or_default(),
+        variant: config.variant_engine_path.clone().unwrap_or_default(),
     }
 }
 

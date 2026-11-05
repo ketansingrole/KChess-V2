@@ -1892,6 +1892,9 @@ pub struct AnalysisRequest {
     pub lines: f64,
     /// Keep searching until stopped instead of stopping at a sensible depth.
     pub infinite: Option<bool>,
+    /// The Lichess variant key (`crazyhouse`, `atomic`…) when the position is not standard chess;
+    /// those go to Fairy-Stockfish.
+    pub variant: Option<String>,
 }
 
 /// One engine line. Scores are from White's point of view, like Lichess shows them.

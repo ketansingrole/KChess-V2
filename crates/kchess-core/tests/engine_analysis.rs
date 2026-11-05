@@ -369,3 +369,82 @@ async fn each_connection_has_its_own_analysis() {
     })
     .await;
 }
+
+/// A Crazyhouse position goes to the variant engine, whatever engine is chosen, with Fairy-
+/// Stockfish's name for the variant and the FEN with its pockets as it is.
+#[tokio::test]
+async fn a_variant_position_goes_to_the_variant_engine_with_its_variant() {
+    let dir = tempfile::tempdir().expect("a folder");
+    let variant = std::path::PathBuf::from(support::engine_copy(dir.path(), "search"));
+    let log = log_path("analysis-variant");
+    let host = support::host();
+    let mut locations = support::locations();
+    locations.variant = variant.clone();
+    let mut ctx = kchess_core::engine::EngineContext::new(
+        host.clone(),
+        Arc::new(support::hub(&host)),
+        scheduler(4, false),
+        locations,
+    );
+    let started: Arc<Mutex<Vec<std::path::PathBuf>>> = Arc::default();
+    let seen = Arc::clone(&started);
+    let fake_log = log.clone();
+    ctx.command = Arc::new(move |status| {
+        seen.lock().expect("paths").push(status.path.clone());
+        support::fake("search", Some(&fake_log))
+    });
+    let analysis = Analysis::new(ctx);
+    let (updates, sink) = recorder();
+    // 1. e4 d5 2. exd5 Qxd5: a pawn each in hand.
+    let fen = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
+    let id = analysis
+        .start_analysis(
+            json!({ "fen": fen, "lines": 1, "infinite": true, "variant": "crazyhouse" }),
+            &fake_path(),
+            sink,
+        )
+        .expect("a valid Crazyhouse request");
+    wait_until(WAIT, "the variant engine to be asked", || {
+        received(&log)
+            .iter()
+            .any(|line| line.starts_with("position fen"))
+            .then_some(())
+    })
+    .await;
+    analysis.stop_analysis(true);
+    let _ = find(&updates, |u| u.id == id);
+    assert_eq!(*started.lock().expect("paths"), vec![variant]);
+    let lines = received(&log);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "setoption name UCI_Variant value crazyhouse"),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == &format!("position fen {fen}"))
+    );
+    assert!(!lines.iter().any(|line| line.contains("UCI_Chess960")));
+}
+
+/// A drop that is no legal move there, or a variant KChess does not know, is refused.
+#[tokio::test]
+async fn a_variant_request_is_checked_under_its_rules() {
+    let log = log_path("analysis-variant-invalid");
+    let (analysis, _) = analysis_with("search", &log);
+    let (_, sink) = recorder();
+    let root = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+    for request in [
+        json!({ "fen": root, "rootFen": root, "moves": ["P@e4"], "lines": 1, "variant": "crazyhouse" }),
+        json!({ "fen": root, "lines": 1, "variant": "shogi" }),
+    ] {
+        assert!(
+            analysis
+                .start_analysis(request.clone(), &fake_path(), Arc::clone(&sink))
+                .is_err(),
+            "{request}"
+        );
+    }
+}

@@ -1507,6 +1507,30 @@ struct AnalysisRequest {
     moves: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     client_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
+}
+
+/// A variant game's position for analysis: its root under the variant's rules, and its moves
+/// played there to the position asked about. Its FEN may carry what the variant keeps
+/// (Crazyhouse's pockets, Three-check's checks) and Horde's 36 pawns.
+fn variant_analysis_position(request: &AnalysisRequest, variant: &str) -> Checked<()> {
+    let invalid = || "Invalid analysis position or move history.".to_string();
+    for text in std::iter::once(&request.fen).chain(request.root_fen.as_ref()) {
+        max_chars(text, 120, None, "fen")?;
+    }
+    let root = request.root_fen.as_deref().unwrap_or(&request.fen);
+    let moves = request.moves.as_deref().unwrap_or_default();
+    if moves.len() > 600 {
+        return Err("Invalid move list.".into());
+    }
+    let replay = replay::replay_setup(variant, root, moves).ok_or("Invalid position.")?;
+    let asked = replay::replay_setup(variant, &request.fen, &Vec::<&str>::new())
+        .ok_or("Invalid position.")?;
+    if replay.played.len() != moves.len() || replay.fen != asked.fen {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 /// `assertAnalysisRequest`: the request's shape, and a position its moves reach.
@@ -1518,8 +1542,29 @@ fn assert_analysis_request(value: J) -> Checked<AnalysisRequest> {
         ["rootFen"] => None,
         ["moves", rest @ ..] => move_list_messages(rest, Some("Invalid move list.")),
         ["clientId"] => Some("Invalid analysis request."),
+        ["variant"] => Some("Invalid variant."),
         _ => None,
     })?;
+    // Standard chess and Chess960 are checked as they always were, below.
+    if let Some(variant) = request
+        .variant
+        .as_deref()
+        .filter(|variant| !matches!(*variant, "standard" | "chess960"))
+    {
+        one_of(variant, VARIANTS, Some("Invalid variant."), "variant")?;
+        within(
+            request.lines,
+            1,
+            5,
+            Some("Invalid number of engine lines."),
+            "",
+        )?;
+        if let Some(client) = request.client_id {
+            within(client, 1, MAX_SAFE, Some("Invalid analysis request."), "")?;
+        }
+        variant_analysis_position(&request, variant)?;
+        return Ok(request);
+    }
     fen(&request.fen, None, Some("Invalid position."), "fen")?;
     engine_position(&request.fen)?;
     let lines = Some("Invalid number of engine lines.");

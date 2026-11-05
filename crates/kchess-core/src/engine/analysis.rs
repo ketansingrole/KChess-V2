@@ -18,7 +18,9 @@ use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::status::{EngineStatus, engine_identity, engine_status};
+use super::status::{
+    EngineStatus, engine_identity, engine_status, fairy_variant, variant_engine_status,
+};
 use super::uci::{UciController, error_summary, lock, signal_aborted, truncate_for_log};
 use super::{EngineContext, after, clear_timer, domain, parse_info, replace_timer, validate};
 use crate::error::{CoreError, Result};
@@ -101,6 +103,9 @@ struct Request {
     lines: f64,
     #[serde(default)]
     infinite: bool,
+    /// A Lichess variant key; standard chess (or Chess960) when left out.
+    #[serde(default)]
+    variant: Option<String>,
 }
 
 /// The whole number a validated request carries, as the integer the update reports.
@@ -537,15 +542,21 @@ async fn analyse(
     if token.is_cancelled() {
         return Err(signal_aborted());
     }
-    let status: EngineStatus =
-        engine_status(&*shared.ctx.host, &shared.ctx.locations, configured).await;
+    // Variants other than Chess960 go to the bundled Fairy-Stockfish, whatever engine is chosen.
+    let fairy = request.variant.as_deref().and_then(fairy_variant);
+    let status: EngineStatus = match fairy {
+        Some(_) => variant_engine_status(&*shared.ctx.host, &shared.ctx.locations).await,
+        None => engine_status(&*shared.ctx.host, &shared.ctx.locations, configured).await,
+    };
     if token.is_cancelled() {
         return Err(signal_aborted());
     }
     if !status.ready {
-        return Err(CoreError::new(
-            "Stockfish could not be found. Choose an engine in Settings.",
-        ));
+        return Err(CoreError::new(if fairy.is_some() {
+            "Fairy-Stockfish, which analyses this variant, is missing."
+        } else {
+            "Stockfish could not be found. Choose an engine in Settings."
+        }));
     }
     let key = engine_identity(&status).await?;
     lock(&session.progress).engine = key.clone();
@@ -587,14 +598,17 @@ async fn analyse(
             // values are sent. Chess960 is always on: castling is king-takes-rook in the history.
             let threads = shared.ctx.scheduler.search_threads().to_string();
             let lines = whole(request.lines).to_string();
-            target
-                .ensure_options(&[
-                    ("Threads", threads.as_str()),
-                    ("Hash", "128"),
-                    ("MultiPV", lines.as_str()),
-                    ("UCI_Chess960", "true"),
-                ])
-                .await?;
+            let mut options = vec![
+                ("Threads", threads.as_str()),
+                ("Hash", "128"),
+                ("MultiPV", lines.as_str()),
+            ];
+            // Fairy-Stockfish plays the variant named; its castling is king-takes-rook too.
+            options.push(match fairy {
+                Some(variant) => ("UCI_Variant", variant),
+                None => ("UCI_Chess960", "true"),
+            });
+            target.ensure_options(&options).await?;
             if token.is_cancelled() {
                 return Err(signal_aborted());
             }

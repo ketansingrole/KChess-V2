@@ -102,6 +102,18 @@ fn config(options: &Options) -> Config {
             .filter(|path| !path.is_empty())
             .map(PathBuf::from)
             .or_else(|| beside(&executable("stockfish"))),
+        // Fairy-Stockfish for variants: beside the executable, or (a build in this repository)
+        // where `cargo xtask fairy-stockfish` builds it.
+        variant_engine_path: std::env::var_os("KCHESS_VARIANT_ENGINE_PATH")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| beside(&executable("fairy-stockfish")))
+            .or_else(|| {
+                let built = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../target/fairy-stockfish/bin")
+                    .join(executable("fairy-stockfish"));
+                built.exists().then_some(built)
+            }),
         // Beside the executable, or in a Mac bundle's Resources, as the app finds it: the first
         // client to start the profile's core chooses it for every client.
         voice_helper_path: beside(&format!("voice/{}", executable("kchess-voice"))).or_else(|| {
@@ -140,6 +152,7 @@ impl CoreClient {
                     config: kchess_service::ServiceConfig {
                         legacy_database_path: config.legacy_database_path,
                         bundled_engine_path: config.bundled_engine_path,
+                        variant_engine_path: config.variant_engine_path,
                         managed_engine_dir: config.managed_engine_dir,
                         voice_helper_path: config.voice_helper_path,
                         system_credentials: config.system_credentials,
