@@ -41,6 +41,8 @@ pub(crate) enum StudyAction {
     RenameChapter,
     DuplicateChapter,
     RemoveChapter,
+    PreviousChapter,
+    NextChapter,
 }
 
 pub struct StudyBar {
@@ -77,7 +79,34 @@ impl StudyBar {
         if count > 1 {
             actions.push(StudyAction::RemoveChapter);
         }
+        let (before, after) = self.neighbours(cx);
+        if before.is_some() {
+            actions.push(StudyAction::PreviousChapter);
+        }
+        if after.is_some() {
+            actions.push(StudyAction::NextChapter);
+        }
         actions
+    }
+
+    /// The chapters before and after the one shown, by their ids.
+    fn neighbours(&self, cx: &App) -> (Option<String>, Option<String>) {
+        let Some((study, chapter)) = self.open(cx) else {
+            return (None, None);
+        };
+        let ids: Vec<String> = crate::studies::chapter_items(&study)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let Some(index) = ids.iter().position(|id| *id == chapter) else {
+            return (None, None);
+        };
+        (
+            index
+                .checked_sub(1)
+                .and_then(|before| ids.get(before).cloned()),
+            ids.get(index + 1).cloned(),
+        )
     }
 
     /// Whether the open study is a Lichess study's offline copy, which _Remove_ forgets.
@@ -101,6 +130,17 @@ impl StudyBar {
             StudyAction::RenameChapter => self.rename_chapter(window, cx),
             StudyAction::DuplicateChapter => self.duplicate_chapter(window, cx),
             StudyAction::RemoveChapter => self.remove_chapter(window, cx),
+            StudyAction::PreviousChapter | StudyAction::NextChapter => {
+                let (before, after) = self.neighbours(cx);
+                let next = if action == StudyAction::NextChapter {
+                    after
+                } else {
+                    before
+                };
+                if let Some(chapter) = next {
+                    self.select_chapter(chapter, cx);
+                }
+            }
         }
     }
 

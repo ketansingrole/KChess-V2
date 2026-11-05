@@ -398,3 +398,43 @@ fn lichess_studies_open_from_quick_pick_with_an_account(cx: &mut gpui_kit::TestA
     super::palette::wait_until_closed(&mut app);
     assert_eq!(app.find(("studies-tabs", 1usize)).selected(), Some(true));
 }
+
+/// Quick Pick steps to the next and previous chapter, offering each only where there is one.
+#[gpui_kit::test]
+fn quick_pick_steps_through_the_chapters(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
+    wait_for_listed(&mut app, &["Pawn openings"]);
+    app.click("open-imported");
+    wait_for_value(&mut app, "Study chapter", "1. Chapter 1");
+    let run = |app: &mut Harness, command: &str| {
+        app.press("shift-secondary-p");
+        app.type_text(command);
+        super::palette::wait_for_first(app, command);
+        app.press("enter");
+        super::palette::wait_until_closed(app);
+    };
+    run(&mut app, "Next chapter");
+    wait_for_value(&mut app, "Study chapter", "2. Chapter 2");
+    app.find("tree-d2d4");
+    // The last chapter has no next one.
+    app.press("shift-secondary-p");
+    app.type_text("chapter");
+    super::palette::wait_for_first(&mut app, "Add chapter");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..12usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert!(
+        listed.contains(&"Previous chapter".to_string()),
+        "{listed:?}"
+    );
+    assert!(!listed.contains(&"Next chapter".to_string()), "{listed:?}");
+    app.press("escape");
+    super::palette::wait_until_closed(&mut app);
+    run(&mut app, "Previous chapter");
+    wait_for_value(&mut app, "Study chapter", "1. Chapter 1");
+    app.find("tree-e2e4");
+}

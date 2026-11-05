@@ -1084,6 +1084,15 @@ fn study_commands(cx: &App) -> Vec<Command> {
                 StudyAction::RemoveChapter => {
                     ("delete-chapter", "Delete chapter", "trash-2", "remove")
                 }
+                StudyAction::PreviousChapter => (
+                    "previous-chapter",
+                    "Previous chapter",
+                    "chevron-left",
+                    "back",
+                ),
+                StudyAction::NextChapter => {
+                    ("next-chapter", "Next chapter", "chevron-right", "forward")
+                }
             };
             let bar = bar.downgrade();
             Command::new(
