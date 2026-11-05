@@ -56,6 +56,13 @@ pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
             ],
         ),
         (
+            "Lichess games",
+            vec![(
+                "Confirm / cancel a correspondence move",
+                "Enter Esc".to_string(),
+            )],
+        ),
+        (
             "Puzzles",
             vec![("Next puzzle, once one is over", "Enter".to_string())],
         ),
