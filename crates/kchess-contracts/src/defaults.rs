@@ -70,6 +70,7 @@ pub fn default_settings() -> Result<Settings, String> {
             swipe_navigation: true,
             swipe_indicator: true,
             puzzle_auto_next: false,
+            confirm_correspondence: true,
         },
     })
 }

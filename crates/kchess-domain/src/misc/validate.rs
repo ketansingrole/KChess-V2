@@ -1039,6 +1039,13 @@ struct Settings {
     swipe_navigation: bool,
     swipe_indicator: bool,
     puzzle_auto_next: bool,
+    /// Newer than the other settings: a frontend that does not send it keeps the default, on.
+    #[serde(default = "on")]
+    confirm_correspondence: bool,
+}
+
+fn on() -> bool {
+    true
 }
 
 /// The message of each setting.
@@ -1072,6 +1079,7 @@ fn settings_messages(keys: &[&str]) -> Msg {
         ["showOpeningName"] => "Invalid opening name setting.",
         ["swipeNavigation" | "swipeIndicator"] => "Invalid swipe setting.",
         ["puzzleAutoNext"] => "Invalid puzzle setting.",
+        ["confirmCorrespondence"] => "Invalid move confirmation setting.",
         ["notificationsEnabled"] => NOTIFY,
         [key] if key.starts_with("notify") => NOTIFY,
         _ => "Invalid settings.",
@@ -2491,6 +2499,7 @@ mod tests {
             "swipeNavigation",
             "swipeIndicator",
             "puzzleAutoNext",
+            "confirmCorrespondence",
         ] {
             fields.push((flag, J::Bool(true)));
         }
@@ -2504,6 +2513,30 @@ mod tests {
         assert_eq!(normalized["engineLevels"], json!(["club", "gm"]));
         let keys: Vec<&String> = normalized.as_object().unwrap().keys().collect();
         assert_eq!(keys[..3], ["appearance", "boardTheme", "lightTheme"]);
+    }
+
+    /// A frontend from before move confirmation sends no `confirmCorrespondence`: its settings
+    /// still save, with confirmation on.
+    #[test]
+    fn settings_without_move_confirmation_keep_it_on() {
+        let older: Vec<_> = settings()
+            .into_iter()
+            .filter(|(key, _)| *key != "confirmCorrespondence")
+            .collect();
+        let normalized = run("assertSettings", obj(older)).unwrap();
+        assert_eq!(normalized["confirmCorrespondence"], json!(true));
+        let mut off = settings();
+        off.retain(|(key, _)| *key != "confirmCorrespondence");
+        off.push(("confirmCorrespondence", J::Bool(false)));
+        let normalized = run("assertSettings", obj(off)).unwrap();
+        assert_eq!(normalized["confirmCorrespondence"], json!(false));
+        let mut wrong = settings();
+        wrong.retain(|(key, _)| *key != "confirmCorrespondence");
+        wrong.push(("confirmCorrespondence", J::Num(1.0)));
+        assert_eq!(
+            run("assertSettings", obj(wrong)).unwrap_err(),
+            "Invalid move confirmation setting."
+        );
     }
 
     #[test]

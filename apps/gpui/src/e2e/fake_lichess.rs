@@ -50,6 +50,9 @@ pub struct Session {
     pub moves: Vec<String>,
     /// The game's Lichess variant key; standard when unset.
     pub variant: Option<&'static str>,
+    /// The game's board stream says it is correspondence: three days a move, no clock. (Its
+    /// listing stays rapid, so it still comes to the board on its own.)
+    pub correspondence: bool,
     /// Lichess's `status`, once the game has ended; `started` until then.
     pub finished: Option<&'static str>,
     pub winner: Option<&'static str>,
@@ -789,7 +792,7 @@ fn summary(elsewhere: bool, variant: Option<&str>) -> Value {
 }
 
 fn full(session: &Session) -> Value {
-    json!({
+    let mut full = json!({
         "type": "gameFull",
         "id": GAME,
         "rated": false,
@@ -802,7 +805,14 @@ fn full(session: &Session) -> Value {
         "black": { "id": OPPONENT.to_lowercase(), "name": OPPONENT, "rating": 1700 },
         "initialFen": "startpos",
         "state": state(session)
-    })
+    });
+    if session.correspondence {
+        full["clock"] = Value::Null;
+        full["daysPerTurn"] = json!(3);
+        full["speed"] = json!("correspondence");
+        full["perf"] = json!({ "name": "Correspondence" });
+    }
+    full
 }
 
 fn state(session: &Session) -> Value {

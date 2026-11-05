@@ -413,3 +413,48 @@ fn a_seek_is_cancelled_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
         crate::online::handle(cx).read(cx).phase != Phase::Seeking
     });
 }
+
+/// A correspondence move cannot be taken back, so it waits on the board for Confirm (Return) and
+/// can be cancelled (Esc) until then, as on Lichess; with the setting off it goes at once.
+#[gpui_kit::test]
+fn a_correspondence_move_waits_for_confirm(cx: &mut gpui_kit::TestAppContext) {
+    let (app, lichess) = Harness::signed_in(cx, true);
+    lichess.lock().correspondence = true;
+    let mut app = app.restart();
+    app.online();
+    app.open("Play on Lichess");
+    app.find("online-abort");
+
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.find("move-confirm");
+    app.click("move-cancel");
+    app.wait_gone("move-confirm");
+
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.find("move-confirm");
+    app.press("escape");
+    app.wait_gone("move-confirm");
+    assert!(writes(&lichess).is_empty(), "{:?}", writes(&lichess));
+
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.find("move-confirm");
+    app.press("enter");
+    app.wait_for_moves(&["e4", "e5"]);
+    assert_eq!(
+        writes(&lichess),
+        ["POST /api/board/game/E2eGame1/move/e2e4"]
+    );
+
+    app.with_window(|_, cx| {
+        crate::settings::change(cx, |settings| {
+            settings.frontend.confirm_correspondence = false
+        })
+    });
+    app.click_square("g1", true);
+    app.click_square("f3", true);
+    app.wait_for_moves(&["e4", "e5", "Nf3", "Nc6"]);
+    assert!(!app.shows("move-confirm"));
+}

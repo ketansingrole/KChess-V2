@@ -31,7 +31,7 @@ pub const RESULT_SQL: &str =
     "CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END";
 
 /// Every persisted setting, in column order (`SETTINGS_KEYS`).
-const SETTINGS_KEYS: [&str; 41] = [
+const SETTINGS_KEYS: [&str; 42] = [
     "appearance",
     "boardTheme",
     "lightTheme",
@@ -73,6 +73,7 @@ const SETTINGS_KEYS: [&str; 41] = [
     "swipeNavigation",
     "swipeIndicator",
     "puzzleAutoNext",
+    "confirmCorrespondence",
 ];
 
 /// Every persisted game field, in column order (`GAME_KEYS`).
@@ -147,6 +148,7 @@ pub struct Settings {
     pub swipe_navigation: bool,
     pub swipe_indicator: bool,
     pub puzzle_auto_next: bool,
+    pub confirm_correspondence: bool,
 }
 
 pub(super) fn default_settings() -> Settings {
@@ -194,6 +196,7 @@ pub(super) fn default_settings() -> Settings {
         swipe_navigation: true,
         swipe_indicator: true,
         puzzle_auto_next: false,
+        confirm_correspondence: true,
     }
 }
 
@@ -658,6 +661,7 @@ fn settings_from_values(values: &[SqlValue]) -> Result<Settings> {
         swipe_navigation: is_not_zero(&column("swipeNavigation")),
         swipe_indicator: is_not_zero(&column("swipeIndicator")),
         puzzle_auto_next: is_not_zero(&column("puzzleAutoNext")),
+        confirm_correspondence: is_not_zero(&column("confirmCorrespondence")),
     };
     if settings.sound_volume > 1.0 {
         settings.sound_volume = (settings.sound_volume / 100.0).min(1.0);
@@ -1501,6 +1505,8 @@ mod tests {
         assert_eq!(get_settings(&db).unwrap(), json!(defaults));
         // A solved puzzle stays on the board until Next (or Return), as on Lichess.
         assert!(!defaults.puzzle_auto_next);
+        // A correspondence move cannot be taken back, so it waits for Confirm, as on Lichess.
+        assert!(defaults.confirm_correspondence);
     }
 
     #[test]

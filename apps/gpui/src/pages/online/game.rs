@@ -452,7 +452,8 @@ impl OnlinePage {
         let online = online_entity.read(cx);
         let model = online.model().clone();
         let board_size = self.layout.board_size(window);
-        self.game_panel(online, &model, cx, &palette)
+        let page = cx.weak_entity();
+        self.game_panel(online, &model, page, cx, &palette)
             .h(self.layout.panel_height(board_size))
             .into_any_element()
     }
@@ -603,6 +604,17 @@ impl OnlinePage {
                 if !this.focus.is_focused(window) || event.keystroke.modifiers.modified() {
                     return;
                 }
+                if this.pending.is_some() {
+                    match event.keystroke.key.as_str() {
+                        "enter" => this.confirm_move(cx),
+                        "escape" => this.cancel_move(cx),
+                        _ => {}
+                    }
+                    if matches!(event.keystroke.key.as_str(), "enter" | "escape") {
+                        cx.stop_propagation();
+                        return;
+                    }
+                }
                 if crate::shell::zen_key(&event.keystroke.key, cx) {
                     cx.stop_propagation();
                     return;
@@ -710,7 +722,14 @@ impl OnlinePage {
             )
     }
 
-    fn game_panel(&self, online: &OnlineState, model: &Value, cx: &App, palette: &Palette) -> Div {
+    fn game_panel(
+        &self,
+        online: &OnlineState,
+        model: &Value,
+        page: WeakEntity<OnlinePage>,
+        cx: &App,
+        palette: &Palette,
+    ) -> Div {
         let playing = online.phase == Phase::Playing;
         let finished = online.phase == Phase::Finished;
         let moves = online.moves();
@@ -767,6 +786,40 @@ impl OnlinePage {
         let draw = model["drawOffer"].as_str().unwrap_or("none");
         let takeback = model["takebackOffer"].as_str().unwrap_or("none");
         let mut notices: Vec<AnyElement> = Vec::new();
+        if let Some(pending) = self.pending() {
+            let mut shown = moves.clone();
+            shown.push(pending.uci.clone());
+            let san = view::sans(&setup, &shown).pop().unwrap_or_default();
+            let (confirm, cancel) = (page.clone(), page);
+            notices.push(
+                offer(
+                    "check",
+                    format!("Play {san}?"),
+                    vec![
+                        Button::new("move-confirm")
+                            .xsmall()
+                            .primary()
+                            .label("Confirm")
+                            .tooltip("Return")
+                            .on_click(move |_, _, cx| {
+                                confirm.update(cx, |page, cx| page.confirm_move(cx)).ok();
+                            })
+                            .into_any_element(),
+                        Button::new("move-cancel")
+                            .xsmall()
+                            .outline()
+                            .label("Cancel")
+                            .tooltip("Esc")
+                            .on_click(move |_, _, cx| {
+                                cancel.update(cx, |page, cx| page.cancel_move(cx)).ok();
+                            })
+                            .into_any_element(),
+                    ],
+                    palette,
+                )
+                .into_any_element(),
+            );
+        }
         if let Some(seconds) = first_move_in {
             notices.push(
                 offer(

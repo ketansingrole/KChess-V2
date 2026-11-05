@@ -1090,6 +1090,15 @@ impl SettingsPage {
                 |s, on| s.frontend.premove = on,
                 palette,
             )
+            .switch(
+                "confirm-move",
+                "Confirm correspondence moves",
+                None,
+                frontend.confirm_correspondence,
+                true,
+                |s, on| s.frontend.confirm_correspondence = on,
+                palette,
+            )
             .row(
                 "Pawn promotion",
                 None,

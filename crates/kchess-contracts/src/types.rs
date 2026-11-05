@@ -429,6 +429,8 @@ pub struct FrontendPreferences {
     pub swipe_indicator: bool,
     /// Load the next training puzzle as soon as one is solved.
     pub puzzle_auto_next: bool,
+    /// Ask before a correspondence move is sent: there it cannot be taken back.
+    pub confirm_correspondence: bool,
 }
 
 /// Every setting: the core's preferences and the desktop's.
