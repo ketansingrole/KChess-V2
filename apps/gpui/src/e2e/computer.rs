@@ -10,13 +10,21 @@ fn computer(cx: &mut gpui_kit::TestAppContext) -> Harness {
     let mut app = Harness::start(cx);
     app.open("Play with computer");
     app.find("chess-board");
-    app.wait_for("the game to take moves", |window, _| {
-        use gpui_kit::test::TestQueryExt as _;
-        window
-            .try_find_by_label("Enter a chess move in SAN or UCI")
-            .is_some_and(|entry| entry.disabled() != Some(true))
-    });
+    wait_playable(&mut app);
     app
+}
+
+/// Until the page takes moves: the saved game is restored and the engine is ready, which a new
+/// game (another variant's engine) waits for again. The page itself is asked, not the move field
+/// as last drawn, which can still show the game before.
+fn wait_playable(app: &mut Harness) {
+    app.wait_for("the game to take moves", |_, cx| {
+        crate::shell::view_of::<crate::pages::computer::ComputerPage>(
+            crate::pages::Page::Computer,
+            cx,
+        )
+        .is_some_and(|page| page.read(cx).takes_moves())
+    });
 }
 
 #[gpui_kit::test]
@@ -190,6 +198,8 @@ fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::Test
         )
     });
     app.wait_for_moves(&[]);
+    // Under a loaded full run the move was once typed before the new game took moves, and lost.
+    wait_playable(&mut app);
     app.click_label("Enter a chess move in SAN or UCI");
     app.type_text("O-O-O");
     app.press("enter");

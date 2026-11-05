@@ -311,6 +311,12 @@ impl ComputerPage {
         .detach();
     }
 
+    /// The player may move now: the saved game is restored and the engine ready.
+    #[cfg(test)]
+    pub(crate) fn takes_moves(&self) -> bool {
+        self.interactive()
+    }
+
     /// Back to the moment before the library has loaded (a slow profile's first frames).
     #[cfg(test)]
     pub(crate) fn forget_loaded(&mut self, cx: &mut Context<Self>) {
@@ -601,9 +607,9 @@ impl ComputerPage {
         .unwrap_or_default()
     }
 
-    /// The player may move now: it is their turn at the latest position (`localInteractive`).
-    /// The player may move: not before the saved game is restored, which would replace the move
-    /// (and nothing is saved before then).
+    /// The player may move now: it is their turn at the latest position (`localInteractive`), and
+    /// not before the saved game is restored, which would replace the move (and nothing is saved
+    /// before then).
     fn interactive(&self) -> bool {
         let host = self.host();
         self.loaded
