@@ -85,6 +85,8 @@ pub struct ComputerPage {
     search: Option<Task<()>>,
     save: Option<Task<()>>,
     ticker: Option<Task<()>>,
+    /// The player's low-time warning; the computer's clock runs low unannounced.
+    low_time: crate::game::low_time::LowTime,
     /// What the clocks showed at the last tick: a tick redraws only when a clock face changes.
     ticked: Option<[Option<SharedString>; 2]>,
     error: Option<SharedString>,
@@ -202,6 +204,7 @@ impl ComputerPage {
             search: None,
             save: None,
             ticker: None,
+            low_time: Default::default(),
             ticked: None,
             error: None,
             pending: None,
@@ -557,6 +560,27 @@ impl ComputerPage {
         crate::game::whole(&self.game.state["ply"]) as usize
     }
 
+    /// Sound the low-time warning as the player's clock runs low.
+    fn warn_low_time(&mut self, cx: &mut Context<Self>) {
+        let host = self.host();
+        if self.game.over(&host) {
+            return;
+        }
+        let color = if self.user_color() == Color::Black {
+            "black"
+        } else {
+            "white"
+        };
+        let initial = self.game.state["clock"]["minutes"]
+            .as_f64()
+            .unwrap_or_default()
+            * 60.;
+        let remaining = self.game.remaining(color, &host);
+        if self.low_time.crossed(color, remaining, initial) {
+            crate::sound::play(crate::sound::Sound::LowTime, cx);
+        }
+    }
+
     fn user_color(&self) -> Color {
         if self.game.state["color"] == "black" {
             Color::Black
@@ -700,6 +724,7 @@ impl ComputerPage {
                         let effects = this.game.expire(&host);
                         let acted = effects.as_ref().is_ok_and(|effects| !effects.is_empty());
                         this.perform(effects, cx);
+                        this.warn_low_time(cx);
                         let shown = ["white", "black"].map(|color| this.clock_text(color));
                         if acted || this.ticked.as_ref() != Some(&shown) {
                             this.ticked = Some(shown);
@@ -848,6 +873,20 @@ impl ComputerPage {
             level: level.to_string(),
         };
         self.start_chosen(chosen, window, cx);
+    }
+
+    /// A new game from `setup` as the side to move, on a clock of `minutes`, no increment.
+    #[cfg(test)]
+    pub(crate) fn play_with_clock(
+        &mut self,
+        setup: Value,
+        color: Color,
+        minutes: f64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.game.state["clock"] = json!({ "minutes": minutes, "increment": 0 });
+        self.start_from(setup, color, window, cx);
     }
 
     /// Like the page's own New game, a game in progress is only thrown away when confirmed.

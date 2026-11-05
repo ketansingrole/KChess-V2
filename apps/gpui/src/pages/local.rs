@@ -99,6 +99,8 @@ pub struct LocalPage {
     clock_layout: Entity<SelectState<Vec<SharedString>>>,
     save: Option<Task<()>>,
     ticker: Option<Task<()>>,
+    /// Each player's low-time warning.
+    low_time: crate::game::low_time::LowTime,
     clock_ticker: Option<Task<()>>,
     /// What the clocks showed at the last tick: a tick redraws only when a clock face changes
     /// (each second, each tenth in the last ten).
@@ -247,6 +249,7 @@ impl LocalPage {
             clock_layout,
             save: None,
             ticker: None,
+            low_time: Default::default(),
             clock_ticker: None,
             ticked: None,
             layout: PlayLayout::default(),
@@ -526,6 +529,18 @@ impl LocalPage {
                         if fell {
                             this.ticker = None;
                             this.changed(cx);
+                        }
+                        if !fell && !this.game.over(now) {
+                            for color in ["white", "black"] {
+                                let initial = this.game.state["clock"][color]["minutes"]
+                                    .as_f64()
+                                    .unwrap_or_default()
+                                    * 60.;
+                                let remaining = this.game.remaining(color, now);
+                                if this.low_time.crossed(color, remaining, initial) {
+                                    crate::sound::play(crate::sound::Sound::LowTime, cx);
+                                }
+                            }
                         }
                         let shown = ["white", "black"]
                             .map(|side| clock_face(this.game.remaining(side, now)));

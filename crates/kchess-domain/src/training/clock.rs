@@ -59,7 +59,7 @@ pub struct SetData {
 }
 
 /// lila's low-time threshold: min(60, 12.5% of initial), at least 10s (2s for short games).
-fn threshold(initial: f64) -> f64 {
+pub fn low_time_threshold(initial: f64) -> f64 {
     1000.0
         * js_min(
             60.0,
@@ -92,7 +92,7 @@ impl ClockState {
         self.ticking = data.ticking.clone();
         self.last_update = now + data.delay_centis.unwrap_or(0.0) * 10.0;
         if let Some(initial) = data.initial_seconds.filter(|s| *s != 0.0 && !s.is_nan()) {
-            self.emerg_ms = threshold(initial);
+            self.emerg_ms = low_time_threshold(initial);
         }
         if let Some(color) = &data.ticking {
             self.alerted.set(color, false);

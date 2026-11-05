@@ -125,8 +125,20 @@ pub fn play(sound: Sound, cx: &mut App) {
     play_at(sound, 1., cx);
 }
 
+/// The clips asked for, in order, once a test sets it.
+#[cfg(test)]
+#[derive(Default)]
+pub struct Played(pub Vec<Sound>);
+
+#[cfg(test)]
+impl Global for Played {}
+
 /// Play a clip at `gain` times the chosen volume (the trainers' quieter low-time beep).
 pub fn play_at(sound: Sound, gain: f64, cx: &mut App) {
+    #[cfg(test)]
+    if cx.has_global::<Played>() {
+        cx.global_mut::<Played>().0.push(sound);
+    }
     let frontend = &cx.global::<SettingsHandle>().0.read(cx).settings.frontend;
     if !frontend.sound_enabled {
         return;

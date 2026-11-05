@@ -14,6 +14,8 @@ mod puzzle;
 mod rush;
 mod uci_info;
 
+pub use clock::low_time_threshold;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;

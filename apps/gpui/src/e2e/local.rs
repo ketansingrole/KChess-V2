@@ -603,3 +603,32 @@ fn undo_takes_back_outside_the_move_box(cx: &mut gpui_kit::TestAppContext) {
     app.press("secondary-z");
     assert!(app.moves().is_empty());
 }
+
+/// The side to move hears the low-time warning as its clock runs low, before its flag falls.
+#[gpui_kit::test]
+fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::local::LocalPage;
+    use crate::sound::{Played, Sound};
+    let mut app = board(cx);
+    app.cx.update(|cx| cx.set_global(Played::default()));
+    let started = std::time::Instant::now();
+    app.with_window(|window, cx| {
+        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        local.update(cx, |local, cx| {
+            let setup =
+                serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+            // Three seconds each: the warning comes under two.
+            let clock = serde_json::json!({
+                "white": { "minutes": 0.05, "increment": 0 },
+                "black": { "minutes": 0.05, "increment": 0 },
+            });
+            local.replace_game(setup, clock, window, cx);
+            local.play("e2e4", window, cx);
+        });
+    });
+    app.wait_for("the low-time warning", |_, cx| {
+        cx.global::<Played>().0.contains(&Sound::LowTime)
+    });
+    assert!(started.elapsed() < std::time::Duration::from_millis(2_900));
+}

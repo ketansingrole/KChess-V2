@@ -389,3 +389,34 @@ fn undo_takes_back(cx: &mut gpui_kit::TestAppContext) {
     app.press("secondary-z");
     app.wait_for_moves(&[]);
 }
+
+/// The player's clock warns as it runs low, before it runs out, as Lichess's does. (The stand-in
+/// engine answers e4 alone: the player, Black to move, plays first so that answer is legal.)
+#[gpui_kit::test]
+fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::computer::ComputerPage;
+    use crate::sound::{Played, Sound};
+    let mut app = computer(cx);
+    app.cx.update(|cx| cx.set_global(Played::default()));
+    app.with_window(|window, cx| {
+        let page = crate::shell::view_of::<ComputerPage>(Page::Computer, cx).expect("the page");
+        let setup = serde_json::json!({
+            "variant": "standard",
+            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1",
+        });
+        // Three seconds: the warning comes under two, once both sides have moved.
+        page.update(cx, |page, cx| {
+            page.play_with_clock(setup, shakmaty::Color::Black, 0.05, window, cx)
+        });
+    });
+    wait_playable(&mut app);
+    app.click_square("e7", false);
+    app.click_square("e5", false);
+    app.wait_for_moves(&["e5", "e4"]);
+    let started = std::time::Instant::now();
+    app.wait_for("the low-time warning", |_, cx| {
+        cx.global::<Played>().0.contains(&Sound::LowTime)
+    });
+    assert!(started.elapsed() < std::time::Duration::from_millis(2_900));
+}
