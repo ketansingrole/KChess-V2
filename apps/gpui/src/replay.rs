@@ -203,7 +203,7 @@ impl Render for GameReplay {
                 "replay-moves",
                 &self.sans,
                 self.ply,
-                view::black_first(&self.setup),
+                view::first_move(&self.setup),
                 "No moves to review".into(),
                 select.clone(),
                 &palette,

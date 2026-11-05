@@ -393,27 +393,39 @@ pub fn back_to_game(on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'sta
         .into_any_element()
 }
 
-/// One move of a list: its number, side and SAN.
-struct Move {
-    number: usize,
-    black: bool,
+/// A move of a list: its number and whether Black plays it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FirstMove {
+    pub number: usize,
+    pub black: bool,
 }
 
-fn move_at(index: usize, black_first: bool) -> Move {
-    let ply = index + usize::from(black_first);
-    Move {
-        number: ply / 2 + 1,
+impl Default for FirstMove {
+    fn default() -> Self {
+        Self {
+            number: 1,
+            black: false,
+        }
+    }
+}
+
+/// The move at `index` of a list that begins with `first`.
+fn move_at(index: usize, first: FirstMove) -> FirstMove {
+    let ply = index + usize::from(first.black);
+    FirstMove {
+        number: first.number + ply / 2,
         black: ply % 2 == 1,
     }
 }
 
 /// `.moves-list`: the game's moves as a scoresheet, ruled numbered pairs on the panel itself, the
-/// one on the board highlighted. `select` is called with the ply to show (1 for the first move).
+/// one on the board highlighted, numbered from the game's `first` move. `select` is called with the
+/// ply to show (1 for the first move).
 pub fn moves_list(
     id: impl Into<ElementId>,
     sans: &[String],
     ply: usize,
-    black_first: bool,
+    first: FirstMove,
     empty: SharedString,
     select: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
     palette: &Palette,
@@ -429,7 +441,7 @@ pub fn moves_list(
     let mut rows = Vec::new();
     let mut row: Vec<AnyElement> = Vec::new();
     for (index, san) in sans.iter().enumerate() {
-        let at = move_at(index, black_first);
+        let at = move_at(index, first);
         if !at.black || index == 0 {
             if !row.is_empty() {
                 rows.push(std::mem::take(&mut row));
@@ -1502,12 +1514,58 @@ mod tests {
                     "moves",
                     &["e4".into(), "e5".into()],
                     2,
-                    false,
+                    super::FirstMove::default(),
                     "No moves".into(),
                     move |ply, _, _| chosen.set(Some(ply)),
                     &palette,
                 ))
         }
+    }
+
+    /// The list numbered every game from 1: one set up at Black's 30th move showed "1. … Nf6"
+    /// where the scoresheet reads "30. … Nf6".
+    #[test]
+    fn moves_are_numbered_from_the_game_s_first_move() {
+        use super::{FirstMove, move_at};
+        let setup = serde_json::json!({
+            "variant": "standard",
+            "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 3 30",
+        });
+        let first = crate::game::view::first_move(&setup);
+        assert_eq!(
+            first,
+            FirstMove {
+                number: 30,
+                black: true
+            }
+        );
+        let numbered: Vec<_> = (0..3).map(|index| move_at(index, first)).collect();
+        assert_eq!(
+            numbered,
+            [
+                FirstMove {
+                    number: 30,
+                    black: true
+                },
+                FirstMove {
+                    number: 31,
+                    black: false
+                },
+                FirstMove {
+                    number: 31,
+                    black: true
+                },
+            ]
+        );
+        let usual = serde_json::json!({ "fen": crate::game::STANDARD_FEN });
+        assert_eq!(crate::game::view::first_move(&usual), FirstMove::default());
+        assert_eq!(
+            move_at(2, FirstMove::default()),
+            FirstMove {
+                number: 2,
+                black: false
+            }
+        );
     }
 
     /// GPUI announces nothing by itself: a move or a result was heard only when the reader went

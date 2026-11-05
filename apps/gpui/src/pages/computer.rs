@@ -1392,10 +1392,7 @@ impl Render for ComputerPage {
         let moves = self.moves();
         let ply = self.ply();
         let interactive = self.interactive();
-        let black_first = position.is_some()
-            && self.game.state["setup"]["fen"]
-                .as_str()
-                .is_some_and(|fen| fen.split(' ').nth(1) == Some("b"));
+        let first = crate::game::view::first_move(&self.game.state["setup"]);
         let in_progress = self.in_progress();
         let result = self.game.result(&host);
         let side_of = |color: Color| {
@@ -1606,7 +1603,7 @@ impl Render for ComputerPage {
                 "computer-moves",
                 &sans,
                 ply,
-                black_first,
+                first,
                 "No moves yet".into(),
                 select.clone(),
                 &palette,

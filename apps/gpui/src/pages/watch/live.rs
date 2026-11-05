@@ -719,7 +719,7 @@ impl WatchPage {
                 "watch-moves",
                 &sans,
                 self.live.shown_ply(),
-                setup.as_ref().is_some_and(view::black_first),
+                setup.as_ref().map(view::first_move).unwrap_or_default(),
                 empty.into(),
                 select.clone(),
                 palette,

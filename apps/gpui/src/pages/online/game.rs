@@ -1053,7 +1053,7 @@ impl OnlinePage {
                 "online-moves",
                 &sans,
                 ply,
-                view::black_first(&setup),
+                view::first_move(&setup),
                 "No moves yet".into(),
                 select,
                 palette,

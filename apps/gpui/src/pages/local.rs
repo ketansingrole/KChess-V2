@@ -1512,7 +1512,7 @@ impl LocalPage {
                 "local-moves",
                 &sans,
                 shown,
-                view::black_first(self.setup()),
+                view::first_move(self.setup()),
                 "White moves first. The first move starts the clock.".into(),
                 select.clone(),
                 &palette,
