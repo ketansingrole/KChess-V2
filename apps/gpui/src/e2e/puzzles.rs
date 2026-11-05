@@ -226,6 +226,13 @@ fn quick_pick_starts_and_ends_a_storm_run(cx: &mut gpui_kit::TestAppContext) {
     app.find("rush-again");
     run(&mut app, "Back to modes");
     app.find("rush-start");
+
+    // Over, a run is played again with Return, as the next puzzle is.
+    app.click("rush-start");
+    app.click("rush-end");
+    app.find("rush-again");
+    app.press("enter");
+    app.find("rush-end");
 }
 
 /// F turns the puzzle's board, as its button does, after a click on the page.

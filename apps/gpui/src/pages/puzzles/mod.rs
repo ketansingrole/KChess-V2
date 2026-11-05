@@ -1705,9 +1705,19 @@ impl PuzzlesPage {
     }
 
     /// F turns the board, as its button does, while no text field has the keys; Return or Space
-    /// goes on to the next puzzle once this one is over (its move field is shut by then).
+    /// goes on to the next puzzle once this one is over (its move field is shut by then), and
+    /// plays a Storm, Streak or Rush run again once one is over.
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if event.keystroke.modifiers.modified() {
+            return;
+        }
+        let again = Action::Rush(RushAction::Again);
+        if matches!(event.keystroke.key.as_str(), "enter" | "space")
+            && self.focus.is_focused(window)
+            && self.actions(cx).contains(&again)
+        {
+            self.act(again, cx);
+            cx.stop_propagation();
             return;
         }
         if matches!(event.keystroke.key.as_str(), "enter" | "space")

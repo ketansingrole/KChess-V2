@@ -76,6 +76,10 @@ pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
             "Puzzles",
             vec![
                 ("Next puzzle, once one is over", "Enter".to_string()),
+                (
+                    "Storm, Streak or Rush again, once a run is over",
+                    "Enter".to_string(),
+                ),
                 ("Next due mistake, once one is solved", "Enter".to_string()),
                 ("Next lesson step, once one is done", "Enter".to_string()),
             ],
