@@ -526,6 +526,11 @@ impl EditorPage {
         self.changed(cx);
     }
 
+    #[cfg(test)]
+    pub(crate) fn orientation(&self) -> Color {
+        self.orientation
+    }
+
     fn flip(&mut self, cx: &mut Context<Self>) {
         self.orientation = !self.orientation;
         self.redraw(cx);
@@ -1083,6 +1088,22 @@ impl Render for EditorPage {
         div()
             .size_full()
             .track_focus(&self.focus)
+            // F turns the board, as its button does, while no text field has the keys.
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if this.focus.is_focused(window)
+                    && !event.keystroke.modifiers.modified()
+                    && event.keystroke.key == "f"
+                {
+                    this.flip(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            // A click gives the keys back to the page, before a text field (the FEN) takes them.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .child(
                 self.layout
                     .render("editor", board_column, panel, window, cx),

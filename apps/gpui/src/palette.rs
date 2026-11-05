@@ -1007,6 +1007,9 @@ fn editor_commands(cx: &App) -> Vec<Command> {
         },
         EditorPage::act,
     )
+    .into_iter()
+    .map(flip_key)
+    .collect()
 }
 
 /// The game over the board's actions, as its panel's buttons offer them.
