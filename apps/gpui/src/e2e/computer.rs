@@ -175,6 +175,28 @@ fn new_game_asks_first_then_clears_the_board(cx: &mut gpui_kit::TestAppContext) 
     app.wait_for_moves(&[]);
 }
 
+/// Quick Pick shows ⌘C and ⌘N beside the commands they run here.
+#[gpui_kit::test]
+fn quick_pick_shows_the_copy_and_new_keys(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.wait_for_moves(&["e4"]);
+    let keys = app.cx.update(|cx| crate::palette::page_command_keys(cx));
+    let key = |id: &str| {
+        keys.iter()
+            .find(|(command, _)| command == id)
+            .map(|(_, keys)| *keys)
+    };
+    let (copy, new) = if cfg!(target_os = "macos") {
+        ("⌘ C", "⌘ N")
+    } else {
+        ("Ctrl C", "Ctrl N")
+    };
+    assert_eq!(key("computer:copy-pgn"), Some(copy), "{keys:?}");
+    assert_eq!(key("computer:new-game"), Some(new), "{keys:?}");
+}
+
 /// ⌘N asks the same as New game does.
 #[gpui_kit::test]
 fn the_new_key_asks_first_then_clears_the_board(cx: &mut gpui_kit::TestAppContext) {

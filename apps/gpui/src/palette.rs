@@ -519,8 +519,52 @@ fn settings_commands(cx: &App) -> Vec<Command> {
     list
 }
 
-/// Actions for the page in view, first in command mode (`pageCommands`).
+/// Actions for the page in view, first in command mode (`pageCommands`), with ⌘C and ⌘N shown
+/// beside the commands those keys run on this page.
 fn page_commands(cx: &App) -> Vec<Command> {
+    let mut commands = page_commands_unkeyed(cx);
+    let (copy, new) = if cfg!(target_os = "macos") {
+        ("⌘ C", "⌘ N")
+    } else {
+        ("Ctrl C", "Ctrl N")
+    };
+    if let Some(at) = copy_target(&commands) {
+        commands[at].kbds = copy;
+    }
+    if let Some(at) = new_target(&commands) {
+        commands[at].kbds = new;
+    }
+    commands
+}
+
+/// Which of a page's commands Copy outside a text field runs: its game's PGN, or its position's
+/// FEN where it has no game.
+fn copy_target(commands: &[Command]) -> Option<usize> {
+    [":copy-pgn", ":copy-fen"].into_iter().find_map(|kind| {
+        commands
+            .iter()
+            .position(|command| command.id.ends_with(kind))
+    })
+}
+
+/// Which of a page's commands New runs.
+fn new_target(commands: &[Command]) -> Option<usize> {
+    commands
+        .iter()
+        .position(|command| command.id.ends_with(":new-game") || command.id == "studies:new")
+}
+
+/// The page's keys beside its commands, by id (`page_commands`).
+#[cfg(test)]
+pub(crate) fn page_command_keys(cx: &App) -> Vec<(String, &'static str)> {
+    page_commands(cx)
+        .into_iter()
+        .filter(|command| !command.kbds.is_empty())
+        .map(|command| (command.id.to_string(), command.kbds))
+        .collect()
+}
+
+fn page_commands_unkeyed(cx: &App) -> Vec<Command> {
     let zen = cx
         .global::<SettingsHandle>()
         .0
@@ -1314,7 +1358,12 @@ fn app_commands(cx: &App) -> Vec<Command> {
             icon("panel-left"),
             crate::shell::toggle_sidebar,
         )
-        .keywords("toggle navigation"),
+        .keywords("toggle navigation")
+        .kbds(if cfg!(target_os = "macos") {
+            "⌃ ⌘ S"
+        } else {
+            "Ctrl B"
+        }),
         Command::new(
             "app:shortcuts",
             "Keyboard shortcuts",
@@ -1733,11 +1782,8 @@ pub fn new_on_page(window: &mut Window, cx: &mut App) {
         return;
     }
     let commands = page_commands(cx);
-    let new = commands
-        .iter()
-        .find(|command| command.id.ends_with(":new-game") || command.id == "studies:new");
-    if let Some(command) = new {
-        (command.run)(window, cx);
+    if let Some(at) = new_target(&commands) {
+        (commands[at].run)(window, cx);
     }
 }
 
@@ -1750,11 +1796,8 @@ pub fn copy_shown(window: &mut Window, cx: &mut App) {
         return;
     }
     let commands = page_commands(cx);
-    let copy = [":copy-pgn", ":copy-fen"]
-        .into_iter()
-        .find_map(|kind| commands.iter().find(|command| command.id.ends_with(kind)));
-    if let Some(command) = copy {
-        (command.run)(window, cx);
+    if let Some(at) = copy_target(&commands) {
+        (commands[at].run)(window, cx);
     }
 }
 
