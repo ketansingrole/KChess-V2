@@ -395,6 +395,13 @@ pub fn zen_key(key: &str, cx: &mut App) -> bool {
     true
 }
 
+/// The window's title as the workspace last set it.
+#[cfg(test)]
+pub fn window_title_shown(cx: &App) -> Option<String> {
+    let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
+    Some(workspace.read(cx).title.clone())
+}
+
 /// The page shown, once the window is open.
 pub fn current_page(cx: &App) -> Option<Page> {
     let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
@@ -954,7 +961,26 @@ pub struct Workspace {
     pages: Pages,
     /// Where Settings' Back returns to: the page open before it.
     back: Page,
+    /// The window's title as last set (`window_title`).
+    title: String,
     _subscriptions: Vec<Subscription>,
+}
+
+/// The window's title on `page`: its name, so Mission Control, the Window menu and screen
+/// readers tell the windows apart; Home is the app alone.
+fn window_title(page: Page) -> String {
+    let name = match page {
+        Page::Dashboard => None,
+        Page::Settings => Some("Settings"),
+        page => nav()
+            .into_iter()
+            .find(|(each, ..)| *each == page)
+            .map(|(_, label, _)| label),
+    };
+    match name {
+        Some(name) => format!("{name} — {}", crate::profile::APP_NAME),
+        None => crate::profile::APP_NAME.to_string(),
+    }
 }
 
 impl Workspace {
@@ -1057,6 +1083,7 @@ impl Workspace {
             palette: crate::palette::init(window, cx),
             pages: Pages::new(window, cx),
             back: Page::Dashboard,
+            title: crate::profile::APP_NAME.to_string(),
             _subscriptions: subscriptions,
         };
         if let Some(page) = Page::remembered() {
@@ -2084,6 +2111,11 @@ fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.fit_window(window);
+        let title = window_title(self.pages.current());
+        if title != self.title {
+            window.set_window_title(&title);
+            self.title = title;
+        }
         // Zen mode on a game page leaves the board and its panel (`.app-shell.zen aside`).
         let zen = cx
             .global::<SettingsHandle>()

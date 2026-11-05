@@ -325,3 +325,15 @@ fn the_account_menu_opens_the_profile_and_the_accounts_settings(cx: &mut gpui_ki
             .is_some_and(|name| name.eq_ignore_ascii_case("Showcase"))
     });
 }
+
+/// The window's title names the page, so Mission Control and the Window menu tell it apart.
+#[gpui_kit::test]
+fn the_window_title_names_the_page(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let title = |app: &mut Harness| app.with_window(|_, cx| crate::shell::window_title_shown(cx));
+    assert_eq!(title(&mut app).as_deref(), Some("KChess"));
+    app.open("Puzzles");
+    assert_eq!(title(&mut app).as_deref(), Some("Puzzles — KChess"));
+    app.open("Analysis board");
+    assert_eq!(title(&mut app).as_deref(), Some("Analysis board — KChess"));
+}
