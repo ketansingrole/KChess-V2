@@ -133,6 +133,18 @@ fn an_open_game_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     app.find("tree-e2e4 e7e5 d1h5 b8c6 f1c4 g8f6 h5f7");
 }
 
+/// Home lists recent games only once there is one: before that the board's card starts a game.
+#[gpui_kit::test]
+fn home_lists_recent_games_once_there_is_one(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Home");
+    app.find("home-play");
+    assert!(!app.shows("home-view-all"));
+    play_over_the_board(&mut app, &SCHOLARS_MATE);
+    app.open("Home");
+    app.find("home-view-all");
+}
+
 /// Home's _Review_ is in Quick Pick: the last game opens in Game history. Home adds no Sync games
 /// of its own there.
 #[gpui_kit::test]

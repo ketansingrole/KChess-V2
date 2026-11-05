@@ -555,6 +555,8 @@ impl Render for HomePage {
         };
 
         games.truncate(RECENT);
+        // Before the first game there is nothing to list: the board's card already starts one.
+        let has_games = !games.is_empty();
         let recent = widgets::card(&palette)
             .flex_1()
             .min_w_0()
@@ -564,33 +566,23 @@ impl Render for HomePage {
                     .justify_between()
                     .mb(px(4.))
                     .child(widgets::heading("Recent games", &palette))
-                    .when(!games.is_empty(), |header| {
-                        header.child(
-                            // The arrow trails the label (`trailing-icon`).
-                            Button::new("home-view-all")
-                                .text()
-                                .xsmall()
-                                .accessibility_label("View all")
-                                .child(
-                                    h_flex()
-                                        .gap(px(4.))
-                                        .child("View all")
-                                        .child(icon("arrow-right").size(px(14.))),
-                                )
-                                .on_click(|_, window, cx| {
-                                    crate::shell::open(Page::History, window, cx)
-                                }),
-                        )
-                    }),
+                    .child(
+                        // The arrow trails the label (`trailing-icon`).
+                        Button::new("home-view-all")
+                            .text()
+                            .xsmall()
+                            .accessibility_label("View all")
+                            .child(
+                                h_flex()
+                                    .gap(px(4.))
+                                    .child("View all")
+                                    .child(icon("arrow-right").size(px(14.))),
+                            )
+                            .on_click(|_, window, cx| {
+                                crate::shell::open(Page::History, window, cx)
+                            }),
+                    ),
             )
-            .when(games.is_empty(), |card| {
-                card.child(
-                    widgets::empty_state(icon("history"), "No saved games yet", None, &palette)
-                        .flex_1()
-                        .justify_center()
-                        .py(px(24.)),
-                )
-            })
             .child(
                 v_flex()
                     .mx(px(-12.))
@@ -716,7 +708,7 @@ impl Render for HomePage {
             .min_w_0()
             .gap(px(16.))
             .child(tiles)
-            .child(recent);
+            .when(has_games, |starts| starts.child(recent));
         // The connect card is one more card in the grid; a connected account's section, with its
         // own heading, stands further off.
         let section_gap = match (connect.is_some(), stacked) {
