@@ -400,10 +400,9 @@ fn a_seek_is_cancelled_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
         crate::online::handle(cx).read(cx).phase != Phase::Checking
     });
     app.with_window(|_, cx| {
-        crate::online::handle(cx).update(cx, |online, cx| {
-            online.phase = Phase::Seeking;
-            cx.notify();
-        })
+        // As the rules set it: a phase set alone was put back by a late answer (the ongoing
+        // games, the challenges) under a loaded run.
+        crate::online::handle(cx).update(cx, |online, cx| online.set_phase("seeking", cx))
     });
     app.press("secondary-k");
     app.type_text(">Cancel seek");

@@ -255,6 +255,15 @@ impl OnlineState {
         next
     }
 
+    /// Put the state in a phase as the rules would (tests): the model too, which the phase is
+    /// derived from again whenever a late answer lands.
+    #[cfg(test)]
+    pub(crate) fn set_phase(&mut self, phase: &str, cx: &mut Context<Self>) {
+        self.model["onlinePhase"] = json!(phase);
+        self.sync_phase(cx);
+        cx.notify();
+    }
+
     fn sync_phase(&mut self, cx: &mut Context<Self>) {
         let before = self.phase;
         self.phase = match self.model["onlinePhase"].as_str() {
