@@ -21,6 +21,19 @@ pub struct PuzzleState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_move: Option<Vec<String>>,
     pub sans: Vec<String>,
+    /// The Lichess key of a drill's variant (a mistake from a Crazyhouse game); empty for
+    /// standard chess, which every Lichess puzzle is.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub variant: String,
+}
+
+/// The state's position, by its variant's rules.
+fn position_of(state: &PuzzleState) -> Option<VariantPosition> {
+    if state.variant.is_empty() {
+        rules::standard_from_fen(&state.fen)
+    } else {
+        rules::setup_start(&state.variant, &state.fen)
+    }
 }
 
 /// `PlayerMove`: the state after the player's move, whether it was right, and the reply.
@@ -206,8 +219,18 @@ fn squares_for(pos: Option<&VariantPosition>, uci: &str) -> Option<Vec<String>> 
     }
 }
 
-fn move_squares_at(pos: &VariantPosition, uci: &str) -> Option<Vec<String>> {
-    squares_for(Some(pos), uci)
+/// A drill's move squares: a Crazyhouse drop (`N@f3`) marks the square it lands on.
+fn drill_squares(
+    state: &PuzzleState,
+    pos: Option<&VariantPosition>,
+    uci: &str,
+) -> Option<Vec<String>> {
+    match uci.split_once('@') {
+        Some((_, to)) if !state.variant.is_empty() && rules::parse_square(to).is_some() => {
+            Some(vec![to.to_string(), to.to_string()])
+        }
+        _ => squares_for(pos, uci),
+    }
 }
 
 /// An unreadable FEN still highlights the move's squares: only castling detection needs the
@@ -223,18 +246,23 @@ fn start_puzzle(puzzle: &Value) -> PuzzleState {
     let last_move = string_of(puzzle.get("lastMove"))
         .filter(|uci| !uci.is_empty())
         .and_then(|uci| move_squares(&fen, uci));
+    let variant = string_of(puzzle.get("variant"))
+        .filter(|variant| *variant != "standard" && rules::lichess_variant(variant).is_some())
+        .unwrap_or_default()
+        .to_string();
     PuzzleState {
         fen,
         index: 0.0,
         status: "playing".into(),
         last_move,
         sans: Vec::new(),
+        variant,
     }
 }
 
 /// `applyMove`: `uci` played from the state's position, or None when it is illegal.
 fn apply_move(state: &PuzzleState, uci: &str) -> Option<PuzzleState> {
-    let pos = rules::standard_from_fen(&state.fen)?;
+    let pos = position_of(state)?;
     apply_move_at(&pos, state, uci)
 }
 
@@ -245,10 +273,11 @@ fn apply_move_at(pos: &VariantPosition, state: &PuzzleState, uci: &str) -> Optio
     sans.push(played.san);
     Some(PuzzleState {
         fen: played.position.fen,
-        last_move: move_squares_at(pos, uci),
+        last_move: drill_squares(state, Some(pos), uci),
         sans,
         index: state.index,
         status: state.status.clone(),
+        variant: state.variant.clone(),
     })
 }
 
@@ -266,7 +295,7 @@ fn player_move(solution: &[String], state: PuzzleState, uci: &str) -> PlayerMove
     if state.status != "playing" {
         return wrong(state);
     }
-    let Some(pos) = rules::standard_from_fen(&state.fen) else {
+    let Some(pos) = position_of(&state) else {
         return wrong(state);
     };
     let Some(played) = position::play_uci(&pos, uci) else {
@@ -330,7 +359,8 @@ fn next_solution_squares_call(args: &[Value]) -> Out {
     let puzzle: Value = value_arg(args, 0, "puzzle")?;
     let state: PuzzleState = value_arg(args, 1, "state")?;
     let solution = strings_of(puzzle.get("solution"));
-    let squares = expected_at(&solution, state.index).and_then(|uci| move_squares(&state.fen, uci));
+    let squares = expected_at(&solution, state.index)
+        .and_then(|uci| drill_squares(&state, position_of(&state).as_ref(), uci));
     to_value(squares)
 }
 
@@ -376,6 +406,32 @@ mod tests {
         assert_eq!(uci_squares("e7e8q"), Some(("e7", "e8")));
         assert_eq!(uci_squares("e7e8k"), Some(("e7", "e8")));
         assert_eq!(uci_squares("e7e8x"), None);
+    }
+
+    #[test]
+    fn a_variant_drill_is_solved_by_its_rules() {
+        // Crazyhouse, a pawn in each pocket: the drop is the answer, which standard rules refuse.
+        let puzzle = json!({
+            "fen": "rnb1kbnr/ppp1pppp/8/q7/8/2N5/PPPP1PPP/R1BQKBNR[Pp] w KQkq - 2 4",
+            "solution": ["P@d4"],
+            "variant": "crazyhouse",
+        });
+        let state = start_puzzle(&puzzle);
+        assert_eq!(state.variant, "crazyhouse");
+        let squares = next_solution_squares_call(&[puzzle.clone(), json!(state)]).unwrap();
+        assert_eq!(squares, json!(["d4", "d4"]));
+        let played = player_move(&["P@d4".to_string()], state.clone(), "P@d4");
+        assert!(played.correct);
+        assert_eq!(played.state.status, "solved");
+        assert_eq!(played.state.sans, ["P@d4"]);
+        assert_eq!(played.state.last_move, Some(vec!["d4".into(), "d4".into()]));
+        let standard = PuzzleState {
+            variant: String::new(),
+            ..state
+        };
+        assert!(!player_move(&["P@d4".to_string()], standard.clone(), "P@d4").correct);
+        // A standard puzzle's state has no variant field, as before.
+        assert!(json!(standard).get("variant").is_none());
     }
 
     #[test]

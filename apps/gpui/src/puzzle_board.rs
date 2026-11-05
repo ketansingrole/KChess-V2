@@ -283,8 +283,8 @@ impl PuzzleBoard {
             cx.notify();
             return;
         };
-        let position =
-            kchess_domain::rules::setup_start("standard", on_board.fen()).unwrap_or_default();
+        let position = kchess_domain::rules::setup_start(on_board.variant(), on_board.fen())
+            .unwrap_or_default();
         let movable = self.playing().then(|| on_board.player_color());
         let mut state =
             BoardState::of(&position, self.orientation(), movable, on_board.last_move());
@@ -486,10 +486,10 @@ impl PuzzleBoard {
         if !self.voice.owns(event) {
             return;
         }
-        let fen = self
+        let (fen, variant) = self
             .on_board
             .as_ref()
-            .map(|board| board.fen().to_string())
+            .map(|board| (board.fen().to_string(), board.variant().to_string()))
             .unwrap_or_default();
         let heard = match event {
             crate::voice::VoiceEvent::Missed { heard, .. } => {
@@ -498,7 +498,7 @@ impl PuzzleBoard {
             }
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
         };
-        let setup = json!({ "variant": "standard", "fen": fen });
+        let setup = json!({ "variant": variant, "fen": fen });
         let turn = Turn {
             taking: self.playing(),
             idle: None,
@@ -516,8 +516,8 @@ impl PuzzleBoard {
         if text.is_empty() || !self.playing() {
             return;
         }
-        let setup = json!({ "variant": "standard", "fen": board.fen() });
-        let typed = kchess_domain::rules::setup_start("standard", board.fen())
+        let setup = json!({ "variant": board.variant(), "fen": board.fen() });
+        let typed = kchess_domain::rules::setup_start(board.variant(), board.fen())
             .and_then(|position| view::typed_uci(&setup, &position, &text));
         match typed {
             Some(uci) => {
@@ -580,6 +580,14 @@ impl Render for PuzzleBoard {
             })
             .m(px(-3.))
             .child(crate::board::cached(&self.board));
+        // Crazyhouse drills (a mistake from a Crazyhouse game) show the pockets to drop from.
+        let [top_pocket, bottom_pocket] =
+            [!orientation, orientation].map(|color| crate::board::pocket(&self.board, color, cx));
+        let board = v_flex()
+            .gap(px(4.))
+            .children(top_pocket)
+            .child(board)
+            .children(bottom_pocket);
         let material = |white: bool| widgets::material(&fen, white, &set, &palette);
         let column = if self.material {
             v_flex()

@@ -111,6 +111,11 @@ impl OnBoard {
         self.state["fen"].as_str().unwrap_or_default()
     }
 
+    /// The variant it is played in: a drill from a variant game keeps the game's.
+    pub fn variant(&self) -> &str {
+        self.puzzle["variant"].as_str().unwrap_or("standard")
+    }
+
     /// `playing`, `solved` or `failed`.
     pub fn status(&self) -> &str {
         self.state["status"].as_str().unwrap_or("playing")

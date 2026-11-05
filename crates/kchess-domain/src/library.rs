@@ -238,13 +238,22 @@ pub fn decode_mistakes(raw: &Value) -> Option<Vec<Value>> {
                     .iter()
                     .map(|m| string(Some(m)))
                     .collect::<Option<_>>()?;
-                if replay::replay_positions_count(fen, &solution) != solution.len() + 1 {
+                // A drill from a variant game is played by that variant's rules.
+                let variant = match item.get("variant") {
+                    None | Some(Value::Null) => None,
+                    Some(variant) => Some(string(Some(variant)).filter(|v| known_variant(v))?),
+                };
+                let playable = match variant {
+                    Some(variant) => replay::replay_setup_count(variant, fen, &solution)? + 1,
+                    None => replay::replay_positions_count(fen, &solution),
+                };
+                if playable != solution.len() + 1 {
                     return None;
                 }
                 let due_at = finite(item.get("dueAt"))?;
                 let streak = integer(item.get("streak"))?;
                 let attempts = integer(item.get("attempts"))?;
-                Some(json!({
+                let mut drill = json!({
                     "id": id,
                     "fen": fen,
                     "solution": solution,
@@ -252,7 +261,11 @@ pub fn decode_mistakes(raw: &Value) -> Option<Vec<Value>> {
                     "dueAt": number(due_at),
                     "streak": number(streak),
                     "attempts": number(attempts),
-                }))
+                });
+                if let Some(variant) = variant {
+                    drill["variant"] = json!(variant);
+                }
+                Some(drill)
             })
             .collect(),
     )

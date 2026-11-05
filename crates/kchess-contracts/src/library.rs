@@ -93,6 +93,9 @@ pub struct MistakeExercise {
     pub due_at: f64,
     pub streak: f64,
     pub attempts: f64,
+    /// The Lichess key of the variant of the game it is from; none for standard chess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
 }
 
 /// A reviewed game that has positions in practice, and where it came from when that is known.
