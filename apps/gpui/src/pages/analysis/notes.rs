@@ -101,6 +101,7 @@ impl AnalysisPage {
         );
         let path = self.path.clone();
         self.root.node_at_mut(&path).comments = (!next.is_empty()).then(|| vec![next]);
+        self.typing_comment = Some(path);
         self.changed(cx);
     }
 

@@ -151,6 +151,7 @@ const ICONS: &[(&str, Option<&str>)] = &[
     ("puzzle", Some("puzzle_piece")),
     ("rabbit", Some("animal_rabbit")),
     ("radio", Some("live")),
+    ("redo-2", Some("arrow_redo")),
     ("refresh-cw", Some("arrow_sync")),
     ("repeat", Some("arrow_repeat_all")),
     ("rocket", Some("rocket")),

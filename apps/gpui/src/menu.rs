@@ -115,6 +115,10 @@ pub fn init(cx: &mut App) {
         bind("secondary-shift--", ZoomOut, cx),
         bind("secondary-0", ActualSize, cx),
         bind("secondary-/", ShowShortcuts, cx),
+        // Outside a text field, Undo and Redo reach the page (the analysis board's edits); a
+        // field keeps its own binding for its text.
+        bind("secondary-z", Undo, cx),
+        bind("shift-secondary-z", Redo, cx),
     ];
     cx.bind_keys(bindings);
     // Back and forward through the pages, as a browser takes them: ⌘[ and ⌘] on macOS, Alt
@@ -127,6 +131,10 @@ pub fn init(cx: &mut App) {
             bind("alt-right", GoForward, cx),
         ]
     });
+    // Ctrl+Y redoes too, as text fields take it outside macOS.
+    if !cfg!(target_os = "macos") {
+        cx.bind_keys([bind("ctrl-y", Redo, cx)]);
+    }
     cx.on_action(|_: &ShowShortcuts, cx| {
         cx.defer(|cx| {
             if let Some(window) = cx.active_window() {

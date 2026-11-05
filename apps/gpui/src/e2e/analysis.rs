@@ -201,6 +201,71 @@ fn a_comment_and_an_annotation_stay_with_the_move(cx: &mut gpui_kit::TestAppCont
     assert_eq!(app.find("glyph-4").checked(), Some(true));
 }
 
+/// ⌘Z and ⇧⌘Z (Ctrl+Z, Ctrl+Y) undo and redo the tree's edits, a comment's typing as one step,
+/// and the board's ⋯ menu offers them too. A new document starts with nothing to undo.
+#[gpui_kit::test]
+fn edits_are_undone_and_redone(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 2. Nf3 (2. Bc4) *");
+    let undo = |app: &mut Harness| app.press("secondary-z");
+    let redo = |app: &mut Harness| app.press("shift-secondary-z");
+    // The import is where the history starts.
+    app.click("analysis-more");
+    app.click_label("Undo");
+    app.find("tree-e2e4 e7e5 g1f3");
+
+    // A comment, typed letter by letter, is one step.
+    app.click("tree-e2e4 e7e5");
+    app.click("add-comment");
+    app.type_text("Symmetrical.");
+    app.find("comment-e2e4 e7e5");
+    app.click("chess-board");
+    undo(&mut app);
+    app.wait_gone("comment-e2e4 e7e5");
+    redo(&mut app);
+    app.find("comment-e2e4 e7e5");
+
+    // A promotion, then a deletion, undone in turn and redone.
+    app.click("tree-e2e4 e7e5 f1c4");
+    app.click("analysis-more");
+    app.click_label("Make main line");
+    app.click("analysis-more");
+    app.click_label("Delete from here");
+    app.wait_gone("tree-e2e4 e7e5 f1c4");
+    undo(&mut app);
+    app.find("tree-e2e4 e7e5 f1c4");
+    assert_eq!(selected(&mut app, "e2e4 e7e5 f1c4"), Some(true));
+    assert!(app.with_window(|_, cx| {
+        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+            crate::pages::Page::Analysis,
+            cx,
+        )
+        .is_some_and(|page| page.read(cx).pgn().contains("2. Bc4 ( 2. Nf3 )"))
+    }));
+    undo(&mut app);
+    assert!(app.with_window(|_, cx| {
+        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+            crate::pages::Page::Analysis,
+            cx,
+        )
+        .is_some_and(|page| page.read(cx).pgn().contains("2. Nf3 ( 2. Bc4 )"))
+    }));
+    redo(&mut app);
+    redo(&mut app);
+    app.wait_gone("tree-e2e4 e7e5 f1c4");
+
+    // A move played after an undo drops what could be redone.
+    undo(&mut app);
+    app.find("tree-e2e4 e7e5 f1c4");
+    app.click_square("g8", true);
+    app.click_square("f6", true);
+    app.find("tree-e2e4 e7e5 f1c4 g8f6");
+    redo(&mut app);
+    app.find("tree-e2e4 e7e5 f1c4");
+    undo(&mut app);
+    app.wait_gone("tree-e2e4 e7e5 f1c4 g8f6");
+}
+
 #[gpui_kit::test]
 fn the_analysis_with_its_comments_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
@@ -223,19 +288,23 @@ fn moves_are_deleted_from_here_and_a_new_analysis_starts_empty(cx: &mut gpui_kit
     import(&mut app, "1. e4 e5 2. Nf3 *");
     app.click("tree-e2e4 e7e5");
 
+    // Deleting asks nothing: its notice's Undo brings the moves back.
     app.click("analysis-more");
     app.click_label("Delete from here");
-    app.click("cancel");
-    app.find("tree-e2e4 e7e5 g1f3");
-
-    app.click("analysis-more");
-    app.click_label("Delete from here");
-    app.click("ok");
     app.find("tree-e2e4");
     app.wait_for("the deleted moves to go", |window, _| {
         window.try_find("tree-e2e4 e7e5").is_none()
     });
     assert!(!app.shows("tree-e2e4 e7e5 g1f3"));
+    app.click("undo-delete-moves");
+    app.find("tree-e2e4 e7e5 g1f3");
+    assert_eq!(selected(&mut app, "e2e4 e7e5"), Some(true));
+
+    app.click("analysis-more");
+    app.click_label("Delete from here");
+    app.wait_for("the deleted moves to go", |window, _| {
+        window.try_find("tree-e2e4 e7e5").is_none()
+    });
 
     app.click("analysis-more");
     app.click_label("New analysis");

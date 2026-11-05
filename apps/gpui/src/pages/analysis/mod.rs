@@ -2,6 +2,7 @@
 //! board, Stockfish's lines and arrows for the position shown, Lichess's cloud evaluation, and the
 //! session the Electron app keeps (`sessions.analysis`), so either app opens it as it was left.
 
+mod edits;
 mod notes;
 mod practice;
 mod review;
@@ -16,10 +17,10 @@ use std::time::Duration;
 use futures::FutureExt as _;
 
 use gpui_kit::base::TestSupportExt as _;
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::input::{InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent, InputState, Redo, Textarea, TextareaState, Undo};
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::switch::Switch;
@@ -153,6 +154,10 @@ fn result_of(position: &VariantPosition) -> &'static str {
 pub struct AnalysisPage {
     root: TreeNode,
     path: String,
+    /// Undo and Redo over the tree's edits.
+    edits: edits::Edits,
+    /// The move whose comment the last change typed, so a comment's typing is one step.
+    typing_comment: Option<String>,
     orientation: Color,
     /// The saved study the board is showing, and its chapter; edits are saved back to it.
     study: String,
@@ -420,9 +425,12 @@ impl AnalysisPage {
                 }
             }),
         ];
+        let edits = edits::Edits::new(&root, &path);
         let mut page = AnalysisPage {
             root,
             path,
+            edits,
+            typing_comment: None,
             orientation,
             study,
             chapter,
@@ -682,6 +690,7 @@ impl AnalysisPage {
         self.persist_study(cx);
         self.root = tree;
         self.path.clear();
+        self.edits.reset(&self.root, "");
         self.clear_evaluations();
         self.study.clear();
         self.review.origin = None;
@@ -974,6 +983,8 @@ impl AnalysisPage {
 
     /// The board, the engine and the saved session follow a change.
     fn changed(&mut self, cx: &mut Context<Self>) {
+        let typing = self.typing_comment.take();
+        self.edits.track(&self.root, &self.path, typing);
         self.reveal_move.set(true);
         self.follow_review(cx);
         self.check_practice(cx);
@@ -1603,29 +1614,57 @@ impl AnalysisPage {
         window.push_notification(SharedString::from(format!("{what} copied")), cx);
     }
 
-    /// Cutting a line has no undo, so it asks first.
-    fn ask_remove(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Cut the move shown and what follows it at once; the notice's Undo (or ⌘Z) brings it back.
+    fn delete_from_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let at = self.path.clone();
         if at.is_empty() {
             return;
         }
+        self.remove(&at, cx);
         let page = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
-            let (page, at) = (page.clone(), at.clone());
-            dialog
-                .title("Delete from here?")
-                .description(
-                    "This move and every move after it, with their variations and comments, are removed",
-                )
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    let _ = page.update(cx, |page, cx| page.remove(&at, cx));
-                    true
-                })
-        });
+        window.push_notification(
+            widgets::action_notification(
+                Notification::new().title("Moves deleted"),
+                "undo-delete-moves",
+                "Undo",
+                move |window, cx| {
+                    let _ = page.update(cx, |page, cx| page.undo(window, cx));
+                },
+            ),
+            cx,
+        );
+    }
+
+    /// Take back the last edit to the tree (⌘Z, Edit → Undo).
+    pub(crate) fn undo(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(snapshot) = self.edits.undo() {
+            self.restore(snapshot, cx);
+        }
+    }
+
+    /// Make the last edit undone again (⇧⌘Z, Edit → Redo).
+    pub(crate) fn redo(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(snapshot) = self.edits.redo() {
+            self.restore(snapshot, cx);
+        }
+    }
+
+    pub(crate) fn can_undo(&self) -> bool {
+        self.edits.can_undo()
+    }
+
+    pub(crate) fn can_redo(&self) -> bool {
+        self.edits.can_redo()
+    }
+
+    /// Show a tree from the edit history, at the move it was left on.
+    fn restore(&mut self, snapshot: edits::Snapshot, cx: &mut Context<Self>) {
+        self.root = snapshot.root;
+        self.path = self.root.existing_path(&snapshot.path);
+        // The comment field shows the restored tree's comment.
+        self.notes.filled_for = None;
+        self.changed(cx);
+        cx.notify();
     }
 
     pub(crate) fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2000,7 +2039,7 @@ fn move_menu(
             .icon(icon("scissors"))
             .on_click(act(Box::new(move |page, window, cx| {
                 page.path = delete_at.clone();
-                page.ask_remove(window, cx)
+                page.delete_from_here(window, cx)
             }))),
     )
     .separator()
@@ -2724,6 +2763,7 @@ impl AnalysisPage {
     /// First, previous, next and last move, flip, import, and the rest in a menu.
     fn render_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let at_start = self.path.is_empty();
+        let (can_undo, can_redo) = (self.can_undo(), self.can_redo());
         let at_end = self.node().children.is_empty();
         let on_variation = !self.path.is_empty() && !self.root.on_mainline(&self.path);
         // A finished game cannot be played on from its last position.
@@ -2830,6 +2870,19 @@ impl AnalysisPage {
                             }
                         };
                         menu.item(
+                            PopupMenuItem::new("Undo")
+                                .icon(icon("undo-2"))
+                                .disabled(!can_undo)
+                                .on_click(action(|page, window, cx| page.undo(window, cx))),
+                        )
+                        .item(
+                            PopupMenuItem::new("Redo")
+                                .icon(icon("redo-2"))
+                                .disabled(!can_redo)
+                                .on_click(action(|page, window, cx| page.redo(window, cx))),
+                        )
+                        .separator()
+                        .item(
                             PopupMenuItem::new("Copy FEN")
                                 .icon(icon("copy"))
                                 .on_click(action(|page, window, cx| page.copy_fen(window, cx))),
@@ -2855,7 +2908,9 @@ impl AnalysisPage {
                             PopupMenuItem::new("Delete from here")
                                 .icon(icon("scissors"))
                                 .disabled(at_start)
-                                .on_click(action(|page, window, cx| page.ask_remove(window, cx))),
+                                .on_click(action(|page, window, cx| {
+                                    page.delete_from_here(window, cx)
+                                })),
                         )
                         .separator()
                         .item(
@@ -3143,6 +3198,9 @@ impl Render for AnalysisPage {
             .size_full()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key))
+            // A text field takes these for its own text first.
+            .on_action(cx.listener(|this, _: &Undo, window, cx| this.undo(window, cx)))
+            .on_action(cx.listener(|this, _: &Redo, window, cx| this.redo(window, cx)))
             .child(self.layout.render_under(
                 "analysis",
                 self.study_bar.clone(),
