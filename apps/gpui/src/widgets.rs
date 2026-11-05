@@ -666,6 +666,29 @@ pub fn hint(text: impl Into<SharedString>, palette: &Palette) -> Div {
         .child(text.into())
 }
 
+/// A load that failed inside a card: what went wrong, in `color`, and a small Try again.
+pub fn retry_line(
+    id: &'static str,
+    message: impl Into<SharedString>,
+    color: Hsla,
+    retry: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    h_flex()
+        .flex_wrap()
+        .gap(px(8.))
+        .text_size(px(13.))
+        .text_color(color)
+        .child(message.into())
+        .child(
+            Button::new(id)
+                .text()
+                .xsmall()
+                .icon(icon("rotate-cw"))
+                .label("Try again")
+                .on_click(retry),
+        )
+}
+
 /// Something loading: the turning spinner and a muted line ("Loading…"), as a hint reads.
 pub fn loading(text: impl Into<SharedString>, palette: &Palette) -> Div {
     h_flex()

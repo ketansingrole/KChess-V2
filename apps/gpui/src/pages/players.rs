@@ -1287,7 +1287,7 @@ impl PlayersPage {
             .child(self.history.clone())
     }
 
-    fn record_card(&self, palette: &Palette) -> Div {
+    fn record_card(&self, palette: &Palette, cx: &mut Context<Self>) -> Div {
         let mut card = widgets::card(palette).gap(px(8.)).child(
             h_flex()
                 .justify_between()
@@ -1338,12 +1338,12 @@ impl PlayersPage {
                 ),
         );
         if let Some(error) = &self.stats_error {
-            return card.child(
-                div()
-                    .text_size(px(13.))
-                    .text_color(palette.error)
-                    .child(error.clone()),
-            );
+            return card.child(widgets::retry_line(
+                "players-stats-retry",
+                error.clone(),
+                palette.error,
+                cx.listener(|this, _, _, cx| this.load_stats(cx)),
+            ));
         }
         let Some(stats) = &self.stats else {
             return card.child(widgets::loading("Loading…", palette));
@@ -1480,12 +1480,12 @@ impl PlayersPage {
                 ),
         );
         if let Some(error) = &self.board_error {
-            return card.child(
-                div()
-                    .text_size(px(13.))
-                    .text_color(palette.error)
-                    .child(error.clone()),
-            );
+            return card.child(widgets::retry_line(
+                "players-board-retry",
+                error.clone(),
+                palette.error,
+                cx.listener(|this, _, _, cx| this.load_board(cx)),
+            ));
         }
         let Some(board) = &self.board else {
             return card.child(widgets::loading("Loading…", palette));
@@ -1635,21 +1635,12 @@ impl PlayersPage {
             .gap(px(8.))
             .child(widgets::heading("Recent games", palette));
         if self.games_error {
-            return card.child(
-                h_flex()
-                    .gap(px(8.))
-                    .text_size(px(13.))
-                    .text_color(palette.text_muted)
-                    .child("Lichess isn’t sending this player’s games right now")
-                    .child(
-                        Button::new("players-games-retry")
-                            .text()
-                            .xsmall()
-                            .icon(icon("rotate-cw"))
-                            .label("Try again")
-                            .on_click(cx.listener(|this, _, _, cx| this.load_activity(cx))),
-                    ),
-            );
+            return card.child(widgets::retry_line(
+                "players-games-retry",
+                "Lichess isn’t sending this player’s games right now",
+                palette.text_muted,
+                cx.listener(|this, _, _, cx| this.load_activity(cx)),
+            ));
         }
         match &self.games {
             None => card.child(widgets::loading("Loading…", palette)),
@@ -1836,7 +1827,7 @@ impl Render for PlayersPage {
         let narrow = window.viewport_size().width < px(1060.);
         let body = self.profile.clone().map(|profile| {
             let profile_card = self.profile_card(&profile, cx, &palette);
-            let record = self.record_card(&palette);
+            let record = self.record_card(&palette, cx);
             let games = self.games_card(cx, &palette);
             let days = self.days_card(narrow, &palette);
             if narrow {

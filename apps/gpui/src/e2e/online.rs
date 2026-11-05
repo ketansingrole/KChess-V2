@@ -393,3 +393,15 @@ fn watch_says_when_no_followed_player_is_playing(cx: &mut gpui_kit::TestAppConte
     assert_eq!(app.find(("watch-tabs", 1usize)).selected(), Some(true));
     app.find("watch-friends-none");
 }
+
+/// A leaderboard that could not load says so with Try again, which loads it once Lichess answers.
+#[gpui_kit::test]
+fn a_failed_leaderboard_can_be_tried_again(cx: &mut gpui_kit::TestAppContext) {
+    // The stand-in Lichess fails Racing Kings' leaderboard once.
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.cx
+        .update(|cx| crate::prefs::set(cx, "kchess:leaderboard-perf", "racingKings".to_string()));
+    app.open("Players");
+    app.click("players-board-retry");
+    app.find(("players-board-row", 0usize));
+}

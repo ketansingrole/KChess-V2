@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -332,8 +332,13 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
     if request.path == "/api/users/status" {
         return reply(&mut out, &json!([]));
     }
-    // Leaderboards are public, so they are asked for without the login.
+    // Leaderboards are public, so they are asked for without the login. Racing Kings' fails the
+    // first time it is asked for, and answers after that (a failed load tried again).
     if let Some(perf) = request.path.strip_prefix("/api/player/top/100/") {
+        static RACING_KINGS_ASKED: AtomicBool = AtomicBool::new(false);
+        if perf == "racingKings" && !RACING_KINGS_ASKED.swap(true, Ordering::SeqCst) {
+            return refuse(&mut out, &json!({ "error": "Not now" }));
+        }
         let user = |username: &str, title: Option<&str>, rating: u32, progress: i32| {
             json!({
                 "username": username,
