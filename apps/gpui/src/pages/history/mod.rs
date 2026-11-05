@@ -63,6 +63,20 @@ fn filter_of(outcome: &str) -> Option<Filter> {
 }
 
 /// `archivedOutcome`, shared with the Electron app.
+/// A played game's opening, with its ECO code ("C20 King's Pawn Game"); none for a variant or a
+/// line no opening names.
+pub(crate) fn opening_name(game: &Value) -> Option<String> {
+    if game["setup"]["variant"].as_str().unwrap_or("standard") != "standard" {
+        return None;
+    }
+    let opening = rules("openingAt", &[game["setup"].clone(), game["moves"].clone()]).ok()?;
+    Some(format!(
+        "{} {}",
+        opening["eco"].as_str()?,
+        opening["name"].as_str()?
+    ))
+}
+
 pub(crate) fn outcome(game: &Value) -> String {
     rules("archivedOutcome", std::slice::from_ref(game))
         .ok()
@@ -310,25 +324,14 @@ impl HistoryPage {
         }
     }
 
-    /// A game's opening, as `C40 King's Knight Opening`, in standard chess.
+    /// A game's opening, as `C40 King's Knight Opening`, in standard chess; worked out once.
     fn opening(&self, game: &Value) -> Option<String> {
-        if game["setup"]["variant"].as_str().unwrap_or("standard") != "standard" {
-            return None;
-        }
         let moves = game["moves"].as_array().map_or(0, Vec::len);
         let key = (text(game, "id").to_string(), moves);
         self.openings
             .borrow_mut()
             .entry(key)
-            .or_insert_with(|| {
-                let opening =
-                    rules("openingAt", &[game["setup"].clone(), game["moves"].clone()]).ok()?;
-                Some(format!(
-                    "{} {}",
-                    opening["eco"].as_str()?,
-                    opening["name"].as_str()?
-                ))
-            })
+            .or_insert_with(|| opening_name(game))
             .clone()
     }
 

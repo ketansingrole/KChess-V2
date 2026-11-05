@@ -42,6 +42,8 @@ pub struct HomePage {
     continue_game: Option<(Unfinished, Value)>,
     /// The position on the board, and what it was drawn from.
     board: Option<(String, Entity<ChessBoard>)>,
+    /// The last game's opening, by the game and its length, worked out once.
+    last_opening: Option<((String, usize), Option<String>)>,
     /// Your Lichess activity, once an account is connected, and the account it shows.
     activity: Option<(String, Entity<lichess::LichessActivity>)>,
     /// The page's content, as last laid out: it, not the window, decides what goes beside what.
@@ -175,6 +177,7 @@ impl HomePage {
         let mut page = HomePage {
             continue_game: None,
             board: None,
+            last_opening: None,
             activity: None,
             area: Measured::default(),
             focus: cx.focus_handle(),
@@ -423,22 +426,55 @@ impl Render for HomePage {
                 }),
                 None,
             ),
-            // The last game, as its row in Recent games says it: who won, and against whom.
-            (None, Some(game)) => (
-                Some((crate::pages::history::opponent(game), None)),
-                Some(
-                    h_flex()
-                        .gap(px(8.))
-                        .child(crate::pages::history::badge(
-                            &crate::pages::history::outcome(game),
-                            None,
-                            &palette,
-                        ))
-                        .child(short_date(game["startedAt"].as_f64().unwrap_or_default()))
-                        .into_any_element(),
-                ),
-                game["id"].as_str().map(str::to_string),
-            ),
+            // The last game, as its row in Recent games says it: who won, and against whom; and
+            // the opening it was.
+            (None, Some(game)) => {
+                let key = (
+                    game["id"].as_str().unwrap_or_default().to_string(),
+                    game["moves"].as_array().map_or(0, Vec::len),
+                );
+                if self
+                    .last_opening
+                    .as_ref()
+                    .is_none_or(|(seen, _)| *seen != key)
+                {
+                    let name = crate::pages::history::opening_name(game);
+                    self.last_opening = Some((key, name));
+                }
+                let opening = self
+                    .last_opening
+                    .as_ref()
+                    .and_then(|(_, name)| name.clone());
+                (
+                    Some((crate::pages::history::opponent(game), None)),
+                    Some(
+                        v_flex()
+                            .gap(px(6.))
+                            .child(
+                                h_flex()
+                                    .gap(px(8.))
+                                    .child(crate::pages::history::badge(
+                                        &crate::pages::history::outcome(game),
+                                        None,
+                                        &palette,
+                                    ))
+                                    .child(short_date(
+                                        game["startedAt"].as_f64().unwrap_or_default(),
+                                    )),
+                            )
+                            .children(opening.map(|opening| {
+                                div()
+                                    .id("home-opening")
+                                    .test_support()
+                                    .truncate()
+                                    .aria_label(opening.clone())
+                                    .child(opening)
+                            }))
+                            .into_any_element(),
+                    ),
+                    game["id"].as_str().map(str::to_string),
+                )
+            }
             (None, None) => (None, None, None),
         };
         let unfinished = self.continue_game.is_some();

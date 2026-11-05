@@ -153,6 +153,11 @@ fn the_last_game_is_reviewed_from_home_in_quick_pick(cx: &mut gpui_kit::TestAppC
     let mut app = mate_in_history(cx);
     app.open("Home");
     app.find("home-review");
+    // The last game says which opening it was, as its row in Game history does.
+    assert_eq!(
+        app.find("home-opening").label(),
+        Some("C20 King's Pawn Game: Wayward Queen Attack")
+    );
     app.press("secondary-k");
     app.type_text(">");
     super::palette::wait_for_first(&mut app, "Review last game");
