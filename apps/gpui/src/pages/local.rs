@@ -1109,8 +1109,11 @@ impl LocalPage {
         .child(face(Side::Top, 1, cx))
         .child(face(Side::Bottom, 2, cx));
         let [top_minutes, bottom_minutes, increment] = &self.clock_inputs;
-        let small_input =
-            |input: &Entity<InputState>| div().w(px(64.)).child(Input::new(input).small());
+        let small_input = |input: &Entity<InputState>, name: &'static str| {
+            div()
+                .w(px(64.))
+                .child(Input::new(input).small().aria_label(name))
+        };
         v_flex()
             .id("local-clock")
             .size_full()
@@ -1193,11 +1196,11 @@ impl LocalPage {
                         h_flex()
                             .gap(px(4.))
                             .text_size(px(14.))
-                            .child(small_input(top_minutes))
+                            .child(small_input(top_minutes, "Player 1 minutes"))
                             .child(div().text_color(palette.text_muted).child("/"))
-                            .child(small_input(bottom_minutes))
+                            .child(small_input(bottom_minutes, "Player 2 minutes"))
                             .child("min +")
-                            .child(small_input(increment))
+                            .child(small_input(increment, "Increment in seconds"))
                             .child("s"),
                     ),
             )

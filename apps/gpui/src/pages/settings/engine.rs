@@ -325,7 +325,8 @@ impl SettingsPage {
                     .text_color(palette.text_muted)
                     .child(description),
             );
-        let controls = h_flex().gap(px(8.)).flex_none().children(buttons);
+        // The buttons wrap rather than run past a narrow window.
+        let controls = h_flex().flex_wrap().gap(px(8.)).children(buttons);
         if self.narrow() {
             v_flex()
                 .gap(px(8.))

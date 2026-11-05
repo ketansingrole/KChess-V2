@@ -568,7 +568,7 @@ impl Rows {
         let change = Rc::new(change);
         let control = h_flex().child(
             Switch::new(id)
-                .small()
+                .large()
                 .checked(on)
                 .disabled(!enabled)
                 .accessibility_label(title)

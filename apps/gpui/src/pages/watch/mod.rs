@@ -762,6 +762,7 @@ impl WatchPage {
                 Button::new("watch-friends-refresh")
                     .ghost()
                     .xsmall()
+                    .size(px(24.))
                     .icon(icon("refresh-cw"))
                     .accessibility_label("Refresh followed players")
                     .on_click(cx.listener(|this, _, _, cx| this.refresh_presence(cx))),

@@ -2598,7 +2598,7 @@ impl AnalysisPage {
                             .gap(px(8.))
                             .child(
                                 Switch::new("infinite")
-                                    .small()
+                                    .large()
                                     .checked(infinite)
                                     .disabled(!engine_on)
                                     .accessibility_label("Infinite analysis")
@@ -2618,7 +2618,7 @@ impl AnalysisPage {
                             .gap(px(8.))
                             .child(
                                 Switch::new("arrows")
-                                    .small()
+                                    .large()
                                     .checked(arrows)
                                     .disabled(!engine_on)
                                     .accessibility_label("Show engine arrows")
@@ -2634,7 +2634,7 @@ impl AnalysisPage {
                             .gap(px(8.))
                             .child(
                                 Switch::new("threat")
-                                    .small()
+                                    .large()
                                     .checked(threat)
                                     .disabled(!engine_on)
                                     .accessibility_label("Show threat")
@@ -2653,7 +2653,7 @@ impl AnalysisPage {
                             .gap(px(8.))
                             .child(
                                 Switch::new("cloud")
-                                    .small()
+                                    .large()
                                     .checked(cloud_on)
                                     .disabled(!allowed)
                                     .accessibility_label("Lichess cloud evaluation")

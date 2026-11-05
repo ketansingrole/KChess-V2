@@ -661,7 +661,7 @@ impl WatchPage {
                             .text_size(px(13.))
                             .child(
                                 Switch::new("broadcast-grid-evaluations")
-                                    .small()
+                                    .large()
                                     .checked(crate::prefs::get(cx, GRID_EVALUATIONS, true))
                                     .disabled(!self.broadcasts.engine_ready() || !allowed)
                                     .accessibility_label("Evaluation bars")

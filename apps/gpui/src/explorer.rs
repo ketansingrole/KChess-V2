@@ -9,7 +9,6 @@ use std::time::Duration;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
     Disableable as _, Selectable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -995,6 +994,7 @@ impl Render for PositionExplorer {
                     head.child(
                         Button::new("explorer-filters")
                             .xsmall()
+                            .size(px(24.))
                             .ghost()
                             .icon(icon("sliders-horizontal"))
                             .selected(self.show_filters)
@@ -1102,10 +1102,13 @@ impl Render for PositionExplorer {
             .when(!self.grid, |explorer| {
                 explorer.child(
                     h_flex()
+                        .flex_wrap()
                         .gap(px(12.))
+                        .text_size(px(13.))
                         .child(
                             Button::new("explorer-lookup")
                                 .xsmall()
+                                .min_h(px(24.))
                                 .outline()
                                 .icon(icon("search"))
                                 .label("Look up this position")
@@ -1115,19 +1118,24 @@ impl Render for PositionExplorer {
                                     this.lookup(None, true, Some(window), cx)
                                 })),
                         )
-                        .child(
-                            Switch::new("explorer-follow")
-                                .xsmall()
-                                .checked(prefs.follow)
-                                .label("Follow moves")
-                                .on_click(cx.listener(|this, on: &bool, _, cx| {
+                        .child(widgets::labelled_switch(
+                            "explorer-follow",
+                            "Follow moves",
+                            prefs.follow,
+                            false,
+                            {
+                                let explorer = cx.entity().downgrade();
+                                move |on, _, cx| {
                                     let on = *on;
-                                    this.update_prefs(cx, |prefs| prefs.follow = on);
-                                    if on {
-                                        this.lookup(None, false, None, cx);
-                                    }
-                                })),
-                        ),
+                                    let _ = explorer.update(cx, |this, cx| {
+                                        this.update_prefs(cx, |prefs| prefs.follow = on);
+                                        if on {
+                                            this.lookup(None, false, None, cx);
+                                        }
+                                    });
+                                }
+                            },
+                        )),
                 )
             })
             .when(needs_player, |explorer| {

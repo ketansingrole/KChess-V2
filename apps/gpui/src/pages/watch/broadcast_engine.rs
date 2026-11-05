@@ -457,7 +457,7 @@ impl WatchPage {
                         .gap(px(8.))
                         .child(
                             Switch::new(id)
-                                .small()
+                                .large()
                                 .checked(crate::prefs::get(cx, key, default))
                                 .accessibility_label(label)
                                 .on_click(move |on, _, cx| {
@@ -497,6 +497,7 @@ impl WatchPage {
             .gap(px(8.))
             .child(
                 Switch::new("broadcast-engine")
+                    .large()
                     .checked(on && allowed)
                     .disabled(!allowed)
                     .accessibility_label("Broadcast engine analysis")

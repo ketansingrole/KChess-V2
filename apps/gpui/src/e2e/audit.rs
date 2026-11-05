@@ -246,6 +246,82 @@ fn every_page_with_content_lays_out_its_controls(cx: &mut gpui_kit::TestAppConte
     );
 }
 
+/// Every tab of every page and every settings section, not only those a page opens on: the chess
+/// clock's time fields once had no names, behind Over the board's second tab.
+#[gpui_kit::test]
+fn every_tab_and_settings_section_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let mut findings = Findings::default();
+    let settle = |app: &mut Harness| {
+        for _ in 0..20 {
+            app.tick();
+        }
+    };
+    for (width, height) in SIZES {
+        app.cx
+            .simulate_window_resize(app.window, size(px(width), px(height)));
+        for (page, label, _) in crate::shell::nav().iter() {
+            let (page, label) = (*page, *label);
+            app.with_window(|window, cx| crate::shell::open(page, window, cx));
+            settle(&mut app);
+            let tabs = app.with_window(|window, _| {
+                window
+                    .elements()
+                    .into_iter()
+                    .filter(|e| e.visible() && e.role() == Some(Role::Tab))
+                    .filter_map(|e| Some((e.path().last()?.clone(), e.label()?.to_string())))
+                    .collect::<Vec<_>>()
+            });
+            for (id, tab) in tabs {
+                let shown = app.with_window(|window, cx| {
+                    let shown = window.try_find(id.clone()).is_some();
+                    if shown {
+                        window.click(id.clone(), cx);
+                    }
+                    shown
+                });
+                if !shown {
+                    continue;
+                }
+                settle(&mut app);
+                let controls = app.with_window(|window, _| window.elements());
+                check(
+                    &format!("{label} → {tab} at {width}×{height}"),
+                    width,
+                    &controls,
+                    &mut findings,
+                );
+            }
+        }
+        for (section, label, _) in crate::pages::settings::sections() {
+            app.with_window(|window, cx| crate::shell::open_settings(section, window, cx));
+            settle(&mut app);
+            let controls = app.with_window(|window, _| window.elements());
+            check(
+                &format!("Settings → {label} at {width}×{height}"),
+                width,
+                &controls,
+                &mut findings,
+            );
+        }
+    }
+    findings.problems.sort();
+    findings.problems.dedup();
+    findings.small.sort();
+    findings.small.dedup();
+    assert!(
+        findings.problems.is_empty() && findings.small.is_empty(),
+        "behind a tab:\n  {}",
+        findings
+            .problems
+            .iter()
+            .chain(&findings.small)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+}
+
 /// Games, a puzzle attempt and a study, kept by the core before the pages are opened.
 fn seed(app: &mut Harness) {
     let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";

@@ -354,7 +354,7 @@ impl Render for CreateArena {
                     .child("Rated")
                     .child(
                         Switch::new("arena-rated")
-                            .small()
+                            .large()
                             .checked(self.rated)
                             .accessibility_label("Rated")
                             .on_click(cx.listener(|this, checked: &bool, _, cx| {
