@@ -347,7 +347,9 @@ impl Run {
                 self.m.berserked = true;
             }
         }
-        let ticking = running.then(|| self.m.turn());
+        // Lichess starts a clock only once both sides have moved; until then each side has a
+        // first-move timer instead, and the clocks hold at their starting time.
+        let ticking = (running && self.m.online_moves.len() >= 2).then(|| self.m.turn());
         let initial = self.m.online_initial;
         self.effect(Effect::ClockSet {
             white,

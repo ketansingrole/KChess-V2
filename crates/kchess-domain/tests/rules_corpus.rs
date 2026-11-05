@@ -54,6 +54,22 @@ fn digest(answer: &Result<String, String>) -> String {
     }
 }
 
+/// The first 200 bytes of a call's arguments for a report, cut at a character boundary (a cut
+/// inside "…" once turned a changed answer into a panic that named none).
+fn head(args: &str) -> &str {
+    let mut end = args.len().min(200);
+    while !args.is_char_boundary(end) {
+        end -= 1;
+    }
+    &args[..end]
+}
+
+#[test]
+fn a_report_cuts_arguments_between_characters() {
+    let args = format!("{}…", "a".repeat(199));
+    assert_eq!(head(&args), "a".repeat(199));
+}
+
 #[test]
 fn every_method_answers_as_recorded() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rules-corpus.jsonl.gz");
@@ -76,18 +92,14 @@ fn every_method_answers_as_recorded() {
             if digest(&by_value) != actual && differ.len() < 20 {
                 differ.push(format!(
                     "{method} by value {}: {actual} ≠ {}",
-                    &args[..args.len().min(200)],
+                    head(args),
                     digest(&by_value)
                 ));
             }
         }
         if actual != case["d"] {
             if differ.len() < 20 {
-                differ.push(format!(
-                    "{method} {}: {} ≠ {actual}",
-                    &args[..args.len().min(200)],
-                    case["d"]
-                ));
+                differ.push(format!("{method} {}: {} ≠ {actual}", head(args), case["d"]));
             }
             case["d"] = json!(actual);
         }
