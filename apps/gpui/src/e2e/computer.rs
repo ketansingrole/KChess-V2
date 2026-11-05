@@ -164,6 +164,24 @@ fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::Test
 }
 
 /// Once the game is over, Quick Pick reviews it on the analysis board, as the banner's button does.
+/// Until the saved game is restored the board takes no move: on a slow profile (Windows CI) the
+/// restore once landed between a player's two clicks and dropped the move.
+#[gpui_kit::test]
+fn no_move_is_taken_before_the_saved_game_is_restored(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.cx.update(|cx| {
+        let page = crate::shell::view_of::<crate::pages::computer::ComputerPage>(
+            crate::pages::Page::Computer,
+            cx,
+        )
+        .expect("the page");
+        page.update(cx, |page, cx| page.forget_loaded(cx));
+    });
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    assert_eq!(app.moves(), Vec::<String>::new());
+}
+
 #[gpui_kit::test]
 fn a_finished_game_is_reviewed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);

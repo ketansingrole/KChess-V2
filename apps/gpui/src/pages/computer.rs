@@ -308,6 +308,13 @@ impl ComputerPage {
         .detach();
     }
 
+    /// Back to the moment before the library has loaded (a slow profile's first frames).
+    #[cfg(test)]
+    pub(crate) fn forget_loaded(&mut self, cx: &mut Context<Self>) {
+        self.loaded = false;
+        self.after_change(cx);
+    }
+
     fn log_warn(&self, message: &str) {
         crate::log::write(Level::Warn, "computer-game", message);
     }
@@ -360,6 +367,10 @@ impl ComputerPage {
 
     /// Start the engine's search when it is the engine's turn (`computerTurn`).
     fn computer_turn(&mut self, cx: &mut Context<Self>) {
+        // The saved game comes first; loading it takes the computer's turn.
+        if !self.loaded {
+            return;
+        }
         let host = self.host();
         let request = match self.game.search_start(&host) {
             Ok(Some(request)) => request,
@@ -588,9 +599,12 @@ impl ComputerPage {
     }
 
     /// The player may move now: it is their turn at the latest position (`localInteractive`).
+    /// The player may move: not before the saved game is restored, which would replace the move
+    /// (and nothing is saved before then).
     fn interactive(&self) -> bool {
         let host = self.host();
-        self.engine == Engine::Ready
+        self.loaded
+            && self.engine == Engine::Ready
             && self.allowed
             && !self.game.over(&host)
             && self.ply() == self.moves().len()
