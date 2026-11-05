@@ -408,6 +408,38 @@ fn the_side_to_move_and_castling_rights_show_in_the_fen(cx: &mut gpui_kit::TestA
     );
 }
 
+/// A pasted Chess960 position keeps its castling; a king moved off e1 in a standard one loses
+/// White's, rather than castling Chess960-style from d1.
+#[gpui_kit::test]
+fn chess960_castling_is_kept_and_a_moved_king_drops_its_own(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = editor(cx);
+    app.drag_square("e1", "d1", true);
+    wait_for_fen(
+        &mut app,
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBK1BNR w kq - 0 1",
+    );
+    // Castling from d1 is allowed in Chess960, and offered, but not ticked for you.
+    assert!(app.enabled("castling-Q"));
+    assert_eq!(app.find("castling-Q").checked(), Some(false));
+
+    app.click_label("FEN");
+    app.press("secondary-a");
+    app.type_text("bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1");
+    app.press("enter");
+    wait_for_fen(
+        &mut app,
+        "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w KQkq - 0 1",
+    );
+    for key in ["K", "Q", "k", "q"] {
+        assert_eq!(
+            app.find(format!("castling-{key}")).checked(),
+            Some(true),
+            "{key}"
+        );
+    }
+    assert_eq!(app.status(), "Ready to analyse");
+}
+
 #[gpui_kit::test]
 fn a_typed_fen_sets_the_board_and_one_that_is_not_legal_is_not_analysed(
     cx: &mut gpui_kit::TestAppContext,

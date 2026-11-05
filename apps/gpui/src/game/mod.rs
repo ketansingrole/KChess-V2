@@ -66,7 +66,10 @@ pub fn editor_setup(text: &str) -> Option<Value> {
         return None;
     }
     let fields: Vec<&str> = trimmed.split_whitespace().collect();
-    let rights = fields.get(2).copied().unwrap_or("-");
+    let rights = castling_letters(
+        parsed["board"].as_str().unwrap_or_default(),
+        fields.get(2).copied().unwrap_or("-"),
+    );
     let ep = fields
         .get(3)
         .copied()
@@ -86,6 +89,41 @@ pub fn editor_setup(text: &str) -> Option<Value> {
         },
         "ep": ep,
     }))
+}
+
+/// Castling rights as `KQkq`: Shredder-FEN and X-FEN name a rook by its file (`HAha`), which is
+/// the short side when it stands right of its king.
+fn castling_letters(board: &str, rights: &str) -> String {
+    let king_file = |rank: usize, king: char| {
+        let mut file = 0;
+        for c in board.split('/').nth(rank).unwrap_or_default().chars() {
+            match c.to_digit(10) {
+                Some(skip) => file += skip as usize,
+                None if c == king => return Some(file),
+                None => file += 1,
+            }
+        }
+        None
+    };
+    rights
+        .chars()
+        .filter_map(|c| match c {
+            'K' | 'Q' | 'k' | 'q' => Some(c),
+            'A'..='H' | 'a'..='h' => {
+                let white = c.is_ascii_uppercase();
+                let king = king_file(if white { 7 } else { 0 }, if white { 'K' } else { 'k' })?;
+                let file = (c.to_ascii_lowercase() as u8 - b'a') as usize;
+                let short = file > king;
+                Some(match (white, short) {
+                    (true, true) => 'K',
+                    (true, false) => 'Q',
+                    (false, true) => 'k',
+                    (false, false) => 'q',
+                })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Why a position cannot be played, in the words the board editor uses (`positionProblem`).
@@ -231,6 +269,35 @@ mod setup_tests {
         assert_eq!(variant("1rk4r/8/8/8/8/8/8/1RK4R w HBhb - 0 1"), "chess960");
         // Its king and rooks moved, so the position no longer castles at all.
         assert_eq!(variant("1r5r/2k5/8/8/8/8/2K5/1R5R w - - 0 1"), "standard");
+    }
+
+    /// A Chess960 position pasted into the board editor keeps its castling, written as `KQkq`,
+    /// and plays as Chess960 from there.
+    #[test]
+    fn the_editor_keeps_a_chess960_positions_castling() {
+        for pasted in [
+            "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1",
+            "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w KQkq - 0 1",
+        ] {
+            let setup = super::editor_setup(pasted).expect("a position");
+            assert_eq!(
+                setup["castling"],
+                serde_json::json!({ "K": true, "Q": true, "k": true, "q": true }),
+                "{pasted}"
+            );
+            let fen = super::rules("setupFen", &[setup]).expect("its FEN");
+            assert_eq!(
+                fen,
+                "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w KQkq - 0 1"
+            );
+            assert_eq!(setup_from_fen(fen.as_str().unwrap())["variant"], "chess960");
+        }
+        // Only the rights written: the long side's rook (F) on its own.
+        let setup = super::editor_setup("bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w F - 0 1");
+        assert_eq!(
+            setup.expect("a position")["castling"],
+            serde_json::json!({ "K": false, "Q": true, "k": false, "q": false })
+        );
     }
 }
 
