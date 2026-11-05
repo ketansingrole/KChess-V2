@@ -555,3 +555,40 @@ fn the_games_listed_are_exported_as_one_pgn(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(saved.matches("[Event ").count(), 1, "{saved}");
     assert!(saved.contains("Qxf7#"), "{saved}");
 }
+
+/// Home names a variant game's variant, on the last game's card and in its Recent games row.
+#[gpui_kit::test]
+fn home_names_a_variant_games_variant(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.cx.update(|cx| {
+        let played = cx.global::<crate::played::PlayedHandle>().0.clone();
+        played.update(cx, |played, cx| {
+            played.save(
+                serde_json::json!({
+                    "id": "atomic-game",
+                    "source": "computer",
+                    "setup": {
+                        "variant": "atomic",
+                        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                    },
+                    "moves": ["e2e4", "e7e5"],
+                    "white": "You",
+                    "black": "Stockfish · Club Player",
+                    "result": "1/2-1/2",
+                    "reason": "agreement",
+                    "finished": true,
+                    "timeControl": "300+3",
+                    "startedAt": 1_790_000_000_000u64,
+                    "updatedAt": 1_790_000_000_000u64,
+                }),
+                cx,
+            );
+        });
+    });
+    app.open("Home");
+    assert_eq!(app.find("home-opening").label(), Some("Atomic"));
+    assert_eq!(
+        app.find(("home-game", 0usize)).label(),
+        Some("You vs Stockfish · Club Player, Atomic")
+    );
+}

@@ -23,6 +23,14 @@ use crate::widgets::KeyboardFocus as _;
 
 mod lichess;
 
+/// A game's variant by name, when it is not standard chess.
+fn variant_of(game: &Value) -> Option<String> {
+    game["setup"]["variant"]
+        .as_str()
+        .filter(|variant| *variant != "standard")
+        .map(crate::game::variant_label)
+}
+
 /// Recent games on Home (`localGames`).
 const RECENT: usize = 6;
 /// A tile's narrowest width; two of them share a row when they fit, else one.
@@ -444,11 +452,14 @@ impl Render for HomePage {
                     let name = crate::pages::history::opening_name(game);
                     self.last_opening = Some((key, name));
                 }
-                let opening = self
-                    .last_opening
-                    .as_ref()
-                    .and_then(|(_, name)| name.clone())
-                    .filter(|_| crate::pages::history::opening_names_shown(cx));
+                // A variant game is named by its variant, as its row is; a standard one by its
+                // opening, while opening names are shown.
+                let opening = variant_of(game).or_else(|| {
+                    self.last_opening
+                        .as_ref()
+                        .and_then(|(_, name)| name.clone())
+                        .filter(|_| crate::pages::history::opening_names_shown(cx))
+                });
                 (
                     Some((crate::pages::history::opponent(game), None)),
                     Some(
@@ -630,9 +641,13 @@ impl Render for HomePage {
                         let id = game["id"].as_str().unwrap_or_default().to_string();
                         h_flex()
                             .id(("home-game", index))
+                            .test_support()
                             .role(Role::Button)
                             .keyboard_focus(palette.primary)
-                            .aria_label(names(&game))
+                            .aria_label(match variant_of(&game) {
+                                Some(variant) => format!("{}, {variant}", names(&game)),
+                                None => names(&game),
+                            })
                             .gap(px(12.))
                             .px(px(12.))
                             .py(px(8.))
@@ -661,9 +676,15 @@ impl Render for HomePage {
                                     .flex_none()
                                     .text_right()
                                     .text_color(palette.text_muted)
-                                    .child(crate::pages::history::move_count(
-                                        game["moves"].as_array().map_or(0, Vec::len),
-                                    )),
+                                    .child({
+                                        let count = crate::pages::history::move_count(
+                                            game["moves"].as_array().map_or(0, Vec::len),
+                                        );
+                                        match variant_of(&game) {
+                                            Some(variant) => format!("{variant} · {count}"),
+                                            None => count,
+                                        }
+                                    }),
                             )
                             .child(
                                 div()
