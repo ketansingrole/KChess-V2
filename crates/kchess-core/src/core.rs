@@ -512,7 +512,12 @@ impl Core {
             "reviews.get" => {
                 let fen: String = arg(args, 0, "fen")?;
                 let moves: Vec<String> = optional(args, 1, "moves")?;
-                json(self.reviews.get_review(&fen, &moves).await?)
+                let variant: Option<String> = optional(args, 2, "variant")?;
+                json(
+                    self.reviews
+                        .get_review(&fen, &moves, variant.as_deref())
+                        .await?,
+                )
             }
             "reviews.setup" => {
                 self.reviews.setup_reviews(Arc::new(self.review_bridge()));

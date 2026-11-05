@@ -1,5 +1,6 @@
 //! Variant analysis with the real Fairy-Stockfish (`support::fairy_stockfish`): a Crazyhouse
-//! position analysed with drops in its lines, and an Atomic one under Atomic's rules.
+//! position analysed with drops in its lines, an Atomic one under Atomic's rules, and a
+//! Crazyhouse game reviewed.
 
 mod support;
 
@@ -98,4 +99,79 @@ async fn an_atomic_capture_that_explodes_the_king_is_mate() {
         "{best:?}"
     );
     assert!(best.mate.is_some_and(|mate| mate > 0.0), "{best:?}");
+}
+
+/// A Crazyhouse game with a drop is reviewed by Fairy-Stockfish to the end (standard rules stop
+/// at the drop), under a key of its own: the same moves in standard chess are another game.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_crazyhouse_game_is_reviewed_with_its_drops() {
+    use kchess_core::engine::review::{ReviewRequest, ReviewSettings, Reviews};
+    use support::review_store::{MemoryStore, ScriptedHost};
+    let Some(engine) = support::fairy_stockfish() else {
+        return;
+    };
+    let host = support::host();
+    let mut locations = support::locations();
+    locations.variant = engine;
+    let ctx = EngineContext::new(
+        host.clone(),
+        Arc::new(support::hub(&host)),
+        support::scheduler(4, false),
+        locations,
+    );
+    let store = MemoryStore::new();
+    let reviews = Reviews::new(ctx, store.clone());
+    let review_host = ScriptedHost::new(
+        store,
+        ReviewSettings {
+            review_auto: "off".into(),
+            review_on_battery: true,
+            engine_path: String::new(),
+        },
+    );
+    reviews.setup_reviews(review_host.clone());
+    let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+    let moves: Vec<String> = ["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"]
+        .map(String::from)
+        .to_vec();
+    reviews
+        .request_review(ReviewRequest {
+            fen: fen.into(),
+            moves: moves.clone(),
+            game_id: None,
+            account: None,
+            variant: Some("crazyhouse".into()),
+        })
+        .await
+        .expect("the request");
+    let done = wait_until_review(&review_host).await;
+    assert_eq!(done.evals.len(), moves.len() + 1);
+    assert!(done.evals.iter().all(Option::is_some), "{:?}", done.evals);
+    assert_eq!(done.extra.get("variant"), Some(&json!("crazyhouse")));
+    assert!(
+        done.engine
+            .as_deref()
+            .is_some_and(|engine| engine.contains("fairy-stockfish")),
+        "{:?}",
+        done.engine
+    );
+    let standard =
+        kchess_domain::api::call("reviewKey", &json!([fen, moves]).to_string()).expect("a key");
+    assert_ne!(json!(done.key).to_string(), standard);
+    // The stored review is found again by its variant.
+    let found = reviews
+        .get_review(fen, &moves, Some("crazyhouse"))
+        .await
+        .expect("the lookup");
+    assert_eq!(found.map(|review| review.key), Some(done.key));
+    reviews.stop_reviews().await;
+}
+
+async fn wait_until_review(
+    host: &support::review_store::ScriptedHost,
+) -> kchess_core::engine::review::StoredReview {
+    support::wait_until(Duration::from_secs(60), "the complete review", || {
+        host.complete_updates().into_iter().next()
+    })
+    .await
 }

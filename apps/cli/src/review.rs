@@ -10,29 +10,39 @@ use crate::core::{CoreClient, Event};
 
 const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-/// A game read for review: where it starts, its main line in SAN and in UCI.
+/// A game read for review: where it starts, its main line in SAN and in UCI, and the Lichess key
+/// of its variant when Fairy-Stockfish reviews it (not standard chess or Chess960).
 #[derive(Debug, PartialEq)]
 pub struct Line {
     pub fen: String,
     pub sans: Vec<String>,
     pub moves: Vec<String>,
+    pub variant: Option<&'static str>,
 }
 
-/// The main line of the first game in `pgn`. Standard games and Chess960 are reviewed, as on
-/// the analysis board: the review reads moves under standard rules.
+/// The Lichess key of a PGN `Variant` header's variant.
+pub fn variant_key(name: &str) -> Result<&'static str, String> {
+    let variant = kchess_domain::rules::pgn_variant(Some(name))
+        .ok_or_else(|| format!("Unknown variant {name}."))?;
+    kchess_domain::misc::constants::VARIANTS
+        .iter()
+        .copied()
+        .find(|key| kchess_domain::rules::lichess_variant(key) == Some(variant))
+        .ok_or_else(|| format!("Unknown variant {name}."))
+}
+
+/// The main line of the first game in `pgn`, read by its variant's rules.
 pub fn main_line(pgn: &str) -> Result<Line, String> {
     let game = parse_pgn(pgn)
         .into_iter()
         .next()
         .ok_or("No game could be read from that PGN.")?;
-    if let Some(variant) = game.header("Variant").filter(|variant| {
-        !["standard", "chess960", "from position"]
-            .iter()
-            .any(|known| variant.eq_ignore_ascii_case(known))
-    }) {
-        return Err(format!("{variant} games cannot be reviewed."));
-    }
-    let fen = game.header("FEN").unwrap_or(START).to_string();
+    let variant = match game.header("Variant") {
+        Some(name) => {
+            Some(variant_key(name)?).filter(|key| !matches!(*key, "standard" | "chess960"))
+        }
+        None => None,
+    };
     let mut sans = Vec::new();
     let mut node = 0;
     while let Some(next) = game.children(node).next() {
@@ -42,7 +52,27 @@ pub fn main_line(pgn: &str) -> Result<Line, String> {
     if sans.is_empty() {
         return Err("That game has no moves to review.".into());
     }
-    let moves = san_to_uci(&fen, &sans);
+    let (fen, moves) = match variant {
+        // Read by the variant's rules, up to the first move that is not legal.
+        Some(_) => {
+            let line = kchess_domain::position::pgn_mainline(pgn, sans.len());
+            let fen = line["start"]
+                .as_str()
+                .ok_or("No game could be read from that PGN.")?;
+            let moves = line["moves"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry["uci"].as_str().map(str::to_string))
+                .collect();
+            (fen.to_string(), moves)
+        }
+        None => {
+            let fen = game.header("FEN").unwrap_or(START).to_string();
+            let moves = san_to_uci(&fen, &sans);
+            (fen, moves)
+        }
+    };
     if moves.len() < sans.len() {
         return Err(format!(
             "Move {} ({}) is not legal there.",
@@ -50,7 +80,12 @@ pub fn main_line(pgn: &str) -> Result<Line, String> {
             sans[moves.len()]
         ));
     }
-    Ok(Line { fen, sans, moves })
+    Ok(Line {
+        fen,
+        sans,
+        moves,
+        variant,
+    })
 }
 
 /// Each side's figures and the faulted moves, numbered as in the game.
@@ -95,12 +130,12 @@ pub async fn run(
     core.call("resumeOnline", vec![]).await?;
     // A queued request answers null; the finished review arrives as an update. The core keys it
     // by its own reading of the start position, so it is recognised by its moves and position.
-    let mut stored = core
-        .call(
-            "reviewRequest",
-            vec![json!({ "fen": line.fen, "moves": line.moves })],
-        )
-        .await?;
+    let mut request = json!({ "fen": line.fen, "moves": line.moves });
+    // Fairy-Stockfish reviews the other variants.
+    if let Some(variant) = line.variant {
+        request["variant"] = json!(variant);
+    }
+    let mut stored = core.call("reviewRequest", vec![request]).await?;
     let start = |fen: &str| fen.split(' ').take(2).collect::<Vec<_>>().join(" ");
     let ours = |review: &Value| {
         review["moves"] == json!(line.moves)
@@ -109,7 +144,9 @@ pub async fn run(
                 .is_some_and(|fen| start(fen) == start(&line.fen))
     };
     // The key the core gives the review, so a failure reported for it ends the wait.
-    let key = kchess_domain::api::call_value("reviewKey", &[json!(line.fen), json!(line.moves)])
+    let mut key_args = vec![json!(line.fen), json!(line.moves)];
+    key_args.extend(line.variant.map(|variant| json!(variant)));
+    let key = kchess_domain::api::call_value("reviewKey", &key_args)
         .ok()
         .and_then(|key| key.as_str().map(str::to_string));
     let interrupted = tokio::signal::ctrl_c();
@@ -150,14 +187,25 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn the_main_line_is_read_and_other_variants_refused() {
+    fn the_main_line_is_read_in_its_variant() {
         let line =
             main_line("[Event \"x\"]\n\n1. e4 e5 (1... c5) 2. Nf3 { ok } Nc6 *").expect("a game");
         assert_eq!(line.sans, ["e4", "e5", "Nf3", "Nc6"]);
         assert_eq!(line.moves, ["e2e4", "e7e5", "g1f3", "b8c6"]);
+        assert_eq!(line.variant, None);
+        // Another variant's moves are read by its rules: a drop is a move in Crazyhouse.
+        let zh = main_line("[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 3. P@e3 *")
+            .expect("a Crazyhouse game");
+        assert_eq!(zh.variant, Some("crazyhouse"));
+        assert_eq!(zh.moves, ["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"]);
+        assert!(zh.fen.contains('['), "{}", zh.fen);
         assert_eq!(
-            main_line("[Variant \"Atomic\"]\n\n1. e4 *"),
-            Err("Atomic games cannot be reviewed.".into())
+            main_line("[Variant \"Atomic\"]\n\n1. e4 d5 2. exd5 Ke7 *"),
+            Err("Move 2 (Ke7) is not legal there.".into())
+        );
+        assert_eq!(
+            main_line("[Variant \"Bughouse\"]\n\n1. e4 *"),
+            Err("Unknown variant Bughouse.".into())
         );
         // Chess960 castles king onto rook's square or the king's, as the core accepts either.
         let fischer = main_line(

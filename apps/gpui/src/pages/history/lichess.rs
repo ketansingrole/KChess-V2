@@ -65,7 +65,7 @@ fn result_of(game: &Value) -> &'static str {
 /// The PGN's setup and main line, for the replay, in the variant its header names.
 fn line_of(pgn: &str) -> Option<(Value, Vec<String>)> {
     let variant = crate::game::pgn_variant_key(pgn)?;
-    if !crate::game::reviewable(variant) {
+    if !crate::game::standard_rules(variant) {
         // Replayed under the variant's own rules.
         let line = crate::game::rules("pgnMainline", &[json!(pgn)]).ok()?;
         let start = line["start"].as_str()?;
@@ -441,12 +441,7 @@ impl HistoryPage {
                             .small()
                             .disabled(!crate::game::pgn_analysable(pgn))
                             .icon(icon("chart-line"))
-                            // Another variant's game is analysed, not reviewed.
-                            .label(if crate::game::pgn_reviewable(pgn) {
-                                "Review"
-                            } else {
-                                "Analyse"
-                            })
+                            .label("Review")
                             .on_click(move |_, window, cx| {
                                 let ply = replay_handle.read(cx).ply();
                                 open_review(reviewed.clone(), ply, window, cx);

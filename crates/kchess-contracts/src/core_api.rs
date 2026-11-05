@@ -159,8 +159,8 @@ pub fn methods() -> Vec<Method> {
         ),
         method(
             "reviewGet",
-            "The stored review of these moves from this position, if any.",
-            vec![req("fen"), req("moves")],
+            "The stored review of these moves from this position, if any; `variant` is a variant\n   * game's Lichess key.",
+            vec![req("fen"), req("moves"), opt("variant")],
         ),
         method(
             "reviewRequest",

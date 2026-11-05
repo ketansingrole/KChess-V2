@@ -861,7 +861,7 @@ impl ComputerPage {
     fn can_review(&self) -> bool {
         self.game.result(&self.host()).is_some()
             && !self.moves().is_empty()
-            && crate::game::reviewable(&self.setup_variant())
+            && crate::game::standard_rules(&self.setup_variant())
     }
 
     /// Run an action as its button does, asking first where the button asks.

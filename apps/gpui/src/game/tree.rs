@@ -85,7 +85,7 @@ pub struct PvMove {
 /// is the Lichess key of the rules it is played by.
 pub fn pv_san(fen: &str, pv: &[String], max: usize, variant: &str) -> Vec<PvMove> {
     let pv = &pv[..pv.len().min(max)];
-    let variant = if super::reviewable(variant) {
+    let variant = if super::standard_rules(variant) {
         ""
     } else {
         variant
@@ -236,7 +236,7 @@ impl TreeNode {
                 "ply": parent.ply,
                 "childUcis": parent.children.iter().map(|child| child.uci.clone()).collect::<Vec<_>>(),
                 // Standard rules read Chess960 castling too.
-                "variant": if super::reviewable(self.variant()) { "" } else { self.variant() },
+                "variant": if super::standard_rules(self.variant()) { "" } else { self.variant() },
             })],
         )
         .ok()?;

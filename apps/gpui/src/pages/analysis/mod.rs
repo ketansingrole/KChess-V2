@@ -517,14 +517,29 @@ impl AnalysisPage {
         self.engine_status(cx)
     }
 
+    /// The review shown, once it covers the whole main line and is finished, with its summary.
+    #[cfg(test)]
+    pub(crate) fn finished_review(&self, cx: &App) -> Option<(Value, Value)> {
+        let review = self.review(cx).filter(|review| {
+            review["complete"] == json!(true) && review["key"] == json!(self.mainline_key())
+        })?;
+        let (analysis, _) = self.game_analysis(cx)?;
+        Some((review, analysis))
+    }
+
     fn position(&self) -> Option<VariantPosition> {
         position_of(self.root.variant(), &self.node().fen)
     }
 
-    /// Whether the game on the board can be reviewed (standard chess or Chess960): other variants
-    /// have their engine lines only.
-    fn reviewable(&self) -> bool {
-        crate::game::reviewable(self.root.variant())
+    /// Whether the game on the board is played by standard rules (standard chess or Chess960):
+    /// the explorer, cloud evaluation, the editor and games started from a position are theirs.
+    fn standard_rules(&self) -> bool {
+        crate::game::standard_rules(self.root.variant())
+    }
+
+    /// The Lichess key of the game's variant when Fairy-Stockfish analyses and reviews it.
+    pub(super) fn fairy_variant(&self) -> Option<&'static str> {
+        (!self.standard_rules()).then(|| self.root.variant())
     }
 
     fn context(&self) -> String {
@@ -1094,8 +1109,8 @@ impl AnalysisPage {
             "infinite": infinite,
         });
         // Fairy-Stockfish analyses the other variants.
-        if !self.reviewable() {
-            asked["variant"] = json!(self.root.variant());
+        if let Some(variant) = self.fairy_variant() {
+            asked["variant"] = json!(variant);
         }
         let start = cx.global::<AppCore>().call("startAnalysis", vec![asked]);
         cx.spawn(async move |this, cx| {
@@ -1216,7 +1231,7 @@ impl AnalysisPage {
             .cloud_eval;
         if !self.attached
             || !cloud_on
-            || !self.reviewable()
+            || !self.standard_rules()
             || !Self::assistance_allowed(cx)
             || game_over(self.position().as_ref()).is_some()
         {
@@ -1519,7 +1534,7 @@ impl AnalysisPage {
             self.path.split(' ').count()
         };
         GameExport {
-            variant: if self.reviewable() {
+            variant: if self.standard_rules() {
                 crate::game::setup_from_fen(&self.root.fen)["variant"]
                     .as_str()
                     .unwrap_or("standard")
@@ -2542,13 +2557,13 @@ impl AnalysisPage {
 
     /// `.panel-tabs`: the tool under the engine, one at a time.
     fn render_tabs(&self, tool: Tool, palette: &Palette) -> impl IntoElement {
-        let mut tabs = vec![(Tool::Moves, "Moves", icon("list-tree"))];
-        // Reviews and the opening explorer are standard chess's.
-        if self.reviewable() {
-            tabs.extend([
-                (Tool::Review, "Review", icon("chart-line")),
-                (Tool::Explorer, "Explorer", icon("book-open-text")),
-            ]);
+        let mut tabs = vec![
+            (Tool::Moves, "Moves", icon("list-tree")),
+            (Tool::Review, "Review", icon("chart-line")),
+        ];
+        // The opening explorer is standard chess's.
+        if self.standard_rules() {
+            tabs.push((Tool::Explorer, "Explorer", icon("book-open-text")));
         }
         h_flex()
             .flex_none()
@@ -2632,7 +2647,7 @@ impl AnalysisPage {
         // A finished game cannot be played on from its last position.
         let over = game_over(self.position().as_ref()).is_some();
         // The editor and the games started from a position are standard chess's.
-        let standard = self.reviewable();
+        let standard = self.standard_rules();
         let page = cx.entity().downgrade();
         let step = |id: &'static str, glyph: &'static str, label: &'static str, disabled: bool| {
             Button::new(id)
@@ -2801,7 +2816,7 @@ impl AnalysisPage {
     fn render_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let palette = *cx.global::<Palette>();
         let tool = match Tool::of(&crate::prefs::get::<String>(cx, TOOL, "moves".into())) {
-            _ if !self.reviewable() => Tool::Moves,
+            Tool::Explorer if !self.standard_rules() => Tool::Moves,
             tool => tool,
         };
         let allowed = Self::assistance_allowed(cx);

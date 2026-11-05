@@ -18,13 +18,25 @@ const STANDARD_PERFS: &[&str] = &[
 
 pub fn call(method: &str, args: &[Value]) -> Option<Out> {
     Some(match method {
-        "reviewKey" => {
-            list(args, 1, "moves").map(|moves| json!(review_key(&text_of(args, 0), &join(moves))))
-        }
+        "reviewKey" => list(args, 1, "moves").map(|moves| {
+            // A variant game's key names its variant: the same moves are another game in Atomic.
+            match arg(args, 2).and_then(Value::as_str) {
+                Some(variant) if !matches!(variant, "standard" | "chess960") => json!(review_key(
+                    &format!("{variant}|{}", text_of(args, 0)),
+                    &join(moves)
+                )),
+                _ => json!(review_key(&text_of(args, 0), &join(moves))),
+            }
+        }),
         "hasScore" => Ok(json!(has_score(arg(args, 0)))),
-        "endEval" => Ok(end_eval(
-            arg(args, 0).and_then(Value::as_str) == Some("checkmate"),
-        )),
+        "endEval" => Ok(match arg(args, 0).and_then(Value::as_str) {
+            // A variant won by the side to move (Antichess): mate for it, from White's side.
+            Some("won") => {
+                let white = arg(args, 1).and_then(Value::as_str) == Some("white");
+                json!({ "mate": if white { 1 } else { -1 } })
+            }
+            end => end_eval(end == Some("checkmate")),
+        }),
         "isReviewablePerf" => Ok(json!(
             arg(args, 0)
                 .and_then(Value::as_str)

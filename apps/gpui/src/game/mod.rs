@@ -145,9 +145,10 @@ pub fn analysable(variant: &str) -> bool {
     kchess_domain::rules::lichess_variant(variant).is_some()
 }
 
-/// Whether a game in this variant can be reviewed and its mistakes practised: standard chess, and
-/// Chess960, which reviews play with king-takes-rook castling.
-pub fn reviewable(variant: &str) -> bool {
+/// Whether a game in this variant is played by standard rules: standard chess, and Chess960, which
+/// plays with king-takes-rook castling. Stockfish reviews them and their mistakes become drills;
+/// Fairy-Stockfish reviews the other variants.
+pub fn standard_rules(variant: &str) -> bool {
     matches!(variant, "standard" | "chess960")
 }
 
@@ -155,11 +156,6 @@ pub fn reviewable(variant: &str) -> bool {
 /// knows, or none at all).
 pub fn pgn_analysable(pgn: &str) -> bool {
     pgn_variant_key(pgn).is_some_and(analysable)
-}
-
-/// Whether a PGN's game can be reviewed (`reviewable`).
-pub fn pgn_reviewable(pgn: &str) -> bool {
-    pgn_variant_key(pgn).is_some_and(reviewable)
 }
 
 /// The Lichess key of the variant a PGN's `Variant` header names ("atomic", "chess960"), standard
@@ -237,17 +233,20 @@ fn chess960_castling(fen: &str) -> bool {
 
 #[cfg(test)]
 mod pgn_tests {
-    use super::{pgn_analysable, pgn_reviewable};
+    use super::{pgn_analysable, pgn_variant_key, standard_rules};
 
     #[test]
-    fn known_variants_are_analysable_and_standard_ones_reviewable() {
+    fn known_variants_are_analysable_and_standard_ones_follow_standard_rules() {
         for pgn in [
             "1. e4 e5 *",
             "[Event \"x\"]\n\n1. e4 *",
             "[Variant \"Standard\"]\n\n1. e4 *",
             "[Variant \"Chess960\"]\n[FEN \"x\"]\n\n1. e4 *",
         ] {
-            assert!(pgn_analysable(pgn) && pgn_reviewable(pgn), "{pgn}");
+            assert!(
+                pgn_analysable(pgn) && pgn_variant_key(pgn).is_some_and(standard_rules),
+                "{pgn}"
+            );
         }
         for pgn in [
             "[Variant \"Atomic\"]\n\n1. e4 *",
@@ -255,7 +254,10 @@ mod pgn_tests {
             // Pasted into a one-line field, the tags sit side by side.
             "[Event \"x\"] [Variant \"Crazyhouse\"] 1. e4 *",
         ] {
-            assert!(pgn_analysable(pgn) && !pgn_reviewable(pgn), "{pgn}");
+            assert!(
+                pgn_analysable(pgn) && !pgn_variant_key(pgn).is_some_and(standard_rules),
+                "{pgn}"
+            );
         }
         assert!(!pgn_analysable("[Variant \"Something else\"]\n\n1. e4 *"));
         assert_eq!(super::pgn_variant_key("1. e4 *"), Some("standard"));

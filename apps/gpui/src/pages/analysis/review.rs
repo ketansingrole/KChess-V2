@@ -101,9 +101,11 @@ impl AnalysisPage {
         moves_of(&self.root.line_end(""))
     }
 
-    /// `reviewKey`: the same moves from the same start share one review.
+    /// `reviewKey`: the same moves from the same start (and in the same variant) share one review.
     pub fn mainline_key(&self) -> String {
-        rules("reviewKey", &[json!(self.root.fen), json!(self.mainline())])
+        let mut args = vec![json!(self.root.fen), json!(self.mainline())];
+        args.extend(self.fairy_variant().map(|variant| json!(variant)));
+        rules("reviewKey", &args)
             .ok()
             .and_then(|key| key.as_str().map(str::to_string))
             .unwrap_or_default()
@@ -130,9 +132,9 @@ impl AnalysisPage {
             self.review.requested.clear();
             let moves = self.mainline();
             if store.read(cx).get(&key).is_none() && !moves.is_empty() {
-                let found = cx
-                    .global::<AppCore>()
-                    .call("reviewGet", vec![json!(self.root.fen), json!(moves)]);
+                let mut args = vec![json!(self.root.fen), json!(moves)];
+                args.extend(self.fairy_variant().map(|variant| json!(variant)));
+                let found = cx.global::<AppCore>().call("reviewGet", args);
                 let store = store.clone();
                 cx.spawn(async move |this, cx| match found.await {
                     Ok(review) if !review.is_null() => {
@@ -294,10 +296,6 @@ impl AnalysisPage {
 
     /// Review the main line now (`requestReview`); the engine makes way for it.
     pub fn request_review(&mut self, cx: &mut Context<Self>) {
-        // Another variant's game has its engine lines, not a review.
-        if !self.reviewable() {
-            return;
-        }
         crate::prefs::set(cx, TOOL, "review");
         self.review.request_error = None;
         let moves = self.mainline();
@@ -309,6 +307,10 @@ impl AnalysisPage {
         stop_analysis(false, cx);
         let origin = self.review.origin.clone().unwrap_or(Value::Null);
         let mut request = json!({ "fen": self.root.fen, "moves": moves });
+        // Fairy-Stockfish reviews the other variants.
+        if let Some(variant) = self.fairy_variant() {
+            request["variant"] = json!(variant);
+        }
         if let Some(id) = origin["gameId"].as_str() {
             request["gameId"] = json!(id);
             request["account"] = origin["account"].clone();
@@ -366,6 +368,10 @@ impl AnalysisPage {
 
     /// Your mistakes in a reviewed game you played are saved for practice once its review is done.
     fn save_player_mistakes(&mut self, cx: &mut Context<Self>) {
+        // Mistake drills are standard chess.
+        if self.fairy_variant().is_some() {
+            return;
+        }
         let Some(review) = self.review(cx) else {
             return;
         };
@@ -437,6 +443,10 @@ impl AnalysisPage {
     /// The sides whose labelled moves the review puts into practice: yours, or both in a game you
     /// did not play.
     fn practice_sides(&self, analysis: &Value) -> Vec<&'static str> {
+        // Drills are standard chess: another variant's mistakes are only shown.
+        if self.fairy_variant().is_some() {
+            return Vec::new();
+        }
         let player = self
             .review
             .origin

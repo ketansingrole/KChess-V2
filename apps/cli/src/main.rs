@@ -28,7 +28,7 @@ Commands:
   local [variant]                  Play over the board (chess960, crazyhouse, atomic…)
   puzzle [id|link]                 Solve the daily puzzle, or that one (hint, solution)
   pgn <link>                       Print a Lichess game's PGN, or a public study chapter's
-  review <link|file|moves>         Review a game with Stockfish: accuracy and faulted moves
+  review <link|file|moves>         Review a game with the engine: accuracy and faulted moves
   explore [masters|opening|tablebase] <fen|startpos|moves>
                                    Look a position up (the tablebase for 7 pieces or fewer)
   opening <fen|startpos|moves>     Name the opening a position or line reaches (ECO)
@@ -474,7 +474,7 @@ fn analysis_request(words: &[String]) -> Result<Value, String> {
         .and_then(|game| game.header("Variant").map(str::to_string));
     let variant = match (variant, header) {
         (Some(variant), _) => Some(variant),
-        (None, Some(name)) => Some(variant_key(&name)?.to_string()),
+        (None, Some(name)) => Some(review::variant_key(&name)?.to_string()),
         (None, None) => None,
     };
     match variant.as_deref() {
@@ -483,17 +483,6 @@ fn analysis_request(words: &[String]) -> Result<Value, String> {
         }
         _ => standard_analysis_request(words),
     }
-}
-
-/// The Lichess key of a PGN `Variant` header's variant.
-fn variant_key(name: &str) -> Result<&'static str, String> {
-    let variant = kchess_domain::rules::pgn_variant(Some(name))
-        .ok_or_else(|| format!("Unknown variant {name}."))?;
-    kchess_domain::misc::constants::VARIANTS
-        .iter()
-        .copied()
-        .find(|key| kchess_domain::rules::lichess_variant(key) == Some(variant))
-        .ok_or_else(|| format!("Unknown variant {name}."))
 }
 
 /// A position in another variant, or the one its moves reach, read by that variant's rules.

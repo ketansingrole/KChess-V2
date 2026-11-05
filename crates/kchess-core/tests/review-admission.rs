@@ -64,6 +64,7 @@ async fn cancel_during_storage_admission_does_not_enqueue_later() {
         moves,
         game_id: None,
         account: None,
+        variant: None,
     });
     tokio::pin!(pending);
     tokio::time::timeout(LIMIT, async {
@@ -87,6 +88,7 @@ async fn cancel_during_storage_admission_does_not_enqueue_later() {
             moves: vec!["e2e4".into()],
             game_id: None,
             account: None,
+            variant: None,
         }),
     )
     .await

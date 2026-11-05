@@ -1598,6 +1598,8 @@ struct ReviewRequest {
     fen: String,
     moves: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     game_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     account: Option<String>,
@@ -1610,8 +1612,32 @@ fn assert_review_request(value: J) -> Checked<ReviewRequest> {
         ["moves", rest @ ..] => move_list_messages(rest, Some("Invalid move list.")),
         ["gameId"] => Some("Invalid game id."),
         ["account"] => Some(USERNAME),
+        ["variant"] => Some("Invalid variant."),
         _ => Some("Invalid review request."),
     })?;
+    // A variant game (Fairy-Stockfish reviews it) is replayed by its variant's rules.
+    if let Some(variant) = request
+        .variant
+        .as_deref()
+        .filter(|variant| !matches!(*variant, "standard" | "chess960"))
+    {
+        one_of(variant, VARIANTS, Some("Invalid variant."), "variant")?;
+        max_chars(&request.fen, 120, Some("Invalid position."), "fen")?;
+        move_list(&request.moves)?;
+        if let Some(id) = &request.game_id {
+            game_id(id)?;
+        }
+        if let Some(account) = &request.account {
+            request.account = Some(username(account, "account")?);
+        }
+        if replay::replay_setup_count(variant, &request.fen, &request.moves)
+            != Some(request.moves.len())
+        {
+            return Err("Invalid game position or move history.".into());
+        }
+        return Ok(request);
+    }
+    request.variant = None;
     fen(&request.fen, None, Some("Invalid position."), "fen")?;
     engine_position(&request.fen)?;
     move_list(&request.moves)?;

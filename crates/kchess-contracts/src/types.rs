@@ -1998,6 +1998,9 @@ pub struct ReviewRequest {
     /// A Lichess game: its own analysis is fetched first when it has one.
     pub game_id: Option<String>,
     pub account: Option<String>,
+    /// The Lichess key of a variant game's variant (`crazyhouse`, `atomic`…), which
+    /// Fairy-Stockfish reviews.
+    pub variant: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

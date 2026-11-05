@@ -207,3 +207,39 @@ fn profile_changes_name_contract_areas_of_listed_methods() {
         assert!(changed_areas(read).is_empty(), "{read} is a read");
     }
 }
+
+/// `reviewGet` finds a standard game's review by its two arguments, and another variant's by a
+/// third: a game with no variant is not refused as an "Invalid variant." (the app's lookup after a
+/// restart once was).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn review_get_takes_an_optional_variant() {
+    let dir = tempfile::tempdir().expect("profile");
+    let core = Core::open(Config::new(dir.path().to_path_buf()), Arc::new(Quiet)).expect("opens");
+    // Assistance waits for the check that no Lichess game is live.
+    core.call("resumeOnline", vec![]).await.expect("no game");
+    let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    let zh = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+    let moves = json!(["e2e4", "d7d5", "e4d5", "d8d5"]);
+    for args in [
+        vec![json!(start), moves.clone()],
+        vec![json!(start), moves.clone(), Value::Null],
+        vec![
+            json!(zh),
+            json!(["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"]),
+            json!("crazyhouse"),
+        ],
+    ] {
+        let found = core.call("reviewGet", args.clone()).await;
+        assert_eq!(
+            found.map_err(|cause| cause.message),
+            Ok(Value::Null),
+            "{args:?}"
+        );
+    }
+    // A drop is not a standard move.
+    let refused = core
+        .call("reviewGet", vec![json!(start), json!(["P@e3"])])
+        .await;
+    assert!(refused.is_err());
+    core.close().await;
+}

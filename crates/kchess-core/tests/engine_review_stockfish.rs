@@ -56,6 +56,7 @@ async fn bundled_stockfish_reviews_a_game_with_castling() {
             moves: CASTLED.iter().map(|mv| (*mv).to_string()).collect(),
             game_id: None,
             account: None,
+            variant: None,
         })
         .await
         .expect("the request");

@@ -151,7 +151,7 @@ const CORE: &[Row] = &[
     ),
     ("startAnalysis", 1, &[Valid("assertAnalysisRequest")]),
     ("stopAnalysis", 0, &[Optional("assertBoolean")]),
-    ("reviewGet", 2, &[Position, Valid("assertMoves")]),
+    ("reviewGet", 2, &[Position, Valid("assertMoves"), Any]),
     ("reviewRequest", 1, &[Valid("assertReviewRequest")]),
     ("reviewCancel", 1, &[Valid("assertReviewKey")]),
     ("reviewStatus", 0, &[]),
@@ -517,6 +517,20 @@ pub fn check(scope: Scope, method: &str, args: &[J]) -> Result<(), String> {
     };
     if args.len() < min || args.len() > checks.len() {
         return count_error();
+    }
+    // `reviewGet(fen, moves, variant)`: a variant game's position is checked by its own rules.
+    if method == "reviewGet"
+        && let Some(J::Str(variant)) = args.get(2)
+    {
+        return apply(
+            "assertReviewRequest",
+            vec![J::Obj(vec![
+                ("fen".into(), args[0].clone()),
+                ("moves".into(), args[1].clone()),
+                ("variant".into(), J::Str(variant.clone())),
+            ])],
+        )
+        .map(|_| ());
     }
     let absent = J::Undef;
     for (index, check) in checks.iter().enumerate() {

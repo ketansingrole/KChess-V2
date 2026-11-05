@@ -598,8 +598,8 @@ fn a_variant_game_is_played_by_its_own_rules(cx: &mut gpui_kit::TestAppContext) 
         shown_fen(&mut app),
         "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
     );
-    // Reviews and the opening explorer are standard chess's; the engine lines are not.
-    assert!(!app.shows("Review"));
+    // Fairy-Stockfish reviews the game; the opening explorer is standard chess's.
+    assert!(app.shows("Review"));
     assert!(!app.shows("Explorer"));
     wait_for_search(&mut app);
 }

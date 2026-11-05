@@ -312,6 +312,8 @@ fn harmonic_mean(values: &[f64]) -> f64 {
 /// caller uses the TypeScript rules, whose JavaScript coercions they depend on.
 struct Review<'a> {
     fen: &'a str,
+    /// The Lichess key of a variant game's variant; empty for standard chess.
+    variant: &'a str,
     moves: Vec<&'a str>,
     lichess: bool,
     evals: Vec<Option<Score>>,
@@ -384,6 +386,7 @@ impl<'a> Review<'a> {
         };
         Some(Review {
             fen,
+            variant: map.get("variant").and_then(Value::as_str).unwrap_or(""),
             moves,
             lichess: map.get("source").and_then(Value::as_str) == Some("lichess"),
             evals,
@@ -411,7 +414,7 @@ fn analyse(review: &Review) -> Option<Analysis> {
     // check would generate every legal move at every ply.
     let needs_end =
         review.evals.len() < review.moves.len() + 1 || review.evals.iter().any(Option::is_none);
-    let positions = replay::replay_turns_with_end(review.fen, &review.moves, needs_end);
+    let positions = replay::replay_turns_in(review.variant, review.fen, &review.moves, needs_end);
     let eval_at = |i: usize| -> Option<Score> {
         if let Some(Some(score)) = review.evals.get(i) {
             return Some(*score);
@@ -420,6 +423,14 @@ fn analyse(review: &Review) -> Option<Analysis> {
             Some("checkmate") => Some(Score {
                 cp: None,
                 mate: Some(0.0),
+            }),
+            Some("won") => Some(Score {
+                cp: None,
+                mate: Some(if positions.get(i).is_some_and(|p| p.0) {
+                    1.0
+                } else {
+                    -1.0
+                }),
             }),
             Some(_) => Some(Score {
                 cp: Some(0.0),
@@ -607,7 +618,7 @@ pub fn review_phases(raw: &Value) -> Option<Value> {
     let review = Review::read(raw)?;
     let analysis = analyse(&review)?;
     let count = analysis.colors.len();
-    let mut pos = rules::standard_from_fen(review.fen)?;
+    let mut pos = replay::start_of(review.variant, review.fen)?;
     let (mut middle, mut end) = (count, count);
     for i in 0..=count {
         let board = pos.board();
@@ -656,7 +667,7 @@ pub fn review_phases(raw: &Value) -> Option<Value> {
 pub fn review_classifications(raw: &Value) -> Option<Value> {
     let review = Review::read(raw)?;
     let analysis = analyse(&review)?;
-    let mut pos = rules::standard_from_fen(review.fen)?;
+    let mut pos = replay::start_of(review.variant, review.fen)?;
     let evals = raw.get("evals")?.as_array()?;
     let mut labels = Vec::with_capacity(analysis.moves.len());
     for (i, entry) in analysis.moves.iter().enumerate() {
@@ -678,11 +689,16 @@ pub fn review_classifications(raw: &Value) -> Option<Value> {
                 let loss = 50.0 * pov(white, win_chances(b, white) - win_chances(a, !white));
                 let best = before.and_then(|v| v.get("best")).and_then(Value::as_str);
                 if loss <= 2.0 && best == Some(text) {
-                    Some(if sound_sacrifice(&pos, m, before, after) {
-                        "brilliant"
-                    } else {
-                        "best"
-                    })
+                    // Material does not measure a sacrifice in the variants (drops, explosions).
+                    Some(
+                        if matches!(review.variant, "" | "standard" | "chess960")
+                            && sound_sacrifice(&pos, m, before, after)
+                        {
+                            "brilliant"
+                        } else {
+                            "best"
+                        },
+                    )
                 } else if loss <= 2.0 {
                     Some("excellent")
                 } else if loss < 5.0 {
