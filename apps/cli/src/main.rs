@@ -33,7 +33,8 @@ Commands:
   explore [masters|opening|tablebase] [--variant name] <fen|startpos|moves>
                                    Look a position up (the tablebase for 7 pieces or fewer)
   opening <fen|startpos|moves>     Name the opening a position or line reaches (ECO)
-  position <fen|startpos|moves>    Print whose turn, check or mate, and the legal moves
+  position [--variant name] <fen|startpos|moves>
+                                   Print whose turn, check or mate, and the legal moves
   watch [channel|link]             Stream Lichess TV, a game or a broadcast as JSON lines
   methods                          List available CoreApi methods
 
@@ -578,18 +579,17 @@ fn opening_name(words: &[String]) -> Result<Value, String> {
 /// move in SAN.
 fn position_info(words: &[String]) -> Result<Value, String> {
     let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "position"))?;
-    let setup = json!({ "variant": "standard", "fen": request["fen"] });
+    let variant = request["variant"].as_str().unwrap_or("standard");
+    let setup = json!({ "variant": variant, "fen": request["fen"] });
     let call = |method: &str| {
         kchess_domain::api::call_value(method, std::slice::from_ref(&setup))
             .map_err(|cause| cause.to_string())
     };
     let info = call("position")?;
-    let legal: Vec<Value> = call("legalMoves")?
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|entry| entry["san"].clone())
-        .collect();
+    let legal =
+        kchess_domain::rules::setup_start(variant, info["fen"].as_str().unwrap_or_default())
+            .map(|position| kchess_domain::position::legal_sans(&position))
+            .unwrap_or_default();
     Ok(json!({
         "fen": info["fen"],
         "turn": info["turn"],
@@ -730,6 +730,21 @@ mod tests {
         assert!(
             super::position_info(&words("1. e4 e4")).is_err_and(|cause| cause.starts_with("Move "))
         );
+        // A variant's position is read by its rules: a Crazyhouse pocket's pawn drops, and King
+        // of the Hill is won on the centre.
+        let zh = super::position_info(&words("--variant crazyhouse 1. e4 d5 2. exd5 Qxd5"))
+            .expect("a Crazyhouse position");
+        assert!(
+            zh["legal"]
+                .as_array()
+                .is_some_and(|legal| legal.contains(&serde_json::json!("P@e3"))),
+            "{zh}"
+        );
+        let hill = super::position_info(&words(
+            "--variant kingOfTheHill 1. d4 e5 2. Kd2 Ke7 3. Kd3 Ke6 4. Ke4",
+        ))
+        .expect("a King of the Hill position");
+        assert_eq!(hill["legal"], serde_json::json!([]), "{hill}");
     }
 
     #[test]
