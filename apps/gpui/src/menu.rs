@@ -119,6 +119,8 @@ pub fn init(cx: &mut App) {
         // field keeps its own binding for its text.
         bind("secondary-z", Undo, cx),
         bind("shift-secondary-z", Redo, cx),
+        // Outside a text field, Paste opens a copied game, position or Lichess link.
+        bind("secondary-v", Paste, cx),
     ];
     cx.bind_keys(bindings);
     // Back and forward through the pages, as a browser takes them: ⌘[ and ⌘] on macOS, Alt
@@ -139,6 +141,13 @@ pub fn init(cx: &mut App) {
         cx.defer(|cx| {
             if let Some(window) = cx.active_window() {
                 let _ = window.update(cx, |_, window, cx| crate::shortcuts::open(window, cx));
+            }
+        })
+    });
+    cx.on_action(|_: &Paste, cx| {
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, cx| crate::palette::open_pasted(window, cx));
             }
         })
     });

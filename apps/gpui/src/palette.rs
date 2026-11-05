@@ -1665,6 +1665,24 @@ fn pasted(text: &str) -> Vec<Command> {
     ]
 }
 
+/// Paste outside a text field: what the clipboard holds opens as Quick Pick's first suggestion
+/// for it would (a game or position on the analysis board, a Lichess link where it belongs).
+/// Under a dialog nothing happens; anything else is said in a notice.
+pub fn open_pasted(window: &mut Window, cx: &mut App) {
+    use gpui_kit::component::WindowExt as _;
+    if window.has_active_dialog(cx) {
+        return;
+    }
+    let text = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default();
+    match pasted(text.trim()).into_iter().next() {
+        Some(command) => (command.run)(window, cx),
+        None => window.push_notification("Copy a PGN, a FEN or a Lichess link to open it", cx),
+    }
+}
+
 /// Numbered moves (`1. e4 e5 2. Nf3`, with or without PGN headers) the analysis board can play.
 fn movetext(text: &str) -> Option<String> {
     let numbered = text.split_whitespace().any(|word| word.starts_with("1."));

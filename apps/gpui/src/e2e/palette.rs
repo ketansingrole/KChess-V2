@@ -751,3 +751,46 @@ fn a_watched_game_is_analysed_from_its_button_and_quick_pick(cx: &mut gpui_kit::
     });
     app.find("tree-e2e4 c7c5");
 }
+
+/// Paste outside a text field opens what was copied: moves on the analysis board, a FEN there
+/// too; text that is neither leaves the page as it was, and a text field still takes its paste.
+#[gpui_kit::test]
+fn a_copied_game_is_opened_with_paste(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Puzzles");
+    let copy = |app: &mut Harness, text: &str| {
+        app.cx
+            .write_to_clipboard(gpui_kit::ClipboardItem::new_string(text.to_string()))
+    };
+    let page = |app: &mut Harness| app.cx.update(|cx| crate::shell::current_page(cx));
+
+    copy(&mut app, "hello");
+    app.press("secondary-v");
+    assert_eq!(page(&mut app), Some(crate::pages::Page::Puzzles));
+
+    copy(&mut app, "1. e4 e5 2. Nf3");
+    app.press("secondary-v");
+    app.wait_for("the moves on the analysis board", |_, cx| {
+        crate::shell::current_page(cx) == Some(crate::pages::Page::Analysis)
+    });
+    app.find("tree-e2e4 e7e5 g1f3");
+
+    // In Quick Pick's field the text is pasted as text.
+    app.press("secondary-k");
+    app.press("secondary-v");
+    wait_for_first(&mut app, "Analyse these moves");
+    app.press("escape");
+    wait_until_closed(&mut app);
+
+    copy(
+        &mut app,
+        "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1",
+    );
+    app.press("secondary-v");
+    // The moves on the board are not saved: replacing them asks first.
+    app.click_label("Replace");
+    app.wait_gone("tree-e2e4 e7e5 g1f3");
+    app.click_square("d7", true);
+    app.click_square("d5", true);
+    app.find("tree-d7d5");
+}
