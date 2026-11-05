@@ -563,6 +563,9 @@ fn analysis_fen(words: &[String]) -> Result<String, String> {
 /// Lichess does (the last named position on the way). Offline: no core is needed.
 fn opening_name(words: &[String]) -> Result<Value, String> {
     let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "opening"))?;
+    if request.get("variant").is_some() {
+        return Err("Opening names are for standard chess only.".into());
+    }
     let root = request.get("rootFen").unwrap_or(&request["fen"]).clone();
     let moves = request.get("moves").cloned().unwrap_or_else(|| json!([]));
     let named = kchess_domain::api::call_value(
@@ -846,6 +849,11 @@ mod tests {
         assert_eq!(
             opening_name(&[]),
             Err("opening requires a FEN or moves.".into())
+        );
+        // Opening names are standard chess's, as the game pages show them.
+        assert_eq!(
+            opening_name(&strings(&["--variant", "crazyhouse", "1.", "e4", "c5"])),
+            Err("Opening names are for standard chess only.".into())
         );
     }
 
