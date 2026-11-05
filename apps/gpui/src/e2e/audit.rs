@@ -4,7 +4,7 @@
 
 use std::fmt::Write as _;
 
-use gpui_kit::test::{ElementSnapshot, TestQueryExt as _};
+use gpui_kit::test::{ElementSnapshot, TestQueryExt as _, TestWindowExt as _};
 use gpui_kit::{Role, px, size};
 
 use super::{Harness, SIZES};
@@ -174,5 +174,32 @@ fn describe(control: &ElementSnapshot) -> String {
     match control.label() {
         Some(label) => format!("{:?} {label:?}", control.role()),
         None => format!("{:?} {:?}", control.role(), control.path().last()),
+    }
+}
+
+/// The board editor's settings scroll under its actions, which stay inside the panel at every size
+/// (they were cut off at its foot in a laptop-sized window).
+#[gpui_kit::test]
+fn the_board_editors_actions_stay_in_its_panel(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.with_window(|window, cx| crate::shell::open(Page::Editor, window, cx));
+    for (width, height) in SIZES {
+        app.cx
+            .simulate_window_resize(app.window, size(px(width), px(height)));
+        for _ in 0..20 {
+            app.tick();
+        }
+        let bounds = |app: &mut Harness, id: &'static str| {
+            app.with_window(|window, _| window.try_find(id).map(|found| found.bounds()))
+                .unwrap_or_else(|| panic!("no {id}"))
+        };
+        let panel = bounds(&mut app, "editor-panel");
+        for action in ["analyse-position", "play-stockfish", "play-friend"] {
+            let button = bounds(&mut app, action);
+            assert!(
+                button.bottom() <= panel.bottom() && button.top() >= panel.top(),
+                "{action} at {width}x{height}: {button:?} outside the panel {panel:?}"
+            );
+        }
     }
 }

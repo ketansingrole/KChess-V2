@@ -895,15 +895,12 @@ impl Render for EditorPage {
                     .text_color(palette.error)
                     .child(error)
             }));
-        let panel = widgets::side_panel(&palette)
-            .id("editor-panel")
-            .overflow_y_scroll()
-            .h(self
-                .layout
-                .fixed(self.layout.panel_height_px(board_size) + SPARE_ROWS))
+        // The position's settings scroll; what to do with it stays in view below them.
+        let settings = v_flex()
+            .id("editor-settings")
             .flex_1()
-            .min_w(PANEL_MIN)
-            .max_w(PANEL_MAX)
+            .min_h_0()
+            .overflow_y_scroll()
             .gap(px(16.))
             .child(
                 widgets::StatusBanner::new(
@@ -1033,9 +1030,21 @@ impl Render for EditorPage {
                             .label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     ),
-            )
+            );
+        let panel = widgets::side_panel(&palette)
+            .id("editor-panel")
+            .test_support()
+            .h(self
+                .layout
+                .fixed(self.layout.panel_height_px(board_size) + SPARE_ROWS))
+            .flex_1()
+            .min_w(PANEL_MIN)
+            .max_w(PANEL_MAX)
+            .gap(px(14.))
+            .child(settings)
             .child(
                 v_flex()
+                    .flex_none()
                     .pt(px(14.))
                     .border_t_1()
                     .border_color(palette.border)
