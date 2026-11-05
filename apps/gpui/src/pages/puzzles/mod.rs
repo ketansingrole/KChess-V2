@@ -949,7 +949,7 @@ pub(crate) fn status_panel(
                     Button::new("puzzle-flip")
                         .ghost()
                         .icon(icon("arrow-up-down"))
-                        .tooltip("Flip board")
+                        .tooltip("Flip board (F)")
                         .accessibility_label("Flip board")
                         .on_click({
                             let board = board_entity.downgrade();
@@ -1546,6 +1546,13 @@ impl PuzzlesPage {
     }
 
     /// The puzzle board of the tab shown, while it shows a puzzle, and whether it is Train's.
+    /// Whether the board on screen is turned round.
+    #[cfg(test)]
+    pub(crate) fn shown_flipped(&self, cx: &App) -> Option<bool> {
+        self.shown_board(cx)
+            .map(|(board, _)| board.read(cx).flipped())
+    }
+
     fn shown_board(&self, cx: &App) -> Option<(Entity<PuzzleBoard>, bool)> {
         match crate::prefs::get::<String>(cx, TAB, "train".into()).as_str() {
             "train" => (self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == "ready")
@@ -1610,6 +1617,17 @@ impl PuzzlesPage {
             Action::Flip => board.update(cx, |board, cx| board.flip(cx)),
             Action::Next => self.load_next(cx),
             Action::Rush(_) => {}
+        }
+    }
+
+    /// F turns the board, as its button does, while no text field has the keys.
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+            return;
+        }
+        if event.keystroke.key == "f" && self.actions(cx).contains(&Action::Flip) {
+            self.act(Action::Flip, cx);
+            cx.stop_propagation();
         }
     }
 
@@ -1744,6 +1762,13 @@ impl Render for PuzzlesPage {
         v_flex()
             .size_full()
             .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::key))
+            // A click gives the keys back to the page, before a text field takes them.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .child(
                 div()
                     .flex_none()

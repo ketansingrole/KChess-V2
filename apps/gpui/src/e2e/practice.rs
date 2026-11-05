@@ -173,6 +173,27 @@ fn endgame_drills_open_and_return_to_the_courses(cx: &mut gpui_kit::TestAppConte
     assert!(!app.shows("chess-board"));
 }
 
+/// F turns an endgame drill's board, as its button does.
+#[gpui_kit::test]
+fn f_flips_an_endgame_drill(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, 3);
+    reveal(&mut app, "endgame-courses", "card-drills");
+    app.click("card-drills");
+    app.find("drill-hint");
+    let flipped = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+                .and_then(|page| page.read(cx).drills(cx))
+                .map(|drills| drills.read(cx).flipped())
+        })
+    };
+    assert_eq!(flipped(&mut app), Some(false));
+    app.click("chess-board");
+    app.press("f");
+    assert_eq!(flipped(&mut app), Some(true));
+}
+
 /// An endgame drill's buttons are in Quick Pick, those it allows now.
 #[gpui_kit::test]
 fn an_endgame_drill_is_flipped_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {

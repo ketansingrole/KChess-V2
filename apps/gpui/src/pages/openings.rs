@@ -574,6 +574,11 @@ impl OpeningsPage {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn orientation(&self) -> Color {
+        self.orientation
+    }
+
     fn flip(&mut self, cx: &mut Context<Self>) {
         self.orientation = !self.orientation;
         self.redraw(cx);
@@ -1103,7 +1108,7 @@ impl OpeningsPage {
                             .ghost()
                             .xsmall()
                             .icon(icon("arrow-up-down"))
-                            .tooltip("Flip board")
+                            .tooltip("Flip board (F)")
                             .accessibility_label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     ),
@@ -1218,6 +1223,21 @@ impl Render for OpeningsPage {
             return div()
                 .size_full()
                 .track_focus(&self.focus)
+                // F turns the line's board, as its button does, while no text field has the keys.
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                    if this.focus.is_focused(window)
+                        && !event.keystroke.modifiers.modified()
+                        && event.keystroke.key == "f"
+                    {
+                        this.act(Action::Flip, window, cx);
+                        cx.stop_propagation();
+                    }
+                }))
+                .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    if event.button == MouseButton::Left {
+                        window.focus(&this.focus, cx);
+                    }
+                }))
                 .child(self.render_detail(window, cx, &palette))
                 .into_any_element();
         }

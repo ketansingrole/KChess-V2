@@ -616,7 +616,7 @@ fn page_actions<V: 'static, A: Copy + 'static>(
 
 /// A page's flip command, with the F its page takes for it.
 fn flip_key(command: Command) -> Command {
-    if command.id.ends_with(":flip") {
+    if command.id.ends_with("flip") {
         command.kbds("F")
     } else {
         command
@@ -706,6 +706,9 @@ fn puzzle_commands(cx: &App) -> Vec<Command> {
         },
         |page: &mut PuzzlesPage, action, _, cx| page.act(action, cx),
     )
+    .into_iter()
+    .map(flip_key)
+    .collect()
 }
 
 /// The watched game's actions, as its panel's buttons offer them.
@@ -769,6 +772,9 @@ fn openings_commands(cx: &App) -> Vec<Command> {
         },
         OpeningsPage::act,
     )
+    .into_iter()
+    .map(flip_key)
+    .collect()
 }
 
 /// The Tournaments page's actions: the schedule's, or the open event's.
@@ -866,6 +872,9 @@ fn practice_commands(cx: &App) -> Vec<Command> {
         },
         PracticePage::act,
     )
+    .into_iter()
+    .map(flip_key)
+    .collect()
 }
 
 /// Game history's actions: the open game's, or the synced games'.

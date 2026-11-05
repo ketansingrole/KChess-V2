@@ -226,3 +226,20 @@ fn a_drilled_line_is_saved_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let studies = loop_until_saved(&mut app);
     assert!(studies.contains("King's Gambit"), "{studies}");
 }
+
+/// F turns an opening's board, as its button does.
+#[gpui_kit::test]
+fn f_flips_an_openings_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = openings(cx);
+    open_kieseritzky(&mut app);
+    let orientation = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<crate::pages::openings::OpeningsPage>(Page::Openings, cx)
+                .map(|page| page.read(cx).orientation())
+        })
+    };
+    let before = orientation(&mut app).expect("the page");
+    app.click("opening-title");
+    app.press("f");
+    assert_eq!(orientation(&mut app), Some(!before));
+}

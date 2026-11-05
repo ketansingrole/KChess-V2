@@ -227,3 +227,38 @@ fn quick_pick_starts_and_ends_a_storm_run(cx: &mut gpui_kit::TestAppContext) {
     run(&mut app, "Back to modes");
     app.find("rush-start");
 }
+
+/// F turns the puzzle's board, as its button does, after a click on the page.
+#[gpui_kit::test]
+fn f_flips_the_puzzle(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/training/{}",
+        super::fake_lichess::LINKED_PUZZLE
+    ));
+    super::palette::wait_for_first(&mut app, "Solve this puzzle");
+    app.press("enter");
+    app.find("daily-today");
+    app.wait_for("the puzzle to be playable", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_some_and(|hint| hint.disabled() != Some(true))
+    });
+    super::palette::wait_until_closed(&mut app);
+    let flipped = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<crate::pages::puzzles::PuzzlesPage>(
+                crate::pages::Page::Puzzles,
+                cx,
+            )
+            .and_then(|page| page.read(cx).shown_flipped(cx))
+        })
+    };
+    assert_eq!(flipped(&mut app), Some(false));
+    app.click("chess-board");
+    app.press("f");
+    assert_eq!(flipped(&mut app), Some(true));
+}

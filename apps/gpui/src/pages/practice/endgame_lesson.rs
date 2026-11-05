@@ -721,7 +721,7 @@ impl EndgameLesson {
                         Button::new("lesson-flip")
                             .outline()
                             .icon(icon("arrow-up-down"))
-                            .tooltip("Flip board")
+                            .tooltip("Flip board (F)")
                             .accessibility_label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     )

@@ -272,6 +272,11 @@ impl PuzzleBoard {
         if self.flipped { !color } else { color }
     }
 
+    #[cfg(test)]
+    pub(crate) fn flipped(&self) -> bool {
+        self.flipped
+    }
+
     pub fn flip(&mut self, cx: &mut Context<Self>) {
         self.flipped = !self.flipped;
         self.redraw(cx);

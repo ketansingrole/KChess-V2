@@ -240,6 +240,24 @@ impl PracticePage {
                     drill.update(cx, |drill, cx| drill.key(event, window, cx));
                 }
             }
+            // F turns an endgame drill's or lesson's board, as its button does.
+            "endgames"
+                if self.focus.is_focused(window)
+                    && !event.keystroke.modifiers.modified()
+                    && event.keystroke.key == "f" =>
+            {
+                let flip = self.actions(cx).into_iter().find(|action| {
+                    matches!(
+                        action,
+                        Action::Drill(endgame_drills::DrillAction::Flip)
+                            | Action::Lesson(endgame_lesson::LessonAction::Flip)
+                    )
+                });
+                if let Some(flip) = flip {
+                    self.act(flip, window, cx);
+                    cx.stop_propagation();
+                }
+            }
             _ => {}
         }
     }
@@ -289,6 +307,13 @@ impl Render for PracticePage {
                     }
                 }),
             )
+            // On an endgame's board a click gives F back to the page, before a text field
+            // takes the keys.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left && Self::tab(cx) == "endgames" {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .child(
                 div()
                     .flex_none()
