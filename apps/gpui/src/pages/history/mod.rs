@@ -302,6 +302,40 @@ impl HistoryPage {
         games
     }
 
+    /// The games the list shows under its filter, newest first.
+    fn listed(&self, cx: &App) -> Vec<Value> {
+        self.games(cx)
+            .into_iter()
+            .filter(|game| {
+                self.filter == Filter::All || filter_of(&outcome(game)) == Some(self.filter)
+            })
+            .collect()
+    }
+
+    /// The game `step` rows from the open one in the list (-1 the one above, newer; 1 below),
+    /// skipping clock sessions, which have no moves to go through.
+    fn neighbour(&self, step: isize, cx: &App) -> Option<(usize, Value)> {
+        let (open, _) = self.open.as_ref()?;
+        let listed = self.listed(cx);
+        let at = listed.iter().position(|game| game["id"] == open["id"])?;
+        let mut index = at as isize;
+        loop {
+            index += step;
+            let game = listed.get(usize::try_from(index).ok()?)?;
+            if text(game, "source") != "clock" {
+                return Some((index as usize, game.clone()));
+            }
+        }
+    }
+
+    /// Open the game `step` rows away, the list's page following it.
+    fn step_game(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((index, game)) = self.neighbour(step, cx) {
+            self.page = index / PAGE_SIZE;
+            self.open_game(game, window, cx);
+        }
+    }
+
     /// Show the Lichess tab's list of one account's games (Following's Games).
     pub fn show_lichess_account(
         &mut self,
@@ -311,6 +345,24 @@ impl HistoryPage {
     ) {
         self.choose_source(Source::Lichess, cx);
         self.set_lichess_account(account, window, cx);
+    }
+
+    /// Open the first game on the Lichess list's page, as its row does.
+    #[cfg(test)]
+    pub(crate) fn open_first_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(game) = self.lichess.games.first().cloned() {
+            self.open_lichess(game, window, cx);
+        }
+    }
+
+    /// The Lichess game open, and the ids its list's page shows.
+    #[cfg(test)]
+    pub(crate) fn lichess_open(&self) -> (Option<String>, Vec<String>) {
+        let id = |game: &Value| game["id"].as_str().unwrap_or_default().to_string();
+        (
+            self.lichess.open.as_ref().map(|(game, _)| id(game)),
+            self.lichess.games.iter().map(id).collect(),
+        )
     }
 
     /// The Lichess tab once loaded: its total and the openings of the games listed.
@@ -767,6 +819,28 @@ impl HistoryPage {
                             .label("All games")
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.close_game(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("previous-game")
+                            .ghost()
+                            .icon(icon("chevron-left"))
+                            .tooltip("Previous game")
+                            .accessibility_label("Previous game")
+                            .disabled(self.neighbour(-1, cx).is_none())
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.step_game(-1, window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("next-game")
+                            .ghost()
+                            .icon(icon("chevron-right"))
+                            .tooltip("Next game")
+                            .accessibility_label("Next game")
+                            .disabled(self.neighbour(1, cx).is_none())
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.step_game(1, window, cx)),
                             ),
                     )
                     .child(badge(&outcome(game), None, palette))

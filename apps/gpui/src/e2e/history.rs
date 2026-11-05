@@ -379,3 +379,73 @@ fn lichess_games_are_searched_by_opponent_or_opening(cx: &mut gpui_kit::TestAppC
         total > 0 && total < 40
     });
 }
+
+/// An open game steps to the games above and below it in the list without going back to it,
+/// within the list's filter.
+#[gpui_kit::test]
+fn an_open_game_steps_to_the_next_and_previous(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = mate_in_history(cx);
+    // A newer game, left unfinished after one move: it is listed first.
+    app.open("Over the board");
+    app.click("local-new");
+    app.click("start-local");
+    app.wait_for_moves(&[]);
+    play_over_the_board(&mut app, &["e4"]);
+    app.open("Game history");
+    app.find(("history-row", 1usize));
+
+    app.click(("history-row", 0usize));
+    app.wait_for_moves(&["e4"]);
+    assert!(!app.enabled("previous-game"));
+    app.click("next-game");
+    app.wait_for_moves(&SCHOLARS_MATE);
+    assert!(!app.enabled("next-game"));
+    app.click("previous-game");
+    app.wait_for_moves(&["e4"]);
+
+    // Under White won, the unfinished game is not listed: Scholar's mate has no neighbours.
+    app.click("all-games");
+    app.click(("history-filter", 1usize));
+    app.click(("history-row", 0usize));
+    app.wait_for_moves(&SCHOLARS_MATE);
+    assert!(!app.enabled("previous-game"));
+    assert!(!app.enabled("next-game"));
+}
+
+/// A synced Lichess game steps to its neighbours on the list's page too.
+#[gpui_kit::test]
+fn a_lichess_game_steps_to_the_next_and_previous(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    app.with_window(|window, cx| crate::shell::open(Page::History, window, cx));
+    app.click(("history-source", 2usize));
+    lichess_listed(&mut app, "the synced games", |total, _| total == 40);
+    let open = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+                .map(|page| page.read(cx).lichess_open())
+                .unwrap_or_default()
+        })
+    };
+    let wait_open = |app: &mut Harness, row: usize| {
+        app.wait_for("the game to open", |_, cx| {
+            crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+                .map(|page| page.read(cx).lichess_open())
+                .is_some_and(|(open, ids)| open.as_ref() == ids.get(row))
+        });
+    };
+
+    app.with_window(|window, cx| {
+        let page = crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+            .expect("the history page");
+        page.update(cx, |page, cx| page.open_first_lichess(window, cx));
+    });
+    wait_open(&mut app, 0);
+    assert!(!app.enabled("lichess-previous-game"));
+    app.click("lichess-next-game");
+    wait_open(&mut app, 1);
+    app.click("lichess-next-game");
+    wait_open(&mut app, 2);
+    app.click("lichess-previous-game");
+    wait_open(&mut app, 1);
+    assert!(open(&mut app).0.is_some());
+}

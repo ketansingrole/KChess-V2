@@ -353,6 +353,22 @@ impl HistoryPage {
         .detach();
     }
 
+    /// The game `step` rows from the open one on the list's page (-1 the one above, newer).
+    fn lichess_neighbour(&self, step: isize) -> Option<Value> {
+        let (open, _) = self.lichess.open.as_ref()?;
+        let games = &self.lichess.games;
+        let at = games.iter().position(|game| game["id"] == open["id"])?;
+        games
+            .get(usize::try_from(at as isize + step).ok()?)
+            .cloned()
+    }
+
+    fn step_lichess(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(game) = self.lichess_neighbour(step) {
+            self.open_lichess(game, window, cx);
+        }
+    }
+
     pub(super) fn close_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.lichess.open = None;
         self.redo = None;
@@ -437,6 +453,32 @@ impl HistoryPage {
                             .label("All games")
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.close_lichess(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("lichess-previous-game")
+                            .ghost()
+                            .small()
+                            .icon(icon("chevron-left"))
+                            .tooltip("Previous game")
+                            .accessibility_label("Previous game")
+                            .disabled(self.lichess_neighbour(-1).is_none())
+                            .on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.step_lichess(-1, window, cx)
+                                }),
+                            ),
+                    )
+                    .child(
+                        Button::new("lichess-next-game")
+                            .ghost()
+                            .small()
+                            .icon(icon("chevron-right"))
+                            .tooltip("Next game")
+                            .accessibility_label("Next game")
+                            .disabled(self.lichess_neighbour(1).is_none())
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.step_lichess(1, window, cx)),
                             ),
                     )
                     .child(super::badge(outcome, None, palette))

@@ -1058,6 +1058,32 @@ fn showcase_games(username: &str) -> Vec<Value> {
             if let Some(winner) = winner {
                 game["winner"] = json!(winner);
             }
+            // `pgnInJson`, as the export sends it: the moves numbered, under the players' tags.
+            let result = match winner {
+                Some("white") => "1-0",
+                Some(_) => "0-1",
+                None => "1/2-1/2",
+            };
+            let (white_name, black_name) = if white {
+                (user["name"].as_str().unwrap_or_default(), opponent)
+            } else {
+                (opponent, user["name"].as_str().unwrap_or_default())
+            };
+            let movetext: Vec<String> = moves
+                .split_whitespace()
+                .enumerate()
+                .map(|(ply, san)| {
+                    if ply % 2 == 0 {
+                        format!("{}. {san}", ply / 2 + 1)
+                    } else {
+                        san.to_string()
+                    }
+                })
+                .collect();
+            game["pgn"] = json!(format!(
+                "[White \"{white_name}\"]\n[Black \"{black_name}\"]\n[Result \"{result}\"]\n\n{} {result}\n",
+                movetext.join(" ")
+            ));
             game
         })
         .collect()
