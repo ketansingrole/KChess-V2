@@ -857,11 +857,9 @@ impl ComputerPage {
         actions
     }
 
-    /// The finished game can be reviewed on the analysis board (standard chess and Chess960).
+    /// The finished game can be reviewed on the analysis board.
     fn can_review(&self) -> bool {
-        self.game.result(&self.host()).is_some()
-            && !self.moves().is_empty()
-            && crate::game::standard_rules(&self.setup_variant())
+        self.game.result(&self.host()).is_some() && !self.moves().is_empty()
     }
 
     /// Run an action as its button does, asking first where the button asks.

@@ -294,8 +294,15 @@ impl Game {
         if !self.state.setup.is_standard_start() {
             options.insert("fen".into(), json!(self.state.setup.fen));
         }
-        if self.state.setup.variant == "chess960" {
-            options.insert("chess960".into(), json!(true));
+        match self.state.setup.variant.as_str() {
+            "standard" => {}
+            "chess960" => {
+                options.insert("chess960".into(), json!(true));
+            }
+            // Fairy-Stockfish plays the other variants.
+            variant => {
+                options.insert("variant".into(), json!(variant));
+            }
         }
         if let Some(movetime) = movetime {
             options.insert("movetime".into(), json!(movetime));

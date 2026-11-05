@@ -1,6 +1,6 @@
 //! Variant analysis with the real Fairy-Stockfish (`support::fairy_stockfish`): a Crazyhouse
 //! position analysed with drops in its lines, an Atomic one under Atomic's rules, and a
-//! Crazyhouse game reviewed.
+//! Crazyhouse game reviewed, and the computer playing Crazyhouse and Horde.
 
 mod support;
 
@@ -174,4 +174,86 @@ async fn wait_until_review(
         host.complete_updates().into_iter().next()
     })
     .await
+}
+
+/// The computer's search over the real Fairy-Stockfish, which `random` makes play its random
+/// move (the weakest levels) or its best.
+fn variant_search(engine: std::path::PathBuf, random: f64) -> kchess_core::engine::search::Search {
+    let host = support::host();
+    let mut locations = support::locations();
+    locations.variant = engine;
+    let ctx = EngineContext::new(
+        host.clone(),
+        Arc::new(support::hub(&host)),
+        support::scheduler(2, false),
+        locations,
+    );
+    kchess_core::engine::search::Search::with_random(ctx, Arc::new(move || random))
+}
+
+/// The computer plays Crazyhouse and Horde by their rules, from their own starts: its moves
+/// (best or random) are legal there, and a drop is among the moves it is given.
+#[tokio::test]
+async fn the_computer_plays_a_variant_by_its_rules() {
+    let Some(engine) = support::fairy_stockfish() else {
+        return;
+    };
+    let zh = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+    let horde = "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1";
+    let games = [
+        (
+            "crazyhouse",
+            zh,
+            vec!["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"],
+        ),
+        ("horde", horde, vec!["d4d5"]),
+    ];
+    for random in [1.0, 0.0] {
+        let search = variant_search(engine.clone(), random);
+        for (variant, fen, moves) in &games {
+            let level = if random == 0.0 { "beginner" } else { "max" };
+            let reply = search
+                .best_move(
+                    json!(moves),
+                    level,
+                    "",
+                    json!({ "fen": fen, "variant": variant, "movetime": 100 }),
+                )
+                .await
+                .unwrap_or_else(|cause| panic!("{variant} {level}: {}", cause.message));
+            let mut line: Vec<String> = moves.iter().map(|mv| mv.to_string()).collect();
+            line.push(reply.clone());
+            assert_eq!(
+                kchess_domain::replay::replay_setup_count(variant, fen, &line),
+                Some(line.len()),
+                "{variant} {level} played {reply}"
+            );
+        }
+        search.stop_engine(true);
+    }
+}
+
+/// Without Fairy-Stockfish a variant game's move fails at once, saying which engine is missing.
+#[tokio::test]
+async fn a_variant_move_without_fairy_stockfish_says_so() {
+    let search = variant_search(
+        std::path::PathBuf::from("/nonexistent/fairy-stockfish"),
+        1.0,
+    );
+    let failed = search
+        .best_move(
+            json!(["e2e4"]),
+            "max",
+            "",
+            json!({
+                "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1",
+                "variant": "crazyhouse",
+            }),
+        )
+        .await
+        .expect_err("no engine");
+    assert_eq!(
+        failed.message,
+        "Fairy-Stockfish, which plays this variant, is missing."
+    );
 }

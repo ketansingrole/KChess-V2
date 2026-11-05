@@ -77,7 +77,7 @@ can add them as a friend, challenge them or watch their current game.
   moves and the eval chart, judged by the variant's own wins). The explorer, cloud evaluation and
   mistake drills cover standard chess and Chess960. On the command line,
   `kchess-cli analyze --variant crazyhouse <fen|moves>` and `kchess-cli review` (a PGN with its
-  `Variant` header) do the same. Playing these variants against the computer is not built yet.
+  `Variant` header) do the same.
 - **Opening names** from Lichess's CC0 opening list, bundled with the app, in every game view.
   Settings → Gameplay → _Show opening names_.
 - **Lichess studies**: list your studies, open a chapter, save all chapters to the local study
@@ -88,7 +88,7 @@ can add them as a friend, challenge them or watch their current game.
 - **Import a game by link**: paste a lichess.org game link (with `/black` or `#move` if you
   like) into the analysis board's import, and the game opens there. On the command line,
   `kchess-cli pgn <link>` prints a game's or a public study chapter's PGN, and
-  `kchess-cli review <link|file|moves>` reviews a standard or Chess960 game with Stockfish, printing each
+  `kchess-cli review <link|file|moves>` reviews a game (in any variant) with the engine, printing each
   side's accuracy and the inaccuracies, mistakes and blunders.
   `kchess-cli explore [masters|opening|tablebase] <fen|moves>` prints the explorer's moves for a
   position, from the tablebase when it has seven pieces or fewer, and
@@ -107,7 +107,8 @@ can add them as a friend, challenge them or watch their current game.
 ### Playing without Lichess
 
 - **Computer games**: _Game options_ starts from the standard position, a Chess960 position
-  (numbered, or random) or any FEN, with an optional clock (the engine's thinking time is kept
+  (numbered, or random), another variant (King of the Hill, Three-check, Antichess, Atomic,
+  Horde, Racing Kings or Crazyhouse, played by the bundled Fairy-Stockfish) or any FEN, with an optional clock (the engine's thinking time is kept
   within its clock), a colour and a strength. The editor and analysis board both have _Play
   Stockfish from here_.
 - **Over the board**: two players at one computer in any supported variant. It has optional

@@ -182,3 +182,56 @@ fn a_finished_game_is_reviewed_from_quick_pick(cx: &mut gpui_kit::TestAppContext
         crate::shell::current_page(cx) == Some(crate::pages::Page::Analysis)
     });
 }
+
+/// Game options start a game in another variant, which the engine plays by its rules: the
+/// variant's start, and the computer's move from it.
+#[gpui_kit::test]
+fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click("game-options");
+    app.click(("start", 2usize));
+    app.click("start-game");
+    app.wait_gone("start-game");
+    let variant = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<crate::pages::computer::ComputerPage>(
+                crate::pages::Page::Computer,
+                cx,
+            )
+            .map(|page| page.read(cx).setup_variant())
+        })
+    };
+    // The first variant listed after standard chess and Chess960.
+    assert_eq!(variant(&mut app).as_deref(), Some("kingOfTheHill"));
+    // The scripted engine answers e2e4, which King of the Hill's rules allow from its start.
+    app.click("flip");
+    app.wait_for_moves(&["e4"]);
+
+    // A Crazyhouse start (its FEN has pockets, which standard rules refuse) is searched in
+    // Crazyhouse: the computer, White, moves.
+    app.with_window(|window, cx| {
+        let page = crate::shell::view_of::<crate::pages::computer::ComputerPage>(
+            crate::pages::Page::Computer,
+            cx,
+        )
+        .expect("the page");
+        page.update(cx, |page, cx| {
+            page.start_from(
+                serde_json::json!({
+                    "variant": "crazyhouse",
+                    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1",
+                }),
+                shakmaty::Color::Black,
+                window,
+                cx,
+            )
+        });
+    });
+    // Starting over asks first.
+    app.click("ok");
+    app.wait_for_moves(&["e4"]);
+    assert_eq!(variant(&mut app).as_deref(), Some("crazyhouse"));
+    // The dialog opens on the variant game being played.
+    app.click("game-options");
+    assert_eq!(app.find(("start", 2usize)).selected(), Some(true));
+}

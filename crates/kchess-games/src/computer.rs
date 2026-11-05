@@ -287,6 +287,35 @@ mod tests {
         assert_eq!(game.state["moves"], json!([]));
     }
 
+    /// Another variant's game is played by its rules and searched in it: a drop is a move, and
+    /// the engine is told the variant (Fairy-Stockfish plays it) and the start.
+    #[test]
+    fn a_crazyhouse_game_searches_in_its_variant() {
+        let mut game = ComputerGame::new(None, &host(0.)).unwrap();
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+        game.start(
+            Some(json!({ "variant": "crazyhouse", "fen": start })),
+            None,
+            &host(0.),
+        )
+        .unwrap();
+        for (ply, mv) in ["e2e4", "d7d5", "e4d5", "d8d5"].iter().enumerate() {
+            if ply % 2 == 0 {
+                assert!(game.play(mv, &host(1.)).unwrap().0, "{mv}");
+            } else {
+                let request = game.search_start(&host(2.)).unwrap().expect("a search");
+                assert_eq!(request.options["variant"], "crazyhouse");
+                assert_eq!(request.options["fen"], start);
+                game.search_reply(&request, mv, &host(3.)).unwrap();
+            }
+        }
+        let (played, _) = game.play("P@e3", &host(4.)).unwrap();
+        assert!(played);
+        let request = game.search_start(&host(5.)).unwrap().expect("a search");
+        assert_eq!(request.moves, ["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"]);
+        assert!(request.options.get("chess960").is_none());
+    }
+
     #[test]
     fn an_illegal_move_is_refused() {
         let mut game = ComputerGame::new(None, &host(0.)).unwrap();

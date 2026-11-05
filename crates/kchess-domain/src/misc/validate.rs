@@ -1472,17 +1472,38 @@ struct BestMoveOptions {
     movetime: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     chess960: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variant: Option<String>,
 }
 
 fn assert_best_move_options(value: J) -> Checked<BestMoveOptions> {
     if matches!(value, J::Undef) {
         return Ok(BestMoveOptions::default());
     }
-    let options: BestMoveOptions = decode(value, |keys| match keys {
+    let mut options: BestMoveOptions = decode(value, |keys| match keys {
         ["fen"] => Some("Invalid position."),
         ["movetime"] => Some("Invalid think time."),
+        ["variant"] => Some("Invalid variant."),
         _ => Some("Invalid engine options."),
     })?;
+    // Another variant (Fairy-Stockfish plays it) starts from a position legal by its own rules.
+    if let Some(variant) = options
+        .variant
+        .as_deref()
+        .filter(|variant| !matches!(*variant, "standard" | "chess960"))
+    {
+        one_of(variant, VARIANTS, Some("Invalid variant."), "variant")?;
+        let position = options.fen.as_deref().ok_or("Invalid position.")?;
+        max_chars(position, 120, Some("Invalid position."), "fen")?;
+        if crate::rules::setup_start(variant, position).is_none() {
+            return Err("Invalid position.".into());
+        }
+        if let Some(movetime) = options.movetime {
+            within(movetime, 50, 5000, Some("Invalid think time."), "")?;
+        }
+        return Ok(options);
+    }
+    options.variant = None;
     if let Some(position) = &options.fen {
         fen(position, None, Some("Invalid position."), "fen")?;
         engine_position(position)?;
@@ -2477,6 +2498,29 @@ mod tests {
         assert_eq!(run("assertAnalysisRequest", analysis), refused);
         let search = obj(vec![("fen", J::Str(crowded.into()))]);
         assert_eq!(run("assertBestMoveOptions", search), refused);
+        // Horde's thirty-six pawns are Horde's: Fairy-Stockfish plays them.
+        let horde = "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1";
+        let search = obj(vec![
+            ("fen", J::Str(horde.into())),
+            ("variant", J::Str("horde".into())),
+        ]);
+        assert_eq!(
+            run("assertBestMoveOptions", search),
+            Ok(json!({ "fen": horde, "variant": "horde" }))
+        );
+        let search = obj(vec![
+            ("fen", J::Str(horde.into())),
+            ("variant", J::Str("crazyhouse".into())),
+        ]);
+        assert_eq!(
+            run("assertBestMoveOptions", search),
+            Err("Invalid position.".into())
+        );
+        let search = obj(vec![("variant", J::Str("bughouse".into()))]);
+        assert_eq!(
+            run("assertBestMoveOptions", search),
+            Err("Invalid variant.".into())
+        );
         let review = obj(vec![
             ("fen", J::Str(crowded.into())),
             ("moves", J::Arr(vec![])),

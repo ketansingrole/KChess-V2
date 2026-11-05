@@ -186,7 +186,7 @@ beside the macOS window buttons to the window's left edge, in line with the side
 - Online extras: draw offers, chat, incoming challenges with accept/decline, rematch, claim victory, berserk, correspondence games, variants (Chess960, King of the Hill, Three-check, Antichess, Atomic, Horde, Racing Kings) and tournaments (arenas and your teams' Swiss events).
 - Watch Lichess TV, friends' live games and broadcasts; look up any player's ratings, records and your score against them.
 - Analysis extras: variant games (Crazyhouse, Atomic and the rest) analysed and reviewed by the bundled Fairy-Stockfish, Masters and Player explorer databases with filters, opt-in Lichess cloud evaluation, opening names, Lichess study import and export, and GIF/PNG/PGN export.
-- Computer games from Chess960 or any position, with clocks; two players at one computer, a chess clock for real boards, blindfold and zen mode; an opening trainer; and Insights from your synced games.
+- Computer games from Chess960, any variant or any position, with clocks; two players at one computer, a chess clock for real boards, blindfold and zen mode; an opening trainer; and Insights from your synced games.
 - What KChess cannot do that Lichess does, and why, is in [`docs/lichess-parity.md`](docs/lichess-parity.md).
 
 ### What is synced with Lichess and what is not
