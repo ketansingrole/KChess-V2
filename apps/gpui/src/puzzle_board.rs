@@ -250,6 +250,16 @@ impl PuzzleBoard {
             && !self.frozen
     }
 
+    /// Whether the keys are with the typed-move field.
+    pub fn move_field_focused(&self, window: &Window, cx: &App) -> bool {
+        self.move_input.read(cx).focus_handle(cx).is_focused(window)
+    }
+
+    /// Solved, failed or its solution shown: what is left is the next puzzle.
+    pub fn over(&self) -> bool {
+        self.on_board.is_some() && matches!(self.status(), "solved" | "failed" | "revealed")
+    }
+
     /// Runs (`retry: false`, `reply-delay`): a wrong move fails the puzzle, replies come faster.
     pub fn for_runs(&mut self, reply_delay: Duration) {
         self.retry = false;

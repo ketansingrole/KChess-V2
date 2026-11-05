@@ -262,3 +262,63 @@ fn f_flips_the_puzzle(cx: &mut gpui_kit::TestAppContext) {
     app.press("f");
     assert_eq!(flipped(&mut app), Some(true));
 }
+
+/// Once a training puzzle is over (and Next puzzle after solving is off), Return goes on to the next one, from the (now shut) move field
+/// or the page, and so does Space; while it is being solved, Return belongs to the move field.
+#[gpui_kit::test]
+fn return_goes_on_to_the_next_puzzle(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.cx.update(|cx| {
+        crate::prefs::set(
+            cx,
+            "kchess:puzzle-angle",
+            super::fake_lichess::TRAINED_THEME,
+        );
+        // Moving on by itself after a solve would hide whether the keys do.
+        crate::settings::change(cx, |settings| settings.frontend.puzzle_auto_next = false);
+    });
+    app.open("Puzzles");
+    let key = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<crate::pages::puzzles::PuzzlesPage>(
+                crate::pages::Page::Puzzles,
+                cx,
+            )
+            .map(|page| page.read(cx).puzzle_key())
+        })
+    };
+    let playable = |app: &mut Harness| {
+        app.wait_for("the puzzle to be playable", |window, _| {
+            window
+                .try_find("puzzle-hint")
+                .is_some_and(|hint| hint.disabled() != Some(true))
+        });
+    };
+    let solve = |app: &mut Harness| {
+        app.click_label("Enter a chess move in SAN or UCI");
+        app.type_text("Qxf7#");
+        app.press("enter");
+        app.wait_for("the puzzle to be solved", |window, _| {
+            window
+                .try_find("puzzle-hint")
+                .is_none_or(|hint| hint.disabled() == Some(true))
+        });
+    };
+    playable(&mut app);
+    let first = key(&mut app);
+    solve(&mut app);
+    // The solving Return did not skip the solved puzzle.
+    assert_eq!(key(&mut app), first);
+    app.press("enter");
+    playable(&mut app);
+    let second = key(&mut app);
+    assert_ne!(second, first);
+
+    solve(&mut app);
+    app.click("chess-board");
+    app.press("space");
+    playable(&mut app);
+    assert_ne!(key(&mut app), second);
+}

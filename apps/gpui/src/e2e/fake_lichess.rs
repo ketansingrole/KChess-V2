@@ -377,6 +377,28 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             }),
         );
     }
+    // Anonymous training draws a puzzle, numbered on each draw; only for one theme, so the pages
+    // other tests open still find Lichess out of reach.
+    if (request.method.as_str(), request.path.as_str()) == ("GET", "/api/puzzle/next")
+        && request.query.contains(&format!("angle={TRAINED_THEME}"))
+    {
+        static DRAWN: AtomicUsize = AtomicUsize::new(0);
+        let drawn = DRAWN.fetch_add(1, Ordering::Relaxed);
+        return reply(
+            &mut out,
+            &json!({
+                "game": { "id": LINKED_GAME },
+                "puzzle": {
+                    "id": format!("KcTr{drawn}"),
+                    "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                    "lastMove": "g8f6",
+                    "solution": ["h5f7"],
+                    "rating": 1100,
+                    "themes": [TRAINED_THEME],
+                },
+            }),
+        );
+    }
     // Broadcasts are public: a tournament of two rounds, which a round's link finds.
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", path) if path == format!("/api/broadcast/{BROADCAST_TOUR}") => {
@@ -648,6 +670,8 @@ pub const BROADCAST_ROUNDS: [&str; 2] = ["kcRound1", "kcRound2"];
 pub const BROADCAST_BOARD: &str = "[Event \"KChess Open\"]\n[White \"Ada\"]\n[Black \"Bo\"]\n\
 [Result \"*\"]\n[ChapterURL \"https://lichess.org/broadcast/kchess-open/round-1/kcRound1/kcBoard1\"]\n\n\
 1. e4 e5 2. Nf3 *\n\n\n";
+/// The theme anonymous training draws puzzles in (each one Qxf7#).
+pub const TRAINED_THEME: &str = "mateIn1";
 /// The puzzle a pasted lichess.org/training link opens.
 pub const LINKED_PUZZLE: &str = "KcPz1";
 const LINKED_PGN: &str = "[Event \"Rated rapid game\"]\n[Site \"https://lichess.org/kchessE2\"]\n\

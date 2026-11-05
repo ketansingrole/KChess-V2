@@ -1553,6 +1553,12 @@ impl PuzzlesPage {
             .map(|(board, _)| board.read(cx).flipped())
     }
 
+    /// The puzzle on the Train tab, told apart from the one before it.
+    #[cfg(test)]
+    pub(crate) fn puzzle_key(&self) -> u64 {
+        self.session.puzzle_key()
+    }
+
     fn shown_board(&self, cx: &App) -> Option<(Entity<PuzzleBoard>, bool)> {
         match crate::prefs::get::<String>(cx, TAB, "train".into()).as_str() {
             "train" => (self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == "ready")
@@ -1620,9 +1626,25 @@ impl PuzzlesPage {
         }
     }
 
-    /// F turns the board, as its button does, while no text field has the keys.
+    /// F turns the board, as its button does, while no text field has the keys; Return or Space
+    /// goes on to the next puzzle once this one is over (its move field is shut by then).
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+        if event.keystroke.modifiers.modified() {
+            return;
+        }
+        if matches!(event.keystroke.key.as_str(), "enter" | "space")
+            && self.actions(cx).contains(&Action::Next)
+            && self.shown_board(cx).is_some_and(|(board, _)| {
+                let board = board.read(cx);
+                board.over()
+                    && (self.focus.is_focused(window) || board.move_field_focused(window, cx))
+            })
+        {
+            self.act(Action::Next, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if !self.focus.is_focused(window) {
             return;
         }
         if event.keystroke.key == "f" && self.actions(cx).contains(&Action::Flip) {

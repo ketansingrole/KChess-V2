@@ -193,7 +193,7 @@ pub(super) fn default_settings() -> Settings {
         show_opening_name: true,
         swipe_navigation: true,
         swipe_indicator: true,
-        puzzle_auto_next: true,
+        puzzle_auto_next: false,
     }
 }
 
@@ -1484,6 +1484,8 @@ mod tests {
             json!(["beginner", "club", "expert", "fm", "im", "gm", "max"])
         );
         assert_eq!(get_settings(&db).unwrap(), json!(defaults));
+        // A solved puzzle stays on the board until Next (or Return), as on Lichess.
+        assert!(!defaults.puzzle_auto_next);
     }
 
     #[test]

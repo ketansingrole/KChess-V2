@@ -53,6 +53,10 @@ pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
             ],
         ),
         (
+            "Puzzles",
+            vec![("Next puzzle, once one is over", "Enter".to_string())],
+        ),
+        (
             "Chess clock",
             vec![
                 ("Press the clock", "Space".to_string()),
