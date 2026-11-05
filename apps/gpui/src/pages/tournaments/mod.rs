@@ -5,7 +5,7 @@
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::InputState;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -99,7 +99,21 @@ impl TournamentsPage {
                 .placeholder("Entry code (if any)")
         });
         let accounts = crate::accounts::handle(cx);
-        let subscriptions = vec![cx.observe(&accounts, |_, _, cx| cx.notify())];
+        let subscriptions = vec![
+            cx.observe(&accounts, |_, _, cx| cx.notify()),
+            // Return in the entry code joins, as the Join button beside it does.
+            cx.subscribe_in(
+                &password,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter { .. } = event
+                        && this.may_join(cx)
+                    {
+                        this.join(window, cx);
+                    }
+                },
+            ),
+        ];
         let refresh = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(REFRESH_EVERY).await;
@@ -305,6 +319,19 @@ impl TournamentsPage {
             open.page = page.max(1);
         }
         self.load_event(cx);
+    }
+
+    /// Whether the open event can be joined now: not over, not joined yet, playable here and open
+    /// to the account, with no action under way.
+    pub(super) fn may_join(&self, cx: &App) -> bool {
+        let Some(detail) = self.open.as_ref().and_then(|open| open.detail.as_ref()) else {
+            return false;
+        };
+        !self.busy
+            && detail["status"] != json!("finished")
+            && !self.joined_now(detail, cx)
+            && detail["playable"] == json!(true)
+            && detail["verdicts"]["accepted"] != json!(false)
     }
 
     /// `join`: with the entry code, if any; a login without the permission asks to reconnect.

@@ -28,6 +28,7 @@ mod screens;
 mod settings;
 mod shell;
 mod studies;
+mod tournaments;
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;

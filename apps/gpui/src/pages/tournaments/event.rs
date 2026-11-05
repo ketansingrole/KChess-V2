@@ -137,8 +137,6 @@ impl TournamentsPage {
         let account = Self::account(cx);
         let finished = detail["status"] == json!("finished");
         let started = detail["status"] == json!("started");
-        let accepted = detail["verdicts"]["accepted"] != json!(false);
-        let playable = detail["playable"] == json!(true);
         let arena = detail["system"] == json!("arena");
         let actions = if finished {
             None
@@ -162,7 +160,7 @@ impl TournamentsPage {
                             .icon(icon("log-in"))
                             .label("Join")
                             .loading(self.busy)
-                            .disabled(!playable || !accepted || self.busy)
+                            .disabled(!self.may_join(cx))
                             .on_click(cx.listener(|this, _, window, cx| this.join(window, cx))),
                     ),
             )

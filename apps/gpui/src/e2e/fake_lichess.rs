@@ -532,6 +532,12 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 },
             )
         }
+        // Joining the public arena, with its entry code when one is given.
+        ("POST", p) if p == format!("/api/tournament/{ARENA}/join") => {
+            let mut session = session.lock();
+            session.writes.push(format!("POST {p} {}", request.body));
+            reply(&mut out, &json!({ "ok": true }))
+        }
         ("POST", p) if p.starts_with("/api/board/game/") => {
             write_game(&session, p);
             reply(&mut out, &json!({ "ok": true }))
