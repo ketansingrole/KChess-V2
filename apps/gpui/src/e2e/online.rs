@@ -101,9 +101,12 @@ fn watch_shows_its_feed_failing_and_the_following_and_broadcast_tabs(
 ) {
     let mut app = open(cx, "Watch", true);
     assert_eq!(app.find(("watch-tabs", 0usize)).selected(), Some(true));
-    // The TV feed cannot connect: it can be asked again.
-    assert!(app.enabled("watch-retry"));
-    assert!(app.enabled("watch-channels-refresh"));
+    // Neither the channels nor the feed load: the page says so once, and can be asked again.
+    assert!(app.enabled("watch-try-again"));
+    assert!(!app.shows("watch-retry"));
+    assert!(!app.shows("watch-channels-refresh"));
+    app.click("watch-try-again");
+    app.find("watch-try-again");
 
     app.click(("watch-tabs", 1usize));
     assert_eq!(app.find(("watch-tabs", 1usize)).selected(), Some(true));
@@ -114,7 +117,7 @@ fn watch_shows_its_feed_failing_and_the_following_and_broadcast_tabs(
     assert!(app.enabled("broadcasts-retry"));
 
     app.click(("watch-tabs", 0usize));
-    assert!(app.enabled("watch-channels-refresh"));
+    assert!(app.enabled("watch-try-again"));
 }
 
 #[gpui_kit::test]

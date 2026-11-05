@@ -823,6 +823,10 @@ impl WatchPage {
                 .into_any_element(),
             );
         }
+        // TV with no channels and no game says it once, in its place.
+        if self.tv_unreachable() {
+            return notices;
+        }
         if let Some(error) = &self.error {
             notices.push(
                 div()
@@ -918,6 +922,7 @@ impl Render for WatchPage {
             ));
         let notices = self.notices(cx, &palette);
         let body = match self.tab {
+            Tab::Tv if self.tv_unreachable() => self.tv_error(cx, &palette),
             Tab::Tv | Tab::Friends => self.live_layout(window, cx, &palette),
             Tab::Broadcasts => self.broadcasts_body(window, cx, &palette),
         };
@@ -951,6 +956,36 @@ impl Render for WatchPage {
 }
 
 impl WatchPage {
+    /// TV could reach neither its channels nor a game: nothing to show but the failure.
+    fn tv_unreachable(&self) -> bool {
+        self.tab == Tab::Tv
+            && self.channels.is_empty()
+            && self.error.is_some()
+            && self.live.frame.is_none()
+    }
+
+    fn tv_error(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
+        let message = self.error.clone().unwrap_or_default();
+        widgets::card(palette)
+            .child(
+                widgets::empty_state(icon("triangle-alert"), message, None, palette).child(
+                    h_flex().justify_center().mt(px(8.)).child(
+                        Button::new("watch-try-again")
+                            .primary()
+                            .icon(icon("rotate-cw"))
+                            .label("Try again")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.error = None;
+                                this.load_channels(cx);
+                                this.stop(cx);
+                                this.resume(window, cx);
+                            })),
+                    ),
+                ),
+            )
+            .into_any_element()
+    }
+
     fn layout_probe(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         self.layout.probe(cx)
     }
