@@ -209,8 +209,8 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
             )
             .child(hint(if kept > 0. {
                 format!(
-                    "{text} · {} puzzles picked so far",
-                    widgets::format_count(kept)
+                    "{text} · {} picked so far",
+                    widgets::format_counted(kept, "puzzle", "puzzles")
                 )
             } else {
                 text
@@ -228,8 +228,12 @@ pub fn card(compact: bool, cx: &App, palette: &Palette) -> impl IntoElement + us
             .into_any_element()
     } else if this.status["installed"] == json!(true) {
         let mut line = format!(
-            "{} puzzles · {} on disk",
-            widgets::format_count(this.status["count"].as_f64().unwrap_or_default()),
+            "{} · {} on disk",
+            widgets::format_counted(
+                this.status["count"].as_f64().unwrap_or_default(),
+                "puzzle",
+                "puzzles"
+            ),
             format_bytes(this.status["bytes"].as_f64().unwrap_or_default())
         );
         if let Some(at) = this.status["importedAt"].as_f64() {
