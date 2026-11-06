@@ -234,7 +234,7 @@ impl BoardState {
             edit: None,
             badge: None,
             premove: None,
-            pockets: position.pockets().cloned(),
+            pockets: position.pockets().copied(),
             drops,
         }
     }

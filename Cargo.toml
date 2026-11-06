@@ -41,6 +41,16 @@ cast_possible_truncation = "allow"
 indexing_slicing = "allow"
 unwrap_used = "allow"
 expect_used = "allow"
+# From Google's Rust style guide (2026-11-06): the rules a lint can hold that the code already
+# nearly kept (its few hits fixed then). `clone` is named as one, not hidden in `to_string` or
+# `to_owned`; `format!` rather than `+` on strings; `let … else` rather than a match that only
+# returns. `cargo xtask check` denies warnings, so these fail it. `use gpui_kit::*` stays: it is
+# GPUI Kit's prelude, which the guide leaves to the reviewer.
+implicit_clone = "warn"
+string_add = "warn"
+manual_let_else = "warn"
+cloned_instead_of_copied = "warn"
+uninlined_format_args = "warn"
 
 [workspace.dependencies]
 shakmaty = { version = "0.30", features = ["variant"] }

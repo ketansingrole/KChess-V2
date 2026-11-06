@@ -165,7 +165,7 @@ async fn a_game_described_without_its_position_is_shown_from_the_next_one() {
                 "lm": "f8c5", "wc": 600, "bc": 598
             }),
         ] {
-            tx.send(record.to_string() + "\n").unwrap();
+            tx.send(format!("{record}\n")).unwrap();
         }
         std::mem::forget(tx);
         Reply::Stream(rx)
@@ -211,7 +211,7 @@ async fn last_state_of_a_closed_game_stream(records: Vec<Value>) -> WatchState {
         }
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         for record in &records {
-            tx.send(record.to_string() + "\n").unwrap();
+            tx.send(format!("{record}\n")).unwrap();
         }
         Reply::Stream(rx)
     })
@@ -277,7 +277,7 @@ async fn a_game_feed_that_closes_mid_game_offers_to_reconnect() {
 }
 
 fn tv_frame(id: &str, fen: &str) -> String {
-    json!({
+    let frame = json!({
         "t": "featured",
         "d": {
             "id": id,
@@ -288,9 +288,8 @@ fn tv_frame(id: &str, fen: &str) -> String {
                 { "color": "black", "seconds": 590, "user": { "name": "Bob" } }
             ]
         }
-    })
-    .to_string()
-        + "\n"
+    });
+    format!("{frame}\n")
 }
 
 #[tokio::test]
@@ -360,11 +359,10 @@ async fn a_tv_feed_adds_its_moves_once_the_delayed_export_lines_up() {
     assert_eq!(lined.moves, Some(vec!["e2e4".to_string()]));
     assert_eq!(lined.start_fen.as_deref(), Some(INITIAL));
     feed_tx
-        .send(
+        .send(format!(
+            "{}\n",
             json!({ "t": "fen", "d": { "fen": after_e5, "lm": "e7e5", "wc": 599, "bc": 580 } })
-                .to_string()
-                + "\n",
-        )
+        ))
         .unwrap();
     wait_until("the second move", || {
         sink.frames
@@ -384,7 +382,10 @@ async fn a_tv_feed_adds_its_moves_once_the_delayed_export_lines_up() {
     spectator.stop();
     let count = sink.frames.lock().unwrap().len();
     feed_tx
-        .send(json!({ "t": "fen", "d": { "fen": INITIAL, "lm": "e2e4" } }).to_string() + "\n")
+        .send(format!(
+            "{}\n",
+            json!({ "t": "fen", "d": { "fen": INITIAL, "lm": "e2e4" } })
+        ))
         .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(sink.frames.lock().unwrap().len(), count);

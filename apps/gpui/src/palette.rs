@@ -560,7 +560,7 @@ pub(crate) fn page_command_keys(cx: &App) -> Vec<(String, &'static str)> {
     page_commands(cx)
         .into_iter()
         .filter(|command| !command.kbds.is_empty())
-        .map(|command| (command.id.to_string(), command.kbds))
+        .map(|command| (command.id.clone(), command.kbds))
         .collect()
 }
 
@@ -617,7 +617,7 @@ pub(crate) fn command_ids(cx: &App) -> Vec<(String, String)> {
     ]
     .concat()
     .into_iter()
-    .map(|command| (command.id.to_string(), command.label.to_string()))
+    .map(|command| (command.id.clone(), command.label.clone()))
     .collect()
 }
 

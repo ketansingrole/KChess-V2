@@ -615,8 +615,7 @@ fn opening_name(words: &[String]) -> Result<Value, String> {
     let named = kchess_domain::api::call_value(
         "openingAt",
         &[json!({ "variant": "standard", "fen": root }), moves],
-    )
-    .map_err(|cause| cause.to_string())?;
+    )?;
     if named.is_null() {
         return Err("No named opening there.".into());
     }
@@ -629,10 +628,7 @@ fn position_info(words: &[String]) -> Result<Value, String> {
     let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "position"))?;
     let variant = request["variant"].as_str().unwrap_or("standard");
     let setup = json!({ "variant": variant, "fen": request["fen"] });
-    let call = |method: &str| {
-        kchess_domain::api::call_value(method, std::slice::from_ref(&setup))
-            .map_err(|cause| cause.to_string())
-    };
+    let call = |method: &str| kchess_domain::api::call_value(method, std::slice::from_ref(&setup));
     let info = call("position")?;
     let legal =
         kchess_domain::rules::setup_start(variant, info["fen"].as_str().unwrap_or_default())

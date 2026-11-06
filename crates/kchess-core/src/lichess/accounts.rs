@@ -827,16 +827,13 @@ impl Lichess {
         let mut following: HashMap<String, Value> = HashMap::new();
         let mut problems = Vec::new();
         for row in rows.iter().filter(|row| row.connected) {
-            let token = match self.tokens.token(&row.username).await {
-                Ok(Some(token)) => token,
-                Ok(None) | Err(_) => {
-                    problems.push(FollowingProblem {
-                        account: row.username.clone(),
-                        message: "Its Lichess login is unavailable.".to_string(),
-                        needs_reconnect: true,
-                    });
-                    continue;
-                }
+            let Ok(Some(token)) = self.tokens.token(&row.username).await else {
+                problems.push(FollowingProblem {
+                    account: row.username.clone(),
+                    message: "Its Lichess login is unavailable.".to_string(),
+                    needs_reconnect: true,
+                });
+                continue;
             };
             let mut lines = Vec::new();
             let outcome = self

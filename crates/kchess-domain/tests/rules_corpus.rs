@@ -110,7 +110,7 @@ fn every_method_answers_as_recorded() {
             std::fs::File::create(&path).unwrap(),
             flate2::Compression::best(),
         );
-        out.write_all((rewritten.join("\n") + "\n").as_bytes())
+        out.write_all(format!("{}\n", rewritten.join("\n")).as_bytes())
             .unwrap();
         out.finish().unwrap();
         return;
