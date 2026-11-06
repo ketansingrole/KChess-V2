@@ -279,9 +279,9 @@ records what the switch kept.
 - [x] Go to your game
 - [x] Masked entry code fields, with a button to show the code
 
-## Lichess insights
+## Insights
 
-- [x] An account's synced games: games, score, streaks and accuracy; by colour, speed, opponent
+- [x] An account's synced games (Lichess or Chess.com): games, score, streaks and accuracy; by colour, speed, opponent
       rating, length, day, time of day and ending; openings with the best and weakest; filtered by
       account, speed, period and rated or casual; read again when shown
 

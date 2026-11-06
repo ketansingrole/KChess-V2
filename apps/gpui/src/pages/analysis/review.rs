@@ -802,7 +802,8 @@ impl AnalysisPage {
                 .review
                 .origin
                 .as_ref()
-                .is_some_and(|origin| origin["gameId"].is_string());
+                .and_then(|origin| origin["gameId"].as_str())
+                .is_some_and(|id| !kchess_domain::chesscom::is_game_id(id));
         let reviewed = review
             .as_ref()
             .map_or(0, |review| self.reviewed_plies(review));

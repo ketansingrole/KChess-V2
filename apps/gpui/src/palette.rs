@@ -212,7 +212,7 @@ fn places(cx: &App) -> Vec<Command> {
         (Page::Watch, "Watch", icon("tv"), "tv broadcast"),
         (
             Page::Insights,
-            "Lichess insights",
+            "Insights",
             icon("chart-pie"),
             "stats openings performance",
         ),

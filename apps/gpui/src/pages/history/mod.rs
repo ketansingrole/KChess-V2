@@ -925,7 +925,7 @@ fn source_tabs(
     let mut labels: Vec<(Option<Icon>, SharedString)> = vec![
         (None, "Computer".into()),
         (None, "Over the board".into()),
-        (None, "Lichess".into()),
+        (None, "Online".into()),
     ];
     if connected {
         sources.push(Source::Bookmarks);

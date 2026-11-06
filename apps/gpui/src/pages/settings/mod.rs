@@ -207,6 +207,8 @@ pub struct SettingsPage {
     voice_model: Option<kchess_core::voice::Status>,
     voice_model_error: Option<SharedString>,
     voice_downloading: bool,
+    /// My accounts: the Chess.com username to add.
+    chesscom_input: Entity<gpui_kit::component::input::InputState>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -257,7 +259,22 @@ impl SettingsPage {
                 cx,
             )
         });
+        let chesscom_input = cx.new(|cx| {
+            gpui_kit::component::input::InputState::new(window, cx)
+                .placeholder("Chess.com username")
+        });
         let subscriptions = vec![
+            cx.subscribe_in(
+                &chesscom_input,
+                window,
+                |this, _, event: &gpui_kit::component::input::InputEvent, window, cx| match event {
+                    gpui_kit::component::input::InputEvent::PressEnter { .. } => {
+                        this.add_chesscom(window, cx)
+                    }
+                    gpui_kit::component::input::InputEvent::Change => cx.notify(),
+                    _ => {}
+                },
+            ),
             cx.subscribe(
                 &ai_model,
                 |this, _, _: &SelectEvent<Vec<SharedString>>, cx| {
@@ -385,6 +402,7 @@ impl SettingsPage {
             voice_model: None,
             voice_model_error: None,
             voice_downloading: false,
+            chesscom_input,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
@@ -1503,7 +1521,10 @@ impl Render for SettingsPage {
             Section::Engine => self.engine(&settings, cx, &palette),
             Section::Offline => self.offline(cx, &palette),
             Section::Updates => self.updates(&settings, cx, &palette),
-            Section::Accounts => self.accounts(cx, &palette),
+            Section::Accounts => v_flex()
+                .gap(px(16.))
+                .child(self.accounts(cx, &palette))
+                .child(self.chesscom_accounts(cx, &palette)),
             Section::Voice => self.voice(&settings, cx, &palette),
             Section::Data => self.data(cx, &palette),
         };

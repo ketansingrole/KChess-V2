@@ -38,14 +38,14 @@ impl Core {
                     .await
             }
             "gameRatingHistory" => {
-                let account = normal("assertUsername", &arg(args, 0))?;
+                let account = normal("assertGameAccount", &arg(args, 0))?;
                 self.ensure_migrated().await?;
                 self.database
                     .call_async("store.games.gameRatingHistory", &[account])
                     .await
             }
             "gamePgn" => {
-                let account = normal("assertUsername", &arg(args, 0))?;
+                let account = normal("assertGameAccount", &arg(args, 0))?;
                 let id = normal("assertGameId", &arg(args, 1))?;
                 self.ensure_migrated().await?;
                 self.database

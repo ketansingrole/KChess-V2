@@ -2,6 +2,7 @@
 //! filtered by account, result and rating and searched by opponent or opening; each with its review's accuracy; opened to go through
 //! move by move or to review on the analysis board.
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -282,7 +283,15 @@ impl HistoryPage {
     /// Sync the chosen account's games, or every account's.
     pub(super) fn sync_lichess(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let account = (self.lichess.account != "all").then(|| self.lichess.account.clone());
-        crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.sync(account, window, cx));
+        // A Chess.com player's games sync from Chess.com.
+        let chesscom = account
+            .as_deref()
+            .and_then(kchess_domain::chesscom::username_of)
+            .map(str::to_string);
+        crate::accounts::handle(cx).update(cx, |accounts, cx| match chesscom {
+            Some(name) => accounts.sync_chesscom(Some(name), window, cx),
+            None => accounts.sync(account, window, cx),
+        });
     }
 
     /// Whether a filter narrows the synced games.
@@ -389,11 +398,16 @@ impl HistoryPage {
 
     /// The accounts the filter offers, kept up to date with the account store.
     fn sync_account_choices(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let accounts: Vec<String> = crate::accounts::handle(cx)
-            .read(cx)
+        let store = crate::accounts::handle(cx).read(cx);
+        let accounts: Vec<String> = store
             .all()
             .iter()
             .filter_map(|account| account["username"].as_str().map(str::to_string))
+            .chain(store.chesscom().iter().filter_map(|player| {
+                player["username"]
+                    .as_str()
+                    .map(kchess_domain::chesscom::account_of)
+            }))
             .collect();
         let mut items = vec![Choice::new("all", "All accounts")];
         items.extend(
@@ -529,7 +543,7 @@ impl HistoryPage {
             let accounts = accounts.read(cx);
             (
                 accounts.data["gameCount"].as_f64().unwrap_or_default() as usize,
-                !accounts.all().is_empty(),
+                !accounts.all().is_empty() || !accounts.chesscom().is_empty(),
                 accounts.busy,
             )
         };
@@ -544,7 +558,7 @@ impl HistoryPage {
             let body = if has_accounts {
                 widgets::empty_state(
                     icon("history"),
-                    "No saved Lichess games",
+                    "No saved online games",
                     Some("Sync games to get started".into()),
                     palette,
                 )
@@ -552,8 +566,8 @@ impl HistoryPage {
             } else {
                 widgets::empty_state(
                     icon("history"),
-                    "No saved Lichess games",
-                    Some("Follow a player or connect Lichess".into()),
+                    "No saved online games",
+                    Some("Follow a Lichess player, or add your Chess.com username".into()),
                     palette,
                 )
                 .child(
@@ -567,6 +581,18 @@ impl HistoryPage {
                                 .label("Follow a player")
                                 .on_click(|_, window, cx| {
                                     crate::shell::open(Page::Friends, window, cx)
+                                }),
+                        )
+                        .child(
+                            Button::new("history-chesscom")
+                                .outline()
+                                .label("Add Chess.com")
+                                .on_click(|_, window, cx| {
+                                    crate::shell::open_settings(
+                                        crate::pages::settings::Section::Accounts,
+                                        window,
+                                        cx,
+                                    )
                                 }),
                         )
                         .child(
@@ -867,6 +893,7 @@ pub fn game_row(
     // `.game-row`: 11px by 12px, 13px text.
     h_flex()
         .id(id)
+        .test_support()
         .role(Role::Button)
         .keyboard_focus(palette.primary)
         .aria_label(format!("Game against {opponent}"))
