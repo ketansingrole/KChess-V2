@@ -62,6 +62,7 @@ use crate::studies::StudyHandle;
 use crate::theme::{Palette, radii, tint};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
+use crate::widgets::Pressable as _;
 
 /// Why the board left its study: another window changed the chapter it was saving to.
 const STALE_COPY: &str = "This study was changed in another KChess window. Your board is kept as an unsaved copy; save it under a new name or reopen the study.";
@@ -1342,7 +1343,7 @@ impl AnalysisPage {
                     })
                     .when(!chosen, |tab| {
                         tab.text_color(palette.text_muted)
-                            .hover(|tab| tab.text_color(palette.highlighted))
+                            .pressable_text(palette.highlighted)
                     })
                     .on_click(move |_, window, cx| {
                         crate::prefs::set(cx, TOOL, choice.key());

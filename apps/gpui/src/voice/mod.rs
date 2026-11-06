@@ -134,6 +134,12 @@ impl kchess_core::Host for QuietHost {
 fn model_cache() -> &'static VoiceModelCache {
     static CACHE: std::sync::OnceLock<VoiceModelCache> = std::sync::OnceLock::new();
     CACHE.get_or_init(|| {
+        // Tests share one cache, first made on a core thread, where the test's own profile
+        // (thread-local) is not set and `data_dir` would be the real profile: a scratch folder of
+        // the test process's own instead.
+        #[cfg(test)]
+        let dir = std::env::temp_dir().join(format!("kchess-test-voice-{}", std::process::id()));
+        #[cfg(not(test))]
         let dir = crate::profile::data_dir().unwrap_or_default().join("voice");
         let (archive, official) = model::active_model();
         VoiceModelCache::new(Arc::new(QuietHost), dir, archive, official)

@@ -59,6 +59,8 @@ pub enum Reply {
     Text(u16, &'static str, String),
     /// Status, extra headers, body.
     WithHeaders(u16, Vec<(&'static str, String)>, String),
+    /// Status, extra headers, a body of raw bytes (a compressed answer).
+    Bytes(u16, Vec<(&'static str, String)>, Vec<u8>),
     /// 200 NDJSON, sent chunk by chunk as the sender provides them; the body ends when the sender
     /// is dropped.
     Stream(mpsc::UnboundedReceiver<String>),
@@ -203,7 +205,7 @@ async fn handle(
                     &mut socket,
                     status,
                     &[("Content-Type", "application/json".into())],
-                    &body,
+                    body.as_bytes(),
                 )
                 .await;
             }
@@ -212,12 +214,15 @@ async fn handle(
                     &mut socket,
                     status,
                     &[("Content-Type", content_type.into())],
-                    &body,
+                    body.as_bytes(),
                 )
                 .await;
             }
             Reply::WithHeaders(status, extra, body) => {
                 let extra: Vec<(&str, String)> = extra;
+                return write_sized(&mut socket, status, &extra, body.as_bytes()).await;
+            }
+            Reply::Bytes(status, extra, body) => {
                 return write_sized(&mut socket, status, &extra, &body).await;
             }
             Reply::Stream(chunks) => {
@@ -251,7 +256,7 @@ async fn write_sized(
     socket: &mut TcpStream,
     status: u16,
     extra: &[(&str, String)],
-    body: &str,
+    body: &[u8],
 ) -> std::io::Result<()> {
     let mut head = format!("HTTP/1.1 {status} {}\r\n", status_text(status));
     for (name, value) in extra {
@@ -262,7 +267,7 @@ async fn write_sized(
         body.len()
     ));
     socket.write_all(head.as_bytes()).await?;
-    socket.write_all(body.as_bytes()).await?;
+    socket.write_all(body).await?;
     close_after_client(socket).await;
     Ok(())
 }
