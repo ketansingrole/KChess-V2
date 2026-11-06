@@ -25,6 +25,7 @@ use crate::game::{rules, view};
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Side, Tone};
 
 /// Typing pauses this long before a search is sent.
@@ -742,7 +743,7 @@ impl WatchPage {
                     .border_color(palette.border)
                     .bg(palette.elevated)
                     .cursor_pointer()
-                    .hover(|cell| cell.border_color(palette.border_accented))
+                    .pressable_card(palette)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.broadcasts.select_game(id.clone(), cx);
                         this.engine_changed(cx);
@@ -950,11 +951,11 @@ impl WatchPage {
                                 .bg(palette.elevated)
                                 .when(disabled, |card| card.opacity(0.6))
                                 .when(!disabled, |card| {
-                                    card.cursor_pointer()
-                                        .hover(|card| card.border_color(palette.border_accented))
-                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                    card.cursor_pointer().pressable_card(palette).on_click(
+                                        cx.listener(move |this, _, window, cx| {
                                             this.open_tour(tour.clone(), window, cx)
-                                        }))
+                                        }),
+                                    )
                                 })
                                 .child(
                                     // Inside the card's border; GPUI does not clip

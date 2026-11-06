@@ -51,6 +51,10 @@ string_add = "warn"
 manual_let_else = "warn"
 cloned_instead_of_copied = "warn"
 uninlined_format_args = "warn"
+# A function's cognitive complexity (nesting-weighted branches, `clippy.toml` sets the limit) stays
+# at or under 25. Flat `match` dispatchers score low here where cyclomatic counts score them high,
+# so the limit catches tangled logic rather than wide APIs.
+cognitive_complexity = "warn"
 
 [workspace.dependencies]
 shakmaty = { version = "0.30", features = ["variant"] }

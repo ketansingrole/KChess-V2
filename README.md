@@ -3,6 +3,8 @@
 [![CI](https://github.com/ketansingrole/KChess-V2/actions/workflows/ci.yml/badge.svg)](https://github.com/ketansingrole/KChess-V2/actions/workflows/ci.yml)
 [![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
+**[Download KChess](https://ketansingrole.github.io/KChess-V2/)** for macOS, Windows and Linux.
+
 KChess is a desktop chess app written in Rust: play Stockfish, play on Lichess, follow friends, review games, solve puzzles and train. The window is [GPUI](https://github.com/zed-industries/zed) with [GPUI Kit](https://github.com/longbridge/gpui-kit); chess rules run on [`shakmaty`](https://github.com/niklasf/shakmaty) (`crates/kchess-domain`); a headless core (`crates/kchess-core`) handles Stockfish, Lichess, the local library, puzzles and OAuth. Sounds and board themes are the Lichess assets.
 
 ## Apps
@@ -161,7 +163,7 @@ Installers come from `.github/workflows/release.yml` as a draft GitHub Release, 
 
 ### Landing page
 
-`site/` is the landing page: plain HTML and CSS, no build step. `.github/workflows/site.yml`
+`site/` is the landing page ([ketansingrole.github.io/KChess-V2](https://ketansingrole.github.io/KChess-V2/)): plain HTML and CSS, no build step. `.github/workflows/site.yml`
 publishes it to GitHub Pages when it changes on main and whenever a release is published. The job
 fills `{{version}}` with the latest published release, after checking that release has every
 installer the page links to, and copies the app icon beside the page. The screenshots in

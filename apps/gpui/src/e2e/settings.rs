@@ -186,3 +186,19 @@ fn a_row_title_finds_its_category_in_quick_pick(cx: &mut gpui_kit::TestAppContex
     app.press("enter");
     app.find(("notation", 1usize));
 }
+
+/// Settings → Updates links to the website, the source and the issue tracker.
+#[gpui_kit::test]
+fn updates_links_to_the_website_source_and_issues(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Updates");
+    for (id, label) in [
+        ("about-website", "Website"),
+        ("about-source", "Source code"),
+        ("about-issues", "Report a problem"),
+    ] {
+        let link = app.find(id);
+        assert_eq!(link.label(), Some(label));
+        assert_eq!(link.role(), Some(gpui_kit::Role::Link));
+    }
+}

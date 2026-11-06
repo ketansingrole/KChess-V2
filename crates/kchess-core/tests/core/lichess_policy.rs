@@ -375,3 +375,59 @@ async fn an_unreachable_server_is_said_in_plain_words() {
     assert_eq!(failure.kind, Some(kchess_core::ErrorKind::Offline));
     assert!(kchess_core::ErrorKind::Offline.retryable());
 }
+
+/// A gzip body as a compressing server sends it.
+fn gzipped(text: &str) -> Vec<u8> {
+    use std::io::Write;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(text.as_bytes()).unwrap();
+    encoder.finish().unwrap()
+}
+
+#[tokio::test]
+async fn ordinary_calls_accept_gzip_and_live_streams_ask_for_an_uncompressed_body() {
+    let account = r#"{"id":"alice","username":"Alice"}"#;
+    let fixture = serve(move |seen| {
+        if seen.path() == "/api/account" {
+            Reply::Bytes(
+                200,
+                vec![
+                    ("Content-Type", "application/json".into()),
+                    ("Content-Encoding", "gzip".into()),
+                ],
+                gzipped(account),
+            )
+        } else {
+            Reply::Json(200, "{}".into())
+        }
+    })
+    .await;
+    let policy = policy_with(Arc::new(Recording::default()), Duration::from_secs(5));
+    let client = http_client();
+    let cancel = CancellationToken::new();
+    let send = |path: &str| {
+        let request = client
+            .get(format!("{}{path}", fixture.base))
+            .build()
+            .unwrap();
+        let policy = Arc::clone(&policy);
+        let cancel = cancel.clone();
+        async move { policy.send(request, &cancel).await.unwrap().response }
+    };
+
+    // The compressed answer arrives decoded.
+    let answer = send("/api/account").await;
+    assert_eq!(answer.text().await.unwrap(), account);
+    let encoding = |path: &str| {
+        fixture.to(path)[0]
+            .header("accept-encoding")
+            .map(str::to_string)
+    };
+    assert!(encoding("/api/account").is_some_and(|value| value.contains("gzip")));
+
+    // A live stream must not wait on a compressor's buffer; a bulk export may.
+    let _ = send("/api/stream/event").await.text().await;
+    assert_eq!(encoding("/api/stream/event").as_deref(), Some("identity"));
+    let _ = send("/api/games/user/Alice").await.text().await;
+    assert!(encoding("/api/games/user/Alice").is_some_and(|value| value.contains("gzip")));
+}

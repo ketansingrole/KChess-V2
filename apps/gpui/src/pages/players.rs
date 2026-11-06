@@ -20,6 +20,7 @@ use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::rating_history::{Retry, has_points};
 use crate::rating_speeds::RatingSpeeds;
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Look};
 
 /// Recent lookups kept (`kchess:players-recent`), and names offered under the search.
@@ -162,7 +163,7 @@ fn name_chip(
         .bg(palette.accented)
         .text_size(px(13.))
         .text_color(palette.toned)
-        .hover(|chip| chip.text_color(palette.highlighted))
+        .pressable_text(palette.highlighted)
         .when(online, |chip| {
             chip.child(div().size(px(6.)).rounded_full().bg(palette.success))
         })
@@ -1003,7 +1004,7 @@ impl PlayersPage {
                         .rounded(radii::SM)
                         .text_size(px(12.))
                         .text_color(palette.text_muted)
-                        .hover(|clear| clear.text_color(palette.highlighted))
+                        .pressable_text(palette.highlighted)
                         .child("Clear")
                         .on_click(cx.listener(|_, _, _, cx| {
                             crate::prefs::set(cx, RECENT_KEY, Vec::<String>::new());
@@ -1809,7 +1810,7 @@ pub fn player_link(id: impl Into<ElementId>, name: String, ring: Hsla) -> Statef
         .aria_label(name.clone())
         .truncate()
         .cursor_pointer()
-        .hover(|link| link.underline())
+        .pressable_link()
         .child(name.clone())
         .on_click(move |_, window, cx| {
             // A name inside a clickable row opens the player, not the row.

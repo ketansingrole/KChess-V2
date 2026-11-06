@@ -12,6 +12,7 @@ use super::{Rows, SettingsPage};
 use crate::assets::icon;
 use crate::theme::Palette;
 use crate::updates::{Phase, Updates, UpdatesHandle};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Look};
 
 /// What a restart now would cost: a real-time Lichess game's clock keeps running, and a timed
@@ -59,6 +60,11 @@ pub fn ask_restart(window: &mut Window, cx: &mut App) {
             })
     });
 }
+
+/// The landing page, the source and the issue tracker, under the version.
+pub const WEBSITE: &str = "https://ketansingrole.github.io/KChess-V2/";
+pub const SOURCE: &str = "https://github.com/ketansingrole/KChess-V2";
+pub const ISSUES: &str = "https://github.com/ketansingrole/KChess-V2/issues";
 
 fn bytes(count: u64) -> String {
     widgets::format_bytes(count as f64)
@@ -203,27 +209,40 @@ impl SettingsPage {
                 .disabled(phase == Phase::Checking)
                 .on_click(act(|updates, cx| updates.check(false, cx)))
         });
-        let label = if target.is_some() {
-            "What's new"
-        } else {
-            "Release notes"
-        };
-        let notes = || {
-            let page = page.clone();
+        let link = |id: &'static str, label: &'static str| {
             div()
-                .id("update-notes")
+                .id(id)
                 .role(Role::Link)
                 .keyboard_focus(palette.primary)
                 .aria_label(label)
                 .flex()
                 .items_center()
+                // A 24 px target, as every control's.
+                .min_h(px(24.))
                 .gap(px(2.))
                 .text_size(px(12.))
                 .text_color(palette.text_muted)
                 .cursor_pointer()
-                .hover(|link| link.text_color(palette.text))
-                .on_click(move |_, _, cx| cx.open_url(&page))
+                .pressable_text(palette.text)
                 .child(label)
+        };
+        // This build's own notes, in the app; a newer release's are on its page until installed.
+        let whats_new = || {
+            link("whats-new-open", "What's new")
+                .on_click(|_, window, cx| crate::whats_new::open(window, cx))
+                .test_support()
+        };
+        // A page outside KChess, marked with an arrow.
+        let external = |id: &'static str, label: &'static str, url: String| {
+            link(id, label)
+                .on_click(move |_, _, cx| cx.open_url(&url))
+                .child(icon("arrow-up-right").size(px(12.)))
+                .test_support()
+        };
+        let notes = || {
+            let page = page.clone();
+            link("update-notes", "Release notes")
+                .on_click(move |_, _, cx| cx.open_url(&page))
                 .child(icon("arrow-up-right").size(px(12.)))
         };
         let head = h_flex()
@@ -259,9 +278,7 @@ impl SettingsPage {
                             .text_size(px(13.))
                             .text_color(palette.text_muted)
                             .when(!line.is_empty(), |row| row.child(line.clone()))
-                            .when(target.is_none() && phase != Phase::Disabled, |row| {
-                                row.child(notes())
-                            }),
+                            .when(target.is_none(), |row| row.child(whats_new())),
                     ),
             )
             .child(h_flex().gap(px(8.)).children(primary).children(check));
@@ -316,6 +333,15 @@ impl SettingsPage {
                     )
                 })
         });
+        let about = h_flex()
+            .gap(px(16.))
+            .flex_wrap()
+            .pt(px(14.))
+            .border_t_1()
+            .border_color(palette.border)
+            .child(external("about-website", "Website", WEBSITE.into()))
+            .child(external("about-source", "Source code", SOURCE.into()))
+            .child(external("about-issues", "Report a problem", ISSUES.into()));
         let status = widgets::card(palette)
             .gap(px(14.))
             .child(head)
@@ -327,7 +353,8 @@ impl SettingsPage {
                     .text_color(palette.error)
                     .child(icon("circle-alert").size(px(14.)))
                     .child(error)
-            }));
+            }))
+            .child(about);
         let can_check = updates.can_check();
         let frontend = &settings.frontend;
         v_flex().gap(px(16.)).child(status).when(can_check, |page| {

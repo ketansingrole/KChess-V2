@@ -23,6 +23,14 @@ const START_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 
 const REPLIES: [(&str, &str); 3] = [("e2e4", "e7e5"), ("g1f3", "b8c6"), ("f1c4", "g8f6")];
 const KEEP_ALIVE: Duration = Duration::from_secs(5);
 
+/// Frank's activity fails while this is set, and Racing Kings' leaderboard while the other is:
+/// each for the one test that tries a failed load again, which sets it until it has seen the
+/// failure. (Failing only the first request lost the failure whenever the page asked twice, a
+/// later load replacing the failed one: Windows CI timed out waiting for Try again.) Only those
+/// tests ask for frank or Racing Kings, so the process-wide switch is theirs alone.
+pub static FRANK_FAILS: AtomicBool = AtomicBool::new(false);
+pub static RACING_KINGS_FAILS: AtomicBool = AtomicBool::new(false);
+
 /// What Lichess holds for one signed-in test.
 #[derive(Default)]
 pub struct Session {
@@ -274,14 +282,13 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         sessions.get(login).cloned()
     });
     // A player's activity is public too: a few weeks of it, which each name staggers. Frank's
-    // fails the first time it is asked for (a failed timeline tried again).
+    // fails while `FRANK_FAILS` is set (a failed timeline tried again).
     if let Some(name) = request
         .path
         .strip_prefix("/api/user/")
         .and_then(|rest| rest.strip_suffix("/activity"))
     {
-        static FRANK_ASKED: AtomicBool = AtomicBool::new(false);
-        if name == "frank" && !FRANK_ASKED.swap(true, Ordering::SeqCst) {
+        if name == "frank" && FRANK_FAILS.load(Ordering::SeqCst) {
             return refuse(&mut out, &json!({ "error": "Not now" }));
         }
         return reply(&mut out, &activity(name));
@@ -345,11 +352,10 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
     if request.path == "/api/users/status" {
         return reply(&mut out, &json!([]));
     }
-    // Leaderboards are public, so they are asked for without the login. Racing Kings' fails the
-    // first time it is asked for, and answers after that (a failed load tried again).
+    // Leaderboards are public, so they are asked for without the login. Racing Kings' fails
+    // while `RACING_KINGS_FAILS` is set (a failed load tried again).
     if let Some(perf) = request.path.strip_prefix("/api/player/top/100/") {
-        static RACING_KINGS_ASKED: AtomicBool = AtomicBool::new(false);
-        if perf == "racingKings" && !RACING_KINGS_ASKED.swap(true, Ordering::SeqCst) {
+        if perf == "racingKings" && RACING_KINGS_FAILS.load(Ordering::SeqCst) {
             return refuse(&mut out, &json!({ "error": "Not now" }));
         }
         let user = |username: &str, title: Option<&str>, rating: u32, progress: i32| {

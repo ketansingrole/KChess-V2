@@ -44,6 +44,13 @@ impl Core {
                 let days = normal("assertDays", &arg(args, 1))?;
                 self.inner("lichess.stormDashboard", vec![name, days]).await
             }
+            _ => self.run_local_puzzles(method, args).await,
+        }
+    }
+
+    /// Answers the facade's puzzle database methods.
+    async fn run_local_puzzles(&self, method: &str, args: &[Value]) -> Result<Value> {
+        match method {
             "puzzleDbStatus" => self.puzzle_operation("puzzles.status", vec![]).await,
             "puzzleDbInstall" => {
                 self.puzzle_operation("puzzles.install", vec![json!(PUZZLE_DB_URL)])
@@ -77,6 +84,13 @@ impl Core {
                 let query = normal("assertPuzzleProgressQuery", &arg(args, 0))?;
                 self.puzzle_operation("puzzles.progress", vec![query]).await
             }
+            _ => self.run_training_logs(method, args).await,
+        }
+    }
+
+    /// Answers the facade's training run and voice log methods.
+    async fn run_training_logs(&self, method: &str, args: &[Value]) -> Result<Value> {
+        match method {
             "saveRun" => {
                 let run = normal("assertRunInput", &arg(args, 0))?;
                 self.database.call_async("store.runs.saveRun", &[run]).await

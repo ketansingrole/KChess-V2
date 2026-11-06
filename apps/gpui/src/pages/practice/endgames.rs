@@ -19,6 +19,7 @@ use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::theme::{Palette, radii, tint};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
+use crate::widgets::Pressable as _;
 
 const VIEW: &str = "kchess:endgame-view";
 const COURSES: &str = "courses";
@@ -258,7 +259,7 @@ impl Endgames {
             .rounded(radii::XL)
             .bg(palette.elevated)
             .cursor_pointer()
-            .hover(|card| card.border_color(palette.border_accented))
+            .pressable_card(palette)
             .on_click(move |_, window, cx| {
                 Self::open(&view, cx);
                 window.refresh();

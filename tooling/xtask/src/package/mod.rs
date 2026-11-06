@@ -33,7 +33,7 @@ use crate::util::{Result, hex, root, run_with, say};
 pub const AUTHOR: &str = "Ketan Singrole";
 pub const COPYRIGHT: &str = "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.";
 #[allow(dead_code)]
-pub const HOMEPAGE: &str = "https://github.com/ketansingrole/KChess-V2#readme";
+pub const HOMEPAGE: &str = "https://ketansingrole.github.io/KChess-V2/";
 #[allow(dead_code)]
 pub const SYNOPSIS: &str = "Desktop chess: Stockfish, Lichess, puzzles and training";
 #[allow(dead_code)]
