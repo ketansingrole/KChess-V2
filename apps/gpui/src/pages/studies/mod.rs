@@ -584,7 +584,20 @@ impl StudiesPage {
     }
 
     pub(crate) fn open_import(window: &mut Window, cx: &mut App) {
+        Self::open_import_with(None, window, cx);
+    }
+
+    /// The import dialog holding `pgn` already, as a file of several games dropped on the window
+    /// offers it.
+    pub(crate) fn open_import_with(pgn: Option<String>, window: &mut Window, cx: &mut App) {
         let import = cx.new(|cx| ImportStudy::new(window, cx));
+        if let Some(pgn) = pgn {
+            import.update(cx, |import, cx| {
+                import
+                    .text
+                    .update(cx, |text, cx| text.set_value(pgn, window, cx));
+            });
+        }
         window.open_dialog(cx, move |dialog, _, _| {
             dialog
                 .title("Import a study")

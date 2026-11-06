@@ -1,6 +1,8 @@
 //! Repertoire: drill a repertoire. Any saved study is a
-//! tree of moves; KChess plays the other side's moves from it (favouring the lines you get wrong)
-//! and you answer with one of yours. One chapter can be drilled, or all of them: chapters from the
+//! tree of moves; KChess plays the other side's moves from it (lines due for review first, then
+//! favouring the lines you get wrong) and you answer with one of yours. Each line, root to leaf,
+//! is scheduled by spaced repetition: a line finished without a mistake comes back later and
+//! later, a missed one at once. One chapter can be drilled, or all of them: chapters from the
 //! same starting position are one tree. An opening chosen on the Openings page is drilled without a
 //! study: its named line, then the explorer's popular moves for a few more.
 
@@ -16,6 +18,7 @@ use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_core::Level;
+use kchess_domain::training::repetition;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use shakmaty::{Color, Position as _};
@@ -151,6 +154,66 @@ fn study_roots(chapters: &[Chapter]) -> Vec<TreeNode> {
     roots
 }
 
+/// The paths of a tree's leaves: each one is a line, from the root to its end.
+fn leaves(root: &TreeNode) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut stack = vec![(root, String::new())];
+    while let Some((node, path)) = stack.pop() {
+        if node.children.is_empty() {
+            if !path.is_empty() {
+                found.push(path);
+            }
+            continue;
+        }
+        for child in node.children.iter().rev() {
+            stack.push((child, child_path(&path, &child.uci)));
+        }
+    }
+    found
+}
+
+/// A line's name in the schedule.
+fn line_id(root: &TreeNode, path: &str) -> String {
+    repetition::line_id(&root.fen, root.fen == STANDARD_FEN, path)
+}
+
+/// Whether `path` is `line` or on the way to it.
+fn leads_to(path: &str, line: &str) -> bool {
+    line == path
+        || line
+            .strip_prefix(path)
+            .is_some_and(|rest| rest.starts_with(' '))
+}
+
+fn now_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0., |elapsed| elapsed.as_millis() as f64)
+}
+
+/// When a line is next due, from now: "in 5 min", "in 3 h", "in 2 days".
+fn due_in(due: f64, now: f64) -> String {
+    let minutes = ((due - now) / 60_000.).ceil().max(1.);
+    if minutes < 60. {
+        format!("in {minutes} min")
+    } else if minutes < 24. * 60. {
+        format!("in {} h", (minutes / 60.).round())
+    } else {
+        let days = (minutes / (24. * 60.)).round();
+        format!("in {days} day{}", if days == 1. { "" } else { "s" })
+    }
+}
+
+/// The panel's line on the schedule: how many lines are due, or when the next one is.
+fn schedule_text(summary: &repetition::Summary, now: f64) -> Option<String> {
+    match (summary.due, summary.next_due) {
+        (0, None) => None,
+        (0, Some(due)) => Some(format!("Next line due {}", due_in(due, now))),
+        (1, _) => Some("1 line due".into()),
+        (due, _) => Some(format!("{due} lines due")),
+    }
+}
+
 fn turn_of(fen: &str) -> Color {
     if fen.split(' ').nth(1) == Some("b") {
         Color::Black
@@ -172,6 +235,7 @@ fn color_name(color: Color) -> &'static str {
 pub(crate) enum RepertoireAction {
     ShowMove,
     Restart,
+    Review,
     Forget,
     Save,
 }
@@ -179,6 +243,14 @@ pub(crate) enum RepertoireAction {
 pub struct Repertoire {
     studies: Vec<Study>,
     misses: Value,
+    /// Every repertoire's spaced-repetition schedule: key → line → card.
+    schedule: Value,
+    /// The line being drilled, when one was chosen (a due line): the opponent's moves follow it.
+    target: Option<String>,
+    /// Whether this line had a wrong move or a shown one: it is then answered wrong.
+    line_missed: bool,
+    /// Only due lines come up, until none is left.
+    reviewing: bool,
     /// An opening's drill tree, and the opening and side it was built for.
     drill: Option<TreeNode>,
     drill_for: Option<Value>,
@@ -269,6 +341,10 @@ impl Repertoire {
         let mut drill = Repertoire {
             studies: Self::studies_of(cx),
             misses: Value::Null,
+            schedule: Value::Null,
+            target: None,
+            line_missed: false,
+            reviewing: false,
             drill: None,
             drill_for: None,
             preparing: false,
@@ -304,6 +380,14 @@ impl Repertoire {
             Ok(library) => {
                 let _ = this.update(cx, |this, cx| {
                     this.misses = library["repertoireMisses"].clone();
+                    this.schedule = library["repertoireSchedule"].clone();
+                    // A due line comes first, also when the schedule arrived after the first line.
+                    if this.target.is_none()
+                        && this.correct + this.wrong == 0
+                        && this.due_line(cx).is_some()
+                    {
+                        this.start_line(cx);
+                    }
                     cx.notify();
                 });
             }
@@ -528,16 +612,78 @@ impl Repertoire {
         }));
     }
 
+    /// Every line of the trees: its tree, its path and its name in the schedule.
+    fn lines(&self) -> Vec<(usize, String, String)> {
+        self.roots
+            .iter()
+            .enumerate()
+            .flat_map(|(index, root)| {
+                leaves(root).into_iter().map(move |path| {
+                    let id = line_id(root, &path);
+                    (index, path, id)
+                })
+            })
+            .collect()
+    }
+
+    /// How this repertoire's lines stand in the schedule now.
+    fn summary(&self, cx: &App) -> repetition::Summary {
+        let lines = self.lines();
+        let table = &self.schedule[self.miss_key(cx)];
+        repetition::summary(lines.iter().map(|(_, _, id)| id.as_str()), table, now_ms())
+    }
+
+    /// The most overdue line, if any is due.
+    fn due_line(&self, cx: &App) -> Option<(usize, String)> {
+        let lines = self.lines();
+        let ids: Vec<&str> = lines.iter().map(|(_, _, id)| id.as_str()).collect();
+        let table = &self.schedule[self.miss_key(cx)];
+        let index = repetition::most_overdue(&ids, table, now_ms())?;
+        let (root, path, _) = lines.into_iter().nth(index)?;
+        Some((root, path))
+    }
+
+    /// Review the due lines, most overdue first, until none is left.
+    fn review_due(&mut self, cx: &mut Context<Self>) {
+        self.reviewing = true;
+        self.start_line(cx);
+    }
+
     fn start_line(&mut self, cx: &mut Context<Self>) {
         self.reply = None;
         self.hint.clear();
-        let table = self.misses[self.miss_key(cx)].clone();
-        let roots: Vec<&TreeNode> = self.roots.iter().collect();
-        self.at = pick_weak(&roots, &table, random_unit()).map(|index| (index, String::new()));
+        self.line_missed = false;
+        self.target = None;
+        let due = self.due_line(cx);
+        if due.is_none() && self.reviewing {
+            self.reviewing = false;
+            self.feedback = Some(Feedback {
+                kind: Kind::Done,
+                text: "Due lines reviewed".into(),
+                detail: None,
+            });
+            self.redraw(cx);
+            return;
+        }
+        self.at = match due {
+            Some((root, path)) => {
+                self.target = Some(path);
+                Some((root, String::new()))
+            }
+            None => {
+                let table = self.misses[self.miss_key(cx)].clone();
+                let roots: Vec<&TreeNode> = self.roots.iter().collect();
+                pick_weak(&roots, &table, random_unit()).map(|index| (index, String::new()))
+            }
+        };
         if self.at.is_some() {
             self.feedback = Some(Feedback {
                 kind: Kind::Info,
-                text: "New line".into(),
+                text: if self.target.is_some() {
+                    "Line due for review".into()
+                } else {
+                    "New line".into()
+                },
                 detail: None,
             });
             if !self.your_turn(cx) {
@@ -554,7 +700,15 @@ impl Repertoire {
         let table = self.misses[self.miss_key(cx)].clone();
         let node = self.roots[root].node_at(&path);
         let children: Vec<&TreeNode> = node.children.iter().collect();
-        let Some(next) = pick_weak(&children, &table, random_unit()).map(|index| children[index])
+        // The line chosen for review, while the moves are on it; otherwise the weak lines.
+        let on_target = self.target.as_ref().and_then(|target| {
+            children
+                .iter()
+                .position(|child| leads_to(&child_path(&path, &child.uci), target))
+        });
+        let Some(next) = on_target
+            .or_else(|| pick_weak(&children, &table, random_unit()))
+            .map(|index| children[index])
         else {
             return self.finish_line(cx);
         };
@@ -569,6 +723,7 @@ impl Repertoire {
 
     fn finish_line(&mut self, cx: &mut Context<Self>) {
         self.lines += 1;
+        self.review_line(cx);
         self.feedback = Some(Feedback {
             kind: Kind::Done,
             text: "End of this line".into(),
@@ -600,6 +755,7 @@ impl Repertoire {
             });
         let Some((uci, san, last)) = found else {
             self.wrong += 1;
+            self.line_missed = true;
             let fen = node.fen.clone();
             let expected: Vec<&str> = node
                 .children
@@ -682,6 +838,9 @@ impl Repertoire {
             actions.push(RepertoireAction::ShowMove);
         }
         actions.push(RepertoireAction::Restart);
+        if self.summary(cx).due > 0 {
+            actions.push(RepertoireAction::Review);
+        }
         if self.has_misses(cx) {
             actions.push(RepertoireAction::Forget);
         }
@@ -703,7 +862,11 @@ impl Repertoire {
         }
         match action {
             RepertoireAction::ShowMove => self.show_answer(cx),
-            RepertoireAction::Restart => self.start_line(cx),
+            RepertoireAction::Restart => {
+                self.reviewing = false;
+                self.start_line(cx)
+            }
+            RepertoireAction::Review => self.review_due(cx),
             RepertoireAction::Forget => self.clear_misses(window, cx),
             RepertoireAction::Save => self.save_opening(window, cx),
         }
@@ -715,8 +878,53 @@ impl Repertoire {
         }
         if let Some(node) = self.node() {
             self.hint = Self::arrows(node, Arrow::hint);
+            // A shown move was not remembered.
+            self.line_missed = true;
         }
         self.redraw(cx);
+    }
+
+    /// The finished line answered in the schedule: right when it had no wrong or shown move.
+    fn review_line(&mut self, cx: &mut Context<Self>) {
+        let Some((root, path)) = self.at.clone() else {
+            return;
+        };
+        let Some(tree) = self.roots.get(root) else {
+            return;
+        };
+        if path.is_empty() {
+            return;
+        }
+        let (key, line, correct) = (self.miss_key(cx), line_id(tree, &path), !self.line_missed);
+        // At once here, so the next line is chosen by it; the core's answer replaces it.
+        let mut schedule = self.schedule.as_object().cloned().unwrap_or_default();
+        if let Err(cause) = repetition::record(&mut schedule, &key, &line, correct, now_ms()) {
+            crate::log::write(
+                Level::Warn,
+                "repertoire",
+                &format!("Scheduling a line failed: {cause}"),
+            );
+            return;
+        }
+        self.schedule = Value::Object(schedule);
+        let saved = cx.global::<AppCore>().call(
+            "reviewRepertoireLine",
+            vec![json!(key), json!(line), json!(correct)],
+        );
+        cx.spawn(async move |this, cx| match saved.await {
+            Ok(schedule) => {
+                let _ = this.update(cx, |this, cx| {
+                    this.schedule = schedule;
+                    cx.notify();
+                });
+            }
+            Err(cause) => crate::log::write(
+                Level::Warn,
+                "repertoire",
+                &format!("Saving a line's review failed: {}", cause.message),
+            ),
+        })
+        .detach();
     }
 
     fn record_miss(&mut self, fen: String, cx: &mut Context<Self>) {
@@ -991,9 +1199,9 @@ impl Render for Repertoire {
             board_column
         };
         let how = if drills_opening {
-            "After the named line you play the most played move on Lichess, and KChess answers with popular replies. Lines you got wrong come up more often."
+            "After the named line you play the most played move on Lichess, and KChess answers with popular replies. Lines due for review come first; lines you got wrong come up more often."
         } else {
-            "KChess answers with moves from your study. Lines you got wrong come up more often."
+            "KChess answers with moves from your study. Lines due for review come first; lines you got wrong come up more often."
         };
         let help = Popover::new("repertoire-help")
             .anchor(Anchor::TopRight)
@@ -1012,6 +1220,8 @@ impl Render for Repertoire {
                     .child(how)
             });
         let chapters = self.study(cx).map_or(0, |study| study.chapters.len());
+        let summary = self.summary(cx);
+        let schedule = schedule_text(&summary, now_ms());
         let total = self.correct + self.wrong;
         let comment = self.node().map(|node| {
             node.comments
@@ -1146,6 +1356,15 @@ impl Render for Repertoire {
                     )
                 }
             )))
+            .children(schedule.map(|text| {
+                div()
+                    .id("repertoire-due")
+                    .test_support()
+                    .aria_label(SharedString::from(text.clone()))
+                    .text_size(px(14.))
+                    .text_color(palette.text_muted)
+                    .child(text)
+            }))
             .child(
                 h_flex()
                     .flex_wrap()
@@ -1166,7 +1385,18 @@ impl Render for Repertoire {
                             .outline()
                             .icon(icon("rotate-ccw"))
                             .label("Restart line")
-                            .on_click(cx.listener(|this, _, _, cx| this.start_line(cx))),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.reviewing = false;
+                                this.start_line(cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("review-due")
+                            .outline()
+                            .icon(icon("calendar-days"))
+                            .label("Review due lines")
+                            .disabled(summary.due == 0)
+                            .on_click(cx.listener(|this, _, _, cx| this.review_due(cx))),
                     )
                     .child(
                         Button::new("forget-mistakes")
@@ -1219,7 +1449,11 @@ impl Render for Repertoire {
 
 #[cfg(test)]
 mod tests {
-    use super::{Chapter, TreeNode, merge, pick_weak, same_castle, study_roots, weakness};
+    use super::{
+        Chapter, TreeNode, due_in, leads_to, leaves, merge, pick_weak, same_castle, schedule_text,
+        study_roots, weakness,
+    };
+    use kchess_domain::training::repetition::Summary;
     use serde_json::json;
 
     fn chapter(pgn: &str) -> Chapter {
@@ -1272,5 +1506,45 @@ mod tests {
         other.add_move("", "c2c4").unwrap();
         merge(&mut tree, other);
         assert_eq!(tree.children.len(), 3);
+    }
+
+    #[test]
+    fn each_leaf_is_a_line() {
+        let roots = study_roots(&[
+            chapter("1. e4 e5 2. Nf3"),
+            chapter("1. e4 c5"),
+            chapter("1. d4"),
+        ]);
+        assert_eq!(leaves(&roots[0]), ["e2e4 e7e5 g1f3", "e2e4 c7c5", "d2d4"]);
+        assert!(leads_to("e2e4", "e2e4 e7e5"));
+        assert!(leads_to("e2e4 e7e5", "e2e4 e7e5"));
+        assert!(!leads_to("e2e4 e7e6", "e2e4 e7e5 g1f3"));
+        assert!(leaves(&TreeNode::new(None)).is_empty());
+    }
+
+    #[test]
+    fn the_schedule_reads_as_due_lines_or_the_next_one() {
+        let now = 1_000_000_000.;
+        let summary = |due, next_due| Summary {
+            due,
+            new: 0,
+            next_due,
+        };
+        assert_eq!(schedule_text(&summary(0, None), now), None);
+        assert_eq!(
+            schedule_text(&summary(1, Some(now)), now).as_deref(),
+            Some("1 line due")
+        );
+        assert_eq!(
+            schedule_text(&summary(3, None), now).as_deref(),
+            Some("3 lines due")
+        );
+        assert_eq!(
+            schedule_text(&summary(0, Some(now + 86_400_000.)), now).as_deref(),
+            Some("Next line due in 1 day")
+        );
+        assert_eq!(due_in(now + 30_000., now), "in 1 min");
+        assert_eq!(due_in(now + 3. * 3_600_000., now), "in 3 h");
+        assert_eq!(due_in(now + 6. * 86_400_000., now), "in 6 days");
     }
 }

@@ -289,3 +289,37 @@ async fn chesscom_games_are_reviewed_without_asking_lichess() {
     assert_eq!(queue[0]["id"], "cc-l5");
     assert_eq!(queue[0]["checked"], true, "{queue}");
 }
+
+/// A Chess.com game keeps the rating after it and no change: its history is those ratings, a
+/// point a day per speed (Home's rating cards and chart for a Chess.com player).
+#[tokio::test]
+async fn chesscom_ratings_make_a_history_without_rating_changes() {
+    let fixture = serve(move |seen: &Seen| match seen.path() {
+        "/pub/player/alice" => Reply::Json(200, profile_body()),
+        "/pub/player/alice/games/archives" => Reply::Json(
+            200,
+            json!({ "archives": [format!("https://api.chess.com/pub/player/alice/games/{PAST}")] })
+                .to_string(),
+        ),
+        path if path.ends_with(PAST) => Reply::Json(
+            200,
+            month_body(&[
+                game(5, "Alice", "bob", "win", "resigned"),
+                game(6, "bob", "Alice", "win", "checkmated"),
+            ]),
+        ),
+        _ => Reply::Json(404, "{}".into()),
+    })
+    .await;
+    let profile = profile(&fixture);
+    profile.chesscom.add("alice").await.expect("added");
+    let history = profile
+        .database
+        .call_async("store.games.gameRatingHistory", &[json!("alice@chess.com")])
+        .await
+        .unwrap();
+    assert_eq!(
+        history,
+        json!([{ "name": "rapid", "points": [[2020, 0, 6, 1500], [2020, 0, 7, 1480]] }])
+    );
+}

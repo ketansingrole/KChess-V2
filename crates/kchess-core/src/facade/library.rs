@@ -151,6 +151,17 @@ impl Core {
                     )
                     .await
             }
+            "reviewRepertoireLine" => {
+                let key = normal("assertRepertoireKey", &arg(args, 0))?;
+                let line = normal("assertRepertoireLine", &arg(args, 1))?;
+                let correct = normal("assertBoolean", &arg(args, 2))?;
+                self.database
+                    .call_async(
+                        "store.library.reviewRepertoireLine",
+                        &[key, line, correct, json!(now_ms())],
+                    )
+                    .await
+            }
             "viewPreferences" => {
                 let imported = self
                     .database

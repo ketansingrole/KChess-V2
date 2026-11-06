@@ -541,6 +541,11 @@ pub fn methods() -> Vec<Method> {
             vec![req("key"), req("misses")],
         ),
         method(
+            "reviewRepertoireLine",
+            "Answer a repertoire line right or wrong; its spaced-repetition schedule moves on. Returns every repertoire's schedule.",
+            vec![req("key"), req("line"), req("correct")],
+        ),
+        method(
             "customThemes",
             "The user's own app themes from the profile's themes folder, with a line per file that could not be used.",
             vec![],

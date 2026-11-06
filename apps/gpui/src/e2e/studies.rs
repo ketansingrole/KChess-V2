@@ -144,6 +144,28 @@ fn an_imported_pgn_becomes_a_study_with_a_chapter_for_each_game(cx: &mut gpui_ki
     assert!(!app.shows("tree-e2e4"));
 }
 
+/// A file of several games dropped on any page is offered as a study: the Studies import opens
+/// holding it, and imports a chapter for each game.
+#[gpui_kit::test]
+fn a_dropped_file_of_several_games_is_offered_as_a_study(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Puzzles");
+    let _file = app.drop_file("openings.pgn", TWO_CHAPTERS.as_bytes());
+    wait_for_value(&mut app, "PGN", TWO_CHAPTERS);
+    assert_eq!(
+        app.cx.update(|cx| crate::shell::current_page(cx)),
+        Some(crate::pages::Page::Studies)
+    );
+    fill_in_dialog(&mut app, "Study name", "Dropped openings");
+    app.click("import-run");
+    app.find("open-imported");
+    wait_for_listed(&mut app, &["Dropped openings"]);
+    app.click("open-imported");
+    wait_for_value(&mut app, "Study name", "Dropped openings");
+    wait_for_value(&mut app, "Study chapter", "1. Chapter 1");
+    app.find("tree-e2e4");
+}
+
 #[gpui_kit::test]
 fn a_pgn_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
