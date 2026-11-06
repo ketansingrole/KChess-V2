@@ -32,7 +32,7 @@ const RETRY: Duration = Duration::from_millis(50);
 /// Who this client is, for `hello`.
 #[derive(Clone, Debug)]
 pub struct Hello {
-    /// `electron`, `gpui`, `cli`, `mcp`...
+    /// `gpui`, `cli`, `mcp`...
     pub kind: String,
     pub capabilities: Vec<Capability>,
 }

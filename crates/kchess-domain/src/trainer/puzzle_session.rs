@@ -1,12 +1,12 @@
 //! The training session's transitions.
 //!
-//! The TypeScript class keeps its reactive state, runs the host call each transition returns
+//! The caller keeps the state, runs the host call each transition returns
 //! (`call`), and reports the settled reply back with the `resume` token it was given. Every
 //! decision is made here: a reply counts only while its load generation, session version,
 //! attempt and selection are still current, which is how late replies are ignored.
 //!
 //! Transitions take `{ state, internal, … }` and return `{ state, internal, call, warn }`.
-//! `internal` holds what the class kept privately (load generation, session version, attempt).
+//! `internal` holds what the caller keeps privately (load generation, session version, attempt).
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};

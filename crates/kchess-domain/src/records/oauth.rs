@@ -49,7 +49,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
 }
 
 /// `oauthLook(value)`: the requested look when every colour and the appearance are valid, else
-/// null; the TypeScript side then answers with its default look.
+/// null; the caller then answers with its default look.
 fn look(value: Option<&Value>) -> Value {
     let Some(Value::Object(map)) = value else {
         return Value::Null;

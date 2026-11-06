@@ -1,6 +1,5 @@
 //! Storm, Streak and Rush: a run's state and the rules that change it.
-//! Each transition takes the state and returns the next one; the TypeScript wrappers keep the
-//! mutating signatures their callers use.
+//! Each transition takes the state and returns the next one.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
