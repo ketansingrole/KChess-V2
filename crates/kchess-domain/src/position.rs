@@ -535,6 +535,24 @@ mod tests {
         assert_eq!(info.outcome, Some(json!({})));
     }
 
+    /// Every legal move's SAN, a Crazyhouse pocket's drops after the board's moves.
+    #[test]
+    fn lists_every_legal_san_with_the_drops_last() {
+        let pos = rules::standard_from_fen(START).unwrap();
+        let sans = legal_sans(&pos);
+        assert_eq!(sans.len(), 20);
+        assert!(sans.contains(&"Nf3".to_string()) && sans.contains(&"e4".to_string()));
+        let crazyhouse = rules::setup_position(
+            shakmaty::variant::Variant::Crazyhouse,
+            rules::parse_fen("k7/8/8/8/8/8/8/7K[N] w - - 0 1").unwrap(),
+        )
+        .unwrap();
+        let sans = legal_sans(&crazyhouse);
+        assert_eq!(sans.len(), 3 + 62, "{sans:?}");
+        assert_eq!(sans.last().map(String::as_str), Some("N@h8"));
+        assert!(sans[..3].iter().all(|san| san.starts_with('K')));
+    }
+
     /// Bare kings: moves remain, yet the game is drawn and over.
     #[test]
     fn bare_kings_end_the_game_in_a_draw() {
