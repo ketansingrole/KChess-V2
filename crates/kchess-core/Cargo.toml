@@ -55,6 +55,8 @@ rustix = { version = "1", features = ["fs", "process"] }
 libc = "0.2"
 
 [dev-dependencies]
+# Random legal games for the compression benchmark (`examples/http_compression.rs`).
+shakmaty.workspace = true
 # The method table the facade's dispatch is checked against (tests/facade_dispatch.rs).
 kchess-contracts = { path = "../kchess-contracts" }
 
