@@ -61,6 +61,8 @@ pub struct Session {
     pub takeback_offered: bool,
     /// The app's writes, in order ("POST /api/board/game/E2eGame1/move/e2e4").
     pub writes: Vec<String>,
+    /// The account's game download waits until this is cleared: a sync still running.
+    pub hold_games: bool,
     /// Counts changes: a game stream sends the state again whenever this moves on.
     version: usize,
 }
@@ -597,7 +599,12 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         ("GET", p) if p.starts_with("/api/crosstable/") => {
             reply(&mut out, &json!({ "users": {}, "nbGames": 0 }))
         }
-        ("GET", p) if p.starts_with("/api/games/user/") => ndjson(&mut out),
+        ("GET", p) if p.starts_with("/api/games/user/") => {
+            while session.lock().hold_games {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            ndjson(&mut out)
+        }
         ("POST", "/api/games/export/_ids") => ndjson(&mut out),
         _ => not_found(&mut out),
     }

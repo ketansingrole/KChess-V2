@@ -168,7 +168,7 @@ fn account_row(
                         .small()
                         .icon(icon("refresh-cw"))
                         .label("Sync")
-                        .disabled(busy)
+                        .disabled(accounts.syncing())
                         .on_click(act(|accounts, name, window, cx| {
                             accounts.sync(Some(name), window, cx)
                         })),

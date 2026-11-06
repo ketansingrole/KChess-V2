@@ -279,6 +279,39 @@ fn a_failed_timeline_can_be_tried_again(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.shows("friends-timeline-retry"));
 }
 
+/// A sync of a big account takes minutes: following a player meanwhile works at once, and Sync
+/// all waits for the running sync. (A single busy flag used to disable Follow until it ended.)
+#[gpui_kit::test]
+fn following_works_while_games_sync(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = Harness::signed_in(cx, false);
+    app.open("Following");
+    lichess.lock().hold_games = true;
+    app.with_window(|window, cx| {
+        crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.sync(None, window, cx))
+    });
+    app.wait_for("the sync to start", |_, cx| {
+        crate::accounts::handle(cx).read(cx).syncing()
+    });
+    follow(&mut app, "dana");
+    app.wait_for("dana to be followed", |_, cx| {
+        crate::accounts::handle(cx)
+            .read(cx)
+            .tracked()
+            .iter()
+            .any(|friend| friend["username"].as_str() == Some("dana"))
+    });
+    app.wait_for("Sync all to wait for the sync", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find(gpui_kit::ElementId::from("friends-sync"))
+            .is_some_and(|sync| sync.disabled() == Some(true))
+    });
+    lichess.lock().hold_games = false;
+    app.wait_for("the syncs to end", |_, cx| {
+        !crate::accounts::handle(cx).read(cx).working()
+    });
+}
+
 /// A player who finished a game since their sync is marked, and so is Sync all, from their profile
 /// alone; syncing takes the mark away.
 #[gpui_kit::test]
@@ -289,7 +322,7 @@ fn players_with_games_to_sync_are_marked(cx: &mut gpui_kit::TestAppContext) {
     let new_games = ("friend-new-games", 0usize);
     app.wait_for("the follow's sync", |_, cx| {
         let accounts = crate::accounts::handle(cx).read(cx);
-        !accounts.busy
+        !accounts.working()
             && accounts
                 .tracked()
                 .iter()

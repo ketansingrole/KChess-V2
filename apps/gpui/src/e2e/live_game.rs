@@ -256,7 +256,7 @@ fn a_refreshed_login_brings_back_the_event_stream(cx: &mut gpui_kit::TestAppCont
     });
     expired.lock().revoked = true;
     app.wait_for("the app to stop syncing", |_, cx| {
-        !crate::accounts::handle(cx).read(cx).busy
+        !crate::accounts::handle(cx).read(cx).working()
     });
 
     let refreshed = app.connect("Tester", false);

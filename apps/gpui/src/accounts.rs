@@ -18,7 +18,11 @@ pub struct Accounts {
     pub data: Value,
     /// `usage`: bytes downloaded per account, and what each keeps (`UsageReport`).
     pub usage: Value,
+    /// An account action runs: connecting, following, importing, signing out or removing.
     pub busy: bool,
+    /// Game syncs running. They take minutes on a big account and run beside the actions: the
+    /// core joins a second sync of the same account to the running one.
+    syncs: usize,
     reads: Reads,
 }
 
@@ -33,6 +37,7 @@ pub fn init(cx: &mut App) {
         data: Value::Null,
         usage: Value::Null,
         busy: false,
+        syncs: 0,
         reads: Reads::default(),
     });
     cx.set_global(AccountsHandle(accounts.clone()));
@@ -57,6 +62,16 @@ fn say(window: &mut Window, cx: &mut App, message: impl Into<SharedString>) {
 }
 
 impl Accounts {
+    /// A game sync runs.
+    pub fn syncing(&self) -> bool {
+        self.syncs > 0
+    }
+
+    /// Anything runs: an account action or a sync.
+    pub fn working(&self) -> bool {
+        self.busy || self.syncing()
+    }
+
     /// Every account KChess keeps (connected or only tracked).
     pub fn all(&self) -> Vec<Value> {
         self.data["accounts"]
@@ -194,11 +209,13 @@ impl Accounts {
     }
 
     /// `sync`: download one account's games (all when `None`), and say what that cost.
+    /// Syncing everyone waits for no other sync but starts only when none runs; one account's sync
+    /// always starts (a player just followed is not in a sync of everyone already running).
     pub fn sync(&mut self, username: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy {
+        if username.is_none() && self.syncing() {
             return;
         }
-        self.busy = true;
+        self.syncs += 1;
         cx.notify();
         let core = cx.global::<AppCore>().clone();
         let before: f64 = self.total_downloaded();
@@ -208,7 +225,7 @@ impl Accounts {
             let result = synced.await;
             let usage = core.call("usage", Vec::new()).await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.busy = false;
+                this.syncs -= 1;
                 if let Ok(usage) = usage {
                     this.usage = usage;
                 }
@@ -509,6 +526,7 @@ mod tests {
             data: json!({ "accounts": [] }),
             usage: json!({}),
             busy: false,
+            syncs: 0,
             reads: Reads::default(),
         };
         let read = accounts.reads.start();

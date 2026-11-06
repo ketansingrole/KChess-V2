@@ -310,7 +310,7 @@ impl SidebarInputs {
             back: workspace.back,
             game_mark: game_mark(cx),
             online: crate::network::online(cx),
-            accounts_busy: accounts.busy,
+            accounts_busy: accounts.working(),
             active: accounts.active(cx),
             connected: accounts.connected(),
         }
@@ -1800,7 +1800,7 @@ impl Workspace {
 
 /// Something is waiting on Lichess (`busy`): signing in, syncing, starting a game.
 fn working(cx: &App) -> bool {
-    crate::accounts::handle(cx).read(cx).busy || crate::online::handle(cx).read(cx).busy
+    crate::accounts::handle(cx).read(cx).working() || crate::online::handle(cx).read(cx).busy
 }
 
 /// The Lichess game the sidebar marks (`lichessGame`): your move (in a live game, or in a

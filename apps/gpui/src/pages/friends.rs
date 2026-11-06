@@ -387,7 +387,7 @@ impl FriendsPage {
         if !accounts.connected().is_empty() {
             actions.push(Action::Import);
         }
-        if !accounts.tracked().is_empty() && !accounts.busy {
+        if !accounts.tracked().is_empty() && !accounts.syncing() {
             actions.push(Action::Sync);
         }
         actions
@@ -474,7 +474,7 @@ impl FriendsPage {
                 .child(widgets::badge("New", Look::Primary, palette))
         });
         let cell = |width: f32| div().w(px(width)).text_right();
-        let busy = accounts.busy;
+        let syncing = accounts.syncing();
         let (sync_name, clear_name, remove_name, games_name, challenge_name) = (
             name.clone(),
             name.clone(),
@@ -644,7 +644,7 @@ impl FriendsPage {
                                 menu.item(
                                     PopupMenuItem::new("Sync")
                                         .icon(icon("refresh-cw"))
-                                        .disabled(busy)
+                                        .disabled(syncing)
                                         .on_click(move |_, window, cx| {
                                             let name = sync_name.clone();
                                             crate::accounts::handle(cx).update(
@@ -722,7 +722,7 @@ impl Render for FriendsPage {
                 )
             });
         let typed = !self.input.read(cx).value().trim().is_empty();
-        let busy = accounts.busy;
+        let (busy, syncing) = (accounts.busy, accounts.syncing());
         let new_games = friends
             .iter()
             .filter(|friend| {
@@ -784,8 +784,8 @@ impl Render for FriendsPage {
                                 count => format!("{count} players have new games"),
                             })
                         })
-                        .loading(busy)
-                        .disabled(busy)
+                        .loading(syncing)
+                        .disabled(syncing)
                         .on_click(|_, window, cx| sync_all(window, cx)),
                 )
             });

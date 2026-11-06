@@ -848,7 +848,7 @@ fn connect_showcase(
         let done = cx.update(|cx| {
             let accounts = crate::accounts::handle(cx);
             let accounts = accounts.read(cx);
-            accounts.active(cx).as_deref() == Some(username) && !accounts.busy
+            accounts.active(cx).as_deref() == Some(username) && !accounts.working()
         });
         if done {
             break;

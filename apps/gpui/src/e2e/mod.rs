@@ -126,7 +126,7 @@ impl Harness {
         // dropped, as the disabled button would be: Windows CI, slow enough to ask while the first
         // account synced, timed out `switching_accounts_moves_the_event_stream` waiting for it.
         self.wait_for("the accounts to be free for a sign-in", |_, cx| {
-            !crate::accounts::handle(cx).read(cx).busy
+            !crate::accounts::handle(cx).read(cx).working()
         });
         self.cx
             .update_window(self.window, |_, window, cx| {
