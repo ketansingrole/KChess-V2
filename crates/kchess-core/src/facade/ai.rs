@@ -238,10 +238,17 @@ impl Core {
                 now_ms(),
             )
             .await?;
-        connection.sealed = Some(self.seal_tokens(&signed.tokens).await?);
-        connection.client_id = Some(client_id);
-        connection.email = signed.identity.email;
-        self.save_ai_connection(&connection).await?;
+        let sealed = self.seal_tokens(&signed.tokens).await?;
+        // The sign-in took minutes: merge into the connection as saved now, so a model or effort
+        // chosen meanwhile (in this window or another) is kept.
+        let renewing = self.ai.refreshing.lock().await;
+        let mut saved = self.ai_connection().await?;
+        saved.host_id = connection.host_id;
+        saved.sealed = Some(sealed);
+        saved.client_id = Some(client_id);
+        saved.email = signed.identity.email;
+        self.save_ai_connection(&saved).await?;
+        drop(renewing);
         self.ai_status().await
     }
 

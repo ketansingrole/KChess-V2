@@ -112,10 +112,12 @@ async fn a_plan_connects_explains_and_disconnects() {
         std::env::set_var("KCHESS_TEST_OPENAI_BASE", &fixture.base);
     }
     let dir = tempfile::tempdir().unwrap();
+    // When set, the browser's trip back waits for this.
+    let hold = Arc::new(Mutex::new(None::<tokio::sync::oneshot::Receiver<()>>));
     let host = Arc::new(Recording::default());
     *host.answers.lock().unwrap() = default_answers();
     {
-        let nonce = Arc::clone(&nonce);
+        let (nonce, hold) = (Arc::clone(&nonce), Arc::clone(&hold));
         *host.browser.lock().unwrap() = Some(Box::new(move |url: String| {
             let url = reqwest::Url::parse(&url).unwrap();
             let query = |name: &str| {
@@ -124,7 +126,11 @@ async fn a_plan_connects_explains_and_disconnects() {
                     .map(|(_, value)| value.into_owned())
                     .unwrap_or_default()
             };
-            assert_eq!(query("client_id"), "dynamic_agent_client");
+            // The first sign-in registers; a later one reuses the registration.
+            assert!(
+                ["dynamic_agent_client", "oaiapp_1"].contains(&query("client_id").as_str()),
+                "{url}"
+            );
             assert!(query("ext_agent_host_id").starts_with("urn:uuid:"));
             assert!(query("scope").contains("chatgpt.tokens.use.direct"));
             *nonce.lock().unwrap() = query("nonce");
@@ -133,7 +139,11 @@ async fn a_plan_connects_explains_and_disconnects() {
                 query("redirect_uri"),
                 query("state")
             );
+            let held = hold.lock().unwrap().take();
             tokio::spawn(async move {
+                if let Some(held) = held {
+                    held.await.ok();
+                }
                 http_client().get(back).send().await.expect("callback");
             });
         }));
@@ -196,4 +206,22 @@ async fn a_plan_connects_explains_and_disconnects() {
     assert_eq!(status["registered"], true);
     let after = core.call("aiExplain", vec![request("e1d1")]).await.unwrap();
     assert_eq!(after["problem"], "connect");
+
+    // A model and effort chosen while a sign-in waits in the browser survive its return.
+    let (release, held) = tokio::sync::oneshot::channel();
+    *hold.lock().unwrap() = Some(held);
+    let (signed, chosen) = tokio::join!(core.call("aiConnect", vec![]), async {
+        while hold.lock().unwrap().is_some() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let chosen = core
+            .call("aiSetOptions", vec![json!("gpt-a"), json!("high")])
+            .await;
+        release.send(()).unwrap();
+        chosen
+    });
+    assert_eq!(chosen.unwrap()["effort"], "high");
+    let signed = signed.unwrap();
+    assert_eq!(signed["connected"], true);
+    assert_eq!(signed["effort"], "high", "{signed}");
 }
