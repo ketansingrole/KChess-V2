@@ -41,7 +41,7 @@ jobs:
           shared-key: ${{ runner.os == 'Linux' && 'check' || 'gpui' }}
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: false
-      - uses: taiki-e/install-action@e1ccb018cd7dae15203b0b410fac02acf205cb1f # cargo-nextest
+      - uses: taiki-e/install-action@61b160225e09dfa2ea62afd328f7c2eafb5d2e54 # cargo-nextest
       # Four times as many tests at once as the runner has cores, as GUARDRAILS.md's
       # `--test-threads=40` does on a 10-core Mac.
       - name: Oversubscribed tests

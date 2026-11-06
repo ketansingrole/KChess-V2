@@ -116,7 +116,7 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@61b160225e09dfa2ea62afd328f7c2eafb5d2e54 # cargo-llvm-cov
-      - uses: taiki-e/install-action@e1ccb018cd7dae15203b0b410fac02acf205cb1f # cargo-nextest
+      - uses: taiki-e/install-action@61b160225e09dfa2ea62afd328f7c2eafb5d2e54 # cargo-nextest
       - run: rustup component add llvm-tools-preview
       # The official Stockfish, so the tests that need a real engine run (`tests/support`).
       - name: Fetch Stockfish
@@ -145,7 +145,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@85b8c964f8994926657d167d871f45a4b9d3467d # cargo-deny
+      - uses: taiki-e/install-action@61b160225e09dfa2ea62afd328f7c2eafb5d2e54 # cargo-deny
       - run: cargo deny check
       # The fuzz workspace has its own lock file.
       - run: cargo deny --manifest-path fuzz/Cargo.toml check
@@ -169,7 +169,7 @@ jobs:
           shared-key: gpui
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@e1ccb018cd7dae15203b0b410fac02acf205cb1f # cargo-nextest
+      - uses: taiki-e/install-action@61b160225e09dfa2ea62afd328f7c2eafb5d2e54 # cargo-nextest
       - run: cargo clippy -p kchess-gpui -p kchess-cli -p xtask --all-targets --locked -- -D warnings
       # The app's tests under `cargo test`: each starts GPUI, so a process per test (nextest) is slower.
       - run: cargo test -p kchess-gpui --locked
