@@ -222,6 +222,7 @@ impl SettingsPage {
         let whats_new = || {
             link("whats-new-open", "What's new")
                 .on_click(|_, window, cx| crate::whats_new::open(window, cx))
+                .test_support()
         };
         let notes = || {
             let page = page.clone();

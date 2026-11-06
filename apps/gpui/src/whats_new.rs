@@ -6,6 +6,7 @@
 //! on; a profile from before this preference existed gets the running release's notes.
 
 use gpui_kit::component::v_flex;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::theme::Palette;
@@ -192,7 +193,6 @@ fn date_label(date: &str) -> Option<String> {
 fn list(releases: &[Release], palette: &Palette, height: Pixels) -> impl IntoElement {
     v_flex()
         .id("whats-new")
-        .test_support()
         .max_h(height)
         .overflow_y_scroll()
         .gap(px(16.))
@@ -243,11 +243,12 @@ fn list(releases: &[Release], palette: &Palette, height: Pixels) -> impl IntoEle
                     )
                 }))
         }))
+        .test_support()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Item, NOTES, date_label, parse, parse_version, releases_up_to, to_show};
 
     const SAMPLE: &str = "# What's new\n\nIntro text.\n\n## Unreleased\n\n- **Next**: not yet.\n\n\
         ## 2026.11.4 (2026-11-20)\n\n- **Guess the move**: a drill, see [Practice](https://x).\n  \
