@@ -8,7 +8,6 @@ use super::fake_lichess::Handle;
 fn in_a_game(cx: &mut gpui_kit::TestAppContext) -> (Harness, Handle) {
     let (app, lichess) = Harness::signed_in(cx, true);
     let mut app = app.restart();
-    app.online();
     app.open("Play on Lichess");
     app.find("online-abort");
     (app, lichess)
@@ -68,7 +67,6 @@ fn a_game_lichess_keeps_from_apps_is_offered_to_watch(cx: &mut gpui_kit::TestApp
         session.board_streams = 0;
     }
     let mut app = app.restart();
-    app.online();
     app.open("Play on Lichess");
     {
         use gpui_kit::test::TestWindowExt as _;
@@ -113,7 +111,6 @@ fn a_game_refused_on_launch_offers_watching(cx: &mut gpui_kit::TestAppContext) {
     let (app, lichess) = Harness::signed_in(cx, true);
     lichess.lock().board_refused = true;
     let mut app = app.restart();
-    app.online();
     app.open("Play on Lichess");
     app.find("online-watch");
     assert!(!app.shows("online-reconnect"));
@@ -303,7 +300,6 @@ fn a_crazyhouse_pawn_is_dropped_from_the_pocket(cx: &mut gpui_kit::TestAppContex
         session.moves = ["e2e4", "d7d5", "e4d5", "d8d5"].map(String::from).to_vec();
     }
     let mut app = app.restart();
-    app.online();
     app.open("Play on Lichess");
     app.find("online-resign");
     app.find("pocket-White-Pawn");
@@ -446,7 +442,6 @@ fn a_correspondence_move_waits_for_confirm(cx: &mut gpui_kit::TestAppContext) {
     let (app, lichess) = Harness::signed_in(cx, true);
     lichess.lock().correspondence = true;
     let mut app = app.restart();
-    app.online();
     app.open("Play on Lichess");
     app.find("online-abort");
 

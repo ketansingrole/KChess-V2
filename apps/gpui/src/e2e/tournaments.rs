@@ -35,7 +35,6 @@ fn return_in_the_entry_code_joins(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn escape_goes_back_to_all_tournaments(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.online();
     app.with_window(|window, cx| crate::shell::open_tournament(ARENA, window, cx));
     app.find("tournament-join");
     app.press("escape");

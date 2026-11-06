@@ -107,7 +107,6 @@ fn the_chosen_tab_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppContex
 #[gpui_kit::test]
 fn a_pasted_puzzle_link_opens_the_puzzle(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.online();
     app.press("secondary-k");
     app.type_text(&format!(
         "https://lichess.org/training/{}",
@@ -147,7 +146,6 @@ fn a_pasted_puzzle_link_opens_the_puzzle(cx: &mut gpui_kit::TestAppContext) {
 fn quick_pick_shows_the_solution(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
     let mut app = Harness::start(cx);
-    app.online();
     app.press("secondary-k");
     app.type_text(&format!(
         "https://lichess.org/training/{}",
@@ -247,7 +245,6 @@ fn quick_pick_starts_and_ends_a_storm_run(cx: &mut gpui_kit::TestAppContext) {
 fn f_flips_the_puzzle(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     let mut app = Harness::start(cx);
-    app.online();
     app.press("secondary-k");
     app.type_text(&format!(
         "https://lichess.org/training/{}",
@@ -283,7 +280,6 @@ fn f_flips_the_puzzle(cx: &mut gpui_kit::TestAppContext) {
 fn return_goes_on_to_the_next_puzzle(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     let mut app = Harness::start(cx);
-    app.online();
     app.cx.update(|cx| {
         crate::prefs::set(
             cx,
@@ -343,7 +339,6 @@ fn return_goes_on_to_the_next_puzzle(cx: &mut gpui_kit::TestAppContext) {
 fn a_finished_puzzle_is_stepped_through(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     let mut app = Harness::start(cx);
-    app.online();
     app.cx.update(|cx| {
         crate::prefs::set(
             cx,
@@ -398,7 +393,6 @@ fn a_finished_puzzle_is_stepped_through(cx: &mut gpui_kit::TestAppContext) {
 fn a_finished_puzzle_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     let mut app = Harness::start(cx);
-    app.online();
     app.cx.update(|cx| {
         crate::prefs::set(
             cx,
@@ -456,7 +450,6 @@ fn a_finished_puzzle_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppConte
 fn a_finished_puzzles_theme_is_trained(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     let mut app = Harness::start(cx);
-    app.online();
     app.press("secondary-k");
     app.type_text(&format!(
         "https://lichess.org/training/{}",

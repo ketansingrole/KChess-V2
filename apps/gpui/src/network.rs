@@ -10,6 +10,9 @@ const EVERY: Duration = Duration::from_secs(5);
 
 pub struct Network {
     pub online: bool,
+    /// The answer is decided elsewhere (the end-to-end tests), so the machine's own is not read:
+    /// a test ran as the CI runner's routing said, offline wherever it had no route out.
+    pub pinned: bool,
 }
 
 #[derive(Clone)]
@@ -38,6 +41,7 @@ fn connected() -> bool {
 pub fn init(cx: &mut App) {
     let network = cx.new(|_| Network {
         online: connected(),
+        pinned: false,
     });
     cx.set_global(NetworkHandle(network.clone()));
     cx.spawn(async move |cx| {
@@ -45,7 +49,7 @@ pub fn init(cx: &mut App) {
             cx.background_executor().timer(EVERY).await;
             let now = cx.background_executor().spawn(async { connected() }).await;
             network.update(cx, |network, cx| {
-                if network.online != now {
+                if !network.pinned && network.online != now {
                     network.online = now;
                     cx.notify();
                 }

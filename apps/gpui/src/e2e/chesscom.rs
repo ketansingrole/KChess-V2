@@ -16,7 +16,6 @@ fn listed(app: &mut Harness, what: &str, ready: impl Fn(usize) -> bool) {
 #[gpui_kit::test]
 fn a_chesscom_player_is_synced_listed_counted_and_removed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.online();
     app.open_settings("Accounts");
     assert!(!app.enabled("chesscom-add"), "nothing typed yet");
     app.click_label("Chess.com username");
@@ -59,7 +58,6 @@ fn a_chesscom_player_is_synced_listed_counted_and_removed(cx: &mut gpui_kit::Tes
 fn home_shows_a_chesscom_players_activity(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     let mut app = Harness::start(cx);
-    app.online();
     app.open_settings("Accounts");
     app.click_label("Chess.com username");
     app.type_text("e2e_dave");
@@ -99,7 +97,6 @@ fn home_shows_a_chesscom_players_activity(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn an_unknown_chesscom_player_is_not_added(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.online();
     app.open_settings("Accounts");
     app.click_label("Chess.com username");
     app.type_text("nobody_at_all");

@@ -93,7 +93,6 @@ impl Harness {
     /// Start the app signed in to the stand-in Lichess; `game` puts a game under way there.
     pub fn signed_in(cx: &mut TestAppContext, game: bool) -> (Harness, fake_lichess::Handle) {
         let mut app = Self::start(cx);
-        app.online();
         let session = app.connect("Tester", game);
         (app, session)
     }
@@ -102,7 +101,6 @@ impl Harness {
     /// speed, a rating history and synced games.
     pub fn signed_in_showcase(cx: &mut TestAppContext) -> (Harness, fake_lichess::Handle) {
         let mut app = Self::start(cx);
-        app.online();
         let session = app.connect_with("Showcase", false, |session| session.showcase = true);
         (app, session)
     }
@@ -162,12 +160,14 @@ impl Harness {
         session
     }
 
-    /// Take the computer to be on a network, whatever the machine running the test says.
-    pub fn online(&mut self) {
+    /// Take the computer to be on a network, whatever the machine running the test says, and keep
+    /// it so: the app's own look at the machine every few seconds would otherwise undo it.
+    fn online(&mut self) {
         self.cx.update(|cx| {
             let network = cx.global::<crate::network::NetworkHandle>().0.clone();
             network.update(cx, |network, cx| {
                 network.online = true;
+                network.pinned = true;
                 cx.notify();
             });
         });
@@ -226,6 +226,10 @@ impl Harness {
             profile: Some(profile),
             owns_app,
         };
+        // Every test runs on a network, as the fixtures stand in for it: on a runner without a
+        // route out, the app read the machine as offline (`e2e::shell::the_app_starts_on_home`
+        // found Connect Lichess disabled).
+        harness.online();
         harness.find("settings");
         harness
     }
