@@ -1165,6 +1165,10 @@ impl Workspace {
         if let Some(page) = Page::remembered() {
             workspace.choose(page, window, cx);
         }
+        // Once the window shows: the notes of an update just installed.
+        cx.defer_in(window, |_, window, cx| {
+            crate::whats_new::on_start(window, cx)
+        });
         workspace
     }
 
