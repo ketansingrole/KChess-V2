@@ -61,6 +61,11 @@ pub fn ask_restart(window: &mut Window, cx: &mut App) {
     });
 }
 
+/// The landing page, the source and the issue tracker, under the version.
+pub const WEBSITE: &str = "https://ketansingrole.github.io/KChess-V2/";
+pub const SOURCE: &str = "https://github.com/ketansingrole/KChess-V2";
+pub const ISSUES: &str = "https://github.com/ketansingrole/KChess-V2/issues";
+
 fn bytes(count: u64) -> String {
     widgets::format_bytes(count as f64)
 }
@@ -227,6 +232,13 @@ impl SettingsPage {
                 .on_click(|_, window, cx| crate::whats_new::open(window, cx))
                 .test_support()
         };
+        // A page outside KChess, marked with an arrow.
+        let external = |id: &'static str, label: &'static str, url: String| {
+            link(id, label)
+                .on_click(move |_, _, cx| cx.open_url(&url))
+                .child(icon("arrow-up-right").size(px(12.)))
+                .test_support()
+        };
         let notes = || {
             let page = page.clone();
             link("update-notes", "Release notes")
@@ -321,6 +333,15 @@ impl SettingsPage {
                     )
                 })
         });
+        let about = h_flex()
+            .gap(px(16.))
+            .flex_wrap()
+            .pt(px(14.))
+            .border_t_1()
+            .border_color(palette.border)
+            .child(external("about-website", "Website", WEBSITE.into()))
+            .child(external("about-source", "Source code", SOURCE.into()))
+            .child(external("about-issues", "Report a problem", ISSUES.into()));
         let status = widgets::card(palette)
             .gap(px(14.))
             .child(head)
@@ -332,7 +353,8 @@ impl SettingsPage {
                     .text_color(palette.error)
                     .child(icon("circle-alert").size(px(14.)))
                     .child(error)
-            }));
+            }))
+            .child(about);
         let can_check = updates.can_check();
         let frontend = &settings.frontend;
         v_flex().gap(px(16.)).child(status).when(can_check, |page| {
