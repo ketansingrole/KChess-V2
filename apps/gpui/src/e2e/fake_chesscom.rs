@@ -30,8 +30,9 @@ pub fn base() -> String {
     .clone()
 }
 
-/// The games `name` played: a win as White and a loss as Black.
+/// The games `name` played, rated 1500 in both: a win as White and a loss as Black.
 fn games(name: &str) -> Value {
+    let rating = |player: &str| if player == name { 1500 } else { 1450 };
     let game = |number: u64, white: &str, black: &str, results: (&str, &str), moves: &str| {
         json!({
             "url": format!("https://www.chess.com/game/live/{number}"),
@@ -44,8 +45,8 @@ fn games(name: &str) -> Value {
             "end_time": 1_579_000_000 + number,
             "rated": true,
             "rules": "chess",
-            "white": { "username": white, "rating": 1500, "result": results.0 },
-            "black": { "username": black, "rating": 1450, "result": results.1 },
+            "white": { "username": white, "rating": rating(white), "result": results.0 },
+            "black": { "username": black, "rating": rating(black), "result": results.1 },
         })
     };
     json!({ "games": [

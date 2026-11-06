@@ -52,7 +52,8 @@ pub struct HomePage {
     board: Option<(String, Entity<ChessBoard>)>,
     /// The last game's opening, by the game and its length, worked out once.
     last_opening: Option<((String, usize), Option<String>)>,
-    /// Your Lichess activity, once an account is connected, and the account it shows.
+    /// Your Lichess activity, once an account is connected (else a Chess.com player's), and the
+    /// account it shows.
     activity: Option<(String, Entity<lichess::LichessActivity>)>,
     /// The page's content, as last laid out: it, not the window, decides what goes beside what.
     area: Measured,
@@ -232,6 +233,12 @@ impl HomePage {
         }
     }
 
+    /// The activity card shown, if any.
+    #[cfg(test)]
+    pub(crate) fn activity(&self) -> Option<Entity<lichess::LichessActivity>> {
+        self.activity.as_ref().map(|(_, view)| view.clone())
+    }
+
     /// Read the unfinished computer game and the accounts again (the page was shown).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<AppCore>().clone();
@@ -349,7 +356,15 @@ impl Render for HomePage {
         let (connected, busy) = {
             let accounts = crate::accounts::handle(cx);
             let accounts = accounts.read(cx);
-            (accounts.active(cx), accounts.busy)
+            // Without a Lichess account, the first Chess.com player's games are the activity.
+            let account = accounts.active(cx).or_else(|| {
+                accounts.chesscom().first().and_then(|player| {
+                    player["username"]
+                        .as_str()
+                        .map(kchess_domain::chesscom::account_of)
+                })
+            });
+            (account, accounts.busy)
         };
         let padding = side_padding(window);
         // Before the first layout, the window less the sidebar is the guess.
@@ -696,7 +711,8 @@ impl Render for HomePage {
                             )
                     })),
             );
-        // A connected account's activity follows; until then, one line to connect it.
+        // A connected account's (or Chess.com player's) activity follows; until then, one line to
+        // connect it.
         let activity = match connected.clone() {
             Some(account) => {
                 let stale = self
