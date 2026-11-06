@@ -891,6 +891,15 @@ mod tests {
         }
     }
 
+    /// A header value escapes only `"` and `\\`; any other backslash breaks the header.
+    #[test]
+    fn a_header_value_escapes_only_quotes_and_backslashes() {
+        let line = r#"[Event "a \"b\" \\c"]"#;
+        assert_eq!(match_header(line), Some(("Event", r#"a \"b\" \\c"#, line.len())));
+        assert_eq!(match_header(r#"[Event "a\x"]"#), None);
+        assert!(!header_regex().is_match(r#"[Event "a\x"]"#));
+    }
+
     /// Only a result outside every variation is the game's.
     #[test]
     fn a_result_inside_a_variation_is_not_the_games() {
