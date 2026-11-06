@@ -1084,7 +1084,7 @@ fn the_release_key_file_holds_one_key_or_none() {
     );
     assert_eq!(parse_update_key(&base64(&[7u8; 31])), None, "wrong length");
     // The committed file is either empty of keys or holds a valid one.
-    let committed = include_str!("../update-key.pub");
+    let committed = include_str!("../../update-key.pub");
     let has_key_line = committed
         .lines()
         .any(|line| !line.trim().is_empty() && !line.trim().starts_with('#'));
