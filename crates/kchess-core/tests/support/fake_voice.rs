@@ -6,6 +6,8 @@
 //! - `refuse`: answers an error instead of ready, as a helper that cannot load the model does.
 //! - `crash-on-audio`: exits without answering the first audio.
 //! - `hang-on-audio`: never answers audio.
+//! - `slow-grammar`: as `normal`, but takes a second to acknowledge a grammar, longer than the
+//!   tests' per-request deadline, as a new helper on a loaded machine can.
 //!
 //! Every request's tag is appended to the folder's `log` file before it is answered.
 
@@ -44,7 +46,12 @@ fn main() {
             .expect("log");
         writeln!(log, "{}", head[0] as char).expect("log line");
         match head[0] {
-            b'G' => say(r#"{"ok":true}"#),
+            b'G' => {
+                if mode == "slow-grammar" {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+                say(r#"{"ok":true}"#);
+            }
             b'A' if mode == "crash-on-audio" => std::process::exit(3),
             b'A' if mode == "hang-on-audio" => loop {
                 std::thread::park();

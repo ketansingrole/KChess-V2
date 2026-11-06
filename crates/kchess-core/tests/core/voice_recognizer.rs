@@ -195,6 +195,28 @@ async fn reports_a_helper_that_cannot_load_the_model() {
     );
 }
 
+// Windows CI, 2026-11-06: the first `start` of a fresh helper failed with "Speech recognition
+// stopped" because its grammar request was held to the 300 ms per-chunk deadline and the
+// helper's first request (creating its log file) took longer on a loaded runner. A helper that
+// is slow to take a grammar is still starting, not hung.
+#[tokio::test]
+async fn a_helper_slow_to_take_its_grammar_is_still_starting() {
+    let folder = model("slow-grammar");
+    let (voice, _) = recognizer(folder.path());
+    voice.start(&grammar(), 16_000.0).await.expect("start");
+    assert!(
+        voice
+            .accept(&pcm(&[5]))
+            .await
+            .expect("heard")
+            .result
+            .is_some()
+    );
+    // A new grammar for the running helper has the same allowance.
+    voice.start(&grammar(), 16_000.0).await.expect("restart");
+    assert_eq!(requests(folder.path()), "GAG");
+}
+
 #[tokio::test]
 async fn recovers_from_a_crashed_or_hung_helper_with_a_new_one() {
     for mode in ["crash-on-audio", "hang-on-audio"] {

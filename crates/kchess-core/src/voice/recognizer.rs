@@ -23,7 +23,8 @@ use tokio::sync::Mutex;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 
-/// Loading the model reads about 40 MB; a slow disk gets a generous bound.
+/// Loading the model reads about 40 MB; a slow disk gets a generous bound. Taking a grammar
+/// (compiling it into the recognizer's graph) is part of starting and shares this bound.
 const STARTUP_DEADLINE: Duration = Duration::from_secs(60);
 /// A 100 ms chunk is recognized in milliseconds; anything this slow has hung.
 const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
@@ -209,14 +210,14 @@ impl VoiceRecognizer {
         }
     }
 
-    /// One request to the running helper. A broken pipe, a timeout or an unreadable answer ends
-    /// the helper; the next `start` launches a new one.
-    async fn exchange(&self, tag: u8, payload: &[u8]) -> Result<Answer> {
+    /// One request to the running helper, answered within `deadline`. A broken pipe, a timeout or
+    /// an unreadable answer ends the helper; the next `start` launches a new one.
+    async fn exchange(&self, tag: u8, payload: &[u8], deadline: Duration) -> Result<Answer> {
         let mut slot = self.helper.lock().await;
         let helper = slot
             .as_mut()
             .ok_or_else(|| CoreError::new("Voice input isn’t listening."))?;
-        match tokio::time::timeout(self.request_deadline, helper.request(tag, payload)).await {
+        match tokio::time::timeout(deadline, helper.request(tag, payload)).await {
             Ok(Ok(Answer {
                 error: Some(message),
                 ..
@@ -253,7 +254,12 @@ impl VoiceRecognizer {
         if payload.len() > MAX_PAYLOAD {
             return Err(CoreError::new("Invalid voice grammar."));
         }
-        match self.exchange(b'G', payload.as_bytes()).await? {
+        // Not the per-chunk bound: a new helper's first request and a large grammar take longer
+        // than a chunk of audio, and a helper that is merely slow to set up has not hung.
+        match self
+            .exchange(b'G', payload.as_bytes(), self.startup_deadline)
+            .await?
+        {
             Answer { ok: Some(true), .. } => Ok(()),
             _ => Err(CoreError::new(STOPPED)),
         }
@@ -268,12 +274,12 @@ impl VoiceRecognizer {
         if pcm.len() % 2 != 0 || pcm.len() > MAX_PAYLOAD {
             return Err(CoreError::new("Invalid audio."));
         }
-        heard(self.exchange(b'A', &pcm).await?)
+        heard(self.exchange(b'A', &pcm, self.request_deadline).await?)
     }
 
     /// Ends the utterance (push-to-talk released) and answers what it said.
     pub async fn finish(&self) -> Result<Heard> {
-        heard(self.exchange(b'F', &[]).await?)
+        heard(self.exchange(b'F', &[], self.request_deadline).await?)
     }
 
     /// Stops the helper, releasing the model's memory.
