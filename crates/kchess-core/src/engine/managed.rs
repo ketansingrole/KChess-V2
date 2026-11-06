@@ -412,12 +412,19 @@ async fn install(host: &dyn Host, location: &ManagedLocation) -> Result<InstallR
         let (pending, path) = (pending.clone(), path.clone());
         let (pending_version, version_path) = (pending_version.clone(), dir.join(VERSION_FILE));
         move || async move {
-            tokio::fs::rename(&pending, &path)
+            // Both renames run on one blocking task, which finishes even when the caller is
+            // dropped between them (its connection closed), so the executable and its VERSION
+            // are replaced together.
+            let renamed = tokio::task::spawn_blocking(move || {
+                std::fs::rename(&pending, &path).map_err(|cause| {
+                    io_error("Could not replace the Stockfish executable", cause)
+                })?;
+                std::fs::rename(&pending_version, &version_path)
+                    .map_err(|cause| io_error("Could not record the Stockfish version", cause))
+            });
+            renamed
                 .await
-                .map_err(|cause| io_error("Could not replace the Stockfish executable", cause))?;
-            tokio::fs::rename(&pending_version, &version_path)
-                .await
-                .map_err(|cause| io_error("Could not record the Stockfish version", cause))
+                .map_err(|_| CoreError::new("Could not replace the Stockfish executable."))?
         }
     };
     if let Err(error) = with_handoff(location, commit).await {

@@ -23,7 +23,20 @@ pub fn run(program: &str, args: &[&str]) -> Result {
 }
 
 pub fn run_with(command: &mut Command) -> Result {
-    let shown = format!("{command:?}");
+    run_shown(command, &[])
+}
+
+/// Runs `program` with `args` like `run`, but never shows the `secrets` among them: a failure
+/// message (printed and kept in build logs) names them `<redacted>`.
+pub fn run_redacted(program: &str, args: &[&str], secrets: &[&str]) -> Result {
+    run_shown(Command::new(program).args(args), secrets)
+}
+
+fn run_shown(command: &mut Command, secrets: &[&str]) -> Result {
+    let mut shown = format!("{command:?}");
+    for secret in secrets.iter().filter(|secret| !secret.is_empty()) {
+        shown = shown.replace(secret, "<redacted>");
+    }
     let status = command
         .current_dir(root())
         .status()
@@ -117,5 +130,19 @@ mod tests {
         let manifest = "[workspace]\nmembers = []\n\n[workspace.package]\n# The release\nversion = \"2026.10.15\"\nedition = \"2024\"\n\n[package]\nversion = \"0.1.0\"\n";
         assert_eq!(workspace_version(manifest).as_deref(), Some("2026.10.15"));
         assert_eq!(workspace_version("[package]\nversion = \"1.0.0\"\n"), None);
+    }
+
+    /// A failed notarization must not print the app-specific password.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_command_does_not_show_its_secret() {
+        let failed = run_redacted(
+            "sh",
+            &["-c", "exit 3", "--password", "abcd-efgh"],
+            &["abcd-efgh"],
+        )
+        .unwrap_err();
+        assert!(!failed.contains("abcd-efgh"), "{failed}");
+        assert!(failed.contains("<redacted>"), "{failed}");
     }
 }
