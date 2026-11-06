@@ -101,19 +101,26 @@ impl Harness {
     pub fn signed_in_showcase(cx: &mut TestAppContext) -> (Harness, fake_lichess::Handle) {
         let mut app = Self::start(cx);
         app.online();
-        let session = app.connect_as("Showcase", false, true);
+        let session = app.connect_with("Showcase", false, |session| session.showcase = true);
         (app, session)
     }
 
     /// Connect an account as a person would: the core opens the login page (`opened-urls.txt`,
     /// its test switch) and the "browser" returns with a code.
     pub fn connect(&mut self, username: &str, game: bool) -> fake_lichess::Handle {
-        self.connect_as(username, game, false)
+        self.connect_with(username, game, |_| {})
     }
 
-    fn connect_as(&mut self, username: &str, game: bool, showcase: bool) -> fake_lichess::Handle {
+    /// `connect`, with `prepare` setting up what Lichess holds before the app first asks for it
+    /// (set after signing in, it could miss the sign-in's own requests).
+    pub fn connect_with(
+        &mut self,
+        username: &str,
+        game: bool,
+        prepare: impl FnOnce(&mut fake_lichess::Session),
+    ) -> fake_lichess::Handle {
         let (code, session) = fake_lichess::session(username, game);
-        session.lock().showcase = showcase;
+        prepare(&mut session.lock());
         let opened = self
             .profile
             .as_ref()
