@@ -233,6 +233,11 @@ pub struct ScriptedHost {
     pub fetched: Mutex<Vec<(String, Vec<String>)>>,
     pub updates: Mutex<Vec<ReviewUpdate>>,
     pub statuses: Mutex<Vec<ReviewStatus>>,
+    /// When set, the next settings read waits until it is answered: a test holds the review
+    /// queue inside one pass with it.
+    pub hold_settings: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    /// How many settings reads have started.
+    pub settings_reads: std::sync::atomic::AtomicUsize,
 }
 
 impl ScriptedHost {
@@ -245,6 +250,8 @@ impl ScriptedHost {
             fetched: Mutex::new(Vec::new()),
             updates: Mutex::new(Vec::new()),
             statuses: Mutex::new(Vec::new()),
+            hold_settings: Mutex::new(None),
+            settings_reads: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -274,7 +281,15 @@ pub fn settings(auto: &str, on_battery: bool) -> ReviewSettings {
 
 impl ReviewHost for ScriptedHost {
     fn settings(&self) -> BoxFuture<'_, Result<ReviewSettings>> {
-        Box::pin(async move { Ok(self.settings.lock().expect("settings").clone()) })
+        Box::pin(async move {
+            self.settings_reads
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let held = self.hold_settings.lock().expect("hold").take();
+            if let Some(held) = held {
+                let _ = held.await;
+            }
+            Ok(self.settings.lock().expect("settings").clone())
+        })
     }
 
     fn accounts(&self) -> BoxFuture<'_, Result<Vec<String>>> {

@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use super::client::{Failure, LichessClient, TokenSource, authorize};
 use super::reviews::review_from_lichess;
 use crate::capabilities::Capabilities;
-use crate::error::{CoreError, Result as CoreResult};
+use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::{Host, Level};
 use crate::store::games::EXPORTED_GAME_CACHE;
 
@@ -637,7 +637,10 @@ impl Lichess {
             .await
         {
             Ok(value) => Ok(Reply::Done(value)),
-            Err(failure) if matches!(failure.status(), Some(401) | Some(403)) => {
+            // Only a refused login asks to reconnect: a 403 for a reason Lichess gave ("not
+            // your study", a closed tournament) said "reconnect your account", and reconnecting
+            // changed nothing.
+            Err(Failure::Lichess(error)) if error.kind() == ErrorKind::Login => {
                 Ok(Reply::NeedsReconnect)
             }
             Err(failure) => Err(failure.into()),

@@ -358,6 +358,10 @@ impl OnlineSession {
             let outcome = self
                 .read_stream(request, &line_cancel, &mut on_open, &mut on_line)
                 .await;
+            // Lichess replays pending challenges and ongoing games on every connect, so a line the
+            // checks refuse comes back each time: a connection that ended on one made no progress,
+            // or the stream would reconnect about once a second forever.
+            let malformed = line_error.is_some();
             let outcome = match line_error.take() {
                 Some(message) => Err(core(message)),
                 None => outcome,
@@ -407,7 +411,11 @@ impl OnlineSession {
                 );
                 return;
             }
-            failures = if received { 1 } else { failures + 1 };
+            failures = if received && !malformed {
+                1
+            } else {
+                failures + 1
+            };
             if failures > MAX_RECONNECTS {
                 self.log(
                     Level::Warn,
