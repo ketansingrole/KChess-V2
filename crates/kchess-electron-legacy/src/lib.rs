@@ -28,3 +28,14 @@ pub type Result<T> = std::result::Result<T, Error>;
 fn error(text: impl Into<String>) -> Error {
     Error(text.into())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn an_error_shows_its_text() {
+        assert_eq!(
+            super::error("No temporary folder").to_string(),
+            "No temporary folder"
+        );
+    }
+}

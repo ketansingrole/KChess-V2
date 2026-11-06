@@ -143,6 +143,25 @@ mod tests {
         assert_eq!(game.result(5.).unwrap()["winner"], "black");
     }
 
+    /// A flag falls only when the time is up, and the snapshots describe the finished game.
+    #[test]
+    fn a_flag_falls_when_the_time_is_up() {
+        let mut game = LocalGame::new(None, 0.).unwrap();
+        assert!(!game.over(0.));
+        let setup = game.state["setup"].clone();
+        let clock = json!({ "white": { "minutes": 1, "increment": 0 }, "black": { "minutes": 1, "increment": 0 } });
+        game.start(setup, clock, 0.).unwrap();
+        let (_, flagged) = game.play("e2e4", 1_000.).unwrap();
+        assert!(!flagged.0);
+        assert!(!game.expire(30_000.).unwrap().0);
+        assert!(game.expire(100_000.).unwrap().0);
+        assert!(game.over(100_000.));
+        assert_eq!(game.snapshot(100_000.)["moves"], json!(["e2e4"]));
+        let archived = game.archive_snapshot(100_000.);
+        assert_eq!(archived["source"], "board");
+        assert_eq!(archived["result"], "1-0");
+    }
+
     #[test]
     fn a_clock_runs_from_the_first_move_and_pauses() {
         let mut game = LocalGame::new(None, 0.).unwrap();

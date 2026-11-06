@@ -623,4 +623,17 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), total, "method names are unique");
     }
+
+    /// Each method keeps its arguments in order, the optional ones marked.
+    #[test]
+    fn methods_list_their_arguments_in_order() {
+        let methods = methods();
+        assert!(methods.len() > 100, "{}", methods.len());
+        let lookup = methods.iter().find(|m| m.name == "positionLookup").unwrap();
+        let params: Vec<(&str, bool)> =
+            lookup.params.iter().map(|p| (p.name, p.optional)).collect();
+        assert_eq!(params, [("kind", false), ("fen", false), ("options", true)]);
+        let studies = methods.iter().find(|m| m.name == "lichessStudies").unwrap();
+        assert!(studies.doc.starts_with("Studies an account owns"));
+    }
 }

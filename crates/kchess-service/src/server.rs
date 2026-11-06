@@ -582,8 +582,47 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::terminal;
+    use super::*;
     use serde_json::json;
+
+    /// A log past its limit starts afresh; a smaller one is added to.
+    #[test]
+    fn the_service_log_starts_afresh_past_its_limit() {
+        let profile = tempfile::tempdir().expect("profile");
+        let path = profile.path().join("logs").join("service.log");
+        std::fs::create_dir_all(path.parent().expect("logs")).expect("logs");
+        let kept = 2 * 1024 * 1024;
+        std::fs::write(&path, vec![b'.'; kept]).expect("log");
+        ServiceHost::new(profile.path()).log(Level::Info, "test", "kept");
+        let length = std::fs::metadata(&path).expect("log").len();
+        assert!(length > kept as u64, "{length}");
+
+        std::fs::write(&path, vec![b'.'; LOG_LIMIT as usize + 1]).expect("log");
+        ServiceHost::new(profile.path()).log(Level::Info, "test", "afresh");
+        let text = std::fs::read_to_string(&path).expect("log");
+        assert!(
+            text.len() < 1024 && text.contains("afresh"),
+            "{}",
+            text.len()
+        );
+    }
+
+    /// A client that falls behind misses progress, but is cut off rather than miss anything else.
+    #[test]
+    fn a_full_queue_drops_only_progress() {
+        let host = ServiceHost {
+            clients: Mutex::new(HashMap::new()),
+            log: Mutex::new(None),
+        };
+        let connected = |host: &ServiceHost| host.clients.lock().expect("clients").contains_key(&1);
+        let (sender, _queue) = mpsc::channel(1);
+        host.add(1, sender.clone(), Arc::new(Notify::new()));
+        host.send(1, &sender, "watch:frame", json!({}));
+        host.send(1, &sender, "watch:frame", json!({}));
+        assert!(connected(&host), "a progress frame is dropped");
+        host.send(1, &sender, "engine:analysis", json!({ "done": true }));
+        assert!(!connected(&host), "a terminal update is never dropped");
+    }
 
     #[test]
     fn a_progress_events_last_update_is_terminal() {

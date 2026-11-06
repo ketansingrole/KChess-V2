@@ -417,3 +417,139 @@ async fn a_core_that_never_answers_hello_fails_the_connection() {
         connected.err()
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_refusal_reaches_the_client_with_its_reason() {
+    let profile = tempfile::tempdir().expect("profile");
+    let _core = fake_core(profile.path(), |mut stream| async move {
+        read_frame(&mut stream).await.expect("hello");
+        let refuse = Frame::Refuse {
+            reason: RefuseReason::Version,
+            message: "Another KChess release is open.".into(),
+            sole: false,
+            clients: vec![protocol::ClientSummary {
+                kind: "electron".into(),
+                release: "2026.1.1".into(),
+            }],
+        };
+        write_frame(&mut stream, &refuse).await.expect("refuse");
+    })
+    .await;
+    let refused = Client::connect(profile.path(), &window("gpui"))
+        .await
+        .err()
+        .expect("refused");
+    assert_eq!(refused.to_string(), "Another KChess release is open.");
+    let ConnectError::Refused {
+        reason,
+        sole,
+        clients,
+        ..
+    } = refused
+    else {
+        panic!("refused: {refused:?}");
+    };
+    assert_eq!(reason, RefuseReason::Version);
+    assert!(!sole);
+    assert_eq!(clients[0].kind, "electron");
+}
+
+#[tokio::test]
+async fn connect_errors_read_as_their_message() {
+    let profile = tempfile::tempdir().expect("profile");
+    let missing = Client::connect(profile.path(), &window("gpui"))
+        .await
+        .err()
+        .expect("no core");
+    assert_eq!(missing, ConnectError::NotRunning);
+    assert_eq!(missing.to_string(), "No KChess core runs for this profile.");
+    assert_eq!(
+        ConnectError::Failed("Broken.".into()).to_string(),
+        "Broken."
+    );
+}
+
+/// `kchess-service version` prints what a client of this build says in `hello`.
+#[test]
+fn the_binary_prints_its_release_and_protocol() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_kchess-service"))
+        .arg("version")
+        .output()
+        .expect("ran");
+    assert!(output.status.success());
+    let printed: Value = serde_json::from_slice(&output.stdout).expect("json");
+    assert_eq!(
+        printed,
+        json!({ "release": protocol::release(), "protocol": protocol::protocol() })
+    );
+    let usage = std::process::Command::new(env!("CARGO_BIN_EXE_kchess-service"))
+        .output()
+        .expect("ran");
+    assert_eq!(usage.status.code(), Some(2));
+}
+
+/// `suspend` and `close` only answer: the shared core keeps serving every window.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_window_cannot_close_the_shared_core() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (gpui, _events) = connect(profile.path(), "gpui").await;
+    let info = discovery::read_info(profile.path()).expect("core.json");
+    assert!(info.started_at > 1_600_000_000_000, "{}", info.started_at);
+    assert_eq!(gpui.call("suspend", vec![]).await, Ok(Value::Null));
+    assert_eq!(gpui.call("close", vec![]).await, Ok(Value::Null));
+    gpui.call("library", vec![]).await.expect("still served");
+    assert!(!service.is_finished());
+    service.abort();
+}
+
+/// Once a core decides to close for another release, nobody else is let in.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_closing_core_lets_nobody_in() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (gpui, _events) = connect(profile.path(), "gpui").await;
+    let socket =
+        std::path::PathBuf::from(discovery::read_info(profile.path()).expect("info").socket);
+    drop(gpui);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let token = discovery::read_token(profile.path()).expect("token");
+    let info = discovery::read_info(profile.path()).expect("core.json");
+    // Both connect before the refusal, so the second is answered after the core decided.
+    let first = transport::connect(Path::new(&info.socket))
+        .await
+        .expect("socket");
+    let second = transport::connect(Path::new(&info.socket))
+        .await
+        .expect("socket");
+    let say_hello = |stream: transport::Stream, protocol: String| {
+        let token = token.clone();
+        async move {
+            let (mut reader, mut writer) = tokio::io::split(stream);
+            let hello = Frame::Hello {
+                token,
+                kind: "test".into(),
+                release: "1999.1.0".into(),
+                protocol,
+                capabilities: Vec::new(),
+            };
+            write_frame(&mut writer, &hello).await.expect("hello");
+            read_frame(&mut reader).await.ok().flatten()
+        }
+    };
+    let refused = say_hello(first, "another-release".into()).await;
+    assert!(matches!(refused, Some(Frame::Refuse { sole: true, .. })));
+    let late = say_hello(second, protocol::protocol()).await;
+    assert!(
+        !matches!(late, Some(Frame::Welcome { .. })),
+        "welcomed into a closing core: {late:?}"
+    );
+    tokio::time::timeout(WAIT, service)
+        .await
+        .expect("the service closes")
+        .expect("joined")
+        .expect("closed cleanly");
+    assert!(!socket.exists(), "the socket goes with it");
+}

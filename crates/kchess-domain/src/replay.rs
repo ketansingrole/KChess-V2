@@ -322,6 +322,36 @@ mod tests {
         assert_eq!(engine_line(START, &line, false), None);
     }
 
+    /// Stalemate and bare kings are draws; a position with play left has no end.
+    #[test]
+    fn positions_mark_draws() {
+        let stalemate = replay_positions("k7/8/1Q6/8/8/8/8/K7 w - - 0 1", &["b6c7"]);
+        assert_eq!(stalemate[0].end, None);
+        assert_eq!(stalemate[1].end, Some("draw"));
+        let bare = replay_positions("k7/8/8/8/8/8/1q6/K7 w - - 0 1", &["a1b2"]);
+        assert_eq!(bare[1].end, Some("draw"));
+    }
+
+    /// Each position's side to move and end, the end only when asked for.
+    #[test]
+    fn turns_follow_the_replay() {
+        let mate = ["f2f3", "e7e5", "g2g4", "d8h4"];
+        let turns = replay_turns(START, &mate);
+        assert_eq!(
+            turns,
+            [
+                (true, None),
+                (false, None),
+                (true, None),
+                (false, None),
+                (true, Some("checkmate")),
+            ]
+        );
+        let unchecked = replay_turns_with_end(START, &mate, false);
+        assert_eq!(unchecked.last(), Some(&(true, None)));
+        assert_eq!(replay_turns(START, &["e2e4", "e2e4"]).len(), 2);
+    }
+
     #[test]
     fn positions_mark_checkmate() {
         let positions = replay_positions(START, &["f2f3", "e7e5", "g2g4", "d8h4"]);
@@ -331,6 +361,9 @@ mod tests {
             replay_positions_count(START, &["f2f3", "e7e5", "g2g4", "d8h4"]),
             5
         );
+        // The start and each move played before the first illegal one.
+        assert_eq!(replay_positions_count(START, &["e2e4", "e7e5", "e1e3"]), 3);
+        assert_eq!(replay_positions_count("not a fen", &["e2e4"]), 0);
     }
 }
 
@@ -352,6 +385,24 @@ mod variant_tests {
         let antichess = replay_positions_in("antichess", last, &["a2b3"]);
         assert_eq!(antichess[1].end, Some("won"));
         assert_eq!(antichess[1].turn, "black");
+        // Left with pieces but no moves, the side to move has won too; the other side having
+        // no pieces does not end it.
+        let blocked = "8/p7/P7/8/8/8/8/8 b - - 0 1";
+        assert_eq!(
+            replay_positions_in("antichess", blocked, &[] as &[&str])[0].end,
+            Some("won")
+        );
+        let bare = "8/8/8/8/8/8/8/k7 b - - 0 1";
+        assert_eq!(
+            replay_positions_in("antichess", bare, &[] as &[&str])[0].end,
+            None
+        );
+        // King of the Hill: a king already on the hill has won for the side to move.
+        let hill = "8/8/8/8/4K3/8/8/k7 w - - 0 1";
+        assert_eq!(
+            replay_positions_in("kingOfTheHill", hill, &[] as &[&str])[0].end,
+            Some("won")
+        );
         let score = crate::api::call("endEval", r#"["won", "black"]"#).unwrap();
         assert_eq!(score, r#"{"mate":-1}"#);
         // A drop replays in Crazyhouse and not in standard chess.
