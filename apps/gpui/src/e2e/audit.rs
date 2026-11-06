@@ -40,9 +40,7 @@ fn every_page_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
             .simulate_window_resize(app.window, size(px(width), px(height)));
         for &(page, label) in &pages {
             app.with_window(|window, cx| crate::shell::open(page, window, cx));
-            for _ in 0..20 {
-                app.tick();
-            }
+            app.settle();
             let controls = app.with_window(|window, _| window.elements());
             check(
                 &format!("{label} at {width}×{height}"),
@@ -76,9 +74,7 @@ fn the_move_box_is_one_size_on_every_board_page(cx: &mut gpui_kit::TestAppContex
     let mut sizes = Vec::new();
     for page in [Page::Computer, Page::Analysis] {
         app.with_window(|window, cx| crate::shell::open(page, window, cx));
-        for _ in 0..20 {
-            app.tick();
-        }
+        app.settle();
         sizes.push(app.with_window(|window, _| {
             window
                 .try_find_by_label("Enter a chess move in SAN or UCI")
@@ -186,9 +182,7 @@ fn the_board_editors_actions_stay_in_its_panel(cx: &mut gpui_kit::TestAppContext
     for (width, height) in SIZES {
         app.cx
             .simulate_window_resize(app.window, size(px(width), px(height)));
-        for _ in 0..20 {
-            app.tick();
-        }
+        app.settle();
         let bounds = |app: &mut Harness, id: &'static str| {
             app.with_window(|window, _| window.try_find(id).map(|found| found.bounds()))
                 .unwrap_or_else(|| panic!("no {id}"))
@@ -221,9 +215,7 @@ fn every_page_with_content_lays_out_its_controls(cx: &mut gpui_kit::TestAppConte
             .simulate_window_resize(app.window, size(px(width), px(height)));
         for &(page, label) in &pages {
             app.with_window(|window, cx| crate::shell::open(page, window, cx));
-            for _ in 0..20 {
-                app.tick();
-            }
+            app.settle();
             let controls = app.with_window(|window, _| window.elements());
             check(
                 &format!("{label} at {width}×{height}"),
@@ -253,9 +245,7 @@ fn every_tab_and_settings_section_lays_out_its_controls(cx: &mut gpui_kit::TestA
     let mut app = Harness::start(cx);
     let mut findings = Findings::default();
     let settle = |app: &mut Harness| {
-        for _ in 0..20 {
-            app.tick();
-        }
+        app.settle();
     };
     for (width, height) in SIZES {
         app.cx
@@ -330,9 +320,7 @@ fn every_dialog_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     let mut findings = Findings::default();
     let settle = |app: &mut Harness| {
-        for _ in 0..20 {
-            app.tick();
-        }
+        app.settle();
     };
     let dialogs: [(Page, &str, &str); 5] = [
         (Page::Computer, "game-options", "Game options"),
@@ -494,9 +482,7 @@ fn every_page_with_the_longest_content_lays_out_its_controls(cx: &mut gpui_kit::
             .simulate_window_resize(app.window, size(px(width), px(height)));
         for &(page, label) in &pages {
             app.with_window(|window, cx| crate::shell::open(page, window, cx));
-            for _ in 0..20 {
-                app.tick();
-            }
+            app.settle();
             let controls = app.with_window(|window, _| window.elements());
             check(
                 &format!("{label} at {width}×{height}"),

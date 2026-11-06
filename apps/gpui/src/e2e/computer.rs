@@ -508,7 +508,7 @@ fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
     app.click_square("e5", false);
     app.wait_for_moves(&["e5", "e4"]);
     let started = std::time::Instant::now();
-    app.wait_for("the low-time warning", |_, cx| {
+    app.wait_for_in_real_time("the low-time warning", |_, cx| {
         cx.global::<Played>().0.contains(&Sound::LowTime)
     });
     assert!(started.elapsed() < std::time::Duration::from_millis(2_900));

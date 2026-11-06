@@ -40,6 +40,20 @@ fn processes() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Wait until the installation's lock is free once its holder has let it go. A process another
+/// test forks meanwhile (the end-to-end tests' engines, which do not hold `PROCESSES`) holds a
+/// copy of the lock until its own exec closes it, so the lock is given a moment.
+fn wait_unlocked(root: &Path, installed: &Path) {
+    let started = std::time::Instant::now();
+    while InstallLock::take(root, installed).is_err() {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "the installation stays locked after its holder let it go"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 fn scratch(name: &str) -> PathBuf {
     let folder = std::env::temp_dir().join(format!("kchess-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
@@ -221,6 +235,7 @@ fn one_installer_at_a_time_for_each_installation() {
     assert!(InstallLock::path(&root, &installed).exists());
     assert!(package.exists());
     drop(first);
+    wait_unlocked(&root, &installed);
     tidy(Some(&install), Some(&root));
     assert!(
         !incoming(&installed).exists(),
@@ -255,6 +270,7 @@ fn a_deb_helpers_package_and_failure_outlive_the_app() {
     tidy(Some(&install), Some(&root));
     assert!(package.exists());
     drop(helper);
+    wait_unlocked(&root, &install.path);
     tidy(Some(&install), Some(&root));
     assert!(!package.exists());
     // An earlier version's helper notes only that it failed.
@@ -406,17 +422,9 @@ fn an_installer_started_on_quit_keeps_the_installation_until_it_exits() {
     assert!(package.exists(), "the installer's package stays");
     std::fs::write(&release, "").unwrap();
     assert!(installer.wait().unwrap().success());
-    // Free once the installer has gone. A process another test thread forks meanwhile holds
-    // a copy of the lock until its own exec closes it: under the load of three test runs at
-    // once that outlasted the installer, so the lock is given a moment.
-    let started = std::time::Instant::now();
-    while InstallLock::take(&root, &install.path).is_err() {
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(5),
-            "the installation stays locked after its installer exited"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    // Free once the installer has gone: under the load of three test runs at once a forked
+    // copy of the lock outlasted the installer.
+    wait_unlocked(&root, &install.path);
     let _ = std::fs::remove_dir_all(&folder);
 }
 

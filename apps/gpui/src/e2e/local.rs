@@ -45,11 +45,12 @@ fn a_timed_games_clock_runs_for_the_side_to_move(cx: &mut gpui_kit::TestAppConte
             .map(str::to_string)
             .unwrap_or_default()
     };
-    app.wait_for("Black's clock to run down", |window, _| {
+    // Any second under five minutes: a loaded machine can draw 4:59 and next 4:57.
+    app.wait_for_in_real_time("Black's clock to run down", |window, _| {
         use gpui_kit::test::TestWindowExt as _;
         window
             .try_find(("local-clock", 1usize))
-            .and_then(|face| face.label().map(|label| label.contains("4:58")))
+            .and_then(|face| face.label().map(|label| label.contains("4:5")))
             == Some(true)
     });
     assert_eq!(label(&mut app, 0), "White clock, 5:00");
@@ -638,7 +639,7 @@ fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
             local.play("e2e4", window, cx);
         });
     });
-    app.wait_for("the low-time warning", |_, cx| {
+    app.wait_for_in_real_time("the low-time warning", |_, cx| {
         cx.global::<Played>().0.contains(&Sound::LowTime)
     });
     assert!(started.elapsed() < std::time::Duration::from_millis(2_900));
