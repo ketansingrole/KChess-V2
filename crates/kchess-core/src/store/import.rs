@@ -19,7 +19,7 @@ use super::games::{
 };
 use crate::error::{CoreError, Result};
 use crate::host::Level;
-use kchess_domain::{api, js};
+use kchess_domain::js;
 
 const PIECE_ANIMATIONS: [&str; 4] = ["none", "fast", "normal", "slow"];
 const REVIEW_AUTO: [&str; 3] = ["off", "recent", "all"];
@@ -222,6 +222,39 @@ fn from_json(ctx: &StoreContext) -> Result<bool> {
         );
     }
     Ok(true)
+}
+
+/// Once the earlier database's tokens are sealed in this profile, delete its plaintext copies,
+/// overwriting the freed pages (`secure_delete`), so a backup, a sync tool or another program
+/// cannot read a live Lichess login from it. Its games and settings stay. Failure (the earlier app
+/// still holds it open) is logged, and the next start tries again.
+pub fn scrub_legacy_tokens(ctx: &StoreContext) -> Result<()> {
+    let Some(legacy_path) = ctx.config.legacy_database_path.as_deref() else {
+        return Ok(());
+    };
+    if !legacy_path.exists() {
+        return Ok(());
+    }
+    let scrubbed = Connection::open_with_flags(
+        legacy_path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .and_then(|legacy| {
+        legacy.pragma_update(None, "secure_delete", true)?;
+        match legacy.execute("DELETE FROM lichess_tokens", []) {
+            Ok(_) => Ok(()),
+            Err(cause) if cause.to_string().contains("no such table") => Ok(()),
+            Err(cause) => Err(cause),
+        }
+    });
+    if let Err(cause) = scrubbed {
+        log(
+            ctx,
+            Level::Warn,
+            &format!("The earlier database's Lichess logins could not be removed: {cause}"),
+        );
+    }
+    Ok(())
 }
 
 fn with_bak(path: &Path) -> std::path::PathBuf {
@@ -615,9 +648,7 @@ pub fn normalize_settings(stored: &Map<String, Value>) -> Result<Map<String, Val
 }
 
 fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
-    let text = serde_json::to_string(&args).map_err(|cause| CoreError::new(cause.to_string()))?;
-    let output = api::call(method, &text).map_err(CoreError::new)?;
-    serde_json::from_str(&output).map_err(|cause| CoreError::new(cause.to_string()))
+    crate::engine::domain(method, args)
 }
 
 fn begin(db: &Connection) -> Result<()> {

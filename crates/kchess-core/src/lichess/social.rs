@@ -10,7 +10,7 @@ use super::accounts::{
     Lichess, LichessGame, Reply, no_such_user, normalize_game, parse_game, path_segment,
     profile_key,
 };
-use super::client::Failure;
+use super::client::{Failure, Ndjson};
 use crate::error::{CoreError, Result as CoreResult};
 use kchess_domain::records::RATING_DISPLAY_NAMES;
 
@@ -186,6 +186,7 @@ impl Lichess {
                         "application/vnd.lichess.v3+json",
                         None,
                         self.lifetime(),
+                        None,
                     )
                     .await
             })
@@ -328,15 +329,17 @@ impl Lichess {
                 let mut lines = Vec::new();
                 self.client()
                     .ndjson(
-                        reqwest::Method::GET,
-                        "/api/games/export/bookmarks",
-                        &[
-                            ("max", BOOKMARKS_MAX.to_string()),
-                            ("moves", "false".to_string()),
-                            ("opening", "true".to_string()),
-                        ],
-                        None,
-                        Some(&super::client::authorize(&token)),
+                        Ndjson {
+                            method: reqwest::Method::GET,
+                            path: "/api/games/export/bookmarks",
+                            query: &[
+                                ("max", BOOKMARKS_MAX.to_string()),
+                                ("moves", "false".to_string()),
+                                ("opening", "true".to_string()),
+                            ],
+                            body: None,
+                            auth: Some(&super::client::authorize(&token)),
+                        },
                         self.lifetime(),
                         |line| {
                             lines.push(line.to_string());
@@ -452,6 +455,16 @@ pub fn read_suggestions(body: &Value) -> Vec<PlayerSuggestion> {
 /// One day of `/api/user/{u}/activity` as lines.
 fn activity_items(day: &Value) -> Vec<ActivityItem> {
     let mut items = Vec::new();
+    game_items(day, &mut items);
+    puzzle_items(day, &mut items);
+    event_items(day, &mut items);
+    follow_items(day, &mut items);
+    community_items(day, &mut items);
+    items
+}
+
+/// Games played, by speed.
+fn game_items(day: &Value, items: &mut Vec<ActivityItem>) {
     if let Some(games) = day["games"].as_object() {
         for (perf, score) in games {
             let n = count(&score["win"]) + count(&score["loss"]) + count(&score["draw"]);
@@ -472,6 +485,10 @@ fn activity_items(day: &Value) -> Vec<ActivityItem> {
             });
         }
     }
+}
+
+/// Puzzles solved and puzzle runs.
+fn puzzle_items(day: &Value, items: &mut Vec<ActivityItem>) {
     let puzzles = &day["puzzles"]["score"];
     if puzzles.is_object() {
         let solved = count(&puzzles["win"]);
@@ -508,6 +525,10 @@ fn activity_items(day: &Value) -> Vec<ActivityItem> {
             ));
         }
     }
+}
+
+/// Tournament results and correspondence play.
+fn event_items(day: &Value, items: &mut Vec<ActivityItem>) {
     for best in day["tournaments"]["best"].as_array().into_iter().flatten() {
         let Some(name) = text_of(&best["tournament"]["name"]) else {
             continue;
@@ -545,6 +566,10 @@ fn activity_items(day: &Value) -> Vec<ActivityItem> {
             }
         }
     }
+}
+
+/// Followers gained and players followed.
+fn follow_items(day: &Value, items: &mut Vec<ActivityItem>) {
     let gained = count(&day["follows"]["in"]["nb"])
         .max(day["follows"]["in"]["ids"].as_array().map_or(0, Vec::len) as u64);
     if gained > 0 {
@@ -565,6 +590,10 @@ fn activity_items(day: &Value) -> Vec<ActivityItem> {
             });
         }
     }
+}
+
+/// Studies, teams, forum posts, simuls, practice, patronage and streams.
+fn community_items(day: &Value, items: &mut Vec<ActivityItem>) {
     for study in day["studies"].as_array().into_iter().flatten() {
         if let Some(name) = text_of(&study["name"]) {
             items.push(item("study", format!("Created the study {name}")));
@@ -602,7 +631,6 @@ fn activity_items(day: &Value) -> Vec<ActivityItem> {
     if day["stream"].as_bool() == Some(true) {
         items.push(item("stream", "Streamed on Lichess".to_string()));
     }
-    items
 }
 
 pub fn read_activity(body: &Value) -> Vec<ActivityDay> {

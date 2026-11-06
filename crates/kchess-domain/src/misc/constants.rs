@@ -21,14 +21,6 @@ pub const ENGINE_LEVELS: &[&str] = &[
 ];
 pub const PROMOTION_MODES: &[&str] = &["ask", "queen", "premove"];
 pub const PIECE_ANIMATIONS: &[&str] = &["none", "fast", "normal", "slow"];
-pub const NOTIFICATION_KINDS: &[&str] = &[
-    "opponentMove",
-    "lowTime",
-    "gameEvents",
-    "computerMove",
-    "challenge",
-    "test",
-];
 pub const ONLINE_ACTIONS: &[&str] = &[
     "resign",
     "abort",
@@ -192,43 +184,9 @@ pub const LEGACY_DOCUMENT_KEYS: &[&str] = &[
 ];
 pub const TOURNAMENT_SYSTEMS: &[&str] = &["arena", "swiss"];
 
-/// The pages diagnostics may name (`RENDERER_ROUTES`).
-pub const RENDERER_ROUTES: &[&str] = &[
-    "/",
-    "/online",
-    "/tournaments",
-    "/watch",
-    "/local",
-    "/computer",
-    "/analysis",
-    "/studies",
-    "/editor",
-    "/puzzles",
-    "/practice",
-    "/history",
-    "/insights",
-    "/friends",
-    "/players",
-    "/settings",
-];
-
-/// The timings a frontend may record (`PERFORMANCE_NAMES`): fixed names, then one per route.
-pub fn performance_names() -> Vec<String> {
-    ["app.ready", "board.frame", "voice.activation"]
-        .into_iter()
-        .map(String::from)
-        .chain(
-            RENDERER_ROUTES
-                .iter()
-                .map(|route| format!("page.navigation:{route}")),
-        )
-        .collect()
-}
 /// Largest serialized document the core stores (`MAX_DOCUMENT`).
 pub const MAX_DOCUMENT: usize = 2_000_000;
 pub const MAX_CHAPTERS: usize = 64;
 pub const MAX_MOVES: usize = 1024;
-/// Largest export the core saves (`EXPORT_MAX`).
-pub const EXPORT_MAX: usize = 40 * 1024 * 1024;
 /// `Number.MAX_SAFE_INTEGER`
 pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;

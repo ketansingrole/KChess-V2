@@ -38,6 +38,16 @@ pub struct TextLimit<'a> {
     pub message: &'a str,
 }
 
+/// An NDJSON request (`Client::ndjson`): `body` is the comma-separated id list of the `_ids`
+/// exports, sent as `text/plain`.
+pub struct Ndjson<'a> {
+    pub method: reqwest::Method,
+    pub path: &'a str,
+    pub query: &'a [(&'a str, String)],
+    pub body: Option<String>,
+    pub auth: Option<&'a str>,
+}
+
 /// A failed Lichess call: the API's own error (with its status and endpoint), or a failure of
 /// the core itself (a rejected request, a stalled stream, an abort).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -382,7 +392,8 @@ impl LichessClient {
     }
 
     /// A text response (`parseAs: 'text'`), such as a game exported as PGN. An empty body is a
-    /// valid answer here, as it is for `unwrap`.
+    /// valid answer here, as it is for `unwrap`. With a `limit`, the decoded size is bounded
+    /// before the response finishes.
     pub async fn get_text(
         &self,
         path: &str,
@@ -390,13 +401,14 @@ impl LichessClient {
         accept: &str,
         auth: Option<&str>,
         cancel: &CancellationToken,
+        limit: Option<TextLimit<'_>>,
     ) -> Result<String> {
         let mut headers = vec![("Accept", accept.to_string())];
         headers.extend(auth_header(auth));
         let admitted = self
             .call(reqwest::Method::GET, path, query, &headers, None, cancel)
             .await?;
-        self.read_text(admitted, "GET", path, cancel, None).await
+        self.read_text(admitted, "GET", path, cancel, limit).await
     }
 
     /// One game from `POST /api/games/export/_ids`, which Lichess answers without an account;
@@ -422,39 +434,21 @@ impl LichessClient {
         self.read_text(admitted, "POST", path, cancel, None).await
     }
 
-    /// A text download whose decoded size is bounded before the response finishes.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn get_text_bounded(
-        &self,
-        path: &str,
-        query: &[(&str, String)],
-        accept: &str,
-        auth: Option<&str>,
-        cancel: &CancellationToken,
-        limit: TextLimit<'_>,
-    ) -> Result<String> {
-        let mut headers = vec![("Accept", accept.to_string())];
-        headers.extend(auth_header(auth));
-        let admitted = self
-            .call(reqwest::Method::GET, path, query, &headers, None, cancel)
-            .await?;
-        self.read_text(admitted, "GET", path, cancel, Some(limit))
-            .await
-    }
-
     /// An NDJSON response, read line by line as it arrives (`parseAs: 'stream'`). `body` is the
     /// comma-separated id list of the `_ids` exports, sent as `text/plain`.
-    #[allow(clippy::too_many_arguments)]
     pub async fn ndjson<F: FnMut(&str) -> Result<()>>(
         &self,
-        method: reqwest::Method,
-        path: &str,
-        query: &[(&str, String)],
-        body: Option<String>,
-        auth: Option<&str>,
+        request: Ndjson<'_>,
         cancel: &CancellationToken,
         on_line: F,
     ) -> Result<()> {
+        let Ndjson {
+            method,
+            path,
+            query,
+            body,
+            auth,
+        } = request;
         let mut headers = vec![("Accept", "application/x-ndjson".to_string())];
         headers.extend(auth_header(auth));
         let body = body.map(|text| ("text/plain", text));
@@ -590,6 +584,39 @@ pub(crate) fn parse_json<T: DeserializeOwned>(text: &str, path: &str) -> Result<
     })
 }
 
+/// The most an ordinary (non-stream) Lichess answer may hold.
+const MAX_BODY: usize = 64 * 1024 * 1024;
+
+/// The body as text, refused once it passes `max` bytes.
+async fn capped_body(response: reqwest::Response, max: usize) -> Result<String> {
+    use futures_util::StreamExt as _;
+    let dropped = || {
+        Failure::Core(
+            CoreError::new("The connection to Lichess dropped.").with_kind(ErrorKind::Offline),
+        )
+    };
+    if response
+        .content_length()
+        .is_some_and(|length| length > max as u64)
+    {
+        return Err(Failure::Core(CoreError::new(
+            "Lichess sent an unexpectedly large response.",
+        )));
+    }
+    let mut body = Vec::new();
+    let mut chunks = response.bytes_stream();
+    while let Some(chunk) = chunks.next().await {
+        let chunk = chunk.map_err(|_| dropped())?;
+        if body.len() + chunk.len() > max {
+            return Err(Failure::Core(CoreError::new(
+                "Lichess sent an unexpectedly large response.",
+            )));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
 /// Read the whole body within the request deadline (a stream is exempt: line readers bound
 /// their own silence and chunk readers wait until the body ends), abortable through `cancel`.
 pub(crate) async fn read_with_deadline(
@@ -600,12 +627,14 @@ pub(crate) async fn read_with_deadline(
     limit: Option<TextLimit<'_>>,
 ) -> Result<String> {
     let read = async move {
-        // Preserve reqwest's normal text decoding (including BOM handling) for ordinary calls.
+        // Ordinary calls decode as reqwest's `text()` does without its charset feature (lossy
+        // UTF-8 of the whole body), but no further than `MAX_BODY`: the deadline alone let a
+        // misbehaving endpoint send hundreds of megabytes first.
         if !stream && limit.is_none() {
             return tokio::select! {
                 biased;
                 _ = cancel.cancelled() => Err(Failure::Core(CoreError::aborted("This operation was aborted"))),
-                text = response.text() => text.map_err(|_| Failure::Core(CoreError::new("The connection to Lichess dropped.").with_kind(ErrorKind::Offline))),
+                body = capped_body(response, MAX_BODY) => body,
             };
         }
         let mut text = String::new();
@@ -630,5 +659,43 @@ pub(crate) async fn read_with_deadline(
             Ok(answer) => answer,
             Err(_) => Err(Failure::Core(super::policy::timed_out())),
         }
+    }
+}
+
+#[cfg(test)]
+mod body_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    /// A one-shot local server answering `answer`; its URL.
+    async fn serve(answer: Vec<u8>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut head = [0u8; 1024];
+            let _ = socket.read(&mut head).await;
+            let _ = socket.write_all(&answer).await;
+        });
+        format!("http://{address}/")
+    }
+
+    async fn body(answer: &str, max: usize) -> Result<String> {
+        let url = serve(answer.as_bytes().to_vec()).await;
+        let response = reqwest::get(url).await.unwrap();
+        capped_body(response, max).await
+    }
+
+    /// An ordinary call's body is bounded, with or without a declared length.
+    #[tokio::test]
+    async fn an_oversized_body_is_refused() {
+        let ok = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello";
+        assert_eq!(body(ok, 5).await.unwrap(), "hello");
+        let declared = "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nhello!";
+        assert!(body(declared, 5).await.is_err());
+        let chunked = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n\
+                       3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n";
+        assert!(body(chunked, 5).await.is_err());
+        assert_eq!(body(chunked, 6).await.unwrap(), "abcdef");
     }
 }

@@ -122,20 +122,26 @@ impl Core {
                     asked["variant"] = arg(args, 2);
                 }
                 let request = normal("assertReviewRequest", &asked)?;
-                self.inner(
-                    "reviews.get",
-                    vec![
-                        request["fen"].clone(),
-                        request["moves"].clone(),
-                        request["variant"].clone(),
-                    ],
-                )
-                .await
+                let review = self
+                    .inner(
+                        "reviews.get",
+                        vec![
+                            request["fen"].clone(),
+                            request["moves"].clone(),
+                            request["variant"].clone(),
+                        ],
+                    )
+                    .await?;
+                // A game can start while the review was read.
+                self.assistance_allowed("Review is unavailable during a live Lichess game.")?;
+                Ok(review)
             }
             "reviewRequest" => {
                 self.assistance_allowed("Review is unavailable during a live Lichess game.")?;
                 let request = normal("assertReviewRequest", &arg(args, 0))?;
-                self.inner("reviews.request", vec![request]).await
+                let review = self.inner("reviews.request", vec![request]).await?;
+                self.assistance_allowed("Review is unavailable during a live Lichess game.")?;
+                Ok(review)
             }
             "reviewCancel" => {
                 let key = normal("assertReviewKey", &arg(args, 0))?;

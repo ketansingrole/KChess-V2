@@ -3,6 +3,7 @@
 //! click-to-move and drag-and-drop, and the promotion picker. Squares, highlights and pieces are
 //! painted in one pass; the page gives the board its position and hears its moves.
 
+mod keyboard;
 pub mod looks;
 mod pocket;
 
@@ -22,6 +23,7 @@ use shakmaty::{Board, ByColor, ByRole, Color, File, Piece, Position as _, Rank, 
 
 use crate::settings::SettingsHandle;
 use crate::theme::radii;
+use crate::widgets::Pressable as _;
 
 /// Chessground's square colors (`chessground.brown.css`).
 const LAST_MOVE: u32 = 0x9bc70069; // rgba(155, 199, 0, 0.41)
@@ -304,7 +306,8 @@ struct Drag {
     moved: bool,
 }
 
-/// Pieces sliding from one square to another.
+/// Pieces sliding from one square to another, timed by the executor's clock: the real one in the
+/// app, the test's own in tests, where a slide holds still until the test moves the clock.
 struct Animation {
     moves: Vec<(Piece, Square, Square)>,
     start: std::time::Instant,
@@ -312,15 +315,30 @@ struct Animation {
 }
 
 impl Animation {
-    /// How far along, eased as Chessground eases (cubic in, then out).
-    fn progress(&self) -> f32 {
-        let t = (self.start.elapsed().as_secs_f32() / self.duration.as_secs_f32()).min(1.);
+    fn ended(&self, now: std::time::Instant) -> bool {
+        now.saturating_duration_since(self.start) >= self.duration
+    }
+
+    /// How far along at `now`, eased as Chessground eases (cubic in, then out).
+    fn progress(&self, now: std::time::Instant) -> f32 {
+        let elapsed = now.saturating_duration_since(self.start);
+        let t = (elapsed.as_secs_f32() / self.duration.as_secs_f32()).min(1.);
         if t < 0.5 {
             4. * t * t * t
         } else {
             (t - 1.) * (2. * t - 2.) * (2. * t - 2.) + 1.
         }
     }
+}
+
+/// Whether a new position slides its pieces, for the Settings speed in milliseconds:
+/// - not with Reduce motion on, which stills movement;
+/// - not while the last slide is still under way: positions coming faster than a slide (an
+///   arrow key held through a game, moves played back quickly) are shown at once, where
+///   restarting each slide would keep the pieces always in motion and behind the moves;
+/// - not when the board turned: a flipped board is redrawn, not slid.
+fn slides_now(duration_ms: f64, reduce_motion: bool, running: bool, flipped: bool) -> bool {
+    duration_ms > 0. && !reduce_motion && !running && !flipped
 }
 
 /// The pieces that moved from `old` to `new`: each piece that left a square, paired with the
@@ -447,7 +465,28 @@ pub struct ChessBoard {
     drag: Option<Drag>,
     /// A pawn move waiting for its promotion piece.
     promotion: Option<(Square, Square)>,
+    /// The promotion piece the keyboard has marked (`keyboard::PROMOTION`).
+    promotion_choice: usize,
     bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// The board's own keys, which Tab gives it: made with its first frame.
+    focus: Option<FocusHandle>,
+    /// The square the keyboard is on; it starts where `keyboard::start` puts it.
+    cursor: Option<Square>,
+}
+
+/// What a press on a square does, from the mouse or the keyboard alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Press {
+    /// The picked pocket piece is dropped there.
+    Drop(Role),
+    /// The selected piece moves there, from this square.
+    Play(Square),
+    /// A premove was queued, or one waiting was taken back.
+    Queued,
+    /// A piece that may move was picked up; `again` when it was already selected.
+    Pick { piece: Piece, again: bool },
+    /// Nothing to move there: the selection goes.
+    Clear,
 }
 
 impl EventEmitter<BoardEvent> for ChessBoard {}
@@ -466,7 +505,10 @@ impl ChessBoard {
             selected_drop: None,
             drag: None,
             promotion: None,
+            promotion_choice: 0,
             bounds: Rc::new(Cell::new(Bounds::default())),
+            focus: None,
+            cursor: None,
         }
     }
 
@@ -525,37 +567,39 @@ impl ChessBoard {
             .unwrap_or_else(|| "normal".into());
         let duration = looks::animation_ms(&choice);
         let moves = slides(&self.pieces, next);
-        // Same side up: a flipped board is redrawn, not slid.
-        if duration <= 0. || moves.is_empty() || orientation != self.state.orientation {
+        let now = cx.background_executor().now();
+        let running = self
+            .animation
+            .as_ref()
+            .is_some_and(|animation| !animation.ended(now));
+        let flipped = orientation != self.state.orientation;
+        if !slides_now(duration, cx.reduce_motion(), running, flipped) || moves.is_empty() {
             self.animation = None;
             return;
         }
+        let duration = std::time::Duration::from_secs_f64(duration / 1000.);
         self.animation = Some(Animation {
             moves,
-            start: std::time::Instant::now(),
-            duration: std::time::Duration::from_secs_f64(duration / 1000.),
+            start: now,
+            duration,
         });
+        // The frames between are drawn on the display's own clock (`render` asks for the next
+        // one while the slide runs), so a 120 Hz screen slides at 120 Hz, in step with its
+        // refresh; this only ends the slide, for a window that draws no more frames (hidden,
+        // or a test's, which has no frame clock).
         self._animating = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(16))
-                    .await;
-                let going = this
-                    .update(cx, |this, cx| {
-                        cx.notify();
-                        let done = this.animation.as_ref().is_none_or(|animation| {
-                            animation.start.elapsed() >= animation.duration
-                        });
-                        if done {
-                            this.animation = None;
-                        }
-                        !done
-                    })
-                    .unwrap_or(false);
-                if !going {
-                    return;
+            cx.background_executor().timer(duration).await;
+            let _ = this.update(cx, |this, cx| {
+                let now = cx.background_executor().now();
+                if this
+                    .animation
+                    .as_ref()
+                    .is_none_or(|animation| animation.ended(now))
+                {
+                    this.animation = None;
                 }
-            }
+                cx.notify();
+            });
         }));
     }
 
@@ -690,43 +734,12 @@ impl ChessBoard {
             return self.edit_press(tool, square, event.position, cx);
         }
         cx.emit(BoardEvent::Select(square));
-        if let Some(role) = self.selected_drop.take() {
-            if self.drops_to(role, square) {
-                self.selected = None;
-                self.drop_piece(role, square, cx);
-                return;
-            }
-            cx.notify();
-        }
-        // A press while a premove waits takes it back (Chessground's `cancelPremove`).
-        if self.queued.take().is_some() {
-            self.selected = None;
-            cx.notify();
-            return;
-        }
-        if let Some(from) = self.selected
-            && from != square
-            && self.reaches(from, square)
-        {
-            self.selected = None;
-            self.play(from, square, cx);
-            return;
-        }
-        if let Some(from) = self.selected
-            && from != square
-            && self.premoves_to(from, square)
-        {
-            self.selected = None;
-            self.queued = Some((from, square));
-            cx.notify();
-            return;
-        }
-        match self.pieces.piece_at(square) {
-            Some(piece)
-                if (Some(piece.color) == self.state.movable && self.can_move_from(square))
-                    || (Some(piece.color) == self.state.premove
-                        && self.state.movable.is_none()) =>
-            {
+        match self.decide(square) {
+            Press::Drop(role) => return self.drop_piece(role, square, cx),
+            Press::Play(from) => return self.play(from, square, cx),
+            Press::Pick { piece, .. } => {
+                // A second press on the selected piece lets go of it on release, unless it is
+                // dragged.
                 self.drag = Some(Drag {
                     from: square,
                     piece,
@@ -734,14 +747,56 @@ impl ChessBoard {
                     start: event.position,
                     moved: false,
                 });
-                // A second press on the selected piece lets go of it, unless it is dragged.
-                if self.selected != Some(square) {
-                    self.selected = Some(square);
-                }
             }
-            _ => self.selected = None,
+            Press::Queued | Press::Clear => {}
         }
         cx.notify();
+    }
+
+    /// What pressing `square` does to the selection, a picked pocket piece and a queued premove,
+    /// and what is left to play.
+    fn decide(&mut self, square: Square) -> Press {
+        if let Some(role) = self.selected_drop.take()
+            && self.drops_to(role, square)
+        {
+            self.selected = None;
+            return Press::Drop(role);
+        }
+        // A press while a premove waits takes it back (Chessground's `cancelPremove`).
+        if self.queued.take().is_some() {
+            self.selected = None;
+            return Press::Queued;
+        }
+        if let Some(from) = self.selected
+            && from != square
+            && self.reaches(from, square)
+        {
+            self.selected = None;
+            return Press::Play(from);
+        }
+        if let Some(from) = self.selected
+            && from != square
+            && self.premoves_to(from, square)
+        {
+            self.selected = None;
+            self.queued = Some((from, square));
+            return Press::Queued;
+        }
+        match self.pieces.piece_at(square) {
+            Some(piece)
+                if (Some(piece.color) == self.state.movable && self.can_move_from(square))
+                    || (Some(piece.color) == self.state.premove
+                        && self.state.movable.is_none()) =>
+            {
+                let again = self.selected == Some(square);
+                self.selected = Some(square);
+                Press::Pick { piece, again }
+            }
+            _ => {
+                self.selected = None;
+                Press::Clear
+            }
+        }
     }
 
     /// The right button starts a drawing on a square.
@@ -914,6 +969,7 @@ impl ChessBoard {
                 cx.emit(BoardEvent::Move(format!("{from}{to}q")));
             } else {
                 self.promotion = Some((from, to));
+                self.promotion_choice = 0;
             }
         } else {
             // The piece lands at once; the page's next position confirms or undoes it.
@@ -935,6 +991,235 @@ impl ChessBoard {
     fn cancel_promotion(&mut self, cx: &mut Context<Self>) {
         self.promotion = None;
         cx.notify();
+    }
+
+    /* ── The keyboard ─────────────────────────────────────────────────── */
+
+    /// Whether the board itself has the keys (Tab gave them to it).
+    pub fn has_keys(&self, window: &Window) -> bool {
+        self.focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_focused(window))
+    }
+
+    /// The board's keys, made the first time they are asked for.
+    pub fn focus_handle(&mut self, cx: &mut App) -> FocusHandle {
+        self.focus
+            .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+            .clone()
+    }
+
+    /// The square the keyboard is on.
+    fn cursor(&self) -> Square {
+        self.cursor
+            .unwrap_or_else(|| keyboard::start(self.state.orientation, self.state.last_move))
+    }
+
+    /// Whether the player can do anything on the board now: move, premove, drop or edit.
+    fn interactive(&self) -> bool {
+        !self.state.preview
+            && (self.state.edit.is_some()
+                || self.state.movable.is_some()
+                || self.state.premove.is_some())
+    }
+
+    /// The arrows move the cursor, Enter or Space presses its square and Escape lets go; while
+    /// the promotion picker is open, they choose its piece. Other keys, and these when the board
+    /// has nothing to do with them, go on to the page.
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.has_keys(window) || event.keystroke.modifiers.modified() {
+            return;
+        }
+        let key = event.keystroke.key.as_str();
+        // Held for push to talk, Space is the voice's.
+        if key == "space" && crate::voice::handle(cx).read(cx).can_talk() {
+            return;
+        }
+        if self.keyboard(key, cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    /// A key on the board; whether it was taken.
+    fn keyboard(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        if self.promotion.is_some() {
+            match keyboard::promotion_key(self.promotion_choice, key) {
+                Some(keyboard::PromotionKey::Highlight(choice)) => {
+                    self.promotion_choice = choice;
+                    cx.notify();
+                }
+                Some(keyboard::PromotionKey::Pick(role)) => self.promote(role, cx),
+                Some(keyboard::PromotionKey::Cancel) => self.cancel_promotion(cx),
+                None => return false,
+            }
+            return true;
+        }
+        if let Some(square) = keyboard::step(self.cursor(), self.state.orientation, key) {
+            self.cursor = Some(square);
+            cx.notify();
+            return true;
+        }
+        match key {
+            "enter" | "space" => self.activate(self.cursor(), cx),
+            "escape" => self.let_go(cx),
+            _ => false,
+        }
+    }
+
+    /// Enter on a square: what a click there does, without a drag; a second press on the
+    /// selected piece lets go of it. Whether the board took the key.
+    fn activate(&mut self, square: Square, cx: &mut Context<Self>) -> bool {
+        if self.state.preview {
+            return false;
+        }
+        if let Some(tool) = self.state.edit {
+            self.edit_key(tool, square, cx);
+            return true;
+        }
+        let busy = self.selected.is_some() || self.selected_drop.is_some() || self.queued.is_some();
+        cx.emit(BoardEvent::Select(square));
+        let press = self.press_key(square);
+        match press {
+            Press::Drop(role) => self.drop_piece(role, square, cx),
+            Press::Play(from) => self.play(from, square, cx),
+            Press::Pick { .. } | Press::Queued | Press::Clear => {}
+        }
+        cx.notify();
+        busy || press != Press::Clear || self.interactive()
+    }
+
+    /// What Enter on `square` does to the selection: as a click, but a second press on the
+    /// selected piece lets go of it, as a click's release does.
+    fn press_key(&mut self, square: Square) -> Press {
+        let press = self.decide(square);
+        if let Press::Pick { again: true, .. } = press {
+            self.selected = None;
+        }
+        press
+    }
+
+    /// The editor from the keyboard: its tool puts down or takes off a piece, and its pointer
+    /// picks a piece up on one press and puts it down on the next.
+    fn edit_key(&mut self, tool: EditTool, square: Square, cx: &mut Context<Self>) {
+        match tool {
+            EditTool::Place(_) | EditTool::Trash => {
+                self.edit_press(tool, square, point(px(0.), px(0.)), cx);
+            }
+            EditTool::Pointer => match self.selected.take() {
+                Some(from) if from != square => {
+                    if let Some(piece) = self.pieces.remove_piece_at(from) {
+                        self.pieces.set_piece_at(square, piece);
+                        self.edited(cx);
+                    }
+                }
+                Some(_) => {}
+                None => self.selected = self.pieces.piece_at(square).map(|_| square),
+            },
+        }
+        cx.notify();
+    }
+
+    /// Escape: the selection, a picked pocket piece and a queued premove go. Whether there was
+    /// any.
+    fn let_go(&mut self, cx: &mut Context<Self>) -> bool {
+        let busy = self.selected.take().is_some()
+            | self.selected_drop.take().is_some()
+            | self.queued.take().is_some();
+        if busy {
+            cx.notify();
+        }
+        busy
+    }
+
+    /// Where the piece picked can go: its moves, its premoves or a pocket piece's drops.
+    fn targets(&self) -> Vec<Square> {
+        if let Some(role) = self.selected_drop {
+            return self.state.drops.get(&role).cloned().unwrap_or_default();
+        }
+        let Some(square) = self.selected else {
+            return Vec::new();
+        };
+        if self.state.edit.is_some() {
+            Vec::new()
+        } else if self.state.movable.is_some() {
+            self.state.dests.get(&square).cloned().unwrap_or_default()
+        } else if self
+            .pieces
+            .piece_at(square)
+            .is_some_and(|piece| Some(piece.color) == self.state.premove)
+        {
+            premove_targets(&self.pieces, square)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The squares for a screen reader, in ranks from the viewer's top: each named for what
+    /// stands on it, the selected one marked, the cursor's the one read while the board has the
+    /// keys (and ringed then). A screen reader's press on one presses it as Enter does.
+    fn render_squares(&self, focused: bool, ring: Hsla, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let targets = self.targets();
+        let cursor = self.cursor();
+        let interactive = self.interactive();
+        let entity = cx.entity().downgrade();
+        (0..8u32)
+            .map(|row| {
+                let cells = (0..8u32).map(|column| {
+                    let (file, rank) = match self.state.orientation {
+                        Color::White => (column, 7 - row),
+                        Color::Black => (7 - column, row),
+                    };
+                    let square = Square::from_coords(File::new(file), Rank::new(rank));
+                    let name = keyboard::square_name(
+                        square,
+                        self.pieces.piece_at(square),
+                        self.state.blindfold,
+                        targets.contains(&square),
+                    );
+                    let at_cursor = square == cursor;
+                    div()
+                        .id(("square", usize::from(square)))
+                        .test_support()
+                        .role(gpui_kit::Role::GridCell)
+                        .aria_label(name)
+                        .aria_column_index(column as usize)
+                        .aria_selected(self.selected == Some(square))
+                        .when(at_cursor, |cell| cell.aria_active_descendant())
+                        .when(interactive, |cell| {
+                            let entity = entity.clone();
+                            cell.on_a11y_action(
+                                gpui_kit::AccessibleAction::Click,
+                                move |_, _, cx| {
+                                    let _ = entity.update(cx, |this, cx| {
+                                        this.cursor = Some(square);
+                                        this.activate(square, cx);
+                                    });
+                                },
+                            )
+                        })
+                        .absolute()
+                        .top_0()
+                        .left(relative(column as f32 / 8.))
+                        .w(relative(0.125))
+                        .h_full()
+                        .when(focused && at_cursor, |cell| {
+                            cell.border(px(3.)).border_color(ring)
+                        })
+                        .into_any_element()
+                });
+                div()
+                    .id(("rank", row as usize))
+                    .role(gpui_kit::Role::Row)
+                    .aria_row_index(row as usize)
+                    .absolute()
+                    .left_0()
+                    .top(relative(row as f32 / 8.))
+                    .w_full()
+                    .h(relative(0.125))
+                    .children(cells)
+                    .into_any_element()
+            })
+            .collect()
     }
 
     /// `coords.squares`: each square's name in its top corner, in the other square color.
@@ -1058,7 +1343,15 @@ impl ChessBoard {
         labels
     }
 
-    fn render_promotion(&self, set: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The promotion picker; while the board has the keys, the piece they would take is ringed
+    /// and is the one a screen reader reads.
+    fn render_promotion(
+        &self,
+        set: &str,
+        focused: bool,
+        ring: Hsla,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let (_, to) = self.promotion?;
         let color = if to.rank() == Rank::Eighth {
             Color::White
@@ -1067,12 +1360,8 @@ impl ChessBoard {
         };
         let theme = cx.theme();
         let (elevated, border, background) = (theme.muted, theme.border, theme.background);
-        let choices = [
-            (Role::Queen, "Queen"),
-            (Role::Rook, "Rook"),
-            (Role::Bishop, "Bishop"),
-            (Role::Knight, "Knight"),
-        ];
+        let palette = *cx.global::<crate::theme::Palette>();
+        let marked = self.promotion_choice % keyboard::PROMOTION.len();
         Some(
             div()
                 .id("promotion")
@@ -1090,6 +1379,7 @@ impl ChessBoard {
                 .child(
                     div()
                         .id("promotion-choices")
+                        .test_support()
                         .role(gpui_kit::Role::Dialog)
                         .aria_label("Choose promotion piece")
                         .flex()
@@ -1100,30 +1390,48 @@ impl ChessBoard {
                         .border_1()
                         .border_color(border)
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .children(choices.into_iter().map(|(role, label)| {
-                            div()
-                                .id(label)
-                                .role(gpui_kit::Role::Button)
-                                .aria_label(label)
-                                .size(px(60.))
-                                .p(px(4.))
-                                // Concentric with the picker's corners, 8px further out.
-                                .rounded(radii::SM)
-                                .bg(background)
-                                .border_1()
-                                .border_color(border)
-                                .cursor_pointer()
-                                .hover(|style| style.bg(elevated))
-                                .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
-                                .on_click(cx.listener(move |this, _, _, cx| this.promote(role, cx)))
-                                .child(
-                                    img(SharedString::from(looks::piece_path(
-                                        set,
-                                        Piece { color, role },
-                                    )))
-                                    .size_full(),
-                                )
-                        })),
+                        .children(keyboard::PROMOTION.into_iter().enumerate().map(
+                            |(index, (role, label))| {
+                                div()
+                                    .id(label)
+                                    .test_support()
+                                    .role(gpui_kit::Role::Button)
+                                    .aria_label(label)
+                                    .aria_selected(index == marked)
+                                    .when(index == marked, |choice| choice.aria_active_descendant())
+                                    .size(px(60.))
+                                    .p(px(4.))
+                                    // Concentric with the picker's corners, 8px further out.
+                                    .rounded(radii::SM)
+                                    .bg(background)
+                                    .border_1()
+                                    .border_color(border)
+                                    .cursor_pointer()
+                                    .pressable_fill(elevated, &palette)
+                                    .when(focused && index == marked, |choice| {
+                                        choice.shadow(vec![BoxShadow {
+                                            color: ring,
+                                            offset: point(px(0.), px(0.)),
+                                            blur_radius: px(0.),
+                                            spread_radius: px(2.),
+                                            inset: false,
+                                        }])
+                                    })
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::new(label).build(window, cx)
+                                    })
+                                    .on_click(
+                                        cx.listener(move |this, _, _, cx| this.promote(role, cx)),
+                                    )
+                                    .child(
+                                        img(SharedString::from(looks::piece_path(
+                                            set,
+                                            Piece { color, role },
+                                        )))
+                                        .size_full(),
+                                    )
+                            },
+                        )),
                 )
                 .into_any_element(),
         )
@@ -1491,6 +1799,17 @@ pub fn cached(board: &Entity<ChessBoard>) -> AnyElement {
     board.clone().cached(style).into_any_element()
 }
 
+/// Whether a page's keys reach it: the page itself has them, or the board on it does (a board
+/// takes the arrows, Enter, Space and Escape and passes every other key on to its page).
+pub fn page_has_keys(page: &FocusHandle, window: &Window, cx: &App) -> bool {
+    page.is_focused(window)
+        || (page.contains_focused(window, cx)
+            && window
+                .context_stack()
+                .last()
+                .is_some_and(|context| context.contains(keyboard::CONTEXT)))
+}
+
 /// What a screen reader says of the board: the last move and
 /// the side to move.
 fn describe(state: &BoardState) -> String {
@@ -1517,7 +1836,12 @@ pub fn outside_gutter(cx: &App) -> Pixels {
 }
 
 impl Render for ChessBoard {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A small picture takes no keys; any other board, even one only looked at, can be read
+        // square by square.
+        let focus = (!self.state.preview).then(|| self.focus_handle(cx));
+        let focused = self.has_keys(window);
+        let ring = cx.global::<crate::theme::Palette>().primary;
         let frontend = cx
             .global::<SettingsHandle>()
             .0
@@ -1633,20 +1957,27 @@ impl Render for ChessBoard {
             self.animation
                 .as_ref()
                 .map(|animation| {
-                    let t = animation.progress();
+                    let now = cx.background_executor().now();
+                    if !animation.ended(now) {
+                        window.request_animation_frame();
+                    }
+                    let t = animation.progress(now);
                     animation
                         .moves
                         .iter()
-                        .map(|(piece, from, to)| {
+                        .enumerate()
+                        .map(|(index, (piece, from, to))| {
                             let (c1, r1) = self.cell(*from);
                             let (c2, r2) = self.cell(*to);
                             let column = c1 as f32 + (c2 as f32 - c1 as f32) * t;
                             let row = r1 as f32 + (r2 as f32 - r1 as f32) * t;
                             img(SharedString::from(looks::piece_path(&set, *piece)))
+                                .id(("board-slide", index))
                                 .absolute()
                                 .left(relative(column / 8.))
                                 .top(relative(row / 8.))
                                 .size(relative(0.125))
+                                .test_support()
                                 .into_any_element()
                         })
                         .collect()
@@ -1675,7 +2006,12 @@ impl Render for ChessBoard {
         if self.state.square_names {
             coordinates.extend(self.render_square_names(look));
         }
-        let promotion = self.render_promotion(&set, cx);
+        let promotion = self.render_promotion(&set, focused, ring, cx);
+        let squares = if self.state.preview {
+            Vec::new()
+        } else {
+            self.render_squares(focused, ring, cx)
+        };
         // The badge overhangs the square's top-right corner, except where that would leave the
         // board.
         let badge = self
@@ -1714,13 +2050,23 @@ impl Render for ChessBoard {
         div()
             .id("chess-board")
             .test_support()
-            // Pictures in a list are named by what holds them; a board to play on is a group, and
-            // says each move as it is played (an `aria-live` line).
+            // Tab gives a board its keys (a press leaves them with the page); it takes the
+            // arrows, Enter, Space and Escape, and hands the rest on.
+            .when_some(focus, |board, focus| {
+                board
+                    .track_focus(&focus)
+                    .key_context(keyboard::CONTEXT)
+                    .on_key_down(cx.listener(Self::key))
+            })
+            // Pictures in a list are named by what holds them; a board to play on is a grid of
+            // squares, and says each move as it is played (an `aria-live` line).
             .when_some(description, |board, description| {
                 board
-                    .role(gpui_kit::Role::Group)
+                    .role(gpui_kit::Role::Grid)
                     .aria_label("Chess board")
                     .aria_description(description.clone())
+                    .aria_row_count(8)
+                    .aria_column_count(8)
                     .child(crate::widgets::live_region("board-live", description))
             })
             .w_full()
@@ -1783,6 +2129,7 @@ impl Render for ChessBoard {
                         .absolute()
                         .size_full(),
                     )
+                    .children(squares)
                     .children(ghost)
                     .children(sliding)
                     .children(coordinates)
@@ -1792,7 +2139,12 @@ impl Render for ChessBoard {
             )
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, event, _, cx| this.press(event, cx)),
+                cx.listener(|this, event, window, cx| {
+                    // The keys stay where they were, as a button's press leaves them, so the page
+                    // keeps its arrows after a click on the board.
+                    window.prevent_default();
+                    this.press(event, cx)
+                }),
             )
             .on_mouse_down(
                 MouseButton::Right,
@@ -1889,7 +2241,7 @@ mod drawing_tests {
 
 #[cfg(test)]
 mod premove_tests {
-    use super::{board_of, premove_targets, slides};
+    use super::{board_of, premove_targets, slides, slides_now};
     use shakmaty::Square;
 
     #[test]
@@ -1915,6 +2267,20 @@ mod premove_tests {
         assert_eq!(slides(&castle, &castled).len(), 2);
         let empty = board_of("8/8/8/8/8/8/8/8 w - - 0 1");
         assert!(slides(&empty, &before).is_empty());
+    }
+
+    /// A slide still under way when the next position comes (an arrow key held) is cut short
+    /// and the new position stands at once; Reduce motion, the None speed and a flip never slide.
+    #[test]
+    fn pieces_slide_only_when_there_is_time_to() {
+        assert!(slides_now(180., false, false, false));
+        assert!(
+            !slides_now(180., false, true, false),
+            "the last slide still runs"
+        );
+        assert!(!slides_now(180., true, false, false), "Reduce motion");
+        assert!(!slides_now(0., false, false, false), "the None speed");
+        assert!(!slides_now(180., false, false, true), "a flipped board");
     }
 }
 
@@ -1964,5 +2330,121 @@ mod fen_tests {
                 .piece_at(Square::D1)
                 .is_some()
         );
+    }
+}
+
+#[cfg(test)]
+mod keyboard_tests {
+    use super::{BoardState, ChessBoard, Press, keyboard};
+    use shakmaty::{Color, Role, Square};
+
+    fn board(fen: &str, variant: &str, orientation: Color) -> ChessBoard {
+        let position = kchess_domain::rules::setup_start(variant, fen).expect("a position");
+        let turn = if fen.split_whitespace().nth(1) == Some("b") {
+            Color::Black
+        } else {
+            Color::White
+        };
+        ChessBoard::new(BoardState::of(&position, orientation, Some(turn), None))
+    }
+
+    fn walk(cursor: Square, orientation: Color, keys: &[&str]) -> Square {
+        keys.iter().fold(cursor, |square, key| {
+            keyboard::step(square, orientation, key).expect("an arrow")
+        })
+    }
+
+    /// The cursor walked with the arrows, then Enter on each end: the piece is picked, a square it
+    /// cannot reach lets go of it as a click does, and a square it can reach plays it.
+    #[test]
+    fn enter_picks_a_piece_and_plays_it_where_the_cursor_is() {
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let mut board = board(start, "standard", Color::White);
+        let cursor = board.cursor();
+        assert_eq!(cursor, Square::E2);
+        assert!(matches!(
+            board.press_key(cursor),
+            Press::Pick { again: false, .. }
+        ));
+        assert_eq!(board.selected, Some(Square::E2));
+        assert!(board.targets().contains(&Square::E4));
+        // Three up is e5, which the pawn cannot reach: the selection goes.
+        let e5 = walk(cursor, Color::White, &["up", "up", "up"]);
+        assert_eq!(e5, Square::E5);
+        assert_eq!(board.press_key(e5), Press::Clear);
+        assert_eq!(board.selected, None);
+        // Enter twice on the same piece lets go of it.
+        board.press_key(Square::E2);
+        assert!(matches!(
+            board.press_key(Square::E2),
+            Press::Pick { again: true, .. }
+        ));
+        assert_eq!(board.selected, None);
+        board.press_key(Square::E2);
+        let e4 = walk(e5, Color::White, &["down"]);
+        assert_eq!(board.press_key(e4), Press::Play(Square::E2));
+        assert_eq!(board.selected, None);
+    }
+
+    /// From Black's side the same keys walk the board turned round.
+    #[test]
+    fn a_turned_board_plays_from_the_keyboard_too() {
+        let after = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+        let mut board = board(after, "standard", Color::Black);
+        assert_eq!(board.cursor(), Square::E7);
+        // Right, from Black's side, is toward the a-file.
+        let d7 = walk(board.cursor(), Color::Black, &["right"]);
+        assert_eq!(d7, Square::D7);
+        board.press_key(d7);
+        let d5 = walk(d7, Color::Black, &["up", "up"]);
+        assert_eq!(d5, Square::D5);
+        assert_eq!(board.press_key(d5), Press::Play(Square::D7));
+    }
+
+    /// A pawn reaching the last rank is played as any move; the picker then asks which piece,
+    /// which the keyboard answers (`keyboard::promotion_key`).
+    #[test]
+    fn a_promotion_is_played_from_the_keyboard() {
+        let mut board = board("4k3/P7/8/8/8/8/8/4K3 w - - 0 1", "standard", Color::White);
+        board.press_key(Square::A7);
+        assert!(board.targets().contains(&Square::A8));
+        assert_eq!(board.press_key(Square::A8), Press::Play(Square::A7));
+        assert_eq!(
+            keyboard::promotion_key(0, "left"),
+            Some(keyboard::PromotionKey::Highlight(3))
+        );
+        assert_eq!(
+            keyboard::promotion_key(3, "enter"),
+            Some(keyboard::PromotionKey::Pick(Role::Knight))
+        );
+    }
+
+    /// A pocket piece picked, Enter drops it on the cursor's square where it may land.
+    #[test]
+    fn enter_drops_a_picked_pocket_piece() {
+        let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[N] w KQkq - 0 1";
+        let mut board = board(fen, "crazyhouse", Color::White);
+        board.selected_drop = Some(Role::Knight);
+        assert!(board.targets().contains(&Square::E4));
+        assert_eq!(board.press_key(Square::E4), Press::Drop(Role::Knight));
+        assert_eq!(board.selected_drop, None);
+        // On a piece, the pocket piece goes and the piece is picked instead.
+        board.selected_drop = Some(Role::Knight);
+        assert!(matches!(board.press_key(Square::E2), Press::Pick { .. }));
+        assert_eq!(board.selected_drop, None);
+    }
+
+    /// A board only looked at takes no moves from the keyboard, though its squares can be read.
+    #[test]
+    fn a_shown_board_takes_no_moves() {
+        let mut board = ChessBoard::new(BoardState::shown(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "standard",
+            Color::White,
+            None,
+        ));
+        assert!(!board.interactive());
+        assert_eq!(board.press_key(Square::E2), Press::Clear);
+        assert_eq!(board.selected, None);
     }
 }

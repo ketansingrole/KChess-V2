@@ -26,6 +26,7 @@ use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii, tint};
 use crate::voice::control::{BarSpec, Control};
 use crate::voice::{Attempt, VoiceEvent};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill, Tone};
 
 const EMPTY_BOARD: &str = "8/8/8/8/8/8/8/8";
@@ -738,9 +739,7 @@ impl EditorPage {
                         .border_2()
                         .border_color(palette.primary)
                 })
-                .when(!selected, |spare| {
-                    spare.hover(|spare| spare.bg(palette.accented))
-                })
+                .when(!selected, |spare| spare.pressable(palette))
                 .tooltip(move |window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(label).build(window, cx)
                 })
@@ -781,9 +780,7 @@ impl EditorPage {
                         .border_2()
                         .border_color(palette.primary)
                 })
-                .when(!selected, |spare| {
-                    spare.hover(|spare| spare.bg(palette.accented))
-                })
+                .when(!selected, |spare| spare.pressable(palette))
                 .tooltip(move |window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(label.clone()).build(window, cx)
                 })
@@ -1147,7 +1144,7 @@ impl Render for EditorPage {
             .track_focus(&self.focus)
             // F turns the board, as its button does, while no text field has the keys.
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if this.focus.is_focused(window)
+                if crate::board::page_has_keys(&this.focus, window, cx)
                     && !event.keystroke.modifiers.modified()
                     && event.keystroke.key == "f"
                 {

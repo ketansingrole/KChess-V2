@@ -111,9 +111,10 @@ fn call_deep(method: &str, args: &str) -> std::result::Result<String, String> {
     on_large_stack(|| call_inner(method, args).map_err(|e| e.to_string()))
 }
 
-/// `work` on a thread whose stack holds `MAX_JSON_DEPTH` levels, whatever thread asked.
+/// `work` on a thread whose stack holds `MAX_JSON_DEPTH` levels, whatever thread asked. Callers
+/// that read a deep answer (a game tree) do so here too: parsing, walking and dropping it recurse.
 #[cfg(not(target_arch = "wasm32"))]
-fn on_large_stack<T: Send>(
+pub fn on_large_stack<T: Send>(
     work: impl FnOnce() -> std::result::Result<T, String> + Send,
 ) -> std::result::Result<T, String> {
     std::thread::scope(|scope| {
@@ -129,7 +130,7 @@ fn on_large_stack<T: Send>(
 
 /// The WebAssembly build has no threads; its own stack (`.cargo/config.toml`) is large enough.
 #[cfg(target_arch = "wasm32")]
-fn on_large_stack<T>(
+pub fn on_large_stack<T>(
     work: impl FnOnce() -> std::result::Result<T, String>,
 ) -> std::result::Result<T, String> {
     work()

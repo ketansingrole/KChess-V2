@@ -137,10 +137,16 @@ fn an_earlier_main_database_is_imported_once_with_its_plaintext_tokens_encrypted
          CREATE TABLE lichess_tokens (username TEXT, token TEXT);
          INSERT INTO lichess_tokens VALUES ('Carol', 'lip_carol');",
     );
-    let store = Store::new(Some(legacy), Secrets::ON);
+    let store = Store::new(Some(legacy.clone()), Secrets::ON);
 
     let settings = store.ok("store.games.getSettings", vec![]);
     assert_eq!(settings["appearance"], json!("light"));
+    // The earlier database keeps its games but no longer holds a live login in plain text.
+    let earlier = Connection::open(&legacy).expect("the earlier database");
+    let count = |sql: &str| -> i64 { earlier.query_row(sql, [], |row| row.get(0)).expect(sql) };
+    assert_eq!(count("SELECT COUNT(*) FROM lichess_tokens"), 0);
+    assert_eq!(count("SELECT COUNT(*) FROM lichess_games"), 1);
+    drop(earlier);
     assert_eq!(settings["soundEnabled"], json!(false));
     assert_eq!(settings["soundVolume"], json!(0.4));
     assert_eq!(settings["enginePath"], json!("/opt/fish"));

@@ -21,10 +21,10 @@ use serde_json::Value;
 use tokio::sync::{OnceCell, watch};
 use tokio_util::sync::CancellationToken;
 
-use super::client::{Failure, LichessClient, TokenSource, authorize};
+use super::client::{Failure, LichessClient, Ndjson, TokenSource, authorize};
 use super::reviews::review_from_lichess;
 use crate::capabilities::Capabilities;
-use crate::error::{CoreError, Result as CoreResult};
+use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::{Host, Level};
 use crate::store::games::EXPORTED_GAME_CACHE;
 
@@ -301,6 +301,12 @@ pub fn now_ms() -> i64 {
 
 /// Percent-encodes one path segment (a username), as openapi-fetch does for `{username}`.
 pub fn path_segment(text: &str) -> String {
+    // `.` and `..` (also when percent-encoded, `%2e`) are dot segments that URL parsing resolves,
+    // so an id from a response could otherwise send an authorized request to another path. As
+    // the literal text `%2E` they name nothing.
+    if text == "." || text == ".." {
+        return "%252E".repeat(text.len());
+    }
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
@@ -631,7 +637,10 @@ impl Lichess {
             .await
         {
             Ok(value) => Ok(Reply::Done(value)),
-            Err(failure) if matches!(failure.status(), Some(401) | Some(403)) => {
+            // Only a refused login asks to reconnect: a 403 for a reason Lichess gave ("not
+            // your study", a closed tournament) said "reconnect your account", and reconnecting
+            // changed nothing.
+            Err(Failure::Lichess(error)) if error.kind() == ErrorKind::Login => {
                 Ok(Reply::NeedsReconnect)
             }
             Err(failure) => Err(failure.into()),
@@ -840,11 +849,13 @@ impl Lichess {
                 .with_usage(&row.username, "profile", async {
                     self.client
                         .ndjson(
-                            reqwest::Method::GET,
-                            "/api/rel/following",
-                            &[],
-                            None,
-                            Some(&authorize(&token)),
+                            Ndjson {
+                                method: reqwest::Method::GET,
+                                path: "/api/rel/following",
+                                query: &[],
+                                body: None,
+                                auth: Some(&authorize(&token)),
+                            },
                             &self.lifetime,
                             |line| {
                                 lines.push(line.to_string());
@@ -994,9 +1005,15 @@ impl Lichess {
     }
 
     /// `exportGame`: a finished game as PGN with clocks, for the analysis board. A game fetched
-    /// once is kept (the newest of them), so without a connection it still opens.
+    /// once is kept (the newest of them), so without a connection it still opens, and a kept game
+    /// that had finished opens from the copy: a finished game does not change.
     pub async fn export_game(&self, id: &str) -> CoreResult<String> {
         let key = format!("{EXPORTED_GAME_CACHE}{id}");
+        if let Ok(Some(kept)) = self.store.read_api_cache(&key).await
+            && let Some(pgn) = kept.value.as_str().filter(|pgn| finished_pgn(pgn))
+        {
+            return Ok(pgn.to_string());
+        }
         let fetched = self
             .client
             .policy()
@@ -1072,11 +1089,13 @@ impl Lichess {
                     let mut lines = Vec::new();
                     self.client
                         .ndjson(
-                            reqwest::Method::GET,
-                            &format!("/api/games/user/{}", path_segment(username)),
-                            &query,
-                            None,
-                            auth.as_deref(),
+                            Ndjson {
+                                method: reqwest::Method::GET,
+                                path: &format!("/api/games/user/{}", path_segment(username)),
+                                query: &query,
+                                body: None,
+                                auth: auth.as_deref(),
+                            },
                             &self.lifetime,
                             |line| {
                                 lines.push(line.to_string());
@@ -1251,8 +1270,9 @@ impl Lichess {
         let generation = self.next_sync.fetch_add(1, Ordering::SeqCst) + 1;
         let (send, receive) = watch::channel(None);
         lock(&self.syncs).insert(key.clone(), (generation, receive));
-        let result = self.run_sync(row, play_time).await;
-        {
+        // Forgotten however the run ends: a cancelled call left its entry behind, and every
+        // later sync of this player joined it and failed at once ("Sync was cancelled.").
+        let forget = crate::tasks::on_drop(|| {
             let mut syncs = lock(&self.syncs);
             if syncs
                 .get(&key)
@@ -1260,7 +1280,9 @@ impl Lichess {
             {
                 syncs.remove(&key);
             }
-        }
+        });
+        let result = self.run_sync(row, play_time).await;
+        drop(forget);
         let shared = result.clone();
         let _ = send.send(Some(shared));
         if let Ok(fetched) = &result {
@@ -1461,11 +1483,13 @@ impl Lichess {
                         let mut lines = Vec::new();
                         self.client
                             .ndjson(
-                                method,
-                                path,
-                                query,
-                                body,
-                                auth.as_deref(),
+                                Ndjson {
+                                    method,
+                                    path,
+                                    query,
+                                    body,
+                                    auth: auth.as_deref(),
+                                },
                                 &self.lifetime,
                                 |line| {
                                     lines.push(line.to_string());
@@ -1819,6 +1843,15 @@ pub struct CrosstableMatchup {
     pub nb_games: i64,
 }
 
+/// Whether `pgn` records a decided result (`[Result "1-0"]`, `"0-1"` or `"1/2-1/2"`); a game
+/// still being played, or one whose result is not named, is `false`.
+fn finished_pgn(pgn: &str) -> bool {
+    pgn.lines()
+        .take_while(|line| line.starts_with('['))
+        .find_map(|line| line.strip_prefix("[Result \"")?.strip_suffix("\"]"))
+        .is_some_and(|result| matches!(result, "1-0" | "0-1" | "1/2-1/2"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1827,6 +1860,14 @@ mod tests {
     fn path_segments_are_encoded() {
         assert_eq!(path_segment("Magnus_C-1"), "Magnus_C-1");
         assert_eq!(path_segment("a/b c"), "a%2Fb%20c");
+        for dots in [".", ".."] {
+            let url = reqwest::Url::parse(&format!(
+                "https://lichess.org/api/broadcast/{}/x",
+                path_segment(dots)
+            ))
+            .unwrap();
+            assert!(url.path().starts_with("/api/broadcast/%252E"), "{url}");
+        }
     }
 
     #[test]

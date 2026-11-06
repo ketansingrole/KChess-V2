@@ -15,6 +15,7 @@ use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::rules;
 use crate::theme::{Palette, radii, tint};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill};
 
 /// Run lengths in seconds; 0 is untimed practice.
@@ -229,16 +230,11 @@ pub fn hud(
         .justify_between()
         .gap(px(12.))
         .child(
-            div()
-                .text_size(px(40.))
-                .font_weight(FontWeight::MEDIUM)
-                .line_height(relative(1.))
-                .text_color(if clock.low() {
-                    palette.loss
-                } else {
-                    palette.text
-                })
-                .child(clock.text()),
+            crate::widgets::timer(clock.text(), px(40.)).text_color(if clock.low() {
+                palette.loss
+            } else {
+                palette.text
+            }),
         )
         .child(
             v_flex()
@@ -314,7 +310,7 @@ pub fn training_list(
                             gpui_kit::transparent_black()
                         })
                         .when(current, |row| row.bg(tint(palette.primary, 10.)))
-                        .when(!current, |row| row.hover(|row| row.bg(palette.accented)))
+                        .when(!current, |row| row.pressable(palette))
                         .on_click(move |_, window, cx| select(id.clone(), window, cx))
                         .child(
                             if item.done {

@@ -14,10 +14,10 @@ use crate::error::{CoreError, Result};
 /// Intentionally runtime-gated, not `cfg(test/debug_assertions)`: tests and end-to-end runs
 /// drive a *release build*, where `debug_assertions` is off, yet still need to seed historical
 /// rows and read dumps.
-/// Packaged builds never set the variable, and `core.rs` refuses the test-only
-/// Lichess/voice overrides unless it is set.
+/// `core.rs` refuses the test-only Lichess/voice overrides unless it is set, and a packaged build
+/// ignores it altogether (`crate::dev_overrides`).
 pub fn enabled() -> bool {
-    std::env::var("KCHESS_STORE_DEBUG").as_deref() == Ok("1")
+    crate::dev_overrides() && std::env::var("KCHESS_STORE_DEBUG").as_deref() == Ok("1")
 }
 
 fn storage(cause: rusqlite::Error) -> CoreError {

@@ -1,8 +1,7 @@
 //! Validation and library documents, reached
-//! through `api::call`. The TypeScript wrappers send their arguments through `rulesLossless`:
-//! the first argument is a sidecar listing where `undefined`, NaN, the infinities and binary data
+//! through `api::call`. The first argument is a sidecar listing where `undefined`, NaN, the infinities and binary data
 //! sat, since JSON cannot carry them. Those are rebuilt here before validation, so each check sees
-//! exactly the values the TypeScript validator saw.
+//! exactly the values the caller passed.
 
 pub mod constants;
 mod contracts;
@@ -36,7 +35,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Result<Value, String>> {
     if is_check {
         return Some(
             inputs(user, sidecar)
-                .and_then(|values| contracts::argument_call(method, &values))
+                .and_then(|values| contracts::argument_call(&values))
                 .map(J::into_value),
         );
     }

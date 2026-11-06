@@ -874,6 +874,66 @@ mod tests {
     use super::*;
     use regex::Regex;
 
+    /// A Result header is read in any dash and written as the PGN standard spells it.
+    #[test]
+    fn result_headers_are_normalized() {
+        for (written, read) in [
+            ("1-0", "1-0"),
+            ("1–0", "1-0"),
+            ("0-1", "0-1"),
+            ("0—1", "0-1"),
+            ("1/2–1/2", "1/2-1/2"),
+            ("1/2-1/2", "1/2-1/2"),
+            ("draw", "*"),
+        ] {
+            let game = &parse_pgn(&format!("[Result \"{written}\"]\n\n*"))[0];
+            assert_eq!(game.header("Result"), Some(read), "{written}");
+        }
+    }
+
+    /// A header value escapes only `"` and `\\`; any other backslash breaks the header.
+    #[test]
+    fn a_header_value_escapes_only_quotes_and_backslashes() {
+        let line = r#"[Event "a \"b\" \\c"]"#;
+        assert_eq!(
+            match_header(line),
+            Some(("Event", r#"a \"b\" \\c"#, line.len()))
+        );
+        assert_eq!(match_header(r#"[Event "a\x"]"#), None);
+        assert!(!header_regex().is_match(r#"[Event "a\x"]"#));
+    }
+
+    /// Only a result outside every variation is the game's.
+    #[test]
+    fn a_result_inside_a_variation_is_not_the_games() {
+        let game = &parse_pgn("1. e4 (1. d4 0-1) e5")[0];
+        assert_ne!(game.header("Result"), Some("0-1"));
+        let game = &parse_pgn("1. e4 (1. d4) e5 0-1")[0];
+        assert_eq!(game.header("Result"), Some("0-1"));
+        // A movetext ending in `*` leaves the header's result alone.
+        let game = &parse_pgn("[Result \"1-0\"]\n\n1. e4 *")[0];
+        assert_eq!(game.header("Result"), Some("1-0"));
+    }
+
+    /// Lichess adds a Site and names each chapter: a study still matches its download.
+    #[test]
+    fn a_study_matches_its_download_without_the_headers_lichess_adds() {
+        let chapters = [("Main line", "[Event \"Study\"]\n\n1. e4 e5 *")];
+        let downloaded = "[Event \"Study\"]\n[Site \"https://lichess.org/study/x/y\"]\n[ChapterName \"Renamed\"]\n\n1. e4 e5 *";
+        assert_eq!(study_matches(&chapters, downloaded), Some(true));
+        let changed = "[Event \"Study\"]\n[Site \"https://lichess.org/study/x/y\"]\n\n1. e4 c5 *";
+        assert_eq!(study_matches(&chapters, changed), Some(false));
+    }
+
+    /// A move reads as its text, kept inline or on the heap.
+    #[test]
+    fn a_san_shows_as_its_text() {
+        assert_eq!(format!("{:?}", San::new("Nf3")), "\"Nf3\"");
+        let long = "Qa1xb2+ (sixteen)";
+        assert_eq!(format!("{:?}", San::new(long)), format!("{long:?}"));
+        assert_eq!(San::new(long).as_str(), long);
+    }
+
     const SPACE: &str = r"[\t\n\x0B\x0C\r \x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]";
 
     /// The reference patterns: the hand-written lexer must agree with them everywhere.

@@ -356,6 +356,10 @@ pub fn start(args: &[Value]) -> Result<Value, String> {
     Game::step(args, |game, inputs, reads| {
         let setup: Setup = arg(inputs, 2, "setup")?;
         let clock: Option<LocalClock> = optional_arg(inputs, 3)?;
+        if let Some(clock) = clock {
+            clock.white.checked()?;
+            clock.black.checked()?;
+        }
         game.start(reads, setup, clock)?;
         Ok(Value::Null)
     })

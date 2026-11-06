@@ -130,10 +130,19 @@ pub fn socket_path(profile: &Path) -> std::io::Result<PathBuf> {
 
 /// Writes `contents` to `path` readable by this user only, replacing it whole.
 pub fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
-    let temporary = path.with_extension("tmp");
+    // Its own temporary name per file (`core.token.tmp`, `core.json.tmp`), made afresh so the
+    // owner-only mode applies: an existing file keeps whatever mode it had.
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".tmp");
+    let temporary = PathBuf::from(temporary);
+    match std::fs::remove_file(&temporary) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     {
         let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
+        options.write(true).create_new(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -202,6 +211,29 @@ pub fn runtime_dir() -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    /// A leftover world-readable temporary file never lends its mode to the token.
+    #[cfg(unix)]
+    #[test]
+    fn private_files_are_owner_only_whatever_was_left() {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = tempfile::tempdir().expect("a folder");
+        let token = folder.path().join(TOKEN_FILE);
+        let mut leftover = token.as_os_str().to_owned();
+        leftover.push(".tmp");
+        std::fs::write(&leftover, "old").expect("a leftover");
+        std::fs::set_permissions(&leftover, std::fs::Permissions::from_mode(0o644))
+            .expect("its mode");
+        write_private(&token, b"secret").expect("written");
+        let mode = std::fs::metadata(&token)
+            .expect("the token")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(std::fs::read(&token).expect("the token"), b"secret");
+        write_private(&folder.path().join(INFO_FILE), b"{}").expect("written beside it");
+        assert_eq!(std::fs::read(&token).expect("the token"), b"secret");
+    }
+
     #[test]
     fn tokens_compare_whole() {
         let token = new_token().expect("random bytes");
@@ -225,6 +257,13 @@ mod tests {
         );
         assert_eq!(plain_windows(r"D:\a\profile"), None);
         assert_eq!(plain_windows(r"\\?\Volume{1234}\profile"), None);
+        // The usual spelling is limited to 259 characters.
+        let longest = format!(r"D:\{}", "a".repeat(256));
+        assert_eq!(
+            plain_windows(&format!(r"\\?\{longest}")).as_deref(),
+            Some(longest.as_str())
+        );
+        assert_eq!(plain_windows(&format!(r"\\?\{longest}a")), None);
         let long = format!(r"\\?\D:\{}", "a".repeat(300));
         assert_eq!(
             plain_windows(&long),
@@ -265,6 +304,27 @@ mod tests {
             socket_dir(Path::new("/run/user/501"), 501, name, false),
             Path::new("/run/user/501/kchess-501")
         );
+    }
+
+    /// A folder others could enter is closed to them; anything but a folder is refused.
+    #[cfg(unix)]
+    #[test]
+    fn a_private_folder_is_this_users_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().expect("root");
+        let open = root.path().join("open");
+        std::fs::create_dir(&open).expect("folder");
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o755)).expect("mode");
+        private_dir(&open).expect("tightened");
+        let mode = std::fs::metadata(&open)
+            .expect("folder")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700);
+        let file = root.path().join("file");
+        std::fs::write(&file, b"").expect("file");
+        assert!(private_dir(&file).is_err());
+        assert!(private_dir(&root.path().join("missing").join("deeper")).is_err());
     }
 
     #[cfg(unix)]

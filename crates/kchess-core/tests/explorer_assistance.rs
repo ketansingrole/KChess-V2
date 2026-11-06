@@ -1,24 +1,53 @@
 //! A game starting mid-lookup still blocks: the explorer answer must not reach a live game.
-// Tests set process environment (`std::env::set_var`), which is unsafe in edition 2024.
-#![allow(unsafe_code)]
 #[path = "support/lichess_http.rs"]
 mod fixtures;
+#[path = "support/signed_in.rs"]
+mod signed_in;
 
-use fixtures::{Recording, Reply, serve};
-use futures_util::poll;
-use kchess_core::{Config, Core};
+use fixtures::{Fixture, Reply, serve};
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{sync::Arc, time::Duration};
+
+const PLAYING: &str = "/api/account/playing";
+
+/// Waits, bounded, until the fixture has seen what `seen` looks for. Bounds, not waits: a loaded
+/// Windows PC filtering 127.0.0.1 took over 5 s here.
+async fn reached(fixture: &Fixture, what: &str, seen: impl Fn(&Fixture) -> bool) {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while !seen(fixture) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{what} reaches the fixture"));
+}
 
 /// `positionLookup` checks assistance before its fetch and again after it resolves, so a game
 /// starting while the lookup is in flight discards the answer instead of delivering explorer
 /// data into the live game (as `bestMove`/`startAnalysis` already recheck after settings load).
+///
+/// Recovery stays unverified, and assistance blocked, only while it is checking Lichess, so the
+/// test holds that check open at the fixture. It used to rely on the first poll of
+/// `resumeOnline` being pending; with no account its only wait is one database read, and a
+/// preempted test thread (a loaded coverage run) let it finish first, verifying no game before
+/// the lookup answered (CI runs 42173832416 and 42180154667).
 #[tokio::test]
 async fn a_game_starting_mid_lookup_blocks_the_explorer_answer() {
-    let (gate_open, gate) = tokio::sync::watch::channel(false);
-    let fixture = serve(move |_| {
+    let (lookup_open, lookup_gate) = tokio::sync::watch::channel(false);
+    let (recovery_open, recovery_gate) = tokio::sync::watch::channel(false);
+    let checks = Arc::new(AtomicUsize::new(0));
+    let fixture = serve(move |seen| {
+        if seen.path() == PLAYING {
+            let reply = Box::new(Reply::Json(200, json!({ "nowPlaying": [] }).to_string()));
+            // Startup recovery answers at once; the mid-lookup one waits for its gate.
+            return match checks.fetch_add(1, Ordering::SeqCst) {
+                0 => *reply,
+                _ => Reply::Gated(recovery_gate.clone(), reply),
+            };
+        }
         Reply::Gated(
-            gate.clone(),
+            lookup_gate.clone(),
             Box::new(Reply::Json(
                 200,
                 json!({ "category": "win", "dtz": 1, "moves": [] }).to_string(),
@@ -26,59 +55,65 @@ async fn a_game_starting_mid_lookup_blocks_the_explorer_answer() {
         )
     })
     .await;
-    // SAFETY: this test binary has one test; the fixture origin is set before opening the core.
-    unsafe {
-        std::env::set_var("KCHESS_STORE_DEBUG", "1");
-        std::env::set_var("KCHESS_TEST_LICHESS_BASE", &fixture.base);
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let host = Arc::new(Recording::default());
-    let core = Core::open(Config::new(dir.path().to_path_buf()), host).unwrap();
+    let profile = signed_in::open(&fixture.base).await;
+    let core = &profile.core;
     // Startup leaves assistance blocked until recovery verifies no game is in progress.
     core.call("resumeOnline", vec![]).await.unwrap();
     assert_eq!(
         core.call_sync("online.assistanceBlocked", vec![]).unwrap(),
         json!(false)
     );
-    let lookup = core.call(
-        "positionLookup",
-        vec![json!("tablebase"), json!("6k1/8/8/8/8/8/8/R5K1 w - - 0 1")],
-    );
-    tokio::pin!(lookup);
-    tokio::select! {
-        biased;
-        _ = &mut lookup => panic!("the gated fixture holds the lookup"),
-        _ = async {
-            // Bounds, not waits: a loaded Windows PC filtering 127.0.0.1 took over 5 s here.
-            tokio::time::timeout(Duration::from_secs(30), async {
-                while fixture.requests().is_empty() {
-                    tokio::time::sleep(Duration::from_millis(5)).await;
-                }
-            })
+    let lookup = tokio::spawn({
+        let core = Arc::clone(core);
+        async move {
+            core.call(
+                "positionLookup",
+                vec![json!("tablebase"), json!("6k1/8/8/8/8/8/8/R5K1 w - - 0 1")],
+            )
             .await
-            .expect("the lookup reaches the fixture");
-        } => {}
-    }
-    // A game starts while the lookup is in flight: recovery re-blocks assistance.
-    let recovery = core.call("resumeOnline", vec![]);
-    tokio::pin!(recovery);
-    assert!(
-        poll!(&mut recovery).is_pending(),
-        "recovery is verifying and assistance is blocked mid-lookup"
-    );
+        }
+    });
+    reached(&fixture, "the lookup", |fixture| {
+        fixture.requests().iter().any(|seen| seen.path() != PLAYING)
+    })
+    .await;
+    assert!(!lookup.is_finished(), "the gated fixture holds the lookup");
+    // A game starts while the lookup is in flight: recovery re-blocks assistance and checks
+    // Lichess, which the fixture holds until the lookup has answered.
+    let recovery = tokio::spawn({
+        let core = Arc::clone(core);
+        async move { core.call("resumeOnline", vec![]).await }
+    });
+    reached(&fixture, "the mid-lookup recovery", |fixture| {
+        fixture.to(PLAYING).len() >= 2
+    })
+    .await;
+    assert!(!recovery.is_finished(), "the gated fixture holds recovery");
     assert_eq!(
         core.call_sync("online.assistanceBlocked", vec![]).unwrap(),
-        json!(true)
+        json!(true),
+        "recovery is verifying and assistance is blocked mid-lookup"
     );
-    gate_open.send(true).unwrap();
+    lookup_open.send(true).unwrap();
     let error = tokio::time::timeout(Duration::from_secs(30), lookup)
         .await
         .expect("the gated lookup resolves")
+        .unwrap()
         .unwrap_err();
     assert!(
         error.message.contains("live Lichess game"),
         "the mid-lookup game blocks the answer: {error:?}"
     );
-    recovery.await.unwrap();
+    recovery_open.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(30), recovery)
+        .await
+        .expect("the gated recovery resolves")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        core.call_sync("online.assistanceBlocked", vec![]).unwrap(),
+        json!(false),
+        "recovery that finds no game unblocks assistance again"
+    );
     core.close().await;
 }

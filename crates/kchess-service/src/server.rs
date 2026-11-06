@@ -12,15 +12,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use kchess_core::connection::ClientInfo;
 use kchess_core::{Config, Core, Host, Level};
 use serde_json::Value;
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::{Notify, Semaphore, mpsc};
 use tokio::task::AbortHandle;
 
 use crate::discovery::{self, CoreInfo};
-use crate::protocol::{self, ClientSummary, Frame, RefuseReason, read_frame, write_frame};
+use crate::protocol::{
+    self, ClientSummary, Frame, MAX_HELLO, RefuseReason, read_frame, read_frame_within, write_frame,
+};
 use crate::transport::{self, Listener, Stream};
 
 /// How long a client has to say `hello`.
 const HELLO_DEADLINE: Duration = Duration::from_secs(5);
+/// Connections that have not yet sent their `hello`; one past this is closed at once.
+const HANDSHAKES: usize = 32;
 /// Frames waiting for a client that reads slowly.
 const QUEUE: usize = 1024;
 /// Progress events a slow client may miss: the next one carries the whole state. Their last,
@@ -135,7 +139,10 @@ impl Host for ServiceHost {
             let at = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |since| since.as_millis());
-            let _ = writeln!(file, "{at} {} [{scope}] {message}", level.name());
+            let message = kchess_core::redact::redact(message);
+            // One write per line: `writeln!` on an unbuffered file writes each piece separately.
+            let line = format!("{at} {} [{scope}] {message}\n", level.name());
+            let _ = file.write_all(line.as_bytes());
         }
     }
 
@@ -176,9 +183,14 @@ struct State {
     protocol: String,
     /// Connected clients.
     active: AtomicUsize,
+    /// Room for connections still in their handshake (`HANDSHAKES`).
+    handshakes: Semaphore,
     /// A client connected or left: the idle countdown starts or stops.
     changed: Notify,
     shutdown: Notify,
+    /// Set, under its lock, when a sole client of another release closes this core: admission
+    /// takes the same lock, so no client is welcomed into a core that is closing.
+    closing: Mutex<bool>,
 }
 
 fn now_ms() -> u64 {
@@ -201,13 +213,17 @@ pub async fn serve(options: ServeOptions) -> Result<(), String> {
     core.serve_connections();
     let core = Arc::new(core);
 
-    let token = discovery::new_token().map_err(|error| format!("No token: {error}"))?;
-    discovery::write_private(&profile.join(discovery::TOKEN_FILE), token.as_bytes())
-        .map_err(|error| format!("The token could not be written: {error}"))?;
+    // The profile's lock is held (`Core::open`), so any discovery files are a dead core's: gone
+    // before binding, a client never sends a token to whatever holds the socket's name instead.
+    let _ = std::fs::remove_file(profile.join(discovery::INFO_FILE));
+    let _ = std::fs::remove_file(profile.join(discovery::TOKEN_FILE));
     let socket = discovery::socket_path(&profile)
         .map_err(|error| format!("The socket folder is unavailable: {error}"))?;
     let listener =
         Listener::bind(&socket).map_err(|error| format!("The socket could not open: {error}"))?;
+    let token = discovery::new_token().map_err(|error| format!("No token: {error}"))?;
+    discovery::write_private(&profile.join(discovery::TOKEN_FILE), token.as_bytes())
+        .map_err(|error| format!("The token could not be written: {error}"))?;
     let info = CoreInfo {
         pid: std::process::id(),
         socket: socket.to_string_lossy().to_string(),
@@ -236,8 +252,10 @@ pub async fn serve(options: ServeOptions) -> Result<(), String> {
         release: info.release.clone(),
         protocol: info.protocol.clone(),
         active: AtomicUsize::new(0),
+        handshakes: Semaphore::new(HANDSHAKES),
         changed: Notify::new(),
         shutdown: Notify::new(),
+        closing: Mutex::new(false),
     });
     tokio::spawn(idle_watch(Arc::clone(&state), options.idle));
 
@@ -294,7 +312,13 @@ async fn idle_watch(state: Arc<State>, idle: Duration) {
         if state.active.load(Ordering::SeqCst) == 0 {
             tokio::select! {
                 () = tokio::time::sleep(idle) => {
+                    // Decided with admission held off, as a version handoff is: a client
+                    // welcomed at the deadline keeps the core open.
+                    let mut closing =
+                        state.closing.lock().unwrap_or_else(|poison| poison.into_inner());
                     if state.active.load(Ordering::SeqCst) == 0 {
+                        *closing = true;
+                        drop(closing);
                         state.shutdown.notify_one();
                         return;
                     }
@@ -309,11 +333,16 @@ async fn idle_watch(state: Arc<State>, idle: Duration) {
 
 /// One client, from `hello` to its last frame.
 async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
+    let Ok(handshake) = state.handshakes.try_acquire() else {
+        return;
+    };
     let (mut reader, mut writer) = tokio::io::split(stream);
-    let Ok(Ok(Some(hello))) = tokio::time::timeout(HELLO_DEADLINE, read_frame(&mut reader)).await
+    let Ok(Ok(Some(hello))) =
+        tokio::time::timeout(HELLO_DEADLINE, read_frame_within(&mut reader, MAX_HELLO)).await
     else {
         return;
     };
+    drop(handshake);
     let Frame::Hello {
         token,
         kind,
@@ -338,18 +367,27 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         return;
     }
     if protocol != state.protocol {
-        let clients: Vec<ClientSummary> = state
-            .core
-            .connections()
-            .ids()
-            .into_iter()
-            .filter_map(|id| state.core.connections().info(id))
-            .map(|info| ClientSummary {
-                kind: info.kind,
-                release: info.release,
-            })
-            .collect();
-        let sole = clients.is_empty();
+        // Decided with admission held off: a client welcomed meanwhile keeps the core open.
+        let (clients, sole) = {
+            let mut closing = state
+                .closing
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let clients: Vec<ClientSummary> = state
+                .core
+                .connections()
+                .ids()
+                .into_iter()
+                .filter_map(|id| state.core.connections().info(id))
+                .map(|info| ClientSummary {
+                    kind: info.kind,
+                    release: info.release,
+                })
+                .collect();
+            let sole = clients.is_empty();
+            *closing |= sole;
+            (clients, sole)
+        };
         let _ = write_frame(
             &mut writer,
             &Frame::Refuse {
@@ -370,11 +408,24 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         return;
     }
 
-    let connection = state.core.connect(ClientInfo {
-        kind,
-        release,
-        capabilities: capabilities.into_iter().map(Into::into).collect(),
-    });
+    let connection = {
+        let closing = state
+            .closing
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if *closing {
+            // The core closes for another release; this client starts or finds the next one.
+            return;
+        }
+        let connection = state.core.connect(ClientInfo {
+            kind,
+            release,
+            capabilities: capabilities.into_iter().map(Into::into).collect(),
+        });
+        // Counted before the lock is let go, so an idle check that follows sees this client.
+        state.active.fetch_add(1, Ordering::SeqCst);
+        connection
+    };
     let (sender, mut queue) = mpsc::channel::<Frame>(QUEUE);
     let cut = Arc::new(Notify::new());
     // `welcome` comes first, then which window alerts now, then every event: a client that joins
@@ -391,7 +442,6 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         });
         state.host.add(connection, sender.clone(), Arc::clone(&cut));
     });
-    state.active.fetch_add(1, Ordering::SeqCst);
     state.changed.notify_one();
     let mut writing = tokio::spawn(async move {
         while let Some(frame) = queue.recv().await {
@@ -449,10 +499,19 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
             Frame::Call { id, method, args } => {
                 let (core, sender, running) =
                     (Arc::clone(&state.core), sender.clone(), Arc::clone(&calls));
+                // Held until the call is registered: another worker may finish a quick call
+                // before `spawn` returns, and its `remove` must find the entry, or the entry
+                // (and the finished task it keeps allocated) would stay until the window closes.
+                let Ok(mut registered) = calls.lock() else {
+                    break;
+                };
                 let task = tokio::spawn(async move {
                     let answer = core.call_client(connection, &method, args).await;
-                    if let Ok(mut running) = running.lock() {
-                        running.remove(&id);
+                    let still_ours = running
+                        .lock()
+                        .is_ok_and(|mut running| running.remove(&id).is_some());
+                    if !still_ours {
+                        return;
                     }
                     let frame = match answer {
                         Ok(value) => Frame::Result {
@@ -470,9 +529,11 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                     };
                     let _ = sender.send(frame).await;
                 });
-                if let Ok(mut running) = calls.lock() {
-                    running.insert(id, task.abort_handle());
+                // A reused id replaces nothing still running: the earlier call is stopped.
+                if let Some(earlier) = registered.insert(id, task.abort_handle()) {
+                    earlier.abort();
                 }
+                drop(registered);
             }
             Frame::Cancel { id } => {
                 let task = calls
@@ -521,8 +582,47 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::terminal;
+    use super::*;
     use serde_json::json;
+
+    /// A log past its limit starts afresh; a smaller one is added to.
+    #[test]
+    fn the_service_log_starts_afresh_past_its_limit() {
+        let profile = tempfile::tempdir().expect("profile");
+        let path = profile.path().join("logs").join("service.log");
+        std::fs::create_dir_all(path.parent().expect("logs")).expect("logs");
+        let kept = 2 * 1024 * 1024;
+        std::fs::write(&path, vec![b'.'; kept]).expect("log");
+        ServiceHost::new(profile.path()).log(Level::Info, "test", "kept");
+        let length = std::fs::metadata(&path).expect("log").len();
+        assert!(length > kept as u64, "{length}");
+
+        std::fs::write(&path, vec![b'.'; LOG_LIMIT as usize + 1]).expect("log");
+        ServiceHost::new(profile.path()).log(Level::Info, "test", "afresh");
+        let text = std::fs::read_to_string(&path).expect("log");
+        assert!(
+            text.len() < 1024 && text.contains("afresh"),
+            "{}",
+            text.len()
+        );
+    }
+
+    /// A client that falls behind misses progress, but is cut off rather than miss anything else.
+    #[test]
+    fn a_full_queue_drops_only_progress() {
+        let host = ServiceHost {
+            clients: Mutex::new(HashMap::new()),
+            log: Mutex::new(None),
+        };
+        let connected = |host: &ServiceHost| host.clients.lock().expect("clients").contains_key(&1);
+        let (sender, _queue) = mpsc::channel(1);
+        host.add(1, sender.clone(), Arc::new(Notify::new()));
+        host.send(1, &sender, "watch:frame", json!({}));
+        host.send(1, &sender, "watch:frame", json!({}));
+        assert!(connected(&host), "a progress frame is dropped");
+        host.send(1, &sender, "engine:analysis", json!({ "done": true }));
+        assert!(!connected(&host), "a terminal update is never dropped");
+    }
 
     #[test]
     fn a_progress_events_last_update_is_terminal() {

@@ -1,5 +1,6 @@
 //! The shared core over a real socket (`docs/shared-core.md`): two clients on one profile,
-//! the checks at `hello`, the version check, the idle stop, and starting the service binary.
+//! the checks at `hello`, the version check and the idle stop. Starting the service binary sets
+//! the runtime folder in the environment, so it runs in a binary of its own (`service_start.rs`).
 
 use std::path::Path;
 use std::time::Duration;
@@ -7,10 +8,7 @@ use std::time::Duration;
 use kchess_core::Config;
 use kchess_service::protocol::{self, Frame, RefuseReason, read_frame, write_frame};
 use kchess_service::server::{ServeOptions, serve};
-use kchess_service::{
-    Capability, Client, ClientEvent, ConnectError, Hello, ServiceConfig, Start, connect_or_start,
-    discovery, transport,
-};
+use kchess_service::{Capability, Client, ClientEvent, ConnectError, Hello, discovery, transport};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -24,6 +22,11 @@ fn window(kind: &str) -> Hello {
 }
 
 /// Serves `profile` in this process; resolves when the service stops.
+/// The idle period of the tests that wait for the service to stop. It also bounds how long the
+/// first client may take to connect, since it runs from the service's start: 300 ms was too
+/// short for a loaded runner, whose client then found no service.
+const IDLE: Duration = Duration::from_secs(2);
+
 fn spawn_service(profile: &Path, idle: Duration) -> tokio::task::JoinHandle<Result<(), String>> {
     let options = ServeOptions {
         config: Config::new(profile.to_path_buf()),
@@ -240,7 +243,9 @@ async fn a_core_nobody_uses_closes_for_another_release() {
 #[tokio::test(flavor = "multi_thread")]
 async fn one_core_per_profile_and_it_stops_when_idle() {
     let profile = tempfile::tempdir().expect("profile");
-    let service = spawn_service(profile.path(), Duration::from_millis(300));
+    // The idle period runs from the start, before anyone connected: long enough that a loaded
+    // runner's first connection lands inside it.
+    let service = spawn_service(profile.path(), IDLE);
     let (gpui, mut events) = connect(profile.path(), "gpui").await;
 
     let second = serve(ServeOptions {
@@ -252,7 +257,7 @@ async fn one_core_per_profile_and_it_stops_when_idle() {
     assert!(second.contains("already running"), "{second}");
 
     // Connected, the service waits past its idle period.
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    tokio::time::sleep(IDLE * 2).await;
     assert!(!service.is_finished());
     drop(gpui);
     tokio::time::timeout(WAIT, service)
@@ -271,50 +276,6 @@ async fn one_core_per_profile_and_it_stops_when_idle() {
     })
     .await;
     assert!(closed.is_ok());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn the_first_app_starts_the_service_and_the_second_reuses_it() {
-    let profile = tempfile::tempdir().expect("profile");
-    let runtime = tempfile::tempdir().expect("runtime");
-    use_runtime_dir(runtime.path());
-    let start = Start {
-        binary: env!("CARGO_BIN_EXE_kchess-service").into(),
-        config: ServiceConfig::default(),
-    };
-    let (gpui, _gpui_events) = connect_or_start(profile.path(), &window("gpui"), &start)
-        .await
-        .expect("started");
-    let info = discovery::read_info(profile.path()).expect("core.json");
-    assert_ne!(info.pid, std::process::id(), "a process of its own");
-    let copied = runtime.path().join("core").join(protocol::release()).join(
-        Path::new(env!("CARGO_BIN_EXE_kchess-service"))
-            .file_name()
-            .expect("name"),
-    );
-    assert!(copied.exists(), "it runs from this release's copy");
-
-    let (electron, _electron_events) =
-        connect_or_start(profile.path(), &window("electron"), &start)
-            .await
-            .expect("reused");
-    assert_eq!(
-        discovery::read_info(profile.path()).expect("core.json").pid,
-        info.pid
-    );
-    assert_ne!(gpui.connection(), electron.connection());
-    electron.call("library", vec![]).await.expect("works");
-
-    // Both gone: the service stops after its idle period (10 s by default).
-    drop((gpui, electron));
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
-    while discovery::read_info(profile.path()).is_some() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "the service stops when idle"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -346,7 +307,7 @@ async fn a_window_that_joins_learns_which_window_alerts() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_window_that_stops_reading_is_cut_off_and_cleaned_up() {
     let profile = tempfile::tempdir().expect("profile");
-    let service = spawn_service(profile.path(), Duration::from_millis(300));
+    let service = spawn_service(profile.path(), IDLE);
     let (gpui, _gpui_events) = connect(profile.path(), "gpui").await;
 
     // A window that says hello and then never reads; it joined last, so it alerts unless the
@@ -457,11 +418,138 @@ async fn a_core_that_never_answers_hello_fails_the_connection() {
     );
 }
 
-/// Points the runtime folder at a test folder. `set_var` is unsafe in edition 2024 because other
-/// threads may read the environment; only this test reads `KCHESS_RUNTIME_DIR`, and it sets it
-/// before starting anything.
-#[allow(unsafe_code)]
-fn use_runtime_dir(dir: &Path) {
-    // SAFETY: no other thread of this test reads the environment while it is set.
-    unsafe { std::env::set_var("KCHESS_RUNTIME_DIR", dir) };
+#[cfg(unix)]
+#[tokio::test]
+async fn a_refusal_reaches_the_client_with_its_reason() {
+    let profile = tempfile::tempdir().expect("profile");
+    let _core = fake_core(profile.path(), |mut stream| async move {
+        read_frame(&mut stream).await.expect("hello");
+        let refuse = Frame::Refuse {
+            reason: RefuseReason::Version,
+            message: "Another KChess release is open.".into(),
+            sole: false,
+            clients: vec![protocol::ClientSummary {
+                kind: "electron".into(),
+                release: "2026.1.1".into(),
+            }],
+        };
+        write_frame(&mut stream, &refuse).await.expect("refuse");
+    })
+    .await;
+    let refused = Client::connect(profile.path(), &window("gpui"))
+        .await
+        .err()
+        .expect("refused");
+    assert_eq!(refused.to_string(), "Another KChess release is open.");
+    let ConnectError::Refused {
+        reason,
+        sole,
+        clients,
+        ..
+    } = refused
+    else {
+        panic!("refused: {refused:?}");
+    };
+    assert_eq!(reason, RefuseReason::Version);
+    assert!(!sole);
+    assert_eq!(clients[0].kind, "electron");
+}
+
+#[tokio::test]
+async fn connect_errors_read_as_their_message() {
+    let profile = tempfile::tempdir().expect("profile");
+    let missing = Client::connect(profile.path(), &window("gpui"))
+        .await
+        .err()
+        .expect("no core");
+    assert_eq!(missing, ConnectError::NotRunning);
+    assert_eq!(missing.to_string(), "No KChess core runs for this profile.");
+    assert_eq!(
+        ConnectError::Failed("Broken.".into()).to_string(),
+        "Broken."
+    );
+}
+
+/// `kchess-service version` prints what a client of this build says in `hello`.
+#[test]
+fn the_binary_prints_its_release_and_protocol() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_kchess-service"))
+        .arg("version")
+        .output()
+        .expect("ran");
+    assert!(output.status.success());
+    let printed: Value = serde_json::from_slice(&output.stdout).expect("json");
+    assert_eq!(
+        printed,
+        json!({ "release": protocol::release(), "protocol": protocol::protocol() })
+    );
+    let usage = std::process::Command::new(env!("CARGO_BIN_EXE_kchess-service"))
+        .output()
+        .expect("ran");
+    assert_eq!(usage.status.code(), Some(2));
+}
+
+/// `suspend` and `close` only answer: the shared core keeps serving every window.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_window_cannot_close_the_shared_core() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (gpui, _events) = connect(profile.path(), "gpui").await;
+    let info = discovery::read_info(profile.path()).expect("core.json");
+    assert!(info.started_at > 1_600_000_000_000, "{}", info.started_at);
+    assert_eq!(gpui.call("suspend", vec![]).await, Ok(Value::Null));
+    assert_eq!(gpui.call("close", vec![]).await, Ok(Value::Null));
+    gpui.call("library", vec![]).await.expect("still served");
+    assert!(!service.is_finished());
+    service.abort();
+}
+
+/// Once a core decides to close for another release, nobody else is let in.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_closing_core_lets_nobody_in() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (gpui, _events) = connect(profile.path(), "gpui").await;
+    let socket =
+        std::path::PathBuf::from(discovery::read_info(profile.path()).expect("info").socket);
+    drop(gpui);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let token = discovery::read_token(profile.path()).expect("token");
+    let info = discovery::read_info(profile.path()).expect("core.json");
+    // Both connect before the refusal, so the second is answered after the core decided.
+    let first = transport::connect(Path::new(&info.socket))
+        .await
+        .expect("socket");
+    let second = transport::connect(Path::new(&info.socket))
+        .await
+        .expect("socket");
+    let say_hello = |stream: transport::Stream, protocol: String| {
+        let token = token.clone();
+        async move {
+            let (mut reader, mut writer) = tokio::io::split(stream);
+            let hello = Frame::Hello {
+                token,
+                kind: "test".into(),
+                release: "1999.1.0".into(),
+                protocol,
+                capabilities: Vec::new(),
+            };
+            write_frame(&mut writer, &hello).await.expect("hello");
+            read_frame(&mut reader).await.ok().flatten()
+        }
+    };
+    let refused = say_hello(first, "another-release".into()).await;
+    assert!(matches!(refused, Some(Frame::Refuse { sole: true, .. })));
+    let late = say_hello(second, protocol::protocol()).await;
+    assert!(
+        !matches!(late, Some(Frame::Welcome { .. })),
+        "welcomed into a closing core: {late:?}"
+    );
+    tokio::time::timeout(WAIT, service)
+        .await
+        .expect("the service closes")
+        .expect("joined")
+        .expect("closed cleanly");
+    assert!(!socket.exists(), "the socket goes with it");
 }

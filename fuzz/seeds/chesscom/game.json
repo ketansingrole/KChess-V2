@@ -1,0 +1,1 @@
+{"url":"https://www.chess.com/game/live/123456789","rules":"chess","time_class":"blitz","time_control":"180","end_time":1730000000,"rated":true,"white":{"username":"hikaru","rating":3200,"result":"win"},"black":{"username":"opponent","rating":2900,"result":"resigned"},"pgn":"[Event \"Live Chess\"]\n\n1. e4 e5 2. Nf3 Nc6 1-0"}

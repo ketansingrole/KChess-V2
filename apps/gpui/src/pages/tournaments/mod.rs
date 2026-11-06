@@ -23,8 +23,22 @@ mod timeline;
 
 /// Standings and games move quickly while a tournament runs.
 const REFRESH_EVERY: Duration = Duration::from_secs(15);
+/// An event that has not started only needs to notice that it has.
+const WAITING_REFRESH_EVERY: Duration = Duration::from_secs(60);
 /// How often the top game's running clock is redrawn between refreshes.
 const CLOCK_TICK: Duration = Duration::from_millis(250);
+
+/// Whether an event of `status`, last read `since` ago, is due a refresh. `since` counts from
+/// the answer, which comes a little after the tick that asked: the slack keeps a running event on
+/// every tick rather than every other one.
+fn refresh_due(status: &Value, since: Duration) -> bool {
+    const SLACK: Duration = Duration::from_secs(2);
+    match status.as_str() {
+        Some("started") => since + SLACK >= REFRESH_EVERY,
+        Some("created") => since + SLACK >= WAITING_REFRESH_EVERY,
+        _ => false,
+    }
+}
 
 /// `control`: "3+2", "½+0".
 pub fn control(clock: &Value) -> String {
@@ -80,6 +94,8 @@ pub struct TournamentsPage {
     schedule_area: Measured,
     scrolled_to_now: bool,
     focus: FocusHandle,
+    /// Whether the page is on screen: the open event is refreshed only then.
+    visible: bool,
     _refresh: Task<()>,
     _clock: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -92,6 +108,13 @@ impl Focusable for TournamentsPage {
 }
 
 impl TournamentsPage {
+    /// The name of the tournament shown, once its details came.
+    #[cfg(test)]
+    pub(crate) fn shown_name(&self) -> Option<String> {
+        let detail = self.open.as_ref()?.detail.as_ref()?;
+        detail["name"].as_str().map(str::to_string)
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> TournamentsPage {
         let password = cx.new(|cx| {
             InputState::new(window, cx)
@@ -119,12 +142,7 @@ impl TournamentsPage {
                 cx.background_executor().timer(REFRESH_EVERY).await;
                 let alive = this
                     .update(cx, |this, cx| {
-                        let running = this.open.as_ref().is_some_and(|open| {
-                            open.detail
-                                .as_ref()
-                                .is_some_and(|detail| detail["status"] != json!("finished"))
-                        });
-                        if running {
+                        if this.refresh_due() {
                             this.load_event(cx);
                         }
                     })
@@ -171,6 +189,7 @@ impl TournamentsPage {
             schedule_area: Measured::default(),
             scrolled_to_now: false,
             focus: cx.focus_handle(),
+            visible: true,
             _refresh: refresh,
             _clock: clock,
             _subscriptions: subscriptions,
@@ -280,6 +299,30 @@ impl TournamentsPage {
         cx.notify();
     }
 
+    /// Whether the open event is due a refresh: only while the page is shown, often while it
+    /// runs, now and then while it waits to start, never once it has finished.
+    fn refresh_due(&self) -> bool {
+        self.visible
+            && self.open.as_ref().is_some_and(|open| {
+                open.detail
+                    .as_ref()
+                    .is_some_and(|detail| refresh_due(&detail["status"], open.received.elapsed()))
+            })
+    }
+
+    /// The page left the screen: the open event stops refreshing.
+    pub fn hidden(&mut self) {
+        self.visible = false;
+    }
+
+    /// The page is back: an open event that is due is refreshed at once.
+    pub fn shown(&mut self, cx: &mut Context<Self>) {
+        self.visible = true;
+        if self.refresh_due() {
+            self.load_event(cx);
+        }
+    }
+
     fn load_event(&mut self, cx: &mut Context<Self>) {
         let account = Self::account_arg(cx);
         let Some(open) = &mut self.open else {
@@ -294,22 +337,27 @@ impl TournamentsPage {
         );
         cx.spawn(async move |this, cx| {
             let answer = call.await;
-            let _ = this.update(cx, |this, cx| {
-                let Some(open) = this.open.as_mut().filter(|open| open.epoch == epoch) else {
-                    return;
-                };
-                match answer {
-                    Ok(detail) => {
-                        open.detail = Some(detail);
-                        open.received = Instant::now();
-                        open.error = None;
+            let _ =
+                this.update(cx, |this, cx| {
+                    // Every tournament opened counts from 1: a reply is this one's only if it also
+                    // names the tournament still open.
+                    let Some(open) = this.open.as_mut().filter(|open| {
+                        open.epoch == epoch && open.system == system && open.id == id
+                    }) else {
+                        return;
+                    };
+                    match answer {
+                        Ok(detail) => {
+                            open.detail = Some(detail);
+                            open.received = Instant::now();
+                            open.error = None;
+                        }
+                        Err(cause) => open.error = Some(cause.message.into()),
                     }
-                    Err(cause) => open.error = Some(cause.message.into()),
-                }
-                // The core forgets an arena that is over or that you left.
-                this.reload_joined(cx);
-                cx.notify();
-            });
+                    // The core forgets an arena that is over or that you left.
+                    this.reload_joined(cx);
+                    cx.notify();
+                });
         })
         .detach();
     }
@@ -434,7 +482,8 @@ impl TournamentsPage {
     }
 
     fn ask_connect(window: &mut Window, cx: &mut App) {
-        window.open_alert_dialog(
+        crate::widgets::open_alert_dialog(
+            window,
             cx,
             |dialog: gpui_kit::component::dialog::AlertDialog, _, _| {
                 dialog
@@ -666,7 +715,9 @@ impl Render for TournamentsPage {
             .track_focus(&self.focus)
             // Escape goes back to the list from an event, while no text field has the keys.
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if this.open.is_some() && this.focus.is_focused(window) && widgets::is_escape(event)
+                if this.open.is_some()
+                    && crate::board::page_has_keys(&this.focus, window, cx)
+                    && widgets::is_escape(event)
                 {
                     this.close_event(cx);
                     cx.stop_propagation();
@@ -694,6 +745,23 @@ impl Render for TournamentsPage {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_a_running_event_refreshes_every_tick_and_a_waiting_one_each_minute() {
+        use super::{REFRESH_EVERY, WAITING_REFRESH_EVERY, refresh_due};
+        use serde_json::json;
+        use std::time::Duration;
+        let tick = REFRESH_EVERY - Duration::from_millis(300);
+        assert!(refresh_due(&json!("started"), tick));
+        assert!(!refresh_due(&json!("started"), Duration::from_secs(1)));
+        // An upcoming event used to be refreshed every tick, for hours before its start.
+        assert!(!refresh_due(&json!("created"), tick));
+        assert!(refresh_due(
+            &json!("created"),
+            WAITING_REFRESH_EVERY - Duration::from_millis(300)
+        ));
+        assert!(!refresh_due(&json!("finished"), Duration::from_secs(3600)));
+    }
+
     use super::control;
     use serde_json::json;
 

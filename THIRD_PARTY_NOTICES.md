@@ -21,13 +21,15 @@ crate they depend on directly is named here.
 | [`tokio`](https://tokio.rs), `tokio-util`                                                                                                         | MIT                                                                    | The core's async runtime, engine processes and cancellation                            |
 | [`reqwest`](https://github.com/seanmonstar/reqwest)                                                                                               | MIT OR Apache-2.0                                                      | HTTPS requests and streams to Lichess and engine downloads                             |
 | [`futures-util`](https://github.com/rust-lang/futures-rs)                                                                                         | MIT OR Apache-2.0                                                      | Reading streamed responses in the core                                                 |
+| [`bytes`](https://github.com/tokio-rs/bytes)                                                                                                      | MIT                                                                    | Downloads resumed after a dropped connection                                           |
 | [`ruzstd`](https://github.com/KillingSpark/zstd-rs)                                                                                               | MIT                                                                    | Decompressing the downloaded puzzle database                                           |
 | [`getrandom`](https://github.com/rust-random/getrandom), [`uuid`](https://github.com/uuid-rs/uuid)                                                | MIT OR Apache-2.0                                                      | Random ids for studies and chapters                                                    |
 | [`sha2`](https://github.com/RustCrypto/hashes), [`base64`](https://github.com/marshallpierce/rust-base64)                                         | MIT OR Apache-2.0                                                      | Engine download checks and the Lichess sign-in challenge                               |
-| [`flate2`](https://github.com/rust-lang/flate2-rs), [`tar`](https://github.com/composefs/tar-rs) (crate), [`zip`](https://github.com/zip-rs/zip2) | MIT OR Apache-2.0 (`zip`: MIT)                                         | Unpacking a downloaded engine                                                          |
+| [`flate2`](https://github.com/rust-lang/flate2-rs), [`tar`](https://github.com/composefs/tar-rs) (crate), [`zip`](https://github.com/zip-rs/zip2) | MIT OR Apache-2.0 (`zip`: MIT)                                         | Unpacking a downloaded engine; gzip-compressed API answers (through `reqwest`)         |
 | [`tempfile`](https://github.com/Stebalien/tempfile)                                                                                               | MIT OR Apache-2.0                                                      | A private staging directory for engine downloads                                       |
 | [`rustix`](https://github.com/bytecodealliance/rustix), [`libc`](https://github.com/rust-lang/libc)                                               | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; MIT OR Apache-2.0 | Engine process signals and file checks on macOS and Linux                              |
 | [`aes-gcm`](https://github.com/RustCrypto/AEADs), [`keyring`](https://github.com/open-source-cooperative/keyring-rs)                              | Apache-2.0 OR MIT; MIT OR Apache-2.0                                   | Sealing Lichess logins in the profile with a key kept in the system's credential store |
+| [`ring`](https://github.com/briansmith/ring) | Apache-2.0 AND ISC | Checking the release key's signature on an update's checksums |
 | [Stockfish](https://stockfishchess.org) (official native build)                                                                                                   | GPL-3.0                                | The bundled computer opponent, beside the app, run as a separate UCI process                                                  |
 | [Fairy-Stockfish](https://github.com/fairy-stockfish/Fairy-Stockfish) (built from source)                                                                         | GPL-3.0                                | The variant engine, beside the app, run as a separate UCI process                                                             |
 | [GPUI](https://github.com/zed-industries/zed) (`gpui-pre`), [GPUI Kit](https://github.com/longbridge/gpui-kit) (`gpui-kit`, `gpui-component`, `gpui-base`)        | Apache-2.0                             | The window, rendering and interface components; `gpui-pre` ships with window zoom, view caching and icon-drawing patches (`vendor/gpui-pre/KCHESS-PATCH.md`), `gpui-pre-apple` with whole large glyphs (`vendor/gpui-pre-apple/KCHESS-PATCH.md`) |
@@ -49,7 +51,7 @@ crate they depend on directly is named here.
 
 ## Game review method
 
-Game review (`crates/kchess-wasm/js/review.ts`) follows the method Lichess publishes in
+Game review (`crates/kchess-domain/src/records/review.rs`) follows the method Lichess publishes in
 [lichess-org/lila](https://github.com/lichess-org/lila) (AGPL-3.0-or-later): its winning-chance
 curve, the thresholds for inaccuracies, mistakes and blunders (including its forced-mate rules),
 and its accuracy formula. The formulas are reimplemented here; no lila code is copied. Analysis
@@ -70,7 +72,7 @@ The core verifies the downloaded speech model against its pinned SHA-256 and unp
 | App color themes (`crates/kchess-domain/data/themes.json`) | [openchamber/openchamber](https://github.com/openchamber/openchamber) built-in themes — MIT; colors only, credits in `apps/gpui/assets/ATTRIBUTION.md`                                                                                |
 | Chess and variant icons (`tooling/xtask/icons/`)            | Original artwork by the KChess authors, drawn in the Fluent icons' style for what that set has no icon for — GPL-3.0-or-later like the code |
 | App icon (`apps/gpui/build/`, `apps/gpui/assets/`)         | Original artwork by the KChess authors, generated by `cargo xtask app-icon` — GPL-3.0-or-later like the code                                                                                                                                   |
-| Opening names (`crates/kchess-domain/data/openings.json`)  | [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings) — CC0-1.0 (public domain); regenerated by `tooling/make-openings.mjs`                                                                                            |
+| Opening names (`crates/kchess-domain/data/openings.json`)  | [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings) — CC0-1.0 (public domain)                                                                                            |
 | Endgame lessons (`crates/kchess-domain/data/lessons.json`) | Original text and positions by the KChess authors — GPL-3.0-or-later like the code; the chapter list follows the topics of lichess.org/practice, whose lesson text and positions are not used. Saavedra's 1895 study is in the public domain |
 
 | Puzzle database (downloaded on request, sampled into `puzzles.db`) | [database.lichess.org](https://database.lichess.org/#puzzles) — CC0 (public domain); the puzzles, their themes and opening tags come from Lichess games and the Lichess puzzle community |
@@ -109,7 +111,7 @@ The speech recognition helper (`crates/kchess-voice`) loads `libvosk`, the offic
 (Apache-2.0), which includes [Kaldi](https://github.com/kaldi-asr/kaldi) and
 [OpenFst](https://www.openfst.org) (Apache-2.0). KChess ships it unchanged from the Vosk
 release archives (0.3.42 for macOS, of which only the arm64 slice is kept; 0.3.45 for Linux and
-Windows), each pinned by SHA-256 in `tooling/voice-runtime.mjs`. On Windows, libvosk needs the
+Windows), each pinned by SHA-256 in `tooling/xtask/src/voice.rs`. On Windows, libvosk needs the
 MinGW-w64 runtime beside it: `libstdc++-6.dll` and `libgcc_s_seh-1.dll` (GPL-3.0 with the GCC
 Runtime Library Exception) and `libwinpthread-1.dll` (MIT and BSD-3-Clause), from the same
 archive. Attribution and the Apache license ship beside the helper (`voice/NOTICE.txt`,

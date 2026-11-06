@@ -370,6 +370,9 @@ impl OnlinePage {
         let current =
             (online.phase == crate::online::Phase::Playing).then(|| online.id().to_string());
         let several = crate::accounts::handle(cx).read(cx).connected().len() > 1;
+        // Boards of games no longer ongoing are let go.
+        self.previews
+            .retain(|id, _| games.iter().any(|game| game["gameId"].as_str() == Some(id)));
         let rows: Vec<AnyElement> = games
             .iter()
             .enumerate()

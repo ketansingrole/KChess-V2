@@ -62,8 +62,8 @@ pub fn next_version(tags: &[&str], year: u32, month: u32) -> Result<String> {
     ))
 }
 
-/// The UTC year and month now, from the system clock (days since 1970 → civil date).
-fn utc_month() -> (u32, u32) {
+/// The UTC date now, from the system clock (days since 1970 → civil date).
+fn utc_date() -> (u32, u32, u32) {
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
@@ -75,9 +75,62 @@ fn utc_month() -> (u32, u32) {
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
-    (year as u32, month as u32)
+    (year as u32, month as u32, day as u32)
+}
+
+/// The notes the app shows after an update (`apps/gpui/src/whats_new.rs`): what each change
+/// brings goes under `## Unreleased`, which `release-version` turns into the release's section.
+const NOTES: &str = "apps/gpui/WHATS_NEW.md";
+const UNRELEASED: &str = "## Unreleased";
+
+/// `notes` with its unreleased items as `version`'s, released on `date` (`YYYY-MM-DD`), under a
+/// fresh, empty `## Unreleased`. Refused when nothing is written there: the app would show an
+/// update with no notes.
+pub fn date_notes(notes: &str, version: &str, date: &str) -> Result<String> {
+    let missing = || {
+        format!(
+            "{NOTES} has nothing under {UNRELEASED}. Write what this release brings there, one \
+             `- **Title**: what it does` line each, then run release-version again."
+        )
+    };
+    // The heading line itself, not a mention of it in the file's introduction.
+    let (head, rest) = notes
+        .split_once(&format!("\n{UNRELEASED}\n"))
+        .map(|(head, rest)| (format!("{head}\n"), format!("\n{rest}")))
+        .ok_or_else(missing)?;
+    let section = rest.split("\n## ").next().unwrap_or_default();
+    if !section
+        .lines()
+        .any(|line| line.trim_start().starts_with("- "))
+    {
+        return Err(missing());
+    }
+    if has_notes(notes, version) {
+        return Err(format!("{NOTES} already has a section for {version}."));
+    }
+    Ok(format!("{head}{UNRELEASED}\n\n## {version} ({date}){rest}"))
+}
+
+/// The items of `version`'s section in `notes`, as the release's text.
+pub fn release_notes(notes: &str, version: &str) -> Option<String> {
+    let heading = format!("## {version} (");
+    let start = notes.lines().position(|line| line.starts_with(&heading))?;
+    let body: Vec<&str> = notes
+        .lines()
+        .skip(start + 1)
+        .take_while(|line| !line.starts_with("## "))
+        .collect();
+    let body = body.join("\n").trim().to_string();
+    (!body.is_empty()).then_some(body)
+}
+
+/// Whether `notes` has a section for `version`.
+pub fn has_notes(notes: &str, version: &str) -> bool {
+    let heading = format!("## {version} (");
+    notes.lines().any(|line| line.starts_with(&heading))
 }
 
 /// Replace the workspace version in Cargo.toml's text.
@@ -100,15 +153,20 @@ pub fn next() -> Result {
         );
     }
     let tags = output("git", &["tag", "--list"])?;
-    let (year, month) = utc_month();
+    let (year, month, day) = utc_date();
     let next = next_version(&tags.lines().collect::<Vec<_>>(), year, month)?;
+    // The notes first: refused, nothing has changed.
+    let notes_path = root().join(NOTES);
+    let notes = std::fs::read_to_string(&notes_path).map_err(|cause| cause.to_string())?;
+    let notes = date_notes(&notes, &next, &format!("{year}-{month:02}-{day:02}"))?;
     let path = root().join("Cargo.toml");
     let manifest = std::fs::read_to_string(&path).map_err(|cause| cause.to_string())?;
     std::fs::write(&path, with_version(&manifest, &next)?).map_err(|cause| cause.to_string())?;
+    std::fs::write(&notes_path, notes).map_err(|cause| cause.to_string())?;
     // The workspace crates' versions in Cargo.lock follow.
     run("cargo", &["update", "--workspace", "--offline"])?;
     say(&format!(
-        "Cargo.toml is now {next}. Review and stage Cargo.toml and Cargo.lock, run `cargo xtask check`,\n\
+        "Cargo.toml is now {next}. Review and stage Cargo.toml, Cargo.lock and {NOTES}, run `cargo xtask check`,\n\
          then commit the release change to main. The tag must be v{next}, pointing at that commit on\n\
          origin/main with green CI. Pushing the tag creates a draft release; publishing is separate."
     ));
@@ -140,6 +198,13 @@ pub fn verify() -> Result {
                 .into(),
         );
     }
+    let notes = std::fs::read_to_string(root().join(NOTES)).map_err(|cause| cause.to_string())?;
+    if !has_notes(&notes, &version) {
+        return Err(format!(
+            "{NOTES} has no `## {version} (date)` section, so the app would show this release \
+             with no notes. `cargo xtask release-version` writes it from `{UNRELEASED}`."
+        ));
+    }
     if std::env::var("GITHUB_REF").is_ok_and(|reference| reference.starts_with("refs/tags/")) {
         let tag = std::env::var("GITHUB_REF_NAME").unwrap_or_default();
         if tag != format!("v{version}") {
@@ -161,6 +226,13 @@ pub fn verify_release() -> Result {
     if std::env::var_os("GITHUB_ACTIONS").is_some() && !on_tag {
         say("Not a tag: CI is not required for a manual Release build.");
         return Ok(());
+    }
+    if crate::update_key::public_key().is_none() {
+        return Err(
+            "apps/gpui/update-key.pub holds no release key, so installed apps could not tell \
+             this release's checksums from replaced ones. Run `cargo xtask update-key`."
+                .into(),
+        );
     }
     let commit = output("git", &["rev-parse", "HEAD"])?.trim().to_string();
     let run = output(
@@ -322,13 +394,20 @@ pub fn attach_draft(dir: &std::path::Path) -> Result {
         }
         None => {
             let title = format!("KChess {}", &tag[1..]);
+            // The notes the app shows for this release, reviewed in the release commit, are the
+            // release's text, and through it the App Store's What's New.
+            let notes = std::fs::read_to_string(root().join(NOTES))
+                .ok()
+                .and_then(|notes| release_notes(&notes, &tag[1..]))
+                .ok_or_else(|| format!("{NOTES} has no notes for {tag}."))?;
             let mut args = vec!["release", "create", tag.as_str()];
             args.extend(&file_args);
             // --verify-tag keeps gh from inventing a tag at the default branch's HEAD.
             args.extend([
                 "--verify-tag",
                 "--draft",
-                "--generate-notes",
+                "--notes",
+                notes.as_str(),
                 "--title",
                 title.as_str(),
             ]);
@@ -491,7 +570,39 @@ mod tests {
 
     #[test]
     fn the_clock_reads_a_month() {
-        let (year, month) = utc_month();
-        assert!(year >= 2026 && (1..=12).contains(&month));
+        let (year, month, day) = utc_date();
+        assert!(year >= 2026 && (1..=12).contains(&month) && (1..=31).contains(&day));
+    }
+
+    #[test]
+    fn a_release_dates_the_unreleased_notes() {
+        let notes = "# What's new\n\nAdd lines under ## Unreleased below.\n\n## Unreleased\n\n- **New**: a thing.\n\n## 2026.11.3 (2026-11-04)\n\n- **Old**: before.\n";
+        let dated = date_notes(notes, "2026.11.4", "2026-11-20").unwrap();
+        assert_eq!(
+            dated,
+            "# What's new\n\nAdd lines under ## Unreleased below.\n\n## Unreleased\n\n## 2026.11.4 (2026-11-20)\n\n- **New**: a thing.\n\n## 2026.11.3 (2026-11-04)\n\n- **Old**: before.\n"
+        );
+        assert!(has_notes(&dated, "2026.11.4"));
+        assert!(has_notes(&dated, "2026.11.3"));
+        assert!(!has_notes(&dated, "2026.11.5"));
+        assert_eq!(
+            release_notes(&dated, "2026.11.4").as_deref(),
+            Some("- **New**: a thing.")
+        );
+        assert_eq!(
+            release_notes(&dated, "2026.11.3").as_deref(),
+            Some("- **Old**: before.")
+        );
+        assert_eq!(release_notes(&dated, "2026.11.5"), None);
+        // Nothing new to say: no release yet.
+        assert!(date_notes(&dated, "2026.11.5", "2026-11-21").is_err());
+        assert!(date_notes("# What's new\n", "2026.11.4", "2026-11-20").is_err());
+    }
+
+    /// The notes in the repository carry the workspace version's section.
+    #[test]
+    fn the_notes_name_the_workspace_version() {
+        let notes = std::fs::read_to_string(root().join(NOTES)).unwrap();
+        assert!(has_notes(&notes, &version().unwrap()));
     }
 }

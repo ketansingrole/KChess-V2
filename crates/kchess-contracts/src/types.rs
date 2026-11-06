@@ -2182,3 +2182,26 @@ pub struct PopularityMonth {
     pub share: f64,
     pub games: f64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A game saved before `playable` existed is one the Board API can play.
+    #[test]
+    fn an_ongoing_game_without_playable_is_playable() {
+        let game: OngoingGame = serde_json::from_value(serde_json::json!({
+            "gameId": "abcd1234",
+            "account": "me",
+            "opponent": { "name": "them" },
+            "color": "white",
+            "fen": "8/8/8/8/8/8/8/8 w - - 0 1",
+            "isMyTurn": true,
+            "variant": "standard",
+            "speed": "blitz",
+            "rated": false,
+        }))
+        .unwrap();
+        assert!(game.playable);
+    }
+}

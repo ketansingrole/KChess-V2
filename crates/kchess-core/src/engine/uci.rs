@@ -541,7 +541,9 @@ impl Inner {
                     }
                     stop_at = Some(Instant::now() + STOP_DEADLINE);
                 }
-                _ = cancelled_or_pending(cancel), if cancel.is_some_and(|token| !token.is_cancelled()) => {
+                // Guarded on the search's own stop, not the caller's token: a token cancelled
+                // just before the first poll must still stop the search.
+                _ = cancelled_or_pending(cancel), if cancel.is_some() && !stop.is_cancelled() => {
                     stop.cancel();
                 }
                 _ = sleep_until(stop_at.unwrap_or_else(Instant::now)), if stop_at.is_some() => {

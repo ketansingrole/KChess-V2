@@ -22,6 +22,7 @@ pub mod review;
 pub mod rules;
 pub mod tactics;
 pub mod theme;
+pub mod time_use;
 pub mod trainer;
 pub mod training;
 pub mod tree;

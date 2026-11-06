@@ -67,8 +67,15 @@ fn default_dir() -> PathBuf {
         .join(APP_NAME)
 }
 
-/// Where earlier releases installed the downloaded engine (`CorePlatform.managedEngineDir`).
+/// Where earlier releases installed the downloaded engine (`CorePlatform.managedEngineDir`),
+/// shared by every app on this account. An isolated profile (a scratch one, a test's) keeps its
+/// own, so installing or deleting it there never touches the person's engine.
 pub fn managed_engine_dir() -> PathBuf {
+    if isolated()
+        && let Ok(dir) = data_dir()
+    {
+        return dir.join("engines/stockfish/current");
+    }
     home().join(".kchess/engines/stockfish/current")
 }
 
@@ -81,7 +88,7 @@ pub fn legacy_database(_data_dir: &std::path::Path) -> Option<PathBuf> {
 /// `voice` folder beside the app (in `Contents/Resources` in the macOS bundle), else (a build in
 /// this repository) the helper `cargo xtask voice-runtime` stages in `target/voice-runtime`.
 pub fn voice_helper() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("KCHESS_VOICE_HELPER").filter(|path| !path.is_empty()) {
+    if let Some(path) = kchess_core::dev_override("KCHESS_VOICE_HELPER") {
         return Some(PathBuf::from(path));
     }
     let name = if cfg!(windows) {
@@ -110,7 +117,7 @@ pub fn voice_helper() -> Option<PathBuf> {
 /// macOS bundle), started without a runtime. `KCHESS_ENGINE_PATH` names another one (development
 /// builds, which ship none).
 pub fn bundled_engine() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("KCHESS_ENGINE_PATH").filter(|path| !path.is_empty()) {
+    if let Some(path) = kchess_core::dev_override("KCHESS_ENGINE_PATH") {
         return Some(PathBuf::from(path));
     }
     let name = if cfg!(windows) {
@@ -126,9 +133,7 @@ pub fn bundled_engine() -> Option<PathBuf> {
 /// the app's executable (`Contents/MacOS` in the macOS bundle), else (a build in this repository)
 /// the one `cargo xtask fairy-stockfish` builds in `target/fairy-stockfish/bin`.
 pub fn variant_engine() -> Option<PathBuf> {
-    if let Some(path) =
-        std::env::var_os("KCHESS_VARIANT_ENGINE_PATH").filter(|path| !path.is_empty())
-    {
+    if let Some(path) = kchess_core::dev_override("KCHESS_VARIANT_ENGINE_PATH") {
         return Some(PathBuf::from(path));
     }
     let name = if cfg!(windows) {
@@ -150,6 +155,17 @@ pub fn variant_engine() -> Option<PathBuf> {
 mod tests {
     /// macOS names a development build after its executable: it read "kchess-gpui" in the menu
     /// bar and Dock until the executable was named as the app.
+    /// A test's profile (as any isolated one) has its own downloaded engine, never the one
+    /// every other app on the account shares.
+    #[test]
+    fn an_isolated_profile_keeps_its_own_engine() {
+        let folder = tempfile::tempdir().expect("a profile");
+        super::TEST_DATA_DIR.with_borrow_mut(|dir| *dir = Some(folder.path().to_path_buf()));
+        let engine = super::managed_engine_dir();
+        super::TEST_DATA_DIR.with_borrow_mut(|dir| *dir = None);
+        assert!(engine.starts_with(folder.path()), "{}", engine.display());
+    }
+
     #[test]
     fn the_executable_is_named_as_the_app() {
         assert_eq!(env!("CARGO_BIN_NAME"), super::APP_NAME);

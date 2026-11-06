@@ -500,3 +500,65 @@ fn return_goes_on_through_a_lesson(cx: &mut gpui_kit::TestAppContext) {
             .is_none_or(|banner| banner.label() != Some("Checkmate"))
     });
 }
+
+/// Guess the move: a pasted game is guessed through as White, each guess scored against the
+/// move played and otherwise by the scripted engine (+31 for whoever is to move, so a guess it
+/// does not list loses 62 centipawns: playable, one point), with a total at the end.
+#[gpui_kit::test]
+fn a_pasted_game_is_guessed_through_and_scored(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, 6);
+    assert!(!app.enabled("guess-start"));
+    app.click_label("Game PGN");
+    app.type_text("[White \"Morphy\"]\n[Black \"Duke\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *");
+    app.click("guess-start");
+    app.find("chess-board");
+    wait_for_label(&mut app, "guess-score", "0 points · 0 of 0 matched");
+
+    // The move played scores full points, and Black's reply follows.
+    app.drag_square("e2", "e4", true);
+    wait_for_label(&mut app, "status-banner", "e4 ✓");
+    app.wait_for_moves(&["e4", "e5"]);
+    wait_for_label(&mut app, "guess-score", "5 points · 1 of 1 matched");
+
+    // Another move is judged by the engine.
+    app.drag_square("d2", "d4", true);
+    wait_for_label(&mut app, "status-banner", "Played Nf3");
+    app.wait_for_moves(&["e4", "e5", "Nf3", "Nc6"]);
+    wait_for_label(&mut app, "guess-score", "6 points · 1 of 2 matched");
+
+    // The last guess ends the game with how close it came.
+    app.drag_square("f1", "b5", true);
+    app.wait_for_moves(&["e4", "e5", "Nf3", "Nc6", "Bb5", "a6"]);
+    wait_for_label(&mut app, "status-banner", "Close to the master");
+    wait_for_label(&mut app, "guess-score", "11 points · 2 of 3 matched");
+
+    // Again starts the same game over; Another game goes back to choosing one.
+    app.click("guess-restart");
+    wait_for_label(&mut app, "guess-score", "0 points · 0 of 0 matched");
+    app.click("guess-another");
+    app.find("guess-start");
+}
+
+/// A game opened for guessing elsewhere (the Masters explorer) lands on the tab, as the side asked
+/// for, and a PGN that is not a game is refused.
+#[gpui_kit::test]
+fn a_game_opened_for_guessing_starts_as_its_side(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    app.with_window(|window, cx| {
+        crate::shell::guess_moves("1. d4 d5 2. c4 *", Some(shakmaty::Color::Black), window, cx)
+    });
+    assert_eq!(app.find(("practice-tabs", 6usize)).selected(), Some(true));
+    // White's first move is played for Black to answer.
+    app.wait_for_moves(&["d4"]);
+    app.drag_square("d7", "d5", false);
+    wait_for_label(&mut app, "status-banner", "d5 ✓");
+    app.wait_for_moves(&["d4", "d5", "c4"]);
+    wait_for_label(&mut app, "status-banner", "Played like the master");
+
+    app.click("guess-another");
+    app.click_label("Game PGN");
+    app.type_text("not a game");
+    app.click("guess-start");
+    wait_for_label(&mut app, "guess-error", "That game has no moves");
+}

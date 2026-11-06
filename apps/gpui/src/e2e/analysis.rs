@@ -21,20 +21,6 @@ fn editor(cx: &mut gpui_kit::TestAppContext) -> Harness {
     app
 }
 
-/// Type into the labelled input of a dialog once it has slid into place.
-fn fill_in_dialog(app: &mut Harness, label: &str, text: &str) {
-    let mut last = None;
-    app.wait_for(&format!("{label:?} to stop moving"), |window, _| {
-        let bounds = window.try_find_by_label(label).map(|input| input.bounds());
-        let still = bounds.is_some() && bounds == last;
-        last = bounds;
-        still
-    });
-    app.click_label(label);
-    app.press("secondary-a");
-    app.type_text(text);
-}
-
 /// Let animations run their course: a dialog that is closing is gone after this.
 pub(super) fn settle(app: &mut Harness) {
     let mut frames = 0;
@@ -47,7 +33,7 @@ pub(super) fn settle(app: &mut Harness) {
 /// Import a FEN or PGN through the analysis board's dialog, and let it close if it will.
 pub(super) fn import(app: &mut Harness, text: &str) {
     app.click("analysis-import");
-    fill_in_dialog(app, "FEN, PGN or Lichess link", text);
+    app.fill_in_dialog("FEN, PGN or Lichess link", text);
     app.click("import-run");
     settle(app);
 }
@@ -154,6 +140,53 @@ fn the_arrow_keys_step_through_the_moves(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.enabled("analysis-back"));
 }
 
+/// A promotion from the keyboard: the cursor walks from e2 to the pawn on a7, Enter picks it up,
+/// Up and Enter play it to a8, and the picker takes the arrows and Enter (Left from the queen
+/// goes round to the knight). The keys the board does not take still reach the page.
+#[gpui_kit::test]
+fn a_pawn_is_promoted_from_the_keyboard(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "4k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+    app.tab_to_board();
+    for key in ["up", "up", "up", "up", "up", "left", "left", "left", "left"] {
+        app.press(key);
+    }
+    assert_eq!(app.square_name("a7"), "a7, white pawn");
+    let a7 = ("square", usize::from(shakmaty::Square::A7));
+    app.press("enter");
+    assert_eq!(app.find(a7).selected(), Some(true));
+    // A square the pawn cannot reach lets go of it, as a click there does.
+    app.press("right");
+    assert_eq!(app.square_name("b7"), "b7, empty");
+    app.press("enter");
+    assert_eq!(app.find(a7).selected(), Some(false));
+    app.press("left");
+    app.press("enter");
+    app.press("up");
+    assert_eq!(app.square_name("a8"), "a8, empty, legal move");
+    app.press("enter");
+    app.find("promotion-choices");
+    assert_eq!(app.find("Queen").selected(), Some(true));
+    app.press("left");
+    assert_eq!(app.find("Knight").selected(), Some(true));
+    app.press("enter");
+    assert_eq!(selected(&mut app, "a7a8n"), Some(true));
+    assert_eq!(app.square_name("a8"), "a8, white knight");
+    // F turns the board and Home goes back to the start: the board hands them to the page.
+    let board = app.find("chess-board").bounds();
+    let a8 = app
+        .find(("square", usize::from(shakmaty::Square::A8)))
+        .bounds();
+    assert!(a8.top() < board.center().y);
+    app.press("f");
+    let a8 = app
+        .find(("square", usize::from(shakmaty::Square::A8)))
+        .bounds();
+    assert!(a8.top() > board.center().y, "the board is turned");
+    app.press("home");
+    assert!(!app.enabled("analysis-back"));
+}
+
 #[gpui_kit::test]
 fn shift_and_the_arrows_go_into_and_out_of_a_variation(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
@@ -208,8 +241,7 @@ fn an_import_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     // An illegal move, and a side with seventeen pieces.
     import(&mut app, "1. e4 e5 2. Ke5 *");
     assert!(app.shows("import-run"), "the dialog stays for a correction");
-    fill_in_dialog(
-        &mut app,
+    app.fill_in_dialog(
         "FEN, PGN or Lichess link",
         "rnbqkbnr/pppppppp/8/8/3q4/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     );
@@ -219,8 +251,7 @@ fn an_import_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.shows("tree-e2e4"));
 
     // A valid position closes it, and play goes on from there: only this king can reach d2.
-    fill_in_dialog(
-        &mut app,
+    app.fill_in_dialog(
         "FEN, PGN or Lichess link",
         "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
     );
@@ -811,6 +842,33 @@ fn a_lichess_game_link_imports_the_game(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
 }
 
+/// A slow link's game arriving after the import was cancelled does not replace the board.
+#[gpui_kit::test]
+fn a_cancelled_link_import_leaves_the_board_alone(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::{HELD_GAME, HELD_GAME_ASKED, HELD_GAME_RELEASED};
+    use std::sync::atomic::Ordering;
+    let mut app = analysis(cx);
+    app.online();
+    import(&mut app, "1. d4 d5 *");
+    app.find("tree-d2d4 d7d5");
+    app.click("analysis-import");
+    app.fill_in_dialog(
+        "FEN, PGN or Lichess link",
+        &format!("https://lichess.org/{HELD_GAME}"),
+    );
+    app.click("import-run");
+    app.wait_for("the export to be asked for", |_, _| {
+        HELD_GAME_ASKED.load(Ordering::SeqCst)
+    });
+    app.click("import-cancel");
+    settle(&mut app);
+    HELD_GAME_RELEASED.store(true, Ordering::SeqCst);
+    settle(&mut app);
+    settle(&mut app);
+    app.find("tree-d2d4 d7d5");
+    assert!(!app.shows("tree-e2e4"), "the late game replaced the board");
+}
+
 /// The FEN of the position the analysis board shows.
 fn shown_fen(app: &mut Harness) -> String {
     app.with_window(|_, cx| {
@@ -843,8 +901,7 @@ fn a_variant_game_is_played_by_its_own_rules(cx: &mut gpui_kit::TestAppContext) 
     import(&mut app, "[Variant \"Bughouse\"]\n\n1. e4 d5 2. exd5 *");
     assert!(app.shows("import-run"), "the dialog stays");
     assert!(!app.shows("tree-e2e4"));
-    fill_in_dialog(
-        &mut app,
+    app.fill_in_dialog(
         "FEN, PGN or Lichess link",
         "[Variant \"Atomic\"]\n\n1. e4 d5 2. exd5 *",
     );
@@ -1213,4 +1270,42 @@ fn the_line_to_a_move_is_copied(cx: &mut gpui_kit::TestAppContext) {
         .and_then(|item| item.text())
         .unwrap_or_default();
     assert!(copied.contains("1. e4 e5 *"), "{copied}");
+}
+
+/// A step through the moves slides its piece, but not with Reduce motion on, and not while the
+/// last step's slide is still under way (an arrow key held): that position stands at once. Slides
+/// are timed by the test's clock, so each holds still until the clock moves past it.
+#[gpui_kit::test]
+fn pieces_slide_only_when_there_is_time_to(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 2. Nf3 d6 *");
+    app.click("tree-e2e4 e7e5 g1f3 d7d6");
+    let slide = ("board-slide", 0usize);
+    let settle = |app: &mut Harness| {
+        app.cx
+            .executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        app.cx.run_until_parked();
+    };
+    settle(&mut app);
+    // The harness runs with Reduce motion on.
+    app.press("left");
+    assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
+    assert!(!app.shows(slide), "Reduce motion stills the piece");
+
+    app.cx.update(|cx| cx.set_reduce_motion(false));
+    settle(&mut app);
+    app.press("left");
+    assert_eq!(selected(&mut app, "e2e4 e7e5"), Some(true));
+    assert!(app.shows(slide), "the knight slides back");
+    // The next step comes before that slide ends: it stands at once.
+    app.press("left");
+    assert_eq!(selected(&mut app, "e2e4"), Some(true));
+    assert!(!app.shows(slide), "a step during a slide stands at once");
+    settle(&mut app);
+    app.press("right");
+    assert!(
+        app.shows(slide),
+        "a step after the slide ended slides again"
+    );
 }

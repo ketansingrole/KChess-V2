@@ -5,7 +5,7 @@
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::hover_card::HoverCard;
-use gpui_kit::component::{Sizable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -19,6 +19,7 @@ use crate::online::{OnlineHandle, OnlineState, Phase};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, panel_style};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 
 /// The player may touch pieces: the game is on, at its last move.
@@ -145,7 +146,7 @@ fn flip(cx: &mut App) {
 }
 
 fn ask_resign(window: &mut Window, cx: &mut App) {
-    window.open_alert_dialog(cx, |dialog: AlertDialog, _, _| {
+    crate::widgets::open_alert_dialog(window, cx, |dialog: AlertDialog, _, _| {
         dialog
             .title("Resign this game?")
             .description("Your opponent will be awarded the win")
@@ -534,7 +535,7 @@ impl OnlinePage {
                         .keyboard_focus(palette.primary)
                         .aria_label(link.clone())
                         .cursor_pointer()
-                        .hover(|name| name.underline())
+                        .pressable_link()
                         .on_click(move |_, window, cx| crate::shell::open_player(&link, window, cx))
                         .child(name)
                         .into_any_element()
@@ -607,8 +608,17 @@ impl OnlinePage {
         self.layout
             .render("online-game", board_column, panel, window, cx)
             .track_focus(&self.focus)
+            // A click anywhere on the page gives the keys back to it (the board keeps them only
+            // from Tab), before a text field takes them for itself, as on the computer's page.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if !this.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+                if !crate::board::page_has_keys(&this.focus, window, cx)
+                    || event.keystroke.modifiers.modified()
+                {
                     return;
                 }
                 if this.pending.is_some() {
@@ -1147,9 +1157,11 @@ impl OnlinePage {
             .children(notices)
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
                 "online-moves",
-                &sans,
-                ply,
-                view::first_move(&setup),
+                widgets::MoveSheet {
+                    sans: &sans,
+                    shown: ply,
+                    first: view::first_move(&setup),
+                },
                 "No moves yet".into(),
                 select,
                 crate::notation::figurine(cx),

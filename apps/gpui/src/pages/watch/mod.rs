@@ -16,6 +16,7 @@ use crate::core::{AppCore, CoreEvent};
 use crate::online::OnlineHandle;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Look, Pill};
 
 mod broadcast_engine;
@@ -680,7 +681,7 @@ impl WatchPage {
                             .when(!disabled, |row| {
                                 let key = key.clone();
                                 row.cursor_pointer()
-                                    .hover(|row| row.bg(palette.accented))
+                                    .pressable(palette)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.watch_channel(key.clone(), cx)
                                     }))
@@ -1038,7 +1039,7 @@ impl WatchPage {
         if key == "escape"
             && self.tab == Tab::Broadcasts
             && self.broadcasts.tour.is_some()
-            && self.focus.is_focused(window)
+            && crate::board::page_has_keys(&self.focus, window, cx)
         {
             if self.broadcasts.current().is_some() {
                 self.all_boards(cx);

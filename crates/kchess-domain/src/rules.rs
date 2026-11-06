@@ -1074,3 +1074,353 @@ mod drop_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod fen_tests {
+    use super::*;
+
+    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    /// A FEN's board is eight ranks of eight files; a `0` is no count of empty squares.
+    #[test]
+    fn a_board_is_eight_full_ranks() {
+        assert!(parse_fen(START).is_some());
+        assert!(parse_fen("rnbqkbnr/pppppppp/80/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").is_none());
+        assert!(parse_fen("rnbqkbnr/pppppppp/7/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").is_none());
+        assert!(parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP w KQkq - 0 1").is_none());
+    }
+
+    /// A pocket is written in brackets or, as some sites write it, after a ninth `/`.
+    #[test]
+    fn a_pocket_reads_in_either_form() {
+        let board = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+        for fen in [
+            format!("{board}[PPn] w - - 0 1"),
+            format!("{board}/PPn w - - 0 1"),
+        ] {
+            let pockets = parse_fen(&fen).unwrap().pockets.unwrap();
+            assert_eq!(pockets.white.pawn, 2, "{fen}");
+            assert_eq!(pockets.black.knight, 1, "{fen}");
+        }
+    }
+
+    /// A square is a lowercase file `a`–`h` and a rank `1`–`8`.
+    #[test]
+    fn a_square_is_on_the_board() {
+        assert_eq!(parse_square("a1"), Some(Square::A1));
+        assert_eq!(parse_square("h8"), Some(Square::H8));
+        for off in ["i1", "a9", "a0", "`1", "A1", "a", "a10"] {
+            assert_eq!(parse_square(off), None, "{off}");
+        }
+    }
+
+    /// Only a piece that can have been promoted keeps its Crazyhouse `~` marker.
+    #[test]
+    fn only_promotable_pieces_keep_their_promoted_marker() {
+        let fen = "k~7/8/8/8/8/8/P~7/Q~6K~[] w - - 0 1";
+        let pos = setup_position(Variant::Crazyhouse, parse_fen(fen).unwrap()).unwrap();
+        assert_eq!(make_fen(&pos), "k7/8/8/8/8/8/P7/Q~6K[] w - - 0 1");
+        let pos = setup_position(Variant::Chess, parse_fen(fen).unwrap()).unwrap();
+        assert_eq!(make_fen(&pos), "k7/8/8/8/8/8/P7/Q6K w - - 0 1");
+    }
+
+    /// Each variant's own rules for a playable position, as chessops checks them.
+    #[test]
+    fn each_variant_refuses_what_chessops_refuses() {
+        use Variant::*;
+        let cases: &[(Variant, &str, bool)] = &[
+            (Chess, START, true),
+            (Chess, "8/8/8/8/8/8/8/8 w - - 0 1", false),
+            (Chess, "k7/8/8/8/8/8/8/K6K w - - 0 1", false),
+            (Chess, "8/8/8/8/8/8/8/K7 w - - 0 1", false),
+            (Chess, "k7/8/8/8/8/8/8/K7 b - - 0 1", true),
+            (Chess, "k7/8/8/8/8/8/8/RK6 w - - 0 1", false),
+            (Chess, "k6P/8/8/8/8/8/8/K7 w - - 0 1", false),
+            (KingOfTheHill, "k7/8/8/8/8/8/8/RK6 w - - 0 1", false),
+            (ThreeCheck, "k6P/8/8/8/8/8/8/K7 w - - 0 1", false),
+            (Crazyhouse, "k7/8/8/8/8/8/8/K7[Q] w - - 0 1", true),
+            (Crazyhouse, "k7/8/8/8/8/8/8/K7[K] w - - 0 1", false),
+            (Crazyhouse, "k7/8/8/8/8/8/8/K7[k] w - - 0 1", false),
+            (Crazyhouse, "k7/8/8/8/8/8/8/RK6[] w - - 0 1", false),
+            (Atomic, "k7/8/8/8/8/8/8/K7 w - - 0 1", true),
+            (Atomic, "8/8/8/8/8/8/8/8 w - - 0 1", false),
+            (Atomic, "k7/8/8/8/8/8/8/RK6 w - - 0 1", false),
+            (Atomic, "k6P/8/8/8/8/8/8/K7 w - - 0 1", false),
+            (Antichess, "8/8/8/8/8/8/8/N7 w - - 0 1", true),
+            (Antichess, "8/8/8/8/8/8/8/8 w - - 0 1", false),
+            (Antichess, "7P/8/8/8/8/8/8/N7 w - - 0 1", false),
+            (RacingKings, "8/8/8/8/8/8/krbnNBRK/qrbnNBRQ w - - 0 1", true),
+            (
+                RacingKings,
+                "8/8/8/8/8/8/krbnNBRK/qrbnNBRP w - - 0 1",
+                false,
+            ),
+            (RacingKings, "8/8/8/8/8/8/k5rK/7R w - - 0 1", false),
+            (
+                Horde,
+                "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1",
+                true,
+            ),
+            (Horde, "rnbqkbnr/pppppppp/8/8/8/8/8/P7 w kq - 0 1", true),
+            (Horde, "rnbqkbnP/pppppppp/8/8/8/8/8/P7 w kq - 0 1", false),
+            (Horde, "rnbqkbnr/pppppppp/8/8/8/8/8/K7 w kq - 0 1", false),
+            (Horde, "8/8/8/8/8/8/8/P7 w - - 0 1", false),
+        ];
+        // A Crazyhouse game holds 64 pieces at most, on the board and in hand.
+        let kings = "k7/8/8/8/8/8/8/K7";
+        for (in_hand, valid) in [(62, true), (63, false)] {
+            let fen = format!("{kings}[{}] w - - 0 1", "Q".repeat(in_hand));
+            let position = parse_fen(&fen).and_then(|setup| setup_position(Crazyhouse, setup));
+            assert_eq!(position.is_some(), valid, "{in_hand} in hand");
+        }
+        for &(variant, fen, valid) in cases {
+            let position = parse_fen(fen).and_then(|setup| setup_position(variant, setup));
+            assert_eq!(position.is_some(), valid, "{variant:?} {fen}");
+        }
+    }
+
+    /// A Crazyhouse pocket holds at most 64 pieces.
+    #[test]
+    fn a_pocket_holds_at_most_64_pieces() {
+        let board = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+        let with = |n: usize| parse_fen(&format!("{board}[{}] w KQkq - 0 1", "P".repeat(n)));
+        assert!(with(64).is_some());
+        assert!(with(65).is_none());
+    }
+
+    /// `K` and `Q` name the outermost rook, or the corner when there is none.
+    #[test]
+    fn castling_rights_name_the_outer_rooks() {
+        let rights = |fen: &str| {
+            let rights = parse_fen(fen).unwrap().castling_rights;
+            rights
+                .into_iter()
+                .map(|sq| sq.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(rights("4k3/8/8/8/8/8/8/R2RK1RR w KQ - 0 1"), ["a1", "h1"]);
+        assert_eq!(rights("4k3/8/8/8/8/8/8/4K3 w KQ - 0 1"), ["a1", "h1"]);
+        assert_eq!(rights("4k3/8/8/8/8/8/8/4K3 w K - 0 1"), ["h1"]);
+        assert_eq!(rights("1r2k1r1/8/8/8/8/8/8/4K3 w kq - 0 1"), ["b8", "g8"]);
+        assert_eq!(rights("4k3/8/8/8/8/8/8/1R2K1R1 w BG - 0 1"), ["b1", "g1"]);
+        assert!(parse_fen("4k3/8/8/8/8/8/8/RR2K2R w KQB - 0 1").is_none());
+    }
+
+    /// Three-check counts: checks remaining (`3+3`) or given (`+0+0`), three at most.
+    #[test]
+    fn reads_three_check_counts_either_way() {
+        let read = |part: &str| {
+            parse_remaining_checks(part)
+                .map(|checks| (u32::from(checks.white), u32::from(checks.black)))
+        };
+        assert_eq!(read("3+2"), Some((3, 2)));
+        assert_eq!(read("+1+0"), Some((2, 3)));
+        assert_eq!(read("4+3"), None);
+        assert_eq!(read("3+4"), None);
+        assert_eq!(read("+0+4"), None);
+        assert_eq!(read("3"), None);
+    }
+
+    fn chess(fen: &str) -> VariantPosition {
+        standard_from_fen(fen).unwrap_or_else(|| panic!("{fen}"))
+    }
+
+    fn uci(pos: &VariantPosition, text: &str) -> Option<String> {
+        legal_move(pos, parse_uci(text)?).map(|m| make_uci(&m))
+    }
+
+    /// An en passant square is kept only behind a pawn that has just passed it.
+    #[test]
+    fn an_en_passant_square_needs_the_pawn_that_passed_it() {
+        let ep = |fen: &str| {
+            parse_fen(fen)
+                .and_then(|s| setup_position(Variant::Chess, s))
+                .map(|p| p.ep_square(shakmaty::EnPassantMode::Always))
+        };
+        let after_e4 = "4k3/8/8/8/4P3/8/8/4K3 b - e3 0 1";
+        assert_eq!(ep(after_e4), Some(Some(Square::E3)));
+        // White to move: e3 is not behind a black pawn that just moved.
+        assert_eq!(ep("4k3/8/8/8/4P3/8/8/4K3 w - e3 0 1"), Some(None));
+        assert_eq!(ep("4k3/8/8/8/8/8/8/4K3 b - e3 0 1"), Some(None));
+        assert_eq!(ep("4k3/8/8/8/4P3/8/4N3/4K3 b - e3 0 1"), Some(None));
+        assert_eq!(ep("4k3/8/8/8/4p3/8/8/4K3 b - e3 0 1"), Some(None));
+        let after_d5 = "4k3/8/8/3p4/8/8/8/4K3 w - d6 0 1";
+        assert_eq!(ep(after_d5), Some(Some(Square::D6)));
+        assert_eq!(ep("4k3/3n4/8/3p4/8/8/8/4K3 w - d6 0 1"), Some(None));
+    }
+
+    /// Castling rights are written `KQkq` for the outermost rooks and by file otherwise.
+    #[test]
+    fn castling_rights_are_written_as_lichess_writes_them() {
+        let written = |fen: &str| {
+            let pos = setup_position(Variant::Chess, parse_fen(fen).unwrap()).unwrap();
+            make_fen(&pos).split(' ').nth(2).unwrap().to_string()
+        };
+        assert_eq!(written(START), "KQkq");
+        assert_eq!(written("4k3/8/8/8/8/8/8/RKR4R w KQ - 0 1"), "KQ");
+        assert_eq!(written("4k3/8/8/8/8/8/8/RKR4R w C - 0 1"), "C");
+        assert_eq!(written("rkr4r/8/8/8/8/8/8/4K3 w c - 0 1"), "c");
+        assert_eq!(written("4k3/8/8/8/8/8/8/4K3 w - - 0 1"), "-");
+    }
+
+    /// A UCI move is four squares' characters, or five with a promotion, or a drop.
+    #[test]
+    fn reads_and_writes_uci_moves() {
+        assert!(parse_uci("e2e4").is_some());
+        assert!(parse_uci("e7e8q").is_some());
+        assert!(parse_uci("N@f3").is_some());
+        for bad in ["e2e", "e2e4qq", "e2é4", "e2e4x", ""] {
+            assert!(parse_uci(bad).is_none(), "{bad}");
+        }
+        let pos = chess("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1");
+        // Castling is written king to rook, either way it was given.
+        assert_eq!(uci(&pos, "e1g1").as_deref(), Some("e1h1"));
+        assert_eq!(uci(&pos, "e1c1").as_deref(), Some("e1a1"));
+        assert_eq!(uci(&pos, "e1a1").as_deref(), Some("e1a1"));
+        let castle = legal_move(&pos, parse_uci("e1h1").unwrap()).unwrap();
+        assert_eq!(dest(&castle), Some(Square::H1));
+        assert_eq!(
+            dest(&Move::Put {
+                role: Role::Pawn,
+                to: Square::E4
+            }),
+            None
+        );
+    }
+
+    /// Promotion is required on the last rank, never to a pawn, and to a king only in Antichess.
+    #[test]
+    fn promotions_follow_each_variants_rules() {
+        let pos = chess("4k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+        assert_eq!(uci(&pos, "a7a8q").as_deref(), Some("a7a8q"));
+        assert_eq!(uci(&pos, "a7a8n").as_deref(), Some("a7a8n"));
+        assert_eq!(uci(&pos, "a7a8"), None);
+        assert_eq!(uci(&pos, "a7a8p"), None);
+        assert_eq!(uci(&pos, "a7a8k"), None);
+        let pos = chess("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
+        assert_eq!(uci(&pos, "a1a2q"), None);
+        let antichess = setup_position(
+            Variant::Antichess,
+            parse_fen("8/P7/8/8/8/8/8/8 w - - 0 1").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(uci(&antichess, "a7a8k").as_deref(), Some("a7a8k"));
+        assert_eq!(uci(&antichess, "a7a8p"), None);
+        assert!(parse_san(&antichess, "a8=K").is_some());
+        assert!(parse_san(&pos, "a2").is_none());
+        let pos = chess("4k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+        assert!(parse_san(&pos, "a8=K").is_none());
+        assert!(parse_san(&pos, "a8").is_none());
+        assert_eq!(
+            parse_san(&pos, "a8=Q").map(|m| make_uci(&m)).as_deref(),
+            Some("a7a8q")
+        );
+        assert_eq!(
+            parse_san(&pos, "a8N").map(|m| make_uci(&m)).as_deref(),
+            Some("a7a8n")
+        );
+    }
+
+    /// A drop needs the piece in the pocket, and a pawn is never dropped on a back rank.
+    #[test]
+    fn drops_need_the_piece_in_hand() {
+        let pos = setup_position(
+            Variant::Crazyhouse,
+            parse_fen("4k3/8/8/8/8/8/8/4K3[Pn] w - - 0 1").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(uci(&pos, "P@e4").as_deref(), Some("P@e4"));
+        assert_eq!(uci(&pos, "P@e8"), None);
+        assert_eq!(uci(&pos, "P@e1"), None);
+        assert_eq!(uci(&pos, "N@e4"), None, "the knight is Black's");
+        assert_eq!(uci(&pos, "Q@e4"), None);
+        assert!(parse_san(&pos, "P@e4").is_some());
+        assert!(parse_san(&pos, "p@e4").is_some());
+        assert!(parse_san(&pos, "@e4").is_some());
+        assert!(parse_san(&pos, "X@e4").is_none());
+        assert!(parse_san(&pos, "PP@e4").is_none());
+        assert!(parse_san(&chess(START), "P@e4").is_none());
+    }
+
+    /// SAN names the moving piece's file, rank or both when another could go there.
+    #[test]
+    fn san_disambiguates_only_when_another_piece_can_move_there() {
+        let san = |fen: &str, text: &str| {
+            let mut pos = chess(fen);
+            let m = legal_move(&pos, parse_uci(text).unwrap()).unwrap();
+            san_and_play(&mut pos, m)
+        };
+        let knights = "4k3/8/8/8/8/8/8/1N2KN2 w - - 0 1";
+        assert_eq!(san(knights, "b1d2"), "Nbd2");
+        assert_eq!(san(knights, "f1d2"), "Nfd2");
+        assert_eq!(san(knights, "f1g3"), "Ng3");
+        let rooks = "4k3/8/8/R7/8/8/8/R3K3 w - - 0 1";
+        assert_eq!(san(rooks, "a1a3"), "R1a3");
+        assert_eq!(san(rooks, "a5a3"), "R5a3");
+        let queens = "k7/8/8/8/8/2Q1Q3/8/2Q1K3 w - - 0 1";
+        assert_eq!(san(queens, "c3d2"), "Qc3d2");
+        // A pinned knight is no rival.
+        assert_eq!(san("4k3/4r3/8/8/8/8/4N3/1N2K3 w - - 0 1", "b1c3"), "Nc3");
+        assert_eq!(san("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", "e1g1"), "O-O");
+        assert_eq!(san("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", "e1c1"), "O-O-O");
+        assert_eq!(san("4k3/8/8/8/8/8/8/4K3 w - - 0 1", "e1f1"), "Kf1");
+        assert_eq!(san("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", "e4d5"), "exd5");
+        assert_eq!(san("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1", "e5d6"), "exd6");
+        assert_eq!(san("4k3/8/8/8/8/8/8/R3K3 w - - 0 1", "a1a8"), "Ra8+");
+        assert_eq!(san("k7/8/1K6/8/8/8/8/7R w - - 0 1", "h1h8"), "Rh8#");
+        // Antichess has no royal king, and two of them can reach one square.
+        let mut kings = setup_position(
+            Variant::Antichess,
+            parse_fen("8/7p/8/8/8/8/8/K1K5 w - - 0 1").unwrap(),
+        )
+        .unwrap();
+        let m = legal_move(&kings, parse_uci("a1b2").unwrap()).unwrap();
+        assert_eq!(san_and_play(&mut kings, m), "Kab2");
+    }
+
+    /// SAN parsing finds the one piece that can make the move, in any spelling Lichess accepts.
+    #[test]
+    fn parses_san_to_the_one_legal_move() {
+        let parsed = |fen: &str, text: &str| parse_san(&chess(fen), text).map(|m| make_uci(&m));
+        let knights = "4k3/8/8/8/8/8/8/1N2KN2 w - - 0 1";
+        assert_eq!(parsed(knights, "Nd2"), None, "ambiguous");
+        assert_eq!(parsed(knights, "Nbd2").as_deref(), Some("b1d2"));
+        assert_eq!(parsed(knights, "N1d2"), None, "still ambiguous");
+        assert_eq!(parsed(knights, "Nf1d2").as_deref(), Some("f1d2"));
+        assert_eq!(parsed(knights, "Nf1-d2").as_deref(), Some("f1d2"));
+        assert_eq!(parsed(START, "e4").as_deref(), Some("e2e4"));
+        assert_eq!(parsed(START, "e2e4").as_deref(), Some("e2e4"));
+        assert_eq!(parsed(START, "e2-e4").as_deref(), Some("e2e4"));
+        assert_eq!(parsed(START, "e5"), None);
+        assert_eq!(parsed(START, "Nf3+").as_deref(), Some("g1f3"));
+        assert_eq!(parsed(START, "Nxf3"), Some("g1f3".to_string()));
+        assert_eq!(parsed(START, "Kf3"), None);
+        assert_eq!(
+            parsed("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", "exd5").as_deref(),
+            Some("e4d5")
+        );
+        assert_eq!(parsed("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", "d5"), None);
+        let castles = "4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1";
+        assert_eq!(parsed(castles, "O-O").as_deref(), Some("e1h1"));
+        assert_eq!(parsed(castles, "O-O-O+").as_deref(), Some("e1a1"));
+        assert_eq!(
+            parsed(castles, "Kg1"),
+            None,
+            "castling is written as castling"
+        );
+        assert_eq!(parsed("4k3/8/8/8/8/8/8/4K3 w - - 0 1", "O-O"), None);
+        assert_eq!(parsed(START, "Nf3é"), None);
+        assert_eq!(parsed(START, "Ni3"), None);
+        assert_eq!(parsed(START, "Nf9"), None);
+        // A Chess960 king beside its rook castles by moving onto it.
+        let beside = setup_position(
+            Variant::Chess,
+            parse_fen("4k3/8/8/8/8/8/8/5KR1 w G - 0 1").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            parse_san(&beside, "Kg1").map(|m| make_uci(&m)).as_deref(),
+            Some("f1g1")
+        );
+    }
+}

@@ -432,3 +432,30 @@ fn quitting_during_a_live_game_asks_first(cx: &mut gpui_kit::TestAppContext) {
     app.open("Home");
     app.find("home-play");
 }
+
+/// The sidebar's shortcut, menu item and command opens and closes it at once, as a command used
+/// many times a day should; a click on its toggle eases it, so the eye can follow where it went.
+/// The ease runs on the test's clock, so it holds still until the test moves the clock.
+#[gpui_kit::test]
+fn only_a_click_eases_the_sidebar(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.cx.update(|cx| cx.set_reduce_motion(false));
+    let width = |app: &mut Harness| f32::from(app.find("sidebar").bounds().size.width);
+    let open = width(&mut app);
+
+    app.with_window(crate::shell::toggle_sidebar);
+    let rail = width(&mut app);
+    assert!(
+        rail < open,
+        "the shortcut closes it at once: {rail} of {open}"
+    );
+    app.with_window(crate::shell::toggle_sidebar);
+    assert_eq!(width(&mut app), open, "and opens it at once");
+
+    app.click("sidebar-toggle");
+    assert_eq!(width(&mut app), open, "a click eases it from where it was");
+    app.cx
+        .executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    assert_eq!(width(&mut app), rail);
+}

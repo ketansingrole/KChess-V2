@@ -581,6 +581,118 @@ pub fn local_variant(words: &[String]) -> Result<Option<String>, String> {
     }
 }
 
+/// A game against the computer, from its saved session and the level and variant asked for.
+async fn computer_game(
+    core: &CoreClient,
+    saved: &Value,
+    level: Option<String>,
+    variant: Option<&str>,
+) -> Result<Game, String> {
+    let mut saved = saved.clone();
+    if let Some(level) = level {
+        let checked =
+            kchess_domain::misc::validate_arguments("bestMove", &[json!([]), json!(level)]);
+        if !matches!(checked, Some(Ok(()))) {
+            return Err(format!("Unknown level {level}."));
+        }
+        if !saved.is_object() {
+            saved = json!({});
+        }
+        saved["level"] = json!(level);
+    }
+
+    // The core still refuses engine help during a live game on every search.
+    core.call("resumeOnline", vec![]).await?;
+    // Fairy-Stockfish plays the other variants; the core says so if it is missing.
+    let fairy = variant.is_some_and(|variant| !matches!(variant, "standard" | "chess960"));
+    let engine = core.call("engineStatus", vec![]).await?;
+    if !fairy && engine["ready"] != json!(true) {
+        return Err("Stockfish is unavailable. Install an engine or pass --engine.".into());
+    }
+    let host = computer::Host {
+        now: 0.0,
+        allowed: true,
+        ready: true,
+    };
+    Ok(Game::Computer(ComputerGame::new(
+        Some(&saved).filter(|s| s.is_object()),
+        &host,
+    )?))
+}
+
+/// What a typed line asks of the game loop.
+enum Typed {
+    Quit,
+    /// Nothing changed: wait for the next line.
+    Skip,
+    /// The game may have changed: let the computer reply, save and show it.
+    Refresh,
+}
+
+impl Session<'_> {
+    /// Answers one typed line.
+    async fn typed(&mut self, command: &str) -> Typed {
+        match command {
+            "" => Typed::Skip,
+            "quit" => Typed::Quit,
+            "status" => Typed::Refresh,
+            "pgn" => {
+                match self.pgn() {
+                    Ok(pgn) => println!("{}", json!({ "pgn": pgn })),
+                    Err(cause) => eprintln!("{cause}"),
+                }
+                Typed::Skip
+            }
+            command => {
+                match self.command(command).await {
+                    Ok(true) => {}
+                    Ok(false) => eprintln!("Illegal move or game unavailable."),
+                    Err(cause) => eprintln!("{cause}"),
+                }
+                Typed::Refresh
+            }
+        }
+    }
+
+    /// Plays typed lines, clock ticks and core events until the player quits, stdin ends, the
+    /// core closes or Ctrl-C.
+    async fn play(&mut self, events: &mut UnboundedReceiver<Event>) {
+        let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+        let mut ticks = tokio::time::interval(std::time::Duration::from_millis(100));
+        let interrupted = tokio::signal::ctrl_c();
+        tokio::pin!(interrupted);
+        loop {
+            tokio::select! {
+                _ = &mut interrupted => break,
+                _ = ticks.tick() => {
+                    if self.expire().await {
+                        self.persist().await;
+                        self.show();
+                    }
+                }
+                Some(event) = events.recv() => {
+                    if event.name == "host:request" {
+                        self.core.answer(&event.payload).await;
+                    } else if event.name == "core:closed" {
+                        break;
+                    }
+                }
+                line = lines.next_line() => {
+                    let Ok(Some(line)) = line else { break };
+                    match self.typed(line.trim()).await {
+                        Typed::Quit => break,
+                        Typed::Skip => continue,
+                        Typed::Refresh => {}
+                    }
+                    self.computer_turn(events).await;
+                    self.persist().await;
+                    self.show();
+                }
+            }
+        }
+    }
+}
+
 pub async fn interactive(
     core: &CoreClient,
     events: &mut UnboundedReceiver<Event>,
@@ -594,38 +706,7 @@ pub async fn interactive(
     let sessions = &library["sessions"];
     let started = Instant::now();
     let game = if computer {
-        let mut saved = sessions["computer"].clone();
-        if let Some(level) = level {
-            let checked =
-                kchess_domain::misc::validate_arguments("bestMove", &[json!([]), json!(level)]);
-            if !matches!(checked, Some(Ok(()))) {
-                return Err(format!("Unknown level {level}."));
-            }
-            if !saved.is_object() {
-                saved = json!({});
-            }
-            saved["level"] = json!(level);
-        }
-
-        // The core still refuses engine help during a live game on every search.
-        core.call("resumeOnline", vec![]).await?;
-        // Fairy-Stockfish plays the other variants; the core says so if it is missing.
-        let fairy = variant
-            .as_deref()
-            .is_some_and(|variant| !matches!(variant, "standard" | "chess960"));
-        let engine = core.call("engineStatus", vec![]).await?;
-        if !fairy && engine["ready"] != json!(true) {
-            return Err("Stockfish is unavailable. Install an engine or pass --engine.".into());
-        }
-        let host = computer::Host {
-            now: 0.0,
-            allowed: true,
-            ready: true,
-        };
-        Game::Computer(ComputerGame::new(
-            Some(&saved).filter(|s| s.is_object()),
-            &host,
-        )?)
+        computer_game(core, &sessions["computer"], level, variant.as_deref()).await?
     } else {
         Game::Local(LocalGame::new(
             Some(&sessions["local"]).filter(|s| s.is_object()),
@@ -666,52 +747,7 @@ pub async fn interactive(
     session.show();
     session.computer_turn(events).await;
 
-    let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
-    let mut ticks = tokio::time::interval(std::time::Duration::from_millis(100));
-    let interrupted = tokio::signal::ctrl_c();
-    tokio::pin!(interrupted);
-    loop {
-        tokio::select! {
-            _ = &mut interrupted => break,
-            _ = ticks.tick() => {
-                if session.expire().await {
-                    session.persist().await;
-                    session.show();
-                }
-            }
-            Some(event) = events.recv() => {
-                if event.name == "host:request" {
-                    core.answer(&event.payload).await;
-                } else if event.name == "core:closed" {
-                    break;
-                }
-            }
-            line = lines.next_line() => {
-                let Ok(Some(line)) = line else { break };
-                let command = line.trim();
-                match command {
-                    "" => continue,
-                    "quit" => break,
-                    "status" => {}
-                    "pgn" => {
-                        match session.pgn() {
-                            Ok(pgn) => println!("{}", json!({ "pgn": pgn })),
-                            Err(cause) => eprintln!("{cause}"),
-                        }
-                        continue;
-                    }
-                    command => match session.command(command).await {
-                        Ok(true) => {}
-                        Ok(false) => eprintln!("Illegal move or game unavailable."),
-                        Err(cause) => eprintln!("{cause}"),
-                    },
-                }
-                session.computer_turn(events).await;
-                session.persist().await;
-                session.show();
-            }
-        }
-    }
+    session.play(events).await;
     if let Game::Computer(_) = session.game {
         let _ = core.call("stopEngine", vec![]).await;
     }

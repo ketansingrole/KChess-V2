@@ -8,13 +8,7 @@ use crate::pages::Page;
 /// the test says would change the pages).
 fn open(cx: &mut gpui_kit::TestAppContext, label: &str, online: bool) -> Harness {
     let mut app = Harness::start(cx);
-    app.cx.update(|cx| {
-        let network = cx.global::<crate::network::NetworkHandle>().0.clone();
-        network.update(cx, |network, cx| {
-            network.online = online;
-            cx.notify();
-        });
-    });
+    app.set_online(online);
     app.open(label);
     app
 }
@@ -265,12 +259,15 @@ fn the_timeline_shows_what_followed_players_did(cx: &mut gpui_kit::TestAppContex
 /// A timeline that could not be read is tried again from where its failure shows.
 #[gpui_kit::test]
 fn a_failed_timeline_can_be_tried_again(cx: &mut gpui_kit::TestAppContext) {
+    use std::sync::atomic::Ordering;
     let (mut app, _lichess) = Harness::signed_in(cx, false);
+    super::fake_lichess::FRANK_FAILS.store(true, Ordering::SeqCst);
     app.open("Following");
     follow(&mut app, "frank");
     // A text button is still a 24 px target (WCAG 2.5.8).
     let retry = app.find("friends-timeline-retry").bounds();
     assert!(retry.size.height >= gpui_kit::px(24.), "{retry:?}");
+    super::fake_lichess::FRANK_FAILS.store(false, Ordering::SeqCst);
     app.click("friends-timeline-retry");
     app.find(gpui_kit::ElementId::NamedInteger(
         "friends-timeline-player".into(),
@@ -452,11 +449,14 @@ fn watch_says_when_no_followed_player_is_playing(cx: &mut gpui_kit::TestAppConte
 /// A leaderboard that could not load says so with Try again, which loads it once Lichess answers.
 #[gpui_kit::test]
 fn a_failed_leaderboard_can_be_tried_again(cx: &mut gpui_kit::TestAppContext) {
-    // The stand-in Lichess fails Racing Kings' leaderboard once.
+    use std::sync::atomic::Ordering;
     let (mut app, _lichess) = Harness::signed_in(cx, false);
+    super::fake_lichess::RACING_KINGS_FAILS.store(true, Ordering::SeqCst);
     app.cx
         .update(|cx| crate::prefs::set(cx, "kchess:leaderboard-perf", "racingKings".to_string()));
     app.open("Players");
+    app.find("players-board-retry");
+    super::fake_lichess::RACING_KINGS_FAILS.store(false, Ordering::SeqCst);
     app.click("players-board-retry");
     app.find(("players-board-row", 0usize));
 }
@@ -473,4 +473,35 @@ fn follow(app: &mut Harness, name: &str) {
             .is_some_and(|follow| follow.disabled() != Some(true))
     });
     app.click("friends-follow");
+}
+
+/// A restarted core counts its online sessions from the start again: its reports are followed,
+/// not dropped as older than the previous core's.
+#[gpui_kit::test]
+fn a_restarted_core_is_followed_from_its_first_session(cx: &mut gpui_kit::TestAppContext) {
+    use crate::core::{AppCore, CoreEvent, RECONNECTED};
+    use serde_json::{Value, json};
+    let mut app = Harness::start(cx);
+    let send = |app: &mut Harness, name: &str, payload: Value| {
+        app.cx.update(|cx| {
+            let events = cx.global::<AppCore>().events.clone();
+            events.update(cx, |_, cx| {
+                cx.emit(CoreEvent {
+                    name: name.into(),
+                    payload,
+                })
+            });
+        });
+        app.cx.run_until_parked();
+    };
+    let epoch = |app: &mut Harness| {
+        app.cx
+            .update(|cx| crate::online::handle(cx).read(cx).state_epoch())
+    };
+    let report = |session: u64| json!({ "session": session, "account": "", "lane": "events", "phase": "connected" });
+    send(&mut app, "online:state", report(40));
+    assert_eq!(epoch(&mut app), 40.);
+    send(&mut app, RECONNECTED, Value::Null);
+    send(&mut app, "online:state", report(39));
+    assert_eq!(epoch(&mut app), 39., "the new core's report is followed");
 }
