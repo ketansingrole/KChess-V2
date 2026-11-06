@@ -15,6 +15,7 @@ pub fn app_store() -> bool {
 pub mod ai;
 pub mod archive;
 pub mod capabilities;
+pub mod chesscom;
 pub mod connection;
 pub mod core;
 pub mod engine;

@@ -1,6 +1,7 @@
 # Docs
 
 - [Lichess parity](lichess-parity.md)
+- [Feature ideas](todo.md): what to build next.
 - [Shared core](shared-core.md): one core per profile, any number of KChess windows.
 - [Releasing and app updates](releasing.md); [Snap Store](snap-store.md).
 - Features: [move classifications](features/move-classifications.md).

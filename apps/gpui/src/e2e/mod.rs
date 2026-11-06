@@ -12,7 +12,9 @@
 
 mod analysis;
 mod audit;
+mod chesscom;
 mod computer;
+mod fake_chesscom;
 mod fake_lichess;
 mod history;
 mod live_game;
@@ -537,6 +539,8 @@ fn environment() {
             std::env::set_var("KCHESS_STORE_DEBUG", "1");
             // Online features fail fast and offline, unless the test signed in.
             std::env::set_var("KCHESS_TEST_LICHESS_BASE", lichess);
+            // Chess.com is a stand-in too: `e2e…` players exist, nobody else does.
+            std::env::set_var("KCHESS_TEST_CHESSCOM_BASE", fake_chesscom::base());
             // A voice model that cannot be had: never the real download, and voice fails at once.
             std::env::set_var("KCHESS_TEST_VOICE_ARCHIVE", "/nonexistent/voice-model.zip");
             std::env::set_var("KCHESS_TEST_VOICE_NAME", "no-model");

@@ -1,4 +1,4 @@
-//! Lichess insights: an account's synced games broken down by colour,
+//! Insights: an account's synced games (Lichess or Chess.com) broken down by colour,
 //! speed, opponent, length, day, time of day, ending and opening, filtered by speed, period and
 //! rated or casual.
 
@@ -211,12 +211,18 @@ impl InsightsPage {
         page
     }
 
+    /// The accounts with synced games: Lichess players, then Chess.com ones (`name@chess.com`).
     fn names(cx: &App) -> Vec<String> {
-        crate::accounts::handle(cx)
-            .read(cx)
+        let accounts = crate::accounts::handle(cx).read(cx);
+        accounts
             .all()
             .iter()
             .filter_map(|account| account["username"].as_str().map(str::to_string))
+            .chain(accounts.chesscom().iter().filter_map(|player| {
+                player["username"]
+                    .as_str()
+                    .map(kchess_domain::chesscom::account_of)
+            }))
             .collect()
     }
 
@@ -225,7 +231,10 @@ impl InsightsPage {
         let names = Self::names(cx);
         let items: Vec<Choice> = names
             .iter()
-            .map(|name| Choice::new(name.clone(), format!("@{name}")))
+            .map(|name| match kchess_domain::chesscom::username_of(name) {
+                Some(player) => Choice::new(name.clone(), format!("@{player} · Chess.com")),
+                None => Choice::new(name.clone(), format!("@{name}")),
+            })
             .collect();
         self.account_select
             .update(cx, |select, cx| select.set_items(items, window, cx));
@@ -340,6 +349,12 @@ impl InsightsPage {
     #[cfg(test)]
     pub(crate) fn loaded(&self) -> bool {
         self.report.is_some() && !self.loading
+    }
+
+    /// How many games the last report counted.
+    #[cfg(test)]
+    pub(crate) fn report_total(&self) -> Option<f64> {
+        self.report.as_ref()?["total"].as_f64()
     }
 
     /// As if the last report had named `variants` as played.
@@ -596,7 +611,7 @@ impl Render for InsightsPage {
                 .child(
                     widgets::empty_state(
                         icon("chart-pie"),
-                        "No saved Lichess games to explore",
+                        "No saved online games to explore",
                         None,
                         &palette,
                     )
@@ -650,14 +665,14 @@ impl Render for InsightsPage {
                     widgets::empty_state(
                         icon("chart-pie"),
                         "No finished games match",
-                        Some("Sync games from Lichess history, or widen the filters".into()),
+                        Some("Sync games from History, or widen the filters".into()),
                         &palette,
                     )
                     .child(
                         h_flex().justify_center().mt(px(8.)).child(
                             Button::new("insights-history")
                                 .outline()
-                                .label("Open Lichess history")
+                                .label("Open history")
                                 .on_click(|_, window, cx| {
                                     crate::shell::open_history_lichess(window, cx)
                                 }),
@@ -774,7 +789,7 @@ impl InsightsPage {
                     }))
                     .when(openings.is_empty(), |list| {
                         list.child(widgets::hint(
-                            "Lichess names openings of synced games; none have two games yet",
+                            "No opening has two synced games yet",
                             palette,
                         ))
                     })

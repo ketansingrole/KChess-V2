@@ -2,6 +2,7 @@
 //! and migrated on first use, with every storage method dispatched from here.
 
 pub mod ai;
+pub mod chesscom;
 pub mod debug;
 pub mod documents;
 pub mod games;
@@ -92,6 +93,9 @@ fn invalidates_counts(method: &str) -> bool {
                 | "tokenCiphertext"
                 | "resealTokenCiphertext"
         );
+    }
+    if let Some(name) = method.strip_prefix("store.chesscom.") {
+        return !matches!(name, "accounts" | "archives");
     }
     method.starts_with("store.import.") || method.starts_with("store.debug.")
 }
@@ -311,9 +315,10 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Result<Value> {
         "store.debug.query" if debug::enabled() => return debug::query(ctx.db, args),
         _ => {}
     }
-    let modules: [Dispatch; 11] = [
+    let modules: [Dispatch; 12] = [
         migrations::call,
         games::call,
+        chesscom::call,
         library::call,
         reviews::call,
         runs::call,

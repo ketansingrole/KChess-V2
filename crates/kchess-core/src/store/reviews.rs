@@ -340,7 +340,9 @@ fn games_to_review(db: &Connection, accounts: &[String], since: f64, limit: f64)
     }
     let marks = vec!["?"; accounts.len()].join(", ");
     let sql = format!(
-        "SELECT g.id, g.account, g.moves, g.pgn, g.perf, g.createdAt, c.id IS NOT NULL AS checked
+        // A Chess.com game (`cc-`) has no Lichess analysis to look up: it counts as checked.
+        "SELECT g.id, g.account, g.moves, g.pgn, g.perf, g.createdAt,
+           (c.id IS NOT NULL OR substr(g.id, 1, 3) = 'cc-') AS checked
          FROM games g
          LEFT JOIN lichess_review_checks c ON c.id = g.id
          WHERE g.account COLLATE NOCASE IN ({marks}) AND g.createdAt >= ? AND NOT EXISTS (

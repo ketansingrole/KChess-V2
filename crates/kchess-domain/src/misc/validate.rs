@@ -153,6 +153,27 @@ fn username(text: &str, path: &str) -> Checked<String> {
     Ok(trimmed.to_owned())
 }
 
+/// The account synced games are kept under: a Lichess username, or a Chess.com player's
+/// `name@chess.com`. Trimmed.
+fn game_account(text: &str, path: &str) -> Checked<String> {
+    let trimmed = js::trim(text);
+    matches(trimmed, patterns::game_account, Some(USERNAME), path, "")?;
+    Ok(trimmed.to_owned())
+}
+
+/// A Chess.com username, trimmed.
+fn chesscom_username(text: &str) -> Checked<String> {
+    let trimmed = js::trim(text);
+    matches(
+        trimmed,
+        patterns::chesscom_username,
+        Some("Enter a valid Chess.com username."),
+        "",
+        "",
+    )?;
+    Ok(trimmed.to_owned())
+}
+
 fn game_id(text: &str) -> Checked<()> {
     matches(text, patterns::game_id, Some("Invalid game id."), "", "")
 }
@@ -213,6 +234,16 @@ fn move_list_messages(keys: &[&str], list: Msg) -> Msg {
 fn assert_username(value: J) -> Checked<String> {
     let text: String = decode(value, always!(USERNAME))?;
     username(&text, "")
+}
+
+fn assert_game_account(value: J) -> Checked<String> {
+    let text: String = decode(value, always!(USERNAME))?;
+    game_account(&text, "")
+}
+
+fn assert_chesscom_username(value: J) -> Checked<String> {
+    let text: String = decode(value, always!("Enter a valid Chess.com username."))?;
+    chesscom_username(&text)
 }
 
 fn assert_game_id(value: J) -> Checked<String> {
@@ -779,7 +810,7 @@ fn assert_insights_query(value: J) -> Checked<InsightsQuery> {
         ["days"] => Some("Invalid period."),
         _ => None,
     })?;
-    query.account = username(&query.account, "account")?;
+    query.account = game_account(&query.account, "account")?;
     if let Some(speed) = &query.speed {
         one_of(speed, EXPLORER_SPEEDS, None, "speed")?;
     }
@@ -1665,7 +1696,7 @@ fn assert_review_request(value: J) -> Checked<ReviewRequest> {
             game_id(id)?;
         }
         if let Some(account) = &request.account {
-            request.account = Some(username(account, "account")?);
+            request.account = Some(game_account(account, "account")?);
         }
         if replay::replay_setup_count(variant, &request.fen, &request.moves)
             != Some(request.moves.len())
@@ -1682,7 +1713,7 @@ fn assert_review_request(value: J) -> Checked<ReviewRequest> {
         game_id(id)?;
     }
     if let Some(account) = &request.account {
-        request.account = Some(username(account, "account")?);
+        request.account = Some(game_account(account, "account")?);
     }
     if replay::replay_positions_count(&request.fen, &request.moves) != request.moves.len() + 1 {
         return Err("Invalid game position or move history.".into());
@@ -1805,7 +1836,7 @@ fn assert_game_page_query(value: J) -> Checked<GamePageQuery> {
         _ => None,
     })?;
     if let Some(account) = &query.account {
-        query.account = Some(username(account, "account")?);
+        query.account = Some(game_account(account, "account")?);
     }
     if let Some(search) = query.search.take() {
         let search = search.trim();
@@ -2360,6 +2391,8 @@ validators! {
     "assertRendererError" => assert_renderer_error,
     "assertUsername" => assert_username,
     "assertGameId" => assert_game_id,
+    "assertGameAccount" => assert_game_account,
+    "assertChesscomUsername" => assert_chesscom_username,
     "assertGameIds" => assert_game_ids,
     "assertUci" => assert_uci,
     "assertMoves" => assert_moves,
