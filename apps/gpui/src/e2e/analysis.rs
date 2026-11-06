@@ -21,20 +21,6 @@ fn editor(cx: &mut gpui_kit::TestAppContext) -> Harness {
     app
 }
 
-/// Type into the labelled input of a dialog once it has slid into place.
-fn fill_in_dialog(app: &mut Harness, label: &str, text: &str) {
-    let mut last = None;
-    app.wait_for(&format!("{label:?} to stop moving"), |window, _| {
-        let bounds = window.try_find_by_label(label).map(|input| input.bounds());
-        let still = bounds.is_some() && bounds == last;
-        last = bounds;
-        still
-    });
-    app.click_label(label);
-    app.press("secondary-a");
-    app.type_text(text);
-}
-
 /// Let animations run their course: a dialog that is closing is gone after this.
 pub(super) fn settle(app: &mut Harness) {
     let mut frames = 0;
@@ -47,7 +33,7 @@ pub(super) fn settle(app: &mut Harness) {
 /// Import a FEN or PGN through the analysis board's dialog, and let it close if it will.
 pub(super) fn import(app: &mut Harness, text: &str) {
     app.click("analysis-import");
-    fill_in_dialog(app, "FEN, PGN or Lichess link", text);
+    app.fill_in_dialog("FEN, PGN or Lichess link", text);
     app.click("import-run");
     settle(app);
 }
@@ -208,8 +194,7 @@ fn an_import_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     // An illegal move, and a side with seventeen pieces.
     import(&mut app, "1. e4 e5 2. Ke5 *");
     assert!(app.shows("import-run"), "the dialog stays for a correction");
-    fill_in_dialog(
-        &mut app,
+    app.fill_in_dialog(
         "FEN, PGN or Lichess link",
         "rnbqkbnr/pppppppp/8/8/3q4/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     );
@@ -219,8 +204,7 @@ fn an_import_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.shows("tree-e2e4"));
 
     // A valid position closes it, and play goes on from there: only this king can reach d2.
-    fill_in_dialog(
-        &mut app,
+    app.fill_in_dialog(
         "FEN, PGN or Lichess link",
         "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
     );
@@ -844,8 +828,7 @@ fn a_variant_game_is_played_by_its_own_rules(cx: &mut gpui_kit::TestAppContext) 
     import(&mut app, "[Variant \"Bughouse\"]\n\n1. e4 d5 2. exd5 *");
     assert!(app.shows("import-run"), "the dialog stays");
     assert!(!app.shows("tree-e2e4"));
-    fill_in_dialog(
-        &mut app,
+    app.fill_in_dialog(
         "FEN, PGN or Lichess link",
         "[Variant \"Atomic\"]\n\n1. e4 d5 2. exd5 *",
     );
