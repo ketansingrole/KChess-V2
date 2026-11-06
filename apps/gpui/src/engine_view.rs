@@ -167,7 +167,7 @@ pub fn engine_lines(
                             .font_features(crate::widgets::tabular())
                             .text_center()
                             .cursor_pointer()
-                            .pressable_fill(tint(palette.primary, 24.), &palette)
+                            .pressable_fill(tint(palette.primary, 24.), palette)
                             .on_click({
                                 let on_play = on_play.clone();
                                 move |_, window, cx| on_play(&eval_pv, 0, window, cx)
@@ -188,7 +188,7 @@ pub fn engine_lines(
                                 .rounded(radii::XS)
                                 .text_color(palette.toned)
                                 .cursor_pointer()
-                                .pressable_fill(tint(palette.primary, 24.), &palette)
+                                .pressable_fill(tint(palette.primary, 24.), palette)
                                 .on_click(move |_, window, cx| on_play(&pv, at, window, cx))
                                 .child(crate::notation::shown(
                                     &played.label,

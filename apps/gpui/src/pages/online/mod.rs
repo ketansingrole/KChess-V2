@@ -543,7 +543,7 @@ impl OnlinePage {
                     })
                     .text_color(palette.text)
                     .cursor_pointer()
-                    .when(!chosen, |cell| cell.pressable_tile(&palette))
+                    .when(!chosen, |cell| cell.pressable_tile(palette))
                     .on_click(set(|form, value| form.minutes = value, *minutes))
                     .child(
                         div()

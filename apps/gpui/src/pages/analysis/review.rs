@@ -1123,7 +1123,7 @@ impl AnalysisPage {
                                 button
                                     .text_color(color)
                                     .cursor_pointer()
-                                    .pressable(&palette)
+                                    .pressable(palette)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.next_labelled(side, kind, cx)
                                     }))

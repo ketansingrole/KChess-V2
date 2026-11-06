@@ -631,7 +631,7 @@ fn duels(detail: &Value, palette: &Palette) -> Option<Div> {
                     .rounded(radii::MD)
                     .text_size(px(13.))
                     .cursor_pointer()
-                    .pressable(&palette)
+                    .pressable(palette)
                     .on_click(move |_, window, cx| crate::shell::watch_game(&id, window, cx))
                     .child(
                         v_flex()

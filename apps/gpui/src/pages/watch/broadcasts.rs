@@ -743,7 +743,7 @@ impl WatchPage {
                     .border_color(palette.border)
                     .bg(palette.elevated)
                     .cursor_pointer()
-                    .pressable_card(&palette)
+                    .pressable_card(palette)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.broadcasts.select_game(id.clone(), cx);
                         this.engine_changed(cx);
@@ -951,7 +951,7 @@ impl WatchPage {
                                 .bg(palette.elevated)
                                 .when(disabled, |card| card.opacity(0.6))
                                 .when(!disabled, |card| {
-                                    card.cursor_pointer().pressable_card(&palette).on_click(
+                                    card.cursor_pointer().pressable_card(palette).on_click(
                                         cx.listener(move |this, _, window, cx| {
                                             this.open_tour(tour.clone(), window, cx)
                                         }),

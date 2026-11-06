@@ -259,7 +259,7 @@ impl Endgames {
             .rounded(radii::XL)
             .bg(palette.elevated)
             .cursor_pointer()
-            .pressable_card(&palette)
+            .pressable_card(palette)
             .on_click(move |_, window, cx| {
                 Self::open(&view, cx);
                 window.refresh();

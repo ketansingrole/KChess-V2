@@ -739,7 +739,7 @@ impl EditorPage {
                         .border_2()
                         .border_color(palette.primary)
                 })
-                .when(!selected, |spare| spare.pressable(&palette))
+                .when(!selected, |spare| spare.pressable(palette))
                 .tooltip(move |window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(label).build(window, cx)
                 })
@@ -780,7 +780,7 @@ impl EditorPage {
                         .border_2()
                         .border_color(palette.primary)
                 })
-                .when(!selected, |spare| spare.pressable(&palette))
+                .when(!selected, |spare| spare.pressable(palette))
                 .tooltip(move |window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(label.clone()).build(window, cx)
                 })

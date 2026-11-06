@@ -327,7 +327,7 @@ fn tile(
         .border_color(palette.border)
         .text_color(palette.highlighted)
         .cursor_pointer()
-        .pressable_tile(&palette)
+        .pressable_tile(palette)
         .on_click(move |_, window, cx| crate::shell::open(page, window, cx))
         .child(
             div()

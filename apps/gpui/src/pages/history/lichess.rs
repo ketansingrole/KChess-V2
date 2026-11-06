@@ -904,7 +904,7 @@ pub fn game_row(
         .rounded(radii::MD)
         .text_size(px(13.))
         .cursor_pointer()
-        .pressable(&palette)
+        .pressable(palette)
         .on_click(move |_, window, cx| select(window, cx))
         .child(
             div()

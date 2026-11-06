@@ -681,7 +681,7 @@ impl WatchPage {
                             .when(!disabled, |row| {
                                 let key = key.clone();
                                 row.cursor_pointer()
-                                    .pressable(&palette)
+                                    .pressable(palette)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.watch_channel(key.clone(), cx)
                                     }))

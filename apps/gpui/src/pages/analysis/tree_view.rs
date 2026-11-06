@@ -161,7 +161,7 @@ impl TreeView<'_> {
                 chip.bg(tint(palette.primary, 30.))
                     .text_color(palette.highlighted)
             })
-            .when(!active, |chip| chip.pressable(&palette))
+            .when(!active, |chip| chip.pressable(palette))
             .on_click({
                 let (page, target) = (page.clone(), target.clone());
                 move |_, _, cx| {

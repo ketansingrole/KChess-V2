@@ -863,7 +863,7 @@ impl OpeningsPage {
                         .rounded(radii::LG)
                         .bg(palette.elevated)
                         .cursor_pointer()
-                        .pressable(&palette)
+                        .pressable(palette)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.show_line(Some(moves.clone()), cx)
                         }))
@@ -1009,7 +1009,7 @@ impl OpeningsPage {
                             .rounded(radii::XS)
                             .cursor_pointer()
                             .when(current, |chip| chip.font_weight(FontWeight::MEDIUM))
-                            .pressable(&palette)
+                            .pressable(palette)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.show_line(Some(upto.clone()), cx)
                             }))

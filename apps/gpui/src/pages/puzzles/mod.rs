@@ -934,7 +934,7 @@ pub(crate) fn status_panel(
                                             pill.role(gpui_kit::Role::Button)
                                                 .aria_label(format!("Train {name}"))
                                                 .cursor_pointer()
-                                                .pressable(&palette)
+                                                .pressable(palette)
                                                 .on_click(move |_, window, cx| {
                                                     train_theme(key.clone(), window, cx)
                                                 })

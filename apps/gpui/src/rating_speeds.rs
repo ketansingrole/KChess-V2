@@ -333,7 +333,7 @@ impl RatingSpeeds {
             .text_size(px(13.))
             .cursor_pointer()
             .when(hidden, |chip| chip.opacity(0.5))
-            .pressable_card(&palette)
+            .pressable_card(palette)
             .role(Role::Button)
             .keyboard_focus(palette.primary)
             .aria_label(speed.name.clone())

@@ -1273,7 +1273,7 @@ impl HistoryPage {
                         })
                         .when(!clock, |row| {
                             row.cursor_pointer()
-                                .pressable(&palette)
+                                .pressable(palette)
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.open_game(opened.clone(), window, cx)
                                 }))
