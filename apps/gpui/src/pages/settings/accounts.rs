@@ -3,7 +3,7 @@
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -32,7 +32,7 @@ fn ask_remove(username: String, connected: bool, window: &mut Window, cx: &mut A
         )
     };
     let handle = cx.global::<AccountsHandle>().0.downgrade();
-    window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+    crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
         let (handle, username) = (handle.clone(), username.clone());
         dialog
             .title(title)
@@ -385,7 +385,7 @@ impl SettingsPage {
 /// Ask before removing a Chess.com player and their games.
 fn ask_remove_chesscom(username: String, window: &mut Window, cx: &mut App) {
     let handle = cx.global::<AccountsHandle>().0.downgrade();
-    window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+    crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
         let (handle, username) = (handle.clone(), username.clone());
         dialog
             .title("Remove this Chess.com player?")

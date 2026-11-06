@@ -38,7 +38,7 @@ impl NameDialog {
             done: Rc::new(done),
         });
         let input = view.read(cx).input.clone();
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::widgets::open_dialog(window, cx, move |dialog, _, _| {
             let submit = view.clone();
             dialog
                 .title(title)

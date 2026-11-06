@@ -551,7 +551,7 @@ impl Render for GameOptions {
 
 /// Open the dialog over the window.
 pub fn open(options: Entity<GameOptions>, window: &mut Window, cx: &mut App) {
-    window.open_dialog(cx, move |dialog, _, _| {
+    crate::widgets::open_dialog(window, cx, move |dialog, _, _| {
         dialog
             .title("New game against Stockfish")
             .w(px(512.))

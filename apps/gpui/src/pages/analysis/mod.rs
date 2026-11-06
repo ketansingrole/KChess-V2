@@ -1804,7 +1804,7 @@ impl AnalysisPage {
             .update(cx, |text, cx| text.set_value("", window, cx));
         let page = cx.entity().downgrade();
         let import = self.import.clone();
-        window.open_dialog(cx, move |dialog, _, cx| {
+        crate::widgets::open_dialog(window, cx, move |dialog, _, cx| {
             let (error, importing) = page.upgrade().map_or((None, false), |page| {
                 let page = page.read(cx);
                 (page.import_error.clone(), page.importing.is_some())

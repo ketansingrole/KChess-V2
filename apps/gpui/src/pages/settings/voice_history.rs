@@ -268,7 +268,7 @@ impl VoiceHistory {
 
     fn ask_clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let this = this.clone();
             dialog
                 .title("Clear voice history?")

@@ -716,7 +716,7 @@ impl StudyBar {
             return;
         };
         let details = cx.new(|cx| GameDetails::new(analysis, window, cx));
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::widgets::open_dialog(window, cx, move |dialog, _, _| {
             dialog
                 .title("Game details")
                 .w(px(512.))

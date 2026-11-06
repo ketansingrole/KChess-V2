@@ -1,7 +1,7 @@
 //! The keyboard shortcuts, listed in a dialog (View → Keyboard Shortcuts, ⌘/ or Quick Pick): the
 //! app's, and the keys the boards take while no text field has them.
 
-use gpui_kit::component::{WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 
 use crate::theme::Palette;
@@ -101,7 +101,7 @@ pub(crate) fn groups() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
 
 /// Open the list over the window.
 pub fn open(window: &mut Window, cx: &mut App) {
-    window.open_dialog(cx, move |dialog, window, cx| {
+    crate::widgets::open_dialog(window, cx, move |dialog, window, cx| {
         let palette = *cx.global::<Palette>();
         // A short window scrolls the list rather than cut it off.
         let room = (window.viewport_size().height - px(180.)).max(px(160.));

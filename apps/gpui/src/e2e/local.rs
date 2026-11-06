@@ -660,3 +660,43 @@ fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
     });
     assert!(started.elapsed() < std::time::Duration::from_millis(2_900));
 }
+
+/// A dialog a key opened (⌘N here) stands at once, as a command repeated all day should; one a
+/// click opened settles in from just above its place. The entrance runs on the test's clock, so
+/// it holds still until the test moves the clock.
+#[gpui_kit::test]
+fn a_dialog_opened_by_a_key_appears_at_once(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = board(cx);
+    app.cx.update(|cx| cx.set_reduce_motion(false));
+    let settle = |app: &mut Harness| {
+        app.cx
+            .executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        app.cx.run_until_parked();
+    };
+
+    app.press(if cfg!(target_os = "macos") {
+        "cmd-n"
+    } else {
+        "ctrl-n"
+    });
+    let opened = app.find("start-local").bounds();
+    settle(&mut app);
+    assert_eq!(
+        app.find("start-local").bounds(),
+        opened,
+        "at rest when it opened"
+    );
+    app.click("cancel-local");
+    settle(&mut app);
+    app.wait_gone("start-local");
+
+    app.click("local-new");
+    let opened = app.find("start-local").bounds();
+    settle(&mut app);
+    let rest = app.find("start-local").bounds();
+    assert!(
+        rest.origin.y > opened.origin.y && rest.origin.y - opened.origin.y < gpui_kit::px(8.),
+        "settles a few pixels down: {opened:?} to {rest:?}"
+    );
+}

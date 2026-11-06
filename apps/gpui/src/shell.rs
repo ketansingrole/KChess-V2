@@ -826,7 +826,7 @@ pub fn replace_analysis(
         run(&*load, window, cx);
         return;
     }
-    window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+    crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
         let (load, run) = (load.clone(), run.clone());
         dialog
             .title("Replace the unsaved analysis?")
