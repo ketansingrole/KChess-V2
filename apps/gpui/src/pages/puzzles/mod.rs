@@ -1736,7 +1736,7 @@ impl PuzzlesPage {
         }
         let again = Action::Rush(RushAction::Again);
         if matches!(event.keystroke.key.as_str(), "enter" | "space")
-            && self.focus.is_focused(window)
+            && crate::board::page_has_keys(&self.focus, window, cx)
             && self.actions(cx).contains(&again)
         {
             self.act(again, cx);
@@ -1748,14 +1748,15 @@ impl PuzzlesPage {
             && self.shown_board(cx).is_some_and(|(board, _)| {
                 let board = board.read(cx);
                 board.over()
-                    && (self.focus.is_focused(window) || board.move_field_focused(window, cx))
+                    && (crate::board::page_has_keys(&self.focus, window, cx)
+                        || board.move_field_focused(window, cx))
             })
         {
             self.act(Action::Next, cx);
             cx.stop_propagation();
             return;
         }
-        if !self.focus.is_focused(window) {
+        if !crate::board::page_has_keys(&self.focus, window, cx) {
             return;
         }
         // A finished puzzle's moves step back and forth, as a game's do.

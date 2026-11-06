@@ -18,7 +18,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
             .execute("DELETE FROM usage", [])
             .map(|_| Value::Null)
             .map_err(db_err),
-        "store.usage.usageReport" => usage_report(db),
+        "store.usage.usageReport" => usage_report(ctx),
         _ => return None,
     };
     Some(result)
@@ -50,7 +50,8 @@ fn flush_usage(db: &Connection, rows: &Value) -> Result<Value> {
 
 /// The database part of `usageReport`: per-account totals and kinds, the storage each account
 /// occupies in games and cached responses, and the earliest counting time.
-fn usage_report(db: &Connection) -> Result<Value> {
+fn usage_report(ctx: &StoreContext) -> Result<Value> {
+    let db = ctx.db;
     let mut accounts = Map::new();
     let mut storage = Map::new();
     let mut since: Option<f64> = None;
@@ -84,25 +85,7 @@ fn usage_report(db: &Connection) -> Result<Value> {
         since = Some(since.map_or(started as f64, |s| s.min(started as f64)));
     }
 
-    let mut statement = db
-        .prepare(
-            "SELECT account, COUNT(*) AS games,
-               SUM(LENGTH(id) + LENGTH(status) + LENGTH(speed) + LENGTH(perf) + LENGTH(opponent)
-                 + COALESCE(LENGTH(opening), 0) + LENGTH(moves) + COALESCE(LENGTH(pgn), 0) + 64) AS bytes
-             FROM games GROUP BY account",
-        )
-        .map_err(db_err)?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, i64>(2)?,
-            ))
-        })
-        .map_err(db_err)?;
-    for row in rows {
-        let (account, games, bytes) = row.map_err(db_err)?;
+    for (account, games, bytes) in game_storage(ctx)? {
         storage.insert(
             account.to_lowercase(),
             json!({ "games": games, "bytes": bytes, "cacheBytes": 0 }),
@@ -134,6 +117,32 @@ fn usage_report(db: &Connection) -> Result<Value> {
         object.insert("since".into(), json!(started));
     }
     Ok(report)
+}
+
+/// Each account's games and the bytes they take. Summing them reads every game's row, moves and
+/// PGN included, so the sums are kept until the games change; `octet_length` reads each value's
+/// size from its row header instead of decoding the text.
+fn game_storage(ctx: &StoreContext) -> Result<Vec<(String, i64, i64)>> {
+    if let Some(rows) = ctx.cache.storage() {
+        return Ok(rows);
+    }
+    let mut statement = ctx
+        .db
+        .prepare(
+            "SELECT account, COUNT(*) AS games,
+               SUM(octet_length(id) + octet_length(status) + octet_length(speed)
+                 + octet_length(perf) + octet_length(opponent) + COALESCE(octet_length(opening), 0)
+                 + octet_length(moves) + COALESCE(octet_length(pgn), 0) + 64) AS bytes
+             FROM games GROUP BY account",
+        )
+        .map_err(db_err)?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .map_err(db_err)?
+        .collect::<std::result::Result<Vec<(String, i64, i64)>, _>>()
+        .map_err(db_err)?;
+    ctx.cache.remember_storage(&rows);
+    Ok(rows)
 }
 
 /// `map[key] += delta` for an integer counter.

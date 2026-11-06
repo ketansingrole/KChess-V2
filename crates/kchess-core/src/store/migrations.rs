@@ -255,6 +255,11 @@ pub const MIGRATIONS: &[&str] = &[
     complete INTEGER NOT NULL,
     PRIMARY KEY (username, month)
   );"#,
+    // The library's aggregates (the overview's records by player and against tracked players, a
+    // page total filtered by rated or searched by opponent or opening) read only these columns:
+    // covered by this index they scan it instead of every game's row with its moves and PGN.
+    r#"CREATE INDEX idx_games_summary ON games (account COLLATE NOCASE, opponent COLLATE NOCASE,
+    color, winner, rated, opening);"#,
 ];
 
 fn storage_error(cause: rusqlite::Error) -> CoreError {
