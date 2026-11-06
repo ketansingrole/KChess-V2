@@ -19,6 +19,7 @@ use crate::online::{OnlineHandle, OnlineState, Phase};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, panel_style};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 
 /// The player may touch pieces: the game is on, at its last move.
@@ -534,7 +535,7 @@ impl OnlinePage {
                         .keyboard_focus(palette.primary)
                         .aria_label(link.clone())
                         .cursor_pointer()
-                        .hover(|name| name.underline())
+                        .pressable_link()
                         .on_click(move |_, window, cx| crate::shell::open_player(&link, window, cx))
                         .child(name)
                         .into_any_element()

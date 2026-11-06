@@ -147,6 +147,17 @@ impl Palette {
             loss: c("--ui-loss"),
         }
     }
+
+    /// A hover `fill` a step stronger, for while it is pressed: a translucent tint half as
+    /// opaque again, a solid color with a little of the text color mixed in (darker on light
+    /// themes, lighter on dark ones).
+    pub fn pressed(&self, fill: Hsla) -> Hsla {
+        if fill.a < 1. {
+            fill.alpha((fill.a * 1.5).min(1.))
+        } else {
+            fill.blend(self.text.opacity(0.1))
+        }
+    }
 }
 
 /// A review judgment's colour (`--judgment-*`, Lichess's): inaccuracy, mistake or blunder.

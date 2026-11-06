@@ -35,6 +35,7 @@ use crate::game::rules;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, columns};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -714,12 +715,15 @@ fn option(
                 .border_1()
                 .border_color(palette.border)
                 .text_color(palette.text_muted)
-                .hover(|option| {
-                    option
-                        .border_color(palette.border_accented)
-                        .bg(palette.accented)
-                        .text_color(palette.toned)
-                })
+                .press(
+                    |option| {
+                        option
+                            .border_color(palette.border_accented)
+                            .bg(palette.accented)
+                            .text_color(palette.toned)
+                    },
+                    |option| option.bg(palette.pressed(palette.accented)),
+                )
         })
         .on_click(move |_, _, cx| choose(cx))
         .child(picture)

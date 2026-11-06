@@ -15,6 +15,7 @@ use crate::board::{BoardState, ChessBoard};
 use crate::game::rules;
 use crate::pages::players::player_link;
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Look};
 
 /// "Starts in 5 min", "12 min left", "Next round in 2 min", "Finished".
@@ -630,7 +631,7 @@ fn duels(detail: &Value, palette: &Palette) -> Option<Div> {
                     .rounded(radii::MD)
                     .text_size(px(13.))
                     .cursor_pointer()
-                    .hover(|row| row.bg(palette.accented))
+                    .pressable(palette)
                     .on_click(move |_, window, cx| crate::shell::watch_game(&id, window, cx))
                     .child(
                         v_flex()
