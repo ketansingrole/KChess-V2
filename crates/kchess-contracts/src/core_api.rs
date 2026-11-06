@@ -102,6 +102,26 @@ pub fn methods() -> Vec<Method> {
         method("removeAccount", "", vec![req("username")]),
         method("syncGames", "", vec![opt("username")]),
         method(
+            "chesscomAccounts",
+            "The Chess.com players whose games are synced, with when each last synced.",
+            vec![],
+        ),
+        method(
+            "addChesscomAccount",
+            "Sync a Chess.com player's games (by username; Chess.com needs no login).",
+            vec![req("username")],
+        ),
+        method(
+            "removeChesscomAccount",
+            "Stop syncing a Chess.com player and delete their games.",
+            vec![req("username")],
+        ),
+        method(
+            "syncChesscomGames",
+            "Download new games of one Chess.com player, or of every one.",
+            vec![opt("username")],
+        ),
+        method(
             "gamePage",
             "Filtered, bounded library rows; full PGN is fetched separately.",
             vec![req("query")],

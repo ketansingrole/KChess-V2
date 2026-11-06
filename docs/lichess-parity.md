@@ -140,6 +140,10 @@ can add them as a friend, challenge them or watch their current game.
   inaccuracies, mistakes and blunders from reviewed games. Variant games are counted apart from
   standard chess, with a Variant choice once you have played one. Everything is worked out
   locally from synced games.
+- **Chess.com games**: a Chess.com username added in Settings → Accounts syncs its public games
+  from Chess.com's public API (it needs no login) into History, the background reviews, Insights
+  and mistake drills. Their speeds, variants and endings are named as Lichess names them, so both
+  sites' games are read alike; bughouse and other rules KChess cannot replay are left out.
 
 ## Not possible, and why
 

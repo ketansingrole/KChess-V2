@@ -351,7 +351,7 @@ fn players_with_games_to_sync_are_marked(cx: &mut gpui_kit::TestAppContext) {
 
 #[gpui_kit::test]
 fn insights_without_games_lead_to_following_or_analysis(cx: &mut gpui_kit::TestAppContext) {
-    let mut app = open(cx, "Lichess insights", true);
+    let mut app = open(cx, "Insights", true);
     // With no games there is nothing to filter.
     app.find("insights-follow");
     assert!(app.with_window(|window, _| {
@@ -360,7 +360,7 @@ fn insights_without_games_lead_to_following_or_analysis(cx: &mut gpui_kit::TestA
     }));
     app.click("insights-analyse");
     assert_eq!(page(&mut app), Some(Page::Analysis));
-    app.open("Lichess insights");
+    app.open("Insights");
     app.click("insights-follow");
     assert_eq!(page(&mut app), Some(Page::Friends));
 }

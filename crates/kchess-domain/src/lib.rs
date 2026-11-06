@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod calendar;
+pub mod chesscom;
 pub mod coach;
 pub mod error;
 pub use error::DomainError;

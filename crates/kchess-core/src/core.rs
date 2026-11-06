@@ -69,6 +69,8 @@ pub struct Core {
     pub(crate) ai: crate::ai::Ai,
     /// The Lichess services (client, online session, spectator, explorer, cloud evaluation).
     pub(crate) services: Services,
+    /// Chess.com game sync.
+    pub(crate) chesscom: crate::chesscom::Chesscom,
     /// Offline speech recognition through the `kchess-voice` helper.
     pub(crate) voice: Arc<VoiceRecognizer>,
     /// The client listening through `voice`: one microphone at a time. Held across each
@@ -164,6 +166,17 @@ fn test_lichess_origin() -> Option<String> {
         .filter(|origin| !origin.is_empty())
 }
 
+/// A test-only Chess.com origin (`KCHESS_TEST_CHESSCOM_BASE`), honoured like `test_lichess_origin`.
+fn test_chesscom_origin() -> Option<String> {
+    if !debug::enabled() {
+        return None;
+    }
+    std::env::var("KCHESS_TEST_CHESSCOM_BASE")
+        .ok()
+        .map(|origin| origin.trim_end_matches('/').to_string())
+        .filter(|origin| !origin.is_empty())
+}
+
 /// A test-only OpenAI origin (`KCHESS_TEST_OPENAI_BASE`), honoured like `test_lichess_origin`.
 fn test_openai_origin() -> Option<String> {
     if !debug::enabled() {
@@ -254,6 +267,12 @@ impl Core {
             config.voice_helper_path.clone(),
             crate::voice::model_dir(&config.data_dir),
         ));
+        let chesscom = crate::chesscom::Chesscom::new(
+            Arc::clone(&database),
+            Arc::clone(&services_host),
+            test_chesscom_origin(),
+            CancellationToken::new(),
+        );
         let data_dir = config.data_dir.clone();
         Ok(Core {
             data_dir,
@@ -274,6 +293,7 @@ impl Core {
             analysis,
             reviews,
             ai: crate::ai::Ai::new(test_openai_origin(), CancellationToken::new())?,
+            chesscom,
             services,
             usage,
             installs: Mutex::new(HashMap::new()),

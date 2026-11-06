@@ -550,7 +550,7 @@ impl Mistakes {
                                     .link()
                                     .xsmall()
                                     .icon(icon("chart-pie"))
-                                    .label("Lichess insights")
+                                    .label("Insights")
                                     .on_click(|_, window, cx| {
                                         crate::shell::open(Page::Insights, window, cx)
                                     }),
