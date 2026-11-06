@@ -102,7 +102,7 @@ pub fn read(dir: &Path) -> Option<WindowState> {
 fn write(dir: &Path, state: &WindowState) {
     let target = file(dir);
     let temp = target.with_extension("json.tmp");
-    let text = serde_json::to_string(state).unwrap_or_default() + "\n";
+    let text = format!("{}\n", serde_json::to_string(state).unwrap_or_default());
     if let Err(cause) = std::fs::write(&temp, text).and_then(|_| std::fs::rename(&temp, &target)) {
         crate::log::write(
             kchess_core::Level::Warn,

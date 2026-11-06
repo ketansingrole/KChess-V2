@@ -295,7 +295,7 @@ impl PuzzleService {
             .with_db(move |db| {
                 attempts::record(db, &attempt, queries::now_ms())?;
                 let query = attempts::ProgressQuery {
-                    today: attempt.day.clone(),
+                    today: attempt.day,
                     limit: attempts::RECENT,
                 };
                 Ok(attempts::progress(db, &query)?)

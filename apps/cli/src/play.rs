@@ -165,8 +165,7 @@ impl Session<'_> {
         kchess_games::rules(
             "setupPgn",
             &[self.state()["setup"].clone(), json!(self.moves()), headers],
-        )
-        .map_err(|cause| cause.to_string())?
+        )?
         .as_str()
         .map(str::to_string)
         .ok_or_else(|| "The game could not be written as PGN.".to_string())
@@ -293,8 +292,7 @@ impl Session<'_> {
                 (kchess_games::random_unit() * 960.0) as i64
             ))
         } else {
-            kchess_games::rules("defaultFen", &[json!(variant)])
-                .map_err(|cause| cause.to_string())?
+            kchess_games::rules("defaultFen", &[json!(variant)])?
         };
         self.reset_history().await;
         let setup = json!({ "variant": variant, "fen": fen });

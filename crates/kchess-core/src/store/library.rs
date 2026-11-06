@@ -1292,7 +1292,7 @@ mod tests {
         let added = run(
             &db,
             "store.library.addMistakes",
-            &[key.clone(), json!("white"), json!(1)],
+            &[key, json!("white"), json!(1)],
         )
         .expect("add");
         assert_eq!(added["added"], json!(1), "{added}");

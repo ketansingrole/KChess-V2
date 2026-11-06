@@ -136,9 +136,7 @@ struct Inner {
     control: Mutex<Control>,
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
-}
+use crate::tasks::lock;
 
 /// Watches one game or TV channel, or a broadcast round, at a time.
 #[derive(Clone)]

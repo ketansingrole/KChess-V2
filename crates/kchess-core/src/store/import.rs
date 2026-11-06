@@ -545,9 +545,8 @@ fn importable(game: &Value) -> bool {
 
 /// `normalizeSettings`: the stored settings over the defaults, with the older forms converted.
 pub fn normalize_settings(stored: &Map<String, Value>) -> Result<Map<String, Value>> {
-    let defaults = match serde_json::to_value(default_settings()) {
-        Ok(Value::Object(map)) => map,
-        _ => return Err(CoreError::new("The default settings are not an object.")),
+    let Ok(Value::Object(defaults)) = serde_json::to_value(default_settings()) else {
+        return Err(CoreError::new("The default settings are not an object."));
     };
     let mut settings = defaults.clone();
     for (key, value) in stored {

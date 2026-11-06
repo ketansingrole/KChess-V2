@@ -285,6 +285,13 @@ fn a_failed_timeline_can_be_tried_again(cx: &mut gpui_kit::TestAppContext) {
 fn following_works_while_games_sync(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, lichess) = Harness::signed_in(cx, false);
     app.open("Following");
+    // The sync held below must be a new one. Signing in syncs the account too, and a sync asked
+    // for while that one runs joins it: on Windows CI (PR #85) the sign-in's sync was past its
+    // games download, so the joined sync ended at once, Sync all never waited and the test
+    // timed out.
+    app.wait_for("the sign-in's sync to end", |_, cx| {
+        !crate::accounts::handle(cx).read(cx).working()
+    });
     lichess.lock().hold_games = true;
     app.with_window(|window, cx| {
         crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.sync(None, window, cx))
