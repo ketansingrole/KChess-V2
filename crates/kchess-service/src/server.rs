@@ -12,15 +12,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use kchess_core::connection::ClientInfo;
 use kchess_core::{Config, Core, Host, Level};
 use serde_json::Value;
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::{Notify, Semaphore, mpsc};
 use tokio::task::AbortHandle;
 
 use crate::discovery::{self, CoreInfo};
-use crate::protocol::{self, ClientSummary, Frame, RefuseReason, read_frame, write_frame};
+use crate::protocol::{
+    self, ClientSummary, Frame, MAX_HELLO, RefuseReason, read_frame, read_frame_within, write_frame,
+};
 use crate::transport::{self, Listener, Stream};
 
 /// How long a client has to say `hello`.
 const HELLO_DEADLINE: Duration = Duration::from_secs(5);
+/// Connections that have not yet sent their `hello`; one past this is closed at once.
+const HANDSHAKES: usize = 32;
 /// Frames waiting for a client that reads slowly.
 const QUEUE: usize = 1024;
 /// Progress events a slow client may miss: the next one carries the whole state. Their last,
@@ -135,6 +139,7 @@ impl Host for ServiceHost {
             let at = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |since| since.as_millis());
+            let message = kchess_core::redact::redact(message);
             let _ = writeln!(file, "{at} {} [{scope}] {message}", level.name());
         }
     }
@@ -176,6 +181,8 @@ struct State {
     protocol: String,
     /// Connected clients.
     active: AtomicUsize,
+    /// Room for connections still in their handshake (`HANDSHAKES`).
+    handshakes: Semaphore,
     /// A client connected or left: the idle countdown starts or stops.
     changed: Notify,
     shutdown: Notify,
@@ -201,13 +208,17 @@ pub async fn serve(options: ServeOptions) -> Result<(), String> {
     core.serve_connections();
     let core = Arc::new(core);
 
-    let token = discovery::new_token().map_err(|error| format!("No token: {error}"))?;
-    discovery::write_private(&profile.join(discovery::TOKEN_FILE), token.as_bytes())
-        .map_err(|error| format!("The token could not be written: {error}"))?;
+    // The profile's lock is held (`Core::open`), so any discovery files are a dead core's: gone
+    // before binding, a client never sends a token to whatever holds the socket's name instead.
+    let _ = std::fs::remove_file(profile.join(discovery::INFO_FILE));
+    let _ = std::fs::remove_file(profile.join(discovery::TOKEN_FILE));
     let socket = discovery::socket_path(&profile)
         .map_err(|error| format!("The socket folder is unavailable: {error}"))?;
     let listener =
         Listener::bind(&socket).map_err(|error| format!("The socket could not open: {error}"))?;
+    let token = discovery::new_token().map_err(|error| format!("No token: {error}"))?;
+    discovery::write_private(&profile.join(discovery::TOKEN_FILE), token.as_bytes())
+        .map_err(|error| format!("The token could not be written: {error}"))?;
     let info = CoreInfo {
         pid: std::process::id(),
         socket: socket.to_string_lossy().to_string(),
@@ -236,6 +247,7 @@ pub async fn serve(options: ServeOptions) -> Result<(), String> {
         release: info.release.clone(),
         protocol: info.protocol.clone(),
         active: AtomicUsize::new(0),
+        handshakes: Semaphore::new(HANDSHAKES),
         changed: Notify::new(),
         shutdown: Notify::new(),
     });
@@ -309,11 +321,16 @@ async fn idle_watch(state: Arc<State>, idle: Duration) {
 
 /// One client, from `hello` to its last frame.
 async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
+    let Ok(handshake) = state.handshakes.try_acquire() else {
+        return;
+    };
     let (mut reader, mut writer) = tokio::io::split(stream);
-    let Ok(Ok(Some(hello))) = tokio::time::timeout(HELLO_DEADLINE, read_frame(&mut reader)).await
+    let Ok(Ok(Some(hello))) =
+        tokio::time::timeout(HELLO_DEADLINE, read_frame_within(&mut reader, MAX_HELLO)).await
     else {
         return;
     };
+    drop(handshake);
     let Frame::Hello {
         token,
         kind,
@@ -449,10 +466,19 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
             Frame::Call { id, method, args } => {
                 let (core, sender, running) =
                     (Arc::clone(&state.core), sender.clone(), Arc::clone(&calls));
+                // The call is registered before it can finish (the lock is held over the spawn),
+                // so a quick call never leaves its handle behind, and only one of the call and a
+                // `Cancel` answers: whichever takes the handle out.
+                let Ok(mut registered) = calls.lock() else {
+                    break;
+                };
                 let task = tokio::spawn(async move {
                     let answer = core.call_client(connection, &method, args).await;
-                    if let Ok(mut running) = running.lock() {
-                        running.remove(&id);
+                    let still_ours = running
+                        .lock()
+                        .is_ok_and(|mut running| running.remove(&id).is_some());
+                    if !still_ours {
+                        return;
                     }
                     let frame = match answer {
                         Ok(value) => Frame::Result {
@@ -470,9 +496,11 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                     };
                     let _ = sender.send(frame).await;
                 });
-                if let Ok(mut running) = calls.lock() {
-                    running.insert(id, task.abort_handle());
+                // A reused id replaces nothing still running: the earlier call is stopped.
+                if let Some(earlier) = registered.insert(id, task.abort_handle()) {
+                    earlier.abort();
                 }
+                drop(registered);
             }
             Frame::Cancel { id } => {
                 let task = calls
