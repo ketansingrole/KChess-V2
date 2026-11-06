@@ -543,6 +543,33 @@ impl PositionExplorer {
         .detach();
     }
 
+    /// Guess a master game's moves on Practice, as the side that won (White after a draw).
+    fn guess_game(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
+        let id = game["id"].as_str().unwrap_or_default().to_string();
+        let call = cx.global::<AppCore>().call("mastersGame", vec![json!(id)]);
+        let side = if game["winner"] == json!("black") {
+            Color::Black
+        } else {
+            Color::White
+        };
+        cx.spawn_in(window, async move |_, cx| {
+            let outcome = call.await;
+            let _ = cx.update(|window, cx| match outcome {
+                Ok(pgn) => crate::shell::guess_moves(
+                    pgn.as_str().unwrap_or_default(),
+                    Some(side),
+                    window,
+                    cx,
+                ),
+                Err(cause) => window.push_notification(
+                    Notification::error(cause.message).title("Could not open the game"),
+                    cx,
+                ),
+            });
+        })
+        .detach();
+    }
+
     fn preview(&mut self, fen: &str, uci: &str, cx: &mut Context<Self>) -> Entity<ChessBoard> {
         let key = format!("{fen} {uci}");
         self.previews
@@ -878,11 +905,8 @@ impl PositionExplorer {
         let list = result["games"]
             .as_array()
             .filter(|games| !games.is_empty())?;
-        let title = if result["kind"] == json!("masters") {
-            "Top games"
-        } else {
-            "Recent games"
-        };
+        let masters = result["kind"] == json!("masters");
+        let title = if masters { "Top games" } else { "Recent games" };
         Some(
             v_flex()
                 .gap(px(2.))
@@ -912,7 +936,8 @@ impl PositionExplorer {
                         .unwrap_or_default();
                     let muted = palette.text_muted;
                     let chosen = game.clone();
-                    h_flex()
+                    let guessed = game.clone();
+                    let row = h_flex()
                         .id(("explorer-game", index))
                         .role(Role::Button)
                         .keyboard_focus(palette.primary)
@@ -944,7 +969,24 @@ impl PositionExplorer {
                                 .flex_none()
                                 .text_color(muted)
                                 .child(format!("{score} {when}")),
-                        )
+                        );
+                    // A master game can be guessed through, move by move, on Practice.
+                    h_flex()
+                        .gap(px(2.))
+                        .child(row.flex_1().min_w_0())
+                        .when(masters, |line| {
+                            line.child(
+                                Button::new(("explorer-guess", index))
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(icon("target"))
+                                    .tooltip("Guess the moves")
+                                    .accessibility_label("Guess the moves")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.guess_game(guessed.clone(), window, cx)
+                                    })),
+                            )
+                        })
                 })),
         )
     }

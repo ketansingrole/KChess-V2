@@ -442,9 +442,11 @@ fn line_review_key(fen: &str, moves: &[String]) -> Option<String> {
     if positions.len() < 2 {
         return None;
     }
-    let args = json!([start.fen, moves[..positions.len() - 1]]).to_string();
-    let key: Value =
-        serde_json::from_str(&kchess_domain::api::call("reviewKey", &args).ok()?).ok()?;
+    let key = kchess_domain::api::call_value(
+        "reviewKey",
+        &[json!(start.fen), json!(moves[..positions.len() - 1])],
+    )
+    .ok()?;
     key.as_str().map(str::to_string)
 }
 
@@ -453,11 +455,12 @@ fn line_review_key(fen: &str, moves: &[String]) -> Option<String> {
 /// here whose line it reviews (your side there is the one named "You").
 fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Value> {
     let mut keys: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for item in read_mistakes(db)? {
         let Some((key, _)) = id_of(&item).and_then(|id| id.rsplit_once(':')) else {
             continue;
         };
-        if !keys.iter().any(|known| known == key) {
+        if seen.insert(key.to_string()) {
             keys.push(key.to_string());
         }
     }
