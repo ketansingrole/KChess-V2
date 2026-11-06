@@ -7,7 +7,8 @@
 use std::ops::Range;
 
 use serde_json::{Map, Value, json};
-use shakmaty::{Bitboard, Color, Position, Rank};
+use shakmaty::variant::VariantPosition;
+use shakmaty::{Bitboard, Color, Move, Position, Rank};
 
 use crate::replay;
 use crate::rules;
@@ -610,15 +611,16 @@ pub fn analyse_review(raw: &Value) -> Option<Value> {
     Some(Value::Object(out))
 }
 
-/// `reviewPhases`: each side's accuracy in the opening, middlegame and endgame, worked out like
-/// the game's. The division is a simpler form of Lichess's: the middlegame begins once at most 10
-/// queens, rooks, bishops and knights remain or either side has fewer than 4 pieces left on its
-/// back rank, and the endgame once at most 6 remain. None when the review cannot be analysed.
-pub fn review_phases(raw: &Value) -> Option<Value> {
-    let review = Review::read(raw)?;
-    let analysis = analyse(&review)?;
-    let count = analysis.colors.len();
-    let mut pos = replay::start_of(review.variant, review.fen)?;
+/// Where the middlegame and the endgame begin, in a simpler form of Lichess's division, in a game of `count` plies from `pos`, as ply
+/// indexes (`count` for a phase never reached): the middlegame once at most 10 queens, rooks,
+/// bishops and knights remain or either side has fewer than 4 pieces left on its back rank, the
+/// endgame once at most 6 remain. `next` gives ply `i`'s move in the position before it; None
+/// when a move it needs is not legal there.
+pub fn phase_starts(
+    mut pos: VariantPosition,
+    count: usize,
+    mut next: impl FnMut(&VariantPosition, usize) -> Option<Move>,
+) -> Option<(usize, usize)> {
     let (mut middle, mut end) = (count, count);
     for i in 0..=count {
         let board = pos.board();
@@ -640,9 +642,23 @@ pub fn review_phases(raw: &Value) -> Option<Value> {
         if i == count {
             break;
         }
-        let m = rules::parse_uci(review.moves[i]).and_then(|u| rules::legal_move(&pos, u))?;
+        let m = next(&pos, i)?;
         pos.play_unchecked(m);
     }
+    Some((middle, end))
+}
+
+/// `reviewPhases`: each side's accuracy in the opening, middlegame and endgame, worked out like
+/// the game's, the phases divided by `phase_starts` (a simpler form of Lichess's division). None
+/// when the review cannot be analysed.
+pub fn review_phases(raw: &Value) -> Option<Value> {
+    let review = Review::read(raw)?;
+    let analysis = analyse(&review)?;
+    let count = analysis.colors.len();
+    let start = replay::start_of(review.variant, review.fen)?;
+    let (middle, end) = phase_starts(start, count, |pos, i| {
+        rules::parse_uci(review.moves[i]).and_then(|u| rules::legal_move(pos, u))
+    })?;
     let mut sides = [Map::new(), Map::new()];
     if let Some(weights) = analysis.weights.as_deref() {
         let phases = [
