@@ -246,8 +246,8 @@ pub fn object<'a>(value: &'a Value, name: &str) -> Result<&'a Map<String, Value>
         .ok_or_else(|| CoreError::new(format!("{name} must be an object")))
 }
 
-/// A `kchess_domain` document decoder or encoder by its TypeScript name. Values are JSON, so
-/// the lossless sidecar the TypeScript wrappers send is empty.
+/// A `kchess_domain` document decoder or encoder by name. Values are JSON, so the lossless
+/// sidecar is empty.
 pub fn misc(method: &str, args: Vec<Value>) -> Result<Value> {
     let mut full = vec![json!([])];
     full.extend(args);

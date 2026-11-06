@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::data::data;
 use super::{Out, text_arg, text_of, to_value, value_arg};
 
-/// One rung of the ladder (`EngineLevelInfo`); the data is shared with TypeScript.
+/// One rung of the ladder (`EngineLevelInfo`), from `data/training.json`.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineLevelInfo {

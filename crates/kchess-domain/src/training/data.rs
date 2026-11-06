@@ -1,5 +1,4 @@
-//! The training constants shared with TypeScript (`crates/kchess-domain/data/training.json`), parsed
-//! once. TypeScript imports the same file, so the two cannot drift.
+//! The training constants (`crates/kchess-domain/data/training.json`), parsed once.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
