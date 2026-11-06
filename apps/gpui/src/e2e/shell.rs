@@ -256,6 +256,33 @@ fn the_keyboard_shows_and_hides_the_sidebar(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(app.find("sidebar-toggle").label(), Some("Hide sidebar"));
 }
 
+/// The buttons that have a key say it in their tooltip (`tooltip_with_action`), which reads it
+/// from the window's keymap as this does: the sidebar toggle's ⌃⌘S (Ctrl+B elsewhere), and New's
+/// ⌘N on the game and study pages. (The harness does not register tooltips themselves.)
+#[gpui_kit::test]
+fn tooltips_show_the_keys(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::kbd::Kbd;
+    let mut app = Harness::start(cx);
+    let keys = app.with_window(|window, _| {
+        let key = |action: &dyn gpui_kit::Action| {
+            window
+                .highest_precedence_binding_for_action(action)
+                .and_then(|binding| {
+                    binding
+                        .keystrokes()
+                        .first()
+                        .map(|key| Kbd::format(key.inner()))
+                })
+        };
+        (key(&crate::menu::ToggleSidebar), key(&crate::menu::New))
+    });
+    if cfg!(target_os = "macos") {
+        assert_eq!(keys, (Some("⌃⌘S".into()), Some("⌘N".into())));
+    } else {
+        assert_eq!(keys, (Some("Ctrl+B".into()), Some("Ctrl+N".into())));
+    }
+}
+
 /// A narrow window gives the page the room: the sidebar shows as its rail there, opens for the
 /// moment from its toggle, and a wider window shows it as kept.
 #[gpui_kit::test]

@@ -610,6 +610,7 @@ impl StudiesPage {
                     .primary()
                     .icon(icon("plus"))
                     .label("New study")
+                    .tooltip_with_action("New study", &crate::menu::New, None)
                     .on_click(|_, window, cx| Self::create(window, cx)),
             )
     }

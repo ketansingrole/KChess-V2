@@ -1690,7 +1690,7 @@ impl Workspace {
                     .custom(ghost_neutral(cx))
                     .icon(icon("panel-left"))
                     .size(px(28.))
-                    .tooltip(label)
+                    .tooltip_with_action(label, &crate::menu::ToggleSidebar, None)
                     .accessibility_label(label)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
             ))

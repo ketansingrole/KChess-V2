@@ -1642,6 +1642,7 @@ impl LocalPage {
                             .when(narrow, |button| button.min_w(relative(0.45)))
                             .icon(icon("plus"))
                             .label("New game")
+                            .tooltip_with_action("New game", &crate::menu::New, None)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.open_new_game(window, cx)),
                             ),

@@ -1749,6 +1749,7 @@ impl Render for ComputerPage {
                             .when(narrow, |button| button.min_w(relative(0.45)))
                             .icon(icon("rotate-ccw"))
                             .label("New game")
+                            .tooltip_with_action("New game", &crate::menu::New, None)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.ask(Question::NewGame, window, cx)
                             })),
