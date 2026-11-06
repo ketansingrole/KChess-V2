@@ -320,8 +320,17 @@ impl Core {
 
     /// Run one method for client `connection` (`connect`): what it starts (an analysis, a watch,
     /// voice input) is its own, and its events go to it.
+    ///
+    /// A method that panics fails like any other: its caller (a window, the command line, a
+    /// socket client whose call has no deadline) is answered rather than left waiting forever.
+    /// The panic hook has logged where.
     pub async fn call_as(&self, connection: u64, method: &str, args: Vec<Value>) -> Result<Value> {
-        crate::connection::scope(connection, self.call_unscoped(method, args)).await
+        crate::tasks::caught(crate::connection::scope(
+            connection,
+            self.call_unscoped(method, args),
+        ))
+        .await
+        .unwrap_or_else(|_| Err(CoreError::new(format!("KChess could not finish {method}."))))
     }
 
     /// Run one method a socket client sent: only `CoreApi` methods and `host.reply`. The internal
@@ -446,6 +455,10 @@ impl Core {
             self.capabilities
                 .reply(id, args.get(1).unwrap_or(&Value::Null));
             return Ok(Value::Null);
+        }
+        // Test-only: a method that panics, as a defect would.
+        if method == "debug.panic" && debug::enabled() {
+            panic!("debug.panic");
         }
         // Test-only: ask the host for a capability and return its answer.
         if method == "host.ask" && debug::enabled() {
@@ -765,6 +778,12 @@ impl Core {
             .lock()
             .map_err(|_| CoreError::new("The engine is unavailable."))?
             .insert(id, cancel_tx);
+        // Forgotten however the request ends, a cancelled call included.
+        let _forget = crate::tasks::on_drop(|| {
+            if let Ok(mut installs) = self.installs.lock() {
+                installs.remove(&id);
+            }
+        });
         let mut location = ManagedLocation::new(self.managed_dir(overridden));
         if let Some(url) = &overridden.release_url {
             location.release_url = url.clone();
@@ -776,18 +795,14 @@ impl Core {
             reviews: self.reviews.clone(),
         }));
         location.cancel = Some(cancel_rx);
-        let result = match mutation {
+        match mutation {
             Mutation::Install => install_managed_engine(self.host.as_ref(), &location)
                 .await
                 .and_then(json),
             Mutation::Delete => delete_managed_engine(self.host.as_ref(), &location)
                 .await
                 .map(|()| Value::Null),
-        };
-        if let Ok(mut installs) = self.installs.lock() {
-            installs.remove(&id);
         }
-        result
     }
 
     fn cancel_install(&self, id: u64) {

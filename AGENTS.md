@@ -15,10 +15,10 @@ JavaScript, TypeScript or Node in the repository; do not add any.
   failures with new commits on the branch, not on `main`. Watch CI in the background
   (`gh run watch <id> --exit-status` with the tool's background mode); do not sit idle on it
   unless the next step needs its result.
-- Push straight to `main` only for changes CI skips (documents only: `docs/` and the top-level
-  guides) or when the user asks. Those pushes still run the full `cargo xtask check` (the
-  `.githooks/pre-push` hook, installed by `cargo xtask install-hooks`, enforces it; skip it only on
-  purpose with `KCHESS_SKIP_PRE_PUSH=1`). Never force-push `main`.
+- Documents-only changes go through a pull request too: CI skips its heavy jobs for them, so they
+  merge in a minute. GitHub refuses every push straight to `main`, from anyone: its rulesets
+  require the `ci-passed` check (all of `ci.yml`) and forbid force-pushing or deleting `main` and
+  moving or deleting `v*` tags. Never turn a ruleset off or add a bypass to get past it.
 
 ## Releases and tags
 
@@ -28,7 +28,8 @@ versions, tagging, verification and assets.
 - Creating a release means preparing a **draft**. Publish only when the user asks. A request to
   fix code, build installers or reduce size does not authorize creating or pushing a tag.
 - Versions come from `cargo xtask release-version` (`YEAR.MONTH.COUNTER`, UTC month). Never pick
-  one by hand from stale tags.
+  one by hand from stale tags. It dates the `## Unreleased` notes in `apps/gpui/WHATS_NEW.md` and
+  refuses an empty section; never invent notes to get past it: write what the release brings.
 - Release only a green commit on `origin/main`, after `cargo xtask release-verify`. Push only that
   tag. Never force-push, move, reuse or delete a release tag.
 - A published release is permanent: ship fixes in the next version. Replace assets only while
@@ -84,6 +85,28 @@ versions, tagging, verification and assets.
   names, roles, labels, and live status/error announcements. Update affected
   tests to verify actions and state rather than require discarded explanatory copy.
 - Never send people to a website to finish something KChess can do itself.
+
+## What's new
+
+`apps/gpui/WHATS_NEW.md` is what people see after an update, in the app, on the GitHub release
+and in the App Store. Its readers play chess; they are not developers.
+
+- A change a player would notice adds one line under `## Unreleased`, in the same pull request:
+  `- **Short name**: what they can now do, or what no longer goes wrong.`
+- Write as you would tell a friend who plays chess: everyday words, one or two short sentences,
+  "you" and what it does for them. Name things as the app's own screens and buttons name them.
+- Never mention code, crates, modules, files, APIs, PRs, refactors, tests, CI, tooling, builds,
+  benchmarks, audits or formats a player has no reason to know. Explain a chess term only when
+  the feature is that term (Crazyhouse: "captured pieces join your side").
+  - Not: "Spaced repetition for the repertoire trainer (SM-2 scheduling)."
+  - But: "**Smarter opening practice**: the opening trainer brings back the moves you got wrong
+    until you remember them."
+  - Not: "Fix memory leaks found by retention benchmarks."
+  - But: "**Fixes**: KChess uses less memory over long sessions."
+- Only what is in the build and works. Fold small fixes into one `**Fixes**` line. Changes with
+  nothing a player would see (internal, tests, docs, tooling) add nothing.
+- Extend an existing line when a later change grows the same feature. Never edit a dated
+  section: a published release's notes are permanent too.
 
 ## Reuse existing UI and behavior
 
@@ -143,7 +166,7 @@ versions, tagging, verification and assets.
   run` (`cargo install cargo-nextest`; `.config/nextest.toml`): it runs test binaries in parallel
   where `cargo test` runs them one at a time. The app's tests are the exception: one binary whose
   tests each start GPUI, faster under `cargo test -p kchess-gpui`. CI runs the full `cargo xtask check` on the pull
-  request; a direct push to `main` runs it first (the pre-push hook enforces it). Packaging changes
+  request. Packaging changes
   also need `cargo xtask package` on the platform they touch; CI then packages, builds the Snap and
   runs the Windows upgrade (`ci.yml` `changes`).
 - Run anything that may take over a minute (`cargo xtask check`, the app's tests, packaging) in

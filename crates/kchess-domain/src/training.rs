@@ -1,13 +1,14 @@
 //! Reached through `api::call` (see RUST_MIGRATION.md).
 //!
 //! Training: puzzle runs (Storm, Streak, Rush), puzzle solving, endgame drills, openings, the
-//! client clock, engine levels and UCI `info` lines. Their constants are data shared with
-//! TypeScript (`crates/kchess-domain/data/`).
+//! client clock, engine levels, UCI `info` lines and Guess the move's scoring. Their constants
+//! are data (`crates/kchess-domain/data/`).
 
 mod clock;
 mod data;
 mod endgames;
 mod engine_levels;
+pub mod guess;
 mod lessons;
 pub mod openings;
 mod puzzle;
@@ -54,7 +55,7 @@ pub(super) fn text_arg<'a>(args: &'a [Value], i: usize, name: &str) -> Result<&'
 }
 
 /// Argument `i` as a JavaScript number (`Number(…)`): absent is NaN, and the non-finite values
-/// the TypeScript wrappers send as their text (`"NaN"`, `"Infinity"`) read back the same way.
+/// a caller sends as their text (`"NaN"`, `"Infinity"`) read back the same way.
 pub(super) fn number_arg(args: &[Value], i: usize) -> f64 {
     js::to_number(arg(args, i))
 }
@@ -88,8 +89,8 @@ pub(super) fn text_of(n: f64) -> String {
     }
 }
 
-/// A number result. JSON has no NaN or infinity, so those go out as their text, which the
-/// TypeScript wrappers turn back into numbers.
+/// A number result. JSON has no NaN or infinity, so those go out as their text (`"NaN"`,
+/// `"Infinity"`).
 pub(super) fn num_out(n: f64) -> Value {
     if n.is_finite() {
         Value::from(n)

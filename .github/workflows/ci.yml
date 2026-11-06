@@ -44,7 +44,7 @@ jobs:
       release: ${{ steps.docs.outputs.release }}
       packaging: ${{ steps.diff.outputs.packaging }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -103,20 +103,20 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Install GPUI build libraries
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
       # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: check
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@cargo-llvm-cov
-      - uses: taiki-e/install-action@cargo-nextest
+      - uses: taiki-e/install-action@61b160225e09dfa2ea62afd328f7c2eafb5d2e54 # cargo-llvm-cov
+      - uses: taiki-e/install-action@e1ccb018cd7dae15203b0b410fac02acf205cb1f # cargo-nextest
       - run: rustup component add llvm-tools-preview
       # The official Stockfish, so the tests that need a real engine run (`tests/support`).
       - name: Fetch Stockfish
@@ -129,7 +129,7 @@ jobs:
           cargo xtask fairy-stockfish
           echo "KCHESS_VARIANT_ENGINE_PATH=$PWD/target/fairy-stockfish/bin/fairy-stockfish" >> "$GITHUB_ENV"
       - run: cargo xtask check
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: check-measurements
@@ -142,11 +142,13 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@cargo-deny
+      - uses: taiki-e/install-action@85b8c964f8994926657d167d871f45a4b9d3467d # cargo-deny
       - run: cargo deny check
+      # The fuzz workspace has its own lock file.
+      - run: cargo deny --manifest-path fuzz/Cargo.toml check
 
   # The app on the other platforms: its lints and its unit and end-to-end tests (`src/e2e`,
   # headless). `check` runs them on Linux.
@@ -159,15 +161,15 @@ jobs:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: gpui
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@cargo-nextest
+      - uses: taiki-e/install-action@e1ccb018cd7dae15203b0b410fac02acf205cb1f # cargo-nextest
       - run: cargo clippy -p kchess-gpui -p kchess-cli -p xtask --all-targets --locked -- -D warnings
       # The app's tests under `cargo test`: each starts GPUI, so a process per test (nextest) is slower.
       - run: cargo test -p kchess-gpui --locked
@@ -194,13 +196,13 @@ jobs:
       CARGO_PROFILE_RELEASE_LTO: ${{ needs.changes.outputs.release != 'true' && 'off' || 'fat' }}
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ needs.changes.outputs.release != 'true' && '16' || '1' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Install GPUI build libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ${{ needs.changes.outputs.release == 'true' && 'package' || 'package-fast' }}
           key: ${{ runner.os }}-${{ runner.arch }}
@@ -211,7 +213,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           # Release packages are made by the Release workflow; CI's are ad hoc signed.
           KCHESS_SIGN_IDENTITY: ''
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: gpui-${{ matrix.os }}
           path: apps/gpui/dist/
@@ -232,3 +234,18 @@ jobs:
     uses: ./.github/workflows/windows-upgrade.yml
     with:
       fast: ${{ needs.changes.outputs.release != 'true' }}
+
+  # The one status check `main`'s ruleset requires: every job above passed, or was skipped because
+  # its change did not need it. A skipped matrix job reports under its bare name, so the ruleset
+  # cannot name the jobs themselves.
+  ci-passed:
+    if: always()
+    needs: [changes, check, deny, gpui, package, snap, windows-upgrade]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null

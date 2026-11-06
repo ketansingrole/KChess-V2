@@ -1167,6 +1167,46 @@ async fn a_move_is_sent_once_and_a_failure_is_not_retried() {
     online.close();
 }
 
+/// Two windows send a move for the same position: while the first is unanswered the second is
+/// refused, never sent, so it cannot land on the position after the opponent replies.
+#[tokio::test]
+async fn a_second_move_is_refused_while_the_first_is_unanswered() {
+    let (_host, fixture, online) = playing(|seen| match seen.method.as_str() {
+        "POST" if seen.path().ends_with("/move/e2e4") => Some(Reply::Hang),
+        "POST" if seen.path().contains("/move/") => {
+            Some(Reply::Json(200, json!({ "ok": true }).to_string()))
+        }
+        _ => None,
+    })
+    .await;
+    let first = tokio::spawn({
+        let online = online.clone();
+        async move { online.move_uci("AbCd1234", "e2e4").await }
+    });
+    for _ in 0..500 {
+        if !fixture.to("/api/board/game/AbCd1234/move/e2e4").is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(!fixture.to("/api/board/game/AbCd1234/move/e2e4").is_empty());
+    let second = online.move_uci("AbCd1234", "d2d4").await;
+    assert!(second.unwrap_err().message().contains("already being sent"));
+    assert!(
+        fixture.to("/api/board/game/AbCd1234/move/d2d4").is_empty(),
+        "the second move never reaches Lichess"
+    );
+    first.abort();
+    let _ = first.await;
+    let third = online.move_uci("AbCd1234", "g1f3").await;
+    assert!(
+        third.is_ok(),
+        "a dropped call releases the guard: {third:?}"
+    );
+    online.cancel();
+    online.close();
+}
+
 #[tokio::test]
 async fn a_live_game_is_not_replaced_by_opening_another_game() {
     let (_host, _fixture, online) = playing(|_| None).await;
@@ -1311,6 +1351,31 @@ async fn a_malformed_line_on_the_event_stream_is_reported_as_it_arrives() {
     })
     .await;
     drop(lines_tx);
+    online.close();
+}
+
+/// A record the checks refuse, replayed by Lichess on every connect, used to count as progress:
+/// the stream reconnected about once a second forever instead of backing off and giving up.
+#[tokio::test]
+async fn a_refused_record_on_every_connect_backs_off_instead_of_reconnecting_each_second() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&attempts);
+    let fixture = serve(move |seen| match (seen.method.as_str(), seen.path()) {
+        ("GET", "/api/stream/event") => {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Reply::Text(200, "application/x-ndjson", "not a record\n".to_string())
+        }
+        _ => refuse(seen),
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    wait_requests(&fixture, "/api/stream/event", 1).await;
+    // Backing off: connects at 0 s, 1 s and 3 s, then 7 s. Once a second would be five by now.
+    tokio::time::sleep(Duration::from_millis(4_500)).await;
+    let seen = attempts.load(Ordering::SeqCst);
+    assert!(seen <= 3, "reconnected {seen} times in 4.5 s");
     online.close();
 }
 

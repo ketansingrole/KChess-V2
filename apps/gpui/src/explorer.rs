@@ -26,6 +26,7 @@ use crate::core::AppCore;
 use crate::game::{STANDARD_FEN, rules};
 use crate::play_layout::Measured;
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill};
 
 const PREFS: &str = "kchess:explorer";
@@ -543,6 +544,33 @@ impl PositionExplorer {
         .detach();
     }
 
+    /// Guess a master game's moves on Practice, as the side that won (White after a draw).
+    fn guess_game(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
+        let id = game["id"].as_str().unwrap_or_default().to_string();
+        let call = cx.global::<AppCore>().call("mastersGame", vec![json!(id)]);
+        let side = if game["winner"] == json!("black") {
+            Color::Black
+        } else {
+            Color::White
+        };
+        cx.spawn_in(window, async move |_, cx| {
+            let outcome = call.await;
+            let _ = cx.update(|window, cx| match outcome {
+                Ok(pgn) => crate::shell::guess_moves(
+                    pgn.as_str().unwrap_or_default(),
+                    Some(side),
+                    window,
+                    cx,
+                ),
+                Err(cause) => window.push_notification(
+                    Notification::error(cause.message).title("Could not open the game"),
+                    cx,
+                ),
+            });
+        })
+        .detach();
+    }
+
     fn preview(&mut self, fen: &str, uci: &str, cx: &mut Context<Self>) -> Entity<ChessBoard> {
         let key = format!("{fen} {uci}");
         self.previews
@@ -720,6 +748,7 @@ impl PositionExplorer {
                 .unwrap_or_else(|| moves.iter().map(games).sum());
             let width = self.area.size().width;
             let (columns, tile) = widgets::columns(width.max(TILE_MIN), TILE_MIN, TILE_GAP);
+            let mut shown = std::collections::HashSet::new();
             let tiles: Vec<AnyElement> = moves
                 .iter()
                 .enumerate()
@@ -751,6 +780,7 @@ impl PositionExplorer {
                             .map(str::to_string)
                     });
                     let board = self.preview(&next, &uci, cx);
+                    shown.insert(format!("{next} {uci}"));
                     let label = match &opening {
                         Some(name) => format!("{san}, {name}"),
                         None => san.clone(),
@@ -767,7 +797,7 @@ impl PositionExplorer {
                         .rounded(radii::MD)
                         .text_size(px(13.))
                         .cursor_pointer()
-                        .hover(|tile| tile.bg(palette.accented))
+                        .pressable(palette)
                         .aria_label(label)
                         .on_click(
                             cx.listener(move |_, _, _, cx| {
@@ -801,6 +831,9 @@ impl PositionExplorer {
                         .into_any_element()
                 })
                 .collect();
+            // Boards of positions no longer shown are let go: each position stepped through
+            // added a board per move, for as long as the page was open.
+            self.previews.retain(|key, _| shown.contains(key));
             let mut rows = Vec::new();
             let mut tiles = tiles.into_iter().peekable();
             while tiles.peek().is_some() {
@@ -837,7 +870,7 @@ impl PositionExplorer {
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.primary)
                             .cursor_pointer()
-                            .hover(|chip| chip.underline())
+                            .pressable_link()
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(ExplorerEvent::Play(uci.clone()))
                             }))
@@ -873,11 +906,8 @@ impl PositionExplorer {
         let list = result["games"]
             .as_array()
             .filter(|games| !games.is_empty())?;
-        let title = if result["kind"] == json!("masters") {
-            "Top games"
-        } else {
-            "Recent games"
-        };
+        let masters = result["kind"] == json!("masters");
+        let title = if masters { "Top games" } else { "Recent games" };
         Some(
             v_flex()
                 .gap(px(2.))
@@ -907,7 +937,8 @@ impl PositionExplorer {
                         .unwrap_or_default();
                     let muted = palette.text_muted;
                     let chosen = game.clone();
-                    h_flex()
+                    let guessed = game.clone();
+                    let row = h_flex()
                         .id(("explorer-game", index))
                         .role(Role::Button)
                         .keyboard_focus(palette.primary)
@@ -919,7 +950,7 @@ impl PositionExplorer {
                         .rounded(radii::SM)
                         .text_size(px(12.))
                         .cursor_pointer()
-                        .hover(|row| row.bg(palette.accented))
+                        .pressable(palette)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.open_game(chosen.clone(), window, cx)
                         }))
@@ -939,7 +970,24 @@ impl PositionExplorer {
                                 .flex_none()
                                 .text_color(muted)
                                 .child(format!("{score} {when}")),
-                        )
+                        );
+                    // A master game can be guessed through, move by move, on Practice.
+                    h_flex()
+                        .gap(px(2.))
+                        .child(row.flex_1().min_w_0())
+                        .when(masters, |line| {
+                            line.child(
+                                Button::new(("explorer-guess", index))
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(icon("target"))
+                                    .tooltip("Guess the moves")
+                                    .accessibility_label("Guess the moves")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.guess_game(guessed.clone(), window, cx)
+                                    })),
+                            )
+                        })
                 })),
         )
     }

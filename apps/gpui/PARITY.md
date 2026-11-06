@@ -102,8 +102,7 @@ records what the switch kept.
       is drawn as a picture of its text, since GPUI cannot rotate text
 - [x] Export (GIF, PNG, PGN) and Analyse
 - [x] Voice input for either player
-- [x] One set of chess clock rules for both apps (`kchess-domain/src/games/otb_clock.rs`; Electron's
-      `stores/clock.ts` moves its state through the `otbClock*` rules)
+- [x] The chess clock's rules are the domain's `otbClock*` (`kchess-domain/src/games/otb_clock.rs`)
 
 ## Settings
 
@@ -174,7 +173,7 @@ records what the switch kept.
 ## Puzzles
 
 - [x] Train: Practice, Downloaded and Rated modes on the Rust puzzle session; theme (from the
-      shared `data/puzzle-themes.json`), difficulty and side; hint ring, solution, wrong-move
+      shared `crates/kchess-domain/data/puzzle-themes.json`), difficulty and side; hint ring, solution, wrong-move
       flash, next after a solve; the session tally, day streak and attempt strip from the log
 - [x] The puzzle database card: download with progress, cancel, delete
 - [x] Daily: the puzzle of the day on its own board

@@ -29,12 +29,14 @@ use std::sync::{Arc, Mutex};
 use crate::error::{CoreError, Result};
 use crate::host::{Config, Host, Level};
 
-/// Filtered page counts, valid until a call that can change the stored games runs. The count is
-/// a full scan of the filter's index, while the page rows themselves are a short index range.
+/// Filtered page counts, the library overview and the storage the games take, valid until a call
+/// that can change the stored games runs. The count is a full scan of the filter's index, while
+/// the page rows themselves are a short index range; the storage reads every game's row.
 #[derive(Default)]
 pub struct StoreCache {
     counts: Mutex<HashMap<String, i64>>,
     overview: Mutex<Option<Value>>,
+    storage: Mutex<Option<Vec<(String, i64, i64)>>>,
 }
 
 impl StoreCache {
@@ -61,12 +63,26 @@ impl StoreCache {
         }
     }
 
+    /// Each account's games and the bytes they take (`usageReport`'s storage).
+    pub fn storage(&self) -> Option<Vec<(String, i64, i64)>> {
+        self.storage.lock().ok()?.clone()
+    }
+
+    pub fn remember_storage(&self, rows: &[(String, i64, i64)]) {
+        if let Ok(mut storage) = self.storage.lock() {
+            *storage = Some(rows.to_vec());
+        }
+    }
+
     pub fn clear(&self) {
         if let Ok(mut counts) = self.counts.lock() {
             counts.clear();
         }
         if let Ok(mut overview) = self.overview.lock() {
             *overview = None;
+        }
+        if let Ok(mut storage) = self.storage.lock() {
+            *storage = None;
         }
     }
 }
@@ -202,10 +218,7 @@ impl Database {
     }
 
     fn call_inner(&self, method: &str, args: &[Value], admitted: bool) -> Result<Value> {
-        let mut db = self
-            .connection
-            .lock()
-            .map_err(|_| CoreError::new("The database is unavailable."))?;
+        let mut db = usable_connection(&self.connection, self.host.as_ref(), "db");
         if !admitted && self.execution.is_closed() {
             return Err(CoreError::new("The database is closed."));
         }
@@ -247,6 +260,44 @@ impl Database {
     }
 }
 
+/// The connection behind `slot`, as a call may use it. A call that panicked holding the lock may
+/// have left its transaction open, and a ROLLBACK that failed leaves one open too: either way the
+/// connection is dropped (SQLite rolls the transaction back) and the next call opens the file
+/// again, rather than every later call failing or joining a transaction nobody will commit.
+pub(crate) fn usable_connection<'a>(
+    slot: &'a std::sync::Mutex<Option<Connection>>,
+    host: &dyn Host,
+    scope: &str,
+) -> std::sync::MutexGuard<'a, Option<Connection>> {
+    let mut db = match slot.lock() {
+        Ok(db) => db,
+        Err(poisoned) => {
+            slot.clear_poison();
+            let mut db = poisoned.into_inner();
+            if db.take().is_some() {
+                host.log(
+                    Level::Warn,
+                    scope,
+                    "A storage call failed while it held the database; it is opened again.",
+                );
+            }
+            db
+        }
+    };
+    if db
+        .as_ref()
+        .is_some_and(|connection| !connection.is_autocommit())
+    {
+        host.log(
+            Level::Warn,
+            scope,
+            "The database was left inside a transaction; it is opened again.",
+        );
+        db.take();
+    }
+    db
+}
+
 /// What a storage method may use: the open database, the host (for logs) and the core's
 /// configuration (the data directory and an earlier release's database, for the one-time imports).
 pub struct StoreContext<'a> {
@@ -262,12 +313,12 @@ pub fn open(path: &Path, host: &dyn Host) -> Result<Connection> {
     let db =
         Connection::open(path).map_err(|e| CoreError::wrap("Could not open the database", e))?;
     db.execute_batch(
-        "PRAGMA journal_mode = WAL;
+        "PRAGMA busy_timeout = 5000;
+         PRAGMA journal_mode = WAL;
          PRAGMA foreign_keys = ON;
          PRAGMA synchronous = NORMAL;
          PRAGMA temp_store = MEMORY;
-         PRAGMA cache_size = -20000;
-         PRAGMA busy_timeout = 5000;",
+         PRAGMA cache_size = -20000;",
     )
     .map_err(|e| CoreError::new(e.to_string()))?;
     migrations::migrate(&db)?;
@@ -354,6 +405,45 @@ mod scheduling_tests {
             Arc::new(Quiet),
         ));
         (dir, database)
+    }
+
+    /// A storage call that panicked with the lock held used to leave it poisoned, so every later
+    /// call failed with "The database is unavailable." until the app restarted, and its open
+    /// transaction stayed open.
+    #[test]
+    fn a_call_that_panicked_holding_the_database_does_not_disable_storage() {
+        let (_dir, database) = database();
+        database.call("store.open", &[]).expect("open");
+        let held = Arc::clone(&database);
+        let panicked = std::thread::spawn(move || {
+            let db = held.connection.lock().expect("lock");
+            if let Some(connection) = db.as_ref() {
+                connection.execute_batch("BEGIN IMMEDIATE").expect("begin");
+            }
+            panic!("a storage method panicked");
+        })
+        .join();
+        assert!(panicked.is_err());
+        assert!(database.connection.is_poisoned());
+        database
+            .call("store.open", &[])
+            .expect("storage works after the panic");
+        assert!(!database.connection.is_poisoned());
+        let db = database.connection.lock().expect("lock");
+        assert!(db.as_ref().is_some_and(Connection::is_autocommit));
+    }
+
+    /// A connection a failed ROLLBACK left inside its transaction is opened again, so later
+    /// writes are not lost inside a transaction nobody commits.
+    #[test]
+    fn a_connection_left_inside_a_transaction_is_opened_again() {
+        let slot = Mutex::new(Some(Connection::open_in_memory().expect("open")));
+        if let Some(connection) = slot.lock().expect("lock").as_ref() {
+            connection.execute_batch("BEGIN").expect("begin");
+        }
+        assert!(usable_connection(&slot, &Quiet, "db").is_none());
+        let slot = Mutex::new(Some(Connection::open_in_memory().expect("open")));
+        assert!(usable_connection(&slot, &Quiet, "db").is_some());
     }
 
     #[tokio::test]

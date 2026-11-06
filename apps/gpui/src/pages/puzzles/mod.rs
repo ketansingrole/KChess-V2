@@ -32,6 +32,7 @@ mod rush;
 pub(crate) use rush::RushAction;
 mod stats;
 
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, Pill, Tone};
 
 const TAB: &str = "kchess:puzzle-tab";
@@ -344,6 +345,25 @@ impl PuzzlesPage {
                 cx.notify();
             }),
         ];
+        // A puzzle left unfinished at quit (after a wrong move, say) is logged as another puzzle
+        // replacing it would log it.
+        let weak = cx.entity().downgrade();
+        crate::core::on_quit(cx, move |cx| {
+            let page = weak.upgrade()?;
+            page.update(cx, |page, cx| {
+                let record = page
+                    .session
+                    .apply("puzzleSessionInvalidate", json!({}))
+                    .record?;
+                let save = cx
+                    .global::<AppCore>()
+                    .call("recordPuzzleAttempt", vec![record]);
+                Some(
+                    Box::pin(async move { save.await.map(|_| ()).map_err(|cause| cause.message) })
+                        as crate::core::BoxedSave,
+                )
+            })
+        });
         PuzzlesPage {
             session: PuzzleSession::new(),
             shown_key: 0,
@@ -560,6 +580,9 @@ impl PuzzlesPage {
             .puzzle_auto_next;
         if solved && auto_next {
             let key = self.session.puzzle_key();
+            // An earlier puzzle's countdown has nothing left to do (it was replaced): dropped,
+            // not kept with every puzzle solved since the page opened.
+            self.timers.clear();
             self.timers.push(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(AUTO_NEXT_DELAY).await;
                 let _ = this.update(cx, |this, cx| {
@@ -911,7 +934,7 @@ pub(crate) fn status_panel(
                                             pill.role(gpui_kit::Role::Button)
                                                 .aria_label(format!("Train {name}"))
                                                 .cursor_pointer()
-                                                .hover(|pill| pill.bg(palette.accented))
+                                                .pressable(palette)
                                                 .on_click(move |_, window, cx| {
                                                     train_theme(key.clone(), window, cx)
                                                 })
@@ -1717,7 +1740,7 @@ impl PuzzlesPage {
         }
         let again = Action::Rush(RushAction::Again);
         if matches!(event.keystroke.key.as_str(), "enter" | "space")
-            && self.focus.is_focused(window)
+            && crate::board::page_has_keys(&self.focus, window, cx)
             && self.actions(cx).contains(&again)
         {
             self.act(again, cx);
@@ -1729,14 +1752,15 @@ impl PuzzlesPage {
             && self.shown_board(cx).is_some_and(|(board, _)| {
                 let board = board.read(cx);
                 board.over()
-                    && (self.focus.is_focused(window) || board.move_field_focused(window, cx))
+                    && (crate::board::page_has_keys(&self.focus, window, cx)
+                        || board.move_field_focused(window, cx))
             })
         {
             self.act(Action::Next, cx);
             cx.stop_propagation();
             return;
         }
-        if !self.focus.is_focused(window) {
+        if !crate::board::page_has_keys(&self.focus, window, cx) {
             return;
         }
         // A finished puzzle's moves step back and forth, as a game's do.

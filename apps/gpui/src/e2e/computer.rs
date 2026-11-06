@@ -53,6 +53,40 @@ fn a_typed_move_is_played(cx: &mut gpui_kit::TestAppContext) {
     app.wait_for_moves(&["Nf3"]);
 }
 
+/// The board from the keyboard: Tab gives it the keys, Enter picks up the pawn under its cursor,
+/// the arrows walk the cursor to e4 and Enter plays the pawn there. A screen reader hears each
+/// square's name and whether the pawn can go there.
+#[gpui_kit::test]
+fn a_move_is_played_from_the_keyboard(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.tab_to_board();
+    assert_eq!(app.square_name("e2"), "e2, white pawn");
+    assert_eq!(
+        app.find(("square", usize::from(shakmaty::Square::E2)))
+            .selected(),
+        Some(false)
+    );
+    app.press("enter");
+    assert_eq!(
+        app.find(("square", usize::from(shakmaty::Square::E2)))
+            .selected(),
+        Some(true)
+    );
+    assert_eq!(app.square_name("e4"), "e4, empty, legal move");
+    app.press("up");
+    app.press("up");
+    app.press("enter");
+    app.wait_for_moves(&["e4"]);
+    assert_eq!(app.square_name("e4"), "e4, white pawn");
+    // The board keeps the keys: the arrows still move its cursor, not the game.
+    app.press("left");
+    assert!(app.enabled("skip-back"));
+    // A click gives them back to the page.
+    app.click(("move", 0usize));
+    app.press("left");
+    assert!(!app.enabled("skip-back"));
+}
+
 /// After a typed move, a click on the moves gives the arrow keys back to the board: they had
 /// stayed with the move box, so ← moved its cursor instead of the game.
 #[gpui_kit::test]
@@ -474,7 +508,7 @@ fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
     app.click_square("e5", false);
     app.wait_for_moves(&["e5", "e4"]);
     let started = std::time::Instant::now();
-    app.wait_for("the low-time warning", |_, cx| {
+    app.wait_for_in_real_time("the low-time warning", |_, cx| {
         cx.global::<Played>().0.contains(&Sound::LowTime)
     });
     assert!(started.elapsed() < std::time::Duration::from_millis(2_900));

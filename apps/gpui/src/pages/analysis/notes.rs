@@ -15,6 +15,7 @@ use crate::game::rules;
 use crate::game::tree::{comment_text, move_number};
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::KeyboardFocus as _;
+use crate::widgets::Pressable as _;
 
 /// `MOVE_GLYPHS`: the annotations a move can carry, by NAG.
 pub const MOVE_GLYPHS: [(i64, &str, &str); 6] = [
@@ -180,9 +181,10 @@ impl AnalysisPage {
                             button
                                 .border_color(gpui_kit::transparent_black())
                                 .text_color(palette.text_muted)
-                                .hover(|button| {
-                                    button.bg(palette.accented).text_color(palette.text)
-                                })
+                                .press(
+                                    |button| button.bg(palette.accented).text_color(palette.text),
+                                    |button| button.bg(palette.pressed(palette.accented)),
+                                )
                         })
                         .tooltip(move |window, cx| {
                             gpui_kit::component::tooltip::Tooltip::new(label).build(window, cx)
@@ -239,11 +241,14 @@ impl AnalysisPage {
                 .text_size(px(13.))
                 .text_color(palette.text_muted)
                 .cursor_text()
-                .hover(|button| {
-                    button
-                        .border_color(palette.primary)
-                        .text_color(palette.text)
-                })
+                .press(
+                    |button| {
+                        button
+                            .border_color(palette.primary)
+                            .text_color(palette.text)
+                    },
+                    |button| button.bg(palette.accented),
+                )
                 .on_click(cx.listener(|this, _, window, cx| this.focus_notes(window, cx)))
                 .child(icon("message-square-plus").size(px(14.)))
                 .child("Add a comment")

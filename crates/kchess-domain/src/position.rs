@@ -492,7 +492,7 @@ pub fn pgn_mainline(text: &str, limit: usize) -> Value {
         };
         let mover = color_name(pos.turn());
         let uci = rules::make_uci(&m);
-        rules::san_and_play(&mut pos, m);
+        pos.play_unchecked(m);
         let clock = data
             .comments
             .as_ref()
@@ -535,6 +535,55 @@ mod tests {
         assert_eq!(info.outcome, Some(json!({})));
     }
 
+    /// Every legal move's SAN, a Crazyhouse pocket's drops after the board's moves.
+    #[test]
+    fn lists_every_legal_san_with_the_drops_last() {
+        let pos = rules::standard_from_fen(START).unwrap();
+        let sans = legal_sans(&pos);
+        assert_eq!(sans.len(), 20);
+        assert!(sans.contains(&"Nf3".to_string()) && sans.contains(&"e4".to_string()));
+        let crazyhouse = rules::setup_position(
+            shakmaty::variant::Variant::Crazyhouse,
+            rules::parse_fen("k7/8/8/8/8/8/8/7K[N] w - - 0 1").unwrap(),
+        )
+        .unwrap();
+        let sans = legal_sans(&crazyhouse);
+        assert_eq!(sans.len(), 3 + 62, "{sans:?}");
+        assert_eq!(sans.last().map(String::as_str), Some("N@h8"));
+        assert!(sans[..3].iter().all(|san| san.starts_with('K')));
+    }
+
+    /// Bare kings: moves remain, yet the game is drawn and over.
+    #[test]
+    fn bare_kings_end_the_game_in_a_draw() {
+        let pos = rules::standard_from_fen("k7/8/8/8/8/8/8/7K w - - 0 1").unwrap();
+        let info = super::info(&pos);
+        assert!(
+            info.insufficient && info.end && !info.variant_end,
+            "{info:?}"
+        );
+        assert!(!info.stalemate && !info.checkmate);
+        assert_eq!(info.outcome, Some(json!({})));
+    }
+
+    /// Antichess ends when the side to move has no pieces, which wins it: the other side
+    /// running out of pieces first does not end it.
+    #[test]
+    fn antichess_ends_when_the_side_to_move_has_no_pieces() {
+        let antichess = |fen| {
+            rules::setup_position(
+                shakmaty::variant::Variant::Antichess,
+                rules::parse_fen(fen).unwrap(),
+            )
+            .unwrap()
+        };
+        let info = super::info(&antichess("8/8/8/8/8/8/8/k7 b - - 0 1"));
+        assert!(!info.variant_end && !info.end, "{info:?}");
+        let info = super::info(&antichess("8/8/8/8/8/8/8/K7 b - - 0 1"));
+        assert!(info.variant_end && info.end, "{info:?}");
+        assert_eq!(info.outcome, Some(json!({ "winner": "black" })));
+    }
+
     #[test]
     fn lists_castling_both_ways_for_the_board() {
         let pos = rules::standard_from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1").unwrap();
@@ -563,12 +612,30 @@ mod tests {
         assert_eq!(play_san(&pos, "O-O-O").unwrap().uci, "e1a1");
     }
 
+    /// `%clk` times: up to milliseconds, as Lichess writes them.
+    #[test]
+    fn reads_clock_times_to_the_millisecond() {
+        assert_eq!(clock_value("1:02:03]"), Some(3723.0));
+        assert_eq!(clock_value("0:00:05.]"), Some(5.0));
+        assert_eq!(clock_value("0:00:05.125]"), Some(5.125));
+        assert_eq!(clock_value("0:00:05.1250]"), None);
+        assert_eq!(clock_value("0:00:05"), None);
+        assert_eq!(clock_value("123456:00:05]"), None);
+    }
+
     #[test]
     fn explains_unplayable_fens() {
         assert_eq!(fen_problem(START), None);
         assert_eq!(fen_problem("nonsense"), Some("fen"));
         assert_eq!(fen_problem("8/8/8/8/8/8/8/8 w - - 0 1"), Some("empty"));
         assert_eq!(fen_problem("8/8/8/8/8/8/8/4K3 w - - 0 1"), Some("kings"));
+        assert_eq!(fen_problem("k7/8/8/8/8/8/8/K6K w - - 0 1"), Some("kings"));
+        assert_eq!(fen_problem("K7/8/8/8/8/8/8/8 b - - 0 1"), Some("kings"));
+        // Black's seventeenth piece counts as much as White's.
+        assert_eq!(
+            fen_problem("K7/8/8/8/8/1q6/pppppppp/qqqqqqqk b - - 0 1"),
+            Some("tooManyPieces")
+        );
         assert_eq!(
             fen_problem("4k3/4Q3/8/8/8/8/8/4K3 w - - 0 1"),
             Some("oppositeCheck")

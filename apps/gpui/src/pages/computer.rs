@@ -1044,7 +1044,7 @@ impl ComputerPage {
             ),
         };
         let page = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let page = page.clone();
             dialog
                 .title(title.clone())
@@ -1697,9 +1697,11 @@ impl Render for ComputerPage {
             ))
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
                 "computer-moves",
-                &sans,
-                ply,
-                first,
+                widgets::MoveSheet {
+                    sans: &sans,
+                    shown: ply,
+                    first,
+                },
                 "No moves yet".into(),
                 select.clone(),
                 crate::notation::figurine(cx),
@@ -1772,7 +1774,9 @@ impl Render for ComputerPage {
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 // The arrows step through the moves when no text field has the keys.
-                if !this.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+                if !crate::board::page_has_keys(&this.focus, window, cx)
+                    || event.keystroke.modifiers.modified()
+                {
                     return;
                 }
                 if crate::shell::zen_key(&event.keystroke.key, cx) {

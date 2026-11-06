@@ -29,6 +29,7 @@ use crate::play_layout::{
     Measured, PAGE_BOTTOM, PAGE_TOP, PANEL_MAX, PANEL_MIN, PlayLayout, side_padding,
 };
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill};
 
 const GROUP: &str = "kchess:openings-group";
@@ -695,7 +696,7 @@ impl OpeningsPage {
                     .min_w_0()
                     .truncate()
                     .cursor_pointer()
-                    .hover(|link| link.underline())
+                    .pressable_link()
                     .child(node.label.clone());
                 match &node.moves {
                     Some(moves) => {
@@ -787,9 +788,10 @@ impl OpeningsPage {
                         .py(px(4.))
                         .child(
                             div()
+                                .id(SharedString::from(format!("result-name-{name}")))
                                 .min_w_0()
                                 .cursor_pointer()
-                                .hover(|link| link.underline())
+                                .pressable_link()
                                 .child(name.clone()),
                         )
                         .child(
@@ -861,7 +863,7 @@ impl OpeningsPage {
                         .rounded(radii::LG)
                         .bg(palette.elevated)
                         .cursor_pointer()
-                        .hover(|item| item.bg(palette.accented))
+                        .pressable(palette)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.show_line(Some(moves.clone()), cx)
                         }))
@@ -1007,7 +1009,7 @@ impl OpeningsPage {
                             .rounded(radii::XS)
                             .cursor_pointer()
                             .when(current, |chip| chip.font_weight(FontWeight::MEDIUM))
-                            .hover(|chip| chip.bg(palette.accented))
+                            .pressable(palette)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.show_line(Some(upto.clone()), cx)
                             }))
@@ -1239,7 +1241,9 @@ impl Render for OpeningsPage {
                 // F turns the line's board, as its button does, while no text field has the keys.
                 // Escape goes back to all openings.
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                    if !this.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+                    if !crate::board::page_has_keys(&this.focus, window, cx)
+                        || event.keystroke.modifiers.modified()
+                    {
                         return;
                     }
                     match event.keystroke.key.as_str() {

@@ -13,20 +13,6 @@ fn settle(app: &mut Harness) {
     });
 }
 
-/// Type into the labelled input of a dialog once it has slid into place.
-fn fill_in_dialog(app: &mut Harness, label: &str, text: &str) {
-    let mut last = None;
-    app.wait_for(&format!("{label:?} to stop moving"), |window, _| {
-        let bounds = window.try_find_by_label(label).map(|input| input.bounds());
-        let still = bounds.is_some() && bounds == last;
-        last = bounds;
-        still
-    });
-    app.click_label(label);
-    app.press("secondary-a");
-    app.type_text(text);
-}
-
 /// Choose the chapter at `row` (from 0) in the open study's chapter select, by keyboard.
 fn choose_chapter(app: &mut Harness, row: usize) {
     app.click_label("Study chapter");
@@ -84,8 +70,8 @@ fn import_study(app: &mut Harness, name: &str, pgn: &str) {
     app.open("Studies");
     let empty = app.shows("empty-import");
     app.click(if empty { "empty-import" } else { "import-pgn" });
-    fill_in_dialog(app, "PGN", pgn);
-    fill_in_dialog(app, "Study name", name);
+    app.fill_in_dialog("PGN", pgn);
+    app.fill_in_dialog("Study name", name);
     app.click("import-run");
     app.find("open-imported");
 }
@@ -156,7 +142,7 @@ fn a_dropped_file_of_several_games_is_offered_as_a_study(cx: &mut gpui_kit::Test
         app.cx.update(|cx| crate::shell::current_page(cx)),
         Some(crate::pages::Page::Studies)
     );
-    fill_in_dialog(&mut app, "Study name", "Dropped openings");
+    app.fill_in_dialog("Study name", "Dropped openings");
     app.click("import-run");
     app.find("open-imported");
     wait_for_listed(&mut app, &["Dropped openings"]);
@@ -171,7 +157,7 @@ fn a_pgn_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.open("Studies");
     app.click("empty-import");
-    fill_in_dialog(&mut app, "PGN", "1. e4 e5 2. Ke5 *");
+    app.fill_in_dialog("PGN", "1. e4 e5 2. Ke5 *");
     app.click("import-run");
     settle(&mut app);
     assert!(app.shows("import-run"), "the dialog stays for a correction");
@@ -194,7 +180,7 @@ fn an_annotated_study_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
     app.click("glyph-2");
     app.click("study-actions");
     app.click_label("Game details…");
-    fill_in_dialog(&mut app, "White", "Alice");
+    app.fill_in_dialog("White", "Alice");
     app.press("escape");
     settle(&mut app);
 
@@ -329,6 +315,85 @@ fn chapters_are_added_renamed_duplicated_and_deleted(cx: &mut gpui_kit::TestAppC
     app.click("chapter-actions");
     app.click_label("Delete chapter");
     wait_for_value(&mut app, "Study chapter", "2. Chapter 2");
+}
+
+/// Another window changed the chapter on the board: switching chapters keeps the board's edits
+/// as an unsaved copy rather than dropping them for the next chapter.
+#[gpui_kit::test]
+fn a_refused_save_keeps_its_edits_when_another_chapter_is_chosen(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    refused_save_then_another_chapter(cx, false);
+}
+
+/// The same, with the edit's delayed save already on its way when the chapter is chosen.
+#[gpui_kit::test]
+fn a_refused_autosave_keeps_its_edits_when_another_chapter_is_chosen(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    refused_save_then_another_chapter(cx, true);
+}
+
+fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosaving: bool) {
+    let mut app = Harness::start(cx);
+    import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
+    app.click("open-imported");
+    wait_for_value(&mut app, "Study chapter", "1. Chapter 1");
+    app.find("tree-e2e4 e7e5");
+    // Another window writes the chapter (this connection's own write is not shown here).
+    let (study, chapter) = app.cx.update(|cx| {
+        let page = crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+            crate::pages::Page::Analysis,
+            cx,
+        )
+        .expect("the analysis board");
+        let page = page.read(cx);
+        (page.study_id().to_string(), page.chapter_id().to_string())
+    });
+    let written = std::rc::Rc::new(std::cell::Cell::new(false));
+    app.cx.update(|cx| {
+        let save = cx.global::<crate::core::AppCore>().call(
+            "studyCommand",
+            vec![serde_json::json!({
+                "op": "save", "id": study, "chapterId": chapter,
+                "name": "Pawn openings", "pgn": "1. c4 *",
+            })],
+        );
+        let written = written.clone();
+        cx.spawn(async move |_| {
+            save.await.expect("the other window's save");
+            written.set(true);
+        })
+        .detach();
+    });
+    app.wait_for("the other window's save", |_, _| written.get());
+    // The edit and the chapter switch come before the edit's own delayed save.
+    app.with_window(|_, cx| {
+        let page = crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+            crate::pages::Page::Analysis,
+            cx,
+        )
+        .expect("the analysis board");
+        let next = cx
+            .global::<crate::studies::StudyHandle>()
+            .0
+            .read(cx)
+            .study(&study)
+            .and_then(|found| found["chapters"][1]["id"].as_str().map(str::to_string))
+            .expect("the second chapter");
+        assert!(page.update(cx, |page, cx| page.play_for_test("g1f3", cx)));
+        if autosaving {
+            page.update(cx, |page, cx| page.autosave_for_test(cx));
+        }
+        let bar = page.read(cx).study_bar();
+        bar.update(cx, |bar, cx| bar.select_chapter(next, cx));
+    });
+    settle(&mut app);
+    app.find("tree-g1f3");
+    assert!(
+        !app.shows("tree-d2d4"),
+        "the edits were dropped for chapter 2"
+    );
 }
 
 #[gpui_kit::test]

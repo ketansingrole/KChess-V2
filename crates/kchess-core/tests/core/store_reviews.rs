@@ -276,3 +276,53 @@ fn a_review_batch_writes_atomically_and_a_failed_batch_keeps_the_previous_review
     // The first review (different key) is untouched.
     assert_eq!(profile.read_review(&key)["gameId"], json!("Game0001"));
 }
+
+/// Time use reads each synced game's clocks: White fell under a tenth of three minutes and
+/// blundered there, so the game counts as time trouble and its blunder as one short of time.
+#[test]
+fn time_use_counts_blunders_made_short_of_time() {
+    let profile = fresh();
+    let pgn = "[TimeControl \"180+0\"]\n\n\
+        1. e4 { [%clk 0:03:00] } 1... e5 { [%clk 0:03:00] } 2. Nf3 { [%clk 0:00:10] } \
+        2... Nc6 { [%clk 0:02:50] } 3. Bc4 { [%clk 0:00:08] } 1-0";
+    profile.exec(&format!(
+        "INSERT INTO games (account,id,createdAt,lastMoveAt,rated,speed,perf,status,winner,color,opponent,moves,pgn) \
+         VALUES ('Alice','Clocked1',1,1,1,'blitz','blitz','resign','white','white','Bob','e4 e5 Nf3 Nc6 Bc4','{pgn}')"
+    ));
+    // A game without clocks is left out.
+    profile.game("Unclocked", "Alice");
+    let report = profile.insights("Alice");
+    assert_eq!(report["total"], json!(2));
+    let time = &report["timeUse"];
+    assert_eq!(time["games"], json!(1));
+    assert_eq!(time["trouble"]["win"], json!(1));
+    assert_eq!(time["spare"]["total"], json!(0));
+    assert_eq!(time["phases"].as_array().map(Vec::len), Some(1));
+    assert_eq!(time["phases"][0]["phase"], json!("opening"));
+    assert_eq!(time["phases"][0]["moves"], json!(3));
+    assert_eq!(time["phases"][0]["share"], json!(100));
+    assert_eq!(time["clockAt"], json!([]), "the game never reached move 20");
+    assert!(time.get("blunders").is_none(), "no review yet");
+
+    let moves = json!(["e2e4", "e7e5", "g1f3", "b8c6", "f1c4"]);
+    profile.write_review(&json!({
+        "key": "clocked-review",
+        "gameId": "Clocked1",
+        "fen": INITIAL_FEN,
+        "moves": moves,
+        "source": "local",
+        "complete": true,
+        "depth": 18,
+        "updatedAt": 1,
+        "evals": [{ "cp": 15 }, { "cp": 15 }, { "cp": 15 }, { "cp": 15 }, { "cp": 15 }, { "cp": -900 }],
+    }));
+    let time = profile.insights("Alice")["timeUse"].clone();
+    assert_eq!(
+        time["blunders"],
+        json!({
+            "games": 1,
+            "short": { "moves": 1, "blunders": 1 },
+            "spare": { "moves": 2, "blunders": 0 },
+        })
+    );
+}

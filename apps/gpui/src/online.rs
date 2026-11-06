@@ -120,6 +120,12 @@ pub struct OnlineState {
 }
 
 impl OnlineState {
+    /// The core session whose reports the board follows.
+    #[cfg(test)]
+    pub(crate) fn state_epoch(&self) -> f64 {
+        self.model["stateEpoch"].as_f64().unwrap_or_default()
+    }
+
     /// The engine may help: no live game, and none still being looked for.
     pub fn assistance_allowed(&self) -> bool {
         matches!(self.phase, Phase::Idle | Phase::Finished)
@@ -1059,6 +1065,9 @@ pub fn init(cx: &mut App) {
                 return;
             }
             state.update(cx, |state, cx| {
+                // The new core counts its sessions from the start: the old core's epoch would
+                // drop every report it sends. The old connection's events all came before this.
+                state.model["stateEpoch"] = json!(0);
                 let phase = state.model["onlinePhase"].as_str().unwrap_or_default();
                 if matches!(phase, "playing" | "seeking" | "disconnected") {
                     state.phase = Phase::Checking;

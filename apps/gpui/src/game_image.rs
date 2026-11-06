@@ -334,13 +334,52 @@ pub struct TextLine {
 }
 
 /// Lines of text, centred and turned `rotation` degrees (a multiple of 90), as a PNG `scale` times
-/// its size: GPUI cannot rotate text, so a turned clock face is shown as a picture of it.
+/// its size.
+#[cfg(test)]
 pub fn rotated_text_png(
     lines: &[TextLine],
     color: &str,
     rotation: u16,
     scale: f32,
 ) -> Result<Vec<u8>, String> {
+    let pixmap = rotated_text(lines, color, rotation, scale)?;
+    pixmap.encode_png().map_err(|cause| cause.to_string())
+}
+
+/// The same, ready to draw: GPUI cannot rotate text, so a turned clock face is shown as a picture
+/// of it. A picture to draw rather than a PNG: GPUI keeps every PNG it decodes for the rest of the
+/// session, and a running clock makes a new face every second. Whoever replaces one releases its
+/// texture (`App::drop_image`).
+pub fn rotated_text_image(
+    lines: &[TextLine],
+    color: &str,
+    rotation: u16,
+    scale: f32,
+) -> Result<Arc<gpui_kit::RenderImage>, String> {
+    render_image(rotated_text(lines, color, rotation, scale)?)
+}
+
+/// `pixmap` as GPUI draws a picture.
+fn render_image(pixmap: Pixmap) -> Result<Arc<gpui_kit::RenderImage>, String> {
+    let (width, height) = (pixmap.width(), pixmap.height());
+    let mut pixels = pixmap.take();
+    // GPUI draws straight-alpha BGRA; the pixmap is premultiplied RGBA.
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        gpui_kit::swap_rgba_pa_to_bgra(pixel);
+    }
+    let buffer =
+        image::RgbaImage::from_raw(width, height, pixels).ok_or("The image could not be made")?;
+    Ok(Arc::new(gpui_kit::RenderImage::new(vec![Frame::new(
+        buffer,
+    )])))
+}
+
+fn rotated_text(
+    lines: &[TextLine],
+    color: &str,
+    rotation: u16,
+    scale: f32,
+) -> Result<Pixmap, String> {
     const GAP: f32 = 12.;
     const WIDTH: f32 = 560.;
     let height: f32 = lines.iter().map(|line| line.size).sum::<f32>()
@@ -376,12 +415,11 @@ pub fn rotated_text_png(
         bx = -WIDTH / 2.,
         by = -height / 2.,
     );
-    let pixmap = rasterize(
+    rasterize(
         svg.as_bytes(),
         (outer_w * scale).round() as u32,
         (outer_h * scale).round() as u32,
-    )?;
-    pixmap.encode_png().map_err(|cause| cause.to_string())
+    )
 }
 
 /// A PNG of the position after `ply` moves.
@@ -451,7 +489,10 @@ pub fn game_gif(
 
 #[cfg(test)]
 mod tests {
-    use super::{ImageOptions, TextLine, game_gif, position_png, rotated_text_png};
+    use super::{
+        ImageOptions, Pixmap, Rect, TextLine, game_gif, position_png, render_image,
+        rotated_text_png,
+    };
     use std::sync::atomic::AtomicBool;
 
     #[test]
@@ -469,6 +510,46 @@ mod tests {
         };
         assert_eq!(size(180), (560, 120));
         assert_eq!(size(90), (120, 560));
+    }
+
+    /// A turned face drawn from its own image looks as its PNG did once GPUI decoded it
+    /// (straight-alpha RGBA with red and blue swapped), to within rounding. Drawn from shapes in
+    /// part-transparent colours rather than text, which needs the system's fonts (CI's Linux
+    /// runner has none).
+    #[test]
+    fn a_picture_to_draw_matches_its_png() {
+        use resvg::tiny_skia::{Paint as Fill, Transform};
+        let mut pixmap = Pixmap::new(64, 48).unwrap();
+        for (index, (r, g, b, a)) in [(34, 102, 170, 255), (200, 40, 90, 191), (255, 255, 255, 64)]
+            .into_iter()
+            .enumerate()
+        {
+            let mut fill = Fill::default();
+            fill.set_color_rgba8(r, g, b, a);
+            let at = index as f32 * 12.;
+            let rect = Rect::from_xywh(at, at / 2., 30., 30.).unwrap();
+            pixmap.fill_rect(rect, &fill, Transform::identity(), None);
+        }
+        let png = pixmap.encode_png().unwrap();
+        let mut decoded = image::load_from_memory(&png).unwrap().into_rgba8();
+        for pixel in decoded.as_chunks_mut::<4>().0 {
+            pixel.swap(0, 2);
+        }
+        let drawn = render_image(pixmap).unwrap();
+        let bytes = drawn.as_bytes(0).unwrap();
+        assert_eq!(drawn.size(0).width.0, 64);
+        assert_eq!(drawn.size(0).height.0, 48);
+        let worst = bytes
+            .iter()
+            .zip(decoded.as_raw())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(worst <= 1, "a channel differs by {worst}");
+        assert!(
+            bytes.chunks(4).any(|pixel| pixel[3] > 0 && pixel[3] < 255),
+            "part-transparent pixels are compared"
+        );
     }
 
     fn game() -> ImageOptions {

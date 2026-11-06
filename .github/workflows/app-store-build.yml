@@ -6,6 +6,15 @@ name: App Store build
 # builds the sandboxed app signed ad hoc, which shows the package still builds.
 on:
   workflow_call:
+    secrets:
+      MAS_APP_P12:
+      MAS_INSTALLER_P12:
+      MAS_P12_PASSWORD:
+      MAS_PROVISION_PROFILE:
+      APPLE_TEAM_ID:
+      ASC_KEY_ID:
+      ASC_ISSUER_ID:
+      ASC_PRIVATE_KEY:
   workflow_dispatch:
 
 permissions:
@@ -14,15 +23,18 @@ permissions:
 jobs:
   package:
     runs-on: macos-latest
+    # The store identities and the App Store Connect key live in the `release` environment, which
+    # only `v*` tags may use; any other build (a manual run) is signed ad hoc.
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || 'build' }}
     env:
       KCHESS_MAS_SIGNING: ${{ secrets.MAS_APP_P12 != '' && 'true' || 'false' }}
       CARGO_PROFILE_RELEASE_LTO: fat
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '1'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: package
           key: ${{ runner.os }}-${{ runner.arch }}
@@ -70,13 +82,16 @@ jobs:
           KCHESS_MAS_INSTALLER_IDENTITY: ${{ steps.signing.outputs.installer }}
           KCHESS_MAS_PROFILE: ${{ steps.signing.outputs.profile }}
           APPLE_TEAM_ID: ${{ env.KCHESS_MAS_SIGNING == 'true' && secrets.APPLE_TEAM_ID || '' }}
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: mas-package
           path: apps/gpui/dist/mas/
           if-no-files-found: error
           retention-days: 14
       # Only a release tag's build reaches App Store Connect; its version is the build number too.
+      - name: Install asc
+        if: env.KCHESS_MAS_SIGNING == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: brew install asc
       - name: Upload to App Store Connect
         if: env.KCHESS_MAS_SIGNING == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -88,7 +103,6 @@ jobs:
           ASC_BYPASS_KEYCHAIN: '1'
         run: |
           test -n "$ASC_APP_ID" || { echo "::error::Set the ASC_APP_ID repository variable."; exit 1; }
-          brew install asc
           version="${GITHUB_REF_NAME#v}"
           pkg="apps/gpui/dist/mas/KChess-$version-mac-arm64.pkg"
           test -s "$pkg" || { echo "::error::No $pkg; the tag and the workspace version differ."; exit 1; }

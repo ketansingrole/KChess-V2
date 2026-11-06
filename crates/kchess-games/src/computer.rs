@@ -316,6 +316,81 @@ mod tests {
         assert!(request.options.get("chess960").is_none());
     }
 
+    fn host_at(now: f64, allowed: bool) -> Host {
+        Host {
+            now,
+            allowed,
+            ready: true,
+        }
+    }
+
+    /// The engine's clock runs out on its turn: the engine stops, its flag falls and the player
+    /// wins; the views report it all.
+    #[test]
+    fn the_engines_flag_falls_on_its_turn() {
+        let mut game = ComputerGame::new(None, &host(0.)).unwrap();
+        let clock = json!({ "minutes": 1, "increment": 0 });
+        game.start(None, Some(clock), &host(0.)).unwrap();
+        // Each side's first move is free.
+        assert!(game.play("e2e4", &host(0.)).unwrap().0);
+        let request = game.search_start(&host(0.)).unwrap().unwrap();
+        game.search_reply(&request, "e7e5", &host(500.)).unwrap();
+        assert_eq!(game.remaining("white", &host(500.)), 60_000.);
+        assert!(game.play("d2d4", &host(1_000.)).unwrap().0);
+        assert_eq!(game.remaining("white", &host(1_000.)), 59_500.);
+        assert_eq!(game.remaining("black", &host(31_000.)), 30_000.);
+        assert!(game.expire(&host(30_000.)).unwrap().is_empty());
+        assert!(!game.over(&host(30_000.)));
+        assert_eq!(game.result(&host(30_000.)), None);
+
+        let effects = game.expire(&host(61_000.)).unwrap();
+        assert_eq!(effects, [Effect::StopEngine, Effect::Flagged]);
+        assert!(game.over(&host(61_000.)));
+        assert_eq!(game.result(&host(61_000.)).unwrap()["kind"], "win");
+        let snapshot = game.snapshot(&host(61_000.));
+        assert_eq!(snapshot["flagged"], "black");
+        assert_eq!(snapshot["moves"], json!(["e2e4", "e7e5", "d2d4"]));
+        let archived = game.archive_snapshot(&host(61_000.));
+        assert_eq!(archived["result"], "1-0");
+        assert_eq!(archived["timeControl"], "60+0");
+    }
+
+    #[test]
+    fn a_resignation_stops_the_engine_and_loses() {
+        let mut game = ComputerGame::new(None, &host(0.)).unwrap();
+        game.play("e2e4", &host(1.)).unwrap();
+        assert_eq!(game.resign(&host(2.)).unwrap(), [Effect::StopEngine]);
+        assert!(game.over(&host(3.)));
+        assert_eq!(game.result(&host(3.)).unwrap()["kind"], "loss");
+    }
+
+    /// Assistance stopping mid-search cancels the engine.
+    #[test]
+    fn losing_permission_stops_the_engine() {
+        let mut game = ComputerGame::new(None, &host(0.)).unwrap();
+        game.play("e2e4", &host(1.)).unwrap();
+        game.search_start(&host(2.)).unwrap().unwrap();
+        let effects = game.availability_changed(&host_at(3., false)).unwrap();
+        assert_eq!(effects, [Effect::StopEngine]);
+        assert_eq!(game.state["thinking"], false);
+    }
+
+    /// A failed search is reported, and one cancelled meanwhile is not.
+    #[test]
+    fn a_failed_search_is_reported_unless_it_was_cancelled() {
+        let mut game = ComputerGame::new(None, &host(0.)).unwrap();
+        game.play("e2e4", &host(1.)).unwrap();
+        let request = game.search_start(&host(2.)).unwrap().unwrap();
+        assert_eq!(
+            game.search_failed(&request, &host(3.)).unwrap(),
+            [Effect::Failed]
+        );
+        assert_eq!(game.state["thinking"], false);
+        let request = game.search_start(&host(4.)).unwrap().unwrap();
+        game.takeback(&host(5.)).unwrap();
+        assert!(game.search_failed(&request, &host(6.)).unwrap().is_empty());
+    }
+
     #[test]
     fn an_illegal_move_is_refused() {
         let mut game = ComputerGame::new(None, &host(0.)).unwrap();

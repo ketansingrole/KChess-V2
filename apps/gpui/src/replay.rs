@@ -106,7 +106,9 @@ impl GameReplay {
     }
 
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+        if !crate::board::page_has_keys(&self.focus, window, cx)
+            || event.keystroke.modifiers.modified()
+        {
             return;
         }
         if event.keystroke.key == "f" {
@@ -220,9 +222,11 @@ impl Render for GameReplay {
             ))
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
                 "replay-moves",
-                &self.sans,
-                self.ply,
-                view::first_move(&self.setup),
+                widgets::MoveSheet {
+                    sans: &self.sans,
+                    shown: self.ply,
+                    first: view::first_move(&self.setup),
+                },
                 "No moves to review".into(),
                 select.clone(),
                 crate::notation::figurine(cx),

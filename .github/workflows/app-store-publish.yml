@@ -23,27 +23,35 @@ jobs:
   submit:
     if: github.event_name == 'workflow_dispatch' || (github.event.release.draft == false && github.event.release.prerelease == false)
     runs-on: macos-latest
+    # The App Store Connect key is the release's environment's, and reaches only the steps that
+    # call asc, never its installation (a formula's install scripts run with the step's env).
+    environment: release
     env:
-      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
       ASC_APP_ID: ${{ vars.ASC_APP_ID }}
       ASC_BYPASS_KEYCHAIN: '1'
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       # Run trusted publishing code and the listing from main, never from a release asset.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           ref: main
       - name: Install asc
+        env:
+          HAS_KEY: ${{ secrets.ASC_KEY_ID != '' }}
         run: |
           test -n "$ASC_APP_ID" || { echo "::error::Set the ASC_APP_ID repository variable."; exit 1; }
-          test -n "$ASC_KEY_ID" || { echo "::error::Add the ASC_KEY_ID, ASC_ISSUER_ID and ASC_PRIVATE_KEY secrets."; exit 1; }
+          test "$HAS_KEY" = true || { echo "::error::Add the ASC_KEY_ID, ASC_ISSUER_ID and ASC_PRIVATE_KEY secrets."; exit 1; }
           brew install asc
       - name: Find the uploaded build
         id: build
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: |
+          case "$RELEASE_TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "::error::$RELEASE_TAG is not a release tag"; exit 1;; esac
+          case "${RELEASE_TAG#v}" in *[!0-9.]*) echo "::error::$RELEASE_TAG is not a release tag"; exit 1;; esac
           version="${RELEASE_TAG#v}"
           build_id="$(asc builds info --app "$ASC_APP_ID" --build-number "$version" --platform MAC_OS --output json \
             | python3 -c 'import json, sys; print(json.load(sys.stdin)["data"]["id"])')"
@@ -57,6 +65,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ steps.build.outputs.version }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: |
           metadata="$RUNNER_TEMP/metadata"
           mkdir -p "$metadata/version/$VERSION"
@@ -80,12 +91,24 @@ jobs:
           PY
           echo "METADATA_DIR=$metadata" >> "$GITHUB_ENV"
       - name: Stage the version
+        env:
+          VERSION: ${{ steps.build.outputs.version }}
+          BUILD_ID: ${{ steps.build.outputs.id }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: |
           asc release stage --app "$ASC_APP_ID" --platform MAC_OS \
-            --version "${{ steps.build.outputs.version }}" --build-id "${{ steps.build.outputs.id }}" \
+            --version "$VERSION" --build-id "$BUILD_ID" \
             --metadata-dir "$METADATA_DIR" --confirm --output table
       - name: Submit for review
+        env:
+          VERSION: ${{ steps.build.outputs.version }}
+          BUILD_ID: ${{ steps.build.outputs.id }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: |
           asc review submit --app "$ASC_APP_ID" --platform MAC_OS \
-            --version "${{ steps.build.outputs.version }}" --build-id "${{ steps.build.outputs.id }}" \
+            --version "$VERSION" --build-id "$BUILD_ID" \
             --confirm --output table

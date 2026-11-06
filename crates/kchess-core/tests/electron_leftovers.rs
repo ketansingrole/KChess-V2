@@ -17,8 +17,10 @@ impl Host for Quiet {
 }
 
 fn electron_profile() -> tempfile::TempDir {
-    // SAFETY: set once before any core opens; every test here sets the same value.
-    unsafe { std::env::set_var("KCHESS_STORE_DEBUG", "1") };
+    static SWITCH: std::sync::Once = std::sync::Once::new();
+    // SAFETY: set once, while every other test here waits on `SWITCH`; each test calls this
+    // before it opens a core or starts a thread that reads the environment.
+    SWITCH.call_once(|| unsafe { std::env::set_var("KCHESS_STORE_DEBUG", "1") });
     let profile = tempfile::tempdir().unwrap();
     let target = profile.path().join("Local Storage").join("leveldb");
     std::fs::create_dir_all(&target).unwrap();

@@ -1,0 +1,2 @@
+# Limit for the workspace `cognitive_complexity` lint (Cargo.toml). Clippy default is 25.
+cognitive-complexity-threshold = 25

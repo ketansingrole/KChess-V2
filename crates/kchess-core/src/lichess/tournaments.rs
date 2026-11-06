@@ -12,7 +12,7 @@ use serde_json::{Number, Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::accounts::{Lichess, Reply, path_segment};
-use super::client::{Failure, TokenSource, authorize};
+use super::client::{Failure, Ndjson, TokenSource, authorize};
 use super::decode::{Millis, Text, present, read};
 use super::online::js_number;
 use crate::error::CoreError;
@@ -877,11 +877,13 @@ async fn swiss_of_teams(
                 lichess
                     .client()
                     .ndjson(
-                        reqwest::Method::GET,
-                        &path,
-                        &[("max", "10".to_string())],
-                        None,
-                        None,
+                        Ndjson {
+                            method: reqwest::Method::GET,
+                            path: &path,
+                            query: &[("max", "10".to_string())],
+                            body: None,
+                            auth: None,
+                        },
                         cancel,
                         |line| {
                             let value = serde_json::from_str::<Value>(line)
@@ -1112,11 +1114,13 @@ async fn swiss_detail(
     lichess
         .client()
         .ndjson(
-            reqwest::Method::GET,
-            &results,
-            &[("nb", "50".to_string())],
-            None,
-            auth,
+            Ndjson {
+                method: reqwest::Method::GET,
+                path: &results,
+                query: &[("nb", "50".to_string())],
+                body: None,
+                auth,
+            },
             cancel,
             |line| {
                 let value = serde_json::from_str::<Value>(line)

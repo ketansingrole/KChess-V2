@@ -28,6 +28,7 @@ mod interface_zoom;
 mod log;
 mod menu;
 mod microphone;
+mod motion;
 mod name_dialog;
 mod network;
 mod notation;
@@ -60,6 +61,7 @@ mod swipe;
 mod theme;
 mod updates;
 mod voice;
+mod whats_new;
 mod widgets;
 mod window_state;
 
@@ -107,6 +109,7 @@ fn main() {
     });
     app.run(move |cx| {
         gpui_kit::init(cx);
+        motion::init(cx);
         menu::init(cx);
         notifications::init(cx);
         if let Err(message) = core::start(data_dir, cx) {

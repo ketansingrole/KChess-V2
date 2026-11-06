@@ -21,6 +21,7 @@ use crate::assets::icon;
 use crate::core::AppCore;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Look};
 
 /// Presence is asked for this many players at a time, and again this often.
@@ -329,7 +330,7 @@ impl FriendsPage {
 
     fn ask_remove(name: String, games: f64, stored: f64, window: &mut Window, cx: &mut App) {
         let account = crate::accounts::handle(cx).read(cx).active(cx);
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let name = name.clone();
             dialog
                 .title("Stop following this player?")
@@ -356,7 +357,7 @@ impl FriendsPage {
     }
 
     fn ask_clear(name: String, games: f64, stored: f64, window: &mut Window, cx: &mut App) {
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let name = name.clone();
             dialog
                 .title("Clear this player's synced data?")
@@ -408,7 +409,7 @@ impl FriendsPage {
     fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let dialog = cx.new(|cx| ImportDialog::new(window, cx));
         self.importer = Some(dialog.clone());
-        window.open_dialog(cx, move |modal, _, _| {
+        crate::widgets::open_dialog(window, cx, move |modal, _, _| {
             modal
                 .title("Import followed players from Lichess")
                 .w(px(560.))
@@ -511,7 +512,7 @@ impl FriendsPage {
                                             .font_weight(FontWeight::MEDIUM)
                                             .truncate()
                                             .cursor_pointer()
-                                            .hover(|name| name.underline())
+                                            .pressable_link()
                                             .on_click({
                                                 let name = name.clone();
                                                 move |_, window, cx| {

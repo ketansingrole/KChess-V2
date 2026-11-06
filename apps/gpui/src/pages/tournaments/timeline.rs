@@ -12,6 +12,7 @@ use crate::assets::icon;
 use crate::theme::{Palette, radii, tint};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
+use crate::widgets::Pressable as _;
 
 const MINUTE: f64 = 60_000.;
 /// About this much of the schedule fits across the box, so the scale follows the window.
@@ -368,7 +369,7 @@ impl TournamentsPage {
                             .text_color(palette.highlighted)
                             .when(finished, |bar| bar.opacity(0.42))
                             .cursor_pointer()
-                            .hover(|bar| bar.opacity(0.9))
+                            .pressable_fade(0.9)
                             .tooltip({
                                 let text = SharedString::from(describe(arena));
                                 move |window, cx| {

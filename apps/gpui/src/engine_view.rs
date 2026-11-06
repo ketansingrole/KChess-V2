@@ -12,6 +12,7 @@ use shakmaty::Color;
 use crate::game::tree::{format_eval, pv_san, winning_chances};
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::KeyboardFocus as _;
+use crate::widgets::Pressable as _;
 
 /// The evaluation bar's width.
 pub const EVAL_BAR: Pixels = px(14.);
@@ -101,19 +102,31 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
     .flex_none()
 }
 
-/// Each line's score and its moves from `fen` (in `variant`, a Lichess key), a click playing the
-/// line up to the move (`on_play`); `pending` rows wait for lines still to come.
-#[allow(clippy::too_many_arguments)]
+/// What the engine panel lists (`engine_lines`): the `lines` searched from `fen` (in `variant`, a
+/// Lichess key), how many rows wait for lines still to come (`pending`), and, when there is
+/// nothing to search, why (`ended`).
+pub struct EngineLines<'a> {
+    pub fen: &'a str,
+    pub variant: &'a str,
+    pub lines: &'a [Value],
+    pub pending: usize,
+    pub ended: Option<&'static str>,
+}
+
+/// Each line's score and its moves, a click playing the line up to the move (`on_play`).
 pub fn engine_lines(
-    fen: &str,
-    variant: &str,
-    lines: &[Value],
-    pending: usize,
-    ended: Option<&'static str>,
+    shown: EngineLines<'_>,
     on_play: PlayLine,
     palette: &Palette,
     figurine: crate::notation::Figurine,
 ) -> Div {
+    let EngineLines {
+        fen,
+        variant,
+        lines,
+        pending,
+        ended,
+    } = shown;
     let mut rows: Vec<AnyElement> = Vec::new();
     if let Some(ended) = ended {
         rows.push(
@@ -150,9 +163,11 @@ pub fn engine_lines(
                             .rounded(radii::SM)
                             .bg(palette.accented)
                             .font_weight(FontWeight::MEDIUM)
+                            // The score changes as the search deepens; it holds still in its chip.
+                            .font_features(crate::widgets::tabular())
                             .text_center()
                             .cursor_pointer()
-                            .hover(|eval| eval.bg(tint(palette.primary, 24.)))
+                            .pressable_fill(tint(palette.primary, 24.), palette)
                             .on_click({
                                 let on_play = on_play.clone();
                                 move |_, window, cx| on_play(&eval_pv, 0, window, cx)
@@ -173,7 +188,7 @@ pub fn engine_lines(
                                 .rounded(radii::XS)
                                 .text_color(palette.toned)
                                 .cursor_pointer()
-                                .hover(|chip| chip.bg(tint(palette.primary, 24.)))
+                                .pressable_fill(tint(palette.primary, 24.), palette)
                                 .on_click(move |_, window, cx| on_play(&pv, at, window, cx))
                                 .child(crate::notation::shown(
                                     &played.label,

@@ -24,6 +24,7 @@ gpui_kit::actions!(
         GoBack,
         GoForward,
         ShowShortcuts,
+        ShowWhatsNew,
         ToggleSidebar,
         Find,
         New
@@ -198,6 +199,13 @@ pub fn init(cx: &mut App) {
             }
         })
     });
+    cx.on_action(|_: &ShowWhatsNew, cx| {
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, cx| crate::whats_new::open(window, cx));
+            }
+        })
+    });
     cx.on_action(|_: &Copy, cx| {
         cx.defer(|cx| {
             if let Some(window) = cx.active_window() {
@@ -258,7 +266,7 @@ pub fn init(cx: &mut App) {
     // Everything is saved, with the window still open to say what could not be, before quitting.
     cx.on_action(|_: &Quit, cx| {
         unless_leaving_a_game("Quit", cx, |cx| {
-            crate::core::prepare_quit(cx, "Quit without saving", |cx| cx.quit(), |_| {});
+            crate::core::prepare_quit(cx, "Quit without saving", crate::core::quit_saved, |_| {});
         });
     });
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -285,6 +293,7 @@ pub fn init(cx: &mut App) {
     cx.set_menus([
         Menu::new(crate::profile::APP_NAME).items([
             MenuItem::action("Settings…", OpenSettings),
+            MenuItem::action("What's New", ShowWhatsNew),
             MenuItem::separator(),
             MenuItem::os_submenu("Services", SystemMenuType::Services),
             MenuItem::separator(),

@@ -20,6 +20,7 @@ use crate::played::PlayedHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
+use crate::widgets::Pressable as _;
 
 mod lichess;
 
@@ -162,22 +163,22 @@ pub(crate) enum Action {
     Review,
 }
 
-/// Your saved games, newest first; the chess clock's are not games to show.
-fn played_games(cx: &App) -> Vec<Value> {
-    let mut games: Vec<Value> = cx
+/// Your newest `limit` saved games, newest first; the chess clock's are not games to show.
+/// Only those are copied: Home reads this on every render, and up to 500 games are saved.
+fn played_games(cx: &App, limit: usize) -> Vec<Value> {
+    let mut games: Vec<&Value> = cx
         .global::<PlayedHandle>()
         .0
         .read(cx)
         .games()
         .iter()
         .filter(|game| game["source"] != "clock")
-        .cloned()
         .collect();
     games.sort_by(|a, b| {
         let started = |game: &Value| game["startedAt"].as_f64().unwrap_or_default();
         started(b).total_cmp(&started(a))
     });
-    games
+    games.into_iter().take(limit).cloned().collect()
 }
 
 impl HomePage {
@@ -207,7 +208,9 @@ impl HomePage {
         if self.continue_game.is_some() {
             return None;
         }
-        played_games(cx).first()?["id"].as_str().map(str::to_string)
+        played_games(cx, 1).first()?["id"]
+            .as_str()
+            .map(str::to_string)
     }
 
     /// What Home's buttons can do now.
@@ -324,10 +327,7 @@ fn tile(
         .border_color(palette.border)
         .text_color(palette.highlighted)
         .cursor_pointer()
-        .hover(|tile| {
-            tile.bg(palette.accented)
-                .border_color(palette.border_accented)
-        })
+        .pressable_tile(palette)
         .on_click(move |_, window, cx| crate::shell::open(page, window, cx))
         .child(
             div()
@@ -416,7 +416,7 @@ impl Render for HomePage {
         }
         let tiles = v_flex().gap(GAP).children(rows);
 
-        let mut games = played_games(cx);
+        let mut games = played_games(cx, RECENT);
         // The game you left, else the last one you finished, else the starting position.
         let session = self.continue_game.as_ref().map(|(_, session)| session);
         let latest = games.first().cloned();
@@ -525,7 +525,7 @@ impl Render for HomePage {
             .size(side_length)
             .flex_none()
             .cursor_pointer()
-            .hover(|board| board.opacity(0.92))
+            .pressable_fade(0.92)
             .on_click(move |_, window, cx| match &board_game {
                 Some(id) => crate::shell::open_game(id, window, cx),
                 None => crate::shell::open(Page::Computer, window, cx),
@@ -667,7 +667,7 @@ impl Render for HomePage {
                             .rounded(radii::MD)
                             .text_size(px(13.))
                             .cursor_pointer()
-                            .hover(|row| row.bg(palette.accented))
+                            .pressable(&palette)
                             .on_click(move |_, window, cx| crate::shell::open_game(&id, window, cx))
                             .child(div().w(px(52.)).flex_none().child(
                                 crate::pages::history::badge(

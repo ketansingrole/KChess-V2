@@ -513,6 +513,16 @@ impl Core {
                     .await;
             }
         }
+        // Every login the earlier database held is sealed here now (or its account was
+        // disconnected), so its plaintext copies go.
+        if legacy["legacyTokens"]
+            .as_array()
+            .is_some_and(|tokens| !tokens.is_empty())
+        {
+            self.database
+                .call_async("store.games.scrubLegacyTokens", &[])
+                .await?;
+        }
         Ok(())
     }
 
@@ -574,8 +584,11 @@ impl Core {
     /// Settings changed: store them, and stop what the new settings change (`persistSettings`).
     pub(crate) async fn persist_settings(&self, settings: Value) -> Result<Value> {
         let previous = self.get_settings().await?;
-        // A frontend may not point the core at an arbitrary executable: only a path the user
-        // picked, downloaded by KChess, or already saved is accepted.
+        // Only a path the user picked (`trustEnginePath`, sent when they choose one in a file
+        // dialog), downloaded by KChess, or already saved is accepted, so a stray or confused
+        // settings write cannot point the core at an executable. It is no boundary against a
+        // client holding the profile's `core.token`: that client is this user, trusted like them
+        // (`docs/shared-core.md`).
         let path = settings["enginePath"].as_str().unwrap_or_default();
         let previous_path = previous["enginePath"].as_str();
         if !path.is_empty()

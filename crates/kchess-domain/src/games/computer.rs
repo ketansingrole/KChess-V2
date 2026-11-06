@@ -609,7 +609,9 @@ pub fn search_end(args: &[Value]) -> Result<Value, String> {
 pub fn start(args: &[Value]) -> Result<Value, String> {
     Game::step(args, |game, inputs, reads| {
         let setup: Setup = arg(inputs, 2, "setup")?;
-        let clock: Option<Clock> = optional_arg(inputs, 3)?;
+        let clock = optional_arg::<Clock>(inputs, 3)?
+            .map(Clock::checked)
+            .transpose()?;
         game.start(reads, setup, clock)?;
         Ok(Value::Null)
     })

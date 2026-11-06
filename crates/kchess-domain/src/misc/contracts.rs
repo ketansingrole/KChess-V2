@@ -1,13 +1,10 @@
-//! The argument contracts of the core's methods (`CORE_CONTRACTS`) and of the desktop's IPC
-//! invocations (`IPC_CONTRACTS`): how many arguments a method takes, and one validator per
-//! argument, run before the method does anything. Desktop methods check their own rows first and
-//! fall back to the core's, so an IPC method with the same name as a core method (`saveSettings`)
-//! takes the desktop's check.
+//! The argument contracts of the core's methods (`CORE_CONTRACTS`): how many arguments a method
+//! takes, and one validator per argument, run before the method does anything.
 //!
-//! The tables are the single source. `kchess-contracts` generates their arities for TypeScript
-//! frontends, which check calls through `validateCoreArguments` and
-//! `validateIpcArguments` on the rules binding. A JSON `null` stands for `undefined` where the
-//! facade passes JSON arguments, since JSON cannot carry `undefined`.
+//! The table is the single source: the facade checks every call against it
+//! (`validate_arguments`), and `validateCoreArguments` answers the same check by name. A JSON
+//! `null` stands for `undefined` where the facade passes JSON arguments, since JSON cannot carry
+//! `undefined`.
 
 use serde_json::{Value, json};
 
@@ -17,7 +14,7 @@ use super::{Run, call};
 /// One argument's validator.
 #[derive(Clone, Copy)]
 enum Check {
-    /// A validator by its TypeScript name.
+    /// A validator by its name (`assertX`).
     Valid(&'static str),
     /// `optional(validator)`: an absent (`undefined`) argument passes.
     Optional(&'static str),
@@ -39,8 +36,6 @@ type Row = (&'static str, usize, &'static [Check]);
 pub enum Scope {
     /// `CORE_CONTRACTS`: the core's `CoreApi` methods.
     Core,
-    /// `IPC_CONTRACTS`: the desktop's invocations (its own rows, then the core's).
-    Ipc,
 }
 
 /// Methods refused during a live human game (engine, review and explorer assistance),
@@ -418,50 +413,6 @@ const CORE: &[Row] = &[
     ),
 ];
 
-/// The desktop's own invocations (`IPC_CHANNELS` that are not core methods, and `saveSettings`,
-/// whose desktop settings differ from the core's).
-const DESKTOP: &[Row] = &[
-    (
-        "completeQuit",
-        1,
-        &[Valid("assertUuid"), Optional("assertBoolean")],
-    ),
-    (
-        "recordPerformance",
-        2,
-        &[Valid("assertPerformanceName"), Valid("assertTimingValue")],
-    ),
-    ("reportRendererError", 1, &[Valid("assertRendererError")]),
-    ("saveExport", 1, &[Valid("assertExport")]),
-    ("exportDiagnostics", 0, &[]),
-    ("windowMinimize", 0, &[]),
-    ("windowToggleMaximize", 0, &[]),
-    ("windowClose", 0, &[]),
-    ("windowIsMaximized", 0, &[]),
-    ("interfaceZoom", 0, &[]),
-    ("setInterfaceZoom", 1, &[Valid("assertInterfaceZoom")]),
-    ("appUpdateStatus", 0, &[]),
-    ("checkAppUpdate", 0, &[]),
-    ("downloadAppUpdate", 0, &[]),
-    ("installAppUpdate", 0, &[]),
-    ("openAppReleases", 0, &[]),
-    ("chooseEngine", 0, &[]),
-    ("notify", 1, &[Valid("assertNotification")]),
-    ("openThemesFolder", 0, &[]),
-    ("openNotificationSettings", 0, &[]),
-    ("microphoneAccess", 1, &[Valid("assertBoolean")]),
-    ("ensureVoiceModel", 0, &[]),
-    ("voiceModelStatus", 0, &[]),
-    ("openMicrophoneSettings", 0, &[]),
-    ("reloadWindow", 0, &[]),
-    ("exportVoiceHistory", 0, &[]),
-    (
-        "saveSettings",
-        1,
-        &[Valid("assertSettings"), Optional("assertSettings")],
-    ),
-];
-
 /// The row of `method` in `scope`, or `None` when it has no contract there.
 fn row(scope: Scope, method: &str) -> Option<(usize, &'static [Check])> {
     let find = |rows: &'static [Row]| {
@@ -471,24 +422,16 @@ fn row(scope: Scope, method: &str) -> Option<(usize, &'static [Check])> {
     };
     match scope {
         Scope::Core => find(CORE),
-        Scope::Ipc => find(DESKTOP).or_else(|| find(CORE)),
     }
 }
 
 /// Every method of `scope` with its fewest and most arguments, sorted by name.
 pub fn arities(scope: Scope) -> Vec<(&'static str, usize, usize)> {
-    let rows: Vec<&Row> = match scope {
-        Scope::Core => CORE.iter().collect(),
-        Scope::Ipc => DESKTOP
-            .iter()
-            .chain(
-                CORE.iter()
-                    .filter(|(name, ..)| !DESKTOP.iter().any(|(d, ..)| d == name)),
-            )
-            .collect(),
+    let rows: &[Row] = match scope {
+        Scope::Core => CORE,
     };
     let mut out: Vec<(&'static str, usize, usize)> = rows
-        .into_iter()
+        .iter()
         .map(|(name, min, checks)| (*name, *min, checks.len()))
         .collect();
     out.sort_by_key(|(name, ..)| *name);
@@ -610,21 +553,17 @@ pub fn validate_arguments(method: &str, args: &[Value]) -> Option<Result<(), Str
     Some(check(Scope::Core, method, &values))
 }
 
-/// Whether `method` is one of the argument-check calls (`validateCoreArguments`,
-/// `validateIpcArguments`), which take `[method, args]`.
+/// Whether `method` is the argument-check call (`validateCoreArguments`), which takes
+/// `[method, args]`.
 pub fn is_call(method: &str) -> bool {
-    matches!(method, "validateCoreArguments" | "validateIpcArguments")
+    method == "validateCoreArguments"
 }
 
-/// The argument-check calls. `values` are `[method, args]`, with `undefined` kept where the
-/// frontend sent it. A valid call returns `null`.
-pub fn argument_call(method: &str, values: &[J]) -> Result<J, String> {
-    let scope = match method {
-        "validateIpcArguments" => Scope::Ipc,
-        _ => Scope::Core,
-    };
+/// The argument-check call. `values` are `[method, args]`, with `undefined` kept where the
+/// caller sent it. A valid call returns `null`.
+pub fn argument_call(values: &[J]) -> Result<J, String> {
     match values {
-        [J::Str(name), J::Arr(list)] => check(scope, name, list).map(|()| J::Null),
+        [J::Str(name), J::Arr(list)] => check(Scope::Core, name, list).map(|()| J::Null),
         _ => Err("The arguments of an argument check are a method name and a list.".into()),
     }
 }
@@ -657,7 +596,7 @@ mod tests {
 
     #[test]
     fn every_contract_names_a_validator() {
-        for (method, _, checks) in CORE.iter().chain(DESKTOP) {
+        for (method, _, checks) in CORE {
             for check in checks.iter() {
                 if let Valid(name) | Optional(name) = check {
                     assert!(
@@ -670,26 +609,14 @@ mod tests {
     }
 
     #[test]
-    fn desktop_rows_override_core_rows_of_the_same_name() {
-        let (_, checks) = row(Scope::Ipc, "saveSettings").expect("saveSettings");
-        assert!(matches!(checks[0], Valid("assertSettings")));
-        let (_, checks) = row(Scope::Core, "saveSettings").expect("saveSettings");
-        assert!(matches!(checks[0], Valid("assertCoreSettings")));
-    }
-
-    #[test]
     fn excess_and_missing_arguments_are_rejected_before_any_check() {
         let excess = vec![J::Undef; 3];
         assert_eq!(
-            check(Scope::Ipc, "completeQuit", &excess),
-            Err("Invalid argument count for completeQuit.".into())
+            check(Scope::Core, "answerMistake", &excess),
+            Err("Invalid argument count for answerMistake.".into())
         );
         assert_eq!(
-            check(Scope::Ipc, "recordPerformance", &[]),
-            Err("Invalid argument count for recordPerformance.".into())
-        );
-        assert_eq!(
-            check(Scope::Ipc, "unknownMethod", &[]),
+            check(Scope::Core, "unknownMethod", &[]),
             Err("Invalid argument count for unknownMethod.".into())
         );
     }

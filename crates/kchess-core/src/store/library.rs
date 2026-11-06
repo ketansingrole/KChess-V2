@@ -246,8 +246,8 @@ pub fn object<'a>(value: &'a Value, name: &str) -> Result<&'a Map<String, Value>
         .ok_or_else(|| CoreError::new(format!("{name} must be an object")))
 }
 
-/// A `kchess_domain` document decoder or encoder by its TypeScript name. Values are JSON, so
-/// the lossless sidecar the TypeScript wrappers send is empty.
+/// A `kchess_domain` document decoder or encoder by name. Values are JSON, so the lossless
+/// sidecar is empty.
 pub fn misc(method: &str, args: Vec<Value>) -> Result<Value> {
     let mut full = vec![json!([])];
     full.extend(args);
@@ -262,7 +262,7 @@ module now; their bodies moved unchanged. The re-exports keep every
 `crate::store::library::X` path working. ── */
 
 pub use super::documents::read_document;
-pub(crate) use super::documents::write_document;
+pub(crate) use super::documents::{assert_replaceable, write_document};
 pub use super::json_codec::{clean_name, js_json, js_slice, utf16_len};
 pub use super::library_import::library;
 pub(crate) use super::library_import::{
@@ -307,7 +307,14 @@ pub(crate) fn write_game(db: &Connection, game: &Value) -> Result<()> {
 
 /* ── Mistake drills ── */
 
+/// The mistakes document as this release stores it: version 1 with a list of items.
+fn mistakes_readable(raw: &Value) -> bool {
+    raw.get("version").and_then(Value::as_f64) == Some(1.0)
+        && raw.get("items").is_some_and(Value::is_array)
+}
+
 fn write_mistakes(db: &Connection, items: Vec<Value>) -> Result<()> {
+    assert_replaceable(db, MISTAKES, Some(1), mistakes_readable)?;
     write_document(
         db,
         MISTAKES,
@@ -442,9 +449,11 @@ fn line_review_key(fen: &str, moves: &[String]) -> Option<String> {
     if positions.len() < 2 {
         return None;
     }
-    let args = json!([start.fen, moves[..positions.len() - 1]]).to_string();
-    let key: Value =
-        serde_json::from_str(&kchess_domain::api::call("reviewKey", &args).ok()?).ok()?;
+    let key = kchess_domain::api::call_value(
+        "reviewKey",
+        &[json!(start.fen), json!(moves[..positions.len() - 1])],
+    )
+    .ok()?;
     key.as_str().map(str::to_string)
 }
 
@@ -453,11 +462,12 @@ fn line_review_key(fen: &str, moves: &[String]) -> Option<String> {
 /// here whose line it reviews (your side there is the one named "You").
 fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Value> {
     let mut keys: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for item in read_mistakes(db)? {
         let Some((key, _)) = id_of(&item).and_then(|id| id.rsplit_once(':')) else {
             continue;
         };
-        if !keys.iter().any(|known| known == key) {
+        if seen.insert(key.to_string()) {
             keys.push(key.to_string());
         }
     }
@@ -589,6 +599,7 @@ fn answer_mistake(db: &Connection, id: &str, solved: bool, now: f64) -> Result<V
 /* ── Tournaments joined from KChess ── */
 
 fn write_joined(db: &Connection, entries: Vec<Value>) -> Result<()> {
+    assert_replaceable(db, JOINED, None, Value::is_array)?;
     write_document(
         db,
         JOINED,
@@ -693,6 +704,11 @@ fn forget_tournaments_of(
 
 /* ── Repertoire training ── */
 
+fn write_misses(db: &Connection, misses: &Value) -> Result<()> {
+    assert_replaceable(db, MISSES, None, Value::is_object)?;
+    write_document(db, MISSES, misses, "Too many repertoire notes are saved.").map(|_| ())
+}
+
 fn record_repertoire_miss(host: &dyn Host, db: &Connection, key: &str, fen: &str) -> Result<Value> {
     let mut misses = object(&read_misses(host, db)?, "repertoire misses")?.clone();
     let table = misses
@@ -703,7 +719,7 @@ fn record_repertoire_miss(host: &dyn Host, db: &Connection, key: &str, fen: &str
     let count = table.get(fen).and_then(Value::as_f64).unwrap_or(0.0) + 1.0;
     table.insert(fen.to_string(), num(count));
     let misses = Value::Object(misses);
-    write_document(db, MISSES, &misses, "Too many repertoire notes are saved.")?;
+    write_misses(db, &misses)?;
     Ok(misses)
 }
 
@@ -711,7 +727,7 @@ fn clear_repertoire_misses(host: &dyn Host, db: &Connection, key: &str) -> Resul
     let mut misses = object(&read_misses(host, db)?, "repertoire misses")?.clone();
     misses.shift_remove(key);
     let misses = Value::Object(misses);
-    write_document(db, MISSES, &misses, "Too many repertoire notes are saved.")?;
+    write_misses(db, &misses)?;
     Ok(misses)
 }
 
@@ -740,7 +756,7 @@ fn restore_repertoire_misses(
         table.insert(fen.clone(), num(now + count));
     }
     let misses = Value::Object(misses);
-    write_document(db, MISSES, &misses, "Too many repertoire notes are saved.")?;
+    write_misses(db, &misses)?;
     Ok(misses)
 }
 
@@ -755,6 +771,8 @@ fn review_repertoire_line(
 ) -> Result<Value> {
     let mut lines = read_schedule_lines(host, db)?;
     repetition::record(&mut lines, key, line, correct, now).map_err(CoreError::new)?;
+    // An unversioned schedule (a development format) is replaced; a newer one is kept.
+    assert_replaceable(db, SCHEDULE, Some(repetition::SCHEDULE_VERSION), |_| true)?;
     write_document(
         db,
         SCHEDULE,
@@ -1470,6 +1488,67 @@ mod tests {
             .is_err()
         );
         assert!(run(&db, "store.library.recordRepertoireMiss", &[json!("white")]).is_err());
+    }
+
+    #[test]
+    fn a_damaged_or_newer_document_is_kept_instead_of_replaced() {
+        use crate::store::documents::DAMAGED_DOCUMENT;
+        let now = 1_800_000_000_000.0;
+        let seed = |db: &Connection, key: &str, body: &str| {
+            db.execute(
+                "INSERT INTO documents (key, body, updatedAt) VALUES (?1, ?2, 0)
+                 ON CONFLICT(key) DO UPDATE SET body = excluded.body",
+                params![key, body],
+            )
+            .expect("seed");
+        };
+        let cases: Vec<(&str, &str, &str, Vec<Value>)> = vec![
+            // A schedule a newer release wrote: answering one line used to keep only that line.
+            (
+                SCHEDULE,
+                r#"{"version":2,"lines":{"study:white":{"e2e4":{"due":0}}}}"#,
+                "store.library.reviewRepertoireLine",
+                vec![json!("study:white"), json!("d2d4"), json!(true), json!(now)],
+            ),
+            // One damaged byte in the drills: the next review's drills used to replace them all.
+            (
+                MISTAKES,
+                r#"{"version":1,"items":[{"id":"a"#,
+                "store.library.addMistakes",
+                vec![json!("REVIEW"), json!("black"), json!(1)],
+            ),
+            (
+                MISTAKES,
+                r#"{"version":2,"items":[]}"#,
+                "store.library.addMistakes",
+                vec![json!("REVIEW"), json!("black"), json!(1)],
+            ),
+            (
+                JOINED,
+                r#"[{"system":"arena""#,
+                "store.library.forgetTournament",
+                vec![json!("arena"), json!("x")],
+            ),
+            (
+                MISSES,
+                r#"{"study:white":"#,
+                "store.library.recordRepertoireMiss",
+                vec![json!("study:white"), json!("fen")],
+            ),
+        ];
+        for (key, body, method, mut args) in cases {
+            let db = drills_db();
+            if args.first() == Some(&json!("REVIEW")) {
+                args[0] = json!(store_blunder_review(&db, "local", 20));
+            }
+            seed(&db, key, body);
+            let error = run(&db, method, &args).expect_err(method);
+            assert_eq!(error.message, DAMAGED_DOCUMENT, "{method}");
+            let kept = read_document_text(&db, key).expect("read").expect("kept");
+            assert_eq!(kept, body, "{method} replaced {key}");
+            // Reading still works, so the rest of the library opens.
+            run(&db, "store.library.library", &[json!(now)]).expect("library");
+        }
     }
 
     #[test]

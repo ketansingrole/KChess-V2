@@ -32,7 +32,7 @@ const RETRY: Duration = Duration::from_millis(50);
 /// Who this client is, for `hello`.
 #[derive(Clone, Debug)]
 pub struct Hello {
-    /// `electron`, `gpui`, `cli`, `mcp`...
+    /// `gpui`, `cli`, `mcp`...
     pub kind: String,
     pub capabilities: Vec<Capability>,
 }
@@ -421,6 +421,28 @@ fn launch(profile: &Path, start: &Start) -> Result<(), ConnectError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every path the starting app passes reaches the core.
+    #[test]
+    fn the_service_config_reaches_the_core() {
+        let path = |name: &str| Some(PathBuf::from(name));
+        let config = ServiceConfig {
+            legacy_database_path: path("legacy.db"),
+            bundled_engine_path: path("stockfish"),
+            variant_engine_path: path("fairy-stockfish"),
+            managed_engine_dir: path("engines"),
+            voice_helper_path: path("kchess-voice"),
+            system_credentials: true,
+        }
+        .into_config(PathBuf::from("profile"));
+        assert_eq!(config.data_dir, PathBuf::from("profile"));
+        assert_eq!(config.legacy_database_path, path("legacy.db"));
+        assert_eq!(config.bundled_engine_path, path("stockfish"));
+        assert_eq!(config.variant_engine_path, path("fairy-stockfish"));
+        assert_eq!(config.managed_engine_dir, path("engines"));
+        assert_eq!(config.voice_helper_path, path("kchess-voice"));
+        assert!(config.system_credentials);
+    }
 
     #[test]
     fn the_sandbox_starts_the_service_from_the_bundle() {

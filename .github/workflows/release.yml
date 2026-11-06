@@ -30,7 +30,7 @@ jobs:
       # `release-verify` reads the tagged commit's CI run.
       actions: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -50,6 +50,10 @@ jobs:
   # (`latest*.yml`), so it installs this over itself. Signed and notarized on macOS with the
   # Developer ID when its secrets are set, ad hoc otherwise.
   package:
+    # Only a validated commit is packaged, and only a `v*` tag reaches the `release` environment
+    # that holds the Developer ID and notarization secrets: a manual run builds ad hoc.
+    needs: validate
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || 'build' }}
     strategy:
       fail-fast: false
       matrix:
@@ -61,7 +65,7 @@ jobs:
       CARGO_PROFILE_RELEASE_LTO: fat
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '1'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Install GPUI build libraries
@@ -70,7 +74,7 @@ jobs:
       - name: Install NSIS
         if: runner.os == 'Windows'
         uses: ./.github/actions/install-nsis
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: package
           key: ${{ runner.os }}-${{ runner.arch }}
@@ -145,7 +149,7 @@ jobs:
           # The Electron app's updater finds the app replacing it through these.
           test -s "apps/gpui/dist/$manifest" || { echo "::error::Missing update metadata: $manifest"; exit 1; }
       # The release job writes one SHA256SUMS.txt for every package.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: kchess-${{ runner.os }}
           path: |
@@ -163,19 +167,31 @@ jobs:
   app-store:
     needs: validate
     uses: ./.github/workflows/app-store-build.yml
-    secrets: inherit
+    # Only what the App Store build uses, never the Developer ID, Snapcraft or release key.
+    secrets:
+      MAS_APP_P12: ${{ secrets.MAS_APP_P12 }}
+      MAS_INSTALLER_P12: ${{ secrets.MAS_INSTALLER_P12 }}
+      MAS_P12_PASSWORD: ${{ secrets.MAS_P12_PASSWORD }}
+      MAS_PROVISION_PROFILE: ${{ secrets.MAS_PROVISION_PROFILE }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
 
   release:
     needs: [validate, package, snap]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    # The release key's secret lives in this environment, limited to `v*` tags (Settings →
+    # Environments → release → deployment branches and tags).
+    environment: release
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           # Only the GitHub downloads: the App Store package goes to App Store Connect alone.
           pattern: kchess-*
@@ -184,6 +200,11 @@ jobs:
       - name: Add checksums
         working-directory: packages
         run: sha256sum * > SHA256SUMS.txt
+      # Installed apps refuse checksums the release key has not signed (apps/gpui/update-key.pub).
+      - name: Sign the checksums
+        env:
+          KCHESS_UPDATE_SIGNING_KEY: ${{ secrets.KCHESS_UPDATE_SIGNING_KEY }}
+        run: cargo xtask sign-sums packages/SHA256SUMS.txt
       - name: Attach to a draft release
         env:
           GH_TOKEN: ${{ github.token }}

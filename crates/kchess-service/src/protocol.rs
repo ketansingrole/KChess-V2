@@ -134,6 +134,18 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 
 /// Reads one frame; `None` when the other side closed between frames.
 pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<Option<Frame>> {
+    read_frame_within(reader, MAX_FRAME).await
+}
+
+/// The largest `hello`: read before the token is checked, so a client that has not proven itself
+/// can make the service allocate no more than this.
+pub const MAX_HELLO: usize = 64 * 1024;
+
+/// `read_frame`, refusing a frame over `limit` bytes before reading it.
+pub async fn read_frame_within<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    limit: usize,
+) -> std::io::Result<Option<Frame>> {
     let mut length = [0u8; 4];
     match reader.read_exact(&mut length).await {
         Ok(_) => {}
@@ -141,7 +153,7 @@ pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result
         Err(error) => return Err(error),
     }
     let length = u32::from_be_bytes(length) as usize;
-    if length > MAX_FRAME {
+    if length > limit {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("a frame of {length} bytes is over the limit"),
@@ -159,18 +171,21 @@ pub async fn write_frame<W: AsyncWrite + Unpin>(
     writer: &mut W,
     frame: &Frame,
 ) -> std::io::Result<()> {
-    let body = serde_json::to_vec(frame)
+    // The length prefix and the body go out in one write.
+    let mut bytes = vec![0u8; 4];
+    serde_json::to_writer(&mut bytes, frame)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    if body.len() > MAX_FRAME {
+    let body = bytes.len() - 4;
+    if body > MAX_FRAME {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("a frame of {} bytes is over the limit", body.len()),
+            format!("a frame of {body} bytes is over the limit"),
         ));
     }
-    let length = u32::try_from(body.len())
+    let length = u32::try_from(body)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    writer.write_all(&length.to_be_bytes()).await?;
-    writer.write_all(&body).await?;
+    bytes[..4].copy_from_slice(&length.to_be_bytes());
+    writer.write_all(&bytes).await?;
     writer.flush().await
 }
 
@@ -250,8 +265,69 @@ mod tests {
         assert!(matches!(old, Frame::Result { kind: None, .. }));
     }
 
+    /// A frame whose body is exactly `size` bytes.
+    fn event_of(size: usize) -> Frame {
+        let empty = Frame::Event {
+            name: "e".into(),
+            payload: json!(""),
+        };
+        let overhead = serde_json::to_vec(&empty).expect("json").len();
+        Frame::Event {
+            name: "e".into(),
+            payload: json!("a".repeat(size - overhead)),
+        }
+    }
+
+    /// Frames up to the limit go out, with a length the reader follows to the next frame.
+    #[tokio::test]
+    async fn frames_up_to_the_limit_are_written_and_read_back_in_turn() {
+        let largest = event_of(MAX_FRAME);
+        let small = Frame::Focus { focused: true };
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &largest)
+            .await
+            .expect("the largest frame");
+        write_frame(&mut bytes, &small)
+            .await
+            .expect("a small frame");
+        let mut reader = bytes.as_slice();
+        let first = read_frame(&mut reader).await.expect("read");
+        assert!(first == Some(largest), "the largest frame reads back");
+        assert_eq!(read_frame(&mut reader).await.expect("read"), Some(small));
+        assert_eq!(read_frame(&mut reader).await.expect("read"), None);
+
+        let over = write_frame(&mut tokio::io::sink(), &event_of(MAX_FRAME + 1)).await;
+        assert!(over.is_err_and(|error| error.to_string().contains("over the limit")));
+    }
+
+    /// Library documents of several megabytes fit in a frame.
+    #[test]
+    fn the_limit_is_sixteen_megabytes() {
+        assert_eq!(MAX_FRAME, 16 << 20);
+    }
+
+    /// A read that fails is an error, not a closed connection.
+    #[tokio::test]
+    async fn a_broken_connection_is_an_error() {
+        struct Broken;
+        impl AsyncRead for Broken {
+            fn poll_read(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+                _: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                std::task::Poll::Ready(Err(std::io::ErrorKind::ConnectionReset.into()))
+            }
+        }
+        assert!(read_frame(&mut Broken).await.is_err());
+    }
+
     #[test]
     fn the_release_and_protocol_are_stable() {
+        let packaged = std::env::var("KCHESS_PACKAGE_VERSION").unwrap_or_default();
+        if packaged.is_empty() {
+            assert_eq!(release(), env!("CARGO_PKG_VERSION"));
+        }
         assert!(!release().is_empty());
         assert_eq!(protocol(), protocol());
         assert_eq!(protocol().len(), 16);

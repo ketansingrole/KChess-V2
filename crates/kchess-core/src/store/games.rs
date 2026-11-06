@@ -20,7 +20,6 @@ use serde_json::{Value, json};
 use super::StoreContext;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
-use kchess_domain::api;
 use kchess_domain::calendar::civil_from_days;
 
 /// Games kept per account.
@@ -388,6 +387,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         // The one-time import from an earlier release, run by the first read (`ensureMigrated`).
         // The plaintext tokens it finds go back to the caller, which encrypts and stores them.
         "legacyImportPending" => super::import::legacy_import_pending(ctx).map(Value::Bool),
+        "scrubLegacyTokens" => super::import::scrub_legacy_tokens(ctx).map(|()| Value::Null),
         "migrate" => optional_arg::<bool>(args, 0, "encryptionAvailable")
             .and_then(|flag| super::import::migrate(ctx, flag.unwrap_or(false)))
             .map(|tokens| {
@@ -475,9 +475,7 @@ pub(super) fn now_ms() -> i64 {
 
 /// A validator or domain rule from `kchess-domain`, by its TypeScript name.
 fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
-    let text = serde_json::to_string(&args).map_err(|cause| CoreError::new(cause.to_string()))?;
-    let output = api::call(method, &text).map_err(CoreError::new)?;
-    serde_json::from_str(&output).map_err(|cause| CoreError::new(cause.to_string()))
+    crate::engine::domain(method, args)
 }
 
 /// `rulesLossless(name, value)` with no special values to carry.
@@ -1173,13 +1171,39 @@ fn dismissed_friends(db: &Connection) -> Result<Vec<String>> {
 }
 
 /// Everything stored for one account's games, inside the caller's transaction: games, pending
-/// syncs, cached profile data, its own explorer lookups, and any review or check left without a
-/// game. A game another tracked account also played keeps its reviews.
+/// syncs, cached profile data, its own explorer lookups, the reviews of its games, and any review
+/// check left without a game. A game another tracked account also played keeps its reviews.
 pub(super) fn purge_account_data(
     db: &Connection,
     account: &str,
     usage: bool,
 ) -> rusqlite::Result<()> {
+    // The reviews of this account's games go with them, unless a game that stays still links
+    // one. A game goes when only this account has it (another may share it). Reviews of local
+    // games and of the analysis board link no synced game: they stay.
+    let gone = |column: &str| {
+        format!(
+            "(EXISTS (SELECT 1 FROM games g WHERE g.id = {column} AND g.account = ?1 COLLATE NOCASE)
+              AND NOT EXISTS (SELECT 1 FROM games g WHERE g.id = {column} AND g.account <> ?1 COLLATE NOCASE))"
+        )
+    };
+    db.execute(
+        &format!(
+            "DELETE FROM reviews WHERE key IN (SELECT reviewKey FROM game_reviews WHERE {})
+               AND NOT EXISTS (SELECT 1 FROM game_reviews other
+                                WHERE other.reviewKey = reviews.key AND NOT {})",
+            gone("game_reviews.gameId"),
+            gone("other.gameId")
+        ),
+        [account],
+    )?;
+    db.execute(
+        &format!(
+            "DELETE FROM game_reviews WHERE {}",
+            gone("game_reviews.gameId")
+        ),
+        [account],
+    )?;
     db.execute(
         "DELETE FROM games WHERE account = ? COLLATE NOCASE",
         [account],
@@ -1216,14 +1240,6 @@ pub(super) fn purge_account_data(
     }
     db.execute(
         "DELETE FROM lichess_review_checks WHERE NOT EXISTS (SELECT 1 FROM games WHERE games.id = lichess_review_checks.id)",
-        [],
-    )?;
-    db.execute(
-        "DELETE FROM game_reviews WHERE NOT EXISTS (SELECT 1 FROM games WHERE games.id = game_reviews.gameId)",
-        [],
-    )?;
-    db.execute(
-        "DELETE FROM reviews WHERE NOT EXISTS (SELECT 1 FROM game_reviews WHERE game_reviews.reviewKey = reviews.key)",
         [],
     )?;
     Ok(())
@@ -1474,6 +1490,55 @@ mod tests {
         let db = Connection::open_in_memory().unwrap();
         crate::store::migrations::migrate(&db).unwrap();
         db
+    }
+
+    /// Clearing an account drops its games' reviews, but keeps the reviews of local games and
+    /// of the analysis board, and a review another account's game still links.
+    #[test]
+    fn clearing_an_account_keeps_reviews_that_are_not_its_games() {
+        let db = database();
+        let review = |key: &str| {
+            format!(
+                "INSERT INTO reviews (key, source, complete, depth, data, summary, updatedAt)
+                   VALUES ('{key}', 'local', 1, 18, '{{}}', '{{}}', 1);"
+            )
+        };
+        let game = |account: &str, id: &str| {
+            format!(
+                "INSERT INTO games (account, id, createdAt, lastMoveAt, rated, speed, perf, status,
+                                    color, opponent, moves)
+                   VALUES ('{account}', '{id}', 1, 1, 1, 'blitz', 'blitz', 'mate', 'white', 'X', '');"
+            )
+        };
+        db.execute_batch(
+            &[
+                review("board"),
+                review("archived"),
+                review("alice"),
+                review("shared"),
+                game("Alice", "Alice001"),
+                game("Bob", "BobGame1"),
+                "INSERT INTO game_reviews VALUES ('Alice001', 'alice'), ('Local001', 'archived'),
+                 ('Alice001', 'shared'), ('BobGame1', 'shared');"
+                    .to_string(),
+            ]
+            .concat(),
+        )
+        .unwrap();
+        purge_account_data(&db, "alice", true).unwrap();
+        let mut kept: Vec<String> = db
+            .prepare("SELECT key FROM reviews ORDER BY key")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        kept.sort();
+        assert_eq!(kept, ["archived", "board", "shared"]);
+        let links: i64 = db
+            .query_row("SELECT count(*) FROM game_reviews", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(links, 2, "the archived game's and Bob's links stay");
     }
 
     /// Result filters are served from the result indexes.
