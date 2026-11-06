@@ -1,16 +1,18 @@
 //! Reached through `api::call` (see RUST_MIGRATION.md).
 //!
 //! Training: puzzle runs (Storm, Streak, Rush), puzzle solving, endgame drills, openings, the
-//! client clock, engine levels and UCI `info` lines. Their constants are data shared with
-//! TypeScript (`crates/kchess-domain/data/`).
+//! client clock, engine levels, UCI `info` lines and Guess the move's scoring. Their constants
+//! are data shared with TypeScript (`crates/kchess-domain/data/`).
 
 mod clock;
 mod data;
 mod endgames;
 mod engine_levels;
+pub mod guess;
 mod lessons;
 pub mod openings;
 mod puzzle;
+pub mod repetition;
 mod rush;
 mod uci_info;
 

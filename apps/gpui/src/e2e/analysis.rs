@@ -1063,15 +1063,9 @@ fn the_editors_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     wait_for_fen(&mut app, START_FEN);
 }
 
-/// Drop `name` holding `text` on the window, as Finder or Explorer would.
+/// Drop `name` holding `text` on the window, and let it open.
 fn drop_file(app: &mut Harness, name: &str, text: &str) -> tempfile::TempDir {
-    let folder = tempfile::tempdir().expect("a folder");
-    let path = folder.path().join(name);
-    std::fs::write(&path, text).expect("the file");
-    app.with_window(|window, cx| {
-        let paths = gpui_kit::ExternalPaths(std::iter::once(path).collect());
-        crate::shell::open_dropped(&paths, window, cx);
-    });
+    let folder = app.drop_file(name, text.as_bytes());
     settle(app);
     folder
 }
@@ -1112,6 +1106,15 @@ fn a_dropped_file_that_is_no_game_is_refused(cx: &mut gpui_kit::TestAppContext) 
     settle(&mut app);
     let _file = drop_file(&mut app, "board.png", "png");
     assert!(!app.shows("import-run"));
+    // A PGN over the import's 2 MB is refused before it is read, from any page.
+    app.open("Puzzles");
+    let big = format!("1. e4 e5 *{}", " ".repeat(2 * 1024 * 1024));
+    let _file = drop_file(&mut app, "huge.pgn", &big);
+    assert!(!app.shows("import-run"));
+    assert_eq!(
+        app.cx.update(|cx| crate::shell::current_page(cx)),
+        Some(crate::pages::Page::Puzzles)
+    );
 }
 
 /// The import's Open file… reads a PGN file from disk, as if it were pasted.

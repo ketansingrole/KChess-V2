@@ -204,6 +204,12 @@ impl RatingHistory {
         self
     }
 
+    /// What is said under a chart drawn from games.
+    pub fn set_games_hint(&mut self, hint: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.games_hint = hint.into();
+        cx.notify();
+    }
+
     /// The mode on the chart.
     pub fn mode(&self) -> &str {
         &self.mode

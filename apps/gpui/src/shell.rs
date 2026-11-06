@@ -869,7 +869,7 @@ fn drop_zone(palette: &Palette) -> impl IntoElement {
                     div()
                         .text_size(px(15.))
                         .font_weight(FontWeight::MEDIUM)
-                        .child("Open on the analysis board"),
+                        .child("Open"),
                 ),
         )
         .invisible()
@@ -879,8 +879,9 @@ fn drop_zone(palette: &Palette) -> impl IntoElement {
 /// The largest file a drop reads: the import's own limit for a PGN.
 const DROPPED_MAX: u64 = 2 * 1024 * 1024;
 
-/// A PGN or FEN file dropped on the window opens on the analysis board, as if pasted into its
-/// import; anything else is refused with a notice.
+/// A PGN or FEN file dropped on the window, from any page: one game or a position opens on the
+/// analysis board, as if pasted into its import; several games are offered as a study, in the
+/// Studies import; anything else is refused with a notice.
 pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
     let Some(path) = paths.paths().first() else {
         return;
@@ -895,6 +896,15 @@ pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
         );
         return;
     };
+    let games = crate::game::rules("pgnGames", &[serde_json::json!(text)])
+        .ok()
+        .and_then(|games| games.as_array().map(Vec::len))
+        .unwrap_or(0);
+    if games > 1 {
+        open(Page::Studies, window, cx);
+        StudiesPage::open_import_with(Some(text), window, cx);
+        return;
+    }
     replace_analysis(window, cx, move |analysis, window, cx| {
         analysis.import_text(text.clone(), window, cx);
         true
@@ -940,6 +950,17 @@ pub fn practise_game(
     replace_analysis(window, cx, move |analysis, _, cx| {
         analysis.practise_game(&game, items.clone(), cx)
     });
+}
+
+/// Guess the move through a game's PGN as `side`, on Practice.
+pub fn guess_moves(pgn: &str, side: Option<shakmaty::Color>, window: &mut Window, cx: &mut App) {
+    crate::prefs::set(cx, "kchess:practice-tab", "guess");
+    open(Page::Practice, window, cx);
+    if let Some(practice) = view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx) {
+        practice.update(cx, |practice, cx| {
+            practice.guess_moves(pgn, side, window, cx)
+        });
+    }
 }
 
 /// Analyse a line from the starting position.
@@ -2193,7 +2214,8 @@ impl Render for Workspace {
                             .relative()
                             .overflow_hidden()
                             .on_scroll(cx.listener(Self::scrolled))
-                            // A PGN or FEN file dropped here opens on the analysis board.
+                            // A PGN or FEN file dropped here opens: on the analysis board, or
+                            // as a study when it holds several games.
                             .on_drop(|paths: &ExternalPaths, window, cx| {
                                 open_dropped(paths, window, cx)
                             })

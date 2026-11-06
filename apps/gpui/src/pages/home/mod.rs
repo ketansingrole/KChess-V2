@@ -52,7 +52,8 @@ pub struct HomePage {
     board: Option<(String, Entity<ChessBoard>)>,
     /// The last game's opening, by the game and its length, worked out once.
     last_opening: Option<((String, usize), Option<String>)>,
-    /// Your Lichess activity, once an account is connected, and the account it shows.
+    /// Your Lichess activity, once an account is connected (else a Chess.com player's), and the
+    /// account it shows.
     activity: Option<(String, Entity<lichess::LichessActivity>)>,
     /// The page's content, as last laid out: it, not the window, decides what goes beside what.
     area: Measured,
@@ -161,22 +162,22 @@ pub(crate) enum Action {
     Review,
 }
 
-/// Your saved games, newest first; the chess clock's are not games to show.
-fn played_games(cx: &App) -> Vec<Value> {
-    let mut games: Vec<Value> = cx
+/// Your newest `limit` saved games, newest first; the chess clock's are not games to show.
+/// Only those are copied: Home reads this on every render, and up to 500 games are saved.
+fn played_games(cx: &App, limit: usize) -> Vec<Value> {
+    let mut games: Vec<&Value> = cx
         .global::<PlayedHandle>()
         .0
         .read(cx)
         .games()
         .iter()
         .filter(|game| game["source"] != "clock")
-        .cloned()
         .collect();
     games.sort_by(|a, b| {
         let started = |game: &Value| game["startedAt"].as_f64().unwrap_or_default();
         started(b).total_cmp(&started(a))
     });
-    games
+    games.into_iter().take(limit).cloned().collect()
 }
 
 impl HomePage {
@@ -206,7 +207,9 @@ impl HomePage {
         if self.continue_game.is_some() {
             return None;
         }
-        played_games(cx).first()?["id"].as_str().map(str::to_string)
+        played_games(cx, 1).first()?["id"]
+            .as_str()
+            .map(str::to_string)
     }
 
     /// What Home's buttons can do now.
@@ -230,6 +233,12 @@ impl HomePage {
                 }
             }
         }
+    }
+
+    /// The activity card shown, if any.
+    #[cfg(test)]
+    pub(crate) fn activity(&self) -> Option<Entity<lichess::LichessActivity>> {
+        self.activity.as_ref().map(|(_, view)| view.clone())
     }
 
     /// Read the unfinished computer game and the accounts again (the page was shown).
@@ -349,7 +358,15 @@ impl Render for HomePage {
         let (connected, busy) = {
             let accounts = crate::accounts::handle(cx);
             let accounts = accounts.read(cx);
-            (accounts.active(cx), accounts.busy)
+            // Without a Lichess account, the first Chess.com player's games are the activity.
+            let account = accounts.active(cx).or_else(|| {
+                accounts.chesscom().first().and_then(|player| {
+                    player["username"]
+                        .as_str()
+                        .map(kchess_domain::chesscom::account_of)
+                })
+            });
+            (account, accounts.busy)
         };
         let padding = side_padding(window);
         // Before the first layout, the window less the sidebar is the guess.
@@ -401,7 +418,7 @@ impl Render for HomePage {
         }
         let tiles = v_flex().gap(GAP).children(rows);
 
-        let mut games = played_games(cx);
+        let mut games = played_games(cx, RECENT);
         // The game you left, else the last one you finished, else the starting position.
         let session = self.continue_game.as_ref().map(|(_, session)| session);
         let latest = games.first().cloned();
@@ -696,7 +713,8 @@ impl Render for HomePage {
                             )
                     })),
             );
-        // A connected account's activity follows; until then, one line to connect it.
+        // A connected account's (or Chess.com player's) activity follows; until then, one line to
+        // connect it.
         let activity = match connected.clone() {
             Some(account) => {
                 let stale = self

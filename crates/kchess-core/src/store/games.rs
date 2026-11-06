@@ -20,7 +20,6 @@ use serde_json::{Value, json};
 use super::StoreContext;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
-use kchess_domain::api;
 use kchess_domain::calendar::civil_from_days;
 
 /// Games kept per account.
@@ -475,9 +474,7 @@ pub(super) fn now_ms() -> i64 {
 
 /// A validator or domain rule from `kchess-domain`, by its TypeScript name.
 fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
-    let text = serde_json::to_string(&args).map_err(|cause| CoreError::new(cause.to_string()))?;
-    let output = api::call(method, &text).map_err(CoreError::new)?;
-    serde_json::from_str(&output).map_err(|cause| CoreError::new(cause.to_string()))
+    crate::engine::domain(method, args)
 }
 
 /// `rulesLossless(name, value)` with no special values to carry.
@@ -968,22 +965,24 @@ fn game_library_overview(ctx: &StoreContext) -> Result<Value> {
     Ok(value)
 }
 
-/// `gameRatingHistory`: the last rated rating each day, per variant.
+/// `gameRatingHistory`: the last rated rating each day, per variant. A Chess.com game records the
+/// player's rating after it and no change, so its rating stands as it is.
 fn rating_history(db: &Connection, account: &str) -> Result<Vec<RatingSeries>> {
+    let after_game = kchess_domain::chesscom::username_of(account).is_some();
     let mut statement = db
         .prepare(
             "SELECT perf, day, rating FROM (
     SELECT perf, CAST(createdAt / 86400000 AS INTEGER) * 86400000 AS day,
-      playerRating + ratingDiff AS rating,
+      playerRating + COALESCE(ratingDiff, 0) AS rating,
       ROW_NUMBER() OVER (PARTITION BY perf, CAST(createdAt / 86400000 AS INTEGER)
         ORDER BY createdAt DESC, id DESC) AS rank
-    FROM games WHERE account = ? COLLATE NOCASE AND rated = 1
-      AND playerRating IS NOT NULL AND ratingDiff IS NOT NULL
+    FROM games WHERE account = ?1 COLLATE NOCASE AND rated = 1
+      AND playerRating IS NOT NULL AND (ratingDiff IS NOT NULL OR ?2)
   ) WHERE rank = 1 ORDER BY day, perf",
         )
         .sql()?;
     let rows = statement
-        .query_map([account], |row| {
+        .query_map(params![account, after_game], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, i64>(1)?,

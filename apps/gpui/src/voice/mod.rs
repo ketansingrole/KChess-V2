@@ -683,11 +683,25 @@ pub fn amend(entry: Entry, update: Value, cx: &App) {
         .detach();
 }
 
+/// A voice grammar by name. Pages read it on every render and it never changes, so each one is
+/// built by the rules once and copied from then on.
 pub fn grammar(name: &str) -> Vec<String> {
-    crate::game::rules(name, &[])
+    thread_local! {
+        static GRAMMARS: std::cell::RefCell<std::collections::HashMap<String, Vec<String>>> =
+            std::cell::RefCell::default();
+    }
+    if let Some(known) = GRAMMARS.with_borrow(|grammars| grammars.get(name).cloned()) {
+        return known;
+    }
+    let list: Vec<String> = crate::game::rules(name, &[])
         .ok()
         .and_then(|list| serde_json::from_value(list).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // An unreadable answer is tried again next time rather than kept.
+    if !list.is_empty() {
+        GRAMMARS.with_borrow_mut(|grammars| grammars.insert(name.to_string(), list.clone()));
+    }
+    list
 }
 
 #[cfg(test)]

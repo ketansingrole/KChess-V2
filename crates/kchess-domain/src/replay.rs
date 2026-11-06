@@ -37,6 +37,18 @@ pub fn replay_setup_count<S: AsRef<str>>(variant: &str, fen: &str, moves: &[S]) 
     Some(count_line(&mut pos, moves))
 }
 
+/// The side to move once `replaySetup` has played what it accepts, and how many moves that is,
+/// without building SAN or a FEN.
+pub fn replay_setup_turn<S: AsRef<str>>(
+    variant: &str,
+    fen: &str,
+    moves: &[S],
+) -> Option<(usize, shakmaty::Color)> {
+    let mut pos = rules::setup_start(variant, fen)?;
+    let count = count_line(&mut pos, moves);
+    Some((count, pos.turn()))
+}
+
 fn play_line<S: AsRef<str>>(
     pos: &mut VariantPosition,
     moves: &[S],
