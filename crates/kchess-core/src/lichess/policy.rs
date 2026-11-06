@@ -490,7 +490,9 @@ impl Policy {
                 Ok(Ok(response)) => response,
                 Ok(Err(cause)) => {
                     // The cause is for the log: it names the address, which says nothing to a player.
-                    self.host.log(Level::Warn, "request-policy", &format!("Lichess request failed: {cause}"));
+                    // Its sources too: reqwest's own text is the same for a refused, reset or
+                    // timed-out connection, and only the OS error beneath says which it was.
+                    self.host.log(Level::Warn, "request-policy", &format!("Lichess request failed: {}", with_sources(&cause)));
                     return Err(CoreError::new("Couldn’t reach Lichess").with_kind(ErrorKind::Offline));
                 }
                 Err(_) => return Err(timed_out()),
@@ -669,6 +671,18 @@ fn unattributed() -> UsageContext {
 }
 
 /// The path of a URL, without its origin or query (for logs).
+/// `cause` followed by each error beneath it, as `a: b: c`.
+fn with_sources(cause: &dyn std::error::Error) -> String {
+    let mut text = cause.to_string();
+    let mut source = cause.source();
+    while let Some(next) = source {
+        text.push_str(": ");
+        text.push_str(&next.to_string());
+        source = next.source();
+    }
+    text
+}
+
 fn url_path(url: &str) -> &str {
     let after_scheme = url.find("://").map_or(url, |at| &url[at + 3..]);
     let path_start = after_scheme.find('/').unwrap_or(after_scheme.len());
@@ -679,6 +693,24 @@ fn url_path(url: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// reqwest says "error sending request" for every failed connection; the log carries what
+    /// lies beneath, so a failure on CI says whether it was refused, reset or out of ports.
+    #[tokio::test]
+    async fn a_failed_request_is_logged_with_its_causes() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .map(|address| address.port())
+            .expect("a free port");
+        let cause = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{port}/"))
+            .send()
+            .await
+            .expect_err("nothing listens there");
+        let text = with_sources(&cause);
+        assert!(text.starts_with(&cause.to_string()), "{text}");
+        assert!(text.len() > cause.to_string().len(), "{text}");
+    }
 
     #[test]
     fn classifies_interactive_and_stream_urls() {

@@ -375,6 +375,9 @@ impl ReviewBridge {
 
 /// The engine owners a replacement of the executable stops: the computer's search, the analysis
 /// engine and the review engine. Their processes must have exited before the file changes.
+/// How long an engine replacement waits for a stopped analysis to end after its engine exited.
+const SETTLE_DEADLINE: Duration = Duration::from_secs(4);
+
 pub struct EngineOwners {
     pub hub: Arc<EngineHub>,
     pub search: Search,
@@ -393,6 +396,11 @@ impl EngineHandoff for EngineOwners {
                     self.reviews.restart_review_engine();
                 })
                 .await?;
+            // The engines have exited; the stopped analysis also ends (its final `interrupted`
+            // update sent, no longer running) before the executable changes. Waiting only for
+            // the processes left it still winding down when a slow CI run published the
+            // replacement. Bounded: with its engine gone it ends at once.
+            let _ = tokio::time::timeout(SETTLE_DEADLINE, self.analysis.settled()).await;
             Ok(Box::new(hold) as EngineGuard)
         })
     }

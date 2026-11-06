@@ -131,7 +131,6 @@ fn the_rail_still_marks_your_move(cx: &mut gpui_kit::TestAppContext) {
     // for the check first still failed once in eight full runs (2026-11-06). Signed in, every
     // reload lists the game again.
     let mut app = Harness::start(cx);
-    app.online();
     app.connect_with("Tester", false, |lichess| {
         lichess.correspondence_turn = true
     });

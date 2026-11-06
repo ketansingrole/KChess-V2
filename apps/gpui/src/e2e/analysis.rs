@@ -830,7 +830,6 @@ fn a_png_shows_the_position_in_the_variation_shown(cx: &mut gpui_kit::TestAppCon
 #[gpui_kit::test]
 fn a_lichess_game_link_imports_the_game(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
-    app.online();
     import(
         &mut app,
         &format!(
@@ -1025,7 +1024,6 @@ fn the_explorer_looks_up_a_crazyhouse_position_in_its_variant(cx: &mut gpui_kit:
 fn a_lichess_study_link_imports_its_chapter(cx: &mut gpui_kit::TestAppContext) {
     use super::fake_lichess::{STUDY, STUDY_CHAPTER, VARIANT_STUDY};
     let mut app = analysis(cx);
-    app.online();
     import(
         &mut app,
         &format!("https://lichess.org/study/{STUDY}/{STUDY_CHAPTER}"),

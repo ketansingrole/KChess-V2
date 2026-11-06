@@ -230,7 +230,6 @@ fn the_interface_zoom_steps_with_the_keys_and_is_kept(cx: &mut gpui_kit::TestApp
 #[gpui_kit::test]
 fn a_pasted_position_or_game_link_opens_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.online();
     app.press("secondary-k");
     app.type_text("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
     wait_for_first(&mut app, "Analyse this position");
@@ -281,7 +280,6 @@ fn a_pasted_position_or_game_link_opens_from_quick_pick(cx: &mut gpui_kit::TestA
 fn a_pasted_broadcast_link_opens_its_round(cx: &mut gpui_kit::TestAppContext) {
     use super::fake_lichess::{BROADCAST_ROUNDS, BROADCAST_TOUR};
     let mut app = Harness::start(cx);
-    app.online();
     let wait_for_round = |app: &mut Harness, wanted: &str| {
         let wanted = wanted.to_string();
         app.wait_for(&format!("round {wanted}"), move |_, cx| {
@@ -320,7 +318,6 @@ fn a_broadcast_board_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppConte
     use super::fake_lichess::BROADCAST_ROUNDS;
     use gpui_kit::test::TestWindowExt as _;
     let mut app = Harness::start(cx);
-    app.online();
     app.press("secondary-k");
     app.type_text(&format!(
         "https://lichess.org/broadcast/kchess-open/round-1/{}",
@@ -372,7 +369,6 @@ fn a_broadcast_board_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppConte
 fn escape_leaves_a_broadcast(cx: &mut gpui_kit::TestAppContext) {
     use super::fake_lichess::BROADCAST_ROUNDS;
     let mut app = Harness::start(cx);
-    app.online();
     app.press("secondary-k");
     app.type_text(&format!(
         "https://lichess.org/broadcast/kchess-open/round-1/{}",
@@ -391,7 +387,6 @@ fn escape_leaves_a_broadcast(cx: &mut gpui_kit::TestAppContext) {
 fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {
     use super::fake_lichess::ARENA;
     let mut app = Harness::start(cx);
-    app.online();
     app.press("secondary-k");
     app.type_text(&format!("https://lichess.org/tournament/{ARENA}"));
     wait_for_first(&mut app, "Open this tournament");
@@ -428,7 +423,6 @@ fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn a_pasted_tv_link_watches_its_channel(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.online();
     app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
     app.click(("watch-tabs", 2usize));
     app.press("secondary-k");

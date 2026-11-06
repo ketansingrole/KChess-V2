@@ -592,7 +592,15 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 let mut session = session.lock();
                 session.streams += 1;
                 session.listening += 1;
-                (session.game, session.elsewhere, session.variant)
+                // Only a game still under way is announced, as on Lichess (and as
+                // `/api/account/playing` answers). A finished one announced again when a new seek
+                // reopened this stream read as the seek's game: the core took it up and cancelled
+                // the seek, before it was sent when the run was slow (New opponent, Linux CI).
+                (
+                    session.game && session.finished.is_none(),
+                    session.elsewhere,
+                    session.variant,
+                )
             };
             let first =
                 start.then(|| json!({ "type": "gameStart", "game": summary(elsewhere, variant) }));
@@ -651,13 +659,15 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             write_game(&session, p);
             reply(&mut out, &json!({ "ok": true }))
         }
-        // A seek is recorded with what it asks for; nobody takes it up.
+        // A seek is recorded with what it asks for; nobody takes it up. As on Lichess, it lasts
+        // while its request stays open, until the app cancels it by hanging up.
         ("POST", "/api/board/seek") => {
             session
                 .lock()
                 .writes
                 .push(format!("POST /api/board/seek {}", request.body));
-            reply(&mut out, &json!({}))
+            let open = move || !session.lock().revoked;
+            stream(&mut out, Vec::new(), open, |_| None)
         }
         ("GET", "/api/challenge") => reply(&mut out, &json!({ "in": [], "out": [] })),
         ("GET", "/api/timeline") => reply(&mut out, &json!({ "entries": [], "users": {} })),
