@@ -20,6 +20,17 @@ pub(crate) async fn caught<T>(work: impl Future<Output = T>) -> Result<T, Panick
         .map_err(|_| Panicked)
 }
 
+/// The value behind `mutex`, even when a holder panicked. Google's Rust style guide says never to
+/// reach inside a poisoned mutex; the core does on purpose. A panic in spawned work is logged and
+/// reported as a failure (`caught`) and the core keeps serving, so a lock that every later request
+/// shares (the Lichess counters, an engine's pipes, the online state) must not fail them all.
+/// Every holder leaves its data whole between statements, so what a panic leaves is usable.
+pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// `tokio::spawn` for detached work: `on_panic` runs if `work` panics.
 pub(crate) fn spawn_guarded(
     work: impl Future<Output = ()> + Send + 'static,

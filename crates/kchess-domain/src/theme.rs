@@ -158,14 +158,14 @@ pub fn colors(palette: &Value, dark: bool) -> Option<Map<String, Value>> {
         elevated,
         accented,
         text.hex(),
-        border.clone(),
+        border,
         border_rgb.mix(55.0, bg).hex(),
         border_rgb.mix(65.0, text).hex(),
         text.hex(),
         text.hex(),
         text.hex(),
         text.mix(80.0, text_muted_rgb).hex(),
-        text_muted.clone(),
+        text_muted,
         text_muted_rgb
             .mix(60.0, bg)
             .at_least(DIMMED_CONTRAST, text, bg)

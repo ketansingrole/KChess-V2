@@ -77,21 +77,95 @@ fn shipped_bins_args() -> Vec<&'static str> {
     args
 }
 
+/// Whether cargo-nextest is installed (CI installs it). It runs every test in its own process and
+/// every test binary at once, where `cargo test` runs one binary at a time (2026-11-06: the core's
+/// tests in 7 s against 19 s); `.config/nextest.toml` holds its profiles.
+fn nextest() -> bool {
+    available("cargo", &["nextest", "--version"])
+}
+
+/// The app, whose tests run under `cargo test`: they are one binary, so nextest gains no
+/// parallelism there, and each test in its own process starts GPUI afresh (2026-11-06, 546 tests:
+/// 60 s under `cargo test`, 74 s under nextest).
+const APP: &str = "kchess-gpui";
+
+/// The commands that run the tests of these packages, or of the whole workspace when there are
+/// none: the app's under `cargo test`, the others under nextest when it is installed.
+fn test_commands(packages: &[String], nextest: bool) -> Vec<Vec<String>> {
+    let app = packages.is_empty() || packages.iter().any(|package| package == APP);
+    let others: Vec<&String> = packages.iter().filter(|package| *package != APP).collect();
+    let mut commands = Vec::new();
+    if packages.is_empty() || !others.is_empty() {
+        let mut command: Vec<String> = if nextest {
+            ["nextest", "run", "--locked", "--no-tests=warn"]
+                .map(String::from)
+                .to_vec()
+        } else {
+            ["test", "--locked"].map(String::from).to_vec()
+        };
+        if packages.is_empty() {
+            command.extend(["--workspace", "--exclude", APP].map(String::from));
+        }
+        for package in others {
+            command.extend(["-p".to_string(), package.clone()]);
+        }
+        commands.push(command);
+    }
+    if app {
+        commands.push(["test", "--locked", "-p", APP].map(String::from).to_vec());
+    }
+    commands
+}
+
+/// Run the tests of these packages, or of the whole workspace when there are none.
+fn run_tests(packages: &[String]) -> Result {
+    let nextest = nextest();
+    if !nextest {
+        say(
+            "cargo-nextest is not installed (`cargo install cargo-nextest`): running `cargo test`.",
+        );
+    }
+    for args in test_commands(packages, nextest) {
+        run_with(Command::new("cargo").args(&args))?;
+    }
+    Ok(())
+}
+
 /// The workspace's tests: under the coverage gate when cargo-llvm-cov is installed (CI installs
-/// it), else plainly.
+/// it), else plainly; then the doctests, which nextest does not run.
 fn tests() -> Result {
-    if !available("cargo", &["llvm-cov", "--version"]) {
+    if available("cargo", &["llvm-cov", "--version"]) {
+        coverage()?;
+        // Outside the totals: the app's views are checked by its end-to-end suite.
+        run_tests(&["kchess-gpui".into(), "xtask".into()])?;
+    } else {
         say(
             "cargo-llvm-cov is not installed: running the tests without the coverage gate (CI runs it).",
         );
-        return run("cargo", &["test", "--workspace", "--locked"]);
+        run_tests(&[])?;
     }
-    coverage()?;
-    // Outside the totals: the app's views are checked by its end-to-end suite.
-    run(
-        "cargo",
-        &["test", "--locked", "-p", "kchess-gpui", "-p", "xtask"],
-    )
+    run("cargo", &["test", "--doc", "--workspace", "--locked"])
+}
+
+/// `cargo llvm-cov`'s arguments: through nextest when it is installed.
+fn coverage_args(nextest: bool, report: &str) -> Vec<&str> {
+    let mut args = vec!["llvm-cov"];
+    if nextest {
+        args.push("nextest");
+    }
+    args.extend([
+        "--workspace",
+        "--exclude",
+        "kchess-gpui",
+        "--exclude",
+        "xtask",
+        "--locked",
+        "--summary-only",
+        "--json",
+        "--output-path",
+        report,
+    ]);
+    args
 }
 
 fn coverage() -> Result {
@@ -99,22 +173,7 @@ fn coverage() -> Result {
     std::fs::create_dir_all(report.parent().unwrap_or(&root()))
         .map_err(|cause| cause.to_string())?;
     let path = report.to_string_lossy().to_string();
-    run(
-        "cargo",
-        &[
-            "llvm-cov",
-            "--workspace",
-            "--exclude",
-            "kchess-gpui",
-            "--exclude",
-            "xtask",
-            "--locked",
-            "--summary-only",
-            "--json",
-            "--output-path",
-            &path,
-        ],
-    )?;
+    run("cargo", &coverage_args(nextest(), &path))?;
     let text = std::fs::read_to_string(&report).map_err(|cause| cause.to_string())?;
     let summary: serde_json::Value =
         serde_json::from_str(&text).map_err(|cause| cause.to_string())?;
@@ -206,26 +265,70 @@ pub fn fast() -> Result {
             ],
         )
     })?;
-    let mut packages: Vec<String> = files.iter().filter_map(|file| package_of(file)).collect();
-    packages.sort();
-    packages.dedup();
-    if packages.is_empty()
+    let mut changed: Vec<String> = files.iter().filter_map(|file| package_of(file)).collect();
+    changed.sort();
+    changed.dedup();
+    if changed.is_empty()
         || files
             .iter()
             .any(|file| file == "Cargo.toml" || file == "Cargo.lock")
     {
-        return step("tests", || {
-            run("cargo", &["test", "--workspace", "--locked"])
-        });
+        return step("tests", || run_tests(&[]));
     }
-    let mut command = Command::new("cargo");
-    command.args(["test", "--locked"]);
-    for package in &packages {
-        command.args(["-p", package]);
-    }
+    let packages = with_dependents(&changed, &workspace_dependencies()?);
     step(&format!("tests of {}", packages.join(", ")), || {
-        run_with(&mut command)
+        run_tests(&packages)
     })
+}
+
+/// Each workspace package with the workspace packages it depends on (normal, dev or build), from
+/// `cargo metadata`.
+fn workspace_dependencies() -> Result<Vec<(String, Vec<String>)>> {
+    let text = output(
+        "cargo",
+        &["metadata", "--format-version", "1", "--no-deps", "--locked"],
+    )?;
+    let metadata: serde_json::Value =
+        serde_json::from_str(&text).map_err(|cause| cause.to_string())?;
+    let packages = metadata["packages"].as_array().cloned().unwrap_or_default();
+    let names: Vec<String> = packages
+        .iter()
+        .filter_map(|package| package["name"].as_str().map(str::to_string))
+        .collect();
+    Ok(packages
+        .iter()
+        .filter_map(|package| {
+            let name = package["name"].as_str()?.to_string();
+            let dependencies = package["dependencies"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|dependency| dependency["name"].as_str())
+                .filter(|dependency| names.iter().any(|name| name == dependency))
+                .map(str::to_string)
+                .collect();
+            Some((name, dependencies))
+        })
+        .collect())
+}
+
+/// The changed packages and every workspace package that depends on one of them, directly or not:
+/// a change to the core runs the app's tests as well as its own.
+fn with_dependents(changed: &[String], dependencies: &[(String, Vec<String>)]) -> Vec<String> {
+    let mut packages = changed.to_vec();
+    loop {
+        let before = packages.len();
+        for (name, uses) in dependencies {
+            if !packages.contains(name) && uses.iter().any(|used| packages.contains(used)) {
+                packages.push(name.clone());
+            }
+        }
+        if packages.len() == before {
+            break;
+        }
+    }
+    packages.sort();
+    packages
 }
 
 /// The local commits a push sends to main, from the hook's standard input.
@@ -341,6 +444,77 @@ mod tests {
         }
         assert!(args.contains(&"--bins"));
         assert!(args.ends_with(&["-D", "clippy::expect_used"]));
+    }
+
+    #[test]
+    fn a_change_tests_every_package_that_depends_on_it() {
+        let dependencies = [
+            (
+                "app".to_string(),
+                vec!["core".to_string(), "domain".to_string()],
+            ),
+            ("core".to_string(), vec!["domain".to_string()]),
+            ("domain".to_string(), vec![]),
+            ("tooling".to_string(), vec![]),
+        ];
+        assert_eq!(
+            with_dependents(&["domain".into()], &dependencies),
+            ["app", "core", "domain"]
+        );
+        assert_eq!(with_dependents(&["app".into()], &dependencies), ["app"]);
+        assert_eq!(
+            with_dependents(&["tooling".into(), "core".into()], &dependencies),
+            ["app", "core", "tooling"]
+        );
+    }
+
+    #[test]
+    fn the_app_tests_under_cargo_test_and_the_rest_under_nextest() {
+        let strings = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            test_commands(&strings(&["kchess-core", "kchess-gpui"]), true),
+            [
+                strings(&[
+                    "nextest",
+                    "run",
+                    "--locked",
+                    "--no-tests=warn",
+                    "-p",
+                    "kchess-core"
+                ]),
+                strings(&["test", "--locked", "-p", "kchess-gpui"]),
+            ]
+        );
+        assert_eq!(
+            test_commands(&[], true),
+            [
+                strings(&[
+                    "nextest",
+                    "run",
+                    "--locked",
+                    "--no-tests=warn",
+                    "--workspace",
+                    "--exclude",
+                    "kchess-gpui"
+                ]),
+                strings(&["test", "--locked", "-p", "kchess-gpui"]),
+            ]
+        );
+        assert_eq!(
+            test_commands(&strings(&["kchess-gpui"]), true),
+            [strings(&["test", "--locked", "-p", "kchess-gpui"])]
+        );
+        assert_eq!(
+            test_commands(&strings(&["xtask"]), false),
+            [strings(&["test", "--locked", "-p", "xtask"])]
+        );
+    }
+
+    #[test]
+    fn coverage_runs_through_nextest_when_it_is_installed() {
+        assert_eq!(coverage_args(true, "r.json")[..2], ["llvm-cov", "nextest"]);
+        assert_eq!(coverage_args(false, "r.json")[1], "--workspace");
+        assert!(coverage_args(true, "r.json").ends_with(&["--output-path", "r.json"]));
     }
 
     #[test]

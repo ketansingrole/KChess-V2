@@ -5,9 +5,9 @@
 Installers are built by `.github/workflows/release.yml`. Versions are dates with a counter,
 `YEAR.MONTH.COUNTER`: the first release in October 2026 is `2026.10.0`, the next `2026.10.1`, and
 the counter restarts each UTC month. There's no zero padding (`2026.10.0`, not `2026.10.00`), which
-keeps the version valid semver. The release is the Cargo workspace version. Follow the release
-checklist in [AGENTS.md](../AGENTS.md). Merge the intended changes with green CI first, then prepare
-the version change:
+keeps the version valid semver. The release is the Cargo workspace version. Follow the
+[release checklist](#release-checklist). Merge the intended changes with green CI first, then
+prepare the version change:
 
 ```bash
 cargo xtask release-version   # fetches origin's tags; updates Cargo.toml and Cargo.lock
@@ -20,7 +20,7 @@ Merge the reviewed version commit into `main` and wait for green CI. The version
 packages, Snap build and Windows upgrade, which otherwise run only when packaging may have changed
 since the last release; from a clean checkout of that commit, `cargo xtask release-verify` checks
 the metadata and that its CI ran and passed every job. Then create an annotated tag derived from
-its version and push only that tag, as shown in `AGENTS.md`. Never reuse or move a release tag. The version helper stops if it cannot refresh remote
+its version and push only that tag, as the [release checklist](#release-checklist) shows. Never reuse or move a release tag. The version helper stops if it cannot refresh remote
 tags; it does not guess using a stale local list.
 
 The workflow builds on macOS, Windows and Linux and attaches the installers, the Snap,
@@ -74,6 +74,60 @@ Without signing credentials, Windows releases are unsigned and macOS builds are 
 first launch macOS says it can't verify the developer: open **System Settings → Privacy &
 Security** and choose **Open Anyway**. Windows SmartScreen shows a similar warning (**More info →
 Run anyway**).
+
+## Release checklist
+
+For whoever releases, people and agents alike ([AGENTS.md](../AGENTS.md) keeps the rules that
+must never be broken).
+
+Creating a release means preparing a **draft**. Publish it only when the user asks to
+publish. A request to fix code, build installers, or reduce size does not authorize
+creating/pushing a tag or publishing a release.
+
+- Versions are `YEAR.MONTH.COUNTER`, using the **UTC release month**. Start a new month
+  at `0`; otherwise use one more than the highest existing tag's counter for that month.
+  No zero padding: workspace version `2026.10.1`, Git tag `v2026.10.1`.
+  Do not use ordinary `v1.2.3`, date/day tags, prerelease suffixes, or guess a counter.
+- Use `cargo xtask release-version`. It must successfully fetch tags from `origin` first.
+  If fetching fails, restore access and retry; do not select a version from stale tags.
+  Commit `Cargo.toml` and `Cargo.lock`; the lockfile must match the workspace version.
+- Release only a commit on `origin/main` whose CI is green. Include every intended file,
+  including new/untracked files; explicitly stage the files instead of relying on
+  `git commit -am`. Keep the working tree clean before tagging and verify CI is green
+  for the intended release commit.
+- Run `cargo xtask release-verify` (it needs the release commit's CI to have run and passed every
+  job, including the packages, Snap and Windows upgrade) and `cargo xtask check`. Verify the
+  release commit and tag before creating an annotated tag. Push **only that tag**, not `--tags` or an arbitrary
+  `HEAD` branch. Never force-push, move, reuse, or delete an existing release tag.
+- Tag pushes run the Release workflow and create a draft after all platform packages
+  succeed. Manual `workflow_dispatch` builds produce downloadable artifacts only,
+  even when the selected ref is a tag. To retry a failed draft build, rerun its original
+  tag-push workflow; do not recreate the tag.
+- Replacing assets is allowed only while the release is a draft. A published release
+  is permanent: ship fixes with the next version and a new tag. Never bypass the
+  `attach-draft-release` guard with a direct `gh release upload --clobber`.
+- Supported downloads: macOS **Apple Silicon (arm64) only** (`.dmg` and `.zip`), Windows
+  x64 (`.exe`), Linux x64 (`.AppImage` and `.deb`), and the Snap, as `KChess-*` with
+  `latest*.yml`. Every Electron installation ever released updates itself through those
+  manifests: keep their names, the Windows GUID, install folder, executable and uninstaller
+  names, the `.deb` package and `/opt/KChess` layout, and the Mac zip's Electron bridge
+  (`legacy/KChess.app`, `com.kchess.electron`) (`tooling/xtask/src/package`).
+  Keep `SHA256SUMS.txt` with the installers. Verify all packages and checksums before
+  publishing; macOS ZIPs are required for the update feed.
+
+Before an authorized tag push, derive its name from the committed workspace version,
+confirm the named commit is the intended release, and inspect the exact local tag:
+
+```bash
+release_tag="v$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)"
+release_commit="$(git rev-parse HEAD)"
+git status --short                          # must be empty
+git merge-base --is-ancestor "$release_commit" origin/main  # must succeed
+git tag --list "$release_tag"               # must be empty for a new release
+git tag -a "$release_tag" -m "KChess ${release_tag#v}" "$release_commit"
+git show --no-patch "$release_tag"           # verify version and target commit
+git push origin "refs/tags/$release_tag"
+```
 
 ## Snap Store
 

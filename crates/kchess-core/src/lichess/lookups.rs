@@ -127,9 +127,7 @@ impl CloudCache {
     }
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
-}
+use crate::tasks::lock;
 
 /// `cloudEval(fen, lines)`: Lichess's cloud evaluation, for positions someone analysed deeply on
 /// Lichess before. Lines are kept only as far as they are legal from the position; unknown

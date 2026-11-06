@@ -17,7 +17,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::{Stream, TryStreamExt};
@@ -193,11 +193,7 @@ pub struct Policy {
     accounting: Mutex<Accounting>,
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    // A panicked holder leaves the counters consistent enough to keep serving; poisoning must
-    // not take every Lichess request down with it.
-    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
-}
+use crate::tasks::lock;
 
 /// A request Lichess did not answer within its deadline.
 pub(crate) fn timed_out() -> CoreError {

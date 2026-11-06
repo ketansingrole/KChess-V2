@@ -20,7 +20,7 @@ fn a_chosen_board_is_saved_and_marked(cx: &mut gpui_kit::TestAppContext) {
     app.open_settings("Appearance");
     let other = crate::board::looks::boards()
         .iter()
-        .map(|board| board.id.to_string())
+        .map(|board| board.id.clone())
         .find(|id| *id != app.saved_settings()["boardTheme"])
         .expect("another board");
     let option = format!("board-{other}");

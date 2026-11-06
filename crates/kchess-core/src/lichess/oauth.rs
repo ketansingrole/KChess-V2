@@ -209,12 +209,9 @@ pub async fn wait_for_redirect(
                 )));
             }
         };
-        let head = match tokio::time::timeout(HEAD_TIMEOUT, read_head(&mut socket)).await {
-            Ok(Ok(head)) => head,
-            _ => {
-                let _ = socket.shutdown().await;
-                continue;
-            }
+        let Ok(Ok(head)) = tokio::time::timeout(HEAD_TIMEOUT, read_head(&mut socket)).await else {
+            let _ = socket.shutdown().await;
+            continue;
         };
         let callback = request_target(&head)
             .as_deref()

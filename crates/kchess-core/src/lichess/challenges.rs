@@ -6,7 +6,7 @@
 //! may be absent but not null, lengths count UTF-16 units, and a malformed event is not a
 //! challenge at all. The variant mapping comes from `kchess_domain`.
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
@@ -35,9 +35,7 @@ pub struct ChallengeInbox {
     now: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
-}
+use crate::tasks::lock;
 
 impl ChallengeInbox {
     /// `now` is the clock (`Date.now()` in TypeScript); tests pass their own.
