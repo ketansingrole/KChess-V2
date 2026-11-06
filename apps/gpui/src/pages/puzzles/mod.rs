@@ -32,6 +32,7 @@ mod rush;
 pub(crate) use rush::RushAction;
 mod stats;
 
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, Pill, Tone};
 
 const TAB: &str = "kchess:puzzle-tab";
@@ -933,7 +934,7 @@ pub(crate) fn status_panel(
                                             pill.role(gpui_kit::Role::Button)
                                                 .aria_label(format!("Train {name}"))
                                                 .cursor_pointer()
-                                                .hover(|pill| pill.bg(palette.accented))
+                                                .pressable(&palette)
                                                 .on_click(move |_, window, cx| {
                                                     train_theme(key.clone(), window, cx)
                                                 })

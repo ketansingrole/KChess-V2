@@ -40,6 +40,78 @@ pub trait KeyboardFocus: InteractiveElement {
 
 impl<E: InteractiveElement> KeyboardFocus for E {}
 
+/// How far a pressed link or text button fades.
+const PRESSED_OPACITY: f32 = 0.7;
+
+/// Pointer feedback for a clickable element that is not a kit button: its hover style, and while
+/// the pointer is held down on it a stronger one at once, with no transition, as the kit's buttons
+/// press. Only an element with an id keeps a pressed state, so these are on `Stateful` elements.
+pub trait Pressable: StatefulInteractiveElement + Sized {
+    /// Rows, tiles and chips: the accented fill on hover, a step stronger while pressed.
+    fn pressable(self, palette: &Palette) -> Self {
+        self.pressable_fill(palette.accented, palette)
+    }
+
+    /// `fill` on hover, a step stronger while pressed.
+    fn pressable_fill(self, fill: Hsla, palette: &Palette) -> Self {
+        let pressed = palette.pressed(fill);
+        self.press(|style| style.bg(fill), |style| style.bg(pressed))
+    }
+
+    /// Bordered cards: the accented border on hover, and the accented fill too while pressed.
+    fn pressable_card(self, palette: &Palette) -> Self {
+        let (border, fill) = (palette.border_accented, palette.accented);
+        self.press(|style| style.border_color(border), |style| style.bg(fill))
+    }
+
+    /// Bordered tiles that fill on hover: the accented border and fill, the fill a step stronger
+    /// while pressed.
+    fn pressable_tile(self, palette: &Palette) -> Self {
+        let (border, fill) = (palette.border_accented, palette.accented);
+        let pressed = palette.pressed(fill);
+        self.press(
+            |style| style.border_color(border).bg(fill),
+            |style| style.bg(pressed),
+        )
+    }
+
+    /// Text buttons and tabs: the text in `color` on hover, faded while pressed.
+    fn pressable_text(self, color: Hsla) -> Self {
+        self.press(
+            |style| style.text_color(color),
+            |style| style.opacity(PRESSED_OPACITY),
+        )
+    }
+
+    /// Links: underlined on hover, faded while pressed.
+    fn pressable_link(self) -> Self {
+        self.press(
+            |style| style.underline(),
+            |style| style.opacity(PRESSED_OPACITY),
+        )
+    }
+
+    /// Pictures and colored buttons: faded to `opacity` on hover, further while pressed.
+    fn pressable_fade(self, opacity: f32) -> Self {
+        self.press(
+            |style| style.opacity(opacity),
+            |style| style.opacity(opacity - 0.12),
+        )
+    }
+
+    /// `hover` on hover; while pressed, `hover` with `pressed` over it. A touch press has no
+    /// hover, so the pressed style repeats the hover one.
+    fn press(
+        self,
+        hover: impl Fn(StyleRefinement) -> StyleRefinement,
+        pressed: impl FnOnce(StyleRefinement) -> StyleRefinement,
+    ) -> Self {
+        self.hover(&hover).active(|style| pressed(hover(style)))
+    }
+}
+
+impl<E: StatefulInteractiveElement> Pressable for E {}
+
 /// `aria-live="polite"`: text a screen reader speaks whenever it changes, without moving the
 /// reader's place (a move just played, a game's result). GPUI's elements cannot mark themselves
 /// live, so this one writes AccessKit's `live` itself; each platform adapter announces a live
@@ -594,7 +666,7 @@ pub fn moves_list(
                     cell.bg(tint(palette.primary, 26.))
                         .font_weight(FontWeight::MEDIUM)
                 })
-                .hover(|cell| cell.bg(palette.accented))
+                .pressable(palette)
                 .on_click(move |_, window, cx| select(index + 1, window, cx))
                 .child(crate::notation::shown(san, &figurine))
                 .into_any_element(),
@@ -1156,7 +1228,7 @@ fn pill_row(
                 .when(!chosen && !tab.disabled, |tab| {
                     tab.cursor_pointer()
                         .text_color(palette.text_muted)
-                        .hover(|tab| tab.text_color(palette.highlighted))
+                        .pressable_text(palette.highlighted)
                 })
                 .when(!tab.disabled, |row| {
                     row.on_click(move |_, window, cx| choose(index, window, cx))
@@ -1942,6 +2014,79 @@ mod tests {
         step(&mut |window, cx| window.focus_next(cx));
         step(&mut |window, cx| window.press("space", cx));
         assert_eq!(chosen.take(), Some(2));
+    }
+
+    /// Clickables drew their hover background and nothing more while held down, so a press
+    /// looked like a hover. A held move draws the pressed fill at once, over its keyboard focus
+    /// handler's `prevent_default`, and lets it go with the button.
+    #[gpui_kit::test]
+    fn a_held_move_draws_its_pressed_background(cx: &mut TestAppContext) {
+        use gpui_kit::{Background, Pixels, Point};
+        use gpui_kit::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+
+        let window = cx.add_window(|_, cx| Page {
+            focus: cx.focus_handle(),
+            chosen: Rc::new(Cell::new(None)),
+        });
+        let palette = Palette::of(&colors("kchess", &[], false), false);
+        let (hover, pressed) = (palette.accented, palette.pressed(palette.accented));
+        assert_ne!(hover, pressed);
+        // The fills painted under `at`.
+        let fills = |window: &Window, at: Point<Pixels>| -> Vec<Background> {
+            let at = at.scale(window.scale_factor());
+            window
+                .painted_quads()
+                .into_iter()
+                .filter(|quad| quad.bounds.contains(&at))
+                .map(|quad| quad.background)
+                .collect()
+        };
+        cx.run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            // The first move: not the current one, which has its own fill.
+            let at = window
+                .try_find(("move", 0usize))
+                .expect("the move")
+                .bounds()
+                .center();
+            let dispatch = |window: &mut Window, cx: &mut App, event: gpui_kit::PlatformInput| {
+                window.dispatch_event(event, cx);
+                window.render_frame(cx);
+            };
+            let mouse_move = MouseMoveEvent {
+                position: at,
+                pressed_button: None,
+                modifiers: Modifiers::default(),
+            };
+            dispatch(window, cx, mouse_move.to_platform_input());
+            let painted = fills(window, at);
+            assert!(painted.contains(&hover.into()), "hovered: {painted:?}");
+            assert!(!painted.contains(&pressed.into()));
+
+            let down = MouseDownEvent {
+                button: MouseButton::Left,
+                position: at,
+                modifiers: Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            };
+            dispatch(window, cx, down.to_platform_input());
+            let painted = fills(window, at);
+            assert!(painted.contains(&pressed.into()), "pressed: {painted:?}");
+
+            let up = MouseUpEvent {
+                button: MouseButton::Left,
+                position: at,
+                modifiers: Modifiers::default(),
+                click_count: 1,
+            };
+            dispatch(window, cx, up.to_platform_input());
+            let painted = fills(window, at);
+            assert!(!painted.contains(&pressed.into()), "released: {painted:?}");
+            assert!(painted.contains(&hover.into()));
+        })
+        .unwrap();
     }
 
     /// A clock turns red only in its last ten seconds, when it shows tenths.

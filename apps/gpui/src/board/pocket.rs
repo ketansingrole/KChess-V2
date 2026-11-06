@@ -12,6 +12,7 @@ use super::{ChessBoard, looks};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::KeyboardFocus as _;
+use crate::widgets::Pressable as _;
 
 /// The droppable roles, in Lichess's pocket order.
 const ROLES: [Role; 5] = [
@@ -102,9 +103,7 @@ pub fn pocket(board: &Entity<ChessBoard>, color: Color, cx: &App) -> Option<AnyE
                     .aria_selected(selected)
                     .keyboard_focus(palette.primary)
                     .cursor_pointer()
-                    .when(!selected, |slot| {
-                        slot.hover(|slot| slot.bg(palette.accented))
-                    })
+                    .when(!selected, |slot| slot.pressable(&palette))
                     .on_click(move |_, _, cx| {
                         let _ = entity.update(cx, |board, cx| board.select_drop(role, cx));
                     })

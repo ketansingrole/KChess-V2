@@ -12,6 +12,7 @@ use super::{Rows, SettingsPage};
 use crate::assets::icon;
 use crate::theme::Palette;
 use crate::updates::{Phase, Updates, UpdatesHandle};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Look};
 
 /// What a restart now would cost: a real-time Lichess game's clock keeps running, and a timed
@@ -221,7 +222,7 @@ impl SettingsPage {
                 .text_size(px(12.))
                 .text_color(palette.text_muted)
                 .cursor_pointer()
-                .hover(|link| link.text_color(palette.text))
+                .pressable_text(palette.text)
                 .on_click(move |_, _, cx| cx.open_url(&page))
                 .child(label)
                 .child(icon("arrow-up-right").size(px(12.)))

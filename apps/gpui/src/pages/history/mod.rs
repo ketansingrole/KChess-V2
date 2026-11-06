@@ -23,6 +23,7 @@ use crate::replay::GameReplay;
 
 pub(crate) mod lichess;
 use crate::theme::Palette;
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Look, Pill};
 
 const PAGE_SIZE: usize = 20;
@@ -1270,13 +1271,12 @@ impl HistoryPage {
                         .when(index > 0, |row| {
                             row.border_t_1().border_color(palette.border)
                         })
-                        .hover(|row| row.bg(palette.accented))
                         .when(!clock, |row| {
-                            row.cursor_pointer().on_click(cx.listener(
-                                move |this, _, window, cx| {
+                            row.cursor_pointer()
+                                .pressable(&palette)
+                                .on_click(cx.listener(move |this, _, window, cx| {
                                     this.open_game(opened.clone(), window, cx)
-                                },
-                            ))
+                                }))
                         }),
                     [
                         badge(outcome, Some(px(96.)), palette).into_any_element(),

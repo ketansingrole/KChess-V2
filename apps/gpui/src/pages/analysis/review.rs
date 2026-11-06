@@ -22,6 +22,7 @@ use crate::reviews::ReviewHandle;
 use crate::theme::{Palette, judgment_color, radii};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
+use crate::widgets::Pressable as _;
 
 /// What a move's label looks like (`MOVE_CLASSIFICATIONS`): its name, glyph and colour.
 /// The NAG of a review's judgment: ?! dubious, ? mistake, ?? blunder.
@@ -1122,7 +1123,7 @@ impl AnalysisPage {
                                 button
                                     .text_color(color)
                                     .cursor_pointer()
-                                    .hover(|button| button.bg(palette.accented))
+                                    .pressable(&palette)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.next_labelled(side, kind, cx)
                                     }))

@@ -1,6 +1,7 @@
 //! The move list: the tree as moves, comments and variations, and the menu on each move.
 
 use super::*;
+use crate::widgets::Pressable as _;
 
 /// One piece of the move list: moves and inline comments flow; main-line comments and the
 /// variations of the main line stand on their own lines.
@@ -160,7 +161,7 @@ impl TreeView<'_> {
                 chip.bg(tint(palette.primary, 30.))
                     .text_color(palette.highlighted)
             })
-            .when(!active, |chip| chip.hover(|chip| chip.bg(palette.accented)))
+            .when(!active, |chip| chip.pressable(&palette))
             .on_click({
                 let (page, target) = (page.clone(), target.clone());
                 move |_, _, cx| {

@@ -23,6 +23,7 @@ use shakmaty::{Board, ByColor, ByRole, Color, File, Piece, Position as _, Rank, 
 
 use crate::settings::SettingsHandle;
 use crate::theme::radii;
+use crate::widgets::Pressable as _;
 
 /// Chessground's square colors (`chessground.brown.css`).
 const LAST_MOVE: u32 = 0x9bc70069; // rgba(155, 199, 0, 0.41)
@@ -1364,6 +1365,7 @@ impl ChessBoard {
         };
         let theme = cx.theme();
         let (elevated, border, background) = (theme.muted, theme.border, theme.background);
+        let palette = *cx.global::<crate::theme::Palette>();
         let marked = self.promotion_choice % keyboard::PROMOTION.len();
         Some(
             div()
@@ -1410,7 +1412,7 @@ impl ChessBoard {
                                     .border_1()
                                     .border_color(border)
                                     .cursor_pointer()
-                                    .hover(|style| style.bg(elevated))
+                                    .pressable_fill(elevated, &palette)
                                     .when(focused && index == marked, |choice| {
                                         choice.shadow(vec![BoxShadow {
                                             color: ring,

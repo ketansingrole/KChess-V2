@@ -20,6 +20,7 @@ use crate::played::PlayedHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
+use crate::widgets::Pressable as _;
 
 mod lichess;
 
@@ -326,10 +327,7 @@ fn tile(
         .border_color(palette.border)
         .text_color(palette.highlighted)
         .cursor_pointer()
-        .hover(|tile| {
-            tile.bg(palette.accented)
-                .border_color(palette.border_accented)
-        })
+        .pressable_tile(&palette)
         .on_click(move |_, window, cx| crate::shell::open(page, window, cx))
         .child(
             div()
@@ -527,7 +525,7 @@ impl Render for HomePage {
             .size(side_length)
             .flex_none()
             .cursor_pointer()
-            .hover(|board| board.opacity(0.92))
+            .pressable_fade(0.92)
             .on_click(move |_, window, cx| match &board_game {
                 Some(id) => crate::shell::open_game(id, window, cx),
                 None => crate::shell::open(Page::Computer, window, cx),
@@ -669,7 +667,7 @@ impl Render for HomePage {
                             .rounded(radii::MD)
                             .text_size(px(13.))
                             .cursor_pointer()
-                            .hover(|row| row.bg(palette.accented))
+                            .pressable(&palette)
                             .on_click(move |_, window, cx| crate::shell::open_game(&id, window, cx))
                             .child(div().w(px(52.)).flex_none().child(
                                 crate::pages::history::badge(
