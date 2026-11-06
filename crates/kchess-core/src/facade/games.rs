@@ -52,6 +52,13 @@ impl Core {
                     .call_async("store.games.gamePgn", &[account, id])
                     .await
             }
+            _ => self.run_game_accounts(method, args).await,
+        }
+    }
+
+    /// Answers the facade's Lichess profile and account methods.
+    async fn run_game_accounts(&self, method: &str, args: &[Value]) -> Result<Value> {
+        match method {
             "cachedProfile" => {
                 let name = normal("assertUsername", &arg(args, 0))?;
                 self.inner("lichess.cachedProfile", vec![name]).await
