@@ -915,10 +915,10 @@ async fn pump(s: Arc<Shared>) {
     // A failed or panicking pass still ends as a pass: `pumping` and `idle` must be reset, or no
     // review runs again and quitting waits on `idle` forever. It looks again later, since the
     // timer that started it has fired and nothing else may.
-    let failure = match crate::tasks::caught(pump_loop(&s)).await {
-        Ok(Ok(())) => None,
-        Ok(Err(cause)) => Some(cause.to_string()),
-        Err(_) => Some("a review step panicked".to_string()),
+    let (idle, failure) = match crate::tasks::caught(pump_loop(&s)).await {
+        Ok(Ok(idle)) => (idle, None),
+        Ok(Err(cause)) => (false, Some(cause.to_string())),
+        Err(_) => (false, Some("a review step panicked".to_string())),
     };
     if let Some(cause) = failure {
         host_log(&s, Level::Warn, &format!("Review queue failed: {cause}"));
@@ -940,8 +940,9 @@ async fn pump(s: Arc<Shared>) {
         )
     };
     // A review asked for while this pass was deciding it had nothing to do found it still
-    // pumping and left the work to it: it would otherwise wait for the next recheck.
-    if asked {
+    // pumping and left the work to it: it would otherwise wait for the next recheck. Only then:
+    // a paused pass leaves its queue for its recheck, or it would start again at once, forever.
+    if idle && asked {
         kick(&s);
     }
     if arm_idle {
@@ -955,7 +956,9 @@ async fn pump(s: Arc<Shared>) {
     }
 }
 
-async fn pump_loop(s: &Arc<Shared>) -> Result<()> {
+/// Works through the queue; whether it ended because it found nothing to do. A pass that ends
+/// paused (a live game, the setting, battery) has scheduled its own recheck instead.
+async fn pump_loop(s: &Arc<Shared>) -> Result<bool> {
     loop {
         let Some(host) = host_of(s) else {
             break;
@@ -996,7 +999,7 @@ async fn pump_loop(s: &Arc<Shared>) -> Result<()> {
                     None => {
                         send_status(s);
                         schedule_recheck(s, 5 * 60_000);
-                        break;
+                        return Ok(true);
                     }
                 }
             }
@@ -1004,7 +1007,7 @@ async fn pump_loop(s: &Arc<Shared>) -> Result<()> {
         set_paused(s, None);
         run(s, job).await;
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Saves what a job produced, unless it was discarded (`publish`).
