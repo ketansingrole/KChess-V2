@@ -224,6 +224,39 @@ fn from_json(ctx: &StoreContext) -> Result<bool> {
     Ok(true)
 }
 
+/// Once the earlier database's tokens are sealed in this profile, delete its plaintext copies,
+/// overwriting the freed pages (`secure_delete`), so a backup, a sync tool or another program
+/// cannot read a live Lichess login from it. Its games and settings stay. Failure (the earlier app
+/// still holds it open) is logged, and the next start tries again.
+pub fn scrub_legacy_tokens(ctx: &StoreContext) -> Result<()> {
+    let Some(legacy_path) = ctx.config.legacy_database_path.as_deref() else {
+        return Ok(());
+    };
+    if !legacy_path.exists() {
+        return Ok(());
+    }
+    let scrubbed = Connection::open_with_flags(
+        legacy_path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .and_then(|legacy| {
+        legacy.pragma_update(None, "secure_delete", true)?;
+        match legacy.execute("DELETE FROM lichess_tokens", []) {
+            Ok(_) => Ok(()),
+            Err(cause) if cause.to_string().contains("no such table") => Ok(()),
+            Err(cause) => Err(cause),
+        }
+    });
+    if let Err(cause) = scrubbed {
+        log(
+            ctx,
+            Level::Warn,
+            &format!("The earlier database's Lichess logins could not be removed: {cause}"),
+        );
+    }
+    Ok(())
+}
+
 fn with_bak(path: &Path) -> std::path::PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(".bak");
