@@ -205,4 +205,63 @@ mod tests {
         assert!(tree_from_pgn("1. e5 *").is_none());
         assert!(tree_from_pgn("1. e4 e5\n\n1. d4 d5").is_none());
     }
+
+    /// A main line of `plies` knight moves, back and forth.
+    fn shuffle(plies: usize) -> String {
+        let knights = ["Nf3", "Nf6", "Ng1", "Ng8"];
+        (0..plies)
+            .map(|ply| match ply % 2 {
+                0 => format!("{}. {}", ply / 2 + 1, knights[ply % 4]),
+                _ => knights[ply % 4].to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Both readers accept a document up to each limit and refuse it one past.
+    fn accepted(pgn: &str) -> bool {
+        let built = tree_from_pgn(pgn).is_some();
+        assert_eq!(valid_pgn(pgn), built, "the two readers agree");
+        built
+    }
+
+    fn on_a_large_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(test)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn a_document_is_read_up_to_its_length_limit() {
+        let game = "1. e4 *";
+        let padded = |len: usize| format!("{game}{}", " ".repeat(len - game.len()));
+        assert!(accepted(&padded(MAX_TEXT)));
+        assert!(!accepted(&padded(MAX_TEXT + 1)));
+    }
+
+    #[test]
+    fn a_tree_is_read_up_to_its_node_limit() {
+        // The main line's first move and its alternatives, each one node.
+        let with = |nodes: usize| format!("1. e4 {} *", "(1. d4) ".repeat(nodes - 1));
+        assert!(accepted(&with(MAX_NODES)));
+        assert!(!accepted(&with(MAX_NODES + 1)));
+    }
+
+    #[test]
+    fn a_tree_is_read_up_to_its_depth_limit() {
+        on_a_large_stack(|| {
+            let deepest = tree_from_pgn(&shuffle(MAX_DEPTH)).unwrap();
+            let mut node = &deepest;
+            while let Some(next) = node.children.first() {
+                node = next;
+            }
+            assert_eq!(node.ply, MAX_DEPTH as u32);
+            assert!(accepted(&shuffle(MAX_DEPTH)));
+            assert!(!accepted(&shuffle(MAX_DEPTH + 1)));
+        });
+    }
 }
+
