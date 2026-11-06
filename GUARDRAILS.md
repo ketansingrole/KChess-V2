@@ -25,7 +25,10 @@ offscreen into `<dir>/<width>x<height>/<page>.png`.
 the working tree has uncommitted or untracked files, since `check` would test those instead. Other
 branches push without it. Skip it only on purpose: `KCHESS_SKIP_PRE_PUSH=1 git push …`.
 
-Before merging, run `cargo xtask check`: `cargo fmt --check`, clippy over every target with
+Code reaches `main` through a pull request, whose CI runs `cargo xtask check` on Linux and the
+app's tests on macOS and Windows before it lands; run `check-fast` before opening it. A direct push
+to `main` (documents only, or when asked) runs `cargo xtask check` first through the hook. The
+check is `cargo fmt --check`, clippy over every target with
 warnings denied (and `unwrap`/`expect` denied in libraries and shipped binaries), the notices
 check, the release metadata, and every test, under the coverage gate when `cargo-llvm-cov` is
 installed. Packaging changes also need `cargo xtask package` on the platform they touch. CI runs

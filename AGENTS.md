@@ -4,63 +4,37 @@ KChess is Rust: the app (`apps/gpui`, GPUI Kit), the command line (`apps/cli`), 
 (`crates/`) and the tooling (`tooling/xtask`, run as `cargo xtask <command>`). There is no
 JavaScript, TypeScript or Node in the repository; do not add any.
 
+## Landing changes
+
+- Code reaches `main` through a pull request, so CI tests it on macOS, Windows and Linux before
+  it lands. The local check runs only on this Mac and cannot see platform-only failures: all six
+  red runs on `main` from 2026-10-29 to 2026-11-06 passed here first.
+- Before opening or updating the PR, run `cargo xtask check-fast`. CI runs the full check, so
+  you do not need `cargo xtask check` for a PR.
+- Open the PR and carry on. Merge it once CI is green, with auto-merge if it is enabled. Fix
+  failures with new commits on the branch, not on `main`. Watch CI in the background
+  (`gh run watch <id> --exit-status` with the tool's background mode); do not sit idle on it
+  unless the next step needs its result.
+- Push straight to `main` only for changes CI skips (documents only: `docs/` and the top-level
+  guides) or when the user asks. Those pushes still run the full `cargo xtask check` (the
+  `.githooks/pre-push` hook, installed by `cargo xtask install-hooks`, enforces it; skip it only on
+  purpose with `KCHESS_SKIP_PRE_PUSH=1`). Never force-push `main`.
+
 ## Releases and tags
 
-Creating a release means preparing a **draft**. Publish it only when the user asks to
-publish. A request to fix code, build installers, or reduce size does not authorize
-creating/pushing a tag or publishing a release.
+Read [the release checklist](docs/releasing.md#release-checklist) before any release work:
+versions, tagging, verification and assets.
 
-- Versions are `YEAR.MONTH.COUNTER`, using the **UTC release month**. Start a new month
-  at `0`; otherwise use one more than the highest existing tag's counter for that month.
-  No zero padding: workspace version `2026.10.1`, Git tag `v2026.10.1`.
-  Do not use ordinary `v1.2.3`, date/day tags, prerelease suffixes, or guess a counter.
-- Use `cargo xtask release-version`. It must successfully fetch tags from `origin` first.
-  If fetching fails, restore access and retry; do not select a version from stale tags.
-  Commit `Cargo.toml` and `Cargo.lock`; the lockfile must match the workspace version.
-- Changes may land on `main` directly or through a pull request; a PR is optional. Before
-  pushing to `main`, run `cargo xtask check` locally (the `.githooks/pre-push` hook, installed by
-  `cargo xtask install-hooks`, runs it and refuses a dirty tree; skip it only on purpose with
-  `KCHESS_SKIP_PRE_PUSH=1`). After pushing, watch the run in the background
-  (`gh run watch <id> --exit-status` with the tool's background mode) and carry on; fix any failure
-  with a follow-up commit (never force-push `main`). Do not sit idle on CI unless the next step
-  needs its result, as a release does.
-- Release only a commit on `origin/main` whose CI is green. Include every intended file,
-  including new/untracked files; explicitly stage the files instead of relying on
-  `git commit -am`. Keep the working tree clean before tagging and verify CI is green
-  for the intended release commit.
-- Run `cargo xtask release-verify` (it needs the release commit's CI to have run and passed every
-  job, including the packages, Snap and Windows upgrade) and `cargo xtask check`. Verify the
-  release commit and tag before creating an annotated tag. Push **only that tag**, not `--tags` or an arbitrary
-  `HEAD` branch. Never force-push, move, reuse, or delete an existing release tag.
-- Tag pushes run the Release workflow and create a draft after all platform packages
-  succeed. Manual `workflow_dispatch` builds produce downloadable artifacts only,
-  even when the selected ref is a tag. To retry a failed draft build, rerun its original
-  tag-push workflow; do not recreate the tag.
-- Replacing assets is allowed only while the release is a draft. A published release
-  is permanent: ship fixes with the next version and a new tag. Never bypass the
-  `attach-draft-release` guard with a direct `gh release upload --clobber`.
-- Supported downloads: macOS **Apple Silicon (arm64) only** (`.dmg` and `.zip`), Windows
-  x64 (`.exe`), Linux x64 (`.AppImage` and `.deb`), and the Snap, as `KChess-*` with
-  `latest*.yml`. Every Electron installation ever released updates itself through those
-  manifests: keep their names, the Windows GUID, install folder, executable and uninstaller
-  names, the `.deb` package and `/opt/KChess` layout, and the Mac zip's Electron bridge
-  (`legacy/KChess.app`, `com.kchess.electron`) (`tooling/xtask/src/package`).
-  Keep `SHA256SUMS.txt` with the installers. Verify all packages and checksums before
-  publishing; macOS ZIPs are required for the update feed.
-
-Before an authorized tag push, derive its name from the committed workspace version,
-confirm the named commit is the intended release, and inspect the exact local tag:
-
-```bash
-release_tag="v$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)"
-release_commit="$(git rev-parse HEAD)"
-git status --short                          # must be empty
-git merge-base --is-ancestor "$release_commit" origin/main  # must succeed
-git tag --list "$release_tag"               # must be empty for a new release
-git tag -a "$release_tag" -m "KChess ${release_tag#v}" "$release_commit"
-git show --no-patch "$release_tag"           # verify version and target commit
-git push origin "refs/tags/$release_tag"
-```
+- Creating a release means preparing a **draft**. Publish only when the user asks. A request to
+  fix code, build installers or reduce size does not authorize creating or pushing a tag.
+- Versions come from `cargo xtask release-version` (`YEAR.MONTH.COUNTER`, UTC month). Never pick
+  one by hand from stale tags.
+- Release only a green commit on `origin/main`, after `cargo xtask release-verify`. Push only that
+  tag. Never force-push, move, reuse or delete a release tag.
+- A published release is permanent: ship fixes in the next version. Replace assets only while
+  the release is a draft, and never bypass the `attach-draft-release` guard.
+- Keep the installer names, the Windows GUID, the install layouts and the Mac zip's Electron
+  bridge (`tooling/xtask/src/package`): every Electron install ever shipped updates through them.
 
 ## Running the app
 
@@ -165,11 +139,12 @@ git push origin "refs/tags/$release_tag"
 
 - Read GUARDRAILS.md for the verification ladder.
 - Test in tiers. While editing, run `cargo xtask check-fast` (format, lints and the tests of the
-  packages changed since main and of every package depending on them). Run tests with
-  `cargo nextest run` (`cargo install cargo-nextest`; `.config/nextest.toml`): it runs test
-  binaries in parallel where `cargo test` runs them one at a time. Before pushing to `main`, run the full `cargo xtask check` (the
-  pre-push hook enforces it). Packaging changes also need `cargo xtask package` on the platform
-  they touch; CI then packages, builds the Snap and runs the Windows upgrade (`ci.yml` `changes`).
+  packages changed since main and of every package depending on them). Run tests with `cargo nextest
+  run` (`cargo install cargo-nextest`; `.config/nextest.toml`): it runs test binaries in parallel
+  where `cargo test` runs them one at a time. CI runs the full `cargo xtask check` on the pull
+  request; a direct push to `main` runs it first (the pre-push hook enforces it). Packaging changes
+  also need `cargo xtask package` on the platform they touch; CI then packages, builds the Snap and
+  runs the Windows upgrade (`ci.yml` `changes`).
 - Run anything that may take over a minute (`cargo xtask check`, the app's tests, packaging) in
   the background with its output in a file, and read the result when it finishes. Never wait in
   a loop (`sleep`, `until grep …; do sleep`, `while pgrep`): the tool reports when a background
