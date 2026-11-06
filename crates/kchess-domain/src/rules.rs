@@ -1116,4 +1116,19 @@ mod fen_tests {
         assert_eq!(rights("4k3/8/8/8/8/8/8/1R2K1R1 w BG - 0 1"), ["b1", "g1"]);
         assert!(parse_fen("4k3/8/8/8/8/8/8/RR2K2R w KQB - 0 1").is_none());
     }
+
+    /// Three-check counts: checks remaining (`3+3`) or given (`+0+0`), three at most.
+    #[test]
+    fn reads_three_check_counts_either_way() {
+        let read = |part: &str| {
+            parse_remaining_checks(part)
+                .map(|checks| (u32::from(checks.white), u32::from(checks.black)))
+        };
+        assert_eq!(read("3+2"), Some((3, 2)));
+        assert_eq!(read("+1+0"), Some((2, 3)));
+        assert_eq!(read("4+3"), None);
+        assert_eq!(read("3+4"), None);
+        assert_eq!(read("+0+4"), None);
+        assert_eq!(read("3"), None);
+    }
 }
