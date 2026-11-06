@@ -1089,4 +1089,13 @@ mod fen_tests {
         assert!(parse_fen("rnbqkbnr/pppppppp/7/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").is_none());
         assert!(parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP w KQkq - 0 1").is_none());
     }
+
+    /// A Crazyhouse pocket holds at most 64 pieces.
+    #[test]
+    fn a_pocket_holds_at_most_64_pieces() {
+        let board = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+        let with = |n: usize| parse_fen(&format!("{board}[{}] w KQkq - 0 1", "P".repeat(n)));
+        assert!(with(64).is_some());
+        assert!(with(65).is_none());
+    }
 }
