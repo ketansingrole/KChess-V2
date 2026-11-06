@@ -19,8 +19,9 @@ with nothing there.
 - **More for other chess variants**: set up positions for any variant, practice your mistakes from variant games, and get your Lichess variant games reviewed.
 - **A clearer Home**: see who won each game, the result of a finished game, and your rating history at a glance.
 - **Calmer animations**: KChess follows your computer's reduce motion setting.
+- **Find us**: Settings → Updates links to the KChess website, its source code, and a place to report a problem.
 - **More reliable updates**: if an update download is interrupted, it carries on where it stopped.
-- **Fixes**: KChess uses less memory over long sessions, is safer, and busy pages respond faster.
+- **Fixes**: KChess uses less memory over long sessions, is safer, and busy pages respond faster. New opponent works right after a Lichess game ends, instead of asking you to reconnect.
 
 ## 2026.11.3 (2026-11-04)
 

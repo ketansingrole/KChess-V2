@@ -1444,3 +1444,44 @@ async fn lists_the_challenges_of_accounts_without_an_open_event_stream() {
     assert!(online.challenges().list().is_empty());
     online.close();
 }
+
+/// Lichess's account stream can say a game finished before the game's own stream does. The
+/// window shows Rematch and New opponent on that `gameFinish`, so the session must end the game
+/// then too: a New opponent clicked at once was refused with "Reconnect to your current game
+/// before finding another" (the app's `e2e::live_game::new_opponent_seeks_the_same_game_against_anyone`
+/// failed this way in CI).
+#[tokio::test]
+async fn a_game_finished_on_the_account_stream_ends_the_live_game() {
+    let events: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
+        Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&events);
+    let (host, fixture, online) = playing(move |seen| match seen.path() {
+        "/api/stream/event" => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            *slot.lock().unwrap() = Some(tx);
+            Some(Reply::Stream(rx))
+        }
+        // The game's own stream says nothing more: its final state is late.
+        _ => None,
+    })
+    .await;
+    wait_requests(&fixture, "/api/stream/event", 1).await;
+    let sender = events.lock().unwrap().clone().unwrap();
+    let finish = json!({
+        "type": "gameFinish",
+        "game": { "gameId": "AbCd1234", "status": { "name": "resign" }, "winner": "black" }
+    });
+    sender.send(format!("{finish}\n")).unwrap();
+    until("the finish to reach the window", || {
+        emitted(&host, "online:event")
+            .iter()
+            .any(|event| event["type"] == "gameFinish")
+    })
+    .await;
+    assert!(
+        !online.playing(),
+        "the finished game no longer blocks a new one"
+    );
+    online.cancel();
+    online.close();
+}
