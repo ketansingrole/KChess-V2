@@ -2207,7 +2207,7 @@ impl Render for Workspace {
                                 cx.listener(|this, _, window, cx| this.go(1, window, cx)),
                             )
                             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                                if !event.is_held && this.pages.page_focused(window) {
+                                if !event.is_held && this.pages.page_focused(window, cx) {
                                     Self::talk_key(&event.keystroke, true, cx);
                                 }
                             }))

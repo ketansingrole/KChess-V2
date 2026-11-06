@@ -1147,7 +1147,7 @@ impl Render for EditorPage {
             .track_focus(&self.focus)
             // F turns the board, as its button does, while no text field has the keys.
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if this.focus.is_focused(window)
+                if crate::board::page_has_keys(&this.focus, window, cx)
                     && !event.keystroke.modifiers.modified()
                     && event.keystroke.key == "f"
                 {
