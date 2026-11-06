@@ -942,6 +942,17 @@ pub fn practise_game(
     });
 }
 
+/// Guess the move through a game's PGN as `side`, on Practice.
+pub fn guess_moves(pgn: &str, side: Option<shakmaty::Color>, window: &mut Window, cx: &mut App) {
+    crate::prefs::set(cx, "kchess:practice-tab", "guess");
+    open(Page::Practice, window, cx);
+    if let Some(practice) = view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx) {
+        practice.update(cx, |practice, cx| {
+            practice.guess_moves(pgn, side, window, cx)
+        });
+    }
+}
+
 /// Analyse a line from the starting position.
 pub fn open_analysis_line(moves: Vec<String>, window: &mut Window, cx: &mut App) {
     replace_analysis(window, cx, move |analysis, _, cx| {

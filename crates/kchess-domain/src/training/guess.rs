@@ -110,7 +110,9 @@ pub fn judge(guess: &str, played: &str, best: Option<Eval>, guessed: Option<Eval
         };
     };
     // A guess the engine finds better than its own best (a shallower search) lost nothing.
-    let loss = (best.centipawns() - guessed.centipawns()).max(0).unsigned_abs();
+    let loss = (best.centipawns() - guessed.centipawns())
+        .max(0)
+        .unsigned_abs();
     let (grade, points) = BANDS
         .iter()
         .find(|(most, _, _)| loss <= *most)
