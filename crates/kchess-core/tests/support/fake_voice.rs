@@ -6,8 +6,12 @@
 //! - `refuse`: answers an error instead of ready, as a helper that cannot load the model does.
 //! - `crash-on-audio`: exits without answering the first audio.
 //! - `hang-on-audio`: never answers audio.
+//! - `slow-grammar`: as `normal`, but takes two seconds to acknowledge a grammar, longer than
+//!   the tests' per-request deadline, as a new helper on a loaded machine can.
 //!
-//! Every request's tag is appended to the folder's `log` file before it is answered.
+//! Every request's tag is appended to the folder's `log` file before it is answered. The file is
+//! opened once, before `ready`: reopening it for each request put a file open (which antivirus
+//! scanning can hold up on Windows) inside every request's deadline.
 
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
@@ -27,6 +31,11 @@ fn main() {
         say(r#"{"error":"The offline voice model couldn’t load."}"#);
         std::process::exit(1);
     }
+    let mut log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(folder.join("log"))
+        .expect("log");
     say(r#"{"ready":true}"#);
     let mut input = std::io::stdin().lock();
     loop {
@@ -37,14 +46,14 @@ fn main() {
         let length = u32::from_le_bytes([head[1], head[2], head[3], head[4]]) as usize;
         let mut payload = vec![0u8; length];
         input.read_exact(&mut payload).expect("payload");
-        let mut log = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(folder.join("log"))
-            .expect("log");
         writeln!(log, "{}", head[0] as char).expect("log line");
         match head[0] {
-            b'G' => say(r#"{"ok":true}"#),
+            b'G' => {
+                if mode == "slow-grammar" {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+                say(r#"{"ok":true}"#);
+            }
             b'A' if mode == "crash-on-audio" => std::process::exit(3),
             b'A' if mode == "hang-on-audio" => loop {
                 std::thread::park();
