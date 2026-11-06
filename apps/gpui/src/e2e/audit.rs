@@ -40,9 +40,7 @@ fn every_page_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
             .simulate_window_resize(app.window, size(px(width), px(height)));
         for &(page, label) in &pages {
             app.with_window(|window, cx| crate::shell::open(page, window, cx));
-            for _ in 0..20 {
-                app.tick();
-            }
+            app.settle();
             let controls = app.with_window(|window, _| window.elements());
             check(
                 &format!("{label} at {width}×{height}"),
@@ -76,9 +74,7 @@ fn the_move_box_is_one_size_on_every_board_page(cx: &mut gpui_kit::TestAppContex
     let mut sizes = Vec::new();
     for page in [Page::Computer, Page::Analysis] {
         app.with_window(|window, cx| crate::shell::open(page, window, cx));
-        for _ in 0..20 {
-            app.tick();
-        }
+        app.settle();
         sizes.push(app.with_window(|window, _| {
             window
                 .try_find_by_label("Enter a chess move in SAN or UCI")
@@ -186,9 +182,7 @@ fn the_board_editors_actions_stay_in_its_panel(cx: &mut gpui_kit::TestAppContext
     for (width, height) in SIZES {
         app.cx
             .simulate_window_resize(app.window, size(px(width), px(height)));
-        for _ in 0..20 {
-            app.tick();
-        }
+        app.settle();
         let bounds = |app: &mut Harness, id: &'static str| {
             app.with_window(|window, _| window.try_find(id).map(|found| found.bounds()))
                 .unwrap_or_else(|| panic!("no {id}"))
@@ -221,9 +215,7 @@ fn every_page_with_content_lays_out_its_controls(cx: &mut gpui_kit::TestAppConte
             .simulate_window_resize(app.window, size(px(width), px(height)));
         for &(page, label) in &pages {
             app.with_window(|window, cx| crate::shell::open(page, window, cx));
-            for _ in 0..20 {
-                app.tick();
-            }
+            app.settle();
             let controls = app.with_window(|window, _| window.elements());
             check(
                 &format!("{label} at {width}×{height}"),
@@ -253,9 +245,7 @@ fn every_tab_and_settings_section_lays_out_its_controls(cx: &mut gpui_kit::TestA
     let mut app = Harness::start(cx);
     let mut findings = Findings::default();
     let settle = |app: &mut Harness| {
-        for _ in 0..20 {
-            app.tick();
-        }
+        app.settle();
     };
     for (width, height) in SIZES {
         app.cx
@@ -330,9 +320,7 @@ fn every_dialog_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     let mut findings = Findings::default();
     let settle = |app: &mut Harness| {
-        for _ in 0..20 {
-            app.tick();
-        }
+        app.settle();
     };
     let dialogs: [(Page, &str, &str); 5] = [
         (Page::Computer, "game-options", "Game options"),
@@ -472,4 +460,88 @@ fn seed(app: &mut Harness) {
             .block_test(done)
             .unwrap_or_else(|cause| panic!("{method}: {cause:?}"));
     }
+}
+
+/// Every page with the longest content people realistically bring: names from imported PGNs
+/// (unbounded: a club's own header, a federation title, a hyphenated surname), a study and its
+/// chapters at Lichess's 100-character limit, and a 20-character Lichess username, the longest
+/// it allows. Long text wraps or ends in an ellipsis; it never pushes a control out of the window
+/// or onto another.
+#[gpui_kit::test]
+fn every_page_with_the_longest_content_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    seed_longest(&mut app);
+    let mut findings = Findings::default();
+    let mut pages: Vec<(Page, &str)> = crate::shell::nav()
+        .iter()
+        .map(|(page, label, _)| (*page, *label))
+        .collect();
+    pages.push((Page::Settings, "Settings"));
+    for (width, height) in SIZES {
+        app.cx
+            .simulate_window_resize(app.window, size(px(width), px(height)));
+        for &(page, label) in &pages {
+            app.with_window(|window, cx| crate::shell::open(page, window, cx));
+            app.settle();
+            let controls = app.with_window(|window, _| window.elements());
+            check(
+                &format!("{label} at {width}×{height}"),
+                width,
+                &controls,
+                &mut findings,
+            );
+        }
+    }
+    assert!(
+        findings.problems.is_empty(),
+        "with the longest content:\n  {}",
+        findings.problems.join("\n  ")
+    );
+}
+
+/// Played games, a study and an analysis line, each with the longest realistic text.
+fn seed_longest(app: &mut Harness) {
+    const WHITE: &str = "GM Aleksandra Wiśniewska-Kowalczyk (Northwind Chess Club)";
+    const BLACK: &str = "Bartholomew Fitzgerald-Montgomery III";
+    const STUDY: &str =
+        "Najdorf Sicilian, English Attack with 6.Be3 e5 7.Nb3: every critical line after 8.f3 Be7";
+    const CHAPTER: &str =
+        "Chapter 12: 9.Qd2 O-O 10.O-O-O Nbd7 11.g4 b5 12.g5 Nh5 13.Kb1 Nb6 14.Na5 Qc7 15.Nd5";
+    let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    app.cx.update(|cx| {
+        let played = cx.global::<crate::played::PlayedHandle>().0.clone();
+        played.update(cx, |played, cx| {
+            for index in 0..3 {
+                played.save(
+                    serde_json::json!({
+                        "id": format!("longest-{index}"),
+                        "source": "computer",
+                        "setup": { "variant": "standard", "fen": start },
+                        "moves": ["e2e4", "c7c5", "g1f3", "d7d6", "d2d4", "c5d4"],
+                        "white": WHITE,
+                        "black": BLACK,
+                        "result": "1/2-1/2",
+                        "reason": "agreement",
+                        "finished": true,
+                        "timeControl": "5400+30",
+                        "startedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
+                        "updatedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
+                    }),
+                    cx,
+                );
+            }
+        });
+    });
+    // A study imported as a person would, three games each named at the length limit.
+    let game = format!(
+        "[Event \"{CHAPTER}\"]\n[White \"{WHITE}\"]\n[Black \"{BLACK}\"]\n\n1. e4 c5 2. Nf3 d6 *"
+    );
+    app.open("Studies");
+    app.click("empty-import");
+    app.fill_in_dialog("PGN", &[game.as_str(); 3].join("\n\n"));
+    app.fill_in_dialog("Study name", STUDY);
+    app.click("import-run");
+    // Its notice stays over every page until taken up.
+    app.click("open-imported");
+    app.wait_gone("open-imported");
 }

@@ -39,6 +39,13 @@ impl Core {
                 let text = normal("assertChatText", &arg(args, 2))?;
                 self.inner("online.sendChat", vec![id, room, text]).await
             }
+            _ => self.run_challenges(method, args).await,
+        }
+    }
+
+    /// Answers the facade's challenge methods.
+    async fn run_challenges(&self, method: &str, args: &[Value]) -> Result<Value> {
+        match method {
             "challenges" => self.inner("challenges.list", vec![]).await,
             "acceptChallenge" => {
                 let id = normal("assertGameId", &arg(args, 0))?;
@@ -85,6 +92,13 @@ impl Core {
                 let id = normal("assertGameId", &arg(args, 1))?;
                 self.inner("online.open", vec![account, id]).await
             }
+            _ => self.run_players(method, args).await,
+        }
+    }
+
+    /// Answers the facade's Lichess player methods.
+    async fn run_players(&self, method: &str, args: &[Value]) -> Result<Value> {
+        match method {
             "playerPerf" => {
                 let name = normal("assertUsername", &arg(args, 0))?;
                 let perf = normal("assertPerfType", &arg(args, 1))?;

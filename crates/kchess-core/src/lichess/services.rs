@@ -162,6 +162,21 @@ impl Services {
 
     /// Runs one asynchronous method. `None` when the method is not one of these services'.
     pub async fn call(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
+        match method.split_once('.')?.0 {
+            "lichess"
+                if method.starts_with("lichess.puzzle") || method == "lichess.stormDashboard" =>
+            {
+                self.call_puzzles(method, args).await
+            }
+            "lichess" => self.call_lichess(method, args).await,
+            "online" => self.call_online(method, args).await,
+            "tournaments" | "studies" => self.call_events(method, args).await,
+            _ => self.call_watch(method, args).await,
+        }
+    }
+
+    /// The `lichess.` methods for accounts, profiles and games.
+    async fn call_lichess(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
         let result = match method {
             "lichess.syncGames" => self.sync_games(args).await,
             "lichess.connectLichess" => self.connect(args).await,
@@ -179,42 +194,14 @@ impl Services {
                 }
                 (Err(cause), _) | (_, Err(cause)) => Err(cause),
             },
-            "lichess.puzzleNext" => match parse::<PuzzleRequest>(args, 0, "request") {
-                Ok(request) => {
-                    reply_json(super::puzzles::puzzle_next(&self.lichess, &request).await)
-                }
-                Err(cause) => Err(cause),
-            },
-            "lichess.puzzleSolve" => match parse::<PuzzleSolveRequest>(args, 0, "request") {
-                Ok(request) => {
-                    reply_json(super::puzzles::puzzle_solve(&self.lichess, &request).await)
-                }
-                Err(cause) => Err(cause),
-            },
-            "lichess.puzzleDaily" => super::puzzles::puzzle_daily(&self.lichess).await,
-            "lichess.puzzleById" => match text(args, 0) {
-                Ok(id) => super::puzzles::puzzle_by_id(&self.lichess, &id).await,
-                Err(cause) => Err(cause),
-            },
-            "lichess.puzzleDashboard" => match parse::<AccountDays>(args, 0, "request") {
-                Ok(request) => reply_json(
-                    super::puzzles::puzzle_dashboard(&self.lichess, &request.account, request.days)
-                        .await,
-                ),
-                Err(cause) => Err(cause),
-            },
-            "lichess.puzzleActivity" => match (text(args, 0), arg_u32(args, 1)) {
-                (Ok(account), Ok(max)) => {
-                    reply_json(super::puzzles::puzzle_activity(&self.lichess, &account, max).await)
-                }
-                (Err(cause), _) | (_, Err(cause)) => Err(cause),
-            },
-            "lichess.stormDashboard" => match (text(args, 0), arg_u32(args, 1)) {
-                (Ok(name), Ok(days)) => {
-                    super::puzzles::storm_dashboard(&self.lichess, &name, days).await
-                }
-                (Err(cause), _) | (_, Err(cause)) => Err(cause),
-            },
+            _ => return self.call_profiles(method, args).await,
+        };
+        Some(result)
+    }
+
+    /// The `lichess.` methods for profiles, followed players and games.
+    async fn call_profiles(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
+        let result = match method {
             "lichess.followedUsers" => to_json(self.lichess.followed_users().await),
             "lichess.cachedProfile" => match text(args, 0) {
                 Ok(name) => to_json(self.lichess.cached_profile(&name).await.map(|cached| {
@@ -274,6 +261,114 @@ impl Services {
                 self.lichess.reset();
                 Ok(Value::Null)
             }
+            _ => return self.call_players(method, args).await,
+        };
+        Some(result)
+    }
+
+    /// The `lichess.` methods for other players: relations, leaderboards and activity.
+    async fn call_players(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
+        let result = match method {
+            "lichess.relation" => match (text(args, 0), text(args, 1)) {
+                (Ok(account), Ok(name)) => reply_json(self.lichess.relation(&account, &name).await),
+                (Err(cause), _) | (_, Err(cause)) => Err(cause),
+            },
+            "lichess.setRelation" => match (text(args, 0), text(args, 1), text(args, 2)) {
+                (Ok(account), Ok(name), Ok(action)) => {
+                    reply_true(self.lichess.set_relation(&account, &name, &action).await)
+                }
+                (Err(cause), _, _) | (_, Err(cause), _) | (_, _, Err(cause)) => Err(cause),
+            },
+            "lichess.profiles" => match strings(args, 0) {
+                Ok(names) => to_json(self.lichess.profiles(&names).await),
+                Err(cause) => Err(cause),
+            },
+            "lichess.leaderboard" => match text(args, 0) {
+                Ok(perf) => to_json(self.lichess.leaderboard(&perf).await),
+                Err(cause) => Err(cause),
+            },
+            "lichess.searchPlayers" => match text(args, 0) {
+                Ok(term) => to_json(self.lichess.search_players(&term).await),
+                Err(cause) => Err(cause),
+            },
+            "lichess.activity" => match text(args, 0) {
+                Ok(name) => to_json(self.lichess.activity(&name).await),
+                Err(cause) => Err(cause),
+            },
+            "lichess.timeline" => to_json(self.lichess.timeline().await),
+            "lichess.importGame" => match (text(args, 0), text(args, 1)) {
+                (Ok(account), Ok(pgn)) => to_json(self.lichess.import_game(&account, &pgn).await),
+                (Err(cause), _) | (_, Err(cause)) => Err(cause),
+            },
+            "lichess.bookmarkedGames" => match text(args, 0) {
+                Ok(account) => reply_json(self.lichess.bookmarked_games(&account).await),
+                Err(cause) => Err(cause),
+            },
+            "lichess.revokeLogins" => match args.first() {
+                None | Some(Value::Null) => {
+                    self.lichess.revoke_logins(None).await;
+                    Ok(Value::Null)
+                }
+                Some(_) => match strings(args, 0) {
+                    Ok(accounts) => {
+                        self.lichess.revoke_logins(Some(&accounts)).await;
+                        Ok(Value::Null)
+                    }
+                    Err(cause) => Err(cause),
+                },
+            },
+            _ => return None,
+        };
+        Some(result)
+    }
+
+    /// The `lichess.` puzzle and storm methods.
+    async fn call_puzzles(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
+        let result = match method {
+            "lichess.puzzleNext" => match parse::<PuzzleRequest>(args, 0, "request") {
+                Ok(request) => {
+                    reply_json(super::puzzles::puzzle_next(&self.lichess, &request).await)
+                }
+                Err(cause) => Err(cause),
+            },
+            "lichess.puzzleSolve" => match parse::<PuzzleSolveRequest>(args, 0, "request") {
+                Ok(request) => {
+                    reply_json(super::puzzles::puzzle_solve(&self.lichess, &request).await)
+                }
+                Err(cause) => Err(cause),
+            },
+            "lichess.puzzleDaily" => super::puzzles::puzzle_daily(&self.lichess).await,
+            "lichess.puzzleById" => match text(args, 0) {
+                Ok(id) => super::puzzles::puzzle_by_id(&self.lichess, &id).await,
+                Err(cause) => Err(cause),
+            },
+            "lichess.puzzleDashboard" => match parse::<AccountDays>(args, 0, "request") {
+                Ok(request) => reply_json(
+                    super::puzzles::puzzle_dashboard(&self.lichess, &request.account, request.days)
+                        .await,
+                ),
+                Err(cause) => Err(cause),
+            },
+            "lichess.puzzleActivity" => match (text(args, 0), arg_u32(args, 1)) {
+                (Ok(account), Ok(max)) => {
+                    reply_json(super::puzzles::puzzle_activity(&self.lichess, &account, max).await)
+                }
+                (Err(cause), _) | (_, Err(cause)) => Err(cause),
+            },
+            "lichess.stormDashboard" => match (text(args, 0), arg_u32(args, 1)) {
+                (Ok(name), Ok(days)) => {
+                    super::puzzles::storm_dashboard(&self.lichess, &name, days).await
+                }
+                (Err(cause), _) | (_, Err(cause)) => Err(cause),
+            },
+            _ => return None,
+        };
+        Some(result)
+    }
+
+    /// The `online.` methods that start, resume and open games.
+    async fn call_online(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
+        let result = match method {
             "online.start" => match parse::<OnlineOptions>(args, 0, "options") {
                 Ok(options) => to_json(self.online.start(&options).await),
                 Err(cause) => Err(cause),
@@ -300,6 +395,14 @@ impl Services {
                     .map_err(CoreError::from),
                 (Err(cause), _) | (_, Err(cause)) => Err(cause),
             },
+            _ => return self.call_challenges(method, args).await,
+        };
+        Some(result)
+    }
+
+    /// The `online.` challenge, move, chat and connection methods.
+    async fn call_challenges(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
+        let result = match method {
             "online.acceptChallenge" => match parse::<ChallengeInfo>(args, 0, "challenge") {
                 Ok(challenge) => self
                     .online
@@ -392,6 +495,14 @@ impl Services {
                 }
                 Err(cause) => Err(cause),
             },
+            _ => return None,
+        };
+        Some(result)
+    }
+
+    /// The `tournaments.` and `studies.` methods.
+    async fn call_events(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
+        let result = match method {
             "tournaments.list" => match text(args, 0) {
                 Ok(account) => {
                     to_json(super::tournaments::tournaments(&self.lichess, &account).await)
@@ -496,6 +607,14 @@ impl Services {
                 }
                 Err(cause) => Err(cause),
             },
+            _ => return None,
+        };
+        Some(result)
+    }
+
+    /// The `spectate.`, `cloudEval.` and `positionLookup.` methods.
+    async fn call_watch(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
+        let result = match method {
             "spectate.watch" => match parse_target(args, 0) {
                 Ok(target) => Ok(json!(self.spectator.mine().watch(target))),
                 Err(cause) => Err(cause),
@@ -541,61 +660,13 @@ impl Services {
                 let moves = args.first().cloned().unwrap_or(Value::Null);
                 to_json(self.lookups.opening_popularity(&moves).await)
             }
-            "lichess.relation" => match (text(args, 0), text(args, 1)) {
-                (Ok(account), Ok(name)) => reply_json(self.lichess.relation(&account, &name).await),
-                (Err(cause), _) | (_, Err(cause)) => Err(cause),
-            },
-            "lichess.setRelation" => match (text(args, 0), text(args, 1), text(args, 2)) {
-                (Ok(account), Ok(name), Ok(action)) => {
-                    reply_true(self.lichess.set_relation(&account, &name, &action).await)
-                }
-                (Err(cause), _, _) | (_, Err(cause), _) | (_, _, Err(cause)) => Err(cause),
-            },
-            "lichess.profiles" => match strings(args, 0) {
-                Ok(names) => to_json(self.lichess.profiles(&names).await),
-                Err(cause) => Err(cause),
-            },
-            "lichess.leaderboard" => match text(args, 0) {
-                Ok(perf) => to_json(self.lichess.leaderboard(&perf).await),
-                Err(cause) => Err(cause),
-            },
-            "lichess.searchPlayers" => match text(args, 0) {
-                Ok(term) => to_json(self.lichess.search_players(&term).await),
-                Err(cause) => Err(cause),
-            },
-            "lichess.activity" => match text(args, 0) {
-                Ok(name) => to_json(self.lichess.activity(&name).await),
-                Err(cause) => Err(cause),
-            },
-            "lichess.timeline" => to_json(self.lichess.timeline().await),
-            "lichess.importGame" => match (text(args, 0), text(args, 1)) {
-                (Ok(account), Ok(pgn)) => to_json(self.lichess.import_game(&account, &pgn).await),
-                (Err(cause), _) | (_, Err(cause)) => Err(cause),
-            },
-            "lichess.bookmarkedGames" => match text(args, 0) {
-                Ok(account) => reply_json(self.lichess.bookmarked_games(&account).await),
-                Err(cause) => Err(cause),
-            },
-            "lichess.revokeLogins" => match args.first() {
-                None | Some(Value::Null) => {
-                    self.lichess.revoke_logins(None).await;
-                    Ok(Value::Null)
-                }
-                Some(_) => match strings(args, 0) {
-                    Ok(accounts) => {
-                        self.lichess.revoke_logins(Some(&accounts)).await;
-                        Ok(Value::Null)
-                    }
-                    Err(cause) => Err(cause),
-                },
-            },
             _ => return None,
         };
         Some(result)
     }
 
-    /// The synchronous methods of these services: pure readings and state the TypeScript callers
-    /// read without starting work. `None` when the method is not one of them.
+    /// The synchronous methods of these services: pure readings and state callers read without
+    /// starting work. `None` when the method is not one of them.
     pub fn call_sync(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
         let result = match method {
             "online.playing" => Ok(json!(self.online.playing())),
@@ -724,7 +795,7 @@ fn reply_true<E: Into<CoreError>>(result: std::result::Result<Reply<()>, E>) -> 
     }
 }
 
-/// A service's answer as the TypeScript caller reads it: the value, or `{ needsReconnect: true }`
+/// A service's answer as a caller reads it: the value, or `{ needsReconnect: true }`
 /// when the account's login lacks the permission.
 fn reply_json<T: serde::Serialize, E: Into<CoreError>>(
     result: std::result::Result<Reply<T>, E>,

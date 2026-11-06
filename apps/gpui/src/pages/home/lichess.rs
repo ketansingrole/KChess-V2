@@ -17,6 +17,7 @@ use crate::pages::history::lichess::{RowDetail, game_row};
 use crate::rating_history::RatingHistory;
 use crate::theme::{Palette, radii};
 use crate::widgets;
+use crate::widgets::Pressable as _;
 
 /// Synced games shown.
 const RECENT: usize = 6;
@@ -422,7 +423,7 @@ impl Render for LichessActivity {
                         palette.border
                     })
                     .cursor_pointer()
-                    .hover(|card| card.border_color(palette.border_accented))
+                    .pressable_card(&palette)
                     .on_click(move |_, window, cx| {
                         history.update(cx, |history, cx| history.show_mode(key, window, cx))
                     })

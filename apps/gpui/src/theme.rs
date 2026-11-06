@@ -92,12 +92,9 @@ const KEYS: &[(&str, &str)] = &[
 /// KChess's own colors, by name, for what GPUI Kit's theme has no slot for
 /// (accented backgrounds, toned and dimmed text, wins and losses): `cx.global::<Palette>()`.
 #[derive(Clone, Copy)]
-// The whole palette, as the stylesheet defines it; each view reads what it paints with.
-#[allow(dead_code)]
 pub struct Palette {
     pub dark: bool,
     pub bg: Hsla,
-    pub muted: Hsla,
     pub elevated: Hsla,
     pub accented: Hsla,
     pub border: Hsla,
@@ -131,7 +128,6 @@ impl Palette {
         Palette {
             dark,
             bg: c("--ui-bg"),
-            muted: c("--ui-bg-muted"),
             elevated: c("--ui-bg-elevated"),
             accented: c("--ui-bg-accented"),
             border: c("--ui-border"),
@@ -149,6 +145,17 @@ impl Palette {
             info: c("--ui-info"),
             win: c("--ui-win"),
             loss: c("--ui-loss"),
+        }
+    }
+
+    /// A hover `fill` a step stronger, for while it is pressed: a translucent tint half as
+    /// opaque again, a solid color with a little of the text color mixed in (darker on light
+    /// themes, lighter on dark ones).
+    pub fn pressed(&self, fill: Hsla) -> Hsla {
+        if fill.a < 1. {
+            fill.alpha((fill.a * 1.5).min(1.))
+        } else {
+            fill.blend(self.text.opacity(0.1))
         }
     }
 }

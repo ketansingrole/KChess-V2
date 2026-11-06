@@ -160,6 +160,12 @@ fn coverage_args(nextest: bool, report: &str) -> Vec<&str> {
         "--exclude",
         "xtask",
         "--locked",
+        // A test process killed while writing its profile leaves a corrupt one, and llvm-profdata
+        // then refuses to merge any: CI's check failed twice with every test passed ("file header
+        // is corrupt … no profile can be merged"). The rest still measure the code; only when
+        // none can be merged is the run refused.
+        "--failure-mode",
+        "all",
         "--summary-only",
         "--json",
         "--output-path",
@@ -515,6 +521,11 @@ mod tests {
         assert_eq!(coverage_args(true, "r.json")[..2], ["llvm-cov", "nextest"]);
         assert_eq!(coverage_args(false, "r.json")[1], "--workspace");
         assert!(coverage_args(true, "r.json").ends_with(&["--output-path", "r.json"]));
+        assert!(
+            coverage_args(true, "r.json")
+                .windows(2)
+                .any(|pair| pair == ["--failure-mode", "all"])
+        );
     }
 
     #[test]

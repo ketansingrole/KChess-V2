@@ -32,6 +32,7 @@ mod settings;
 mod shell;
 mod studies;
 mod tournaments;
+mod whats_new;
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -165,10 +166,16 @@ impl Harness {
 
     /// Take the computer to be on a network, whatever the machine running the test says.
     pub fn online(&mut self) {
+        self.set_online(true);
+    }
+
+    /// Take the computer to be on a network or off it for the rest of the test, whatever the
+    /// machine running it says (`network::init` looks at it again every 5 s).
+    pub fn set_online(&mut self, online: bool) {
         self.cx.update(|cx| {
             let network = cx.global::<crate::network::NetworkHandle>().0.clone();
             network.update(cx, |network, cx| {
-                network.online = true;
+                network.pin(online);
                 cx.notify();
             });
         });
@@ -239,6 +246,33 @@ impl Harness {
         self.cx.run_until_parked();
     }
 
+    /// Let the page come to rest: at least 20 looks, then until its controls hold still for 10.
+    /// A fixed number of looks measured a page loading on a loaded machine and loaded on a quiet
+    /// one, so a layout check saw a different page from run to run.
+    pub fn settle(&mut self) {
+        let layout = |app: &mut Harness| {
+            app.with_window(|window, _| {
+                window
+                    .elements()
+                    .iter()
+                    .map(ElementSnapshot::bounds)
+                    .collect::<Vec<_>>()
+            })
+        };
+        for _ in 0..20 {
+            self.tick();
+        }
+        let started = Instant::now();
+        let mut last = layout(self);
+        let mut still = 0;
+        while still < 10 && started.elapsed() < TIMEOUT {
+            self.tick();
+            let now = layout(self);
+            still = if now == last { still + 1 } else { 0 };
+            last = now;
+        }
+    }
+
     /// Run `f` on the window after a fresh frame.
     pub fn with_window<R>(&mut self, f: impl FnOnce(&mut Window, &mut App) -> R) -> R {
         self.cx.run_until_parked();
@@ -264,8 +298,30 @@ impl Harness {
     }
 
     /// Wait, in real time, until `ready` holds for a fresh frame; `what` names it on failure.
-    pub fn wait_for(&mut self, what: &str, mut ready: impl FnMut(&mut Window, &mut App) -> bool) {
+    pub fn wait_for(&mut self, what: &str, ready: impl FnMut(&mut Window, &mut App) -> bool) {
+        self.wait(what, ready, false);
+    }
+
+    /// `wait_for`, with GPUI's test clock kept up with real time: for a page whose clock reads
+    /// real time but redraws on a timer (a game clock's tick). `tick` moves the test clock 5 ms a
+    /// look, so under load it falls far behind: a 100 ms tick came seconds apart, a clock skipped
+    /// the second a test waited for, and a low-time warning came late or never.
+    pub fn wait_for_in_real_time(
+        &mut self,
+        what: &str,
+        ready: impl FnMut(&mut Window, &mut App) -> bool,
+    ) {
+        self.wait(what, ready, true);
+    }
+
+    fn wait(
+        &mut self,
+        what: &str,
+        mut ready: impl FnMut(&mut Window, &mut App) -> bool,
+        real_time: bool,
+    ) {
         let started = Instant::now();
+        let mut last = started;
         loop {
             if self.with_window(&mut ready) {
                 return;
@@ -274,8 +330,32 @@ impl Harness {
                 let paths = self.paths();
                 panic!("timed out after {TIMEOUT:?} waiting for {what}. Registered: {paths}");
             }
-            self.tick();
+            if real_time {
+                std::thread::sleep(POLL);
+                let now = Instant::now();
+                self.cx.executor().advance_clock(now - last);
+                last = now;
+                self.cx.run_until_parked();
+            } else {
+                self.tick();
+            }
         }
+    }
+
+    /// Type `text` into the dialog's field labelled `label`, in place of what it holds, once the
+    /// dialog has stopped moving.
+    pub fn fill_in_dialog(&mut self, label: &str, text: &str) {
+        use gpui_kit::test::TestQueryExt as _;
+        let mut last = None;
+        self.wait_for(&format!("{label:?} to stop moving"), |window, _| {
+            let bounds = window.try_find_by_label(label).map(|input| input.bounds());
+            let still = bounds.is_some() && bounds == last;
+            last = bounds;
+            still
+        });
+        self.click_label(label);
+        self.press("secondary-a");
+        self.type_text(text);
     }
 
     /// Wait until the element is shown, then return it.

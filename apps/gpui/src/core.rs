@@ -380,6 +380,8 @@ struct Quitting {
     preparing: bool,
     /// The person chose to quit without the saves that failed.
     discarded: bool,
+    /// Everything was saved just now and the app is quitting straight after (`quit_saved`).
+    saved: bool,
 }
 
 impl Global for Quitting {}
@@ -500,10 +502,28 @@ pub fn prepare_quit(
     .detach();
 }
 
+/// Quit, from a `prepare_quit` that saved everything: the quit handler does not save it all again.
+pub fn quit_saved(cx: &mut App) {
+    cx.default_global::<Quitting>().saved = true;
+    cx.quit();
+}
+
+/// Whether the quit handler saves again. GPUI gives it 200 ms (`SHUTDOWN_TIMEOUT`) and drops it
+/// unfinished after that, so saving everything a second time, a round trip to the core each,
+/// could keep the core's close and the work after it (an installer) from ever running.
+fn saves_again(saved: bool, discarded: bool) -> bool {
+    !saved || discarded
+}
+
 /// Every registered flush, then the core's close, then the work for after both.
 pub fn quit(cx: &mut App) -> impl Future<Output = ()> + 'static + use<> {
-    let pending = flush_all(cx);
-    let discarded = cx.default_global::<Quitting>().discarded;
+    let quitting = cx.default_global::<Quitting>();
+    let (saved, discarded) = (std::mem::take(&mut quitting.saved), quitting.discarded);
+    let pending = if saves_again(saved, discarded) {
+        flush_all(cx)
+    } else {
+        Vec::new()
+    };
     let last = std::mem::take(&mut cx.default_global::<QuitLast>().0);
     let last: Vec<Box<dyn FnOnce()>> = last.iter().filter_map(|last| last(cx)).collect();
     let bridge = Arc::clone(&cx.global::<AppCore>().bridge);
@@ -725,7 +745,7 @@ fn answer_host(request: &Value, cx: &mut App) {
                     Err(cause) => json!({ "error": cause.to_string() }),
                 }
             }
-            Some(url) if url.starts_with("https://") || url.starts_with("http://127.0.0.1") => {
+            Some(url) if kchess_core::capabilities::opens_in_browser(url) => {
                 cx.open_url(url);
                 json!({ "value": null })
             }
@@ -755,7 +775,7 @@ fn answer_host(request: &Value, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, BoxedSave, Reads, Waited, all_saved, finish, wait_saved};
+    use super::{Answer, BoxedSave, Reads, Waited, all_saved, finish, saves_again, wait_saved};
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::task::{Context, Poll, Waker};
@@ -830,6 +850,33 @@ mod tests {
             assert_eq!(quitting.as_mut().poll(&mut cx), Poll::Ready(()));
             assert_eq!(*order.borrow(), expected);
         }
+    }
+
+    /// "Restart to update" saved everything, then quit; the quit handler saved it all again, and
+    /// when that took over GPUI's 200 ms the handler was dropped before the installer started.
+    #[test]
+    fn a_quit_straight_after_saving_does_not_save_again() {
+        assert!(
+            !saves_again(true, false),
+            "just saved: nothing to save again"
+        );
+        assert!(
+            saves_again(false, false),
+            "a quit that did not save first saves now"
+        );
+        assert!(saves_again(true, true), "failed saves are tried once more");
+        // Nothing left to save: the core closes and the installer runs in the same poll.
+        let order = Rc::new(RefCell::new(Vec::new()));
+        let (closed, installed) = (Rc::clone(&order), Rc::clone(&order));
+        let mut quitting = Box::pin(finish(
+            Vec::new(),
+            move || closed.borrow_mut().push("close"),
+            vec![Box::new(move || installed.borrow_mut().push("install"))],
+            false,
+        ));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert_eq!(quitting.as_mut().poll(&mut cx), Poll::Ready(()));
+        assert_eq!(*order.borrow(), ["close", "install"]);
     }
 
     #[test]

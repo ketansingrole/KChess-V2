@@ -262,6 +262,12 @@ pub fn get<T: DeserializeOwned>(cx: &App, key: &str, fallback: T) -> T {
         .unwrap_or(fallback)
 }
 
+/// Whether any preference was saved on this profile: it was in use before this start.
+pub fn used(cx: &App) -> bool {
+    cx.try_global::<ViewPreferences>()
+        .is_some_and(|prefs| !prefs.values.is_empty())
+}
+
 /// Remember a preference for every KChess app on this profile. Choosing the shown value again
 /// writes it again when the core refused it.
 pub fn set<T: Serialize>(cx: &mut App, key: &str, value: T) {

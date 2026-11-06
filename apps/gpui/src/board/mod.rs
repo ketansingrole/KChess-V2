@@ -23,6 +23,7 @@ use shakmaty::{Board, ByColor, ByRole, Color, File, Piece, Position as _, Rank, 
 
 use crate::settings::SettingsHandle;
 use crate::theme::radii;
+use crate::widgets::Pressable as _;
 
 /// Chessground's square colors (`chessground.brown.css`).
 const LAST_MOVE: u32 = 0x9bc70069; // rgba(155, 199, 0, 0.41)
@@ -305,7 +306,8 @@ struct Drag {
     moved: bool,
 }
 
-/// Pieces sliding from one square to another.
+/// Pieces sliding from one square to another, timed by the executor's clock: the real one in the
+/// app, the test's own in tests, where a slide holds still until the test moves the clock.
 struct Animation {
     moves: Vec<(Piece, Square, Square)>,
     start: std::time::Instant,
@@ -313,15 +315,30 @@ struct Animation {
 }
 
 impl Animation {
-    /// How far along, eased as Chessground eases (cubic in, then out).
-    fn progress(&self) -> f32 {
-        let t = (self.start.elapsed().as_secs_f32() / self.duration.as_secs_f32()).min(1.);
+    fn ended(&self, now: std::time::Instant) -> bool {
+        now.saturating_duration_since(self.start) >= self.duration
+    }
+
+    /// How far along at `now`, eased as Chessground eases (cubic in, then out).
+    fn progress(&self, now: std::time::Instant) -> f32 {
+        let elapsed = now.saturating_duration_since(self.start);
+        let t = (elapsed.as_secs_f32() / self.duration.as_secs_f32()).min(1.);
         if t < 0.5 {
             4. * t * t * t
         } else {
             (t - 1.) * (2. * t - 2.) * (2. * t - 2.) + 1.
         }
     }
+}
+
+/// Whether a new position slides its pieces, for the Settings speed in milliseconds:
+/// - not with Reduce motion on, which stills movement;
+/// - not while the last slide is still under way: positions coming faster than a slide (an
+///   arrow key held through a game, moves played back quickly) are shown at once, where
+///   restarting each slide would keep the pieces always in motion and behind the moves;
+/// - not when the board turned: a flipped board is redrawn, not slid.
+fn slides_now(duration_ms: f64, reduce_motion: bool, running: bool, flipped: bool) -> bool {
+    duration_ms > 0. && !reduce_motion && !running && !flipped
 }
 
 /// The pieces that moved from `old` to `new`: each piece that left a square, paired with the
@@ -550,37 +567,39 @@ impl ChessBoard {
             .unwrap_or_else(|| "normal".into());
         let duration = looks::animation_ms(&choice);
         let moves = slides(&self.pieces, next);
-        // Same side up: a flipped board is redrawn, not slid.
-        if duration <= 0. || moves.is_empty() || orientation != self.state.orientation {
+        let now = cx.background_executor().now();
+        let running = self
+            .animation
+            .as_ref()
+            .is_some_and(|animation| !animation.ended(now));
+        let flipped = orientation != self.state.orientation;
+        if !slides_now(duration, cx.reduce_motion(), running, flipped) || moves.is_empty() {
             self.animation = None;
             return;
         }
+        let duration = std::time::Duration::from_secs_f64(duration / 1000.);
         self.animation = Some(Animation {
             moves,
-            start: std::time::Instant::now(),
-            duration: std::time::Duration::from_secs_f64(duration / 1000.),
+            start: now,
+            duration,
         });
+        // The frames between are drawn on the display's own clock (`render` asks for the next
+        // one while the slide runs), so a 120 Hz screen slides at 120 Hz, in step with its
+        // refresh; this only ends the slide, for a window that draws no more frames (hidden,
+        // or a test's, which has no frame clock).
         self._animating = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(16))
-                    .await;
-                let going = this
-                    .update(cx, |this, cx| {
-                        cx.notify();
-                        let done = this.animation.as_ref().is_none_or(|animation| {
-                            animation.start.elapsed() >= animation.duration
-                        });
-                        if done {
-                            this.animation = None;
-                        }
-                        !done
-                    })
-                    .unwrap_or(false);
-                if !going {
-                    return;
+            cx.background_executor().timer(duration).await;
+            let _ = this.update(cx, |this, cx| {
+                let now = cx.background_executor().now();
+                if this
+                    .animation
+                    .as_ref()
+                    .is_none_or(|animation| animation.ended(now))
+                {
+                    this.animation = None;
                 }
-            }
+                cx.notify();
+            });
         }));
     }
 
@@ -1341,6 +1360,7 @@ impl ChessBoard {
         };
         let theme = cx.theme();
         let (elevated, border, background) = (theme.muted, theme.border, theme.background);
+        let palette = *cx.global::<crate::theme::Palette>();
         let marked = self.promotion_choice % keyboard::PROMOTION.len();
         Some(
             div()
@@ -1387,7 +1407,7 @@ impl ChessBoard {
                                     .border_1()
                                     .border_color(border)
                                     .cursor_pointer()
-                                    .hover(|style| style.bg(elevated))
+                                    .pressable_fill(elevated, &palette)
                                     .when(focused && index == marked, |choice| {
                                         choice.shadow(vec![BoxShadow {
                                             color: ring,
@@ -1937,20 +1957,27 @@ impl Render for ChessBoard {
             self.animation
                 .as_ref()
                 .map(|animation| {
-                    let t = animation.progress();
+                    let now = cx.background_executor().now();
+                    if !animation.ended(now) {
+                        window.request_animation_frame();
+                    }
+                    let t = animation.progress(now);
                     animation
                         .moves
                         .iter()
-                        .map(|(piece, from, to)| {
+                        .enumerate()
+                        .map(|(index, (piece, from, to))| {
                             let (c1, r1) = self.cell(*from);
                             let (c2, r2) = self.cell(*to);
                             let column = c1 as f32 + (c2 as f32 - c1 as f32) * t;
                             let row = r1 as f32 + (r2 as f32 - r1 as f32) * t;
                             img(SharedString::from(looks::piece_path(&set, *piece)))
+                                .id(("board-slide", index))
                                 .absolute()
                                 .left(relative(column / 8.))
                                 .top(relative(row / 8.))
                                 .size(relative(0.125))
+                                .test_support()
                                 .into_any_element()
                         })
                         .collect()
@@ -2214,7 +2241,7 @@ mod drawing_tests {
 
 #[cfg(test)]
 mod premove_tests {
-    use super::{board_of, premove_targets, slides};
+    use super::{board_of, premove_targets, slides, slides_now};
     use shakmaty::Square;
 
     #[test]
@@ -2240,6 +2267,20 @@ mod premove_tests {
         assert_eq!(slides(&castle, &castled).len(), 2);
         let empty = board_of("8/8/8/8/8/8/8/8 w - - 0 1");
         assert!(slides(&empty, &before).is_empty());
+    }
+
+    /// A slide still under way when the next position comes (an arrow key held) is cut short
+    /// and the new position stands at once; Reduce motion, the None speed and a flip never slide.
+    #[test]
+    fn pieces_slide_only_when_there_is_time_to() {
+        assert!(slides_now(180., false, false, false));
+        assert!(
+            !slides_now(180., false, true, false),
+            "the last slide still runs"
+        );
+        assert!(!slides_now(180., true, false, false), "Reduce motion");
+        assert!(!slides_now(0., false, false, false), "the None speed");
+        assert!(!slides_now(180., false, false, true), "a flipped board");
     }
 }
 

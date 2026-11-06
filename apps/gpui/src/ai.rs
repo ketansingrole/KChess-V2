@@ -142,7 +142,7 @@ impl Ai {
 }
 
 fn welcome(window: &mut Window, cx: &mut App) {
-    window.open_alert_dialog(cx, |dialog: AlertDialog, _, _| {
+    crate::widgets::open_alert_dialog(window, cx, |dialog: AlertDialog, _, _| {
         dialog
             .title("Using your ChatGPT plan")
             .description(

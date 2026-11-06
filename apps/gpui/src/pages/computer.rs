@@ -1044,7 +1044,7 @@ impl ComputerPage {
             ),
         };
         let page = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let page = page.clone();
             dialog
                 .title(title.clone())
@@ -1697,9 +1697,11 @@ impl Render for ComputerPage {
             ))
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
                 "computer-moves",
-                &sans,
-                ply,
-                first,
+                widgets::MoveSheet {
+                    sans: &sans,
+                    shown: ply,
+                    first,
+                },
                 "No moves yet".into(),
                 select.clone(),
                 crate::notation::figurine(cx),

@@ -3,7 +3,7 @@
 
 use gpui_kit::component::button::{Button, ButtonVariant};
 use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::{Disableable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -120,7 +120,7 @@ fn total(usage: &Value, key: &str, fields: &[&str]) -> f64 {
 
 impl SettingsPage {
     fn ask_reset_usage(window: &mut Window, cx: &mut App) {
-        window.open_alert_dialog(cx, |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, |dialog: AlertDialog, _, _| {
             dialog
                 .title("Reset the data counters?")
                 .description("This only clears the download counts shown here. Your stored games and accounts are not touched.")
@@ -150,7 +150,7 @@ impl SettingsPage {
 
     fn ask_clear_runs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let this = this.clone();
             dialog
                 .title("Clear your local scores?")

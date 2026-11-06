@@ -18,6 +18,7 @@ use crate::online::{OnlineHandle, OnlineState, Phase};
 use crate::pages::Page;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
 
 mod chat;
@@ -542,12 +543,7 @@ impl OnlinePage {
                     })
                     .text_color(palette.text)
                     .cursor_pointer()
-                    .when(!chosen, |cell| {
-                        cell.hover(|cell| {
-                            cell.border_color(palette.border_accented)
-                                .bg(palette.accented)
-                        })
-                    })
+                    .when(!chosen, |cell| cell.pressable_tile(palette))
                     .on_click(set(|form, value| form.minutes = value, *minutes))
                     .child(
                         div()

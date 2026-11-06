@@ -1,5 +1,6 @@
 //! The shared core over a real socket (`docs/shared-core.md`): two clients on one profile,
-//! the checks at `hello`, the version check, the idle stop, and starting the service binary.
+//! the checks at `hello`, the version check and the idle stop. Starting the service binary sets
+//! the runtime folder in the environment, so it runs in a binary of its own (`service_start.rs`).
 
 use std::path::Path;
 use std::time::Duration;
@@ -7,10 +8,7 @@ use std::time::Duration;
 use kchess_core::Config;
 use kchess_service::protocol::{self, Frame, RefuseReason, read_frame, write_frame};
 use kchess_service::server::{ServeOptions, serve};
-use kchess_service::{
-    Capability, Client, ClientEvent, ConnectError, Hello, ServiceConfig, Start, connect_or_start,
-    discovery, transport,
-};
+use kchess_service::{Capability, Client, ClientEvent, ConnectError, Hello, discovery, transport};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -24,6 +22,11 @@ fn window(kind: &str) -> Hello {
 }
 
 /// Serves `profile` in this process; resolves when the service stops.
+/// The idle period of the tests that wait for the service to stop. It also bounds how long the
+/// first client may take to connect, since it runs from the service's start: 300 ms was too
+/// short for a loaded runner, whose client then found no service.
+const IDLE: Duration = Duration::from_secs(2);
+
 fn spawn_service(profile: &Path, idle: Duration) -> tokio::task::JoinHandle<Result<(), String>> {
     let options = ServeOptions {
         config: Config::new(profile.to_path_buf()),
@@ -240,7 +243,9 @@ async fn a_core_nobody_uses_closes_for_another_release() {
 #[tokio::test(flavor = "multi_thread")]
 async fn one_core_per_profile_and_it_stops_when_idle() {
     let profile = tempfile::tempdir().expect("profile");
-    let service = spawn_service(profile.path(), Duration::from_millis(300));
+    // The idle period runs from the start, before anyone connected: long enough that a loaded
+    // runner's first connection lands inside it.
+    let service = spawn_service(profile.path(), IDLE);
     let (gpui, mut events) = connect(profile.path(), "gpui").await;
 
     let second = serve(ServeOptions {
@@ -252,7 +257,7 @@ async fn one_core_per_profile_and_it_stops_when_idle() {
     assert!(second.contains("already running"), "{second}");
 
     // Connected, the service waits past its idle period.
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    tokio::time::sleep(IDLE * 2).await;
     assert!(!service.is_finished());
     drop(gpui);
     tokio::time::timeout(WAIT, service)
@@ -271,54 +276,6 @@ async fn one_core_per_profile_and_it_stops_when_idle() {
     })
     .await;
     assert!(closed.is_ok());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn the_first_app_starts_the_service_and_the_second_reuses_it() {
-    let profile = tempfile::tempdir().expect("profile");
-    let runtime = tempfile::tempdir().expect("runtime");
-    use_runtime_dir(runtime.path());
-    // An earlier release's copy, which the started service removes.
-    let earlier = runtime.path().join("core").join("1999.1.0");
-    std::fs::create_dir_all(&earlier).expect("earlier release");
-    let start = Start {
-        binary: env!("CARGO_BIN_EXE_kchess-service").into(),
-        config: ServiceConfig::default(),
-    };
-    let (gpui, _gpui_events) = connect_or_start(profile.path(), &window("gpui"), &start)
-        .await
-        .expect("started");
-    let info = discovery::read_info(profile.path()).expect("core.json");
-    assert_ne!(info.pid, std::process::id(), "a process of its own");
-    let copied = runtime.path().join("core").join(protocol::release()).join(
-        Path::new(env!("CARGO_BIN_EXE_kchess-service"))
-            .file_name()
-            .expect("name"),
-    );
-    assert!(copied.exists(), "it runs from this release's copy");
-    assert!(!earlier.exists(), "other releases' copies are removed");
-
-    let (electron, _electron_events) =
-        connect_or_start(profile.path(), &window("electron"), &start)
-            .await
-            .expect("reused");
-    assert_eq!(
-        discovery::read_info(profile.path()).expect("core.json").pid,
-        info.pid
-    );
-    assert_ne!(gpui.connection(), electron.connection());
-    electron.call("library", vec![]).await.expect("works");
-
-    // Both gone: the service stops after its idle period (10 s by default).
-    drop((gpui, electron));
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
-    while discovery::read_info(profile.path()).is_some() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "the service stops when idle"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -350,7 +307,7 @@ async fn a_window_that_joins_learns_which_window_alerts() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_window_that_stops_reading_is_cut_off_and_cleaned_up() {
     let profile = tempfile::tempdir().expect("profile");
-    let service = spawn_service(profile.path(), Duration::from_millis(300));
+    let service = spawn_service(profile.path(), IDLE);
     let (gpui, _gpui_events) = connect(profile.path(), "gpui").await;
 
     // A window that says hello and then never reads; it joined last, so it alerts unless the
@@ -459,15 +416,6 @@ async fn a_core_that_never_answers_hello_fails_the_connection() {
         "{:?}",
         connected.err()
     );
-}
-
-/// Points the runtime folder at a test folder. `set_var` is unsafe in edition 2024 because other
-/// threads may read the environment; only this test reads `KCHESS_RUNTIME_DIR`, and it sets it
-/// before starting anything.
-#[allow(unsafe_code)]
-fn use_runtime_dir(dir: &Path) {
-    // SAFETY: no other thread of this test reads the environment while it is set.
-    unsafe { std::env::set_var("KCHESS_RUNTIME_DIR", dir) };
 }
 
 #[cfg(unix)]

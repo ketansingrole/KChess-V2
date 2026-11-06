@@ -1382,6 +1382,13 @@ fn app_commands(cx: &App) -> Vec<Command> {
         } else {
             "Ctrl /"
         }),
+        Command::new(
+            "app:whats-new",
+            "What's new",
+            icon("rocket"),
+            crate::whats_new::open,
+        )
+        .keywords("release notes changelog update version"),
     ];
     // Studies' Lichess tab is there only with an account.
     if connected {

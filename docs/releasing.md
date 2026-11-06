@@ -10,9 +10,9 @@ keeps the version valid semver. The release is the Cargo workspace version. Foll
 prepare the version change:
 
 ```bash
-cargo xtask release-version   # fetches origin's tags; updates Cargo.toml and Cargo.lock
+cargo xtask release-version   # fetches origin's tags; updates Cargo.toml, Cargo.lock and WHATS_NEW.md
 cargo xtask check
-git add Cargo.toml Cargo.lock
+git add Cargo.toml Cargo.lock apps/gpui/WHATS_NEW.md
 git commit -m "Release <version>"
 ```
 
@@ -91,6 +91,12 @@ creating/pushing a tag or publishing a release.
 - Use `cargo xtask release-version`. It must successfully fetch tags from `origin` first.
   If fetching fails, restore access and retry; do not select a version from stale tags.
   Commit `Cargo.toml` and `Cargo.lock`; the lockfile must match the workspace version.
+- The release's notes are `apps/gpui/WHATS_NEW.md`'s `## Unreleased` items, which
+  `release-version` turns into `## <version> (<date>)` and refuses to release without. The app
+  shows them once after the update (Settings → Updates → What's new keeps them), and the draft
+  release and the App Store's What's New take the same text. Read them in the release commit's
+  diff as a player would: only what changed for them, no internals, nothing that did not ship.
+  Commit `WHATS_NEW.md` with the version.
 - Release only a commit on `origin/main` whose CI is green. Include every intended file,
   including new/untracked files; explicitly stage the files instead of relying on
   `git commit -am`. Keep the working tree clean before tagging and verify CI is green
@@ -139,7 +145,8 @@ Snap package; publishing a stable GitHub release triggers a checksum-verified up
 ## App updates
 
 **Settings → Updates** shows the installed version, update status, last successful check,
-download progress, manual check/download/restart actions and a link to release notes. By default,
+download progress, manual check/download/restart actions and **What's new**, every release's
+notes from `apps/gpui/WHATS_NEW.md`, which also open on the first start after an update. By default,
 installed builds check stable GitHub releases ten seconds after startup and every six hours,
 download updates in the background, and install when the user quits. Each behaviour has its own
 switch. KChess never initiates a restart while you are playing; **Restart and install** asks first.
@@ -147,8 +154,10 @@ Accounts, preferences and saved history remain in the profile folder. Developmen
 check for updates.
 
 The updater (`apps/gpui/src/updates.rs`) downloads the package it was installed from, checks it
-against `SHA256SUMS.txt`, and refuses one not signed as the running app is (the same macOS team and
-bundle identifier, or the same Windows certificate; an ad hoc Mac build accepts a valid build of
+against `SHA256SUMS.txt`, whose Ed25519 signature (`SHA256SUMS.txt.sig`) must verify against the
+release key in `apps/gpui/update-key.pub`, and refuses one not signed as the running app is (a
+Developer ID build's update must pass `anchor apple generic` with the same team and bundle
+identifier, a Windows build's the same certificate; an ad hoc Mac build accepts a valid build of
 itself, ad hoc or Developer ID). It then replaces the `.app`, runs the NSIS installer silently
 (`--updated /S`), replaces the AppImage, or installs the `.deb` with `pkexec dpkg -i`. A download
 whose connection drops resumes from the bytes it has (`Range`), and downloads are kept from one
@@ -156,7 +165,26 @@ start to the next: a checked package is used again, and one cut short carries on
 the plan to send only the files that changed, is in
 [the updater measurements](benchmarks/2026-11-06-updater.md).
 
-To enable Mac signing and notarization, add these GitHub Actions repository secrets:
+### The release key
+
+The checksums sit in the same release as the packages, so whoever can replace a package can
+rewrite them; the signature is what an installed app trusts. Make the key once, on your own
+machine, and never again (a new key locks every installed app out of updates):
+
+1. `cargo xtask update-key ~/kchess-update-key.txt` writes the secret there (owner-only) and the
+   public half into `apps/gpui/update-key.pub`. Commit that file through a pull request.
+2. Create the `release` environment (Settings → Environments), limit its deployment branches and
+   tags to `v*` tags, and store the secret in it:
+   `gh secret set KCHESS_UPDATE_SIGNING_KEY --env release < ~/kchess-update-key.txt`.
+3. Keep a copy in a password manager and delete the file.
+
+`cargo xtask release-verify` refuses a tag until the key is committed, and the release job's
+`cargo xtask sign-sums` fails when the secret does not match it.
+
+Move the Mac signing and notarization secrets below into the `release` environment too, so only a
+tag build can sign.
+
+To enable Mac signing and notarization, add these GitHub Actions secrets:
 
 - `MAC_CSC_LINK`: base64-encoded Developer ID Application `.p12` certificate.
 - `MAC_CSC_KEY_PASSWORD`: its export password.
@@ -166,7 +194,8 @@ Keep the same app ID and signing identity across releases. Before uploading sign
 the workflow verifies their code signature, signing team, Gatekeeper acceptance and stapled
 notarization ticket. Never put signing credentials or a GitHub token in the app.
 
-Publish the complete release: installers, the manifests and `SHA256SUMS.txt`. Drafts and
+Publish the complete release: installers, the manifests, `SHA256SUMS.txt` and
+`SHA256SUMS.txt.sig`. Drafts and
 prereleases are excluded from the feed. Do not overwrite an already published release to ship a
 fix: advance `YEAR.MONTH.COUNTER`, create a new tag, and publish its draft once all platforms are
 ready. macOS requires the ZIP artifacts as well as DMGs.

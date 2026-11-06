@@ -10,6 +10,7 @@ mod icons;
 mod licenses;
 mod package;
 mod release;
+mod update_key;
 mod util;
 mod voice;
 
@@ -37,6 +38,11 @@ const HELP: &str = "cargo xtask <command>
                         ran and passed every job for HEAD
   attach-draft-release <dir>
                         Attach a tag build's packages to its draft release (CI)
+  update-key <secret file>
+                        Make the release key: the secret to <secret file>, the public half
+                        to apps/gpui/update-key.pub
+  sign-sums <file>      Sign a release's SHA256SUMS.txt into <file>.sig with
+                        KCHESS_UPDATE_SIGNING_KEY (CI)
   download-release-snap Fetch and verify the published release's Snap (CI)
   notices               Check THIRD_PARTY_NOTICES.md names every shipped dependency
   app-icon              Draw the app icon in every size and format the app needs
@@ -66,6 +72,14 @@ fn main() -> ExitCode {
         Some("attach-draft-release") => release::attach_draft(std::path::Path::new(
             rest.first().map_or("packages", String::as_str),
         )),
+        Some("update-key") => match rest.first() {
+            Some(path) => update_key::generate(std::path::Path::new(path)),
+            None => Err("update-key needs the file to write the secret key to.".into()),
+        },
+        Some("sign-sums") => match rest.first() {
+            Some(path) => update_key::sign(std::path::Path::new(path)),
+            None => Err("sign-sums needs the checksums file.".into()),
+        },
         Some("download-release-snap") => release::download_snap(),
         Some("notices") => licenses::check_notices(),
         Some("app-icon") => app_icon::write(),

@@ -1,8 +1,7 @@
 //! Closing the core (`Core::close`, the facade's close sequence): an engine search, a Lichess
 //! request and a puzzle download that are running when the core closes end, `close` returns, and
-//! later calls fail with the TypeScript message `The KChess core is closed.`.
-// Tests set process environment (`std::env::set_var`), which is unsafe in edition 2024.
-#![allow(unsafe_code)]
+//! later calls fail with the TypeScript message `The KChess core is closed.`. The Lichess case
+//! sets the test origin, so it runs in a binary of its own (`core_close_lichess.rs`).
 
 mod support;
 
@@ -33,46 +32,6 @@ impl Host for Wire {
             .lock()
             .expect("events lock")
             .push((event.to_string(), payload));
-    }
-}
-
-/// Restores the test-only Lichess origin (and debug switch) when dropped, so the
-/// other tests in this binary never inherit one test's fixture origin.
-/// Environment variables are process-global and same-binary tests share them.
-struct LichessOriginGuard {
-    debug: Option<String>,
-    base: Option<String>,
-}
-
-impl LichessOriginGuard {
-    fn set(base: &str) -> Self {
-        let previous = Self {
-            debug: std::env::var("KCHESS_STORE_DEBUG").ok(),
-            base: std::env::var("KCHESS_TEST_LICHESS_BASE").ok(),
-        };
-        // SAFETY: the guard below restores the previous values when the test ends.
-        unsafe {
-            std::env::set_var("KCHESS_STORE_DEBUG", "1");
-            std::env::set_var("KCHESS_TEST_LICHESS_BASE", base);
-        }
-        previous
-    }
-}
-
-impl Drop for LichessOriginGuard {
-    fn drop(&mut self) {
-        // SAFETY: restores what `set` replaced; the guarded test has finished,
-        // so no test in this binary is reading these variables right now.
-        unsafe {
-            match self.debug.take() {
-                Some(value) => std::env::set_var("KCHESS_STORE_DEBUG", value),
-                None => std::env::remove_var("KCHESS_STORE_DEBUG"),
-            }
-            match self.base.take() {
-                Some(value) => std::env::set_var("KCHESS_TEST_LICHESS_BASE", value),
-                None => std::env::remove_var("KCHESS_TEST_LICHESS_BASE"),
-            }
-        }
     }
 }
 
@@ -136,42 +95,6 @@ async fn closing_ends_an_engine_search_in_flight() {
         .await
         .expect_err("a closed core refuses");
     assert_eq!(later.message, CLOSED);
-}
-
-#[tokio::test]
-async fn closing_ends_a_lichess_request_in_flight() {
-    // The test origin serves Lichess from a socket that never answers.
-    let silent = TcpListener::bind("127.0.0.1:0").expect("silent origin");
-    let origin = format!(
-        "http://127.0.0.1:{}",
-        silent.local_addr().expect("address").port()
-    );
-    let _guard = LichessOriginGuard::set(&origin);
-    let dir = tempfile::tempdir().expect("profile");
-    let host = Arc::new(Wire::default());
-    let core = open(dir.path(), &host);
-
-    let request = {
-        let core = Arc::clone(&core);
-        tokio::spawn(async move { core.call("profile", vec![json!("someone")]).await })
-    };
-    let_work_start().await;
-
-    tokio::time::timeout(LIMIT, core.close())
-        .await
-        .expect("closing returns while the request waits");
-    let answer = tokio::time::timeout(LIMIT, request)
-        .await
-        .expect("the request ends when the core closes")
-        .expect("the request task");
-    assert!(answer.is_err(), "the request was cancelled, not answered");
-
-    let later = core
-        .call("profile", vec![json!("someone")])
-        .await
-        .expect_err("a closed core refuses");
-    assert_eq!(later.message, CLOSED);
-    drop(silent);
 }
 
 #[tokio::test]

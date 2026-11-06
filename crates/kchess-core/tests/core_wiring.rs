@@ -69,13 +69,14 @@ async fn until<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> T {
     }
 }
 
-/// The test-only location overrides (`managedEngine.*` directories) need the store's switch.
-fn enable_test_locations() {
-    // SAFETY: tests only ever set this to the same value, before any core reads it.
-    unsafe { std::env::set_var("KCHESS_STORE_DEBUG", "1") };
-}
-
+/// A fresh profile, with the store's test switch on (the test-only location overrides,
+/// `managedEngine.*` directories, need it). Every test starts here, so all of them see the same
+/// switch whatever order they run in, and it is set once, before any test opens a core.
 fn profile() -> tempfile::TempDir {
+    static SWITCH: std::sync::Once = std::sync::Once::new();
+    // SAFETY: the first test to get here sets it while the others wait on `SWITCH`, and every
+    // test calls this before it opens a core or starts a thread that reads the environment.
+    SWITCH.call_once(|| unsafe { std::env::set_var("KCHESS_STORE_DEBUG", "1") });
     tempfile::tempdir().expect("temporary profile")
 }
 
@@ -148,7 +149,6 @@ async fn the_hosts_battery_reading_reaches_the_thread_budget() {
 
 #[tokio::test]
 async fn managed_replacement_stops_running_engines_before_it_publishes() {
-    enable_test_locations();
     let dir = profile();
     let host = Arc::new(Wire::default());
     let core = core(&host, dir.path());
@@ -295,7 +295,6 @@ async fn a_review_update_carries_the_stored_review_and_its_summary() {
 
 #[tokio::test]
 async fn online_play_pauses_automatic_reviews() {
-    enable_test_locations();
     let dir = profile();
     let host = Arc::new(Wire::default());
     let core = core(&host, dir.path());
@@ -317,7 +316,6 @@ async fn online_play_pauses_automatic_reviews() {
 
 #[tokio::test]
 async fn closing_the_core_cancels_an_install_and_stops_engines() {
-    enable_test_locations();
     let dir = profile();
     let host = Arc::new(Wire::default());
     let core = Arc::new(core(&host, dir.path()));

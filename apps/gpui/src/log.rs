@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use kchess_core::Level;
-use regex::Regex;
 
 /// Each file's bound; two older files are kept beside it.
 const MAX_BYTES: u64 = 512 * 1024;
@@ -76,7 +75,8 @@ pub fn write(level: Level, scope: &str, message: &str) {
     if level == Level::Debug && std::env::var("KCHESS_DEBUG").as_deref() != Ok("1") {
         return;
     }
-    eprintln!("{} [{scope}] {message}", level.name());
+    // Not `eprintln!`: it panics when stderr is gone (a terminal closed under a running app).
+    let _ = writeln!(std::io::stderr(), "{} [{scope}] {message}", level.name());
     if let Some(log) = LOG.get()
         && let Ok(mut log) = log.lock()
     {
@@ -118,49 +118,4 @@ pub fn read() -> Vec<String> {
         .collect()
 }
 
-/// `redactDiagnostics`: the home folder, bearer tokens, Lichess tokens, credential fields and
-/// email addresses.
-pub fn redact(text: &str) -> String {
-    static RULES: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
-    let rules = RULES.get_or_init(|| {
-        [
-            (r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*", "Bearer [redacted]"),
-            (r"\b(?:lip|lio)_[A-Za-z0-9_-]+\b", "[redacted]"),
-            (
-                r#"(?i)(["']?(?:access_token|refresh_token|id_token|token|password|authorization|cookie|code_verifier|code_challenge|client_secret|verifier|challenge|code|state)["']?\s*[:=]\s*)(["']?)[^\s,"'&}]+(["']?)"#,
-                "${1}${2}[redacted]${3}",
-            ),
-            (r"[\w.+-]+@[\w-]+\.[\w.]+", "[redacted]"),
-        ]
-        .into_iter()
-        .filter_map(|(pattern, with)| Regex::new(pattern).ok().map(|rule| (rule, with)))
-        .collect()
-    });
-    let mut text = match dirs::home_dir() {
-        Some(home) if !home.as_os_str().is_empty() => text.replace(&*home.to_string_lossy(), "~"),
-        _ => text.to_string(),
-    };
-    for (rule, with) in rules {
-        text = rule.replace_all(&text, *with).into_owned();
-    }
-    text
-}
-
-#[cfg(test)]
-mod tests {
-    use super::redact;
-
-    #[test]
-    fn secrets_never_reach_the_log() {
-        let line = redact(
-            "GET /api/account Authorization: Bearer lip_abc123 token=xyz \"password\": \"hunter2\" by me@example.com",
-        );
-        assert!(!line.contains("abc123"), "{line}");
-        assert!(!line.contains("xyz"), "{line}");
-        assert!(!line.contains("hunter2"), "{line}");
-        assert!(!line.contains("example.com"), "{line}");
-        assert!(line.contains("GET /api/account"));
-        // Usernames stay, so logs can still be matched to an account.
-        assert!(redact("synced @KChessTester").contains("KChessTester"));
-    }
-}
+pub use kchess_core::redact::redact;

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::accounts::{Lichess, Reply, path_segment};
-use super::client::{Failure, TextLimit, authorize};
+use super::client::{Failure, Ndjson, TextLimit, authorize};
 use crate::error::{CoreError, Result as CoreResult};
 use kchess_domain::{js, position};
 
@@ -62,11 +62,13 @@ pub async fn lichess_studies(
             lichess
                 .client()
                 .ndjson(
-                    reqwest::Method::GET,
-                    &path,
-                    &[],
-                    None,
-                    Some(auth.as_str()),
+                    Ndjson {
+                        method: reqwest::Method::GET,
+                        path: &path,
+                        query: &[],
+                        body: None,
+                        auth: Some(auth.as_str()),
+                    },
                     &cancel,
                     |line| {
                         if let Some(study) = study_metadata(line)?
@@ -214,16 +216,16 @@ pub async fn lichess_study_chapters(
             ];
             let text = lichess
                 .client()
-                .get_text_bounded(
+                .get_text(
                     &path,
                     &query,
                     "application/x-chess-pgn",
                     Some(auth.as_str()),
                     &cancel,
-                    TextLimit {
+                    Some(TextLimit {
                         utf16_units: MAX_STUDY_PGN,
                         message: "That study is too large to import.",
-                    },
+                    }),
                 )
                 .await?;
             Ok(split_pgn(&text)
@@ -273,16 +275,16 @@ pub async fn public_study_chapter(
         .with_usage("", "study", async {
             lichess
                 .client()
-                .get_text_bounded(
+                .get_text(
                     &path,
                     &query,
                     "application/x-chess-pgn",
                     None,
                     &cancel,
-                    TextLimit {
+                    Some(TextLimit {
                         utf16_units: MAX_STUDY_PGN,
                         message: "That study is too large to import.",
-                    },
+                    }),
                 )
                 .await
         })

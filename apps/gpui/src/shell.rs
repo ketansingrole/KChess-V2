@@ -564,9 +564,11 @@ pub fn sidebar_open(cx: &App) -> bool {
         .is_none_or(|workspace| workspace.read(cx).shown())
 }
 
+/// Show or hide the sidebar from its shortcut, the menu or the command palette: at once, since a
+/// command repeated many times a day should not wait on an animation.
 pub fn toggle_sidebar(_: &mut Window, cx: &mut App) {
     if let Some(workspace) = cx.try_global::<Navigator>().and_then(|n| n.0.upgrade()) {
-        workspace.update(cx, |workspace, cx| workspace.toggle_sidebar(cx));
+        workspace.update(cx, |workspace, cx| workspace.toggle_sidebar(false, cx));
     }
 }
 
@@ -824,7 +826,7 @@ pub fn replace_analysis(
         run(&*load, window, cx);
         return;
     }
-    window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+    crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
         let (load, run) = (load.clone(), run.clone());
         dialog
             .title("Replace the unsaved analysis?")
@@ -919,14 +921,20 @@ pub fn read_game_file(path: &std::path::Path) -> Option<String> {
         .is_some_and(|extension| {
             ["pgn", "fen", "txt"].contains(&extension.to_ascii_lowercase().as_str())
         });
-    readable
-        .then(|| {
-            std::fs::metadata(path)
-                .ok()
-                .filter(|meta| meta.len() <= DROPPED_MAX)
-                .and_then(|_| std::fs::read_to_string(path).ok())
-        })
-        .flatten()
+    if !readable {
+        return None;
+    }
+    // The opened file itself must be a regular file (a symlink to `/dev/zero` or a FIFO named
+    // `.pgn` reports a length of 0), and the read stops past the limit whatever it reported.
+    use std::io::Read as _;
+    let file = std::fs::File::open(path).ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > DROPPED_MAX {
+        return None;
+    }
+    let mut text = String::new();
+    file.take(DROPPED_MAX + 1).read_to_string(&mut text).ok()?;
+    (text.len() as u64 <= DROPPED_MAX).then_some(text)
 }
 
 /// Practise a reviewed game's positions on the analysis board (`usePracticeGame`); another game
@@ -1097,6 +1105,9 @@ impl Workspace {
                 cx.global::<crate::core::AppCore>()
                     .bridge
                     .focus(window.is_window_active());
+                if window.is_window_active() {
+                    crate::motion::refresh(cx);
+                }
             }),
             cx.subscribe_in(
                 &settings,
@@ -1154,6 +1165,10 @@ impl Workspace {
         if let Some(page) = Page::remembered() {
             workspace.choose(page, window, cx);
         }
+        // Once the window shows: the notes of an update just installed.
+        cx.defer_in(window, |_, window, cx| {
+            crate::whats_new::on_start(window, cx)
+        });
         workspace
     }
 
@@ -1222,7 +1237,24 @@ impl Workspace {
         {
             watch.update(cx, |watch, cx| watch.hidden(cx));
         }
+        // The open tournament refreshes only while Tournaments is shown.
+        if current == Page::Tournaments
+            && page != Page::Tournaments
+            && let Some(tournaments) = self
+                .pages
+                .view_of::<crate::pages::tournaments::TournamentsPage>(Page::Tournaments)
+        {
+            tournaments.update(cx, |tournaments, _| tournaments.hidden());
+        }
         self.pages.show(page, window, cx);
+        if page == Page::Tournaments
+            && current != Page::Tournaments
+            && let Some(tournaments) = self
+                .pages
+                .view_of::<crate::pages::tournaments::TournamentsPage>(Page::Tournaments)
+        {
+            tournaments.update(cx, |tournaments, cx| tournaments.shown(cx));
+        }
         if page == Page::Watch
             && current != Page::Watch
             && let Some(watch) = self
@@ -1546,7 +1578,9 @@ impl Workspace {
         }
     }
 
-    fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+    /// Open or close the sidebar; `ease` widens or narrows it over `SIDEBAR_EASE` (a click on its
+    /// toggle, where the motion shows where it went) instead of at once.
+    fn toggle_sidebar(&mut self, ease: bool, cx: &mut Context<Self>) {
         self.sidebar_width_from = sidebar_width(self.shown());
         if self.narrow {
             self.narrow_open = !self.narrow_open;
@@ -1554,7 +1588,11 @@ impl Workspace {
             self.sidebar_open = !self.sidebar_open;
             crate::prefs::set(cx, SIDEBAR_OPEN, self.sidebar_open);
         }
-        self.sidebar_toggled = Some(std::time::Instant::now());
+        if ease {
+            self.sidebar_toggled = Some(std::time::Instant::now());
+        } else {
+            self.sidebar_width_from = sidebar_width(self.shown());
+        }
         cx.notify();
     }
 
@@ -1663,7 +1701,8 @@ impl Workspace {
             .h_full()
             .flex_none()
             .overflow_hidden()
-            .child(sidebar);
+            .child(sidebar)
+            .test_support();
         let from = self.sidebar_width_from;
         if from == width || self.sidebar_settled() {
             return frame.w(width).into_any_element();
@@ -1716,7 +1755,9 @@ impl Workspace {
                     .size(px(28.))
                     .tooltip_with_action(label, &crate::menu::ToggleSidebar, None)
                     .accessibility_label(label)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
+                    .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
+                        this.toggle_sidebar(!event.is_keyboard(), cx)
+                    })),
             ))
             .when(self.shown(), |wrap| {
                 wrap.child(
@@ -2150,31 +2191,35 @@ fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
     };
     let phase = updates.phase;
     let target = handle.downgrade();
-    Some(over_title_bar(
-        Button::new("update-button")
-            .small()
-            .when(phase == Phase::Downloaded, |button| button.primary())
-            .when(phase == Phase::Error, |button| button.danger())
-            .when(
-                !matches!(phase, Phase::Downloaded | Phase::Error),
-                |button| button.outline(),
-            )
-            .icon(icon(match phase {
-                Phase::Downloaded => "rotate-cw",
-                Phase::Error => "circle-alert",
-                _ => "download",
-            }))
-            .label(label)
-            .tooltip(tooltip)
-            .disabled(phase == Phase::Downloading)
-            .on_click(move |_, window, cx| {
-                if phase == Phase::Downloaded {
-                    crate::pages::settings::updates::ask_restart(window, cx);
-                } else {
-                    let _ = target.update(cx, |updates, cx| updates.download(cx));
-                }
-            }),
-    ))
+    Some(
+        over_title_bar(
+            Button::new("update-button")
+                .small()
+                .when(phase == Phase::Downloaded, |button| button.primary())
+                .when(phase == Phase::Error, |button| button.danger())
+                .when(
+                    !matches!(phase, Phase::Downloaded | Phase::Error),
+                    |button| button.outline(),
+                )
+                .icon(icon(match phase {
+                    Phase::Downloaded => "rotate-cw",
+                    Phase::Error => "circle-alert",
+                    _ => "download",
+                }))
+                .label(label)
+                .tooltip(tooltip)
+                .disabled(phase == Phase::Downloading)
+                .on_click(move |_, window, cx| {
+                    if phase == Phase::Downloaded {
+                        crate::pages::settings::updates::ask_restart(window, cx);
+                    } else {
+                        let _ = target.update(cx, |updates, cx| updates.download(cx));
+                    }
+                }),
+        )
+        // Its right edge is anchored, so a proportional "Updating N%" moves it with every percent.
+        .font_features(crate::widgets::tabular()),
+    )
 }
 
 impl Render for Workspace {
@@ -2268,4 +2313,29 @@ pub fn analyse_puzzle(
     replace_analysis(window, cx, move |analysis, _, cx| {
         analysis.open_puzzle(&puzzle, &wrong_moves, cx)
     });
+}
+
+#[cfg(test)]
+mod dropped_file_tests {
+    use super::{DROPPED_MAX, read_game_file};
+
+    #[test]
+    fn a_game_file_under_the_limit_reads() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("game.pgn");
+        std::fs::write(&path, "1. e4 e5 *").unwrap();
+        assert_eq!(read_game_file(&path).as_deref(), Some("1. e4 e5 *"));
+        std::fs::write(&path, vec![b'a'; DROPPED_MAX as usize + 1]).unwrap();
+        assert_eq!(read_game_file(&path), None);
+    }
+
+    /// A `.pgn` symlink to `/dev/zero` reported a length of 0 and was read until memory ran out.
+    #[cfg(unix)]
+    #[test]
+    fn a_device_behind_a_game_name_is_refused() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("game.pgn");
+        std::os::unix::fs::symlink("/dev/zero", &path).unwrap();
+        assert_eq!(read_game_file(&path), None);
+    }
 }

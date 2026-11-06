@@ -20,6 +20,7 @@ use crate::game::{rules, view};
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, panel_style};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 
 /// `ENDINGS`: how a game ended, as Lichess names its status.
@@ -724,9 +725,11 @@ impl WatchPage {
             .children(head_to_head)
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
                 "watch-moves",
-                &sans,
-                self.live.shown_ply(),
-                setup.as_ref().map(view::first_move).unwrap_or_default(),
+                widgets::MoveSheet {
+                    sans: &sans,
+                    shown: self.live.shown_ply(),
+                    first: setup.as_ref().map(view::first_move).unwrap_or_default(),
+                },
                 empty.into(),
                 select.clone(),
                 crate::notation::figurine(cx),
@@ -880,7 +883,7 @@ impl WatchPage {
                         .keyboard_focus(palette.primary)
                         .aria_label(name.clone())
                         .cursor_pointer()
-                        .hover(|name| name.underline())
+                        .pressable_link()
                         .on_click(move |_, window, cx| crate::shell::open_player(&link, window, cx))
                         .child(shown)
                         .into_any_element()

@@ -275,4 +275,75 @@ mod tests {
             "{\"error\":\"no \\\"model\\\"\"}\n"
         );
     }
+
+    fn grammar(rate: &str, phrases: &[String]) -> Request {
+        let body = format!(
+            r#"{{"sampleRate":{rate},"grammar":{}}}"#,
+            serde_json::to_string(phrases).expect("phrases")
+        );
+        parse(b'G', body.as_bytes())
+    }
+
+    #[test]
+    fn a_grammar_is_bounded_by_its_rate_and_phrases() {
+        let none: [String; 0] = [];
+        assert!(matches!(grammar("8000", &none), Request::Grammar(_)));
+        assert!(matches!(grammar("192000", &none), Request::Grammar(_)));
+        assert_eq!(grammar("7999", &none), Request::Invalid("invalid grammar"));
+        assert_eq!(
+            grammar("192001", &none),
+            Request::Invalid("invalid grammar")
+        );
+        assert_eq!(
+            grammar("-16000", &none),
+            Request::Invalid("invalid grammar")
+        );
+
+        let many = vec!["a".to_string(); MAX_PHRASES];
+        assert!(matches!(grammar("16000", &many), Request::Grammar(_)));
+        let too_many = vec!["a".to_string(); MAX_PHRASES + 1];
+        assert_eq!(
+            grammar("16000", &too_many),
+            Request::Invalid("invalid grammar")
+        );
+
+        // A phrase is measured in characters, not bytes.
+        let longest = vec!["é".repeat(MAX_PHRASE_CHARS)];
+        assert!(matches!(grammar("16000", &longest), Request::Grammar(_)));
+    }
+
+    #[test]
+    fn empty_audio_is_an_empty_chunk() {
+        assert_eq!(parse(b'A', &[]), Request::Audio(Vec::new()));
+    }
+
+    #[test]
+    fn unreadable_vosk_output_becomes_an_empty_answer() {
+        assert_eq!(partial("not json"), Answer::Partial(String::new()));
+        assert_eq!(
+            result("not json"),
+            Answer::Result(Recognized {
+                text: String::new(),
+                words: Vec::new(),
+            })
+        );
+        // A word without its text is dropped; one without a confidence counts as 0.
+        assert_eq!(
+            result(r#"{"result":[{"conf":0.5},{"word":"e"}],"text":"e"}"#),
+            Answer::Result(Recognized {
+                text: "e".into(),
+                words: vec![Word {
+                    word: "e".into(),
+                    conf: 0.0,
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn an_empty_input_is_the_end_of_the_stream() {
+        assert!(matches!(read_request(&mut [].as_slice()), Ok(None)));
+        // A tag with no length after it is a frame cut short.
+        assert!(read_request(&mut b"F".as_slice()).is_err());
+    }
 }

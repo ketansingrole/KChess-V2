@@ -26,6 +26,7 @@ use crate::core::AppCore;
 use crate::game::{STANDARD_FEN, rules};
 use crate::play_layout::Measured;
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill};
 
 const PREFS: &str = "kchess:explorer";
@@ -796,7 +797,7 @@ impl PositionExplorer {
                         .rounded(radii::MD)
                         .text_size(px(13.))
                         .cursor_pointer()
-                        .hover(|tile| tile.bg(palette.accented))
+                        .pressable(palette)
                         .aria_label(label)
                         .on_click(
                             cx.listener(move |_, _, _, cx| {
@@ -869,7 +870,7 @@ impl PositionExplorer {
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(palette.primary)
                             .cursor_pointer()
-                            .hover(|chip| chip.underline())
+                            .pressable_link()
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(ExplorerEvent::Play(uci.clone()))
                             }))
@@ -949,7 +950,7 @@ impl PositionExplorer {
                         .rounded(radii::SM)
                         .text_size(px(12.))
                         .cursor_pointer()
-                        .hover(|row| row.bg(palette.accented))
+                        .pressable(palette)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.open_game(chosen.clone(), window, cx)
                         }))

@@ -175,4 +175,87 @@ mod tests {
         let paused = game.remaining("black", 11_000.);
         assert_eq!(game.remaining("black", 40_000.), paused);
     }
+
+    fn one_minute() -> Value {
+        json!({ "white": { "minutes": 1, "increment": 0 }, "black": { "minutes": 1, "increment": 0 } })
+    }
+
+    #[test]
+    fn a_flag_falls_once_the_side_to_move_runs_out() {
+        let mut game = LocalGame::new(None, 0.).unwrap();
+        let setup = game.state["setup"].clone();
+        game.start(setup, one_minute(), 0.).unwrap();
+        game.play("e2e4", 1_000.).unwrap();
+        assert!(!game.expire(30_000.).unwrap().0);
+        assert!(!game.over(30_000.));
+        assert!(game.expire(62_000.).unwrap().0);
+        assert!(game.over(62_000.));
+        assert_eq!(game.result(62_000.).unwrap()["winner"], "white");
+    }
+
+    #[test]
+    fn an_agreed_draw_ends_the_game_without_a_winner() {
+        let mut game = LocalGame::new(None, 0.).unwrap();
+        game.play("e2e4", 1.).unwrap();
+        game.agree_draw(2.).unwrap();
+        assert!(game.over(3.));
+        assert!(
+            game.result(3.)
+                .unwrap()
+                .get("winner")
+                .is_none_or(Value::is_null)
+        );
+    }
+
+    #[test]
+    fn a_takeback_undoes_the_last_move() {
+        let mut game = LocalGame::new(None, 0.).unwrap();
+        game.play("e2e4", 1.).unwrap();
+        game.takeback(2.).unwrap();
+        // White is to move again, so e4 is legal once more and e5 is not.
+        assert_eq!(game.play("e7e5", 3.).unwrap().0, None);
+        assert_eq!(game.play("e2e4", 4.).unwrap().0.as_deref(), Some("e4"));
+    }
+
+    #[test]
+    fn checkmate_ends_the_game() {
+        let mut game = LocalGame::new(None, 0.).unwrap();
+        for (ply, uci) in ["f2f3", "e7e5", "g2g4", "d8h4"].iter().enumerate() {
+            assert!(!game.over(ply as f64));
+            game.play(uci, ply as f64).unwrap();
+        }
+        assert!(game.over(10.));
+        assert_eq!(game.result(10.).unwrap()["winner"], "black");
+    }
+
+    #[test]
+    fn a_saved_game_resumes_where_it_was_left() {
+        let mut game = LocalGame::new(None, 0.).unwrap();
+        game.play("e2e4", 1.).unwrap();
+        game.play("e7e5", 2.).unwrap();
+        let mut resumed = LocalGame::new(Some(&game.state), 3.).unwrap();
+        assert_eq!(resumed.play("e2e4", 4.).unwrap().0, None);
+        assert_eq!(resumed.play("g1f3", 5.).unwrap().0.as_deref(), Some("Nf3"));
+    }
+
+    /// `1e306` minutes made both times infinite, stored as `null`: every later move failed to
+    /// read the state, and the game could only be reset. Negative minutes flagged at once.
+    #[test]
+    fn a_clock_no_game_can_have_is_refused_at_the_start() {
+        let mut game = LocalGame::new(None, 0.).unwrap();
+        let setup = game.state["setup"].clone();
+        for (minutes, increment) in [(1e306, 0.), (-5., 0.), (5., -1.), (181., 0.), (5., 1e9)] {
+            let side = json!({ "minutes": minutes, "increment": increment });
+            let clock = json!({ "white": side, "black": { "minutes": 5, "increment": 0 } });
+            assert!(
+                game.start(setup.clone(), clock, 0.).is_err(),
+                "{minutes} {increment}"
+            );
+            assert_eq!(game.play("e2e4", 1.).unwrap().0.as_deref(), Some("e4"));
+            game.takeback(2.).unwrap();
+        }
+        let clock = json!({ "white": { "minutes": 180, "increment": 180 }, "black": { "minutes": 0, "increment": 0 } });
+        game.start(setup, clock, 0.)
+            .expect("the longest and shortest clocks");
+    }
 }
