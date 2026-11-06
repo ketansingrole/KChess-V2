@@ -341,6 +341,38 @@ async fn two_requested_reviews_both_finish_instead_of_yielding_to_each_other() {
     rig.reviews.stop_reviews().await;
 }
 
+/// A live game starting mid-review stops it: what was done is kept, but no window is told
+/// until the game is over.
+#[tokio::test]
+async fn a_review_interrupted_by_a_live_game_tells_no_window() {
+    let rig = rig("slow-review", "live-interrupt", false, "off", true);
+    rig.reviews
+        .request_review(request(&SCHOLARS))
+        .await
+        .expect("the request");
+    wait_until(WAIT, "the review to search", || {
+        received(&rig.log)
+            .iter()
+            .any(|line| line.starts_with("go "))
+            .then_some(())
+    })
+    .await;
+    *rig.host.busy.lock().expect("busy") = Some(Pause::Online);
+    let before = updates_of(&rig).len();
+    wait_until(WAIT, "the review to pause", || {
+        let status = rig.reviews.review_status();
+        (status.current.is_none() && status.paused == Some(Pause::Online)).then_some(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        updates_of(&rig).len(),
+        before,
+        "no review reached a window during the live game"
+    );
+    rig.reviews.stop_reviews().await;
+}
+
 #[tokio::test]
 async fn discarding_an_account_drops_its_queued_reviews() {
     let rig = rig("review", "discard-queued", false, "off", true);

@@ -492,7 +492,7 @@ pub fn pgn_mainline(text: &str, limit: usize) -> Value {
         };
         let mover = color_name(pos.turn());
         let uci = rules::make_uci(&m);
-        rules::san_and_play(&mut pos, m);
+        pos.play_unchecked(m);
         let clock = data
             .comments
             .as_ref()

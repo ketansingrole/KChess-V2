@@ -175,6 +175,8 @@ pub(crate) struct State {
     pub(crate) live_game: String,
     /// Whether the open game is a correspondence game (another may replace it).
     pub(crate) live_correspondence: bool,
+    /// A move is being sent: another, from any window, is refused until it is answered.
+    pub(crate) move_in_flight: bool,
     pub(crate) protected_game: String,
     pub(crate) protected_account: String,
     pub(crate) recovery_unverified: bool,
@@ -201,6 +203,7 @@ impl State {
             next_handle: 0,
             live_game: String::new(),
             live_correspondence: false,
+            move_in_flight: false,
             protected_game: String::new(),
             protected_account: String::new(),
             recovery_unverified: true,

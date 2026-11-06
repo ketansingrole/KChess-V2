@@ -607,8 +607,17 @@ impl OnlinePage {
         self.layout
             .render("online-game", board_column, panel, window, cx)
             .track_focus(&self.focus)
+            // A click anywhere on the page gives the keys back to it (the board keeps them only
+            // from Tab), before a text field takes them for itself, as on the computer's page.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if !this.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+                if !crate::board::page_has_keys(&this.focus, window, cx)
+                    || event.keystroke.modifiers.modified()
+                {
                     return;
                 }
                 if this.pending.is_some() {

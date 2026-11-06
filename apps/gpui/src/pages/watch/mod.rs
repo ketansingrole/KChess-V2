@@ -1038,7 +1038,7 @@ impl WatchPage {
         if key == "escape"
             && self.tab == Tab::Broadcasts
             && self.broadcasts.tour.is_some()
-            && self.focus.is_focused(window)
+            && crate::board::page_has_keys(&self.focus, window, cx)
         {
             if self.broadcasts.current().is_some() {
                 self.all_boards(cx);

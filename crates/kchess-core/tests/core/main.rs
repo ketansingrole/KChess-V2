@@ -48,6 +48,7 @@ mod store_accounts;
 mod store_games;
 mod store_import;
 mod store_insights;
+mod store_library_scale;
 mod store_reviews;
 mod uci_lifecycle;
 mod voice_model;

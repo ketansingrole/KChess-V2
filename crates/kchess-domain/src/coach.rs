@@ -236,7 +236,7 @@ pub fn move_brief<S: AsRef<str>, T: AsRef<str>>(
     see_line(&start, best, &mut allowed);
     let mut after = start;
     let chosen = rules::parse_uci(played).and_then(|uci| rules::legal_move(&after, uci))?;
-    rules::san_and_play(&mut after, chosen);
+    after.play_unchecked(chosen);
     see_line(&after, refutation, &mut allowed);
     allowed.mate |= facts.mated_in.is_some() || facts.missed_mate.is_some();
     let mut input = format!("Position (FEN): {fen}\nMove played: {}\n", facts.san);
@@ -272,7 +272,7 @@ pub fn review_moment(review: &Value, index: usize) -> Option<Value> {
     for played in moves.get(..index)? {
         let chosen =
             rules::parse_uci(played.as_str()?).and_then(|uci| rules::legal_move(&start, uci))?;
-        rules::san_and_play(&mut start, chosen);
+        start.play_unchecked(chosen);
     }
     let played = moves.get(index)?.as_str()?;
     let fen = rules::make_fen(&start);

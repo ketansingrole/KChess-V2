@@ -180,6 +180,10 @@ pub struct AnalysisPage {
     /// Why the study could not be saved (or a recovered session that differs from it).
     study_error: Option<String>,
     study_save: Option<Task<()>>,
+    /// The chapter write not yet answered, and its number: the text counts as saved meanwhile,
+    /// so a flush waits for it rather than for nothing.
+    study_writing: Option<(u64, StudySave)>,
+    study_writes: u64,
     /// Bumped whenever another document takes the board, so a late save-as does not link it.
     navigation: u64,
     study_bar: Entity<StudyBar>,
@@ -451,6 +455,8 @@ impl AnalysisPage {
             study_pgn,
             study_error,
             study_save: None,
+            study_writing: None,
+            study_writes: 0,
             navigation: 0,
             study_bar,
             review: review::ReviewState::new(mistakes),
@@ -616,6 +622,18 @@ impl AnalysisPage {
 
     /// Play a move from the position shown; false when it is not kept (not legal there, or a
     /// wrong answer while practising).
+    /// The delayed save of the open study's chapter, run now.
+    #[cfg(test)]
+    pub(crate) fn autosave_for_test(&mut self, cx: &mut Context<Self>) {
+        self.persist_study(cx);
+    }
+
+    /// A move on the board, as a click would make it.
+    #[cfg(test)]
+    pub(crate) fn play_for_test(&mut self, uci: &str, cx: &mut Context<Self>) -> bool {
+        self.play(uci, cx)
+    }
+
     fn play(&mut self, uci: &str, cx: &mut Context<Self>) -> bool {
         if let Some(kept) = self.practice_attempt(uci, cx) {
             return kept;
@@ -794,6 +812,11 @@ impl AnalysisPage {
         &self.chapter
     }
 
+    /// Whether the board holds edits its study has not been sent yet.
+    pub fn unsaved_study_edits(&self) -> bool {
+        !self.study.is_empty() && self.root.to_pgn() != self.study_pgn
+    }
+
     pub fn study_error(&self) -> Option<&str> {
         self.study_error.as_deref()
     }
@@ -839,7 +862,7 @@ impl AnalysisPage {
         }
         // Counted as saved while the core writes it; a failure makes it unsaved again.
         let previous = std::mem::replace(&mut self.study_pgn, text.clone());
-        let study = self.study.clone();
+        let (study, chapter) = (self.study.clone(), self.chapter.clone());
         let command = library.read(cx).command(json!({
             "op": "save",
             "name": name,
@@ -849,15 +872,27 @@ impl AnalysisPage {
         }));
         let answer = (Box::pin(command) as std::pin::Pin<Box<dyn Future<Output = _>>>).shared();
         let outcome = answer.clone();
+        self.study_writes += 1;
+        let write = self.study_writes;
+        self.study_writing = Some((write, answer.clone()));
         cx.spawn(async move |this, cx| {
             let result: Result<Value, String> = outcome.await;
             let _ = this.update(cx, |this, cx| {
+                if this
+                    .study_writing
+                    .as_ref()
+                    .is_some_and(|(known, _)| *known == write)
+                {
+                    this.study_writing = None;
+                }
                 match result {
                     Ok(_) => this.study_error = None,
                     // Another window changed the chapter: the board keeps its moves as an unsaved
                     // copy rather than overwriting that window's, or blocking every later save.
                     Err(cause)
-                        if crate::studies::is_stale(cause.as_str()) && this.study == study =>
+                        if crate::studies::is_stale(cause.as_str())
+                            && this.study == study
+                            && this.chapter == chapter =>
                     {
                         this.study.clear();
                         this.chapter.clear();
@@ -883,7 +918,10 @@ impl AnalysisPage {
         &mut self,
         cx: &mut Context<Self>,
     ) -> impl Future<Output = Result<(), String>> + 'static + use<> {
-        let save = self.persist_study(cx);
+        // Nothing new to write: the write still on its way (an autosave) is what to wait for.
+        let save = self
+            .persist_study(cx)
+            .or_else(|| self.study_writing.as_ref().map(|(_, save)| save.clone()));
         async move {
             match save {
                 Some(save) => save.await.map(|_| ()),
@@ -1528,7 +1566,7 @@ impl AnalysisPage {
     /// L turns the engine on or off, E shows the explorer, Space plays the best move, Delete or
     /// Backspace deletes from the move shown (its notice's Undo, or ⌘Z, brings it back).
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.focus.is_focused(window) {
+        if !crate::board::page_has_keys(&self.focus, window, cx) {
             return;
         }
         let modifiers = &event.keystroke.modifiers;
@@ -1851,12 +1889,17 @@ impl AnalysisPage {
                                     })
                             })
                             .child(div().flex_1())
-                            .child(
+                            .child({
+                                let page = run.clone();
                                 Button::new("import-cancel")
                                     .ghost()
                                     .label("Cancel")
-                                    .on_click(|_, window, cx| window.close_dialog(cx)),
-                            )
+                                    .on_click(move |_, window, cx| {
+                                        // A link still being fetched is dropped with it.
+                                        let _ = page.update(cx, |page, _| page.importing = None);
+                                        window.close_dialog(cx);
+                                    })
+                            })
                             .child(
                                 Button::new("import-run")
                                     .primary()
@@ -2022,7 +2065,9 @@ impl AnalysisPage {
         cx.spawn_in(window, async move |this, cx| {
             let pgn = pgn.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if this.importing != Some(turn) {
+                // Dismissed meanwhile (Cancel, Escape or a click outside): nobody waits for it.
+                if this.importing != Some(turn) || !window.has_active_dialog(cx) {
+                    this.importing = this.importing.filter(|pending| *pending != turn);
                     return;
                 }
                 this.importing = None;

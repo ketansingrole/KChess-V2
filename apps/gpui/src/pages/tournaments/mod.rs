@@ -108,6 +108,13 @@ impl Focusable for TournamentsPage {
 }
 
 impl TournamentsPage {
+    /// The name of the tournament shown, once its details came.
+    #[cfg(test)]
+    pub(crate) fn shown_name(&self) -> Option<String> {
+        let detail = self.open.as_ref()?.detail.as_ref()?;
+        detail["name"].as_str().map(str::to_string)
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> TournamentsPage {
         let password = cx.new(|cx| {
             InputState::new(window, cx)
@@ -330,22 +337,27 @@ impl TournamentsPage {
         );
         cx.spawn(async move |this, cx| {
             let answer = call.await;
-            let _ = this.update(cx, |this, cx| {
-                let Some(open) = this.open.as_mut().filter(|open| open.epoch == epoch) else {
-                    return;
-                };
-                match answer {
-                    Ok(detail) => {
-                        open.detail = Some(detail);
-                        open.received = Instant::now();
-                        open.error = None;
+            let _ =
+                this.update(cx, |this, cx| {
+                    // Every tournament opened counts from 1: a reply is this one's only if it also
+                    // names the tournament still open.
+                    let Some(open) = this.open.as_mut().filter(|open| {
+                        open.epoch == epoch && open.system == system && open.id == id
+                    }) else {
+                        return;
+                    };
+                    match answer {
+                        Ok(detail) => {
+                            open.detail = Some(detail);
+                            open.received = Instant::now();
+                            open.error = None;
+                        }
+                        Err(cause) => open.error = Some(cause.message.into()),
                     }
-                    Err(cause) => open.error = Some(cause.message.into()),
-                }
-                // The core forgets an arena that is over or that you left.
-                this.reload_joined(cx);
-                cx.notify();
-            });
+                    // The core forgets an arena that is over or that you left.
+                    this.reload_joined(cx);
+                    cx.notify();
+                });
         })
         .detach();
     }
@@ -702,7 +714,9 @@ impl Render for TournamentsPage {
             .track_focus(&self.focus)
             // Escape goes back to the list from an event, while no text field has the keys.
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if this.open.is_some() && this.focus.is_focused(window) && widgets::is_escape(event)
+                if this.open.is_some()
+                    && crate::board::page_has_keys(&this.focus, window, cx)
+                    && widgets::is_escape(event)
                 {
                     this.close_event(cx);
                     cx.stop_propagation();
