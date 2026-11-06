@@ -1710,9 +1710,6 @@ mod tests {
         );
     }
 
-    /// Every wait turns: the loader icon appears only inside `spinner`, never as a still glyph
-    /// (the Lichess seek card once showed one that never moved), and "Loading…" lines come
-    /// with it through `loading`.
     /// The large ticking times (the chess clock's faces, Puzzle Rush, timed practice runs) used
     /// proportional figures, so their digits shifted sideways on every tick; all draw through
     /// `timer`.
@@ -1733,8 +1730,20 @@ mod tests {
                 "{page} draws its clock as a timer"
             );
         }
+        // The title bar's "Updating N%" is anchored on the right, so a proportional figure
+        // moved the button's left edge with every percent.
+        let shell = std::fs::read_to_string(src.join("../shell.rs")).expect("the shell's source");
+        let button = &shell[shell.find("fn update_button").expect("the update button")..];
+        assert!(
+            button[..button.find("\n}\n").expect("its end")]
+                .contains(".font_features(crate::widgets::tabular())"),
+            "the update button's percentage holds still"
+        );
     }
 
+    /// Every wait turns: the loader icon appears only inside `spinner`, never as a still glyph
+    /// (the Lichess seek card once showed one that never moved), and "Loading…" lines come
+    /// with it through `loading`.
     #[test]
     fn every_loader_is_the_turning_spinner() {
         fn walk(dir: &std::path::Path, found: &mut Vec<String>) {

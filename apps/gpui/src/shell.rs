@@ -2164,31 +2164,35 @@ fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
     };
     let phase = updates.phase;
     let target = handle.downgrade();
-    Some(over_title_bar(
-        Button::new("update-button")
-            .small()
-            .when(phase == Phase::Downloaded, |button| button.primary())
-            .when(phase == Phase::Error, |button| button.danger())
-            .when(
-                !matches!(phase, Phase::Downloaded | Phase::Error),
-                |button| button.outline(),
-            )
-            .icon(icon(match phase {
-                Phase::Downloaded => "rotate-cw",
-                Phase::Error => "circle-alert",
-                _ => "download",
-            }))
-            .label(label)
-            .tooltip(tooltip)
-            .disabled(phase == Phase::Downloading)
-            .on_click(move |_, window, cx| {
-                if phase == Phase::Downloaded {
-                    crate::pages::settings::updates::ask_restart(window, cx);
-                } else {
-                    let _ = target.update(cx, |updates, cx| updates.download(cx));
-                }
-            }),
-    ))
+    Some(
+        over_title_bar(
+            Button::new("update-button")
+                .small()
+                .when(phase == Phase::Downloaded, |button| button.primary())
+                .when(phase == Phase::Error, |button| button.danger())
+                .when(
+                    !matches!(phase, Phase::Downloaded | Phase::Error),
+                    |button| button.outline(),
+                )
+                .icon(icon(match phase {
+                    Phase::Downloaded => "rotate-cw",
+                    Phase::Error => "circle-alert",
+                    _ => "download",
+                }))
+                .label(label)
+                .tooltip(tooltip)
+                .disabled(phase == Phase::Downloading)
+                .on_click(move |_, window, cx| {
+                    if phase == Phase::Downloaded {
+                        crate::pages::settings::updates::ask_restart(window, cx);
+                    } else {
+                        let _ = target.update(cx, |updates, cx| updates.download(cx));
+                    }
+                }),
+        )
+        // Its right edge is anchored, so a proportional "Updating N%" moves it with every percent.
+        .font_features(crate::widgets::tabular()),
+    )
 }
 
 impl Render for Workspace {
