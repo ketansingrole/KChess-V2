@@ -143,6 +143,18 @@ pub fn tabular() -> FontFeatures {
     FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]))
 }
 
+/// A drill's countdown (Puzzle Rush, a timed practice run) at `size`: tabular figures, so the
+/// numbers hold still as they tick instead of shifting with each digit's width.
+pub fn timer(text: impl Into<SharedString>, size: Pixels, color: Hsla) -> Div {
+    div()
+        .text_size(size)
+        .font_weight(FontWeight::MEDIUM)
+        .line_height(relative(1.))
+        .font_features(tabular())
+        .text_color(color)
+        .child(text.into())
+}
+
 /// Which side a player plays, shown as a dot on their avatar.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Side {
@@ -1701,6 +1713,27 @@ mod tests {
     /// Every wait turns: the loader icon appears only inside `spinner`, never as a still glyph
     /// (the Lichess seek card once showed one that never moved), and "Loading…" lines come
     /// with it through `loading`.
+    /// A countdown that ticks every tenth (Puzzle Rush, timed practice runs) used proportional
+    /// figures, so its digits shifted sideways on every tick; both draw it through `timer`.
+    #[test]
+    fn drill_countdowns_hold_still_as_they_tick() {
+        use gpui_kit::Styled as _;
+        let mut timer = super::timer("0:09.4", gpui_kit::px(32.), gpui_kit::black());
+        assert_eq!(
+            timer.style().text.font_features,
+            Some(super::tabular()),
+            "tabular figures"
+        );
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pages");
+        for page in ["puzzles/rush.rs", "practice/run.rs"] {
+            let text = std::fs::read_to_string(src.join(page)).expect("the page's source");
+            assert!(
+                text.contains("widgets::timer("),
+                "{page} draws its clock as a timer"
+            );
+        }
+    }
+
     #[test]
     fn every_loader_is_the_turning_spinner() {
         fn walk(dir: &std::path::Path, found: &mut Vec<String>) {

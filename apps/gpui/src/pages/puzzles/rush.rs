@@ -689,15 +689,15 @@ impl PuzzleRush {
                 .justify_between()
                 .items_end()
                 .children(left.map(|left| {
-                    div()
-                        .text_size(px(32.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(if low {
+                    crate::widgets::timer(
+                        Self::clock_text(left),
+                        px(32.),
+                        if low {
                             palette.error
                         } else {
                             palette.highlighted
-                        })
-                        .child(Self::clock_text(left))
+                        },
+                    )
                 }))
                 .child(
                     h_flex()
