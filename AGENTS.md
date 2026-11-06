@@ -88,15 +88,25 @@ versions, tagging, verification and assets.
 
 ## What's new
 
-- A change a player would notice adds one line under `## Unreleased` in
-  `apps/gpui/WHATS_NEW.md`, in the same pull request: `- **Title**: what it does for them.` The
-  app shows these lines after the update, and the release and the App Store use them as written.
-- Write for a player, not a developer: what they can now do or what stopped going wrong, in a
-  sentence. No crate, module or PR names, no refactors, tests, CI, tooling or benchmarks, and
-  nothing that is not actually in the build. Fold small fixes into one `**Fixes**` line.
-- Edit the existing line when a later change extends the same feature, rather than adding a
-  second. Never edit a released (dated) section: a published release's notes are permanent too.
-- Changes with nothing a player would see (internal, tests, docs) add nothing.
+`apps/gpui/WHATS_NEW.md` is what people see after an update, in the app, on the GitHub release
+and in the App Store. Its readers play chess; they are not developers.
+
+- A change a player would notice adds one line under `## Unreleased`, in the same pull request:
+  `- **Short name**: what they can now do, or what no longer goes wrong.`
+- Write as you would tell a friend who plays chess: everyday words, one or two short sentences,
+  "you" and what it does for them. Name things as the app's own screens and buttons name them.
+- Never mention code, crates, modules, files, APIs, PRs, refactors, tests, CI, tooling, builds,
+  benchmarks, audits or formats a player has no reason to know. Explain a chess term only when
+  the feature is that term (Crazyhouse: "captured pieces join your side").
+  - Not: "Spaced repetition for the repertoire trainer (SM-2 scheduling)."
+  - But: "**Smarter opening practice**: the opening trainer brings back the moves you got wrong
+    until you remember them."
+  - Not: "Fix memory leaks found by retention benchmarks."
+  - But: "**Fixes**: KChess uses less memory over long sessions."
+- Only what is in the build and works. Fold small fixes into one `**Fixes**` line. Changes with
+  nothing a player would see (internal, tests, docs, tooling) add nothing.
+- Extend an existing line when a later change grows the same feature. Never edit a dated
+  section: a published release's notes are permanent too.
 
 ## Reuse existing UI and behavior
 

@@ -96,7 +96,11 @@ pub fn date_notes(notes: &str, version: &str, date: &str) -> Result<String> {
              `- **Title**: what it does` line each, then run release-version again."
         )
     };
-    let (head, rest) = notes.split_once(UNRELEASED).ok_or_else(missing)?;
+    // The heading line itself, not a mention of it in the file's introduction.
+    let (head, rest) = notes
+        .split_once(&format!("\n{UNRELEASED}\n"))
+        .map(|(head, rest)| (format!("{head}\n"), format!("\n{rest}")))
+        .ok_or_else(missing)?;
     let section = rest.split("\n## ").next().unwrap_or_default();
     if !section
         .lines()
@@ -572,11 +576,11 @@ mod tests {
 
     #[test]
     fn a_release_dates_the_unreleased_notes() {
-        let notes = "# What's new\n\n## Unreleased\n\n- **New**: a thing.\n\n## 2026.11.3 (2026-11-04)\n\n- **Old**: before.\n";
+        let notes = "# What's new\n\nAdd lines under ## Unreleased below.\n\n## Unreleased\n\n- **New**: a thing.\n\n## 2026.11.3 (2026-11-04)\n\n- **Old**: before.\n";
         let dated = date_notes(notes, "2026.11.4", "2026-11-20").unwrap();
         assert_eq!(
             dated,
-            "# What's new\n\n## Unreleased\n\n## 2026.11.4 (2026-11-20)\n\n- **New**: a thing.\n\n## 2026.11.3 (2026-11-04)\n\n- **Old**: before.\n"
+            "# What's new\n\nAdd lines under ## Unreleased below.\n\n## Unreleased\n\n## 2026.11.4 (2026-11-20)\n\n- **New**: a thing.\n\n## 2026.11.3 (2026-11-04)\n\n- **Old**: before.\n"
         );
         assert!(has_notes(&dated, "2026.11.4"));
         assert!(has_notes(&dated, "2026.11.3"));
