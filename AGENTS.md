@@ -28,7 +28,8 @@ versions, tagging, verification and assets.
 - Creating a release means preparing a **draft**. Publish only when the user asks. A request to
   fix code, build installers or reduce size does not authorize creating or pushing a tag.
 - Versions come from `cargo xtask release-version` (`YEAR.MONTH.COUNTER`, UTC month). Never pick
-  one by hand from stale tags.
+  one by hand from stale tags. It dates the `## Unreleased` notes in `apps/gpui/WHATS_NEW.md` and
+  refuses an empty section; never invent notes to get past it: write what the release brings.
 - Release only a green commit on `origin/main`, after `cargo xtask release-verify`. Push only that
   tag. Never force-push, move, reuse or delete a release tag.
 - A published release is permanent: ship fixes in the next version. Replace assets only while
@@ -84,6 +85,18 @@ versions, tagging, verification and assets.
   names, roles, labels, and live status/error announcements. Update affected
   tests to verify actions and state rather than require discarded explanatory copy.
 - Never send people to a website to finish something KChess can do itself.
+
+## What's new
+
+- A change a player would notice adds one line under `## Unreleased` in
+  `apps/gpui/WHATS_NEW.md`, in the same pull request: `- **Title**: what it does for them.` The
+  app shows these lines after the update, and the release and the App Store use them as written.
+- Write for a player, not a developer: what they can now do or what stopped going wrong, in a
+  sentence. No crate, module or PR names, no refactors, tests, CI, tooling or benchmarks, and
+  nothing that is not actually in the build. Fold small fixes into one `**Fixes**` line.
+- Edit the existing line when a later change extends the same feature, rather than adding a
+  second. Never edit a released (dated) section: a published release's notes are permanent too.
+- Changes with nothing a player would see (internal, tests, docs) add nothing.
 
 ## Reuse existing UI and behavior
 

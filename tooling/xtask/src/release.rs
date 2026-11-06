@@ -116,6 +116,19 @@ pub fn date_notes(notes: &str, version: &str, date: &str) -> Result<String> {
     Ok(format!("{head}{UNRELEASED}\n\n## {version} ({date}){rest}"))
 }
 
+/// The items of `version`'s section in `notes`, as the release's text.
+pub fn release_notes(notes: &str, version: &str) -> Option<String> {
+    let heading = format!("## {version} (");
+    let start = notes.lines().position(|line| line.starts_with(&heading))?;
+    let body: Vec<&str> = notes
+        .lines()
+        .skip(start + 1)
+        .take_while(|line| !line.starts_with("## "))
+        .collect();
+    let body = body.join("\n").trim().to_string();
+    (!body.is_empty()).then_some(body)
+}
+
 /// Whether `notes` has a section for `version`.
 pub fn has_notes(notes: &str, version: &str) -> bool {
     let heading = format!("## {version} (");
@@ -383,13 +396,20 @@ pub fn attach_draft(dir: &std::path::Path) -> Result {
         }
         None => {
             let title = format!("KChess {}", &tag[1..]);
+            // The notes the app shows for this release, reviewed in the release commit, are the
+            // release's text, and through it the App Store's What's New.
+            let notes = std::fs::read_to_string(root().join(NOTES))
+                .ok()
+                .and_then(|notes| release_notes(&notes, &tag[1..]))
+                .ok_or_else(|| format!("{NOTES} has no notes for {tag}."))?;
             let mut args = vec!["release", "create", tag.as_str()];
             args.extend(&file_args);
             // --verify-tag keeps gh from inventing a tag at the default branch's HEAD.
             args.extend([
                 "--verify-tag",
                 "--draft",
-                "--generate-notes",
+                "--notes",
+                notes.as_str(),
                 "--title",
                 title.as_str(),
             ]);
@@ -569,6 +589,15 @@ mod tests {
         assert!(has_notes(&dated, "2026.11.4"));
         assert!(has_notes(&dated, "2026.11.3"));
         assert!(!has_notes(&dated, "2026.11.5"));
+        assert_eq!(
+            release_notes(&dated, "2026.11.4").as_deref(),
+            Some("- **New**: a thing.")
+        );
+        assert_eq!(
+            release_notes(&dated, "2026.11.3").as_deref(),
+            Some("- **Old**: before.")
+        );
+        assert_eq!(release_notes(&dated, "2026.11.5"), None);
         // Nothing new to say: no release yet.
         assert!(date_notes(&dated, "2026.11.5", "2026-11-21").is_err());
         assert!(date_notes("# What's new\n", "2026.11.4", "2026-11-20").is_err());
