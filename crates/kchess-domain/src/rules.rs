@@ -1074,3 +1074,19 @@ mod drop_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod fen_tests {
+    use super::*;
+
+    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    /// A FEN's board is eight ranks of eight files; a `0` is no count of empty squares.
+    #[test]
+    fn a_board_is_eight_full_ranks() {
+        assert!(parse_fen(START).is_some());
+        assert!(parse_fen("rnbqkbnr/pppppppp/80/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").is_none());
+        assert!(parse_fen("rnbqkbnr/pppppppp/7/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").is_none());
+        assert!(parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP w KQkq - 0 1").is_none());
+    }
+}
