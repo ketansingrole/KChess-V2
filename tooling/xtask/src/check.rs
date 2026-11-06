@@ -84,25 +84,51 @@ fn nextest() -> bool {
     available("cargo", &["nextest", "--version"])
 }
 
-/// Run the tests of these packages, or of the whole workspace when there are none: with nextest
-/// when it is installed, else with `cargo test`.
+/// The app, whose tests run under `cargo test`: they are one binary, so nextest gains no
+/// parallelism there, and each test in its own process starts GPUI afresh (2026-11-06, 546 tests:
+/// 60 s under `cargo test`, 74 s under nextest).
+const APP: &str = "kchess-gpui";
+
+/// The commands that run the tests of these packages, or of the whole workspace when there are
+/// none: the app's under `cargo test`, the others under nextest when it is installed.
+fn test_commands(packages: &[String], nextest: bool) -> Vec<Vec<String>> {
+    let app = packages.is_empty() || packages.iter().any(|package| package == APP);
+    let others: Vec<&String> = packages.iter().filter(|package| *package != APP).collect();
+    let mut commands = Vec::new();
+    if packages.is_empty() || !others.is_empty() {
+        let mut command: Vec<String> = if nextest {
+            ["nextest", "run", "--locked", "--no-tests=warn"]
+                .map(String::from)
+                .to_vec()
+        } else {
+            ["test", "--locked"].map(String::from).to_vec()
+        };
+        if packages.is_empty() {
+            command.extend(["--workspace", "--exclude", APP].map(String::from));
+        }
+        for package in others {
+            command.extend(["-p".to_string(), package.clone()]);
+        }
+        commands.push(command);
+    }
+    if app {
+        commands.push(["test", "--locked", "-p", APP].map(String::from).to_vec());
+    }
+    commands
+}
+
+/// Run the tests of these packages, or of the whole workspace when there are none.
 fn run_tests(packages: &[String]) -> Result {
-    let mut command = Command::new("cargo");
-    if nextest() {
-        command.args(["nextest", "run", "--locked", "--no-tests=warn"]);
-    } else {
+    let nextest = nextest();
+    if !nextest {
         say(
             "cargo-nextest is not installed (`cargo install cargo-nextest`): running `cargo test`.",
         );
-        command.args(["test", "--locked"]);
     }
-    if packages.is_empty() {
-        command.arg("--workspace");
+    for args in test_commands(packages, nextest) {
+        run_with(Command::new("cargo").args(&args))?;
     }
-    for package in packages {
-        command.args(["-p", package]);
-    }
-    run_with(&mut command)
+    Ok(())
 }
 
 /// The workspace's tests: under the coverage gate when cargo-llvm-cov is installed (CI installs
@@ -439,6 +465,48 @@ mod tests {
         assert_eq!(
             with_dependents(&["tooling".into(), "core".into()], &dependencies),
             ["app", "core", "tooling"]
+        );
+    }
+
+    #[test]
+    fn the_app_tests_under_cargo_test_and_the_rest_under_nextest() {
+        let strings = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            test_commands(&strings(&["kchess-core", "kchess-gpui"]), true),
+            [
+                strings(&[
+                    "nextest",
+                    "run",
+                    "--locked",
+                    "--no-tests=warn",
+                    "-p",
+                    "kchess-core"
+                ]),
+                strings(&["test", "--locked", "-p", "kchess-gpui"]),
+            ]
+        );
+        assert_eq!(
+            test_commands(&[], true),
+            [
+                strings(&[
+                    "nextest",
+                    "run",
+                    "--locked",
+                    "--no-tests=warn",
+                    "--workspace",
+                    "--exclude",
+                    "kchess-gpui"
+                ]),
+                strings(&["test", "--locked", "-p", "kchess-gpui"]),
+            ]
+        );
+        assert_eq!(
+            test_commands(&strings(&["kchess-gpui"]), true),
+            [strings(&["test", "--locked", "-p", "kchess-gpui"])]
+        );
+        assert_eq!(
+            test_commands(&strings(&["xtask"]), false),
+            [strings(&["test", "--locked", "-p", "xtask"])]
         );
     }
 

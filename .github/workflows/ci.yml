@@ -162,7 +162,9 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@cargo-nextest
       - run: cargo clippy -p kchess-gpui -p kchess-cli -p xtask --all-targets --locked -- -D warnings
-      - run: cargo nextest run -p kchess-gpui -p kchess-cli -p xtask --locked
+      # The app's tests under `cargo test`: each starts GPUI, so a process per test (nextest) is slower.
+      - run: cargo test -p kchess-gpui --locked
+      - run: cargo nextest run -p kchess-cli -p xtask --locked
       # The headless packages run everywhere else in `check` (Linux); here they keep building and
       # passing on Windows: named pipes, CRLF checkouts, Unix-only test helpers.
       - if: runner.os == 'Windows'

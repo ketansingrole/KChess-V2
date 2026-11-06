@@ -38,7 +38,7 @@ versions, tagging, verification and assets.
 
 ## Running the app
 
-- Check UI behaviour headless first: the end-to-end tests (`cargo nextest run -p kchess-gpui e2e::<area>`)
+- Check UI behaviour headless first: the end-to-end tests (`cargo test -p kchess-gpui e2e::<area>`)
   drive every page without a window. Start the real app only for what they cannot show.
 - `cargo xtask app` builds and starts the app in the background on the scratch profile
   `.data/gpui-profile` with a native Stockfish (fetched into `.data/stockfish` once), prints its
@@ -141,7 +141,8 @@ versions, tagging, verification and assets.
 - Test in tiers. While editing, run `cargo xtask check-fast` (format, lints and the tests of the
   packages changed since main and of every package depending on them). Run tests with `cargo nextest
   run` (`cargo install cargo-nextest`; `.config/nextest.toml`): it runs test binaries in parallel
-  where `cargo test` runs them one at a time. CI runs the full `cargo xtask check` on the pull
+  where `cargo test` runs them one at a time. The app's tests are the exception: one binary whose
+  tests each start GPUI, faster under `cargo test -p kchess-gpui`. CI runs the full `cargo xtask check` on the pull
   request; a direct push to `main` runs it first (the pre-push hook enforces it). Packaging changes
   also need `cargo xtask package` on the platform they touch; CI then packages, builds the Snap and
   runs the Windows upgrade (`ci.yml` `changes`).
