@@ -2021,7 +2021,7 @@ mod tests {
     /// handler's `prevent_default`, and lets it go with the button.
     #[gpui_kit::test]
     fn a_held_move_draws_its_pressed_background(cx: &mut TestAppContext) {
-        use gpui_kit::{Background, Pixels, Point};
+        use gpui_kit::{Background, InputEvent as _, Pixels, Point};
         use gpui_kit::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
 
         let window = cx.add_window(|_, cx| Page {
