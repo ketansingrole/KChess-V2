@@ -485,7 +485,9 @@ pub fn game_gif(
 
 #[cfg(test)]
 mod tests {
-    use super::{ImageOptions, TextLine, game_gif, position_png, rotated_text_png};
+    use super::{
+        ImageOptions, TextLine, game_gif, position_png, rotated_text_image, rotated_text_png,
+    };
     use std::sync::atomic::AtomicBool;
 
     #[test]
@@ -503,6 +505,38 @@ mod tests {
         };
         assert_eq!(size(180), (560, 120));
         assert_eq!(size(90), (120, 560));
+    }
+
+    /// The face drawn from its own image looks as the PNG did once GPUI decoded it (straight-alpha
+    /// RGBA with red and blue swapped), to within rounding.
+    #[test]
+    fn a_turned_face_image_matches_its_png() {
+        let lines = [TextLine {
+            text: "4:59".into(),
+            size: 120.,
+            bold: true,
+            opacity: 0.75,
+        }];
+        let png = rotated_text_png(&lines, "#2266aa", 90, 2.).unwrap();
+        let mut decoded = image::load_from_memory(&png).unwrap().into_rgba8();
+        for pixel in decoded.as_chunks_mut::<4>().0 {
+            pixel.swap(0, 2);
+        }
+        let drawn = rotated_text_image(&lines, "#2266aa", 90, 2.).unwrap();
+        let bytes = drawn.as_bytes(0).unwrap();
+        assert_eq!(drawn.size(0).width.0 as u32, decoded.width());
+        assert_eq!(drawn.size(0).height.0 as u32, decoded.height());
+        let worst = bytes
+            .iter()
+            .zip(decoded.as_raw())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(worst <= 1, "a channel differs by {worst}");
+        assert!(
+            bytes.chunks(4).any(|pixel| pixel[3] > 0),
+            "the text is drawn"
+        );
     }
 
     fn game() -> ImageOptions {
