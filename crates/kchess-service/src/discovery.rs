@@ -225,6 +225,13 @@ mod tests {
         );
         assert_eq!(plain_windows(r"D:\a\profile"), None);
         assert_eq!(plain_windows(r"\\?\Volume{1234}\profile"), None);
+        // The usual spelling is limited to 259 characters.
+        let longest = format!(r"D:\{}", "a".repeat(256));
+        assert_eq!(
+            plain_windows(&format!(r"\\?\{longest}")).as_deref(),
+            Some(longest.as_str())
+        );
+        assert_eq!(plain_windows(&format!(r"\\?\{longest}a")), None);
         let long = format!(r"\\?\D:\{}", "a".repeat(300));
         assert_eq!(
             plain_windows(&long),
@@ -265,6 +272,27 @@ mod tests {
             socket_dir(Path::new("/run/user/501"), 501, name, false),
             Path::new("/run/user/501/kchess-501")
         );
+    }
+
+    /// A folder others could enter is closed to them; anything but a folder is refused.
+    #[cfg(unix)]
+    #[test]
+    fn a_private_folder_is_this_users_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().expect("root");
+        let open = root.path().join("open");
+        std::fs::create_dir(&open).expect("folder");
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o755)).expect("mode");
+        private_dir(&open).expect("tightened");
+        let mode = std::fs::metadata(&open)
+            .expect("folder")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700);
+        let file = root.path().join("file");
+        std::fs::write(&file, b"").expect("file");
+        assert!(private_dir(&file).is_err());
+        assert!(private_dir(&root.path().join("missing").join("deeper")).is_err());
     }
 
     #[cfg(unix)]

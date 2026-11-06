@@ -278,6 +278,9 @@ async fn the_first_app_starts_the_service_and_the_second_reuses_it() {
     let profile = tempfile::tempdir().expect("profile");
     let runtime = tempfile::tempdir().expect("runtime");
     use_runtime_dir(runtime.path());
+    // An earlier release's copy, which the started service removes.
+    let earlier = runtime.path().join("core").join("1999.1.0");
+    std::fs::create_dir_all(&earlier).expect("earlier release");
     let start = Start {
         binary: env!("CARGO_BIN_EXE_kchess-service").into(),
         config: ServiceConfig::default(),
@@ -293,6 +296,7 @@ async fn the_first_app_starts_the_service_and_the_second_reuses_it() {
             .expect("name"),
     );
     assert!(copied.exists(), "it runs from this release's copy");
+    assert!(!earlier.exists(), "other releases' copies are removed");
 
     let (electron, _electron_events) =
         connect_or_start(profile.path(), &window("electron"), &start)
