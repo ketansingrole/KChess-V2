@@ -312,14 +312,18 @@ fn missed_lines_are_due_for_review_and_right_ones_wait(cx: &mut gpui_kit::TestAp
             })
             .unwrap_or_default()
     };
-    app.wait_for("the lapse to be kept", |_, _| card()["lapses"] == 1);
+    app.wait_for("the lapse to be kept", |_, _| {
+        card()["lapses"].as_f64() == Some(1.)
+    });
 
     // Reviewed right, it waits a day; with nothing else due, the review is done.
     app.click("review-due");
     wait_for_status(&mut app, "Line due for review");
     play_kings_gambit(&mut app);
     wait_for_schedule(&mut app, "Next line due in 1 day");
-    app.wait_for("the review to be kept", |_, _| card()["interval"] == 1);
+    app.wait_for("the review to be kept", |_, _| {
+        card()["interval"].as_f64() == Some(1.)
+    });
     wait_for_status(&mut app, "Due lines reviewed");
     assert_eq!(app.find("review-due").disabled(), Some(true));
 }
