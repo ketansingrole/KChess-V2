@@ -120,7 +120,7 @@ pub fn section_keywords(section: Section) -> &'static str {
         }
         Section::Updates => {
             "version about upgrade Check for updates Automatically check for updates \
-             Download updates in the background Install updates when I quit Release notes"
+             Download updates in the background Install updates when I quit What's new release notes"
         }
     }
 }

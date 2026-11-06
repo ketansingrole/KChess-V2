@@ -10,9 +10,9 @@ keeps the version valid semver. The release is the Cargo workspace version. Foll
 prepare the version change:
 
 ```bash
-cargo xtask release-version   # fetches origin's tags; updates Cargo.toml and Cargo.lock
+cargo xtask release-version   # fetches origin's tags; updates Cargo.toml, Cargo.lock and WHATS_NEW.md
 cargo xtask check
-git add Cargo.toml Cargo.lock
+git add Cargo.toml Cargo.lock apps/gpui/WHATS_NEW.md
 git commit -m "Release <version>"
 ```
 
@@ -91,6 +91,12 @@ creating/pushing a tag or publishing a release.
 - Use `cargo xtask release-version`. It must successfully fetch tags from `origin` first.
   If fetching fails, restore access and retry; do not select a version from stale tags.
   Commit `Cargo.toml` and `Cargo.lock`; the lockfile must match the workspace version.
+- The release's notes are `apps/gpui/WHATS_NEW.md`'s `## Unreleased` items, which
+  `release-version` turns into `## <version> (<date>)` and refuses to release without. The app
+  shows them once after the update (Settings → Updates → What's new keeps them), and the draft
+  release and the App Store's What's New take the same text. Read them in the release commit's
+  diff as a player would: only what changed for them, no internals, nothing that did not ship.
+  Commit `WHATS_NEW.md` with the version.
 - Release only a commit on `origin/main` whose CI is green. Include every intended file,
   including new/untracked files; explicitly stage the files instead of relying on
   `git commit -am`. Keep the working tree clean before tagging and verify CI is green
@@ -139,7 +145,8 @@ Snap package; publishing a stable GitHub release triggers a checksum-verified up
 ## App updates
 
 **Settings → Updates** shows the installed version, update status, last successful check,
-download progress, manual check/download/restart actions and a link to release notes. By default,
+download progress, manual check/download/restart actions and **What's new**, every release's
+notes from `apps/gpui/WHATS_NEW.md`, which also open on the first start after an update. By default,
 installed builds check stable GitHub releases ten seconds after startup and every six hours,
 download updates in the background, and install when the user quits. Each behaviour has its own
 switch. KChess never initiates a restart while you are playing; **Restart and install** asks first.
