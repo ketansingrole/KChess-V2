@@ -19,6 +19,7 @@ mod fake_lichess;
 mod history;
 mod live_game;
 mod local;
+mod memory;
 mod online;
 mod openings;
 mod palette;
