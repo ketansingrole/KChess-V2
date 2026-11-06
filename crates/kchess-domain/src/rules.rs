@@ -1104,6 +1104,16 @@ mod fen_tests {
         }
     }
 
+    /// A square is a lowercase file `a`–`h` and a rank `1`–`8`.
+    #[test]
+    fn a_square_is_on_the_board() {
+        assert_eq!(parse_square("a1"), Some(Square::A1));
+        assert_eq!(parse_square("h8"), Some(Square::H8));
+        for off in ["i1", "a9", "a0", "`1", "A1", "a", "a10"] {
+            assert_eq!(parse_square(off), None, "{off}");
+        }
+    }
+
     /// A Crazyhouse pocket holds at most 64 pieces.
     #[test]
     fn a_pocket_holds_at_most_64_pieces() {
