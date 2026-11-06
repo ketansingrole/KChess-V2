@@ -61,6 +61,7 @@ mod swipe;
 mod theme;
 mod updates;
 mod voice;
+mod whats_new;
 mod widgets;
 mod window_state;
 
