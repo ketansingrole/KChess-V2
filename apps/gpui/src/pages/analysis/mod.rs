@@ -1566,7 +1566,7 @@ impl AnalysisPage {
     /// L turns the engine on or off, E shows the explorer, Space plays the best move, Delete or
     /// Backspace deletes from the move shown (its notice's Undo, or ⌘Z, brings it back).
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.focus.is_focused(window) {
+        if !crate::board::page_has_keys(&self.focus, window, cx) {
             return;
         }
         let modifiers = &event.keystroke.modifiers;

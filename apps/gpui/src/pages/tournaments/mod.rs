@@ -678,7 +678,9 @@ impl Render for TournamentsPage {
             .track_focus(&self.focus)
             // Escape goes back to the list from an event, while no text field has the keys.
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if this.open.is_some() && this.focus.is_focused(window) && widgets::is_escape(event)
+                if this.open.is_some()
+                    && crate::board::page_has_keys(&this.focus, window, cx)
+                    && widgets::is_escape(event)
                 {
                     this.close_event(cx);
                     cx.stop_propagation();

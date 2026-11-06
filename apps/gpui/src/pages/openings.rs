@@ -1239,7 +1239,9 @@ impl Render for OpeningsPage {
                 // F turns the line's board, as its button does, while no text field has the keys.
                 // Escape goes back to all openings.
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                    if !this.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+                    if !crate::board::page_has_keys(&this.focus, window, cx)
+                        || event.keystroke.modifiers.modified()
+                    {
                         return;
                     }
                     match event.keystroke.key.as_str() {
