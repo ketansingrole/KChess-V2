@@ -360,8 +360,252 @@ async fn latest(feed: String) -> Result<Release, String> {
         .map_err(failed("The update server's answer could not be read"))
 }
 
-/// Download `asset` into `folder` and check it against the release's digest; the downloaded
-/// file. `progress` hears the bytes received so far.
+/// How many times a download that stops part way picks up again before it fails.
+const RESUMES: u32 = 4;
+/// The wait before the first resume; each later one waits twice as long.
+const RESUME_AFTER: Duration = if cfg!(test) {
+    Duration::from_millis(10)
+} else {
+    Duration::from_secs(2)
+};
+
+/// How often a download reports its progress: every this many bytes, and at its end. One report
+/// for every chunk the server sent was thousands of redraws of the window for one update.
+const PROGRESS_STEP: u64 = 1 << 20;
+
+/// A download so far, in its `.part` file: the digest of what it holds, and how much of how much.
+/// Written through a buffer on the download's own thread (`on_runtime`), not a thread hop for
+/// each chunk.
+struct Part {
+    file: std::io::BufWriter<std::fs::File>,
+    hasher: Sha256,
+    received: u64,
+    total: u64,
+    reported: u64,
+}
+
+impl Part {
+    /// The part at `path`, carrying on from what an earlier download left in it.
+    fn open(path: &Path, total: u64) -> std::io::Result<Part> {
+        use std::io::{Read as _, Seek as _};
+        let mut file = std::fs::File::options()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path)?;
+        let mut hasher = Sha256::new();
+        let mut received = 0u64;
+        let mut buffer = vec![0u8; 1 << 20];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            received += read as u64;
+        }
+        file.seek(std::io::SeekFrom::End(0))?;
+        Ok(Part {
+            file: std::io::BufWriter::with_capacity(1 << 20, file),
+            hasher,
+            received,
+            total,
+            reported: 0,
+        })
+    }
+
+    /// Start the file again from nothing: the server sent the whole package, not the rest.
+    fn restart(&mut self) -> std::io::Result<()> {
+        use std::io::{Seek as _, Write as _};
+        self.file.flush()?;
+        self.file.get_mut().set_len(0)?;
+        self.file.get_mut().seek(std::io::SeekFrom::Start(0))?;
+        self.hasher = Sha256::new();
+        self.received = 0;
+        self.reported = 0;
+        Ok(())
+    }
+
+    fn write(&mut self, chunk: &[u8]) -> std::io::Result<()> {
+        std::io::Write::write_all(&mut self.file, chunk)?;
+        self.hasher.update(chunk);
+        self.received += chunk.len() as u64;
+        Ok(())
+    }
+
+    /// Tell `progress` how far it is, once a step further on or at the end.
+    fn report(&mut self, progress: &futures::channel::mpsc::UnboundedSender<(u64, u64)>) {
+        if self.received - self.reported >= PROGRESS_STEP || self.received >= self.total {
+            self.reported = self.received;
+            let _ = progress.unbounded_send((self.received, self.total));
+        }
+    }
+
+    /// The SHA-256 of everything written, once it is on disk.
+    fn finish(&mut self) -> std::io::Result<String> {
+        std::io::Write::flush(&mut self.file)?;
+        Ok(hex(&self.hasher.clone().finalize()))
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The SHA-256 of the file at `path`, if it can be read.
+fn file_digest(path: &Path) -> Option<String> {
+    use std::io::Read as _;
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 1 << 20];
+    loop {
+        match file.read(&mut buffer).ok()? {
+            0 => return Some(hex(&hasher.finalize())),
+            read => hasher.update(&buffer[..read]),
+        }
+    }
+}
+
+/// Why a download attempt ended early: for good, or with the connection, which may resume.
+enum Stop {
+    Fail(String),
+    Dropped(String),
+}
+
+/// `(first byte, whole length)` of a `Content-Range: bytes 100-199/1000` answer.
+fn content_range(value: &str) -> Option<(u64, Option<u64>)> {
+    let (range, total) = value.trim().strip_prefix("bytes ")?.split_once('/')?;
+    let first = range.split_once('-')?.0.trim().parse().ok()?;
+    Some((first, total.trim().parse().ok()))
+}
+
+/// One request for what `part` still lacks of `url`, appended to it.
+async fn receive(
+    client: &reqwest::Client,
+    url: &str,
+    part: &mut Part,
+    progress: &futures::channel::mpsc::UnboundedSender<(u64, u64)>,
+) -> Result<(), Stop> {
+    let io = |cause: std::io::Error| Stop::Fail(cause.to_string());
+    let mut request = client.get(url);
+    if part.received > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={}-", part.received));
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(failed("Could not download the update"))
+        .map_err(Stop::Dropped)?;
+    let status = response.status();
+    if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+        // What is here is not a beginning of this package: start it again.
+        part.restart().map_err(io)?;
+        return Err(Stop::Dropped("The download stopped".into()));
+    }
+    if status.is_server_error() {
+        log(&format!("download answered {status}"));
+        return Err(Stop::Dropped("Could not download the update".into()));
+    }
+    if !status.is_success() {
+        log(&format!("download answered {status}"));
+        return Err(Stop::Fail("Could not download the update".into()));
+    }
+    let resumed = status == reqwest::StatusCode::PARTIAL_CONTENT
+        && response
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(content_range)
+            .is_some_and(|(first, total)| {
+                if let Some(total) = total {
+                    part.total = total;
+                }
+                first == part.received
+            });
+    if !resumed {
+        if part.received > 0 {
+            part.restart().map_err(io)?;
+        }
+        part.total = response.content_length().unwrap_or(part.total);
+    }
+    let mut body = response.bytes_stream();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk
+            .map_err(failed("The download stopped"))
+            .map_err(Stop::Dropped)?;
+        part.write(&chunk).map_err(io)?;
+        part.report(progress);
+    }
+    if part.total > 0 && part.received < part.total {
+        return Err(Stop::Dropped("The download stopped".into()));
+    }
+    Ok(())
+}
+
+/// Fetch the rest of `part` from `url`, resuming a dropped connection; the digest of the whole.
+async fn receive_all(
+    client: &reqwest::Client,
+    url: &str,
+    part: &mut Part,
+    progress: &futures::channel::mpsc::UnboundedSender<(u64, u64)>,
+) -> Result<String, String> {
+    // A connection that drops part way carries on from the bytes already here, as long as the
+    // server can send the rest (`Range`); the update is never started over for one dropped link.
+    let mut resumes = 0;
+    loop {
+        match receive(client, url, part, progress).await {
+            Ok(()) => break,
+            Err(Stop::Fail(cause)) => return Err(cause),
+            Err(Stop::Dropped(cause)) if resumes < RESUMES => {
+                resumes += 1;
+                log(&format!(
+                    "{cause} at {} of {} bytes, resuming ({resumes}/{RESUMES})",
+                    part.received, part.total
+                ));
+                tokio::time::sleep(RESUME_AFTER * 2u32.pow(resumes - 1)).await;
+            }
+            Err(Stop::Dropped(cause)) => return Err(cause),
+        }
+    }
+    part.finish().map_err(|cause| cause.to_string())
+}
+
+/// Downloads kept from one start to the next, a folder for each version in the downloads root:
+/// a package already downloaded and checked is used again, and one cut short (KChess quit, the
+/// computer slept) carries on from its `.part`. Before, each start cleared the last one's
+/// download, so quitting before installing meant fetching the whole package again.
+const KEPT: &str = ".kept";
+
+/// Where `version`'s download is kept.
+fn kept_folder(root: &Path, version: &str) -> PathBuf {
+    root.join(KEPT).join(version)
+}
+
+/// Remove the kept downloads `stale` names (by version), except one another KChess is still
+/// downloading into (its folder's lock is held).
+fn prune_kept(root: &Path, stale: impl Fn(Option<[u64; 3]>) -> bool) {
+    let Ok(entries) = std::fs::read_dir(root.join(KEPT)) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !stale(parse_version(&name)) {
+            continue;
+        }
+        let path = entry.path();
+        let busy = std::fs::File::options()
+            .write(true)
+            .open(path.join(".lock"))
+            .is_ok_and(|lock| lock.try_lock().is_err());
+        if !busy {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+/// Download `asset` into `folder` (its version's kept folder) and check it against the
+/// release's digest; the downloaded file. `progress` hears the bytes received so far.
 async fn download(
     release: Release,
     asset: Asset,
@@ -386,49 +630,56 @@ async fn download(
         .map_err(failed("Could not download the checksums"))?;
     let expected =
         digest_for(&sums, &asset.name).ok_or("The release lists no checksum for this package")?;
-    let response = client
-        .get(&asset.browser_download_url)
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(failed("Could not download the update"))?;
-    let total = response.content_length().unwrap_or(asset.size);
-    let _ = std::fs::remove_dir_all(&folder);
-    std::fs::create_dir_all(&folder).map_err(|cause| cause.to_string())?;
+    let fail = |cause: std::io::Error| cause.to_string();
+    std::fs::create_dir_all(&folder).map_err(fail)?;
+    // One download of a version at a time: another KChess downloading it is waited for, and its
+    // finished package is then used here too.
+    let lock = std::fs::File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(folder.join(".lock"))
+        .map_err(fail)?;
+    lock.lock().map_err(fail)?;
     let file_path = folder.join(&asset.name);
-    let mut file = tokio::fs::File::create(&file_path)
-        .await
-        .map_err(|cause| cause.to_string())?;
-    let mut hasher = Sha256::new();
-    let mut received = 0u64;
-    let mut body = response.bytes_stream();
-    while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(failed("The download stopped"))?;
-        hasher.update(&chunk);
-        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
-            .await
-            .map_err(|cause| cause.to_string())?;
-        received += chunk.len() as u64;
-        let _ = progress.unbounded_send((received, total));
+    if file_digest(&file_path).is_some_and(|digest| digest == expected) {
+        log(&format!("{} was already downloaded", asset.name));
+        let size = std::fs::metadata(&file_path).map_or(asset.size, |meta| meta.len());
+        let _ = progress.unbounded_send((size, size));
+        return Ok(file_path);
     }
-    tokio::io::AsyncWriteExt::flush(&mut file)
-        .await
-        .map_err(|cause| cause.to_string())?;
-    let digest: String = hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let _ = std::fs::remove_file(&file_path);
+    let part_path = folder.join(format!("{}.part", asset.name));
+    let mut part = Part::open(&part_path, asset.size).map_err(fail)?;
+    let carried = part.received;
+    if carried > 0 {
+        log(&format!(
+            "carrying on from {carried} bytes of {}",
+            asset.name
+        ));
+    }
+    let url = &asset.browser_download_url;
+    let mut digest = receive_all(&client, url, &mut part, &progress).await;
+    if carried > 0 && digest.as_ref().is_ok_and(|digest| *digest != expected) {
+        // What an earlier start left was not this package's beginning: fetch it all again.
+        log("the kept part did not match; downloading it again");
+        part.restart().map_err(fail)?;
+        digest = receive_all(&client, url, &mut part, &progress).await;
+    }
+    let digest = digest?;
+    drop(part);
     if digest != expected {
-        let _ = std::fs::remove_dir_all(&folder);
+        let _ = std::fs::remove_file(&part_path);
         return Err("The downloaded update did not match its checksum".into());
     }
+    std::fs::rename(&part_path, &file_path).map_err(fail)?;
     Ok(file_path)
 }
 
-/// Unpack a macOS update's zip beside it; the `.app` it holds.
-fn unpack(archive: &Path) -> Result<PathBuf, String> {
-    let unpacked = archive.with_file_name("app");
+/// Unpack a macOS update's zip into `folder`; the `.app` it holds. The zip stays where it was
+/// kept, so a later start can unpack it again.
+fn unpack(archive: &Path, folder: &Path) -> Result<PathBuf, String> {
+    let unpacked = folder.join("app");
     let _ = std::fs::remove_dir_all(&unpacked);
     std::fs::create_dir_all(&unpacked).map_err(|cause| cause.to_string())?;
     let status = Command::new("ditto")
@@ -439,7 +690,6 @@ fn unpack(archive: &Path) -> Result<PathBuf, String> {
     if !status.is_ok_and(|status| status.success()) {
         return Err("The update could not be unpacked".into());
     }
-    let _ = std::fs::remove_file(archive);
     std::fs::read_dir(&unpacked)
         .map_err(|cause| cause.to_string())?
         .filter_map(Result::ok)
@@ -549,19 +799,21 @@ fn running_signer(install: &Install) -> Signer {
     }
 }
 
-/// Download, check and stage `asset` (of `package`) in `folder`: the new bundle on macOS, else
-/// the package itself. With `install` known, the update must be signed as the running app is.
+/// Download and check `asset` (of `package`) into its kept `folder`, and stage it: the new
+/// bundle on macOS (unpacked into this app's `work` folder), else the package itself. With
+/// `install` known, the update must be signed as the running app is.
 async fn fetch(
     release: Release,
     asset: Asset,
     package: Package,
     install: Option<Install>,
     folder: PathBuf,
+    work: PathBuf,
     progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
 ) -> Result<PathBuf, String> {
     let file = download(release, asset, folder, progress).await?;
     let staged = match package {
-        Package::MacZip => unpack(&file)?,
+        Package::MacZip => unpack(&file, &work)?,
         _ => file,
     };
     if let Some(install) = install {
@@ -893,7 +1145,7 @@ fn clear_stopped(root: &Path) {
     for entry in entries.filter_map(Result::ok) {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == ".lock" || name.starts_with(INSTALLING) {
+        if name == ".lock" || name == KEPT || name.starts_with(INSTALLING) {
             continue;
         }
         if let Some(folder) = name.strip_suffix(".lock") {
@@ -939,9 +1191,12 @@ fn tidy(install: Option<&Install>, root: Option<&Path>) {
             package: Package::Deb,
             path,
         }) => {
-            // A helper that stopped before installing it.
+            // What a helper stopped before it finished left: its package, a half-written outcome.
             if let Some(root) = root {
-                let _ = std::fs::remove_file(InstallLock::path(root, path).with_extension("deb"));
+                let held = InstallLock::path(root, path);
+                for left in ["deb", "outcome.log", "outcome.new"] {
+                    let _ = std::fs::remove_file(held.with_extension(left));
+                }
             }
         }
         _ => {}
@@ -957,11 +1212,34 @@ fn apply_on_quit(staged: &Path, install: &Install, reopen: bool) -> Result<(), S
     let lock = InstallLock::take(&root, &install.path)?;
     if install.package != Package::Deb {
         apply(staged, install, &lock, reopen)?;
-        std::mem::forget(lock);
-        return Ok(());
+    } else {
+        deb_helper(
+            &root,
+            staged,
+            install,
+            &lock,
+            std::process::id(),
+            "pkexec".as_ref(),
+        )?;
     }
-    let held = InstallLock::path(&root, &install.path);
-    let (package, failed) = (held.with_extension("deb"), held.with_extension("failed"));
+    // Held until this process exits; the installer or helper holds it from the start.
+    std::mem::forget(lock);
+    Ok(())
+}
+
+/// Hand the staged .deb and the installation's `lock` to a helper that installs it with
+/// `elevate dpkg -i` once process `after` (this app) has exited, and records how that went for
+/// the next start (`last_install_error`).
+fn deb_helper(
+    root: &Path,
+    staged: &Path,
+    install: &Install,
+    lock: &InstallLock,
+    after: u32,
+    elevate: &std::ffi::OsStr,
+) -> Result<std::process::Child, String> {
+    let held = InstallLock::path(root, &install.path);
+    let package = held.with_extension("deb");
     // Out of this app's download folder, which the next start may clear: the helper's now.
     std::fs::rename(staged, &package)
         .map_err(|cause| format!("The update could not be installed ({cause})"))?;
@@ -970,36 +1248,71 @@ fn apply_on_quit(staged: &Path, install: &Install, reopen: bool) -> Result<(), S
         .arg(DEB_HELPER)
         .arg("kchess-update")
         .arg(&package)
-        .arg(std::process::id().to_string())
-        .arg(&failed)
+        .arg(after.to_string())
+        .arg(held.with_extension(OUTCOME))
+        .arg(elevate)
         .stdin(lock.inherited()?)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
-    if let Err(cause) = helper {
+    helper.map_err(|cause| {
         let _ = std::fs::remove_file(&package);
-        return Err(format!("The update could not be installed ({cause})."));
-    }
-    // Held until this process exits; the helper holds it from the start.
-    std::mem::forget(lock);
-    Ok(())
+        format!("The update could not be installed ({cause}).")
+    })
 }
 
-/// Installs the .deb (`$1`) once KChess (`$2`) has exited, and notes a failure (`$3`) for the next
-/// start. Its standard input is the installation's lock (`InstallLock::inherited`), kept until
-/// the package manager is done and the package removed.
+/// The extension of the file a .deb helper records its outcome in, beside the installation's lock.
+const OUTCOME: &str = "outcome";
+
+/// Installs the .deb (`$1`) with `$4 dpkg -i` once KChess (`$2`) has exited, and records the exit
+/// status and what the package manager said (`$3`) for the next start. Its standard input is the
+/// installation's lock (`InstallLock::inherited`), kept on descriptor 9 until the package
+/// manager is done, the outcome recorded and the package removed.
 const DEB_HELPER: &str = r#"exec 9<&0 0</dev/null
 while kill -0 "$2" 2>/dev/null; do sleep 0.2; done
-if pkexec dpkg -i "$1" 9<&-; then rm -f "$3"; else echo failed > "$3"; fi
-rm -f "$1""#;
+"$4" dpkg -i "$1" 9<&- >/dev/null 2>"$3.log"
+echo $? > "$3.new"
+tail -c 2000 "$3.log" >> "$3.new"
+mv -f "$3.new" "$3"
+rm -f "$1" "$3.log""#;
 
-/// What the helper installing a .deb left for this start: whether it failed.
-fn last_install_failed(install: Option<&Install>, root: Option<&Path>) -> bool {
+/// `pkexec`'s status when the person dismissed its password prompt.
+const DISMISSED: &str = "126";
+
+/// What the helper installing a .deb on quit left for this start: the error to show when the
+/// package manager failed. An update installed, or a password prompt dismissed, shows nothing.
+/// A helper still running records its outcome for a later start.
+fn last_install_error(install: Option<&Install>, root: Option<&Path>) -> Option<String> {
     let (Some(install), Some(root)) = (install, root) else {
-        return false;
+        return None;
     };
-    let failed = InstallLock::path(root, &install.path).with_extension("failed");
-    std::fs::remove_file(failed).is_ok()
+    let held = InstallLock::path(root, &install.path);
+    // What the helpers of earlier versions left: a failure, without its cause.
+    if std::fs::remove_file(held.with_extension("failed")).is_ok() {
+        log("the last update was not installed");
+        return Some("The last update was not installed".into());
+    }
+    let outcome = held.with_extension(OUTCOME);
+    let recorded = std::fs::read_to_string(&outcome).ok()?;
+    let _ = std::fs::remove_file(&outcome);
+    let (status, said) = recorded.split_once('\n').unwrap_or((&recorded, ""));
+    match status.trim() {
+        "0" => {
+            log("the update was installed");
+            None
+        }
+        DISMISSED => {
+            log("the update was not installed: permission was not given");
+            None
+        }
+        status => {
+            log(&format!(
+                "the update was not installed (status {status}): {}",
+                said.trim()
+            ));
+            Some("The last update was not installed".into())
+        }
+    }
 }
 
 pub fn init(cx: &mut App) {
@@ -1009,7 +1322,15 @@ pub fn init(cx: &mut App) {
         .flatten();
     let root = install.as_ref().and_then(|_| downloads_root().ok());
     tidy(install.as_ref(), root.as_deref());
-    let failed = last_install_failed(install.as_ref(), root.as_deref());
+    if let (Some(install), Some(root)) = (&install, &root) {
+        // Downloads of this version or older are done with, unless an installer is still running
+        // from one.
+        if let Ok(_installing) = InstallLock::take(root, &install.path) {
+            let current = parse_version(&current_version());
+            prune_kept(root, |kept| kept.is_none() || kept <= current);
+        }
+    }
+    let failed = last_install_error(install.as_ref(), root.as_deref());
     let feed = std::env::var("KCHESS_UPDATE_FEED")
         .ok()
         .filter(|feed| !feed.is_empty())
@@ -1028,7 +1349,7 @@ pub fn init(cx: &mut App) {
         })
         .detach();
         let mut updates = Updates {
-            phase: if failed {
+            phase: if failed.is_some() {
                 Phase::Error
             } else if feed.is_some() {
                 Phase::Idle
@@ -1042,7 +1363,7 @@ pub fn init(cx: &mut App) {
             released: None,
             checked_at: None,
             progress: None,
-            error: failed.then(|| "The last update was not installed".to_string()),
+            error: failed,
             release: None,
             staged: None,
             restart: false,
@@ -1208,7 +1529,18 @@ impl Updates {
             cx.notify();
             return;
         };
-        let folder = workspace.path.join(&version);
+        let work = workspace.path.join(&version);
+        let folder = match downloads_root() {
+            Ok(root) => {
+                // Only this version's download is worth keeping now.
+                prune_kept(&root, |kept| kept != parse_version(&version));
+                kept_folder(&root, &version)
+            }
+            Err(cause) => {
+                log(&format!("no folder to keep downloads in: {cause}"));
+                work.clone()
+            }
+        };
         let (sender, mut heard) = futures::channel::mpsc::unbounded();
         let done = on_runtime(fetch(
             release,
@@ -1216,6 +1548,7 @@ impl Updates {
             package,
             self.install.clone(),
             folder,
+            work,
             sender,
         ));
         self.work = Some(cx.spawn(async move |this, cx| {
@@ -1335,7 +1668,7 @@ mod tests {
     use super::{
         BRIDGE_FOLDER, INSTALLING, Install, InstallLock, Package, Release, Signer, Workspace,
         aside, asset_name, detect, digest_for, download, downloads_in, incoming,
-        last_install_failed, latest, offer, parse_version, rename_bridge_folder, replace_by,
+        last_install_error, latest, offer, parse_version, rename_bridge_folder, replace_by,
         signed_alike, swap_file, tidy,
     };
     use sha2::{Digest, Sha256};
@@ -1592,9 +1925,119 @@ mod tests {
         drop(helper);
         tidy(Some(&install), Some(&root));
         assert!(!package.exists());
+        // An earlier version's helper notes only that it failed.
         std::fs::write(held.with_extension("failed"), "failed").unwrap();
-        assert!(last_install_failed(Some(&install), Some(&root)));
-        assert!(!last_install_failed(Some(&install), Some(&root)));
+        assert!(last_install_error(Some(&install), Some(&root)).is_some());
+        assert_eq!(last_install_error(Some(&install), Some(&root)), None);
+        // Installed, or the password prompt dismissed: nothing to show. A failure is, once.
+        let outcome = held.with_extension("outcome");
+        for quiet in ["0\n", "126\n"] {
+            std::fs::write(&outcome, quiet).unwrap();
+            assert_eq!(last_install_error(Some(&install), Some(&root)), None);
+            assert!(!outcome.exists());
+        }
+        std::fs::write(&outcome, "1\ndpkg: error processing archive\n").unwrap();
+        assert!(last_install_error(Some(&install), Some(&root)).is_some());
+        assert_eq!(last_install_error(Some(&install), Some(&root)), None);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// Review 2026-10-27 #7: install-on-quit's helper waited for the password while the app's
+    /// download folder, and the .deb in it, were the exited app's, so a KChess started meanwhile
+    /// deleted the package before dpkg opened it, and the failure went unseen. The helper now
+    /// owns the package and the installation's lock until the package manager is done, and the
+    /// next start reads what happened.
+    #[cfg(unix)]
+    #[test]
+    fn a_start_while_the_deb_helper_waits_for_a_password_leaves_its_package() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _processes = processes();
+        let folder = scratch("deb-relaunch");
+        let root = downloads_in(&folder.join("cache")).unwrap();
+        let install = Install {
+            package: Package::Deb,
+            path: folder.join("kchess"),
+        };
+        let app = Workspace::open(&root).unwrap();
+        let staged = app.path.join("KChess.deb");
+        std::fs::write(&staged, "deb").unwrap();
+        // Stands in for `pkexec dpkg -i PACKAGE`: waits (for a password) until answered, reads
+        // the package as dpkg would, then fails as dpkg does.
+        let (asked, answer, read) = (
+            folder.join("asked"),
+            folder.join("answer"),
+            folder.join("read"),
+        );
+        let elevate = folder.join("pkexec");
+        std::fs::write(
+            &elevate,
+            format!(
+                "#!/bin/sh\n: > '{asked}'\nwhile [ ! -e '{answer}' ]; do sleep 0.02; done\n\
+                 cat \"$3\" > '{read}' || exit 9\necho 'dpkg: error processing archive' >&2\n\
+                 exit 1\n",
+                asked = asked.display(),
+                answer = answer.display(),
+                read = read.display(),
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&elevate, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // The app quitting: it hands the package and the lock over, then exits.
+        let quit = folder.join("quit");
+        let mut running = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(r#"while [ ! -e "$1" ]; do sleep 0.02; done"#)
+            .arg("app")
+            .arg(&quit)
+            .spawn()
+            .unwrap();
+        let lock = InstallLock::take(&root, &install.path).unwrap();
+        let mut helper = super::deb_helper(
+            &root,
+            &staged,
+            &install,
+            &lock,
+            running.id(),
+            elevate.as_os_str(),
+        )
+        .unwrap();
+        let package = InstallLock::path(&root, &install.path).with_extension("deb");
+        assert!(!staged.exists() && package.exists(), "the helper's package");
+        drop(lock);
+        drop(app);
+        std::fs::write(&quit, "").unwrap();
+        running.wait().unwrap();
+        let started = std::time::Instant::now();
+        while !asked.exists() {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(10),
+                "the helper never asked for permission"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // A KChess starts while the password is asked for: it tidies and clears stopped apps'
+        // folders, but the helper's package and lock stay, and there is nothing to report yet.
+        tidy(Some(&install), Some(&root));
+        let relaunched = Workspace::open(&root).unwrap();
+        assert_eq!(last_install_error(Some(&install), Some(&root)), None);
+        assert!(
+            package.exists(),
+            "the package waits for the package manager"
+        );
+        assert!(InstallLock::take(&root, &install.path).is_err());
+        std::fs::write(&answer, "").unwrap();
+        assert!(helper.wait().unwrap().success());
+        assert_eq!(std::fs::read_to_string(&read).unwrap(), "deb");
+        assert!(!package.exists(), "the helper removes its package");
+        // The next start says the update was not installed, once.
+        drop(relaunched);
+        tidy(Some(&install), Some(&root));
+        let _next = Workspace::open(&root).unwrap();
+        assert_eq!(
+            last_install_error(Some(&install), Some(&root)).as_deref(),
+            Some("The last update was not installed")
+        );
+        assert_eq!(last_install_error(Some(&install), Some(&root)), None);
         let _ = std::fs::remove_dir_all(&folder);
     }
 
@@ -1949,6 +2392,240 @@ mod tests {
         let _ = std::fs::remove_dir_all(&folder);
     }
 
+    /// A server for `body` whose first `drops` answers stop part way through and hang up; with
+    /// `ranges`, it sends what a `Range: bytes=N-` asks for. Its base URL, and the `Range` each
+    /// request asked for.
+    fn flaky(
+        body: Vec<u8>,
+        drops: usize,
+        ranges: bool,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Option<u64>>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let heard = std::sync::Arc::clone(&asked);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut request = Vec::new();
+                let mut byte = [0u8; 1];
+                while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                    request.push(byte[0]);
+                }
+                let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+                let from = request.lines().find_map(|line| {
+                    line.strip_prefix("range: bytes=")?
+                        .trim_end_matches('-')
+                        .trim()
+                        .parse::<u64>()
+                        .ok()
+                });
+                let count = {
+                    let mut asked = heard.lock().unwrap();
+                    asked.push(from);
+                    asked.len()
+                };
+                let start = if ranges {
+                    from.unwrap_or(0) as usize
+                } else {
+                    0
+                };
+                let rest = &body[start..];
+                let head = if ranges && from.is_some() {
+                    format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{}/{}\r\n",
+                        body.len() - 1,
+                        body.len()
+                    )
+                } else {
+                    "HTTP/1.1 200 OK\r\n".to_string()
+                };
+                let _ = write!(
+                    stream,
+                    "{head}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                    rest.len()
+                );
+                if count <= drops {
+                    // A third of what is left, then the connection goes.
+                    let _ = stream.write_all(&rest[..rest.len() / 3]);
+                    let _ = stream.flush();
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                    continue;
+                }
+                let _ = stream.write_all(rest);
+                let _ = stream.set_read_timeout(Some(kchess_core::loopback::HANG_UP_WAIT));
+                let _ = std::io::copy(&mut stream, &mut std::io::sink());
+            }
+        });
+        (base, asked)
+    }
+
+    /// A download whose connection dropped started over from nothing, so a slow or unsteady link
+    /// could never finish a 120 MB update; it now carries on from the bytes already received.
+    #[test]
+    fn a_dropped_download_resumes_where_it_stopped() {
+        let folder = scratch("resume");
+        let package: Vec<u8> = (0..300_000u32).map(|n| (n % 251) as u8).collect();
+        let name = asset_name("2026.11.0", Package::AppImage).unwrap();
+        let digest: String = Sha256::digest(&package)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let sums = serve(vec![(
+            "/SHA256SUMS.txt".into(),
+            format!("{digest}  {name}\n").into_bytes(),
+        )]);
+        let attempt = |server: String, target: &str| {
+            let release: Release = serde_json::from_value(serde_json::json!({
+                "tag_name": "v2026.11.0",
+                "assets": [
+                    { "name": name, "browser_download_url": format!("{server}/pkg"), "size": package.len() },
+                    { "name": "SHA256SUMS.txt", "browser_download_url": format!("{sums}/SHA256SUMS.txt") },
+                ],
+            }))
+            .unwrap();
+            let asset = release.assets[0].clone();
+            let (progress, _heard) = futures::channel::mpsc::unbounded();
+            block_on(download(release, asset, folder.join(target), progress))
+        };
+
+        // Two drops: each request asks only for what is missing, and the file is whole.
+        let (server, asked) = flaky(package.clone(), 2, true);
+        let file = attempt(server, "ranged").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), package);
+        let asked = asked.lock().unwrap().clone();
+        assert_eq!(asked.len(), 3);
+        assert_eq!(asked[0], None);
+        assert!(asked[1].is_some_and(|from| from > 0));
+        assert!(asked[2] > asked[1], "each resume starts further on");
+
+        // A server that ignores `Range` sends the whole package again, which replaces the part.
+        let (server, _) = flaky(package.clone(), 1, false);
+        let file = attempt(server, "whole").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), package);
+
+        // A link that keeps dropping gives up after its resumes.
+        let (server, asked) = flaky(package.clone(), usize::MAX, true);
+        assert_eq!(attempt(server, "gone"), Err("The download stopped".into()));
+        assert_eq!(asked.lock().unwrap().len(), 1 + super::RESUMES as usize);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// Each start cleared the last one's download, so quitting before installing meant fetching
+    /// the whole package again; a checked download is now used again, and a part carries on.
+    #[test]
+    fn a_download_is_kept_from_one_start_to_the_next() {
+        let folder = scratch("kept");
+        let package: Vec<u8> = (0..300_000u32).map(|n| (n % 241) as u8).collect();
+        let name = asset_name("2026.11.0", Package::AppImage).unwrap();
+        let digest: String = Sha256::digest(&package)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let sums = serve(vec![(
+            "/SHA256SUMS.txt".into(),
+            format!("{digest}  {name}\n").into_bytes(),
+        )]);
+        let attempt = |server: &str| {
+            let release: Release = serde_json::from_value(serde_json::json!({
+                "tag_name": "v2026.11.0",
+                "assets": [
+                    { "name": name, "browser_download_url": format!("{server}/pkg"), "size": package.len() },
+                    { "name": "SHA256SUMS.txt", "browser_download_url": format!("{sums}/SHA256SUMS.txt") },
+                ],
+            }))
+            .unwrap();
+            let asset = release.assets[0].clone();
+            let (progress, heard) = futures::channel::mpsc::unbounded();
+            let result = block_on(download(release, asset, folder.clone(), progress));
+            (
+                result,
+                futures::executor::block_on_stream(heard).collect::<Vec<_>>(),
+            )
+        };
+        let part = folder.join(format!("{name}.part"));
+
+        // What an earlier start received, its first third, is asked for no more.
+        std::fs::write(&part, &package[..100_000]).unwrap();
+        let (server, asked) = flaky(package.clone(), 0, true);
+        let (file, heard) = attempt(&server);
+        assert_eq!(std::fs::read(file.unwrap()).unwrap(), package);
+        assert_eq!(*asked.lock().unwrap(), vec![Some(100_000)]);
+        assert!(!part.exists());
+        assert_eq!(heard.last(), Some(&(300_000, 300_000)));
+
+        // The checked package is used again without fetching it.
+        let (server, asked) = flaky(package.clone(), 0, true);
+        let (file, heard) = attempt(&server);
+        assert_eq!(std::fs::read(file.unwrap()).unwrap(), package);
+        assert!(asked.lock().unwrap().is_empty());
+        assert_eq!(heard, vec![(300_000, 300_000)]);
+
+        // A kept package or part that is not this one's is fetched again, whole.
+        std::fs::write(folder.join(&name), b"something else").unwrap();
+        std::fs::write(&part, vec![7u8; 50_000]).unwrap();
+        let (server, asked) = flaky(package.clone(), 0, true);
+        let (file, _) = attempt(&server);
+        assert_eq!(std::fs::read(file.unwrap()).unwrap(), package);
+        assert_eq!(*asked.lock().unwrap(), vec![Some(50_000), None]);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// A download reports a step at a time, not once for every chunk the server sends.
+    #[test]
+    fn progress_is_reported_a_step_at_a_time() {
+        let folder = scratch("progress");
+        let package = vec![1u8; 5 * super::PROGRESS_STEP as usize + 123];
+        let url = feed("2026.11.0", &package, |digest, name| {
+            format!("{digest}  {name}\n")
+        });
+        let heard = block_on(async move {
+            let release: Release = latest(url).await.unwrap();
+            let asset = release.assets[0].clone();
+            let (progress, heard) = futures::channel::mpsc::unbounded();
+            download(release, asset, folder.join("pkg"), progress)
+                .await
+                .unwrap();
+            let _ = std::fs::remove_dir_all(&folder);
+            futures::executor::block_on_stream(heard).collect::<Vec<_>>()
+        });
+        let total = package.len() as u64;
+        assert!(heard.len() <= 6, "{} reports", heard.len());
+        assert_eq!(heard.last(), Some(&(total, total)));
+    }
+
+    /// Only the version being downloaded is kept, never one another KChess is downloading.
+    #[test]
+    fn old_kept_downloads_are_removed() {
+        let _processes = processes();
+        let root = scratch("prune");
+        let kept = |version: &str| super::kept_folder(&root, version);
+        for version in ["2026.10.1", "2026.11.0", "2026.12.0", "junk"] {
+            std::fs::create_dir_all(kept(version)).unwrap();
+        }
+        let busy = std::fs::File::create(kept("2026.10.1").join(".lock")).unwrap();
+        busy.lock().unwrap();
+        let current = parse_version("2026.11.0");
+        super::prune_kept(&root, |version| version.is_none() || version <= current);
+        assert!(kept("2026.10.1").exists(), "still being downloaded");
+        assert!(!kept("2026.11.0").exists() && !kept("junk").exists());
+        assert!(kept("2026.12.0").exists());
+        drop(busy);
+
+        // A running app's start never clears the kept downloads.
+        super::clear_stopped(&root);
+        assert!(kept("2026.12.0").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_partial_answer_says_where_it_starts() {
+        use super::content_range;
+        assert_eq!(content_range("bytes 100-199/1000"), Some((100, Some(1000))));
+        assert_eq!(content_range("bytes 5-9/*"), Some((5, None)));
+        assert_eq!(content_range("items 1-2/3"), None);
+    }
+
     fn block_on<T: Send + 'static>(
         work: impl std::future::Future<Output = T> + Send + 'static,
     ) -> T {
@@ -1989,7 +2666,13 @@ mod tests {
             refused,
             Err("The downloaded update did not match its checksum".into())
         );
-        assert!(!folder.join("bad").exists());
+        let left: Vec<_> = std::fs::read_dir(folder.join("bad"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name != ".lock")
+            .collect();
+        assert!(left.is_empty(), "nothing of it is kept: {left:?}");
 
         let url = feed("2026.11.0", &package, |_, _| "abc  other.zip\n".into());
         assert_eq!(

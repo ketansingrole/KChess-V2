@@ -42,3 +42,56 @@ fn escape_goes_back_to_all_tournaments(cx: &mut gpui_kit::TestAppContext) {
     app.wait_gone("tournament-join");
     app.find(("tournaments-filter", 0usize));
 }
+
+/// A tournament left before its details came: they arrive late, while another is open, and are
+/// not shown as that one's (each tournament opened counts its requests from 1).
+#[gpui_kit::test]
+fn a_late_reply_for_another_tournament_is_not_shown(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::{
+        HELD_ARENA, HELD_ARENA_ASKED, HELD_ARENA_B, HELD_ARENA_B_ASKED, HELD_ARENA_B_RELEASED,
+        HELD_ARENA_RELEASED,
+    };
+    use std::sync::atomic::Ordering;
+    let mut app = Harness::start(cx);
+    app.online();
+    let shown = |app: &mut Harness| {
+        app.with_window(|_, cx| {
+            crate::shell::view_of::<crate::pages::tournaments::TournamentsPage>(
+                crate::pages::Page::Tournaments,
+                cx,
+            )
+            .and_then(|page| page.read(cx).shown_name())
+        })
+    };
+    app.with_window(|window, cx| crate::shell::open_tournament(HELD_ARENA, window, cx));
+    app.wait_for("the first arena to be asked for", |_, _| {
+        HELD_ARENA_ASKED.load(Ordering::SeqCst)
+    });
+    app.with_window(|window, cx| crate::shell::open_tournament(HELD_ARENA_B, window, cx));
+    // The first arena's details come while the second is open.
+    HELD_ARENA_RELEASED.store(true, Ordering::SeqCst);
+    app.wait_for("the second arena to be asked for", |_, _| {
+        HELD_ARENA_B_ASKED.load(Ordering::SeqCst)
+    });
+    let mut frames = 0;
+    app.wait_for("the first arena's reply to be handled", |_, _| {
+        frames += 1;
+        frames > 120
+    });
+    let late = shown(&mut app);
+    HELD_ARENA_B_RELEASED.store(true, Ordering::SeqCst);
+    assert_ne!(
+        late.as_deref(),
+        Some("Late Arena"),
+        "the first arena shown as the second"
+    );
+    app.wait_for("the second arena's details", |_, cx| {
+        crate::shell::view_of::<crate::pages::tournaments::TournamentsPage>(
+            crate::pages::Page::Tournaments,
+            cx,
+        )
+        .and_then(|page| page.read(cx).shown_name())
+        .as_deref()
+            == Some("Second Arena")
+    });
+}

@@ -300,8 +300,8 @@ impl Chesscom {
         let generation = self.next_sync.fetch_add(1, Ordering::SeqCst) + 1;
         let (send, receive) = watch::channel(None);
         lock(&self.syncs).insert(key.clone(), (generation, receive));
-        let result = self.run(name).await;
-        {
+        // Forgotten however the run ends, a cancelled call included (see `sync_account`).
+        let forget = crate::tasks::on_drop(|| {
             let mut syncs = lock(&self.syncs);
             if syncs
                 .get(&key)
@@ -309,7 +309,9 @@ impl Chesscom {
             {
                 syncs.remove(&key);
             }
-        }
+        });
+        let result = self.run(name).await;
+        drop(forget);
         let _ = send.send(Some(result.clone()));
         if let Ok(fetched) = &result {
             self.host.log(

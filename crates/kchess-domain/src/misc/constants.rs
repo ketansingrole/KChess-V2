@@ -224,6 +224,15 @@ pub fn performance_names() -> Vec<String> {
         )
         .collect()
 }
+
+/// Whether `name` is one of `performance_names()`, without building the list.
+pub fn is_performance_name(name: &str) -> bool {
+    matches!(name, "app.ready" | "board.frame" | "voice.activation")
+        || name
+            .strip_prefix("page.navigation:")
+            .is_some_and(|route| RENDERER_ROUTES.contains(&route))
+}
+
 /// Largest serialized document the core stores (`MAX_DOCUMENT`).
 pub const MAX_DOCUMENT: usize = 2_000_000;
 pub const MAX_CHAPTERS: usize = 64;
@@ -232,3 +241,24 @@ pub const MAX_MOVES: usize = 1024;
 pub const EXPORT_MAX: usize = 40 * 1024 * 1024;
 /// `Number.MAX_SAFE_INTEGER`
 pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn performance_name_check_matches_the_list() {
+        let names = performance_names();
+        assert!(names.iter().all(|name| is_performance_name(name)));
+        for other in [
+            "",
+            "app",
+            "page.navigation:",
+            "page.navigation:/nowhere",
+            "board.frame ",
+        ] {
+            assert!(!names.iter().any(|name| name == other));
+            assert!(!is_performance_name(other), "{other}");
+        }
+    }
+}

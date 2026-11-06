@@ -632,7 +632,7 @@ fn assert_uuid(value: J) -> Checked<String> {
 /// `recordPerformance` name: one of the frontend's timings (`PERFORMANCE_NAMES`).
 fn assert_performance_name(value: J) -> Checked<String> {
     let text: String = decode(value, plain)?;
-    let known = performance_names().contains(&text);
+    let known = is_performance_name(&text);
     ensure(known, None, "", || "a performance timing name".into())?;
     Ok(text)
 }
@@ -1648,12 +1648,10 @@ fn assert_analysis_request(value: J) -> Checked<AnalysisRequest> {
     }
     let root = request.root_fen.as_deref().unwrap_or(&request.fen);
     let moves = request.moves.as_deref().unwrap_or_default();
-    let positions = replay::replay_positions(root, moves);
-    let normalized = replay::replay_positions(&request.fen, &Vec::<&str>::new())
-        .first()
-        .map(|p| p.fen.clone());
-    let last = positions.last().map(|p| p.fen.as_str());
-    if normalized.is_none() || positions.len() != moves.len() + 1 || last != normalized.as_deref() {
+    // Only the final position matters: replay without a FEN and end check for every ply.
+    let last = replay::fen_after(root, moves, moves.len());
+    let normalized = replay::fen_after(&request.fen, &[] as &[&str], 0);
+    if normalized.is_none() || last != normalized {
         return Err("Invalid analysis position or move history.".into());
     }
     Ok(request)
@@ -2255,6 +2253,15 @@ fn assert_repertoire_key(value: J) -> Checked<String> {
     Ok(key)
 }
 
+/// A repertoire line: its UCI moves, as the spaced-repetition schedule names lines.
+fn assert_repertoire_line(value: J) -> Checked<String> {
+    let line: String = decode(value, plain)?;
+    if !crate::training::repetition::valid_line(&line) {
+        return Err("A repertoire line must be its UCI moves.".into());
+    }
+    Ok(line)
+}
+
 /// A view preference's name: `kchess:` and lowercase letters, digits, `-` and `:`, as the Electron
 /// the Electron app named its `localStorage` keys; at most 100 characters.
 fn assert_view_preference_key(value: J) -> Checked<String> {
@@ -2449,6 +2456,7 @@ validators! {
     "assertStudyCommandShape" => assert_study_command_shape,
     "assertLibraryId" => assert_library_id,
     "assertRepertoireKey" => assert_repertoire_key,
+    "assertRepertoireLine" => assert_repertoire_line,
     "assertViewPreferenceKey" => assert_view_preference_key,
     "assertSessionKind" => assert_session_kind,
     "assertSide" => assert_side,

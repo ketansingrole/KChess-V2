@@ -466,6 +466,13 @@ impl Live {
     /// board.
     pub fn past_games(&mut self, cx: &mut App, palette: &Palette) -> Option<AnyElement> {
         let previous = self.frame.as_ref()?["previous"].as_array()?.clone();
+        // Boards of games the channel no longer lists are let go: a channel left on for hours
+        // added one per game.
+        self.past.retain(|id, _| {
+            previous
+                .iter()
+                .any(|entry| entry["gameId"].as_str() == Some(id))
+        });
         if previous.is_empty() {
             return None;
         }

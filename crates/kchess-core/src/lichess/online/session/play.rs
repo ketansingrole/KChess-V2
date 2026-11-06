@@ -20,6 +20,28 @@ use crate::lichess::online::state::{
     UserPresence, core,
 };
 
+/// The one move being sent; released when its answer arrives or the call is dropped.
+struct MoveInFlight<'a> {
+    session: &'a OnlineSession,
+}
+
+impl<'a> MoveInFlight<'a> {
+    fn claim(session: &'a OnlineSession) -> Res<MoveInFlight<'a>> {
+        let mut st = session.st();
+        if st.move_in_flight {
+            return Err(core("A move is already being sent."));
+        }
+        st.move_in_flight = true;
+        Ok(MoveInFlight { session })
+    }
+}
+
+impl Drop for MoveInFlight<'_> {
+    fn drop(&mut self) {
+        self.session.st().move_in_flight = false;
+    }
+}
+
 impl OnlineSession {
     /// Start the board's stream of game `id` (`openGame`). The state is set before this returns,
     /// so the game counts as played at once; the stream itself runs on a task.
@@ -87,7 +109,11 @@ impl OnlineSession {
         let kind = event["type"].as_str().unwrap_or("").to_string();
         if kind == "gameFull" {
             let correspondence = event["speed"].as_str() == Some("correspondence");
-            self.st().live_correspondence = correspondence;
+            let mut st = self.st();
+            // A replaced game's last event must not describe the game opened since.
+            if st.live_game == game_id {
+                st.live_correspondence = correspondence;
+            }
         }
         let status = match kind.as_str() {
             "gameFull" => event["state"]["status"].as_str(),
@@ -98,7 +124,9 @@ impl OnlineSession {
         if over {
             finished.store(true, Ordering::SeqCst);
             let mut st = self.st();
-            st.live_game.clear();
+            if st.live_game == game_id {
+                st.live_game.clear();
+            }
             if st.protected_game == game_id {
                 st.protected_game.clear();
             }
@@ -159,7 +187,11 @@ impl OnlineSession {
 
     /// Send one move (`move`). The move is sent once: an ambiguous answer is an error, never a
     /// retry.
+    ///
+    /// Moves are serialised across every window: while one is unanswered, another is refused,
+    /// never queued, so it cannot land on a later position nobody chose it for.
     pub async fn move_uci(&self, id: &str, uci: &str) -> Res<()> {
+        let _sending = MoveInFlight::claim(self)?;
         let (account, token) = self.live_token(id, "sending a move").await?;
         let path = format!(
             "/api/board/game/{}/move/{}",

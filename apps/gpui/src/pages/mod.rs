@@ -132,12 +132,12 @@ impl Pages {
         }
     }
 
-    /// The page itself has the keys, not one of its text fields or menus.
-    pub fn page_focused(&self, window: &Window) -> bool {
+    /// The page itself (or its board) has the keys, not one of its text fields or menus.
+    pub fn page_focused(&self, window: &Window, cx: &App) -> bool {
         self.views
             .get(&self.current)
             .and_then(|shown| shown.focus.as_ref())
-            .is_some_and(|focus| focus.is_focused(window))
+            .is_some_and(|focus| crate::board::page_has_keys(focus, window, cx))
     }
 
     /// The Settings page, once it has been shown.

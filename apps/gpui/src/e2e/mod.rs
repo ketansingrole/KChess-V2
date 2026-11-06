@@ -19,6 +19,7 @@ mod fake_lichess;
 mod history;
 mod live_game;
 mod local;
+mod memory;
 mod online;
 mod openings;
 mod palette;
@@ -457,6 +458,26 @@ impl Harness {
     pub fn press(&mut self, key: &str) {
         self.with_window(|window, cx| window.press(key, cx));
         self.cx.run_until_parked();
+    }
+
+    /// Press Tab until the board has the keys, as a keyboard reaches it.
+    pub fn tab_to_board(&mut self) {
+        for _ in 0..200 {
+            if self.find("chess-board").focused() == Some(true) {
+                return;
+            }
+            self.with_window(|window, cx| window.focus_next(cx));
+        }
+        panic!("Tab never reached the board");
+    }
+
+    /// The accessible name of a board's square ("e4").
+    pub fn square_name(&mut self, square: &str) -> String {
+        let square: shakmaty::Square = square.parse().expect("a square");
+        self.find(("square", usize::from(square)))
+            .label()
+            .unwrap_or_default()
+            .to_string()
     }
 
     /// Type text into the focused input.

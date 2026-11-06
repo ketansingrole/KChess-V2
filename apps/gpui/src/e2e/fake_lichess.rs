@@ -377,6 +377,16 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             Showcase::Games(name) => ndjson_lines(&mut out, &showcase_games(&name)),
         };
     }
+    // The same game behind a slow link: its answer waits until a test lets it go.
+    if (request.method.as_str(), request.path.as_str()) == ("POST", "/api/games/export/_ids")
+        && request.body.trim() == HELD_GAME
+    {
+        HELD_GAME_ASKED.store(true, Ordering::SeqCst);
+        while !HELD_GAME_RELEASED.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        return pgn(&mut out, LINKED_PGN);
+    }
     // Games are public: the one a pasted link can fetch here.
     if (request.method.as_str(), request.path.as_str()) == ("POST", "/api/games/export/_ids")
         && request.body.trim() == LINKED_GAME
@@ -448,6 +458,43 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             return reply(
                 &mut out,
                 &json!({ "tour": { "id": BROADCAST_TOUR }, "round": { "id": round } }),
+            );
+        }
+        // Two more arenas, whose details each wait until a test lets them go.
+        ("GET", path)
+            if path == format!("/api/tournament/{HELD_ARENA}")
+                || path == format!("/api/tournament/{HELD_ARENA_B}") =>
+        {
+            let (asked, released, id, name) = if path.ends_with(HELD_ARENA) {
+                (
+                    &HELD_ARENA_ASKED,
+                    &HELD_ARENA_RELEASED,
+                    HELD_ARENA,
+                    "Late Arena",
+                )
+            } else {
+                (
+                    &HELD_ARENA_B_ASKED,
+                    &HELD_ARENA_B_RELEASED,
+                    HELD_ARENA_B,
+                    "Second Arena",
+                )
+            };
+            asked.store(true, Ordering::SeqCst);
+            while !released.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            return reply(
+                &mut out,
+                &json!({
+                    "id": id,
+                    "fullName": name,
+                    "clock": { "limit": 180, "increment": 0 },
+                    "minutes": 30,
+                    "nbPlayers": 1,
+                    "secondsToStart": 300,
+                    "standing": { "page": 1, "players": [] },
+                }),
             );
         }
         // A public arena about to start, which its link opens.
@@ -701,8 +748,19 @@ fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
 
 /// The game a Lichess link in the analysis board's import names, and its PGN.
 pub const LINKED_GAME: &str = "kchessE2";
+/// A game whose export is held until `HELD_GAME_RELEASED` (one test uses it).
+pub const HELD_GAME: &str = "kchessH1";
+pub static HELD_GAME_ASKED: AtomicBool = AtomicBool::new(false);
+pub static HELD_GAME_RELEASED: AtomicBool = AtomicBool::new(false);
 /// A public study, the chapter its link names, and one in a variant the board cannot play.
 pub const ARENA: &str = "kcArena1";
+/// An arena whose details are held until `HELD_ARENA_RELEASED` (one test uses it).
+pub const HELD_ARENA: &str = "kcHeldA1";
+pub static HELD_ARENA_ASKED: AtomicBool = AtomicBool::new(false);
+pub static HELD_ARENA_RELEASED: AtomicBool = AtomicBool::new(false);
+pub const HELD_ARENA_B: &str = "kcHeldA2";
+pub static HELD_ARENA_B_ASKED: AtomicBool = AtomicBool::new(false);
+pub static HELD_ARENA_B_RELEASED: AtomicBool = AtomicBool::new(false);
 pub const STUDY: &str = "kcStudy1";
 pub const STUDY_CHAPTER: &str = "kcChap01";
 pub const VARIANT_STUDY: &str = "kcStudy2";

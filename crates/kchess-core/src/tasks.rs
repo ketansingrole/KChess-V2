@@ -31,6 +31,24 @@ pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// Runs its closure when dropped: bookkeeping a call adds before an `.await` and must undo after
+/// it, on every path. A call whose future is dropped (a socket client cancels it or disconnects,
+/// which aborts its task) never reaches the code after the `.await`.
+pub(crate) struct OnDrop<F: FnOnce()>(Option<F>);
+
+impl<F: FnOnce()> Drop for OnDrop<F> {
+    fn drop(&mut self) {
+        if let Some(undo) = self.0.take() {
+            undo();
+        }
+    }
+}
+
+/// `undo` runs when the returned guard is dropped.
+pub(crate) fn on_drop<F: FnOnce()>(undo: F) -> OnDrop<F> {
+    OnDrop(Some(undo))
+}
+
 /// `tokio::spawn` for detached work: `on_panic` runs if `work` panics.
 pub(crate) fn spawn_guarded(
     work: impl Future<Output = ()> + Send + 'static,
