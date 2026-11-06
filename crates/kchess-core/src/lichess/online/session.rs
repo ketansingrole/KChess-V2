@@ -567,12 +567,19 @@ impl OnlineSession {
         if kind == "gameFinish" {
             self.ongoing_changed();
             let game_id = event["game"]["gameId"].as_str().unwrap_or("").to_string();
-            let (live, protected) = {
-                let st = self.st();
-                (st.live_game.clone(), st.protected_game.clone())
-            };
-            if game_id != live && game_id != protected {
-                return;
+            {
+                let mut st = self.st();
+                if game_id != st.live_game && game_id != st.protected_game {
+                    return;
+                }
+                // Lichess may report the finish here before the game's own stream does, and the
+                // window offers a new game on it: end the game now, as its final state would.
+                if st.live_game == game_id {
+                    st.live_game.clear();
+                }
+                if st.protected_game == game_id {
+                    st.protected_game.clear();
+                }
             }
         }
         self.emit("online:event", event);
