@@ -1368,6 +1368,14 @@ mod fen_tests {
         assert_eq!(san("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1", "e5d6"), "exd6");
         assert_eq!(san("4k3/8/8/8/8/8/8/R3K3 w - - 0 1", "a1a8"), "Ra8+");
         assert_eq!(san("k7/8/1K6/8/8/8/8/7R w - - 0 1", "h1h8"), "Rh8#");
+        // Antichess has no royal king, and two of them can reach one square.
+        let mut kings = setup_position(
+            Variant::Antichess,
+            parse_fen("8/7p/8/8/8/8/8/K1K5 w - - 0 1").unwrap(),
+        )
+        .unwrap();
+        let m = legal_move(&kings, parse_uci("a1b2").unwrap()).unwrap();
+        assert_eq!(san_and_play(&mut kings, m), "Kab2");
     }
 
     /// SAN parsing finds the one piece that can make the move, in any spelling Lichess accepts.
@@ -1402,5 +1410,17 @@ mod fen_tests {
         );
         assert_eq!(parsed("4k3/8/8/8/8/8/8/4K3 w - - 0 1", "O-O"), None);
         assert_eq!(parsed(START, "Nf3é"), None);
+        assert_eq!(parsed(START, "Ni3"), None);
+        assert_eq!(parsed(START, "Nf9"), None);
+        // A Chess960 king beside its rook castles by moving onto it.
+        let beside = setup_position(
+            Variant::Chess,
+            parse_fen("4k3/8/8/8/8/8/8/5KR1 w G - 0 1").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            parse_san(&beside, "Kg1").map(|m| make_uci(&m)).as_deref(),
+            Some("f1g1")
+        );
     }
 }
