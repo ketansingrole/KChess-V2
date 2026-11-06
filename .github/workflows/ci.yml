@@ -14,6 +14,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # `.config/nextest.toml`: report every failure of the run, not only the first.
+  NEXTEST_PROFILE: ci
   GPUI_LINUX_LIBS: >-
     libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev
     libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
@@ -111,6 +113,7 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@cargo-nextest
       - run: rustup component add llvm-tools-preview
       # The official Stockfish, so the tests that need a real engine run (`tests/support`).
       - name: Fetch Stockfish
@@ -157,14 +160,15 @@ jobs:
           shared-key: gpui
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@cargo-nextest
       - run: cargo clippy -p kchess-gpui -p kchess-cli -p xtask --all-targets --locked -- -D warnings
-      - run: cargo test -p kchess-gpui -p kchess-cli -p xtask --locked
+      - run: cargo nextest run -p kchess-gpui -p kchess-cli -p xtask --locked
       # The headless packages run everywhere else in `check` (Linux); here they keep building and
       # passing on Windows: named pipes, CRLF checkouts, Unix-only test helpers.
       - if: runner.os == 'Windows'
         run: cargo clippy -p kchess-domain -p kchess-core -p kchess-service --all-targets --locked -- -D warnings
       - if: runner.os == 'Windows'
-        run: cargo test -p kchess-domain -p kchess-core -p kchess-service --locked
+        run: cargo nextest run -p kchess-domain -p kchess-core -p kchess-service --locked
 
   # The packages as the Release workflow makes them (ad hoc signed on macOS), with the release
   # profile's dependencies cached apart from the tests' debug ones. `windows-upgrade` packages
