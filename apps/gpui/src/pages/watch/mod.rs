@@ -128,6 +128,8 @@ pub struct WatchPage {
     /// The kind of failure (`ErrorKind`) the feed's last state reported.
     failure: Option<String>,
     error: Option<SharedString>,
+    /// Why TV's channel list did not load, shown on the TV tab only.
+    channels_error: Option<SharedString>,
     session: Option<f64>,
     round_session: Option<f64>,
     pending: Option<Pending>,
@@ -151,6 +153,8 @@ pub struct WatchPage {
     layout: PlayLayout,
     shown: bool,
     focus: FocusHandle,
+    /// The mouse wheel over the board, which steps through the moves.
+    wheel: crate::game::view::Wheel,
     _tick: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -162,6 +166,11 @@ impl Focusable for WatchPage {
 }
 
 impl WatchPage {
+    /// The broadcasts' search field, for Find (`shell::find_on_page`).
+    pub(crate) fn search_fields(&self) -> Vec<Entity<gpui_kit::component::input::InputState>> {
+        vec![self.broadcasts.query.clone()]
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> WatchPage {
         let events = cx.global::<AppCore>().events.clone();
         let online = cx.global::<OnlineHandle>().0.clone();
@@ -200,6 +209,7 @@ impl WatchPage {
             phase: None,
             failure: None,
             error: None,
+            channels_error: None,
             session: None,
             round_session: None,
             pending: None,
@@ -225,6 +235,7 @@ impl WatchPage {
             layout: PlayLayout::default(),
             shown: false,
             focus: cx.focus_handle(),
+            wheel: Default::default(),
             _tick: None,
             _subscriptions: subscriptions,
         }
@@ -344,6 +355,8 @@ impl WatchPage {
         }
         self.tab = tab;
         crate::prefs::set(cx, TAB_KEY, tab.key());
+        // A failure belongs to the tab it happened on.
+        self.error = None;
         self.stop(cx);
         self.resume(window, cx);
         self.engine_changed(cx);
@@ -418,9 +431,10 @@ impl WatchPage {
             let _ = this.update(cx, |this, cx| {
                 match answer {
                     Ok(channels) => {
+                        this.channels_error = None;
                         this.channels = channels.as_array().cloned().unwrap_or_default()
                     }
-                    Err(cause) => this.error = Some(cause.message.into()),
+                    Err(cause) => this.channels_error = Some(cause.message.into()),
                 }
                 cx.notify();
             });
@@ -624,75 +638,85 @@ impl WatchPage {
                     .accessibility_label("Refresh channels")
                     .on_click(cx.listener(|this, _, _, cx| this.load_channels(cx))),
             );
-        list_card(palette).child(header).child(
-            v_flex()
-                .id("watch-channel-list")
-                .gap(px(2.))
-                .overflow_y_scroll()
-                .children(self.channels.iter().enumerate().map(|(index, channel)| {
-                    let key = channel["key"].as_str().unwrap_or_default().to_string();
-                    let chosen = current.as_deref() == Some(key.as_str());
-                    let sub = if channel["player"].is_object() {
-                        label(&channel["player"])
-                    } else {
-                        "No game".into()
-                    };
-                    h_flex()
-                        .id(("watch-channel", index))
-                        .role(Role::Button)
-                        .keyboard_focus(palette.primary)
-                        .aria_label(channel["label"].as_str().unwrap_or_default().to_string())
-                        .aria_selected(chosen)
-                        .gap(px(12.))
-                        .p(px(8.))
-                        .rounded(radii::MD)
-                        .when(chosen, |row| {
-                            row.bg(crate::theme::tint(palette.primary, 14.))
-                        })
-                        .when(disabled, |row| row.opacity(0.6))
-                        .when(!disabled, |row| {
-                            let key = key.clone();
-                            row.cursor_pointer()
-                                .hover(|row| row.bg(palette.accented))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.watch_channel(key.clone(), cx)
-                                }))
-                        })
-                        .child(
-                            channel_icon(&key)
-                                .size(px(20.))
-                                .flex_none()
-                                .text_color(if chosen {
+        let failed = self
+            .channels_error
+            .clone()
+            .filter(|_| self.channels.is_empty());
+        list_card(palette)
+            .child(header)
+            .children(failed.map(|error| {
+                div()
+                    .px(px(8.))
+                    .text_size(px(12.))
+                    .text_color(palette.error)
+                    .child(error)
+            }))
+            .child(
+                v_flex()
+                    .id("watch-channel-list")
+                    .gap(px(2.))
+                    .overflow_y_scroll()
+                    .children(self.channels.iter().enumerate().map(|(index, channel)| {
+                        let key = channel["key"].as_str().unwrap_or_default().to_string();
+                        let chosen = current.as_deref() == Some(key.as_str());
+                        let sub = if channel["player"].is_object() {
+                            label(&channel["player"])
+                        } else {
+                            "No game".into()
+                        };
+                        h_flex()
+                            .id(("watch-channel", index))
+                            .role(Role::Button)
+                            .keyboard_focus(palette.primary)
+                            .aria_label(channel["label"].as_str().unwrap_or_default().to_string())
+                            .aria_selected(chosen)
+                            .gap(px(12.))
+                            .p(px(8.))
+                            .rounded(radii::MD)
+                            .when(chosen, |row| {
+                                row.bg(crate::theme::tint(palette.primary, 14.))
+                            })
+                            .when(disabled, |row| row.opacity(0.6))
+                            .when(!disabled, |row| {
+                                let key = key.clone();
+                                row.cursor_pointer()
+                                    .hover(|row| row.bg(palette.accented))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.watch_channel(key.clone(), cx)
+                                    }))
+                            })
+                            .child(channel_icon(&key).size(px(20.)).flex_none().text_color(
+                                if chosen {
                                     palette.primary
                                 } else {
                                     palette.text_muted
-                                }),
-                        )
-                        .child(
-                            v_flex()
-                                .min_w_0()
-                                .child(
-                                    div()
-                                        .text_size(px(14.))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .truncate()
-                                        .child(
-                                            channel["label"]
-                                                .as_str()
-                                                .unwrap_or_default()
-                                                .to_string(),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(12.))
-                                        .text_color(palette.text_muted)
-                                        .truncate()
-                                        .child(sub),
-                                ),
-                        )
-                })),
-        )
+                                },
+                            ))
+                            .child(
+                                v_flex()
+                                    .min_w_0()
+                                    .child(
+                                        div()
+                                            .text_size(px(14.))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .truncate()
+                                            .child(
+                                                channel["label"]
+                                                    .as_str()
+                                                    .unwrap_or_default()
+                                                    .to_string(),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(12.))
+                                            .text_color(palette.text_muted)
+                                            .truncate()
+                                            .child(sub),
+                                    ),
+                            )
+                    })),
+            )
     }
 
     fn friends_list(&self, cx: &mut Context<Self>, palette: &Palette) -> Div {
@@ -743,6 +767,7 @@ impl WatchPage {
                 Button::new("watch-friends-refresh")
                     .ghost()
                     .xsmall()
+                    .size(px(24.))
                     .icon(icon("refresh-cw"))
                     .accessibility_label("Refresh followed players")
                     .on_click(cx.listener(|this, _, _, cx| this.refresh_presence(cx))),
@@ -756,12 +781,22 @@ impl WatchPage {
                     .text_color(palette.error)
                     .child(format!("Could not refresh followed players: {error}"))
             }))
-            .when(playing.is_empty(), |card| {
-                card.child(div().px(px(8.)).child(widgets::hint(
-                    "No followed player is playing right now",
-                    palette,
-                )))
-            })
+            // Said only of players followed, and not while the refresh failed: unknown, not none.
+            .when(
+                playing.is_empty() && !friends.is_empty() && self.presence_error.is_none(),
+                |card| {
+                    card.child(
+                        div()
+                            .id("watch-friends-none")
+                            .test_support()
+                            .px(px(8.))
+                            .child(widgets::hint(
+                                "No followed player is playing right now",
+                                palette,
+                            )),
+                    )
+                },
+            )
             .children(
                 playing
                     .into_iter()
@@ -820,9 +855,15 @@ impl WatchPage {
                 .into_any_element(),
             );
         }
+        // TV with no channels and no game says it once, in its place.
+        if self.tv_unreachable() {
+            return notices;
+        }
         if let Some(error) = &self.error {
             notices.push(
                 div()
+                    .id("watch-error")
+                    .test_support()
                     .text_size(px(13.))
                     .text_color(palette.error)
                     .child(error.clone())
@@ -851,7 +892,7 @@ impl WatchPage {
                         Button::new("watch-retry")
                             .small()
                             .outline()
-                            .label("Retry feed")
+                            .label("Try again")
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.watch(target.clone(), cx)),
                             ),
@@ -915,6 +956,7 @@ impl Render for WatchPage {
             ));
         let notices = self.notices(cx, &palette);
         let body = match self.tab {
+            Tab::Tv if self.tv_unreachable() => self.tv_error(cx, &palette),
             Tab::Tv | Tab::Friends => self.live_layout(window, cx, &palette),
             Tab::Broadcasts => self.broadcasts_body(window, cx, &palette),
         };
@@ -922,6 +964,11 @@ impl Render for WatchPage {
             .id("watch-page")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key))
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .size_full()
             .relative()
             .overflow_y_scroll()
@@ -943,16 +990,65 @@ impl Render for WatchPage {
 }
 
 impl WatchPage {
+    /// TV could reach neither its channels nor a game: nothing to show but the failure.
+    fn tv_unreachable(&self) -> bool {
+        self.tab == Tab::Tv
+            && self.channels.is_empty()
+            && (self.error.is_some() || self.channels_error.is_some())
+            && self.live.frame.is_none()
+    }
+
+    fn tv_error(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
+        let message = self
+            .error
+            .clone()
+            .or_else(|| self.channels_error.clone())
+            .unwrap_or_default();
+        widgets::card(palette)
+            .child(
+                widgets::empty_state(icon("triangle-alert"), message, None, palette).child(
+                    h_flex().justify_center().mt(px(8.)).child(
+                        crate::widgets::try_again("watch-try-again").on_click(cx.listener(
+                            |this, _, window, cx| {
+                                this.error = None;
+                                this.channels_error = None;
+                                this.load_channels(cx);
+                                this.stop(cx);
+                                this.resume(window, cx);
+                            },
+                        )),
+                    ),
+                ),
+            )
+            .into_any_element()
+    }
+
     fn layout_probe(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         self.layout.probe(cx)
     }
 
     /// ←/→ and ↑/↓ step through the shown game; F turns the board.
-    fn key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if event.keystroke.modifiers.modified() {
             return;
         }
         let key = event.keystroke.key.as_str();
+        // Escape steps back, one board to all boards to all broadcasts, while no text field has
+        // the keys.
+        if key == "escape"
+            && self.tab == Tab::Broadcasts
+            && self.broadcasts.tour.is_some()
+            && self.focus.is_focused(window)
+        {
+            if self.broadcasts.current().is_some() {
+                self.all_boards(cx);
+            } else {
+                self.leave_tour(cx);
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         let handled = match self.tab {
             Tab::Broadcasts if key == "l" => self.toggle_broadcast_engine(cx),
             Tab::Broadcasts => {

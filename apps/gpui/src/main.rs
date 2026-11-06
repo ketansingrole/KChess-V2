@@ -30,6 +30,7 @@ mod menu;
 mod microphone;
 mod name_dialog;
 mod network;
+mod notation;
 mod notifications;
 mod online;
 mod pages;
@@ -51,6 +52,7 @@ mod replay;
 mod reviews;
 mod settings;
 mod shell;
+mod shortcuts;
 mod sound;
 mod startup;
 mod studies;
@@ -106,6 +108,7 @@ fn main() {
     app.run(move |cx| {
         gpui_kit::init(cx);
         menu::init(cx);
+        notifications::init(cx);
         if let Err(message) = core::start(data_dir, cx) {
             log::write(Level::Error, "app", &message);
             explain_and_quit(message, cx);

@@ -313,31 +313,31 @@ impl Render for CreateArena {
         let pair = |a: Div, b: Div| h_flex().gap(px(16.)).child(a.flex_1()).child(b.flex_1());
         v_flex()
             .gap(px(14.))
-            .child(widgets::field("Name", Input::new(&self.name), None, &palette))
+            .child(widgets::field("Name", Input::new(&self.name).aria_label("Name"), None, &palette))
             .child(pair(
-                widgets::field("Clock", Select::new(&self.clock), None, &palette),
-                widgets::field("Increment", Select::new(&self.increment), None, &palette),
+                widgets::field("Clock", Select::new(&self.clock).accessibility_label("Clock"), None, &palette),
+                widgets::field("Increment", Select::new(&self.increment).accessibility_label("Increment"), None, &palette),
             ))
             .child(pair(
-                widgets::field("Duration", Select::new(&self.duration), None, &palette),
-                widgets::field("Variant", Select::new(&self.variant), None, &palette),
+                widgets::field("Duration", Select::new(&self.duration).accessibility_label("Duration"), None, &palette),
+                widgets::field("Variant", Select::new(&self.variant).accessibility_label("Variant"), None, &palette),
             ))
             .child(if later {
                 pair(
-                    widgets::field("Starts", Select::new(&self.start), None, &palette),
+                    widgets::field("Starts", Select::new(&self.start).accessibility_label("Starts"), None, &palette),
                     widgets::field(
                         "Start time",
-                        Input::new(&self.start_at),
+                        Input::new(&self.start_at).aria_label("Start time"),
                         problem.map(SharedString::from),
                         &palette,
                     ),
                 )
             } else {
-                widgets::field("Starts", Select::new(&self.start), None, &palette)
+                widgets::field("Starts", Select::new(&self.start).accessibility_label("Starts"), None, &palette)
             })
             .child(widgets::field(
                 "Entry code",
-                Input::new(&self.password).mask_toggle(),
+                Input::new(&self.password).aria_label("Entry code").mask_toggle(),
                 None,
                 &palette,
             ))
@@ -354,7 +354,7 @@ impl Render for CreateArena {
                     .child("Rated")
                     .child(
                         Switch::new("arena-rated")
-                            .small()
+                            .large()
                             .checked(self.rated)
                             .accessibility_label("Rated")
                             .on_click(cx.listener(|this, checked: &bool, _, cx| {

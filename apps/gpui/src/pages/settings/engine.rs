@@ -77,7 +77,10 @@ fn review_text(status: &Value, auto: ReviewAuto) -> String {
         Some("online") => "Paused during your online game".into(),
         Some("off") => "Games are reviewed when you ask for it".into(),
         _ if auto == ReviewAuto::Off => "Games are reviewed when you ask for it".into(),
-        _ if waiting > 0 => format!("{waiting} games waiting"),
+        _ if waiting > 0 => format!(
+            "{} waiting",
+            crate::widgets::format_counted(waiting as f64, "game", "games")
+        ),
         _ => "All caught up".into(),
     }
 }
@@ -322,7 +325,8 @@ impl SettingsPage {
                     .text_color(palette.text_muted)
                     .child(description),
             );
-        let controls = h_flex().gap(px(8.)).flex_none().children(buttons);
+        // The buttons wrap rather than run past a narrow window.
+        let controls = h_flex().flex_wrap().gap(px(8.)).children(buttons);
         if self.narrow() {
             v_flex()
                 .gap(px(8.))
@@ -569,6 +573,10 @@ mod tests {
         assert_eq!(
             review_text(&json!({ "waiting": 4 }), ReviewAuto::Recent),
             "4 games waiting"
+        );
+        assert_eq!(
+            review_text(&json!({ "waiting": 1 }), ReviewAuto::Recent),
+            "1 game waiting"
         );
         assert_eq!(
             review_text(&json!({ "waiting": 0 }), ReviewAuto::Recent),

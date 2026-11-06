@@ -277,6 +277,21 @@ pub enum StudyCommandInput {
     #[serde(rename = "removeChapter")]
     #[serde(rename_all = "camelCase")]
     RemoveChapter { id: String, chapter_id: String },
+    /// A chapter moved to `index` (the last place when past the end).
+    #[serde(rename = "moveChapter")]
+    #[serde(rename_all = "camelCase")]
+    MoveChapter {
+        id: String,
+        chapter_id: String,
+        index: u32,
+    },
+    /// A removed chapter back at `index` (Undo); nothing when the study already has it.
+    #[serde(rename = "restoreChapter")]
+    RestoreChapter {
+        id: String,
+        chapter: StudyChapterEntry,
+        index: u32,
+    },
     #[serde(rename = "markCloud")]
     #[serde(rename_all = "camelCase")]
     MarkCloud {
@@ -304,6 +319,14 @@ pub enum StudyCommandInput {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StudyChapterDraft {
+    pub name: String,
+    pub pgn: String,
+}
+
+/// A chapter as a study keeps it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct StudyChapterEntry {
+    pub id: String,
     pub name: String,
     pub pgn: String,
 }

@@ -176,6 +176,8 @@ pub(crate) enum Action {
     Hint,
     Solution,
     Flip,
+    /// A finished puzzle on the analysis board.
+    Analyse,
     Next,
     /// A Storm, Streak or Rush run's own buttons.
     Rush(RushAction),
@@ -586,9 +588,8 @@ impl PuzzlesPage {
             window,
             |this, view, event: &stats::StatsEvent, window, cx| match event {
                 stats::StatsEvent::Train(key) => {
-                    crate::prefs::set(cx, TAB, "train");
                     let key = key.clone();
-                    this.choose_angle(&key, window, cx);
+                    this.train_theme(&key, window, cx);
                 }
                 stats::StatsEvent::Connect | stats::StatsEvent::Reconnect => {
                     crate::accounts::handle(cx)
@@ -644,6 +645,12 @@ impl PuzzlesPage {
         self.load_next(cx);
     }
 
+    /// Train a theme from another tab or a finished puzzle's themes: back on Train, with it chosen.
+    pub(crate) fn train_theme(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        crate::prefs::set(cx, TAB, "train");
+        self.choose_angle(key, window, cx);
+    }
+
     fn choose_difficulty(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         crate::prefs::set(cx, DIFFICULTY, key);
         let index = DIFFICULTIES
@@ -686,6 +693,15 @@ impl PuzzlesPage {
         self.follow(step, "puzzleSessionLoadSettled", cx);
         cx.notify();
     }
+}
+
+/// Train a theme on the Puzzles page, after the click that asked for it.
+fn train_theme(key: String, window: &mut Window, cx: &mut App) {
+    window.defer(cx, move |window, cx| {
+        if let Some(page) = crate::shell::view_of::<PuzzlesPage>(crate::pages::Page::Puzzles, cx) {
+            page.update(cx, |page, cx| page.train_theme(&key, window, cx));
+        }
+    });
 }
 
 /// What to do, how it went, and the buttons that help.
@@ -875,8 +891,15 @@ pub(crate) fn status_panel(
                                 .into_iter()
                                 .flatten()
                                 .filter_map(Value::as_str)
-                                .map(|theme| {
+                                .enumerate()
+                                .map(|(index, theme)| {
+                                    let name = theme_name(theme, themes);
+                                    // A theme Train offers is a way to train it, as on Lichess.
+                                    let trainable = themes.iter().any(|known| known.key == theme);
+                                    let key = theme.to_string();
                                     div()
+                                        .id(("puzzle-theme", index))
+                                        .test_support()
                                         .px(px(6.))
                                         .py(px(1.))
                                         .rounded(radii::SM)
@@ -884,7 +907,16 @@ pub(crate) fn status_panel(
                                         .border_color(palette.border_accented)
                                         .bg(palette.elevated)
                                         .text_size(px(12.))
-                                        .child(theme_name(theme, themes))
+                                        .when(trainable, |pill| {
+                                            pill.role(gpui_kit::Role::Button)
+                                                .aria_label(format!("Train {name}"))
+                                                .cursor_pointer()
+                                                .hover(|pill| pill.bg(palette.accented))
+                                                .on_click(move |_, window, cx| {
+                                                    train_theme(key.clone(), window, cx)
+                                                })
+                                        })
+                                        .child(name)
                                 }),
                         ),
                     ),
@@ -911,55 +943,73 @@ pub(crate) fn status_panel(
             cx,
             palette,
         ))
-        // `.panel-actions`: Hint, Solution, Flip and Next share the row.
+        // `.panel-actions`: Hint, Solution, Flip and Next share the row; once the puzzle is over,
+        // Hint and Solution give way to the analysis board, its wrong tries as side lines.
         .child(widgets::panel_actions(
             false,
-            [
-                Button::new("puzzle-hint")
-                    .w_full()
-                    .when(hinted, |button| button.primary())
-                    .when(!hinted, |button| button.outline())
-                    .icon(icon("lightbulb"))
-                    .label("Hint")
-                    .when(rated, |button| button.tooltip("Makes this puzzle unrated"))
-                    .disabled(!playing)
-                    .on_click({
-                        let board = board_entity.downgrade();
-                        move |_, _, cx| {
-                            let _ = board.update(cx, |board, cx| board.hint(cx));
-                        }
-                    })
-                    .into_any_element()
-                    .into(),
-                Button::new("puzzle-solution")
-                    .w_full()
-                    .outline()
-                    .icon(icon("eye"))
-                    .label("Solution")
-                    .disabled(!playing)
-                    .on_click({
-                        let board = board_entity.downgrade();
-                        move |_, _, cx| {
-                            let _ = board.update(cx, |board, cx| board.show_solution(cx));
-                        }
-                    })
-                    .into_any_element()
-                    .into(),
-                widgets::fit(
-                    Button::new("puzzle-flip")
-                        .ghost()
-                        .icon(icon("arrow-up-down"))
-                        .tooltip("Flip board")
-                        .accessibility_label("Flip board")
+            (if finished {
+                let (studied, wrong) = (puzzle.clone(), shown.wrong_moves().to_vec());
+                vec![
+                    Button::new("puzzle-analyse")
+                        .w_full()
+                        .outline()
+                        .icon(icon("microscope"))
+                        .label("Analyse")
+                        .tooltip("Analysis board")
+                        .on_click(move |_, window, cx| {
+                            crate::shell::analyse_puzzle(studied.clone(), wrong.clone(), window, cx)
+                        })
+                        .into_any_element()
+                        .into(),
+                ]
+            } else {
+                vec![
+                    Button::new("puzzle-hint")
+                        .w_full()
+                        .when(hinted, |button| button.primary())
+                        .when(!hinted, |button| button.outline())
+                        .icon(icon("lightbulb"))
+                        .label("Hint")
+                        .when(rated, |button| button.tooltip("Makes this puzzle unrated"))
+                        .disabled(!playing)
                         .on_click({
                             let board = board_entity.downgrade();
                             move |_, _, cx| {
-                                let _ = board.update(cx, |board, cx| board.flip(cx));
+                                let _ = board.update(cx, |board, cx| board.hint(cx));
                             }
-                        }),
-                ),
-            ]
+                        })
+                        .into_any_element()
+                        .into(),
+                    Button::new("puzzle-solution")
+                        .w_full()
+                        .outline()
+                        .icon(icon("eye"))
+                        .label("Solution")
+                        .disabled(!playing)
+                        .on_click({
+                            let board = board_entity.downgrade();
+                            move |_, _, cx| {
+                                let _ = board.update(cx, |board, cx| board.show_solution(cx));
+                            }
+                        })
+                        .into_any_element()
+                        .into(),
+                ]
+            })
             .into_iter()
+            .chain([widgets::fit(
+                Button::new("puzzle-flip")
+                    .ghost()
+                    .icon(icon("arrow-up-down"))
+                    .tooltip("Flip board (F)")
+                    .accessibility_label("Flip board")
+                    .on_click({
+                        let board = board_entity.downgrade();
+                        move |_, _, cx| {
+                            let _ = board.update(cx, |board, cx| board.flip(cx));
+                        }
+                    }),
+            )])
             .chain(next.map(|next| {
                 Button::new("puzzle-next")
                     .w_full()
@@ -1116,10 +1166,7 @@ impl PuzzlesPage {
                 h_flex()
                     .gap(px(8.))
                     .child(
-                        Button::new("try-again")
-                            .primary()
-                            .icon(icon("rotate-cw"))
-                            .label("Try again")
+                        crate::widgets::try_again("try-again")
                             .on_click(cx.listener(|this, _, _, cx| this.load_next(cx))),
                     )
                     .when(Self::mode(cx) != "offline", |row| {
@@ -1137,7 +1184,7 @@ impl PuzzlesPage {
             _ => h_flex()
                 .gap(px(8.))
                 .text_color(palette.text_muted)
-                .child(icon("loader-circle").size(px(16.)))
+                .child(crate::widgets::spinner(px(16.)))
                 .child("Finding a puzzle…")
                 .into_any_element(),
         };
@@ -1546,6 +1593,25 @@ impl PuzzlesPage {
     }
 
     /// The puzzle board of the tab shown, while it shows a puzzle, and whether it is Train's.
+    /// Whether the board on screen is turned round.
+    #[cfg(test)]
+    pub(crate) fn shown_flipped(&self, cx: &App) -> Option<bool> {
+        self.shown_board(cx)
+            .map(|(board, _)| board.read(cx).flipped())
+    }
+
+    /// The puzzle on the Train tab, told apart from the one before it.
+    #[cfg(test)]
+    pub(crate) fn puzzle_key(&self) -> u64 {
+        self.session.puzzle_key()
+    }
+
+    /// The Train tab's board, while a finished puzzle is stepped back through: the position shown.
+    #[cfg(test)]
+    pub(crate) fn viewing(&self, cx: &App) -> Option<usize> {
+        self.puzzle.read(cx).viewing()
+    }
+
     fn shown_board(&self, cx: &App) -> Option<(Entity<PuzzleBoard>, bool)> {
         match crate::prefs::get::<String>(cx, TAB, "train".into()).as_str() {
             "train" => (self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == "ready")
@@ -1557,6 +1623,13 @@ impl PuzzlesPage {
                 .map(|board| (board, false)),
             _ => None,
         }
+    }
+
+    /// A Storm, Streak or Rush run is going.
+    pub(crate) fn run_going(&self, cx: &App) -> bool {
+        self.rush
+            .as_ref()
+            .is_some_and(|rush| rush.read(cx).running())
     }
 
     /// The Storm · Streak · Rush view, while its tab is shown.
@@ -1584,6 +1657,9 @@ impl PuzzlesPage {
             actions.extend([Action::Hint, Action::Solution]);
         }
         actions.push(Action::Flip);
+        if matches!(board.read(cx).status(), "solved" | "revealed" | "failed") {
+            actions.push(Action::Analyse);
+        }
         if train {
             actions.push(Action::Next);
         }
@@ -1609,7 +1685,70 @@ impl PuzzlesPage {
             Action::Solution => board.update(cx, |board, cx| board.show_solution(cx)),
             Action::Flip => board.update(cx, |board, cx| board.flip(cx)),
             Action::Next => self.load_next(cx),
-            Action::Rush(_) => {}
+            Action::Analyse | Action::Rush(_) => {}
+        }
+    }
+
+    /// The finished puzzle on the analysis board, as its button opens it; after this update,
+    /// since opening another page leaves this one.
+    pub(crate) fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.actions(cx).contains(&Action::Analyse) {
+            return;
+        }
+        let Some((board, _)) = self.shown_board(cx) else {
+            return;
+        };
+        let board = board.read(cx);
+        let Some(puzzle) = board.puzzle().map(|shown| shown.puzzle.clone()) else {
+            return;
+        };
+        let wrong = board.wrong_moves().to_vec();
+        window.defer(cx, move |window, cx| {
+            crate::shell::analyse_puzzle(puzzle, wrong, window, cx)
+        });
+    }
+
+    /// F turns the board, as its button does, while no text field has the keys; Return or Space
+    /// goes on to the next puzzle once this one is over (its move field is shut by then), and
+    /// plays a Storm, Streak or Rush run again once one is over.
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.modifiers.modified() {
+            return;
+        }
+        let again = Action::Rush(RushAction::Again);
+        if matches!(event.keystroke.key.as_str(), "enter" | "space")
+            && self.focus.is_focused(window)
+            && self.actions(cx).contains(&again)
+        {
+            self.act(again, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if matches!(event.keystroke.key.as_str(), "enter" | "space")
+            && self.actions(cx).contains(&Action::Next)
+            && self.shown_board(cx).is_some_and(|(board, _)| {
+                let board = board.read(cx);
+                board.over()
+                    && (self.focus.is_focused(window) || board.move_field_focused(window, cx))
+            })
+        {
+            self.act(Action::Next, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if !self.focus.is_focused(window) {
+            return;
+        }
+        // A finished puzzle's moves step back and forth, as a game's do.
+        if let Some((board, _)) = self.shown_board(cx)
+            && board.update(cx, |board, cx| board.step(&event.keystroke.key, cx))
+        {
+            cx.stop_propagation();
+            return;
+        }
+        if event.keystroke.key == "f" && self.actions(cx).contains(&Action::Flip) {
+            self.act(Action::Flip, cx);
+            cx.stop_propagation();
         }
     }
 
@@ -1744,6 +1883,13 @@ impl Render for PuzzlesPage {
         v_flex()
             .size_full()
             .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::key))
+            // A click gives the keys back to the page, before a text field takes them.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .child(
                 div()
                     .flex_none()

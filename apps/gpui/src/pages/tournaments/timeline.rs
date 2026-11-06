@@ -1,6 +1,7 @@
 //! The arena schedule: one row per series, a bar per arena coloured by
 //! kind, the hours along the top and a line for now, scrolled to now when it opens.
 
+use gpui_kit::component::Disableable as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -169,6 +170,8 @@ pub fn rows(arenas: &[Value], (start, end): (f64, f64)) -> Vec<Vec<Value>> {
 /// The colour key, beside the page's controls.
 pub fn legend(palette: &Palette) -> impl IntoElement {
     h_flex()
+        .id("tournaments-legend")
+        .test_support()
         .flex_wrap()
         .gap(px(16.))
         .text_size(px(12.))
@@ -232,6 +235,24 @@ impl TournamentsPage {
         palette: &Palette,
     ) -> AnyElement {
         let mut body = v_flex().gap(px(12.));
+        // With nothing listed, the failure takes the list's place, with the way to ask again.
+        if let (None, Some(error)) = (&self.list, &self.error) {
+            return widgets::card(palette)
+                .id("tournaments-error")
+                .test_support()
+                .child(
+                    widgets::empty_state(icon("triangle-alert"), error.clone(), None, palette)
+                        .child(
+                            h_flex().justify_center().mt(px(8.)).child(
+                                widgets::try_again("tournaments-try-again")
+                                    .loading(self.loading)
+                                    .disabled(self.loading)
+                                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                            ),
+                        ),
+                )
+                .into_any_element();
+        }
         if let Some(error) = &self.error {
             body = body.child(
                 div()
@@ -243,7 +264,7 @@ impl TournamentsPage {
         let Some(list) = &self.list else {
             return body
                 .when(self.error.is_none(), |body| {
-                    body.child(widgets::hint("Loading…", palette))
+                    body.child(widgets::loading("Loading…", palette))
                 })
                 .into_any_element();
         };

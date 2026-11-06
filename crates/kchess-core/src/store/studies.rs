@@ -547,6 +547,91 @@ pub(crate) fn study_command(
                 chapters[pick].get("id").cloned().unwrap_or(Value::Null),
             );
         }
+        "moveChapter" => {
+            let chapter_id = field("chapterId");
+            let study = id_arg.and_then(|id| studies.find(id).cloned());
+            let Some(study) = study else {
+                return Err(CoreError::new("That study no longer exists."));
+            };
+            let study = object(&study, "study")?.clone();
+            let mut chapters = study
+                .get("chapters")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let Some(from) = chapters
+                .iter()
+                .position(|c| c.get("id") == Some(&chapter_id))
+            else {
+                return Err(CoreError::new("That chapter no longer exists."));
+            };
+            let to = (field("index").as_u64().unwrap_or(0) as usize).min(chapters.len() - 1);
+            if from != to {
+                let moved = chapters.remove(from);
+                chapters.insert(to, moved);
+                let first = chapters
+                    .first()
+                    .and_then(|c| c.get("pgn"))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let mut updates = vec![
+                    ("chapters", Value::Array(chapters)),
+                    ("pgn", first),
+                    ("updatedAt", num(now)),
+                ];
+                if let Some(cloud) = study.get("cloud").filter(|c| truthy(Some(c))) {
+                    let mut changed = object(cloud, "cloud")?.clone();
+                    changed.insert("structureChanged".into(), Value::Bool(true));
+                    updates.push(("cloud", Value::Object(changed)));
+                }
+                studies.commit(spread(&study, updates))?;
+            }
+            result.insert("id".into(), chapter_id);
+        }
+        "restoreChapter" => {
+            let chapter = field("chapter");
+            let study = id_arg.and_then(|id| studies.find(id).cloned());
+            let Some(study) = study else {
+                return Err(CoreError::new("That study no longer exists."));
+            };
+            let study = object(&study, "study")?.clone();
+            let mut chapters = study
+                .get("chapters")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let present = chapters.iter().any(|c| c.get("id") == chapter.get("id"));
+            if !present {
+                let index = field("index").as_u64().unwrap_or(0) as usize;
+                chapters.insert(index.min(chapters.len()), chapter.clone());
+                let first = chapters
+                    .first()
+                    .and_then(|c| c.get("pgn"))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let mut updates = vec![
+                    ("chapters", Value::Array(chapters)),
+                    ("pgn", first),
+                    ("updatedAt", num(now)),
+                ];
+                if let Some(cloud) = study.get("cloud").filter(|c| truthy(Some(c))) {
+                    let mut changed = object(cloud, "cloud")?.clone();
+                    changed.insert("structureChanged".into(), Value::Bool(true));
+                    updates.push(("cloud", Value::Object(changed)));
+                }
+                let candidate = spread(&study, updates);
+                // The chapter comes back from the app: it must still read as a study's chapter.
+                if kchess_domain::library::decode_study(&Value::Object(candidate.clone())).is_none()
+                {
+                    return Err(CoreError::new("That chapter cannot be restored."));
+                }
+                studies.commit(candidate)?;
+            }
+            result.insert(
+                "id".into(),
+                chapter.get("id").cloned().unwrap_or(Value::Null),
+            );
+        }
         "markCloud" => {
             if let Some(index) = id_arg.and_then(|id| studies.find_index(id)) {
                 let cloud = json!({
@@ -941,6 +1026,106 @@ mod tests {
             assert_eq!(run(&db, command).expect_err("refused").message, message);
         }
         assert!(run(&db, json!("not a command")).is_err());
+    }
+
+    /// Undo puts a removed chapter back where it was, once, and the study's PGN is its first
+    /// chapter's again.
+    #[test]
+    fn a_removed_chapter_is_restored_at_its_place() {
+        let db = database();
+        let id = create(&db, "Endgames", "1. e4 *");
+        let first = study(&db, &id)["chapters"][0]["id"].clone();
+        let copy = run(
+            &db,
+            json!({ "op": "duplicateChapter", "id": id, "chapterId": first }),
+        )
+        .expect("duplicate")["id"]
+            .clone();
+        let removed = study(&db, &id)["chapters"][0].clone();
+        run(
+            &db,
+            json!({ "op": "removeChapter", "id": id, "chapterId": first }),
+        )
+        .expect("remove");
+        assert_eq!(study(&db, &id)["chapters"][0]["id"], copy);
+
+        let restore = json!({ "op": "restoreChapter", "id": id, "chapter": removed, "index": 0 });
+        let result = run(&db, restore.clone()).expect("restore");
+        assert_eq!(result["id"], first);
+        let restored = study(&db, &id);
+        assert_eq!(restored["chapters"][0], removed);
+        assert_eq!(restored["chapters"][1]["id"], copy);
+        assert_eq!(restored["pgn"], removed["pgn"]);
+        // Restoring again changes nothing.
+        run(&db, restore).expect("restore again");
+        assert_eq!(
+            study(&db, &id)["chapters"].as_array().map(Vec::len),
+            Some(2)
+        );
+
+        let mut broken = removed.clone();
+        broken["id"] = json!("other");
+        broken["pgn"] = json!("1. e5 *");
+        assert_eq!(
+            run(
+                &db,
+                json!({ "op": "restoreChapter", "id": id, "chapter": broken, "index": 0 })
+            )
+            .expect_err("refused")
+            .message,
+            "That chapter cannot be restored."
+        );
+        let gone =
+            json!({ "op": "restoreChapter", "id": "missing", "chapter": removed, "index": 0 });
+        assert_eq!(
+            run(&db, gone).expect_err("refused").message,
+            "That study no longer exists."
+        );
+    }
+
+    /// A chapter moves to another place; the study's PGN is its first chapter's.
+    #[test]
+    fn a_chapter_moves_to_another_place() {
+        let db = database();
+        let id = create(&db, "Endgames", "1. e4 *");
+        let first = study(&db, &id)["chapters"][0]["id"].clone();
+        let copy = run(
+            &db,
+            json!({ "op": "duplicateChapter", "id": id, "chapterId": first }),
+        )
+        .expect("duplicate")["id"]
+            .clone();
+        run(
+            &db,
+            json!({ "op": "renameChapter", "id": id, "chapterId": copy, "name": "Second" }),
+        )
+        .expect("rename");
+        let result = run(
+            &db,
+            json!({ "op": "moveChapter", "id": id, "chapterId": copy, "index": 0 }),
+        )
+        .expect("move");
+        assert_eq!(result["id"], copy);
+        let moved = study(&db, &id);
+        assert_eq!(moved["chapters"][0]["id"], copy);
+        assert_eq!(moved["chapters"][1]["id"], first);
+        assert_eq!(moved["pgn"], moved["chapters"][0]["pgn"]);
+        // A place past the end is the last one.
+        run(
+            &db,
+            json!({ "op": "moveChapter", "id": id, "chapterId": copy, "index": 9 }),
+        )
+        .expect("move to the end");
+        assert_eq!(study(&db, &id)["chapters"][1]["id"], copy);
+        assert_eq!(
+            run(
+                &db,
+                json!({ "op": "moveChapter", "id": id, "chapterId": "gone", "index": 0 })
+            )
+            .expect_err("refused")
+            .message,
+            "That chapter no longer exists."
+        );
     }
 
     #[test]

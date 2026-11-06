@@ -331,6 +331,8 @@ struct TopbarInputs {
 #[derive(PartialEq)]
 struct UpdateInputs {
     phase: crate::updates::Phase,
+    /// A real-time game is on: the button waits until it ends.
+    live_game: bool,
     version: Option<String>,
     current: String,
     progress: Option<(u64, u64)>,
@@ -346,6 +348,7 @@ impl TopbarInputs {
             working: working(cx),
             update: UpdateInputs {
                 phase: updates.phase,
+                live_game: crate::online::handle(cx).read(cx).live_game_on(),
                 version: updates.version.clone(),
                 current: updates.current.clone(),
                 progress: updates.progress,
@@ -395,6 +398,13 @@ pub fn zen_key(key: &str, cx: &mut App) -> bool {
     true
 }
 
+/// The window's title as the workspace last set it.
+#[cfg(test)]
+pub fn window_title_shown(cx: &App) -> Option<String> {
+    let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
+    Some(workspace.read(cx).title.clone())
+}
+
 /// The page shown, once the window is open.
 pub fn current_page(cx: &App) -> Option<Page> {
     let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
@@ -410,6 +420,18 @@ pub fn open(page: Page, window: &mut Window, cx: &mut App) {
         return;
     };
     let _ = workspace.update(cx, |workspace, cx| workspace.choose(page, window, cx));
+}
+
+/// Back (-1) or forward (1): out of the page's inner level, then through the pages visited, as
+/// a swipe goes.
+pub fn go(direction: crate::swipe::Direction, window: &mut Window, cx: &mut App) {
+    let Some(workspace) = cx
+        .try_global::<Navigator>()
+        .map(|navigator| navigator.0.clone())
+    else {
+        return;
+    };
+    let _ = workspace.update(cx, |workspace, cx| workspace.go(direction, window, cx));
 }
 
 /// Game history's Lichess tab showing one account's games (`historyAccount`).
@@ -639,6 +661,47 @@ pub fn view_of<V: 'static>(page: Page, cx: &App) -> Option<Entity<V>> {
     workspace.read(cx).pages.view_of::<V>(page)
 }
 
+/// Find: the page's own search field, focused with its text selected, when the page shows one
+/// (History's, Studies', Openings', Watch's broadcasts', Players' username). It is `false`
+/// on a page without one, for Quick Pick to search instead.
+pub fn find_on_page(window: &mut Window, cx: &mut App) -> bool {
+    use crate::pages::{history, openings, players, studies, watch};
+    use gpui_kit::component::input::InputState;
+    fn fields_of<V: Focusable>(
+        page: Page,
+        fields: fn(&V) -> Vec<Entity<InputState>>,
+        cx: &App,
+    ) -> Option<(FocusHandle, Vec<Entity<InputState>>)> {
+        let view = view_of::<V>(page, cx)?;
+        let view = view.read(cx);
+        Some((view.focus_handle(cx), fields(view)))
+    }
+    let found = match current_page(cx) {
+        Some(Page::History) => fields_of(Page::History, history::HistoryPage::search_fields, cx),
+        Some(Page::Studies) => fields_of(Page::Studies, studies::StudiesPage::search_fields, cx),
+        Some(Page::Openings) => {
+            fields_of(Page::Openings, openings::OpeningsPage::search_fields, cx)
+        }
+        Some(Page::Watch) => fields_of(Page::Watch, watch::WatchPage::search_fields, cx),
+        Some(Page::Players) => fields_of(Page::Players, players::PlayersPage::search_fields, cx),
+        _ => None,
+    };
+    let Some((page, fields)) = found else {
+        return false;
+    };
+    // Only a field the page draws now: History's other tab, or Watch away from Broadcasts,
+    // has its field but does not show it.
+    let Some(field) = fields
+        .into_iter()
+        .find(|field| page.contains(&field.read(cx).focus_handle(cx), window))
+    else {
+        return false;
+    };
+    field.update(cx, |field, cx| field.focus(window, cx));
+    window.dispatch_action(Box::new(gpui_kit::component::input::SelectAll), cx);
+    true
+}
+
 /// Open a Lichess broadcast link on Watch → Broadcasts.
 pub fn open_broadcast(link: crate::game::BroadcastLink, window: &mut Window, cx: &mut App) {
     open(Page::Watch, window, cx);
@@ -777,6 +840,85 @@ pub fn replace_analysis(
     });
 }
 
+/// Where a dragged file goes, over the pages: hidden until a file from outside the app is over it,
+/// so the drop has somewhere to land before it is let go. It takes no clicks or scrolls; the page
+/// area underneath opens the file.
+fn drop_zone(palette: &Palette) -> impl IntoElement {
+    div()
+        .id("drop-zone")
+        .test_support()
+        .absolute()
+        .inset_0()
+        .p(px(8.))
+        .flex()
+        .bg(palette.bg)
+        .child(
+            v_flex()
+                .flex_1()
+                .rounded(crate::theme::radii::XL)
+                .border_2()
+                .border_dashed()
+                .border_color(palette.primary)
+                .bg(crate::theme::tint(palette.primary, 4.))
+                .items_center()
+                .justify_center()
+                .gap(px(8.))
+                .text_color(palette.primary)
+                .child(icon("download").size(px(28.)))
+                .child(
+                    div()
+                        .text_size(px(15.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("Open on the analysis board"),
+                ),
+        )
+        .invisible()
+        .drag_over::<ExternalPaths>(|style, _, _, _| style.visible())
+}
+
+/// The largest file a drop reads: the import's own limit for a PGN.
+const DROPPED_MAX: u64 = 2 * 1024 * 1024;
+
+/// A PGN or FEN file dropped on the window opens on the analysis board, as if pasted into its
+/// import; anything else is refused with a notice.
+pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
+    let Some(path) = paths.paths().first() else {
+        return;
+    };
+    let Some(text) = read_game_file(path) else {
+        window.push_notification(
+            gpui_kit::component::notification::Notification::error(
+                "Drop a PGN or FEN file under 2 MB",
+            )
+            .title("Could not open that file"),
+            cx,
+        );
+        return;
+    };
+    replace_analysis(window, cx, move |analysis, window, cx| {
+        analysis.import_text(text.clone(), window, cx);
+        true
+    });
+}
+
+/// A PGN or FEN file's text (`.pgn`, `.fen` or `.txt`, up to 2 MB), or `None`.
+pub fn read_game_file(path: &std::path::Path) -> Option<String> {
+    let readable = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["pgn", "fen", "txt"].contains(&extension.to_ascii_lowercase().as_str())
+        });
+    readable
+        .then(|| {
+            std::fs::metadata(path)
+                .ok()
+                .filter(|meta| meta.len() <= DROPPED_MAX)
+                .and_then(|_| std::fs::read_to_string(path).ok())
+        })
+        .flatten()
+}
+
 /// Practise a reviewed game's positions on the analysis board (`usePracticeGame`); another game
 /// replaces the board's only after asking, when that would lose unsaved analysis.
 pub fn practise_game(
@@ -863,7 +1005,26 @@ pub struct Workspace {
     pages: Pages,
     /// Where Settings' Back returns to: the page open before it.
     back: Page,
+    /// The window's title as last set (`window_title`).
+    title: String,
     _subscriptions: Vec<Subscription>,
+}
+
+/// The window's title on `page`: its name, so Mission Control, the Window menu and screen
+/// readers tell the windows apart; Home is the app alone.
+fn window_title(page: Page) -> String {
+    let name = match page {
+        Page::Dashboard => None,
+        Page::Settings => Some("Settings"),
+        page => nav()
+            .into_iter()
+            .find(|(each, ..)| *each == page)
+            .map(|(_, label, _)| label),
+    };
+    match name {
+        Some(name) => format!("{name} — {}", crate::profile::APP_NAME),
+        None => crate::profile::APP_NAME.to_string(),
+    }
 }
 
 impl Workspace {
@@ -966,6 +1127,7 @@ impl Workspace {
             palette: crate::palette::init(window, cx),
             pages: Pages::new(window, cx),
             back: Page::Dashboard,
+            title: crate::profile::APP_NAME.to_string(),
             _subscriptions: subscriptions,
         };
         if let Some(page) = Page::remembered() {
@@ -1531,7 +1693,7 @@ impl Workspace {
                     .custom(ghost_neutral(cx))
                     .icon(icon("panel-left"))
                     .size(px(28.))
-                    .tooltip(label)
+                    .tooltip_with_action(label, &crate::menu::ToggleSidebar, None)
                     .accessibility_label(label)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
             ))
@@ -1632,7 +1794,7 @@ impl Workspace {
                         .gap(px(8.))
                         .text_size(px(14.))
                         .text_color(cx.theme().muted_foreground)
-                        .child(icon("loader-circle").size(px(16.)))
+                        .child(crate::widgets::spinner(px(16.)))
                         .child("Working…"),
                 )
             })
@@ -1641,7 +1803,7 @@ impl Workspace {
 
 /// Something is waiting on Lichess (`busy`): signing in, syncing, starting a game.
 fn working(cx: &App) -> bool {
-    crate::accounts::handle(cx).read(cx).busy || crate::online::handle(cx).read(cx).busy
+    crate::accounts::handle(cx).read(cx).working() || crate::online::handle(cx).read(cx).busy
 }
 
 /// The Lichess game the sidebar marks (`lichessGame`): your move (in a live game, or in a
@@ -1930,6 +2092,10 @@ fn account_button(expanded: bool, cx: &App) -> AnyElement {
 /// A newer KChess, its download, or the restart that installs it.
 fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
     use crate::updates::{Phase, UpdatesHandle};
+    // Not during a real-time game: the update waits in Settings → Updates until it ends.
+    if crate::online::handle(cx).read(cx).live_game_on() {
+        return None;
+    }
     let handle = cx.global::<UpdatesHandle>().0.clone();
     let updates = handle.read(cx);
     let version = updates.version.clone()?;
@@ -1993,6 +2159,11 @@ fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.fit_window(window);
+        let title = window_title(self.pages.current());
+        if title != self.title {
+            window.set_window_title(&title);
+            self.title = title;
+        }
         // Zen mode on a game page leaves the board and its panel (`.app-shell.zen aside`).
         let zen = cx
             .global::<SettingsHandle>()
@@ -2022,6 +2193,19 @@ impl Render for Workspace {
                             .relative()
                             .overflow_hidden()
                             .on_scroll(cx.listener(Self::scrolled))
+                            // A PGN or FEN file dropped here opens on the analysis board.
+                            .on_drop(|paths: &ExternalPaths, window, cx| {
+                                open_dropped(paths, window, cx)
+                            })
+                            // A mouse's back and forward buttons go as a swipe does.
+                            .on_mouse_down(
+                                MouseButton::Navigate(NavigationDirection::Back),
+                                cx.listener(|this, _, window, cx| this.go(-1, window, cx)),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Navigate(NavigationDirection::Forward),
+                                cx.listener(|this, _, window, cx| this.go(1, window, cx)),
+                            )
                             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                                 if !event.is_held && this.pages.page_focused(window) {
                                     Self::talk_key(&event.keystroke, true, cx);
@@ -2037,7 +2221,8 @@ impl Render for Workspace {
                                     .left(px(self.swipe_shift))
                                     .child(self.pages.view().cached(page_style())),
                             )
-                            .children(self.swipe_edge(cx)),
+                            .children(self.swipe_edge(cx))
+                            .child(drop_zone(cx.global::<Palette>())),
                     ),
             )
             .when(!zen, |shell| {

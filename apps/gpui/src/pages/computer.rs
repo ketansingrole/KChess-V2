@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState, Undo};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
     Disableable as _, IndexPath, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -54,6 +54,7 @@ pub(crate) enum Action {
     Resign,
     NewGame,
     SwitchSides,
+    CopyPgn,
     Review,
 }
 
@@ -85,6 +86,8 @@ pub struct ComputerPage {
     search: Option<Task<()>>,
     save: Option<Task<()>>,
     ticker: Option<Task<()>>,
+    /// The player's low-time warning; the computer's clock runs low unannounced.
+    low_time: crate::game::low_time::LowTime,
     /// What the clocks showed at the last tick: a tick redraws only when a clock face changes.
     ticked: Option<[Option<SharedString>; 2]>,
     error: Option<SharedString>,
@@ -99,6 +102,8 @@ pub struct ComputerPage {
     /// The side panel, measured for `.panel-actions`' narrow rule.
     panel_area: Measured,
     focus: FocusHandle,
+    /// The mouse wheel over the board, which steps through the moves.
+    wheel: crate::game::view::Wheel,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -200,6 +205,7 @@ impl ComputerPage {
             search: None,
             save: None,
             ticker: None,
+            low_time: Default::default(),
             ticked: None,
             error: None,
             pending: None,
@@ -210,6 +216,7 @@ impl ComputerPage {
             panel_area: Measured::default(),
             exporter: cx.new(|_| Exporter::default()),
             focus: cx.focus_handle(),
+            wheel: Default::default(),
             _subscriptions: subscriptions,
         };
         page.load(window, cx);
@@ -306,6 +313,12 @@ impl ComputerPage {
             });
         })
         .detach();
+    }
+
+    /// The player may move now: the saved game is restored and the engine ready.
+    #[cfg(test)]
+    pub(crate) fn takes_moves(&self) -> bool {
+        self.interactive()
     }
 
     /// Back to the moment before the library has loaded (a slow profile's first frames).
@@ -548,6 +561,27 @@ impl ComputerPage {
         crate::game::whole(&self.game.state["ply"]) as usize
     }
 
+    /// Sound the low-time warning as the player's clock runs low.
+    fn warn_low_time(&mut self, cx: &mut Context<Self>) {
+        let host = self.host();
+        if self.game.over(&host) {
+            return;
+        }
+        let color = if self.user_color() == Color::Black {
+            "black"
+        } else {
+            "white"
+        };
+        let initial = self.game.state["clock"]["minutes"]
+            .as_f64()
+            .unwrap_or_default()
+            * 60.;
+        let remaining = self.game.remaining(color, &host);
+        if self.low_time.crossed(color, remaining, initial) {
+            crate::sound::play(crate::sound::Sound::LowTime, cx);
+        }
+    }
+
     fn user_color(&self) -> Color {
         if self.game.state["color"] == "black" {
             Color::Black
@@ -598,9 +632,9 @@ impl ComputerPage {
         .unwrap_or_default()
     }
 
-    /// The player may move now: it is their turn at the latest position (`localInteractive`).
-    /// The player may move: not before the saved game is restored, which would replace the move
-    /// (and nothing is saved before then).
+    /// The player may move now: it is their turn at the latest position (`localInteractive`), and
+    /// not before the saved game is restored, which would replace the move (and nothing is saved
+    /// before then).
     fn interactive(&self) -> bool {
         let host = self.host();
         self.loaded
@@ -691,6 +725,7 @@ impl ComputerPage {
                         let effects = this.game.expire(&host);
                         let acted = effects.as_ref().is_ok_and(|effects| !effects.is_empty());
                         this.perform(effects, cx);
+                        this.warn_low_time(cx);
                         let shown = ["white", "black"].map(|color| this.clock_text(color));
                         if acted || this.ticked.as_ref() != Some(&shown) {
                             this.ticked = Some(shown);
@@ -841,6 +876,20 @@ impl ComputerPage {
         self.start_chosen(chosen, window, cx);
     }
 
+    /// A new game from `setup` as the side to move, on a clock of `minutes`, no increment.
+    #[cfg(test)]
+    pub(crate) fn play_with_clock(
+        &mut self,
+        setup: Value,
+        color: Color,
+        minutes: f64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.game.state["clock"] = json!({ "minutes": minutes, "increment": 0 });
+        self.start_from(setup, color, window, cx);
+    }
+
     /// Like the page's own New game, a game in progress is only thrown away when confirmed.
     fn start_chosen(&mut self, chosen: Chosen, window: &mut Window, cx: &mut Context<Self>) {
         if self.in_progress() {
@@ -876,6 +925,9 @@ impl ComputerPage {
             actions.push(Action::Resign);
         }
         actions.extend([Action::NewGame, Action::SwitchSides]);
+        if !self.moves().is_empty() {
+            actions.push(Action::CopyPgn);
+        }
         if self.can_review() {
             actions.push(Action::Review);
         }
@@ -896,6 +948,7 @@ impl ComputerPage {
             Action::Resign => {}
             Action::NewGame => self.ask(Question::NewGame, window, cx),
             Action::SwitchSides => self.ask(Question::SwitchSides, window, cx),
+            Action::CopyPgn => crate::export::copy_pgn(&self.game_export(), window, cx),
             Action::Review if self.can_review() => self.review_game(window, cx),
             Action::Review => {}
         }
@@ -1530,6 +1583,20 @@ impl Render for ComputerPage {
             .gap(widgets::STACK_GAP)
             .child(computer_line)
             .child(crate::board::cached(&self.board))
+            // The mouse wheel over the board steps through the moves.
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                let Some(key) = this
+                    .wheel
+                    .turn(event.delta.pixel_delta(window.line_height()))
+                else {
+                    return;
+                };
+                if let Some(ply) = crate::game::view::navigate(key, this.ply(), this.moves().len())
+                {
+                    this.show_ply(ply, cx);
+                }
+                cx.stop_propagation();
+            }))
             .child(you_line)
             .children(voice_line)
             .children(self.move_message.clone().map(|message| {
@@ -1610,6 +1677,7 @@ impl Render for ComputerPage {
                             &self.exporter,
                             self.game_export(),
                             Anchor::TopRight,
+                            true,
                             cx,
                         ))
                     })
@@ -1634,13 +1702,14 @@ impl Render for ComputerPage {
                 first,
                 "No moves yet".into(),
                 select.clone(),
+                crate::notation::figurine(cx),
                 &palette,
             )))
             .child(widgets::move_controls(
                 ply,
                 moves.len(),
                 select,
-                (format!("Switch sides (play {other})").into(), flip),
+                (format!("Switch sides (play {other})").into(), None, flip),
             ))
             .child(
                 h_flex()
@@ -1680,6 +1749,7 @@ impl Render for ComputerPage {
                             .when(narrow, |button| button.min_w(relative(0.45)))
                             .icon(icon("rotate-ccw"))
                             .label("New game")
+                            .tooltip_with_action("New game", &crate::menu::New, None)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.ask(Question::NewGame, window, cx)
                             })),
@@ -1689,6 +1759,17 @@ impl Render for ComputerPage {
         self.layout
             .render("computer-page", board_column, panel, window, cx)
             .track_focus(&self.focus)
+            // ⌘Z outside the move box takes back, as the button does.
+            .on_action(
+                cx.listener(|this, _: &Undo, window, cx| this.act(Action::TakeBack, window, cx)),
+            )
+            // A click anywhere on the page gives the keys back to it, before a text field (the
+            // move box) takes them for itself, as on the analysis board.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 // The arrows step through the moves when no text field has the keys.
                 if !this.focus.is_focused(window) || event.keystroke.modifiers.modified() {

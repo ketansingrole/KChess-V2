@@ -223,6 +223,63 @@ fn crazyhouse() {
     }
 }
 
+/// Moves written with figurines over the board and in Settings, in both appearances:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::figurines -- --ignored`
+/// writes `<dir>/figurines/<appearance>-<page>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn figurines() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("figurines");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), 1320., 880.);
+        cx.update(|cx| {
+            crate::settings::change(cx, move |s| {
+                s.frontend.appearance = appearance;
+                s.frontend.figurine_notation = true;
+            })
+        });
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Local, window, cx);
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            let local = crate::shell::view_of::<crate::pages::local::LocalPage>(Page::Local, cx)
+                .expect("the page");
+            local.update(cx, |local, cx| {
+                for uci in [
+                    "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5c6", "d7c6", "e1g1", "f7f6",
+                    "d2d4", "c8g4", "d4e5", "d8d1", "f1d1",
+                ] {
+                    local.play(uci, window, cx);
+                }
+            });
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{name}-board.png")))
+            .expect("the screenshot saves");
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Settings, window, cx);
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{name}-settings.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::core::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
 /// A Crazyhouse game against the computer, named above the board, wide and at the narrowest
 /// window: `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::computer_variant --
 /// --ignored` writes `<dir>/computer-variant/<width>.png`.
@@ -432,6 +489,51 @@ fn players_search() {
     }
 }
 
+/// Game history's Lichess tab searched for an opening, in both appearances, wide and narrow:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::lichess_history_search --
+/// --ignored` writes `<dir>/lichess-history/<state>-<appearance>-<width>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn lichess_history_search() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("lichess-history");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (state, search) in [("all", ""), ("searched", "najdorf"), ("none", "nobody")] {
+        for (appearance, name) in [(Appearance::Dark, "dark"), (Appearance::Light, "light")] {
+            for (width, height) in [(1320., 900.), (760., 900.)] {
+                let profile = tempfile::tempdir().expect("a temporary profile");
+                let (mut cx, window) = start(profile.path(), width, height);
+                cx.update(|cx| {
+                    crate::settings::change(cx, move |s| s.frontend.appearance = appearance)
+                });
+                connect_showcase(&mut cx, window, profile.path(), "Rattiestword5");
+                cx.update_window(window, |_, window, cx| {
+                    crate::shell::open(Page::History, window, cx);
+                    if let Some(page) = crate::shell::view_of::<crate::pages::history::HistoryPage>(
+                        Page::History,
+                        cx,
+                    ) {
+                        page.update(cx, |page, cx| page.search_lichess(search, window, cx));
+                    }
+                })
+                .expect("the window");
+                for _ in 0..8 {
+                    std::thread::sleep(Duration::from_millis(60));
+                    settle(&mut cx, window);
+                }
+                cx.capture_screenshot(window)
+                    .expect("a screenshot")
+                    .save(out.join(format!("{state}-{name}-{width}.png")))
+                    .expect("the screenshot saves");
+                let quit = cx.update(crate::core::quit);
+                cx.foreground_executor().block_test(quit);
+                crate::profile::TEST_DATA_DIR.set(None);
+            }
+        }
+    }
+}
+
 /// The window sizes Home is shot at: wide and narrow, or `KCHESS_HOME_SIZES` ("1920x1100,760x1400").
 fn home_sizes() -> Vec<(f32, f32)> {
     let sizes: Vec<(f32, f32)> = std::env::var("KCHESS_HOME_SIZES")
@@ -559,6 +661,157 @@ fn account_menu() {
     }
 }
 
+/// The keyboard shortcuts dialog in both appearances, at the default and the smallest size:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::shortcuts -- --ignored`
+/// writes `<dir>/shortcuts/<appearance>-<width>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn shortcuts() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("shortcuts");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        for (width, height) in [SIZES[2], SIZES[0]] {
+            let profile = tempfile::tempdir().expect("a temporary profile");
+            let (mut cx, window) = start(profile.path(), width, height);
+            cx.update(|cx| {
+                crate::settings::change(cx, move |s| s.frontend.appearance = appearance)
+            });
+            cx.update_window(window, |_, window, cx| crate::shortcuts::open(window, cx))
+                .expect("the window");
+            settle(&mut cx, window);
+            cx.capture_screenshot(window)
+                .expect("a screenshot")
+                .save(out.join(format!("{name}-{width}.png")))
+                .expect("the screenshot saves");
+            let quit = cx.update(crate::core::quit);
+            cx.foreground_executor().block_test(quit);
+            crate::profile::TEST_DATA_DIR.set(None);
+        }
+    }
+}
+
+/// An over-the-board game's clocks in their last ten seconds, in both appearances:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::low_clock -- --ignored`
+/// writes `<dir>/low-clock/<appearance>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn low_clock() {
+    use crate::pages::local::LocalPage;
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("low-clock");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (name, appearance) in [("dark", Appearance::Dark), ("light", Appearance::Light)] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), 1320., 880.);
+        cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Local, window, cx);
+            let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+            local.update(cx, |local, cx| {
+                let setup =
+                    serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+                let clock = serde_json::json!({
+                    "white": { "minutes": 0.15, "increment": 0 },
+                    "black": { "minutes": 0.15, "increment": 0 },
+                });
+                local.replace_game(setup, clock, window, cx);
+                local.play("e2e4", window, cx);
+            });
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{name}.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::core::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
+/// The analysis board's import dialog at the default and the smallest size:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::import_dialog -- --ignored`
+/// writes `<dir>/import/<width>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn import_dialog() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("import");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (width, height) in [SIZES[2], SIZES[0]] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), width, height);
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Analysis, window, cx);
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            let board = crate::shell::analysis_board(window, cx).expect("the analysis board");
+            board.update(cx, |board, cx| board.open_import(window, cx));
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{width}.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::core::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
+/// A PGN file dragged over Puzzles, in both appearances:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::drop_zone -- --ignored`
+/// writes `<dir>/drop/<appearance>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn drop_zone() {
+    use gpui_kit::InputEvent as _;
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("drop");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (appearance, name) in [(Appearance::Dark, "dark"), (Appearance::Light, "light")] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (width, height) = SIZES[0];
+        let (mut cx, window) = start(profile.path(), width, height);
+        cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Puzzles, window, cx)
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.update_window(window, |_, window, cx| {
+            let position = gpui_kit::point(gpui_kit::px(width * 0.6), gpui_kit::px(height * 0.5));
+            let paths = gpui_kit::ExternalPaths(std::iter::once("game.pgn".into()).collect());
+            window.dispatch_event(
+                gpui_kit::FileDropEvent::Entered { position, paths }.to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(
+                gpui_kit::FileDropEvent::Pending { position }.to_platform_input(),
+                cx,
+            );
+        })
+        .expect("the window");
+        settle(&mut cx, window);
+        cx.capture_screenshot(window)
+            .expect("a screenshot")
+            .save(out.join(format!("{name}.png")))
+            .expect("the screenshot saves");
+        let quit = cx.update(crate::core::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
 /// Connect the stand-in Lichess's showcase account as a person would, and sync its games.
 fn connect_showcase(
     cx: &mut HeadlessAppContext,
@@ -595,7 +848,7 @@ fn connect_showcase(
         let done = cx.update(|cx| {
             let accounts = crate::accounts::handle(cx);
             let accounts = accounts.read(cx);
-            accounts.active(cx).as_deref() == Some(username) && !accounts.busy
+            accounts.active(cx).as_deref() == Some(username) && !accounts.working()
         });
         if done {
             break;
@@ -714,6 +967,7 @@ fn start(profile: &Path, width: f32, height: f32) -> (HeadlessAppContext, AnyWin
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::menu::init(cx);
+        crate::notifications::init(cx);
     });
     cx.update(|cx| crate::core::start(profile.to_path_buf(), cx))
         .expect("the core opens the profile");

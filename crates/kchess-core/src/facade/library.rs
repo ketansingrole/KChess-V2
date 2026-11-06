@@ -142,6 +142,15 @@ impl Core {
                     .call_async("store.library.clearRepertoireMisses", &[key])
                     .await
             }
+            "restoreRepertoireMisses" => {
+                let key = normal("assertRepertoireKey", &arg(args, 0))?;
+                self.database
+                    .call_async(
+                        "store.library.restoreRepertoireMisses",
+                        &[key, arg(args, 1)],
+                    )
+                    .await
+            }
             "viewPreferences" => {
                 let imported = self
                     .database

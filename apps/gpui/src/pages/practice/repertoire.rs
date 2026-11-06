@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
@@ -680,7 +681,10 @@ impl Repertoire {
         if self.your_turn(cx) {
             actions.push(RepertoireAction::ShowMove);
         }
-        actions.extend([RepertoireAction::Restart, RepertoireAction::Forget]);
+        actions.push(RepertoireAction::Restart);
+        if self.has_misses(cx) {
+            actions.push(RepertoireAction::Forget);
+        }
         if Self::drills_opening(cx) && self.drill.is_some() && !self.saving {
             actions.push(RepertoireAction::Save);
         }
@@ -700,7 +704,7 @@ impl Repertoire {
         match action {
             RepertoireAction::ShowMove => self.show_answer(cx),
             RepertoireAction::Restart => self.start_line(cx),
-            RepertoireAction::Forget => self.clear_misses(cx),
+            RepertoireAction::Forget => self.clear_misses(window, cx),
             RepertoireAction::Save => self.save_opening(window, cx),
         }
     }
@@ -731,15 +735,46 @@ impl Repertoire {
         self.keep_misses(saved, "saving a repertoire miss", cx);
     }
 
-    fn clear_misses(&mut self, cx: &mut Context<Self>) {
+    /// Whether this repertoire and side has misses to forget.
+    fn has_misses(&self, cx: &App) -> bool {
+        self.misses[&self.miss_key(cx)]
+            .as_object()
+            .is_some_and(|table| !table.is_empty())
+    }
+
+    /// Forget this repertoire's misses at once; Undo puts them back.
+    fn clear_misses(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let key = self.miss_key(cx);
-        if let Some(misses) = self.misses.as_object_mut() {
-            misses.remove(&key);
-        }
+        let forgotten = self
+            .misses
+            .as_object_mut()
+            .and_then(|misses| misses.remove(&key))
+            .filter(|table| table.as_object().is_some_and(|table| !table.is_empty()));
         let saved = cx
             .global::<AppCore>()
             .call("clearRepertoireMisses", vec![json!(key)]);
         self.keep_misses(saved, "clearing repertoire misses", cx);
+        let Some(forgotten) = forgotten else {
+            return;
+        };
+        let page = cx.entity().downgrade();
+        window.push_notification(
+            widgets::action_notification(
+                Notification::new().title("Mistakes forgotten"),
+                "undo-forget-mistakes",
+                "Undo",
+                move |_, cx| {
+                    let (key, forgotten) = (key.clone(), forgotten.clone());
+                    let _ = page.update(cx, |page, cx| {
+                        let saved = cx
+                            .global::<AppCore>()
+                            .call("restoreRepertoireMisses", vec![json!(key), forgotten]);
+                        page.keep_misses(saved, "restoring repertoire misses", cx);
+                    });
+                },
+            ),
+            cx,
+        );
     }
 
     fn keep_misses(
@@ -1060,7 +1095,7 @@ impl Render for Repertoire {
                 &palette,
             ))
             .when(drills_opening && self.preparing, |panel| {
-                panel.child(div().text_size(px(14.)).child("Loading popular replies…"))
+                panel.child(widgets::loading("Loading popular replies…", &palette))
             })
             .when(
                 drills_opening && !self.preparing && !self.note.is_empty(),
@@ -1138,7 +1173,10 @@ impl Render for Repertoire {
                             .ghost()
                             .icon(icon("eraser"))
                             .label("Forget mistakes")
-                            .on_click(cx.listener(|this, _, _, cx| this.clear_misses(cx))),
+                            .disabled(!self.has_misses(cx))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.clear_misses(window, cx)),
+                            ),
                     )
                     .when(drills_opening, |actions| {
                         actions.child(

@@ -7,7 +7,7 @@
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState, Redo, Undo};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
     Disableable as _, IndexPath, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -174,6 +174,11 @@ pub struct EditorPage {
     voice: Control,
     /// A piece said without a colour takes the colour said last.
     last_color: &'static str,
+    /// Undo and redo: each position as `(variant, FEN)`, the one shown last of `undone`.
+    edits: Vec<(String, String)>,
+    undone: Vec<(String, String)>,
+    /// The position as last recorded, which the next change is undone to.
+    shown: (String, String),
     _subscriptions: Vec<Subscription>,
 }
 
@@ -277,8 +282,12 @@ impl EditorPage {
             focus: cx.focus_handle(),
             voice: Control::new(true, cx),
             last_color: "white",
+            edits: Vec::new(),
+            undone: Vec::new(),
+            shown: (String::new(), String::new()),
             _subscriptions: subscriptions,
         };
+        page.shown = page.snapshot();
         page.redraw(cx);
         page
     }
@@ -384,11 +393,50 @@ impl EditorPage {
         self.changed(cx);
     }
 
-    /// The position changed: the board, the FEN box and the en passant choices follow.
+    /// The position changed: the board, the FEN box and the en passant choices follow, and Undo
+    /// can go back to the one before.
     fn changed(&mut self, cx: &mut Context<Self>) {
+        let now = self.snapshot();
+        if now != self.shown {
+            self.edits.push(std::mem::replace(&mut self.shown, now));
+            self.undone.clear();
+        }
+        self.show_changed(cx);
+    }
+
+    fn show_changed(&mut self, cx: &mut Context<Self>) {
         self.fen_error = None;
         self.stale_fields = true;
         self.redraw(cx);
+    }
+
+    /// The position as Undo keeps it: its variant and FEN.
+    fn snapshot(&self) -> (String, String) {
+        (self.variant.clone(), self.fen())
+    }
+
+    fn restore(&mut self, (variant, fen): (String, String), cx: &mut Context<Self>) {
+        if self.read_fen(&fen) {
+            self.variant = variant;
+        }
+        self.shown = self.snapshot();
+        self.show_changed(cx);
+    }
+
+    /// Back to the position before the last change (⌘Z, Edit → Undo).
+    pub(crate) fn undo(&mut self, cx: &mut Context<Self>) {
+        if let Some(before) = self.edits.pop() {
+            self.undone.push(self.shown.clone());
+            self.restore(before, cx);
+        }
+    }
+
+    /// The change Undo took back, again (⇧⌘Z, Edit → Redo).
+    pub(crate) fn redo(&mut self, cx: &mut Context<Self>) {
+        if let Some(after) = self.undone.pop() {
+            self.edits.push(self.shown.clone());
+            self.restore(after, cx);
+        }
     }
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
@@ -524,6 +572,11 @@ impl EditorPage {
         self.setup["board"] = json!(EMPTY_BOARD);
         self.setup["ep"] = json!("");
         self.changed(cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn orientation(&self) -> Color {
+        self.orientation
     }
 
     fn flip(&mut self, cx: &mut Context<Self>) {
@@ -890,15 +943,12 @@ impl Render for EditorPage {
                     .text_color(palette.error)
                     .child(error)
             }));
-        let panel = widgets::side_panel(&palette)
-            .id("editor-panel")
-            .overflow_y_scroll()
-            .h(self
-                .layout
-                .fixed(self.layout.panel_height_px(board_size) + SPARE_ROWS))
+        // The position's settings scroll; what to do with it stays in view below them.
+        let settings = v_flex()
+            .id("editor-settings")
             .flex_1()
-            .min_w(PANEL_MIN)
-            .max_w(PANEL_MAX)
+            .min_h_0()
+            .overflow_y_scroll()
             .gap(px(16.))
             .child(
                 widgets::StatusBanner::new(
@@ -1028,9 +1078,21 @@ impl Render for EditorPage {
                             .label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     ),
-            )
+            );
+        let panel = widgets::side_panel(&palette)
+            .id("editor-panel")
+            .test_support()
+            .h(self
+                .layout
+                .fixed(self.layout.panel_height_px(board_size) + SPARE_ROWS))
+            .flex_1()
+            .min_w(PANEL_MIN)
+            .max_w(PANEL_MAX)
+            .gap(px(14.))
+            .child(settings)
             .child(
                 v_flex()
+                    .flex_none()
                     .pt(px(14.))
                     .border_t_1()
                     .border_color(palette.border)
@@ -1083,6 +1145,25 @@ impl Render for EditorPage {
         div()
             .size_full()
             .track_focus(&self.focus)
+            // F turns the board, as its button does, while no text field has the keys.
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if this.focus.is_focused(window)
+                    && !event.keystroke.modifiers.modified()
+                    && event.keystroke.key == "f"
+                {
+                    this.flip(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            // The FEN box takes these for its own text first.
+            .on_action(cx.listener(|this, _: &Undo, _, cx| this.undo(cx)))
+            .on_action(cx.listener(|this, _: &Redo, _, cx| this.redo(cx)))
+            // A click gives the keys back to the page, before a text field (the FEN) takes them.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .child(
                 self.layout
                     .render("editor", board_column, panel, window, cx),

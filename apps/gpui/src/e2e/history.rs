@@ -1,6 +1,7 @@
 //! Game history: finished games listed, opened and kept.
 
 use super::Harness;
+use crate::pages::Page;
 
 const SCHOLARS_MATE: [&str; 7] = ["e4", "e5", "Qh5", "Nc6", "Bc4", "Nf6", "Qxf7#"];
 
@@ -78,6 +79,17 @@ fn an_open_game_is_stepped_through_and_closed_to_the_list(cx: &mut gpui_kit::Tes
     assert!(!app.shows("all-games"));
 }
 
+/// Escape closes an open game to the list, as All games does.
+#[gpui_kit::test]
+fn escape_closes_an_open_game(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = mate_in_history(cx);
+    app.click(("history-row", 0usize));
+    app.wait_for_moves(&SCHOLARS_MATE);
+    app.press("escape");
+    app.wait_gone("all-games");
+    app.find(("history-row", 0usize));
+}
+
 #[gpui_kit::test]
 fn finished_games_are_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppContext) {
     let app = mate_in_history(cx);
@@ -121,6 +133,18 @@ fn an_open_game_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     app.find("tree-e2e4 e7e5 d1h5 b8c6 f1c4 g8f6 h5f7");
 }
 
+/// Home lists recent games only once there is one: before that the board's card starts a game.
+#[gpui_kit::test]
+fn home_lists_recent_games_once_there_is_one(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Home");
+    app.find("home-play");
+    assert!(!app.shows("home-view-all"));
+    play_over_the_board(&mut app, &SCHOLARS_MATE);
+    app.open("Home");
+    app.find("home-view-all");
+}
+
 /// Home's _Review_ is in Quick Pick: the last game opens in Game history. Home adds no Sync games
 /// of its own there.
 #[gpui_kit::test]
@@ -129,6 +153,20 @@ fn the_last_game_is_reviewed_from_home_in_quick_pick(cx: &mut gpui_kit::TestAppC
     let mut app = mate_in_history(cx);
     app.open("Home");
     app.find("home-review");
+    // The last game says which opening it was, as its row in Game history does.
+    assert_eq!(
+        app.find("home-opening").label(),
+        Some("C20 King's Pawn Game: Wayward Queen Attack")
+    );
+    // Not while opening names are turned off.
+    app.cx
+        .update(|cx| crate::settings::change(cx, |s| s.frontend.show_opening_name = false));
+    app.wait_for("the opening to go", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find("home-opening").is_none()
+    });
+    app.cx
+        .update(|cx| crate::settings::change(cx, |s| s.frontend.show_opening_name = true));
     app.press("secondary-k");
     app.type_text(">");
     super::palette::wait_for_first(&mut app, "Review last game");
@@ -231,14 +269,18 @@ fn deleting_a_game_asks_first_and_is_kept_after_a_restart(cx: &mut gpui_kit::Tes
     });
     let label = label.expect("the game's actions");
 
+    // Deleting asks nothing: its notice's Undo brings the game back, and it stays.
     app.click_label(&label);
     app.click_label("Delete");
-    app.click("delete-cancel");
+    app.find("history-play");
+    app.click("undo-delete-game");
+    app.find(("history-row", 0usize));
+    let mut app = app.restart();
+    board_games(&mut app);
     app.find(("history-row", 0usize));
 
     app.click_label(&label);
     app.click_label("Delete");
-    app.click("delete-game");
     app.find("history-play");
     assert!(!app.shows(("history-row", 0usize)));
 
@@ -301,6 +343,7 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
     };
     app.wait_for("the first report", |_, cx| page_loaded(cx));
     assert!(app.with_window(|window, _| window.try_find_by_label("Variant").is_none()));
+    assert!(app.with_window(|window, _| window.try_find_by_label("Speed").is_some()));
 
     // The account turns out to have Chess960 games.
     let insights = page(&mut app);
@@ -326,4 +369,226 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
         crate::shell::view_of::<InsightsPage>(Page::Insights, cx)
             .is_some_and(|page| page.read(cx).loaded())
     }
+}
+
+/// The Lichess tab's games, once listed: the total and each game's opening.
+fn lichess_listed(app: &mut Harness, what: &str, ready: impl Fn(usize, &[String]) -> bool) {
+    app.wait_for(what, |_, cx| {
+        crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+            .and_then(|page| page.read(cx).lichess_listed())
+            .is_some_and(|(total, openings)| ready(total, &openings))
+    });
+}
+
+/// Hundreds of synced games are found by opponent or opening: the search narrows the list and
+/// its total, and Clear filters empties it.
+#[gpui_kit::test]
+fn lichess_games_are_searched_by_opponent_or_opening(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    app.with_window(|window, cx| crate::shell::open(Page::History, window, cx));
+    app.click(("history-source", 2usize));
+    lichess_listed(&mut app, "the synced games", |total, _| total == 40);
+
+    app.click_label("Search by opponent or opening");
+    app.type_text("najdorf");
+    lichess_listed(&mut app, "the Najdorf games", |total, openings| {
+        total == 10
+            && !openings.is_empty()
+            && openings.iter().all(|opening| opening.contains("Najdorf"))
+    });
+
+    app.click("lichess-clear");
+    lichess_listed(&mut app, "every game again", |total, _| total == 40);
+    // A name is found in any case.
+    app.click_label("Search by opponent or opening");
+    app.type_text("TACTICALTOM");
+    lichess_listed(&mut app, "TacticalTom's games", |total, _| {
+        total > 0 && total < 40
+    });
+}
+
+/// An open game steps to the games above and below it in the list without going back to it,
+/// within the list's filter.
+#[gpui_kit::test]
+fn an_open_game_steps_to_the_next_and_previous(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = mate_in_history(cx);
+    // A newer game, left unfinished after one move: it is listed first.
+    app.open("Over the board");
+    app.click("local-new");
+    app.click("start-local");
+    app.wait_for_moves(&[]);
+    play_over_the_board(&mut app, &["e4"]);
+    app.open("Game history");
+    app.find(("history-row", 1usize));
+
+    app.click(("history-row", 0usize));
+    app.wait_for_moves(&["e4"]);
+    assert!(!app.enabled("previous-game"));
+    app.click("next-game");
+    app.wait_for_moves(&SCHOLARS_MATE);
+    assert!(!app.enabled("next-game"));
+    app.click("previous-game");
+    app.wait_for_moves(&["e4"]);
+
+    // Under White won, the unfinished game is not listed: Scholar's mate has no neighbours.
+    app.click("all-games");
+    app.click(("history-filter", 1usize));
+    app.click(("history-row", 0usize));
+    app.wait_for_moves(&SCHOLARS_MATE);
+    assert!(!app.enabled("previous-game"));
+    assert!(!app.enabled("next-game"));
+}
+
+/// A synced Lichess game steps to its neighbours on the list's page too.
+#[gpui_kit::test]
+fn a_lichess_game_steps_to_the_next_and_previous(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    app.with_window(|window, cx| crate::shell::open(Page::History, window, cx));
+    app.click(("history-source", 2usize));
+    lichess_listed(&mut app, "the synced games", |total, _| total == 40);
+    let open = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+                .map(|page| page.read(cx).lichess_open())
+                .unwrap_or_default()
+        })
+    };
+    let wait_open = |app: &mut Harness, row: usize| {
+        app.wait_for("the game to open", |_, cx| {
+            crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+                .map(|page| page.read(cx).lichess_open())
+                .is_some_and(|(open, ids)| open.as_ref() == ids.get(row))
+        });
+    };
+
+    app.with_window(|window, cx| {
+        let page = crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+            .expect("the history page");
+        page.update(cx, |page, cx| page.open_first_lichess(window, cx));
+    });
+    wait_open(&mut app, 0);
+    assert!(!app.enabled("lichess-previous-game"));
+    app.click("lichess-next-game");
+    wait_open(&mut app, 1);
+    app.click("lichess-next-game");
+    wait_open(&mut app, 2);
+    app.click("lichess-previous-game");
+    wait_open(&mut app, 1);
+    assert!(open(&mut app).0.is_some());
+}
+
+/// The computer and board games are searched by opponent or opening, as the Lichess games are.
+#[gpui_kit::test]
+fn board_games_are_searched_by_opponent_or_opening(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = mate_in_history(cx);
+    // A second game, 1. e4 alone: a King's Pawn Game, but no Wayward Queen Attack.
+    app.open("Over the board");
+    app.click("local-new");
+    app.click("start-local");
+    app.wait_for_moves(&[]);
+    play_over_the_board(&mut app, &["e4"]);
+    app.open("Game history");
+    app.find(("history-row", 1usize));
+
+    // Openings are searched even while their names are not shown.
+    app.cx
+        .update(|cx| crate::settings::change(cx, |s| s.frontend.show_opening_name = false));
+    app.click_label("Search by opponent or opening");
+    app.type_text("wayward");
+    app.wait_for("one game found", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find(("history-row", 1usize)).is_none()
+    });
+    app.click(("history-row", 0usize));
+    app.wait_for_moves(&SCHOLARS_MATE);
+    app.click("all-games");
+
+    // Nothing found: Show all games clears the search.
+    app.click_label("Search by opponent or opening");
+    app.type_text(" gambit");
+    app.find("show-all");
+    assert!(!app.shows(("history-row", 0usize)));
+    app.click("show-all");
+    app.find(("history-row", 1usize));
+}
+
+/// Export saves the games listed, search applied, as one PGN file.
+#[gpui_kit::test]
+fn the_games_listed_are_exported_as_one_pgn(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = mate_in_history(cx);
+    app.open("Over the board");
+    app.click("local-new");
+    app.click("start-local");
+    app.wait_for_moves(&[]);
+    play_over_the_board(&mut app, &["e4"]);
+    app.open("Game history");
+    app.find(("history-row", 1usize));
+
+    let folder = tempfile::tempdir().expect("a folder to save in");
+    let save = |app: &mut Harness, name: &str| {
+        let started = std::time::Instant::now();
+        while !app.cx.did_prompt_for_new_path() {
+            assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
+            app.tick();
+        }
+        let path = folder.path().join(name);
+        let chosen = path.clone();
+        app.cx.simulate_new_path_selection(move |_| Some(chosen));
+        path
+    };
+    app.click("history-export-all");
+    let both = save(&mut app, "both.pgn");
+    app.wait_for("the file", |_, _| both.exists());
+    let saved = std::fs::read_to_string(&both).expect("the saved PGN");
+    assert_eq!(saved.matches("[Event ").count(), 2, "{saved}");
+
+    app.click_label("Search by opponent or opening");
+    app.type_text("wayward");
+    app.wait_for("one game found", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find(("history-row", 1usize)).is_none()
+    });
+    app.click("history-export-all");
+    let one = save(&mut app, "one.pgn");
+    app.wait_for("the file", |_, _| one.exists());
+    let saved = std::fs::read_to_string(&one).expect("the saved PGN");
+    assert_eq!(saved.matches("[Event ").count(), 1, "{saved}");
+    assert!(saved.contains("Qxf7#"), "{saved}");
+}
+
+/// Home names a variant game's variant, on the last game's card and in its Recent games row.
+#[gpui_kit::test]
+fn home_names_a_variant_games_variant(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.cx.update(|cx| {
+        let played = cx.global::<crate::played::PlayedHandle>().0.clone();
+        played.update(cx, |played, cx| {
+            played.save(
+                serde_json::json!({
+                    "id": "atomic-game",
+                    "source": "computer",
+                    "setup": {
+                        "variant": "atomic",
+                        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                    },
+                    "moves": ["e2e4", "e7e5"],
+                    "white": "You",
+                    "black": "Stockfish · Club Player",
+                    "result": "1/2-1/2",
+                    "reason": "agreement",
+                    "finished": true,
+                    "timeControl": "300+3",
+                    "startedAt": 1_790_000_000_000u64,
+                    "updatedAt": 1_790_000_000_000u64,
+                }),
+                cx,
+            );
+        });
+    });
+    app.open("Home");
+    assert_eq!(app.find("home-opening").label(), Some("Atomic"));
+    assert_eq!(
+        app.find(("home-game", 0usize)).label(),
+        Some("You vs Stockfish · Club Player, Atomic")
+    );
 }

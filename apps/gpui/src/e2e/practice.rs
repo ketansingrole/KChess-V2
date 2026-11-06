@@ -173,6 +173,27 @@ fn endgame_drills_open_and_return_to_the_courses(cx: &mut gpui_kit::TestAppConte
     assert!(!app.shows("chess-board"));
 }
 
+/// F turns an endgame drill's board, as its button does.
+#[gpui_kit::test]
+fn f_flips_an_endgame_drill(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, 3);
+    reveal(&mut app, "endgame-courses", "card-drills");
+    app.click("card-drills");
+    app.find("drill-hint");
+    let flipped = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+                .and_then(|page| page.read(cx).drills(cx))
+                .map(|drills| drills.read(cx).flipped())
+        })
+    };
+    assert_eq!(flipped(&mut app), Some(false));
+    app.click("chess-board");
+    app.press("f");
+    assert_eq!(flipped(&mut app), Some(true));
+}
+
 /// An endgame drill's buttons are in Quick Pick, those it allows now.
 #[gpui_kit::test]
 fn an_endgame_drill_is_flipped_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
@@ -352,4 +373,130 @@ fn a_mistake_is_practised_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
             "Review early"
         ]
     );
+}
+
+/// A solved mistake's board answers the keys as a puzzle's: the arrows step back through its
+/// moves, and F turns it. A click on the board gives the keys back to the page.
+#[gpui_kit::test]
+fn a_solved_mistake_is_stepped_through_and_turned(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, 5);
+    app.find("review-a-game");
+    let mistakes = app.cx.update(|cx| {
+        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+            .and_then(|page| page.read(cx).mistakes())
+            .expect("the mistakes trainer")
+    });
+    app.cx.update(|cx| {
+        mistakes.update(cx, |mistakes, cx| {
+            mistakes.seed(
+                vec![serde_json::json!({
+                    "id": "mate",
+                    "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                    "solution": ["h5f7"],
+                    "dueAt": 0,
+                })],
+                cx,
+            )
+        });
+    });
+    app.click("practice-due");
+    app.click_square("h5", true);
+    app.click_square("f7", true);
+    app.wait_for("the mate to solve the drill", |_, cx| {
+        mistakes.read(cx).board().read(cx).status() == "solved"
+    });
+    app.click("chess-board");
+    app.press("left");
+    assert_eq!(
+        app.cx
+            .update(|cx| mistakes.read(cx).board().read(cx).viewing()),
+        Some(0)
+    );
+    app.press("f");
+    assert!(
+        app.cx
+            .update(|cx| mistakes.read(cx).board().read(cx).flipped())
+    );
+}
+
+/// Once a mistake is solved, Return goes on to the next due one, as on Puzzles.
+#[gpui_kit::test]
+fn return_goes_on_to_the_next_due_mistake(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, 5);
+    app.find("review-a-game");
+    let mistakes = app.cx.update(|cx| {
+        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+            .and_then(|page| page.read(cx).mistakes())
+            .expect("the mistakes trainer")
+    });
+    let mate = |id: &str| {
+        serde_json::json!({
+            "id": id,
+            "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+            "solution": ["h5f7"],
+            "dueAt": 0,
+        })
+    };
+    app.cx.update(|cx| {
+        mistakes.update(cx, |mistakes, cx| {
+            mistakes.seed(vec![mate("first"), mate("second")], cx)
+        })
+    });
+    app.click("practice-due");
+    app.click("chess-board");
+    // Not while it is being solved.
+    app.press("enter");
+    assert_eq!(
+        app.cx
+            .update(|cx| mistakes.read(cx).board().read(cx).status().to_string()),
+        "playing"
+    );
+    app.click_square("h5", true);
+    app.click_square("f7", true);
+    app.wait_for("the mate to solve the drill", |_, cx| {
+        mistakes.read(cx).board().read(cx).status() == "solved"
+    });
+    // The answer is saved in the core, whose drills (none: these were seeded here) come back;
+    // seed the other one again once they have.
+    app.wait_for("the answer to be saved", |_, cx| {
+        !mistakes
+            .read(cx)
+            .actions()
+            .contains(&crate::pages::practice::mistakes::MistakeAction::Next)
+    });
+    app.cx
+        .update(|cx| mistakes.update(cx, |mistakes, cx| mistakes.seed(vec![mate("second")], cx)));
+    app.click("chess-board");
+    app.press("enter");
+    app.wait_for("the next mistake", |_, cx| {
+        mistakes.read(cx).board().read(cx).status() == "playing"
+    });
+}
+
+/// Return goes on through a lesson: past a step to read, and past a step once it is passed, but
+/// not while it is being played.
+#[gpui_kit::test]
+fn return_goes_on_through_a_lesson(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, 3);
+    app.click("card-checkmate-patterns-2");
+    app.click("training-cp2-balestra");
+    app.find("lesson-next");
+    app.click("chess-board");
+    app.press("enter");
+    assert_eq!(app.status(), "Your turn");
+    app.press("enter");
+    assert_eq!(app.status(), "Your turn", "not while it is being played");
+    app.drag_square("d3", "b5", true);
+    wait_for_label(&mut app, "status-banner", "Checkmate");
+    app.click("chess-board");
+    app.press("enter");
+    app.wait_for("the next chapter", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("status-banner")
+            .is_none_or(|banner| banner.label() != Some("Checkmate"))
+    });
 }

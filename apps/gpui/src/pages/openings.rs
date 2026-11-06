@@ -252,6 +252,8 @@ pub struct OpeningsPage {
     search_task: Option<Task<()>>,
     /// The browser starts afresh once a line was opened from it, as Electron's page is remade.
     clear_search: bool,
+    /// A line was just opened from the list: its page takes the keys from the search field.
+    focus_line: bool,
     expanded: HashSet<String>,
     previews: HashMap<String, Entity<ChessBoard>>,
     area: Measured,
@@ -282,6 +284,11 @@ impl Focusable for OpeningsPage {
 }
 
 impl OpeningsPage {
+    /// Its search field, for Find (`shell::find_on_page`).
+    pub(crate) fn search_fields(&self) -> Vec<Entity<InputState>> {
+        vec![self.search.clone()]
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> OpeningsPage {
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search openings or ECO codes"));
@@ -337,6 +344,7 @@ impl OpeningsPage {
             query: String::new(),
             search_task: None,
             clear_search: false,
+            focus_line: false,
             expanded: HashSet::new(),
             previews: HashMap::new(),
             area: Measured::default(),
@@ -405,6 +413,7 @@ impl OpeningsPage {
         };
         if self.line.is_none() {
             self.clear_search = true;
+            self.focus_line = true;
         }
         // The moves as far as they are legal.
         let steps = line_of(&moves);
@@ -572,6 +581,11 @@ impl OpeningsPage {
             Action::Flip => self.flip(cx),
             Action::AllOpenings => self.show_line(None, cx),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn orientation(&self) -> Color {
+        self.orientation
     }
 
     fn flip(&mut self, cx: &mut Context<Self>) {
@@ -964,6 +978,7 @@ impl OpeningsPage {
             .gap(widgets::STACK_GAP)
             .child(crate::board::cached(&self.board))
             .child(widgets::lone_entry(entry));
+        let figurine = crate::notation::figurine(cx);
         let moves = h_flex()
             .flex_wrap()
             .gap_x(px(8.))
@@ -996,7 +1011,7 @@ impl OpeningsPage {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.show_line(Some(upto.clone()), cx)
                             }))
-                            .child(san.clone()),
+                            .child(crate::notation::shown(san, &figurine)),
                     )
             }));
         let train_choice = OpeningChoice {
@@ -1103,7 +1118,7 @@ impl OpeningsPage {
                             .ghost()
                             .xsmall()
                             .icon(icon("arrow-up-down"))
-                            .tooltip("Flip board")
+                            .tooltip("Flip board (F)")
                             .accessibility_label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     ),
@@ -1215,9 +1230,30 @@ impl Render for OpeningsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         if self.line.is_some() {
+            if std::mem::take(&mut self.focus_line) {
+                window.focus(&self.focus, cx);
+            }
             return div()
                 .size_full()
                 .track_focus(&self.focus)
+                // F turns the line's board, as its button does, while no text field has the keys.
+                // Escape goes back to all openings.
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                    if !this.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+                        return;
+                    }
+                    match event.keystroke.key.as_str() {
+                        "f" => this.act(Action::Flip, window, cx),
+                        "escape" => this.show_line(None, cx),
+                        _ => return,
+                    }
+                    cx.stop_propagation();
+                }))
+                .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    if event.button == MouseButton::Left {
+                        window.focus(&this.focus, cx);
+                    }
+                }))
                 .child(self.render_detail(window, cx, &palette))
                 .into_any_element();
         }

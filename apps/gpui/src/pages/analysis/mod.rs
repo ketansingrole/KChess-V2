@@ -2,6 +2,7 @@
 //! board, Stockfish's lines and arrows for the position shown, Lichess's cloud evaluation, and the
 //! session the Electron app keeps (`sessions.analysis`), so either app opens it as it was left.
 
+mod edits;
 mod notes;
 mod practice;
 mod review;
@@ -16,10 +17,10 @@ use std::time::Duration;
 use futures::FutureExt as _;
 
 use gpui_kit::base::TestSupportExt as _;
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::input::{InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent, InputState, Redo, Textarea, TextareaState, Undo};
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::switch::Switch;
@@ -110,6 +111,17 @@ fn position_of(variant: &str, fen: &str) -> Option<VariantPosition> {
     kchess_domain::rules::setup_start(variant, fen)
 }
 
+/// The position with the other side to move (a null move), whose best line is the threat; `None`
+/// in check, where the side to move cannot pass.
+fn threat_fen(variant: &str, fen: &str) -> Option<String> {
+    let position = position_of(variant, fen)?;
+    if position.is_check() {
+        return None;
+    }
+    let passed = position.swap_turn().ok()?;
+    Some(kchess_domain::rules::make_fen(&passed))
+}
+
 /// Checkmate, stalemate, bare kings or a variant's own ending (an exploded king, a king on the
 /// hill…) end the analysis: there is nothing to search.
 fn game_over(position: Option<&VariantPosition>) -> Option<&'static str> {
@@ -153,6 +165,12 @@ fn result_of(position: &VariantPosition) -> &'static str {
 pub struct AnalysisPage {
     root: TreeNode,
     path: String,
+    /// Undo and Redo over the tree's edits.
+    edits: edits::Edits,
+    /// The move whose comment the last change typed, so a comment's typing is one step.
+    typing_comment: Option<String>,
+    /// The threat is shown (X): the engine searches the position with the other side to move.
+    threat: bool,
     orientation: Color,
     /// The saved study the board is showing, and its chapter; edits are saved back to it.
     study: String,
@@ -213,7 +231,7 @@ pub struct AnalysisPage {
     cloud_request: u64,
     cloud_task: Option<Task<()>>,
     save: Option<Task<()>>,
-    wheel: f32,
+    wheel: crate::game::view::Wheel,
     focus: FocusHandle,
     /// Spoken moves, and “back”, “next”, “best move”, “flip board”.
     voice: VoiceMoves,
@@ -420,9 +438,13 @@ impl AnalysisPage {
                 }
             }),
         ];
+        let edits = edits::Edits::new(&root, &path);
         let mut page = AnalysisPage {
             root,
             path,
+            edits,
+            typing_comment: None,
+            threat: false,
             orientation,
             study,
             chapter,
@@ -472,7 +494,7 @@ impl AnalysisPage {
             cloud_request: 0,
             cloud_task: None,
             save: None,
-            wheel: 0.,
+            wheel: Default::default(),
             focus: cx.focus_handle(),
             voice: VoiceMoves::new("analysis", cx),
             tried_labels: Vec::new(),
@@ -556,6 +578,42 @@ impl AnalysisPage {
         analysis_context(&self.root.fen, &moves_of(&self.path))
     }
 
+    /// The position the threat is searched from, while the threat is shown and the side to move
+    /// could pass.
+    fn threat_position(&self) -> Option<String> {
+        self.threat
+            .then(|| threat_fen(self.root.variant(), &self.node().fen))
+            .flatten()
+    }
+
+    /// The position the engine searches: the one shown, or its threat's.
+    fn engine_fen(&self) -> String {
+        self.threat_position()
+            .unwrap_or_else(|| self.node().fen.clone())
+    }
+
+    /// The engine's search and its cache entry: the threat's position stands on its own.
+    fn engine_context(&self) -> String {
+        match self.threat_position() {
+            Some(fen) => analysis_context(&fen, &[]),
+            None => self.context(),
+        }
+    }
+
+    /// Show or hide the opponent's threat (X, as on Lichess).
+    pub(crate) fn toggle_threat(&mut self, cx: &mut Context<Self>) {
+        if self.hides_engine() {
+            return;
+        }
+        self.threat = !self.threat;
+        self.engine_changed(cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn threat_shown(&self) -> Option<String> {
+        self.threat_position()
+    }
+
     /// Play a move from the position shown; false when it is not kept (not legal there, or a
     /// wrong answer while practising).
     fn play(&mut self, uci: &str, cx: &mut Context<Self>) -> bool {
@@ -595,6 +653,34 @@ impl AnalysisPage {
             let next = child_path(&self.path, &child.uci);
             self.go_to(&next, cx);
         }
+    }
+
+    /// Into the first variation from here (Shift →), as Lichess's analysis board does.
+    fn enter_variation(&mut self, cx: &mut Context<Self>) {
+        if let Some(child) = self.node().children.get(1) {
+            let next = child_path(&self.path, &child.uci);
+            self.go_to(&next, cx);
+        }
+    }
+
+    /// Out of the variation shown, back to where it branched off (Shift ←).
+    fn exit_variation(&mut self, cx: &mut Context<Self>) {
+        if let Some(fork) = self.root.fork_before(&self.path) {
+            self.go_to(&fork, cx);
+        }
+    }
+
+    /// E shows the explorer, or the moves again.
+    fn toggle_explorer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let shown = Tool::of(&crate::prefs::get::<String>(cx, TOOL, "moves".into()));
+        let next = if shown == Tool::Explorer {
+            Tool::Moves
+        } else {
+            Tool::Explorer
+        };
+        crate::prefs::set(cx, TOOL, next.key());
+        window.refresh();
+        cx.notify();
     }
 
     pub(crate) fn go_to_start(&mut self, cx: &mut Context<Self>) {
@@ -682,6 +768,7 @@ impl AnalysisPage {
         self.persist_study(cx);
         self.root = tree;
         self.path.clear();
+        self.edits.reset(&self.root, "");
         self.clear_evaluations();
         self.study.clear();
         self.review.origin = None;
@@ -974,6 +1061,8 @@ impl AnalysisPage {
 
     /// The board, the engine and the saved session follow a change.
     fn changed(&mut self, cx: &mut Context<Self>) {
+        let typing = self.typing_comment.take();
+        self.edits.track(&self.root, &self.path, typing);
         self.reveal_move.set(true);
         self.follow_review(cx);
         self.check_practice(cx);
@@ -1092,7 +1181,8 @@ impl AnalysisPage {
         if !self.attached {
             return;
         }
-        let fen = self.node().fen.clone();
+        let fen = self.engine_fen();
+        let threat = self.threat_position().is_some();
         self.client_id += 1;
         let request = self.client_id;
         self.engine_error = None;
@@ -1114,7 +1204,7 @@ impl AnalysisPage {
             cx.notify();
             return;
         }
-        let context = self.context();
+        let context = self.engine_context();
         let known = self.evaluations.get(&context);
         if !infinite
             && known.is_some_and(|known| {
@@ -1135,8 +1225,8 @@ impl AnalysisPage {
         let mut asked = json!({
             "fen": fen,
             "clientId": request,
-            "rootFen": self.root.fen,
-            "moves": moves_of(&self.path),
+            "rootFen": if threat { fen.clone() } else { self.root.fen.clone() },
+            "moves": if threat { Vec::new() } else { moves_of(&self.path) },
             "lines": lines.clamp(1, 5),
             "infinite": infinite,
         });
@@ -1176,7 +1266,7 @@ impl AnalysisPage {
         let id = update["id"].as_f64().unwrap_or_default();
         if update["fen"].as_str() != Some(self.wanted.as_str())
             || update["clientId"].as_f64() != Some(self.client_id as f64)
-            || update["context"].as_str() != Some(self.context().as_str())
+            || update["context"].as_str() != Some(self.engine_context().as_str())
             || id < self.latest_id
         {
             return;
@@ -1233,9 +1323,9 @@ impl AnalysisPage {
         if !Self::assistance_allowed(cx) {
             return None;
         }
-        let context = self.context();
+        let context = self.engine_context();
         if let Some(live) = &self.live
-            && live["fen"].as_str() == Some(self.node().fen.as_str())
+            && live["fen"].as_str() == Some(self.engine_fen().as_str())
             && live["context"].as_str() == Some(context.as_str())
         {
             return Some(live);
@@ -1316,7 +1406,20 @@ impl AnalysisPage {
 
     /// Without the local engine, the cloud's lines drive the bar, arrows and line list.
     fn using_cloud(&self, cx: &App) -> bool {
-        (!Self::engine_on(cx) || !self.engine_ready) && !self.cloud_lines(cx).is_empty()
+        (!Self::engine_on(cx) || !self.engine_ready)
+            && self.threat_position().is_none()
+            && !self.cloud_lines(cx).is_empty()
+    }
+
+    /// The evaluation bar's line: the position's own, also while its threat is shown.
+    fn bar_line(&self, cx: &App) -> Option<Value> {
+        if self.threat_position().is_some() {
+            return self.evaluations.get(&self.context())?["lines"]
+                .as_array()?
+                .first()
+                .cloned();
+        }
+        self.lines(cx).first().cloned()
     }
 
     fn lines(&self, cx: &App) -> Vec<Value> {
@@ -1339,7 +1442,8 @@ impl AnalysisPage {
     }
 
     fn play_best(&mut self, cx: &mut Context<Self>) {
-        if self.hides_engine() {
+        // The threat's best move is the opponent's, not one to play here.
+        if self.hides_engine() || self.threat_position().is_some() {
             return;
         }
         let best = self
@@ -1394,18 +1498,22 @@ impl AnalysisPage {
         let engine_shown = (Self::engine_on(cx) || self.using_cloud(cx))
             && crate::prefs::get(cx, ARROWS, true)
             && game_over(Some(&position)).is_none();
+        let threat = self.threat_position().is_some();
         if engine_shown {
             state.arrows = self
                 .lines(cx)
                 .iter()
                 .enumerate()
+                // The threat is the opponent's best move, in red.
+                .take(if threat { 1 } else { usize::MAX })
                 .filter_map(|(rank, line)| {
                     let uci = line["pv"][0].as_str()?;
-                    Some(Arrow::engine(
-                        now_square(uci, 0..2)?,
-                        now_square(uci, 2..4)?,
-                        rank,
-                    ))
+                    let (from, to) = (now_square(uci, 0..2)?, now_square(uci, 2..4)?);
+                    Some(if threat {
+                        Arrow::brush("red", from, to)
+                    } else {
+                        Arrow::engine(from, to, rank)
+                    })
                 })
                 .collect();
         }
@@ -1416,19 +1524,37 @@ impl AnalysisPage {
 
     /* ── Keys, wheel, menus ───────────────────────────────────────────── */
 
-    /// ← → ↑ ↓ step, F flips, L turns the engine on or off, Space plays the best move.
+    /// ← → ↑ ↓ (and Home, End) step, Shift → and Shift ← go into and out of a variation, F flips,
+    /// L turns the engine on or off, E shows the explorer, Space plays the best move, Delete or
+    /// Backspace deletes from the move shown (its notice's Undo, or ⌘Z, brings it back).
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+        if !self.focus.is_focused(window) {
+            return;
+        }
+        let modifiers = &event.keystroke.modifiers;
+        if modifiers.shift && !modifiers.control && !modifiers.platform && !modifiers.alt {
+            match event.keystroke.key.as_str() {
+                "right" => self.enter_variation(cx),
+                "left" => self.exit_variation(cx),
+                _ => return,
+            }
+            cx.stop_propagation();
+            return;
+        }
+        if modifiers.modified() {
             return;
         }
         match event.keystroke.key.as_str() {
             "left" => self.back(cx),
             "right" => self.forward(cx),
-            "up" => self.go_to_start(cx),
-            "down" => self.go_to_end(cx),
+            "up" | "home" => self.go_to_start(cx),
+            "down" | "end" => self.go_to_end(cx),
             "f" => self.flip(cx),
             "l" => self.toggle_engine(cx),
+            "x" => self.toggle_threat(cx),
             "c" => self.focus_notes(window, cx),
+            "e" => self.toggle_explorer(window, cx),
+            "delete" | "backspace" => self.delete_from_here(window, cx),
             "space"
                 if !cx
                     .global::<SettingsHandle>()
@@ -1479,10 +1605,13 @@ impl AnalysisPage {
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
         };
         let setup = json!({ "variant": self.root.variant(), "fen": fen });
-        let best = (Self::assistance_allowed(cx) && !self.hides_engine())
-            .then(|| self.lines(cx).first().cloned())
-            .flatten()
-            .and_then(|line| line["pv"][0].as_str().map(str::to_string));
+        // The threat's best move is the opponent's: "best move" waits for the position's own.
+        let best = (Self::assistance_allowed(cx)
+            && !self.hides_engine()
+            && self.threat_position().is_none())
+        .then(|| self.lines(cx).first().cloned())
+        .flatten()
+        .and_then(|line| line["pv"][0].as_str().map(str::to_string));
         let mut command: Option<String> = None;
         let turn = Turn {
             taking: true,
@@ -1538,21 +1667,14 @@ impl AnalysisPage {
 
     /// Lichess steps through moves with the mouse wheel over the board.
     fn scroll(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let delta = event.delta.pixel_delta(window.line_height());
-        if delta.x.abs() > delta.y.abs() {
-            return;
+        match self
+            .wheel
+            .turn(event.delta.pixel_delta(window.line_height()))
+        {
+            Some("right") => self.forward(cx),
+            Some(_) => self.back(cx),
+            None => return,
         }
-        // Down (towards the user) goes forward, as `deltaY > 0` does in the browser.
-        self.wheel -= delta.y.as_f32();
-        if self.wheel.abs() < 40. {
-            return;
-        }
-        if self.wheel > 0. {
-            self.forward(cx);
-        } else {
-            self.back(cx);
-        }
-        self.wheel = 0.;
         cx.stop_propagation();
     }
 
@@ -1604,34 +1726,74 @@ impl AnalysisPage {
         self.copy(pgn, "PGN", window, cx);
     }
 
+    /// Copy the moves to the move shown (Quick Pick).
+    pub(crate) fn copy_shown_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let path = self.path.clone();
+        self.copy_line(&path, window, cx);
+    }
+
+    /// Copy the moves from the start to `path` as PGN, without the side lines.
+    fn copy_line(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let pgn = self.root.line_to(path).to_pgn();
+        self.copy(pgn, "Line", window, cx);
+    }
+
     fn copy(&self, text: String, what: &str, window: &mut Window, cx: &mut Context<Self>) {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         window.push_notification(SharedString::from(format!("{what} copied")), cx);
     }
 
-    /// Cutting a line has no undo, so it asks first.
-    fn ask_remove(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Cut the move shown and what follows it at once; the notice's Undo (or ⌘Z) brings it back.
+    fn delete_from_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let at = self.path.clone();
         if at.is_empty() {
             return;
         }
+        self.remove(&at, cx);
         let page = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
-            let (page, at) = (page.clone(), at.clone());
-            dialog
-                .title("Delete from here?")
-                .description(
-                    "This move and every move after it, with their variations and comments, are removed",
-                )
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .cancel_text("Cancel")
-                .show_cancel(true)
-                .on_ok(move |_, _, cx| {
-                    let _ = page.update(cx, |page, cx| page.remove(&at, cx));
-                    true
-                })
-        });
+        window.push_notification(
+            widgets::action_notification(
+                Notification::new().title("Moves deleted"),
+                "undo-delete-moves",
+                "Undo",
+                move |window, cx| {
+                    let _ = page.update(cx, |page, cx| page.undo(window, cx));
+                },
+            ),
+            cx,
+        );
+    }
+
+    /// Take back the last edit to the tree (⌘Z, Edit → Undo).
+    pub(crate) fn undo(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(snapshot) = self.edits.undo() {
+            self.restore(snapshot, cx);
+        }
+    }
+
+    /// Make the last edit undone again (⇧⌘Z, Edit → Redo).
+    pub(crate) fn redo(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(snapshot) = self.edits.redo() {
+            self.restore(snapshot, cx);
+        }
+    }
+
+    pub(crate) fn can_undo(&self) -> bool {
+        self.edits.can_undo()
+    }
+
+    pub(crate) fn can_redo(&self) -> bool {
+        self.edits.can_redo()
+    }
+
+    /// Show a tree from the edit history, at the move it was left on.
+    fn restore(&mut self, snapshot: edits::Snapshot, cx: &mut Context<Self>) {
+        self.root = snapshot.root;
+        self.path = self.root.existing_path(&snapshot.path);
+        // The comment field shows the restored tree's comment.
+        self.notes.filled_for = None;
+        self.changed(cx);
+        cx.notify();
     }
 
     pub(crate) fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1675,6 +1837,18 @@ impl AnalysisPage {
                         h_flex()
                             .justify_end()
                             .gap(px(8.))
+                            .child({
+                                let page = run.clone();
+                                Button::new("import-file")
+                                    .ghost()
+                                    .icon(icon("folder-open"))
+                                    .label("Open file…")
+                                    .on_click(move |_, window, cx| {
+                                        let _ = page
+                                            .update(cx, |page, cx| page.choose_file(window, cx));
+                                    })
+                            })
+                            .child(div().flex_1())
                             .child(
                                 Button::new("import-cancel")
                                     .ghost()
@@ -1695,6 +1869,52 @@ impl AnalysisPage {
                     ),
             )
         });
+    }
+
+    /// Pick a PGN or FEN file and import it, as if its text were pasted; one that cannot be
+    /// read says so under the field.
+    fn choose_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Open".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = chosen.await else {
+                return;
+            };
+            let Some(path) = paths.first() else {
+                return;
+            };
+            let text = crate::shell::read_game_file(path);
+            let _ = this.update_in(cx, |this, window, cx| match text {
+                Some(text) => {
+                    this.import
+                        .update(cx, |field, cx| field.set_value(text, window, cx));
+                    this.run_import(window, cx);
+                }
+                None => {
+                    this.import_error = Some("Choose a PGN or FEN file under 2 MB".into());
+                    window.refresh();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Import `text` as the import dialog would, from a file dropped on the window: the dialog
+    /// closes once the board has it, or stays open with the text and why it was refused.
+    pub(crate) fn import_text(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_import(window, cx);
+        self.import
+            .update(cx, |field, cx| field.set_value(text, window, cx));
+        self.run_import(window, cx);
     }
 
     /// `runImport`: a FEN starts a new analysis there; a Lichess game link fetches that game;
@@ -1920,7 +2140,8 @@ fn move_menu(
                 })
         }
     };
-    let (promote_at, delete_at, fen) = (at.clone(), at.clone(), state.fen.clone());
+    let (promote_at, delete_at, line_at, fen) =
+        (at.clone(), at.clone(), at.clone(), state.fen.clone());
     menu.item(
         PopupMenuItem::new(if state.commented {
             "Edit comment"
@@ -1948,7 +2169,7 @@ fn move_menu(
             .icon(icon("scissors"))
             .on_click(act(Box::new(move |page, window, cx| {
                 page.path = delete_at.clone();
-                page.ask_remove(window, cx)
+                page.delete_from_here(window, cx)
             }))),
     )
     .separator()
@@ -1957,6 +2178,13 @@ fn move_menu(
             .icon(icon("copy"))
             .on_click(act(Box::new(move |page, window, cx| {
                 page.copy(fen.clone(), "FEN", window, cx)
+            }))),
+    )
+    .item(
+        PopupMenuItem::new("Copy line")
+            .icon(icon("list-tree"))
+            .on_click(act(Box::new(move |page, window, cx| {
+                page.copy_line(&line_at, window, cx)
             }))),
     )
 }
@@ -1972,6 +2200,8 @@ struct TreeView<'a> {
     /// Bring the move shown into view after it changes (`block: 'nearest'`).
     reveal: std::rc::Rc<std::cell::Cell<bool>>,
     scroll: ScrollHandle,
+    /// Moves shown with piece symbols.
+    figurine: crate::notation::Figurine,
 }
 
 impl TreeView<'_> {
@@ -2065,7 +2295,7 @@ impl TreeView<'_> {
                         .child(number),
                 )
             })
-            .child(node.san.clone())
+            .child(crate::notation::shown(&node.san, &self.figurine))
             .children(glyph.map(|(glyph, _)| {
                 div()
                     .ml(px(1.))
@@ -2273,8 +2503,13 @@ impl AnalysisPage {
                 "Analysis paused until Lichess game status is verified".into()
             };
         }
+        let threat = if self.threat_position().is_some() {
+            "Threat · "
+        } else {
+            ""
+        };
         let Some(update) = self.evaluation(cx) else {
-            return "Starting…".into();
+            return format!("{threat}Starting…");
         };
         let infinite = crate::prefs::get(cx, INFINITE, false);
         let depth = format!(
@@ -2297,7 +2532,7 @@ impl AnalysisPage {
         } else {
             "…"
         };
-        format!("{depth}{speed}{tail}")
+        format!("{threat}{depth}{speed}{tail}")
     }
 
     /// The engine's head row, the cloud's line and the engine lines (`.ceval`).
@@ -2343,7 +2578,9 @@ impl AnalysisPage {
                     .cloud_eval;
                 let allowed = AnalysisPage::assistance_allowed(cx);
                 let palette = *cx.global::<Palette>();
-                let (on_infinite, on_arrows) = (page.clone(), page.clone());
+                let (on_infinite, on_arrows, on_threat) =
+                    (page.clone(), page.clone(), page.clone());
+                let threat = page.upgrade().is_some_and(|page| page.read(cx).threat);
                 let described = |title: &'static str, hint: Option<&'static str>| {
                     v_flex()
                         .child(div().text_size(px(14.)).child(title))
@@ -2363,7 +2600,7 @@ impl AnalysisPage {
                             .gap(px(8.))
                             .child(
                                 Switch::new("infinite")
-                                    .small()
+                                    .large()
                                     .checked(infinite)
                                     .disabled(!engine_on)
                                     .accessibility_label("Infinite analysis")
@@ -2383,7 +2620,7 @@ impl AnalysisPage {
                             .gap(px(8.))
                             .child(
                                 Switch::new("arrows")
-                                    .small()
+                                    .large()
                                     .checked(arrows)
                                     .disabled(!engine_on)
                                     .accessibility_label("Show engine arrows")
@@ -2398,8 +2635,27 @@ impl AnalysisPage {
                         h_flex()
                             .gap(px(8.))
                             .child(
+                                Switch::new("threat")
+                                    .large()
+                                    .checked(threat)
+                                    .disabled(!engine_on)
+                                    .accessibility_label("Show threat")
+                                    .on_click(move |_, _, cx| {
+                                        let _ =
+                                            on_threat.update(cx, |page, cx| page.toggle_threat(cx));
+                                    }),
+                            )
+                            .child(described(
+                                "Show threat",
+                                Some("The opponent's best move if it were their turn (X)"),
+                            )),
+                    )
+                    .child(
+                        h_flex()
+                            .gap(px(8.))
+                            .child(
                                 Switch::new("cloud")
-                                    .small()
+                                    .large()
                                     .checked(cloud_on)
                                     .disabled(!allowed)
                                     .accessibility_label("Lichess cloud evaluation")
@@ -2475,13 +2731,14 @@ impl AnalysisPage {
                                 palette.text_muted
                             })
                             .when(engine_on && self.engine_busy, |row| {
-                                row.child(icon("loader-circle").size(px(12.)))
+                                row.child(crate::widgets::spinner(px(12.)))
                             })
                             .child(div().truncate().child(status)),
                     ),
             )
             .child(settings_button);
-        let cloud_line = (cloud_on && allowed && !using_cloud).then(|| {
+        let threat = self.threat_position().is_some();
+        let cloud_line = (cloud_on && allowed && !using_cloud && !threat).then(|| {
             let cloud_lines = self.cloud_lines(cx);
             let text: AnyElement = match cloud_lines.first() {
                 Some(best) => {
@@ -2564,15 +2821,19 @@ impl AnalysisPage {
                 {
                     let page = cx.entity().downgrade();
                     crate::engine_view::engine_lines(
-                        &self.node().fen,
+                        &self.engine_fen(),
                         self.root.variant(),
                         &lines,
                         if using_cloud { 0 } else { prefs_lines(cx) },
                         over.map(|_| "Nothing to analyse"),
+                        // A threat's line starts from a position that is not on the board.
                         std::rc::Rc::new(move |pv: &[String], at, _: &mut Window, cx: &mut App| {
-                            let _ = page.update(cx, |page, cx| page.play_line(pv, at, cx));
+                            if !threat {
+                                let _ = page.update(cx, |page, cx| page.play_line(pv, at, cx));
+                            }
                         }),
                         palette,
+                        crate::notation::figurine(cx),
                     )
                 }
                 .into_any_element(),
@@ -2644,7 +2905,7 @@ impl AnalysisPage {
                 .text_size(px(13.))
                 .text_center()
                 .text_color(palette.text_muted)
-                .child("Make a move on the board, or import a game. Variations are kept as you explore.")
+                .child("Make a move on the board, or import a game")
                 .into_any_element();
         }
         let view = TreeView {
@@ -2660,18 +2921,58 @@ impl AnalysisPage {
             },
             reveal: self.reveal_move.clone(),
             scroll: self.moves_scroll.clone(),
+            figurine: crate::notation::figurine(cx),
         };
         let mut pieces = Vec::new();
         view.line(&self.root, "", None, 0, &mut pieces);
-        flow(pieces)
-            .text_size(px(13.))
-            .line_height(relative(1.9))
+        v_flex()
+            .children(self.opening(cx).map(|opening| {
+                div()
+                    .id("analysis-opening")
+                    .test_support()
+                    .px(px(4.))
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(palette.text_muted)
+                    .aria_label(opening.clone())
+                    .child(opening)
+            }))
+            .child(flow(pieces).text_size(px(13.)).line_height(relative(1.9)))
             .into_any_element()
+    }
+
+    /// The opening the moves up to the one shown reached, as the game pages name it
+    /// (`openingAt`): only in standard chess, and while Settings show opening names.
+    fn opening(&self, cx: &App) -> Option<String> {
+        let shown = cx
+            .global::<SettingsHandle>()
+            .0
+            .read(cx)
+            .settings
+            .frontend
+            .show_opening_name;
+        if !shown || self.root.variant() != "standard" {
+            return None;
+        }
+        let opening = rules(
+            "openingAt",
+            &[
+                json!({ "variant": "standard", "fen": self.root.fen }),
+                json!(moves_of(&self.path)),
+            ],
+        )
+        .ok()?;
+        Some(format!(
+            "{} {}",
+            opening["eco"].as_str()?,
+            opening["name"].as_str()?
+        ))
     }
 
     /// First, previous, next and last move, flip, import, and the rest in a menu.
     fn render_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let at_start = self.path.is_empty();
+        let (can_undo, can_redo) = (self.can_undo(), self.can_redo());
         let at_end = self.node().children.is_empty();
         let on_variation = !self.path.is_empty() && !self.root.on_mainline(&self.path);
         // A finished game cannot be played on from its last position.
@@ -2725,6 +3026,7 @@ impl AnalysisPage {
                 &self.exporter,
                 self.game_export(),
                 Anchor::BottomRight,
+                false,
                 cx,
             ))
             .child(
@@ -2777,6 +3079,19 @@ impl AnalysisPage {
                             }
                         };
                         menu.item(
+                            PopupMenuItem::new("Undo")
+                                .icon(icon("undo-2"))
+                                .disabled(!can_undo)
+                                .on_click(action(|page, window, cx| page.undo(window, cx))),
+                        )
+                        .item(
+                            PopupMenuItem::new("Redo")
+                                .icon(icon("redo-2"))
+                                .disabled(!can_redo)
+                                .on_click(action(|page, window, cx| page.redo(window, cx))),
+                        )
+                        .separator()
+                        .item(
                             PopupMenuItem::new("Copy FEN")
                                 .icon(icon("copy"))
                                 .on_click(action(|page, window, cx| page.copy_fen(window, cx))),
@@ -2785,6 +3100,15 @@ impl AnalysisPage {
                             PopupMenuItem::new("Copy PGN")
                                 .icon(icon("file-text"))
                                 .on_click(action(|page, window, cx| page.copy_pgn(window, cx))),
+                        )
+                        .item(
+                            PopupMenuItem::new("Copy line")
+                                .icon(icon("list-tree"))
+                                .disabled(at_start)
+                                .on_click(action(|page, window, cx| {
+                                    let path = page.path.clone();
+                                    page.copy_line(&path, window, cx)
+                                })),
                         )
                         .item(
                             PopupMenuItem::new("Import a position or game…")
@@ -2802,7 +3126,9 @@ impl AnalysisPage {
                             PopupMenuItem::new("Delete from here")
                                 .icon(icon("scissors"))
                                 .disabled(at_start)
-                                .on_click(action(|page, window, cx| page.ask_remove(window, cx))),
+                                .on_click(action(|page, window, cx| {
+                                    page.delete_from_here(window, cx)
+                                })),
                         )
                         .separator()
                         .item(
@@ -3000,7 +3326,7 @@ impl Render for AnalysisPage {
         let allowed = Self::assistance_allowed(cx);
         let using_cloud = self.using_cloud(cx);
         let show_bar = allowed && (Self::engine_on(cx) || using_cloud) && !self.hides_engine();
-        let lines = self.lines(cx);
+        let bar_line = self.bar_line(cx);
         let position = self.position();
         let result = position
             .as_ref()
@@ -3046,7 +3372,11 @@ impl Render for AnalysisPage {
                     .when(show_bar, |row| {
                         // The bar ends where the squares end, above any outside coordinates.
                         row.child(div().pb(crate::board::outside_gutter(cx)).child(
-                            crate::engine_view::eval_bar(lines.first(), self.orientation, result),
+                            crate::engine_view::eval_bar(
+                                bar_line.as_ref(),
+                                self.orientation,
+                                result,
+                            ),
                         ))
                     })
                     .when(!show_bar, |row| row.pl(EVAL_BAR))
@@ -3090,6 +3420,9 @@ impl Render for AnalysisPage {
             .size_full()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key))
+            // A text field takes these for its own text first.
+            .on_action(cx.listener(|this, _: &Undo, window, cx| this.undo(window, cx)))
+            .on_action(cx.listener(|this, _: &Redo, window, cx| this.redo(window, cx)))
             .child(self.layout.render_under(
                 "analysis",
                 self.study_bar.clone(),

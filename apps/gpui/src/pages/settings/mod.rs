@@ -77,6 +77,53 @@ pub fn sections() -> [(Section, &'static str, Icon); 15] {
     ]
 }
 
+/// What finds a category in ⌘K besides its name: every row title it shows (checked by a test, so
+/// a new row is found too), what the custom rows hold, and the names the Electron app used.
+pub fn section_keywords(section: Section) -> &'static str {
+    match section {
+        Section::Appearance => {
+            "Theme Interface size zoom Board coordinates Piece animation Piece notation figurine \
+             symbols letters Piece set Board theme colors"
+        }
+        Section::Themes => {
+            "Appearance Light mode theme Dark mode theme Your own themes app theme colors custom"
+        }
+        Section::Sound => "Game sounds Volume mute audio",
+        Section::Notifications => {
+            "Desktop notifications While I'm using KChess While KChess is in the background \
+             Opponent moves Low on time Game start and result Computer moves Challenges \
+             System sound Try it alerts"
+        }
+        Section::Gameplay => {
+            "Show possible moves legal dots Premoves Confirm correspondence moves Pawn promotion \
+             auto-queen Computer levels Show opening names Blindfold Zen mode \
+             Next puzzle after solving auto next"
+        }
+        Section::Gestures => "Two-finger swipe Swipe feedback trackpad back forward",
+        Section::Voice => {
+            "Confirm spoken moves Hold to speak Keep voice history Microphone access speech"
+        }
+        Section::Engine => {
+            "Status Review my games automatically Also on battery power Game review Stockfish \
+             executable download update"
+        }
+        Section::Analysis => "Lichess cloud evaluation analysis",
+        Section::Ai => "ChatGPT model effort usage coach explain",
+        Section::Accounts => {
+            "my accounts lichess sign in log in connect disconnect sync tracked Use for online play"
+        }
+        Section::Online => "Receive challenges Game chat Check correspondence games",
+        Section::Offline => "Downloaded puzzles voice model Saved games and studies engine",
+        Section::Data => {
+            "Diagnostics Export diagnostics Clear local scores Reset counters Database file storage"
+        }
+        Section::Updates => {
+            "version about upgrade Check for updates Automatically check for updates \
+             Download updates in the background Install updates when I quit Release notes"
+        }
+    }
+}
+
 /// The sidebar's groups of `sections`, in order: each heading and how many categories it holds.
 pub const SECTION_GROUPS: [(&str, usize); 5] = [
     ("Interface", 4),
@@ -426,8 +473,18 @@ impl SettingsPage {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Every row title drawn, so a test can check that ⌘K finds each one.
+    pub(crate) static DRAWN_TITLES: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// A row's title and its optional hint (`.setting-info`).
 fn info(title: impl Into<SharedString>, hint: Option<SharedString>, palette: &Palette) -> Div {
+    let title = title.into();
+    #[cfg(test)]
+    DRAWN_TITLES.with(|titles| titles.borrow_mut().push(title.to_string()));
     v_flex()
         .gap(px(4.))
         .min_w_0()
@@ -436,7 +493,7 @@ fn info(title: impl Into<SharedString>, hint: Option<SharedString>, palette: &Pa
                 .text_size(px(14.))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(palette.highlighted)
-                .child(title.into()),
+                .child(title),
         )
         .children(hint.map(|hint| {
             div()
@@ -511,7 +568,7 @@ impl Rows {
         let change = Rc::new(change);
         let control = h_flex().child(
             Switch::new(id)
-                .small()
+                .large()
                 .checked(on)
                 .disabled(!enabled)
                 .accessibility_label(title)
@@ -902,6 +959,18 @@ impl SettingsPage {
                 ),
                 palette,
             )
+            .row(
+                "Piece notation",
+                None,
+                choice(
+                    "notation",
+                    &[(false, "Letters", None), (true, "Symbols", None)],
+                    frontend.figurine_notation,
+                    |s, value| s.frontend.figurine_notation = value,
+                    palette,
+                ),
+                palette,
+            )
             .stacked("Piece set", None, grid(count, pieces), palette)
             .stacked("Board theme", None, grid(count, boards), palette)
             .card(palette)
@@ -1088,6 +1157,15 @@ impl SettingsPage {
                 frontend.premove,
                 true,
                 |s, on| s.frontend.premove = on,
+                palette,
+            )
+            .switch(
+                "confirm-move",
+                "Confirm correspondence moves",
+                None,
+                frontend.confirm_correspondence,
+                true,
+                |s, on| s.frontend.confirm_correspondence = on,
                 palette,
             )
             .row(

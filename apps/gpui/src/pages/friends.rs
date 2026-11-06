@@ -387,7 +387,7 @@ impl FriendsPage {
         if !accounts.connected().is_empty() {
             actions.push(Action::Import);
         }
-        if !accounts.tracked().is_empty() && !accounts.busy {
+        if !accounts.tracked().is_empty() && !accounts.syncing() {
             actions.push(Action::Sync);
         }
         actions
@@ -474,7 +474,7 @@ impl FriendsPage {
                 .child(widgets::badge("New", Look::Primary, palette))
         });
         let cell = |width: f32| div().w(px(width)).text_right();
-        let busy = accounts.busy;
+        let syncing = accounts.syncing();
         let (sync_name, clear_name, remove_name, games_name, challenge_name) = (
             name.clone(),
             name.clone(),
@@ -556,7 +556,7 @@ impl FriendsPage {
                             .child(
                                 h_flex()
                                     .gap(px(6.))
-                                    .child(format!("{} games", widgets::format_count(games)))
+                                    .child(widgets::format_counted(games, "game", "games"))
                                     .children(new_badge.take()),
                             )
                             .child(
@@ -644,7 +644,7 @@ impl FriendsPage {
                                 menu.item(
                                     PopupMenuItem::new("Sync")
                                         .icon(icon("refresh-cw"))
-                                        .disabled(busy)
+                                        .disabled(syncing)
                                         .on_click(move |_, window, cx| {
                                             let name = sync_name.clone();
                                             crate::accounts::handle(cx).update(
@@ -722,7 +722,7 @@ impl Render for FriendsPage {
                 )
             });
         let typed = !self.input.read(cx).value().trim().is_empty();
-        let busy = accounts.busy;
+        let (busy, syncing) = (accounts.busy, accounts.syncing());
         let new_games = friends
             .iter()
             .filter(|friend| {
@@ -784,8 +784,8 @@ impl Render for FriendsPage {
                                 count => format!("{count} players have new games"),
                             })
                         })
-                        .loading(busy)
-                        .disabled(busy)
+                        .loading(syncing)
+                        .disabled(syncing)
                         .on_click(|_, window, cx| sync_all(window, cx)),
                 )
             });
@@ -816,7 +816,7 @@ impl Render for FriendsPage {
                             widgets::format_bytes(stored),
                             widgets::format_bytes(downloaded)
                         ))
-                        .when(self.loading, |row| row.child(icon("loader-circle").size(px(14.)))),
+                        .when(self.loading, |row| row.child(crate::widgets::spinner(px(14.)))),
                 )
                 .child(
                     widgets::card(&palette)
@@ -882,13 +882,18 @@ impl FriendsPage {
             .gap(px(8.))
             .child(widgets::heading("Timeline", palette));
         Some(match (&self.timeline_error, &self.timeline) {
-            (Some(error), _) => card.child(
-                div()
-                    .text_size(px(13.))
-                    .text_color(palette.error)
-                    .child(error.clone()),
-            ),
-            (None, None) => card.child(widgets::hint("Loading…", palette)),
+            (Some(error), _) => {
+                let page = cx.entity().downgrade();
+                card.child(widgets::retry_line(
+                    "friends-timeline-retry",
+                    error.clone(),
+                    palette.error,
+                    move |_, _, cx| {
+                        let _ = page.update(cx, |page, cx| page.load_timeline(cx));
+                    },
+                ))
+            }
+            (None, None) => card.child(widgets::loading("Loading…", palette)),
             (None, Some(entries)) if entries.is_empty() => {
                 card.child(widgets::hint("Nothing new", palette))
             }
@@ -904,8 +909,7 @@ impl FriendsPage {
                 .when(entries.len() > self.timeline_shown, |card| {
                     card.child(
                         h_flex().child(
-                            Button::new("friends-timeline-more")
-                                .text()
+                            widgets::text_button("friends-timeline-more")
                                 .small()
                                 .label("Show more")
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -1025,7 +1029,7 @@ impl Render for ImportDialog {
             h_flex()
                 .gap(px(8.))
                 .text_color(palette.text_muted)
-                .child(icon("loader-circle").size(px(14.)))
+                .child(crate::widgets::spinner(px(14.)))
                 .child("Asking Lichess…")
                 .into_any_element()
         } else if self.report.is_some() {

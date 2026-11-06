@@ -589,7 +589,8 @@ impl Render for InsightsPage {
                         .map(|report| headline(report, &palette)),
                 ),
             )
-            .child(filters);
+            // Filters wait for games to filter.
+            .when(!names.is_empty(), |header| header.child(filters));
         let body: AnyElement = if names.is_empty() {
             widgets::card(&palette)
                 .child(
@@ -635,16 +636,13 @@ impl Render for InsightsPage {
                 )
                 .child(
                     h_flex().child(
-                        Button::new("insights-retry")
-                            .primary()
-                            .icon(icon("rotate-cw"))
-                            .label("Try again")
+                        crate::widgets::try_again("insights-retry")
                             .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
                     ),
                 )
                 .into_any_element()
         } else if self.loading && report.is_none() {
-            widgets::hint("Loading insights…", &palette).into_any_element()
+            widgets::loading("Loading insights…", &palette).into_any_element()
         } else if let Some(report) = report.filter(|_| total <= 0.) {
             let _ = report;
             widgets::card(&palette)

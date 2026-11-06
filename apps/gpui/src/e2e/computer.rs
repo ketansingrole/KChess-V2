@@ -10,13 +10,21 @@ fn computer(cx: &mut gpui_kit::TestAppContext) -> Harness {
     let mut app = Harness::start(cx);
     app.open("Play with computer");
     app.find("chess-board");
-    app.wait_for("the game to take moves", |window, _| {
-        use gpui_kit::test::TestQueryExt as _;
-        window
-            .try_find_by_label("Enter a chess move in SAN or UCI")
-            .is_some_and(|entry| entry.disabled() != Some(true))
-    });
+    wait_playable(&mut app);
     app
+}
+
+/// Until the page takes moves: the saved game is restored and the engine is ready, which a new
+/// game (another variant's engine) waits for again. The page itself is asked, not the move field
+/// as last drawn, which can still show the game before.
+fn wait_playable(app: &mut Harness) {
+    app.wait_for("the game to take moves", |_, cx| {
+        crate::shell::view_of::<crate::pages::computer::ComputerPage>(
+            crate::pages::Page::Computer,
+            cx,
+        )
+        .is_some_and(|page| page.read(cx).takes_moves())
+    });
 }
 
 #[gpui_kit::test]
@@ -43,6 +51,68 @@ fn a_typed_move_is_played(cx: &mut gpui_kit::TestAppContext) {
     app.type_text("Nf3");
     app.press("enter");
     app.wait_for_moves(&["Nf3"]);
+}
+
+/// After a typed move, a click on the moves gives the arrow keys back to the board: they had
+/// stayed with the move box, so ← moved its cursor instead of the game.
+#[gpui_kit::test]
+fn the_arrows_step_the_moves_after_a_typed_move(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Nf3");
+    app.press("enter");
+    app.wait_for_moves(&["Nf3"]);
+    app.click(("move", 0usize));
+    app.press("left");
+    assert!(!app.enabled("skip-back"));
+    app.press("end");
+    assert!(app.enabled("skip-back"));
+}
+
+/// The Export menu copies the game's PGN and the position shown as a FEN.
+#[gpui_kit::test]
+fn the_export_menu_copies_the_pgn_and_the_fen(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Nf3");
+    app.press("enter");
+    app.wait_for_moves(&["Nf3"]);
+    let copied = |app: &mut Harness, item: &str| {
+        app.click("computer-export");
+        app.wait_for("the menu", |window, _| {
+            use gpui_kit::test::TestQueryExt as _;
+            window.try_find_by_label(item).is_some()
+        });
+        app.click_label(item);
+        app.cx.read_from_clipboard().and_then(|item| item.text())
+    };
+    let pgn = copied(&mut app, "Copy PGN").expect("a copied PGN");
+    assert!(pgn.contains("1. Nf3"), "{pgn}");
+    assert_eq!(
+        copied(&mut app, "Copy FEN").as_deref(),
+        Some("rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1")
+    );
+}
+
+/// Copy outside a text field copies the game's PGN here too, as on the other boards.
+#[gpui_kit::test]
+fn copy_copies_the_game(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Nf3");
+    app.press("enter");
+    app.wait_for_moves(&["Nf3"]);
+    app.click("chess-board");
+    app.cx
+        .write_to_clipboard(gpui_kit::ClipboardItem::new_string("kept".into()));
+    app.press("secondary-c");
+    app.tick();
+    let pgn = app
+        .cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default();
+    assert!(pgn.contains("1. Nf3"), "{pgn}");
 }
 
 #[gpui_kit::test]
@@ -105,6 +175,40 @@ fn new_game_asks_first_then_clears_the_board(cx: &mut gpui_kit::TestAppContext) 
     app.wait_for_moves(&[]);
 }
 
+/// Quick Pick shows ⌘C and ⌘N beside the commands they run here.
+#[gpui_kit::test]
+fn quick_pick_shows_the_copy_and_new_keys(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.wait_for_moves(&["e4"]);
+    let keys = app.cx.update(|cx| crate::palette::page_command_keys(cx));
+    let key = |id: &str| {
+        keys.iter()
+            .find(|(command, _)| command == id)
+            .map(|(_, keys)| *keys)
+    };
+    let (copy, new) = if cfg!(target_os = "macos") {
+        ("⌘ C", "⌘ N")
+    } else {
+        ("Ctrl C", "Ctrl N")
+    };
+    assert_eq!(key("computer:copy-pgn"), Some(copy), "{keys:?}");
+    assert_eq!(key("computer:new-game"), Some(new), "{keys:?}");
+}
+
+/// ⌘N asks the same as New game does.
+#[gpui_kit::test]
+fn the_new_key_asks_first_then_clears_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.wait_for_moves(&["e4"]);
+    app.press("secondary-n");
+    app.click("ok");
+    app.wait_for_moves(&[]);
+}
+
 #[gpui_kit::test]
 fn moves_can_be_stepped_through(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
@@ -149,6 +253,8 @@ fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::Test
         )
     });
     app.wait_for_moves(&[]);
+    // Under a loaded full run the move was once typed before the new game took moves, and lost.
+    wait_playable(&mut app);
     app.click_label("Enter a chess move in SAN or UCI");
     app.type_text("O-O-O");
     app.press("enter");
@@ -227,7 +333,7 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
     }
     app.press("enter");
     let fen = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
-    app.click_label("Crazyhouse start");
+    app.click_label("Start from a FEN (optional)");
     app.type_text("not-a-fen");
     assert!(!app.enabled("start-game"));
     app.press("secondary-a");
@@ -251,13 +357,17 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
     let typed = |app: &mut Harness| {
         app.with_window(|window, _| {
             window
-                .try_find_by_label("Crazyhouse start")
-                .or_else(|| window.try_find_by_label("Horde start"))
+                .try_find_by_label("Start from a FEN (optional)")
                 .and_then(|input| input.value().map(str::to_string))
         })
     };
+    let variant = |window: &mut gpui_kit::Window| {
+        window
+            .try_find_by_label("Choose a variant")
+            .and_then(|select| select.value().map(str::to_string))
+    };
     app.wait_for("the dialog", |window, _| {
-        window.try_find_by_label("Crazyhouse start").is_some()
+        variant(window).as_deref() == Some("Crazyhouse")
     });
     assert_eq!(typed(&mut app).as_deref(), Some(fen));
     app.click_label("Choose a variant");
@@ -266,7 +376,7 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
     app.press("up");
     app.press("enter");
     app.wait_for("the Horde start", |window, _| {
-        window.try_find_by_label("Horde start").is_some()
+        variant(window).as_deref() == Some("Horde")
     });
     assert!(typed(&mut app).is_none_or(|value| value.is_empty()));
     assert!(app.enabled("start-game"));
@@ -326,4 +436,46 @@ fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     // The dialog opens on the variant game being played.
     app.click("game-options");
     assert_eq!(app.find(("start", 2usize)).selected(), Some(true));
+}
+
+/// ⌘Z (Ctrl+Z) takes back as the button does, once the page has the keys.
+#[gpui_kit::test]
+fn undo_takes_back(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = computer(cx);
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.wait_for_moves(&["e4"]);
+    app.press("secondary-z");
+    app.wait_for_moves(&[]);
+}
+
+/// The player's clock warns as it runs low, before it runs out, as Lichess's does. (The stand-in
+/// engine answers e4 alone: the player, Black to move, plays first so that answer is legal.)
+#[gpui_kit::test]
+fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::computer::ComputerPage;
+    use crate::sound::{Played, Sound};
+    let mut app = computer(cx);
+    app.cx.update(|cx| cx.set_global(Played::default()));
+    app.with_window(|window, cx| {
+        let page = crate::shell::view_of::<ComputerPage>(Page::Computer, cx).expect("the page");
+        let setup = serde_json::json!({
+            "variant": "standard",
+            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1",
+        });
+        // Three seconds: the warning comes under two, once both sides have moved.
+        page.update(cx, |page, cx| {
+            page.play_with_clock(setup, shakmaty::Color::Black, 0.05, window, cx)
+        });
+    });
+    wait_playable(&mut app);
+    app.click_square("e7", false);
+    app.click_square("e5", false);
+    app.wait_for_moves(&["e5", "e4"]);
+    let started = std::time::Instant::now();
+    app.wait_for("the low-time warning", |_, cx| {
+        cx.global::<Played>().0.contains(&Sound::LowTime)
+    });
+    assert!(started.elapsed() < std::time::Duration::from_millis(2_900));
 }

@@ -122,7 +122,7 @@ pub struct Broadcasts {
     list: Option<Vec<Value>>,
     loading: bool,
     error: Option<SharedString>,
-    query: Entity<InputState>,
+    pub(super) query: Entity<InputState>,
     results: Vec<Value>,
     searching: bool,
     search_error: Option<SharedString>,
@@ -551,7 +551,7 @@ impl WatchPage {
         .detach();
     }
 
-    fn leave_tour(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn leave_tour(&mut self, cx: &mut Context<Self>) {
         let broadcasts = &mut self.broadcasts;
         broadcasts.redo = None;
         broadcasts.tour = None;
@@ -661,7 +661,7 @@ impl WatchPage {
                             .text_size(px(13.))
                             .child(
                                 Switch::new("broadcast-grid-evaluations")
-                                    .small()
+                                    .large()
                                     .checked(crate::prefs::get(cx, GRID_EVALUATIONS, true))
                                     .disabled(!self.broadcasts.engine_ready() || !allowed)
                                     .accessibility_label("Evaluation bars")
@@ -677,6 +677,7 @@ impl WatchPage {
                     div().w(px(190.)).child(
                         Select::new(&self.broadcasts.round_select)
                             .small()
+                            .accessibility_label("Round")
                             .placeholder(if rounds > 0 {
                                 "Choose a round"
                             } else {
@@ -894,7 +895,13 @@ impl WatchPage {
                     .text_color(palette.error)
                     .child(error)
             }))
-            .children(status.map(|status| widgets::hint(status, palette)))
+            .children(status.map(|status| {
+                if broadcasts.searching || broadcasts.loading {
+                    widgets::loading(status, palette)
+                } else {
+                    widgets::hint(status, palette)
+                }
+            }))
             .when(!searching && broadcasts.error.is_some(), |body| {
                 body.child(
                     h_flex()
@@ -909,7 +916,7 @@ impl WatchPage {
                             Button::new("broadcasts-retry")
                                 .small()
                                 .outline()
-                                .label("Retry broadcasts")
+                                .label("Try again")
                                 .on_click(cx.listener(|this, _, _, cx| this.broadcasts.load(cx))),
                         ),
                 )
@@ -1145,6 +1152,20 @@ impl WatchPage {
                             .child(crate::board::cached(&broadcasts.board)),
                     ),
             )
+            // The mouse wheel over the board steps through the moves.
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                let Some(key) = this
+                    .wheel
+                    .turn(event.delta.pixel_delta(window.line_height()))
+                else {
+                    return;
+                };
+                if this.broadcasts.key(key, cx) {
+                    this.engine_changed(cx);
+                    cx.notify();
+                }
+                cx.stop_propagation();
+            }))
             .child(div().pl(bar_room).child(line(orientation)));
         let sans = view::sans(&setup, &moves);
         let page = cx.entity().downgrade();
@@ -1192,13 +1213,14 @@ impl WatchPage {
                 view::first_move(&setup),
                 "No moves yet".into(),
                 select.clone(),
+                crate::notation::figurine(cx),
                 palette,
             )))
             .child(widgets::move_controls(
                 ply,
                 moves.len(),
                 select,
-                ("Flip board (F)".into(), flip),
+                ("Flip board".into(), Some("F"), flip),
             ))
             .child(
                 h_flex()

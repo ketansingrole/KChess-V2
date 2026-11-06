@@ -103,6 +103,16 @@ fn new_study(cx: &mut gpui_kit::TestAppContext) -> Harness {
     app
 }
 
+/// ⌘N on Studies starts a study, as its New study does.
+#[gpui_kit::test]
+fn new_starts_a_study_on_the_studies_page(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Studies");
+    app.press("secondary-n");
+    app.find("study-actions");
+    wait_for_value(&mut app, "Study name", "Untitled study");
+}
+
 #[gpui_kit::test]
 fn a_new_study_opens_on_the_board_and_is_listed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = new_study(cx);
@@ -287,13 +297,15 @@ fn chapters_are_added_renamed_duplicated_and_deleted(cx: &mut gpui_kit::TestAppC
     wait_for_value(&mut app, "Study chapter", "3. King pawn (copy)");
     app.find("tree-e2e4");
 
+    // Deleting asks nothing: its notice's Undo puts the chapter back in its place, opened.
     app.click("chapter-actions");
     app.click_label("Delete chapter");
-    app.click("cancel");
+    wait_for_value(&mut app, "Study chapter", "2. Chapter 2");
+    app.click("undo-delete-chapter");
     wait_for_value(&mut app, "Study chapter", "3. King pawn (copy)");
+    app.find("tree-e2e4");
     app.click("chapter-actions");
     app.click_label("Delete chapter");
-    app.click("ok");
     wait_for_value(&mut app, "Study chapter", "2. Chapter 2");
 }
 
@@ -395,4 +407,100 @@ fn lichess_studies_open_from_quick_pick_with_an_account(cx: &mut gpui_kit::TestA
     app.press("enter");
     super::palette::wait_until_closed(&mut app);
     assert_eq!(app.find(("studies-tabs", 1usize)).selected(), Some(true));
+}
+
+/// Quick Pick steps to the next and previous chapter, offering each only where there is one.
+#[gpui_kit::test]
+fn quick_pick_steps_through_the_chapters(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
+    wait_for_listed(&mut app, &["Pawn openings"]);
+    app.click("open-imported");
+    wait_for_value(&mut app, "Study chapter", "1. Chapter 1");
+    let run = |app: &mut Harness, command: &str| {
+        app.press("shift-secondary-p");
+        app.type_text(command);
+        super::palette::wait_for_first(app, command);
+        app.press("enter");
+        super::palette::wait_until_closed(app);
+    };
+    run(&mut app, "Next chapter");
+    wait_for_value(&mut app, "Study chapter", "2. Chapter 2");
+    app.find("tree-d2d4");
+    // The last chapter has no next one.
+    app.press("shift-secondary-p");
+    app.type_text("chapter");
+    super::palette::wait_for_first(&mut app, "Add chapter");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..12usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert!(
+        listed.contains(&"Previous chapter".to_string()),
+        "{listed:?}"
+    );
+    assert!(!listed.contains(&"Next chapter".to_string()), "{listed:?}");
+    app.press("escape");
+    super::palette::wait_until_closed(&mut app);
+    run(&mut app, "Previous chapter");
+    wait_for_value(&mut app, "Study chapter", "1. Chapter 1");
+    app.find("tree-e2e4");
+}
+
+/// A chapter moves down from its menu and back up from Quick Pick, and stays open meanwhile.
+#[gpui_kit::test]
+fn chapters_move_up_and_down(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
+    wait_for_listed(&mut app, &["Pawn openings"]);
+    app.click("open-imported");
+    wait_for_value(&mut app, "Study chapter", "1. Chapter 1");
+
+    app.click("chapter-actions");
+    app.click_label("Move down");
+    wait_for_value(&mut app, "Study chapter", "2. Chapter 1");
+    app.find("tree-e2e4");
+    // The last chapter cannot move further down.
+    app.press("shift-secondary-p");
+    app.type_text("Move chapter");
+    super::palette::wait_for_first(&mut app, "Move chapter up");
+    let listed: Vec<String> = app.with_window(|window, _| {
+        (0..12usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect()
+    });
+    assert!(
+        !listed.contains(&"Move chapter down".to_string()),
+        "{listed:?}"
+    );
+    app.press("enter");
+    super::palette::wait_until_closed(&mut app);
+    wait_for_value(&mut app, "Study chapter", "1. Chapter 1");
+    app.find("tree-e2e4");
+}
+
+/// A study's menu saves its PGN, every chapter with its notes, as a file.
+#[gpui_kit::test]
+fn a_study_is_saved_as_a_pgn_file(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
+    wait_for_listed(&mut app, &["Pawn openings"]);
+    app.click_label("Actions for Pawn openings");
+    app.click_label("Save PGN…");
+    let started = std::time::Instant::now();
+    while !app.cx.did_prompt_for_new_path() {
+        assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
+        app.tick();
+    }
+    let folder = tempfile::tempdir().expect("a folder to save in");
+    let path = folder.path().join("Pawn openings.pgn");
+    let chosen = path.clone();
+    app.cx.simulate_new_path_selection(move |_| Some(chosen));
+    app.wait_for("the file", |_, _| path.exists());
+    let saved = std::fs::read_to_string(&path).expect("the saved PGN");
+    assert!(saved.contains("Offline notes"), "{saved}");
+    assert_eq!(saved.matches("[Event ").count(), 2, "{saved}");
 }

@@ -47,6 +47,7 @@ pub(crate) enum LiveAction {
     Resign,
     Abort,
     Rematch,
+    NewOpponent,
     Analyse,
     NewGame,
     CancelSeek,
@@ -67,6 +68,9 @@ pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
             // A rematch on its way is not sent twice: its button shows it loading meanwhile.
             if model["lastGame"].is_object() && !tournament && !online.busy {
                 actions.push(LiveAction::Rematch);
+                if online.new_opponent_form().is_some() {
+                    actions.push(LiveAction::NewOpponent);
+                }
             }
             if crate::game::analysable(online.setup()["variant"].as_str().unwrap_or("standard")) {
                 actions.push(LiveAction::Analyse);
@@ -117,6 +121,9 @@ pub(crate) fn run_live_action(action: LiveAction, window: &mut Window, cx: &mut 
         LiveAction::Resign => return ask_resign(window, cx),
         LiveAction::Analyse => return analyse(window, cx),
         LiveAction::Rematch => return online.update(cx, |online, cx| online.rematch(cx)),
+        LiveAction::NewOpponent => {
+            return online.update(cx, |online, cx| online.new_opponent(cx));
+        }
         LiveAction::NewGame | LiveAction::CancelSeek => {
             return online.update(cx, |online, cx| online.stop(cx));
         }
@@ -452,7 +459,8 @@ impl OnlinePage {
         let online = online_entity.read(cx);
         let model = online.model().clone();
         let board_size = self.layout.board_size(window);
-        self.game_panel(online, &model, cx, &palette)
+        let page = cx.weak_entity();
+        self.game_panel(online, &model, page, cx, &palette)
             .h(self.layout.panel_height(board_size))
             .into_any_element()
     }
@@ -576,6 +584,24 @@ impl OnlinePage {
         board_column = board_column
             .child(line(!orientation))
             .child(crate::board::cached(&self.board))
+            // The mouse wheel over the board steps through the moves.
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                let Some(key) = this
+                    .wheel
+                    .turn(event.delta.pixel_delta(window.line_height()))
+                else {
+                    return;
+                };
+                let online = crate::online::handle(cx);
+                let (ply, count) = {
+                    let online = online.read(cx);
+                    (online.ply(), online.moves().len())
+                };
+                if let Some(next) = view::navigate(key, ply, count) {
+                    online.update(cx, |online, cx| online.view_ply(next, cx));
+                }
+                cx.stop_propagation();
+            }))
             .child(line(orientation));
 
         self.layout
@@ -585,7 +611,23 @@ impl OnlinePage {
                 if !this.focus.is_focused(window) || event.keystroke.modifiers.modified() {
                     return;
                 }
+                if this.pending.is_some() {
+                    match event.keystroke.key.as_str() {
+                        "enter" => this.confirm_move(cx),
+                        "escape" => this.cancel_move(cx),
+                        _ => {}
+                    }
+                    if matches!(event.keystroke.key.as_str(), "enter" | "escape") {
+                        cx.stop_propagation();
+                        return;
+                    }
+                }
                 if crate::shell::zen_key(&event.keystroke.key, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
+                if event.keystroke.key == "f" {
+                    flip(cx);
                     cx.stop_propagation();
                     return;
                 }
@@ -687,7 +729,14 @@ impl OnlinePage {
             )
     }
 
-    fn game_panel(&self, online: &OnlineState, model: &Value, cx: &App, palette: &Palette) -> Div {
+    fn game_panel(
+        &self,
+        online: &OnlineState,
+        model: &Value,
+        page: WeakEntity<OnlinePage>,
+        cx: &App,
+        palette: &Palette,
+    ) -> Div {
         let playing = online.phase == Phase::Playing;
         let finished = online.phase == Phase::Finished;
         let moves = online.moves();
@@ -744,6 +793,40 @@ impl OnlinePage {
         let draw = model["drawOffer"].as_str().unwrap_or("none");
         let takeback = model["takebackOffer"].as_str().unwrap_or("none");
         let mut notices: Vec<AnyElement> = Vec::new();
+        if let Some(pending) = self.pending() {
+            let mut shown = moves.clone();
+            shown.push(pending.uci.clone());
+            let san = view::sans(&setup, &shown).pop().unwrap_or_default();
+            let (confirm, cancel) = (page.clone(), page);
+            notices.push(
+                offer(
+                    "check",
+                    format!("Play {san}?"),
+                    vec![
+                        Button::new("move-confirm")
+                            .xsmall()
+                            .primary()
+                            .label("Confirm")
+                            .tooltip("Return")
+                            .on_click(move |_, _, cx| {
+                                confirm.update(cx, |page, cx| page.confirm_move(cx)).ok();
+                            })
+                            .into_any_element(),
+                        Button::new("move-cancel")
+                            .xsmall()
+                            .outline()
+                            .label("Cancel")
+                            .tooltip("Esc")
+                            .on_click(move |_, _, cx| {
+                                cancel.update(cx, |page, cx| page.cancel_move(cx)).ok();
+                            })
+                            .into_any_element(),
+                    ],
+                    palette,
+                )
+                .into_any_element(),
+            );
+        }
         if let Some(seconds) = first_move_in {
             notices.push(
                 offer(
@@ -960,6 +1043,18 @@ impl OnlinePage {
                             }),
                     )
                 })
+                .when(live.contains(&LiveAction::NewOpponent), |row| {
+                    row.child(
+                        Button::new("online-new-opponent")
+                            .outline()
+                            .icon(icon("users"))
+                            .label("New opponent")
+                            .on_click(|_, _, cx| {
+                                crate::online::handle(cx)
+                                    .update(cx, |online, cx| online.new_opponent(cx))
+                            }),
+                    )
+                })
                 .when(live.contains(&LiveAction::Analyse), |row| {
                     row.child(
                         Button::new("online-analyse")
@@ -975,6 +1070,7 @@ impl OnlinePage {
                         &self.exporter,
                         export,
                         Anchor::BottomLeft,
+                        true,
                         cx,
                     )
                 }))
@@ -1056,13 +1152,14 @@ impl OnlinePage {
                 view::first_move(&setup),
                 "No moves yet".into(),
                 select,
+                crate::notation::figurine(cx),
                 palette,
             )))
             .child(widgets::move_controls(
                 ply,
                 moves.len(),
                 select,
-                ("Flip board".into(), flip),
+                ("Flip board".into(), Some("F"), flip),
             ))
             .child(
                 div()

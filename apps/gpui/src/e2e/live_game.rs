@@ -24,6 +24,32 @@ fn past_the_opening(cx: &mut gpui_kit::TestAppContext) -> (Harness, Handle) {
     (app, lichess)
 }
 
+/// A downloaded update waits while a real-time game is on: no Restart to update in the top bar,
+/// and restarting from Settings says the clock keeps running. A game against the computer or over
+/// the board would be resumed, so only this asks so pointedly.
+#[gpui_kit::test]
+fn an_update_waits_for_the_live_game(cx: &mut gpui_kit::TestAppContext) {
+    use crate::updates::{Phase, UpdatesHandle};
+    let (mut app, _lichess) = in_a_game(cx);
+    app.with_window(|_, cx| {
+        let updates = cx.global::<UpdatesHandle>().0.clone();
+        updates.update(cx, |updates, cx| {
+            updates.phase = Phase::Downloaded;
+            updates.version = Some("2026.10.20".into());
+            cx.notify();
+        });
+    });
+    app.tick();
+    assert!(!app.shows("update-button"));
+    let cost = app.with_window(|_, cx| crate::pages::settings::updates::restart_cost(cx));
+    assert!(cost.is_some_and(|cost| cost.contains("clock keeps running")));
+    app.click("online-abort");
+    app.wait_for("the game to end", |_, cx| {
+        !crate::online::handle(cx).read(cx).live_game_on()
+    });
+    app.find("update-button");
+}
+
 #[gpui_kit::test]
 fn a_game_lichess_keeps_from_apps_is_offered_to_watch(cx: &mut gpui_kit::TestAppContext) {
     // A game started on another device that the Board API cannot play once opened Play on
@@ -256,7 +282,7 @@ fn a_refreshed_login_brings_back_the_event_stream(cx: &mut gpui_kit::TestAppCont
     });
     expired.lock().revoked = true;
     app.wait_for("the app to stop syncing", |_, cx| {
-        !crate::accounts::handle(cx).read(cx).busy
+        !crate::accounts::handle(cx).read(cx).working()
     });
 
     let refreshed = app.connect("Tester", false);
@@ -331,6 +357,12 @@ fn quick_pick_offers_a_draw_and_asks_before_resigning(cx: &mut gpui_kit::TestApp
     app.wait_for("the board to turn round", |_, cx| {
         crate::online::handle(cx).read(cx).flipped
     });
+    // F turns it back, as on every board.
+    app.click(("move", 0usize));
+    app.press("f");
+    app.wait_for("the board to turn back", |_, cx| {
+        !crate::online::handle(cx).read(cx).flipped
+    });
 }
 
 /// Help stays out of Quick Pick during the game; once it is over, Analyse there opens it.
@@ -394,10 +426,9 @@ fn a_seek_is_cancelled_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
         crate::online::handle(cx).read(cx).phase != Phase::Checking
     });
     app.with_window(|_, cx| {
-        crate::online::handle(cx).update(cx, |online, cx| {
-            online.phase = Phase::Seeking;
-            cx.notify();
-        })
+        // As the rules set it: a phase set alone was put back by a late answer (the ongoing
+        // games, the challenges) under a loaded run.
+        crate::online::handle(cx).update(cx, |online, cx| online.set_phase("seeking", cx))
     });
     app.press("secondary-k");
     app.type_text(">Cancel seek");
@@ -406,4 +437,87 @@ fn a_seek_is_cancelled_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     app.wait_for("the seek to end", |_, cx| {
         crate::online::handle(cx).read(cx).phase != Phase::Seeking
     });
+}
+
+/// A correspondence move cannot be taken back, so it waits on the board for Confirm (Return) and
+/// can be cancelled (Esc) until then, as on Lichess; with the setting off it goes at once.
+#[gpui_kit::test]
+fn a_correspondence_move_waits_for_confirm(cx: &mut gpui_kit::TestAppContext) {
+    let (app, lichess) = Harness::signed_in(cx, true);
+    lichess.lock().correspondence = true;
+    let mut app = app.restart();
+    app.online();
+    app.open("Play on Lichess");
+    app.find("online-abort");
+
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.find("move-confirm");
+    app.click("move-cancel");
+    app.wait_gone("move-confirm");
+
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.find("move-confirm");
+    app.press("escape");
+    app.wait_gone("move-confirm");
+    assert!(writes(&lichess).is_empty(), "{:?}", writes(&lichess));
+
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.find("move-confirm");
+    app.press("enter");
+    app.wait_for_moves(&["e4", "e5"]);
+    assert_eq!(
+        writes(&lichess),
+        ["POST /api/board/game/E2eGame1/move/e2e4"]
+    );
+
+    app.with_window(|_, cx| {
+        crate::settings::change(cx, |settings| {
+            settings.frontend.confirm_correspondence = false
+        })
+    });
+    app.click_square("g1", true);
+    app.click_square("f3", true);
+    app.wait_for_moves(&["e4", "e5", "Nf3", "Nc6"]);
+    assert!(!app.shows("move-confirm"));
+}
+
+/// Once a game is over, New opponent seeks the same kind of game against anyone, as on Lichess:
+/// a seek, not a challenge to the last opponent, and the form is left as it was.
+#[gpui_kit::test]
+fn new_opponent_seeks_the_same_game_against_anyone(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = past_the_opening(cx);
+    assert!(!app.shows("online-new-opponent"), "not during the game");
+    let form = app
+        .cx
+        .update(|cx| crate::online::handle(cx).read(cx).form.clone());
+    app.click("online-resign");
+    app.click("ok");
+    app.click("online-new-opponent");
+    app.wait_for("a seek", |_, _| {
+        writes(&lichess)
+            .iter()
+            .any(|write| write.starts_with("POST /api/board/seek"))
+    });
+    // The game's own 10+5, either colour.
+    assert!(
+        writes(&lichess)
+            .contains(&"POST /api/board/seek time=10&increment=5&rated=false&color=random".into()),
+        "{:?}",
+        writes(&lichess)
+    );
+    assert!(
+        !writes(&lichess)
+            .iter()
+            .any(|write| write.contains("/api/challenge/")),
+        "{:?}",
+        writes(&lichess)
+    );
+    assert_eq!(
+        app.cx
+            .update(|cx| crate::online::handle(cx).read(cx).form.clone()),
+        form
+    );
 }

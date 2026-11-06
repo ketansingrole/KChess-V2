@@ -2,7 +2,7 @@
 //! its latest synced games. What was saved last time shows at once; Lichess's answer follows.
 
 use crate::widgets::KeyboardFocus as _;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::Button;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -143,19 +143,6 @@ const PERFS: [(&str, &str); 6] = [
 /// Rating cards shown: the speeds played most.
 const CARDS: usize = 4;
 
-/// "3,897": a count with thousands separated.
-fn grouped(value: f64) -> String {
-    let digits = format!("{}", value.round() as i64);
-    let mut out = String::new();
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    out
-}
-
 /// The speeds to show a card for: those played, most games first; Blitz and Rapid until the
 /// profile is known.
 fn shown_perfs(profile: &Value) -> Vec<(&'static str, &'static str)> {
@@ -190,7 +177,7 @@ impl Render for LichessActivity {
             h_flex()
                 .items_baseline()
                 .gap(px(2.))
-                .child(div().text_color(color).child(grouped(value)))
+                .child(div().text_color(color).child(widgets::format_count(value)))
                 .child(div().text_color(palette.text_muted).child(letter))
         };
         let busy = crate::accounts::handle(cx).read(cx).busy;
@@ -205,15 +192,16 @@ impl Render for LichessActivity {
             .text_color(palette.text_muted)
             .child(format!("@{}", self.account))
             .when(games > 0., |line| {
-                line.child(format!("{} games", grouped(games))).child(
-                    h_flex()
-                        .id("home-record")
-                        .test_support()
-                        .gap(px(8.))
-                        .child(tally(count("win"), "W", palette.win))
-                        .child(tally(count("loss"), "L", palette.loss))
-                        .child(tally(count("draw"), "D", palette.text)),
-                )
+                line.child(widgets::format_counted(games, "game", "games"))
+                    .child(
+                        h_flex()
+                            .id("home-record")
+                            .test_support()
+                            .gap(px(8.))
+                            .child(tally(count("win"), "W", palette.win))
+                            .child(tally(count("loss"), "L", palette.loss))
+                            .child(tally(count("draw"), "D", palette.text)),
+                    )
             });
         let header = h_flex()
             .items_start()
@@ -327,7 +315,7 @@ impl Render for LichessActivity {
                             .child(if played > 0. {
                                 format!(
                                     "{} {}",
-                                    grouped(played),
+                                    widgets::format_count(played),
                                     if key == "puzzle" { "puzzles" } else { "games" }
                                 )
                             } else {
@@ -351,9 +339,7 @@ impl Render for LichessActivity {
                     .child(widgets::heading("Games", &palette))
                     .when(!self.recent.is_empty(), |header| {
                         header.child(
-                            Button::new("home-lichess-all")
-                                .text()
-                                .xsmall()
+                            crate::widgets::text_button("home-lichess-all")
                                 .child(
                                     h_flex()
                                         .gap(px(4.))
@@ -424,14 +410,7 @@ impl Render for LichessActivity {
 mod tests {
     use serde_json::json;
 
-    use super::{LichessActivity, grouped, shown_perfs};
-
-    #[test]
-    fn counts_are_grouped_by_thousands() {
-        assert_eq!(grouped(7.), "7");
-        assert_eq!(grouped(3897.), "3,897");
-        assert_eq!(grouped(1_234_567.), "1,234,567");
-    }
+    use super::{LichessActivity, shown_perfs};
 
     #[test]
     fn the_speeds_played_most_get_the_cards() {

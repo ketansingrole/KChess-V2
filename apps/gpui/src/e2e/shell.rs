@@ -51,6 +51,76 @@ fn every_sidebar_page_opens(cx: &mut gpui_kit::TestAppContext) {
     }
 }
 
+/// The keyboard goes back and forward through the pages visited, as a swipe does: ⌘[ and ⌘] on
+/// macOS, Alt with an arrow elsewhere.
+#[gpui_kit::test]
+fn the_keyboard_goes_back_and_forward_through_the_pages(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    let (back, forward) = if cfg!(target_os = "macos") {
+        ("cmd-[", "cmd-]")
+    } else {
+        ("alt-left", "alt-right")
+    };
+    let mut app = Harness::start(cx);
+    app.open("Puzzles");
+    app.open("Studies");
+    let shown = |app: &mut Harness| app.cx.update(|cx| crate::shell::current_page(cx));
+    app.press(back);
+    assert_eq!(shown(&mut app), Some(Page::Puzzles));
+    app.press(back);
+    assert_eq!(shown(&mut app), Some(Page::Dashboard));
+    app.press(forward);
+    assert_eq!(shown(&mut app), Some(Page::Puzzles));
+    app.press(forward);
+    assert_eq!(shown(&mut app), Some(Page::Studies));
+    // Nothing further forward: the page stays.
+    app.press(forward);
+    assert_eq!(shown(&mut app), Some(Page::Studies));
+}
+
+/// The keyboard shortcuts open from their key and from Quick Pick, and Escape closes them.
+#[gpui_kit::test]
+fn the_keyboard_shortcuts_are_listed(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.press("secondary-/");
+    app.find("shortcuts");
+    app.press("escape");
+    app.wait_gone("shortcuts");
+    app.press("secondary-k");
+    app.type_text("keyboard shortcuts");
+    super::palette::wait_for_first(&mut app, "Keyboard shortcuts");
+    app.press("enter");
+    app.find("shortcuts");
+}
+
+/// ? lists the shortcuts too, as on Lichess, but a text field still takes it as text.
+#[gpui_kit::test]
+fn a_question_mark_lists_the_shortcuts_outside_a_text_field(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.press("?");
+    app.find("shortcuts");
+    app.press("escape");
+    app.wait_gone("shortcuts");
+    // In Quick Pick's field it is typed: ? lists the ways to search, and nothing else.
+    app.press("secondary-k");
+    app.press("?");
+    app.wait_for("Quick Pick's help", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        let listed: Vec<String> = (0..8usize)
+            .filter_map(|index| window.try_find(("palette-item", index)))
+            .filter_map(|item| item.label().map(str::to_string))
+            .collect();
+        window.try_find("shortcuts").is_none()
+            && listed
+                == [
+                    "Go to page",
+                    "Run a command",
+                    "Find a player",
+                    "Change a setting",
+                ]
+    });
+}
+
 /// The sidebar marks your move in a Lichess game beside Play; collapsed to its rail it had no room
 /// for the mark and dropped it, so a correspondence move went unseen there.
 #[gpui_kit::test]
@@ -169,6 +239,50 @@ fn the_sidebar_collapses_and_is_kept_collapsed(cx: &mut gpui_kit::TestAppContext
     assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
 }
 
+/// The sidebar shows and hides from the keyboard too: ⌃⌘S on macOS, as its apps take it, and
+/// Ctrl+B elsewhere.
+#[gpui_kit::test]
+fn the_keyboard_shows_and_hides_the_sidebar(cx: &mut gpui_kit::TestAppContext) {
+    let key = if cfg!(target_os = "macos") {
+        "ctrl-cmd-s"
+    } else {
+        "ctrl-b"
+    };
+    let mut app = Harness::start(cx);
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Hide sidebar"));
+    app.press(key);
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Show sidebar"));
+    app.press(key);
+    assert_eq!(app.find("sidebar-toggle").label(), Some("Hide sidebar"));
+}
+
+/// The buttons that have a key say it in their tooltip (`tooltip_with_action`), which reads it
+/// from the window's keymap as this does: the sidebar toggle's ⌃⌘S (Ctrl+B elsewhere), and New's
+/// ⌘N on the game and study pages. (The harness does not register tooltips themselves.)
+#[gpui_kit::test]
+fn tooltips_show_the_keys(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::component::kbd::Kbd;
+    let mut app = Harness::start(cx);
+    let keys = app.with_window(|window, _| {
+        let key = |action: &dyn gpui_kit::Action| {
+            window
+                .highest_precedence_binding_for_action(action)
+                .and_then(|binding| {
+                    binding
+                        .keystrokes()
+                        .first()
+                        .map(|key| Kbd::format(key.inner()))
+                })
+        };
+        (key(&crate::menu::ToggleSidebar), key(&crate::menu::New))
+    });
+    if cfg!(target_os = "macos") {
+        assert_eq!(keys, (Some("⌃⌘S".into()), Some("⌘N".into())));
+    } else {
+        assert_eq!(keys, (Some("Ctrl+B".into()), Some("Ctrl+N".into())));
+    }
+}
+
 /// A narrow window gives the page the room: the sidebar shows as its rail there, opens for the
 /// moment from its toggle, and a wider window shows it as kept.
 #[gpui_kit::test]
@@ -239,7 +353,13 @@ fn a_rating_card_puts_its_speed_on_the_chart(cx: &mut gpui_kit::TestAppContext) 
     let (mut app, _lichess) = Harness::signed_in_showcase(cx);
     app.find("home-perf-bullet");
     app.find("home-record");
-    assert!(app.enabled("home-sync"));
+    // Signing in syncs the account's games once, with Sync games disabled meanwhile.
+    app.wait_for("Sync games", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find(gpui_kit::ElementId::from("home-sync"))
+            .is_some_and(|sync| sync.disabled() != Some(true))
+    });
     assert_eq!(app.find("home-perf-blitz").selected(), Some(true));
     app.click("home-perf-puzzle");
     app.wait_for("Puzzles to be chosen", |window, _| {
@@ -282,4 +402,40 @@ fn the_account_menu_opens_the_profile_and_the_accounts_settings(cx: &mut gpui_ki
             .and_then(|page| page.read(cx).username())
             .is_some_and(|name| name.eq_ignore_ascii_case("Showcase"))
     });
+}
+
+/// The window's title names the page, so Mission Control and the Window menu tell it apart.
+#[gpui_kit::test]
+fn the_window_title_names_the_page(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let title = |app: &mut Harness| app.with_window(|_, cx| crate::shell::window_title_shown(cx));
+    assert_eq!(title(&mut app).as_deref(), Some("KChess"));
+    app.open("Puzzles");
+    assert_eq!(title(&mut app).as_deref(), Some("Puzzles — KChess"));
+    app.open("Analysis board");
+    assert_eq!(title(&mut app).as_deref(), Some("Analysis board — KChess"));
+}
+
+/// Quitting during a real-time Lichess game asks first: its clock keeps running on Lichess.
+#[gpui_kit::test]
+fn quitting_during_a_live_game_asks_first(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.wait_for("the startup check to finish", |_, cx| {
+        crate::online::handle(cx).read(cx).phase != crate::online::Phase::Checking
+    });
+    // The phase is set where the key is pressed: a later snapshot of the core's replaces it.
+    app.with_window(|window, cx| {
+        use gpui_kit::test::TestWindowExt as _;
+        crate::online::handle(cx).update(cx, |online, cx| online.set_phase("playing", cx));
+        assert!(crate::online::handle(cx).read(cx).live_game_on(), "on");
+        window.press("secondary-q", cx);
+    });
+    app.cx.run_until_parked();
+    assert!(app.cx.has_pending_prompt(), "asked before quitting");
+    app.cx.simulate_prompt_answer("Cancel");
+    app.cx.run_until_parked();
+    assert!(!app.cx.has_pending_prompt());
+    // Still open.
+    app.open("Home");
+    app.find("home-play");
 }

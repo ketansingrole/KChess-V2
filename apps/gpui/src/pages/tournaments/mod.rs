@@ -5,7 +5,7 @@
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::InputState;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -99,7 +99,21 @@ impl TournamentsPage {
                 .placeholder("Entry code (if any)")
         });
         let accounts = crate::accounts::handle(cx);
-        let subscriptions = vec![cx.observe(&accounts, |_, _, cx| cx.notify())];
+        let subscriptions = vec![
+            cx.observe(&accounts, |_, _, cx| cx.notify()),
+            // Return in the entry code joins, as the Join button beside it does.
+            cx.subscribe_in(
+                &password,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter { .. } = event
+                        && this.may_join(cx)
+                    {
+                        this.join(window, cx);
+                    }
+                },
+            ),
+        ];
         let refresh = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(REFRESH_EVERY).await;
@@ -305,6 +319,19 @@ impl TournamentsPage {
             open.page = page.max(1);
         }
         self.load_event(cx);
+    }
+
+    /// Whether the open event can be joined now: not over, not joined yet, playable here and open
+    /// to the account, with no action under way.
+    pub(super) fn may_join(&self, cx: &App) -> bool {
+        let Some(detail) = self.open.as_ref().and_then(|open| open.detail.as_ref()) else {
+            return false;
+        };
+        !self.busy
+            && detail["status"] != json!("finished")
+            && !self.joined_now(detail, cx)
+            && detail["playable"] == json!(true)
+            && detail["verdicts"]["accepted"] != json!(false)
     }
 
     /// `join`: with the entry code, if any; a login without the permission asks to reconnect.
@@ -554,6 +581,7 @@ impl Render for TournamentsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let showing_event = self.open.is_some();
+        let failed = self.list.is_none() && self.error.is_some();
         let page = cx.entity().downgrade();
         let choose = move |index: usize, _: &mut Window, cx: &mut App| {
             let _ = page.update(cx, |page, cx| {
@@ -566,9 +594,15 @@ impl Render for TournamentsPage {
             .flex_wrap()
             // The key keeps room for two of its entries a line; when the controls leave it less,
             // they wrap below it rather than squeezing it into a column.
-            .child(div().flex_1().min_w_0().when(!showing_event, |lead| {
-                lead.min_w(px(320.)).child(timeline::legend(&palette))
-            }))
+            // The key names the colours of a listed schedule, so it waits for one.
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .when(!showing_event && self.list.is_some(), |lead| {
+                        lead.min_w(px(320.)).child(timeline::legend(&palette))
+                    }),
+            )
             // The controls wrap as one group.
             .child(
                 h_flex()
@@ -596,16 +630,19 @@ impl Render for TournamentsPage {
                             true,
                             &palette,
                         ))
-                        .child(
-                            Button::new("tournaments-refresh")
-                                .small()
-                                .outline()
-                                .icon(icon("refresh-cw"))
-                                .label("Refresh")
-                                .loading(self.loading)
-                                .disabled(self.loading)
-                                .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-                        )
+                        // A list that failed to load offers Try again in its place instead.
+                        .when(!failed, |row| {
+                            row.child(
+                                Button::new("tournaments-refresh")
+                                    .small()
+                                    .outline()
+                                    .icon(icon("refresh-cw"))
+                                    .label("Refresh")
+                                    .loading(self.loading)
+                                    .disabled(self.loading)
+                                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                            )
+                        })
                     })
                     .child(
                         Button::new("tournaments-create")
@@ -627,6 +664,19 @@ impl Render for TournamentsPage {
         div()
             .id("tournaments-page")
             .track_focus(&self.focus)
+            // Escape goes back to the list from an event, while no text field has the keys.
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if this.open.is_some() && this.focus.is_focused(window) && widgets::is_escape(event)
+                {
+                    this.close_event(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .size_full()
             .overflow_y_scroll()
             .child(

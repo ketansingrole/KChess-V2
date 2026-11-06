@@ -429,6 +429,10 @@ pub struct FrontendPreferences {
     pub swipe_indicator: bool,
     /// Load the next training puzzle as soon as one is solved.
     pub puzzle_auto_next: bool,
+    /// Ask before a correspondence move is sent: there it cannot be taken back.
+    pub confirm_correspondence: bool,
+    /// Write moves with piece symbols (♘f3) rather than letters (Nf3).
+    pub figurine_notation: bool,
 }
 
 /// Every setting: the core's preferences and the desktop's.
@@ -536,6 +540,9 @@ pub struct GamePageQuery {
     pub account: Option<String>,
     pub result: Option<GameResultFilter>,
     pub rated: Option<bool>,
+    /// Part of an opponent's name or an opening's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<String>,
     pub offset: f64,
     pub limit: f64,
 }

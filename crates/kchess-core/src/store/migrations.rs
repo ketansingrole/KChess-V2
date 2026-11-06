@@ -238,6 +238,8 @@ pub const MIGRATIONS: &[&str] = &[
     // Lichess's `playTime.total` of the player when their games were last synced: it grows with
     // every finished game, so a larger one in a profile means there are games to sync.
     "ALTER TABLE accounts ADD COLUMN syncedPlayTime INTEGER;",
+    "ALTER TABLE settings ADD COLUMN confirmCorrespondence INTEGER NOT NULL DEFAULT 1;",
+    "ALTER TABLE settings ADD COLUMN figurineNotation INTEGER NOT NULL DEFAULT 0;",
 ];
 
 fn storage_error(cause: rusqlite::Error) -> CoreError {

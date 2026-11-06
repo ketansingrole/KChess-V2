@@ -550,15 +550,19 @@ impl Render for PuzzleStats {
             .gap(px(8.))
             .when(self.accounts.len() > 1, |row| {
                 row.child(
-                    div()
-                        .w(px(160.))
-                        .child(Select::new(&self.account_select).small()),
+                    div().w(px(160.)).child(
+                        Select::new(&self.account_select)
+                            .small()
+                            .accessibility_label("Account"),
+                    ),
                 )
             })
             .child(
-                div()
-                    .w(px(140.))
-                    .child(Select::new(&self.days_select).small()),
+                div().w(px(140.)).child(
+                    Select::new(&self.days_select)
+                        .small()
+                        .accessibility_label("Period"),
+                ),
             )
             .child(
                 Button::new("stats-refresh")
@@ -618,7 +622,7 @@ impl Render for PuzzleStats {
                 Some(
                     div()
                         .child(match global["nb"].as_f64() {
-                            Some(nb) => format!("{} puzzles", widgets::format_count(nb)),
+                            Some(nb) => widgets::format_counted(nb, "puzzle", "puzzles"),
                             None => format!("Last {days} days"),
                         })
                         .into_any_element(),
@@ -734,9 +738,11 @@ impl Render for PuzzleStats {
                         ),
                     ))
                     .child(
-                        div()
-                            .w(px(150.))
-                            .child(Select::new(&self.sort_select).small()),
+                        div().w(px(150.)).child(
+                            Select::new(&self.sort_select)
+                                .small()
+                                .accessibility_label("Sort themes"),
+                        ),
                     ),
             )
             .child(themes_body);
@@ -791,14 +797,7 @@ impl PuzzleStats {
             return widgets::card(palette)
                 .gap(px(12.))
                 .child(widgets::heading("Your results on Lichess", palette))
-                .child(
-                    h_flex()
-                        .gap(px(8.))
-                        .text_size(px(13.))
-                        .text_color(palette.text_muted)
-                        .child(icon("loader-circle").size(px(14.)))
-                        .child("Loading from Lichess…"),
-                )
+                .child(crate::widgets::loading("Loading from Lichess…", palette))
                 .into_any_element();
         }
         storm_card(&self.storm, &self.profile, palette).into_any_element()

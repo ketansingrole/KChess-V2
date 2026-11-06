@@ -73,6 +73,34 @@ fn a_timed_games_clock_runs_for_the_side_to_move(cx: &mut gpui_kit::TestAppConte
 const SCHOLARS_MATE: [&str; 7] = ["e4", "e5", "Qh5", "Nc6", "Bc4", "Nf6", "Qxf7#"];
 
 #[gpui_kit::test]
+fn an_empty_move_list_mentions_the_clock_only_in_a_timed_game(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::local::LocalPage;
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = board(cx);
+    assert_eq!(app.find("moves-empty").label(), Some("No moves yet"));
+    app.with_window(|window, cx| {
+        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        local.update(cx, |local, cx| {
+            let setup =
+                serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+            let clock = serde_json::json!({
+                "white": { "minutes": 5, "increment": 0 },
+                "black": { "minutes": 5, "increment": 0 },
+            });
+            local.replace_game(setup, clock, window, cx);
+        });
+    });
+    app.wait_for("the clock's hint", |window, _| {
+        window
+            .try_find("moves-empty")
+            .and_then(|empty| empty.label().map(str::to_string))
+            .as_deref()
+            == Some("The first move starts the clock")
+    });
+}
+
+#[gpui_kit::test]
 fn the_players_take_turns_at_one_board(cx: &mut gpui_kit::TestAppContext) {
     let mut app = board(cx);
     assert_eq!(app.status(), "White to move");
@@ -183,7 +211,7 @@ fn a_new_game_needs_a_valid_start_and_asks_before_replacing_one(cx: &mut gpui_ki
     let mut app = board(cx);
     type_moves(&mut app, &["e4"]);
     app.click("local-new");
-    fill_in_dialog(&mut app, "Standard start", "not-a-fen");
+    fill_in_dialog(&mut app, "Start from a FEN (optional)", "not-a-fen");
     app.wait_for("Start to be refused", |window, _| {
         use gpui_kit::test::TestWindowExt as _;
         window
@@ -197,7 +225,7 @@ fn a_new_game_needs_a_valid_start_and_asks_before_replacing_one(cx: &mut gpui_ki
     app.click("local-new");
     fill_in_dialog(
         &mut app,
-        "Standard start",
+        "Start from a FEN (optional)",
         "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
     );
     app.click("start-local");
@@ -207,7 +235,7 @@ fn a_new_game_needs_a_valid_start_and_asks_before_replacing_one(cx: &mut gpui_ki
     app.click("local-new");
     fill_in_dialog(
         &mut app,
-        "Standard start",
+        "Start from a FEN (optional)",
         "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
     );
     app.click("start-local");
@@ -492,7 +520,7 @@ fn a_new_game_starts_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContext
     app.press("enter");
     fill_in_dialog(
         &mut app,
-        "Crazyhouse start",
+        "Start from a FEN (optional)",
         "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3",
     );
     app.click("start-local");
@@ -505,7 +533,7 @@ fn a_new_game_starts_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContext
     app.wait_for("the position to come back", |window, _| {
         use gpui_kit::test::TestQueryExt as _;
         window
-            .try_find_by_label("Crazyhouse start")
+            .try_find_by_label("Start from a FEN (optional)")
             .and_then(|input| input.value().map(str::to_string))
             .as_deref()
             == Some("rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3")
@@ -531,4 +559,104 @@ fn a_chess960_game_can_be_taken_to_the_analysis_board(cx: &mut gpui_kit::TestApp
     app.click("local-analyse");
     app.find("tree-c1b1");
     assert_eq!(app.find("tree-c1b1 e7e5").selected(), Some(true));
+}
+
+/// F turns the board, as its flip button does, and the arrows and Home still step the moves.
+#[gpui_kit::test]
+fn f_flips_the_board(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::local::LocalPage;
+    let mut app = board(cx);
+    type_moves(&mut app, &["e4", "e5"]);
+    let orientation = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<LocalPage>(Page::Local, cx)
+                .expect("the page")
+                .read(cx)
+                .orientation(cx)
+        })
+    };
+    let before = orientation(&mut app);
+    app.click(("move", 1usize));
+    app.press("f");
+    assert_eq!(orientation(&mut app), !before);
+    app.press("home");
+    assert!(!app.enabled("skip-back"));
+    app.press("f");
+    assert_eq!(orientation(&mut app), before);
+    // The move box still takes a click and the next move.
+    app.press("end");
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Nf3");
+    app.press("enter");
+    app.wait_for_moves(&["e4", "e5", "Nf3"]);
+}
+
+/// The mouse wheel over the board steps through the moves, as on the analysis board: up goes
+/// back, down goes on.
+#[gpui_kit::test]
+fn the_wheel_over_the_board_steps_through_the_moves(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = board(cx);
+    type_moves(&mut app, &["e4", "e5"]);
+    let wheel = |app: &mut Harness, by: f32| {
+        app.with_window(|window, cx| {
+            let by = gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(by));
+            window.scroll("chess-board", gpui_kit::ScrollDelta::Pixels(by), cx);
+        });
+        app.cx.run_until_parked();
+    };
+    wheel(&mut app, 60.);
+    wheel(&mut app, 60.);
+    assert!(!app.enabled("skip-back"));
+    wheel(&mut app, -60.);
+    assert!(app.enabled("skip-back"));
+    assert!(app.enabled("skip-forward"));
+    wheel(&mut app, -60.);
+    assert!(!app.enabled("skip-forward"));
+}
+
+/// ⌘Z (Ctrl+Z) takes back as the button does once the board has the keys; in the move box it
+/// undoes the typing instead.
+#[gpui_kit::test]
+fn undo_takes_back_outside_the_move_box(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = board(cx);
+    type_moves(&mut app, &["e4", "e5"]);
+    // An empty square takes the keys from the move box.
+    app.click_square("a3", true);
+    app.press("secondary-z");
+    app.wait_for_moves(&["e4"]);
+    app.press("secondary-z");
+    app.wait_for_moves(&[]);
+    app.press("secondary-z");
+    assert!(app.moves().is_empty());
+}
+
+/// The side to move hears the low-time warning as its clock runs low, before its flag falls.
+#[gpui_kit::test]
+fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::local::LocalPage;
+    use crate::sound::{Played, Sound};
+    let mut app = board(cx);
+    app.cx.update(|cx| cx.set_global(Played::default()));
+    let started = std::time::Instant::now();
+    app.with_window(|window, cx| {
+        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        local.update(cx, |local, cx| {
+            let setup =
+                serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+            // Three seconds each: the warning comes under two.
+            let clock = serde_json::json!({
+                "white": { "minutes": 0.05, "increment": 0 },
+                "black": { "minutes": 0.05, "increment": 0 },
+            });
+            local.replace_game(setup, clock, window, cx);
+            local.play("e2e4", window, cx);
+        });
+    });
+    app.wait_for("the low-time warning", |_, cx| {
+        cx.global::<Played>().0.contains(&Sound::LowTime)
+    });
+    assert!(started.elapsed() < std::time::Duration::from_millis(2_900));
 }

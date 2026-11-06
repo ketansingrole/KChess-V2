@@ -722,13 +722,14 @@ impl WatchPage {
                 setup.as_ref().map(view::first_move).unwrap_or_default(),
                 empty.into(),
                 select.clone(),
+                crate::notation::figurine(cx),
                 palette,
             )))
             .child(widgets::move_controls(
                 self.live.shown_ply(),
                 moves.len(),
                 select,
-                ("Flip board".into(), flip),
+                ("Flip board".into(), Some("F"), flip),
             ))
             .when(frame["source"] == json!("game"), |panel| {
                 panel.child(widgets::hint(
@@ -906,6 +907,19 @@ impl WatchPage {
             .gap(widgets::STACK_GAP)
             .child(line(!orientation, 0))
             .child(crate::board::cached(&self.live.board))
+            // The mouse wheel over the board steps through the moves.
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                let Some(key) = this
+                    .wheel
+                    .turn(event.delta.pixel_delta(window.line_height()))
+                else {
+                    return;
+                };
+                if this.live.key(key, cx) {
+                    cx.notify();
+                }
+                cx.stop_propagation();
+            }))
             .child(line(orientation, 1));
 
         // Beside the board the panel is its own cached view; under it, part of the page.

@@ -31,7 +31,7 @@ pub const RESULT_SQL: &str =
     "CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END";
 
 /// Every persisted setting, in column order (`SETTINGS_KEYS`).
-const SETTINGS_KEYS: [&str; 41] = [
+const SETTINGS_KEYS: [&str; 43] = [
     "appearance",
     "boardTheme",
     "lightTheme",
@@ -73,6 +73,8 @@ const SETTINGS_KEYS: [&str; 41] = [
     "swipeNavigation",
     "swipeIndicator",
     "puzzleAutoNext",
+    "confirmCorrespondence",
+    "figurineNotation",
 ];
 
 /// Every persisted game field, in column order (`GAME_KEYS`).
@@ -147,6 +149,8 @@ pub struct Settings {
     pub swipe_navigation: bool,
     pub swipe_indicator: bool,
     pub puzzle_auto_next: bool,
+    pub confirm_correspondence: bool,
+    pub figurine_notation: bool,
 }
 
 pub(super) fn default_settings() -> Settings {
@@ -193,7 +197,9 @@ pub(super) fn default_settings() -> Settings {
         show_opening_name: true,
         swipe_navigation: true,
         swipe_indicator: true,
-        puzzle_auto_next: true,
+        puzzle_auto_next: false,
+        confirm_correspondence: true,
+        figurine_notation: false,
     }
 }
 
@@ -278,6 +284,7 @@ struct GamePageQuery {
     account: Option<String>,
     result: Option<String>,
     rated: Option<bool>,
+    search: Option<String>,
     // Validated whole numbers; the validator hands them back as JSON numbers, which may be floats.
     offset: f64,
     limit: f64,
@@ -657,6 +664,8 @@ fn settings_from_values(values: &[SqlValue]) -> Result<Settings> {
         swipe_navigation: is_not_zero(&column("swipeNavigation")),
         swipe_indicator: is_not_zero(&column("swipeIndicator")),
         puzzle_auto_next: is_not_zero(&column("puzzleAutoNext")),
+        confirm_correspondence: is_not_zero(&column("confirmCorrespondence")),
+        figurine_notation: is_one(&column("figurineNotation")),
     };
     if settings.sound_volume > 1.0 {
         settings.sound_volume = (settings.sound_volume / 100.0).min(1.0);
@@ -830,6 +839,19 @@ fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
         clauses.push("rated = ?".into());
         params.push(SqlValue::Integer(i64::from(rated)));
     }
+    if let Some(search) = &query.search {
+        // Any part of the opponent's name or the opening's, any case; `%` and `_` are literal.
+        let escaped = search
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
+        clauses.push(
+            "(opponent LIKE ? ESCAPE '\\' OR COALESCE(opening, '') LIKE ? ESCAPE '\\')".into(),
+        );
+        params.push(SqlValue::Text(pattern.clone()));
+        params.push(SqlValue::Text(pattern));
+    }
     let filter = if clauses.is_empty() {
         String::new()
     } else {
@@ -839,7 +861,7 @@ fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
     // The same filters are re-counted on every page and result toggle, so keep the total until a
     // call that can change the games runs.
     let count_key = format!(
-        "{}|{}|{}",
+        "{}|{}|{}|{}",
         query
             .account
             .as_deref()
@@ -852,7 +874,8 @@ fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
             .unwrap_or(""),
         query
             .rated
-            .map_or("any".to_string(), |rated| rated.to_string())
+            .map_or("any".to_string(), |rated| rated.to_string()),
+        query.search.as_deref().unwrap_or("")
     );
     let total: i64 = match ctx.cache.count(&count_key) {
         Some(total) => total,
@@ -1484,6 +1507,10 @@ mod tests {
             json!(["beginner", "club", "expert", "fm", "im", "gm", "max"])
         );
         assert_eq!(get_settings(&db).unwrap(), json!(defaults));
+        // A solved puzzle stays on the board until Next (or Return), as on Lichess.
+        assert!(!defaults.puzzle_auto_next);
+        // A correspondence move cannot be taken back, so it waits for Confirm, as on Lichess.
+        assert!(defaults.confirm_correspondence);
     }
 
     #[test]

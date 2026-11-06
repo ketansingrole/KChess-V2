@@ -111,10 +111,11 @@ pub fn voice_bar(
                 .small()
                 .when(enabled, |button| button.primary())
                 .when(!enabled, |button| button.ghost())
-                .icon(match state {
-                    State::Loading => icon("loader-circle"),
-                    State::Error => icon("mic-off"),
-                    _ => icon("mic"),
+                // The speech model loading: a spinner turns, and the button still turns voice off.
+                .map(|button| match state {
+                    State::Loading => button.icon(crate::widgets::spinner(px(14.))),
+                    State::Error => button.icon(icon("mic-off")),
+                    _ => button.icon(icon("mic")),
                 })
                 .when(!enabled, |button| button.label("Voice"))
                 .tooltip(if enabled {

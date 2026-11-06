@@ -142,6 +142,12 @@ fn help_and_methods_need_no_core_and_bad_commands_fail() {
     let help = cli(profile.path(), &[], "");
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).starts_with("KChess CLI"));
+    let version = cli(profile.path(), &["--version"], "");
+    assert!(version.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        format!("kchess-cli {}", env!("CARGO_PKG_VERSION"))
+    );
     let methods = cli(profile.path(), &["methods"], "");
     assert!(
         lines(&methods)[0]
@@ -151,6 +157,14 @@ fn help_and_methods_need_no_core_and_bad_commands_fail() {
 
     for (args, message) in [
         (vec!["bogus"], "Unknown command: bogus. Run --help."),
+        (
+            vec!["librar"],
+            "Unknown command: librar. Did you mean library?",
+        ),
+        (
+            vec!["positon"],
+            "Unknown command: positon. Did you mean position?",
+        ),
         (
             vec!["call", "nope"],
             "Unknown CoreApi method. Run methods to list them.",

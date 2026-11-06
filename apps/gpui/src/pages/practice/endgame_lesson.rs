@@ -241,6 +241,17 @@ impl EndgameLesson {
         color_of(self.status()["player"].as_str().unwrap_or("white"))
     }
 
+    /// What Return goes on to: the next step or chapter, once this step is read or passed.
+    pub(crate) fn next_on_return(&self) -> Option<LessonAction> {
+        let status = self.status();
+        let passed =
+            !self.playable() || (status["over"] == json!(true) && status["success"] == json!(true));
+        let actions = self.actions();
+        [LessonAction::Next, LessonAction::NextChapter]
+            .into_iter()
+            .find(|next| passed && actions.contains(next))
+    }
+
     /// What the lesson's buttons can do now.
     pub(crate) fn actions(&self) -> Vec<LessonAction> {
         let thinking = self.engine.thinking;
@@ -639,6 +650,7 @@ impl EndgameLesson {
             .frontend
             .clone();
         let banner = playable.then(|| {
+            let mut busy = false;
             let (tone, glyph, title, detail) = if over {
                 (
                     if success { Tone::Win } else { Tone::Loss },
@@ -673,13 +685,10 @@ impl EndgameLesson {
                     Some(goal(&step.task, side)),
                 )
             } else {
+                busy = thinking;
                 (
                     Tone::Plain,
-                    if thinking {
-                        icon("loader-circle")
-                    } else {
-                        icon("mouse-pointer-click")
-                    },
+                    icon("mouse-pointer-click"),
                     if thinking {
                         "Stockfish is thinking…".to_string()
                     } else {
@@ -689,6 +698,7 @@ impl EndgameLesson {
                 )
             };
             widgets::StatusBanner::new(tone, glyph, title.into())
+                .busy(busy)
                 .announce()
                 .when_some(detail.map(SharedString::from), |banner, value| {
                     banner.detail(value)
@@ -721,7 +731,7 @@ impl EndgameLesson {
                         Button::new("lesson-flip")
                             .outline()
                             .icon(icon("arrow-up-down"))
-                            .tooltip("Flip board")
+                            .tooltip("Flip board (F)")
                             .accessibility_label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     )

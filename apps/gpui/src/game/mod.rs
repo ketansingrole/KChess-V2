@@ -2,6 +2,7 @@
 //! puzzle and view helpers the pages use.
 
 pub mod history;
+pub mod low_time;
 pub mod puzzle;
 pub mod tree;
 pub mod view;

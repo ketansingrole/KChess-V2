@@ -407,7 +407,7 @@ impl Render for EndgameDrills {
         } else if thinking {
             (
                 Tone::Plain,
-                icon("loader-circle"),
+                icon("cpu"),
                 "Stockfish is thinking…".to_string(),
                 None,
             )
@@ -483,6 +483,7 @@ impl Render for EndgameDrills {
             ))
             .child(
                 widgets::StatusBanner::new(tone, glyph, title.into())
+                    .busy(thinking && !missing && !over)
                     .announce()
                     .when_some(detail.map(SharedString::from), |banner, value| {
                         banner.detail(value)
@@ -518,7 +519,7 @@ impl Render for EndgameDrills {
                         Button::new("drill-flip")
                             .outline()
                             .icon(icon("arrow-up-down"))
-                            .tooltip("Flip board")
+                            .tooltip("Flip board (F)")
                             .accessibility_label("Flip board")
                             .on_click(cx.listener(|this, _, _, cx| this.flip(cx))),
                     )

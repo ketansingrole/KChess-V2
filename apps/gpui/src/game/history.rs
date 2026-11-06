@@ -110,7 +110,9 @@ impl HistoryPlace {
             for effect in effects {
                 match effect {
                     Effect::Save(game) => played.save(game, cx),
-                    Effect::Remove(id) => played.remove(&id, cx),
+                    Effect::Remove(id) => {
+                        played.remove(&id, cx);
+                    }
                 }
             }
             if let Some(identity) = self.archive.as_ref().map(GameArchive::identity)

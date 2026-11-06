@@ -20,7 +20,13 @@ gpui_kit::actions!(
         OpenSettings,
         ZoomIn,
         ZoomOut,
-        ActualSize
+        ActualSize,
+        GoBack,
+        GoForward,
+        ShowShortcuts,
+        ToggleSidebar,
+        Find,
+        New
     ]
 );
 
@@ -41,6 +47,15 @@ fn zoom(direction: i8, cx: &mut App) {
             let _ = window.update(cx, |_, window, cx| {
                 crate::interface_zoom::step_window(direction, window, cx)
             });
+        }
+    });
+}
+
+/// Back (-1) or forward (1) through the pages visited, as a swipe goes; after the key's dispatch.
+fn go(direction: crate::swipe::Direction, cx: &mut App) {
+    cx.defer(move |cx| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |_, window, cx| crate::shell::go(direction, window, cx));
         }
     });
 }
@@ -66,14 +81,53 @@ fn show_palette(prefix: &'static str, cx: &mut App) {
 /// Close `window` once everything is saved, with it still open to say what could not be: its
 /// pages own the unsaved work, and on macOS closing it does not quit the app.
 pub fn close_window(window: AnyWindowHandle, cx: &mut App) {
-    crate::core::prepare_quit(
-        cx,
-        "Close without saving",
-        move |cx| {
-            let _ = window.update(cx, |_, window, _| window.remove_window());
-        },
-        |_| {},
-    );
+    unless_leaving_a_game("Close", cx, move |cx| {
+        crate::core::prepare_quit(
+            cx,
+            "Close without saving",
+            move |cx| {
+                let _ = window.update(cx, |_, window, _| window.remove_window());
+            },
+            |_| {},
+        );
+    });
+}
+
+/// Run `then`, after asking first while a real-time Lichess game is on: its clock keeps running
+/// once KChess is gone, and the game is lost on time.
+fn unless_leaving_a_game(leave: &'static str, cx: &mut App, then: impl FnOnce(&mut App) + 'static) {
+    let on = cx
+        .try_global::<crate::online::OnlineHandle>()
+        .is_some_and(|_| crate::online::handle(cx).read(cx).live_game_on());
+    if !on {
+        return then(cx);
+    }
+    // After the update that brought the key or the click: the window cannot ask during it.
+    cx.defer(move |cx| {
+        let window = cx.active_window().or_else(|| cx.windows().first().copied());
+        let answer = window.and_then(|window| {
+            window
+                .update(cx, |_, window, cx| {
+                    window.prompt(
+                        PromptLevel::Warning,
+                        "Your Lichess game is still on",
+                        Some("Its clock keeps running on Lichess."),
+                        &[leave, "Cancel"],
+                        cx,
+                    )
+                })
+                .ok()
+        });
+        let Some(answer) = answer else {
+            return then(cx);
+        };
+        cx.spawn(async move |cx| {
+            if answer.await == Ok(0) {
+                cx.update(then);
+            }
+        })
+        .detach();
+    });
 }
 
 /// A binding whose `secondary-` is the host's Cmd or Ctrl. GPUI resolves `secondary-` only when
@@ -93,6 +147,8 @@ pub fn init(cx: &mut App) {
         bind("cmd-m", Minimize, cx),
         bind("ctrl-cmd-f", ToggleFullScreen, cx),
         bind("secondary-k", Search, cx),
+        bind("secondary-f", Find, cx),
+        bind("secondary-n", New, cx),
         bind("shift-secondary-p", Commands, cx),
         bind("secondary-,", OpenSettings, cx),
         // Interface size, as Electron takes them: with or without Shift, and the keypad's.
@@ -102,12 +158,93 @@ pub fn init(cx: &mut App) {
         bind("secondary--", ZoomOut, cx),
         bind("secondary-shift--", ZoomOut, cx),
         bind("secondary-0", ActualSize, cx),
+        bind("secondary-/", ShowShortcuts, cx),
+        // Outside a text field, Undo and Redo reach the page (the analysis board's edits); a
+        // field keeps its own binding for its text.
+        bind("secondary-z", Undo, cx),
+        bind("shift-secondary-z", Redo, cx),
+        // Outside a text field, Paste opens a copied game, position or Lichess link, and Copy
+        // copies the board's game or position.
+        bind("secondary-v", Paste, cx),
+        bind("secondary-c", Copy, cx),
     ];
     cx.bind_keys(bindings);
+    // Back and forward through the pages, as a browser takes them: ⌘[ and ⌘] on macOS, Alt
+    // with an arrow elsewhere.
+    cx.bind_keys(if cfg!(target_os = "macos") {
+        [bind("cmd-[", GoBack, cx), bind("cmd-]", GoForward, cx)]
+    } else {
+        [
+            bind("alt-left", GoBack, cx),
+            bind("alt-right", GoForward, cx),
+        ]
+    });
+    // The sidebar as macOS apps take it (View > Show Sidebar), and as editors do elsewhere.
+    cx.bind_keys([if cfg!(target_os = "macos") {
+        bind("ctrl-cmd-s", ToggleSidebar, cx)
+    } else {
+        bind("ctrl-b", ToggleSidebar, cx)
+    }]);
+    // ? lists the shortcuts as on Lichess, but only outside a text field, where it is typed.
+    cx.bind_keys([KeyBinding::new("?", ShowShortcuts, Some("!Input"))]);
+    // Ctrl+Y redoes too, as text fields take it outside macOS.
+    if !cfg!(target_os = "macos") {
+        cx.bind_keys([bind("ctrl-y", Redo, cx)]);
+    }
+    cx.on_action(|_: &ShowShortcuts, cx| {
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, cx| crate::shortcuts::open(window, cx));
+            }
+        })
+    });
+    cx.on_action(|_: &Copy, cx| {
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, cx| crate::palette::copy_shown(window, cx));
+            }
+        })
+    });
+    cx.on_action(|_: &Paste, cx| {
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, cx| crate::palette::open_pasted(window, cx));
+            }
+        })
+    });
+    cx.on_action(|_: &New, cx| {
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, cx| crate::palette::new_on_page(window, cx));
+            }
+        })
+    });
+    cx.on_action(|_: &ToggleSidebar, cx| {
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, cx| crate::shell::toggle_sidebar(window, cx));
+            }
+        })
+    });
+    cx.on_action(|_: &GoBack, cx| go(-1, cx));
+    cx.on_action(|_: &GoForward, cx| go(1, cx));
     cx.on_action(|_: &ZoomIn, cx| zoom(1, cx));
     cx.on_action(|_: &ZoomOut, cx| zoom(-1, cx));
     cx.on_action(|_: &ActualSize, cx| zoom(0, cx));
     cx.on_action(|_: &Search, cx| show_palette("", cx));
+    // Find searches the page where it has a search field of its own, and everything elsewhere.
+    cx.on_action(|_: &Find, cx| {
+        cx.defer(|cx| {
+            let found = cx.active_window().is_some_and(|window| {
+                window
+                    .update(cx, |_, window, cx| crate::shell::find_on_page(window, cx))
+                    .unwrap_or(false)
+            });
+            if !found {
+                show_palette("", cx);
+            }
+        })
+    });
     cx.on_action(|_: &Commands, cx| show_palette(">", cx));
     cx.on_action(|_: &OpenSettings, cx| {
         cx.defer(|cx| {
@@ -120,7 +257,9 @@ pub fn init(cx: &mut App) {
     });
     // Everything is saved, with the window still open to say what could not be, before quitting.
     cx.on_action(|_: &Quit, cx| {
-        crate::core::prepare_quit(cx, "Quit without saving", |cx| cx.quit(), |_| {});
+        unless_leaving_a_game("Quit", cx, |cx| {
+            crate::core::prepare_quit(cx, "Quit without saving", |cx| cx.quit(), |_| {});
+        });
     });
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
@@ -155,7 +294,11 @@ pub fn init(cx: &mut App) {
             MenuItem::separator(),
             MenuItem::action("Quit KChess", Quit),
         ]),
-        Menu::new("File").items([MenuItem::action("Close Window", CloseWindow)]),
+        Menu::new("File").items([
+            MenuItem::action("New", New),
+            MenuItem::separator(),
+            MenuItem::action("Close Window", CloseWindow),
+        ]),
         Menu::new("Edit").items([
             MenuItem::os_action("Undo", Undo, OsAction::Undo),
             MenuItem::os_action("Redo", Redo, OsAction::Redo),
@@ -167,13 +310,21 @@ pub fn init(cx: &mut App) {
         ]),
         Menu::new("View").items([
             MenuItem::action("Search…", Search),
+            MenuItem::action("Find on Page", Find),
             MenuItem::action("Run a Command…", Commands),
+            MenuItem::separator(),
+            MenuItem::action("Toggle Sidebar", ToggleSidebar),
+            MenuItem::separator(),
+            MenuItem::action("Back", GoBack),
+            MenuItem::action("Forward", GoForward),
             MenuItem::separator(),
             MenuItem::action("Actual Size", ActualSize),
             MenuItem::action("Zoom In", ZoomIn),
             MenuItem::action("Zoom Out", ZoomOut),
             MenuItem::separator(),
             MenuItem::action("Toggle Full Screen", ToggleFullScreen),
+            MenuItem::separator(),
+            MenuItem::action("Keyboard Shortcuts", ShowShortcuts),
         ]),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),

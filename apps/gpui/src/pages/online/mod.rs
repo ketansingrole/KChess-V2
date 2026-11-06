@@ -84,7 +84,19 @@ pub struct OnlinePage {
     game_panel: Entity<crate::part::Part<OnlinePage>>,
     layout: PlayLayout,
     focus: FocusHandle,
+    /// The mouse wheel over the board, which steps through the moves.
+    wheel: crate::game::view::Wheel,
+    /// A correspondence move on the board, waiting for Confirm (`confirmCorrespondence`).
+    pending: Option<Pending>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// A move made on the board and not sent yet: in `game`, after `after` moves.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Pending {
+    game: String,
+    after: usize,
+    pub uci: String,
 }
 
 impl Focusable for OnlinePage {
@@ -142,10 +154,9 @@ impl OnlinePage {
             cx.observe_in(&accounts, window, |this, _, window, cx| {
                 this.sync_accounts(window, cx);
             }),
-            cx.subscribe(&board, |_, _, event: &BoardEvent, cx| {
+            cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
                 if let BoardEvent::Move(uci) = event {
-                    let uci = uci.clone();
-                    crate::online::handle(cx).update(cx, |online, cx| online.play(uci, cx));
+                    this.board_move(uci.clone(), cx);
                 }
             }),
             cx.subscribe(&target, |_, input, event: &InputEvent, cx| {
@@ -206,6 +217,8 @@ impl OnlinePage {
             ),
             layout: PlayLayout::default(),
             focus: cx.focus_handle(),
+            wheel: Default::default(),
+            pending: None,
             _subscriptions: subscriptions,
         };
         page.sync_accounts(window, cx);
@@ -274,6 +287,57 @@ impl OnlinePage {
         cx.notify();
     }
 
+    /// A move made on the board: sent, or in a correspondence game held for Confirm when
+    /// `confirmCorrespondence` is on, since a sent move there cannot be taken back.
+    fn board_move(&mut self, uci: String, cx: &mut Context<Self>) {
+        let confirm = cx
+            .global::<crate::settings::SettingsHandle>()
+            .0
+            .read(cx)
+            .settings
+            .frontend
+            .confirm_correspondence;
+        let online = crate::online::handle(cx);
+        let held = {
+            let online = online.read(cx);
+            (confirm && online.correspondence()).then(|| Pending {
+                game: online.id().to_string(),
+                after: online.moves().len(),
+                uci: uci.clone(),
+            })
+        };
+        if held.is_some() {
+            self.pending = held;
+            self.redraw(cx);
+            cx.notify();
+        } else {
+            online.update(cx, |online, cx| online.play(uci, cx));
+        }
+    }
+
+    /// Send the move waiting for Confirm.
+    pub(super) fn confirm_move(&mut self, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending.take() else {
+            return;
+        };
+        crate::online::handle(cx).update(cx, |online, cx| online.play(pending.uci, cx));
+        self.redraw(cx);
+        cx.notify();
+    }
+
+    /// Take the move waiting for Confirm back off the board.
+    pub(super) fn cancel_move(&mut self, cx: &mut Context<Self>) {
+        if self.pending.take().is_some() {
+            self.redraw(cx);
+            cx.notify();
+        }
+    }
+
+    /// The move waiting for Confirm, while it still fits the game on the board.
+    pub(super) fn pending(&self) -> Option<&Pending> {
+        self.pending.as_ref()
+    }
+
     /// The board as the game stands, or at the move looked at.
     fn redraw(&mut self, cx: &mut Context<Self>) {
         let (state, id) = {
@@ -282,16 +346,33 @@ impl OnlinePage {
                 online.phase,
                 Phase::Playing | Phase::Finished | Phase::Disconnected
             ) {
+                self.pending = None;
                 return;
             }
             let setup = online.setup();
-            let moves = online.moves();
-            let ply = online.ply();
+            let mut moves = online.moves();
+            let mut ply = online.ply();
             let can_play = game::can_play(online);
+            // A held move lasts while the game is where it was made: a move from Lichess, another
+            // game, the game's end or looking back at earlier moves drops it.
+            if self.pending.as_ref().is_some_and(|pending| {
+                online.phase != Phase::Playing
+                    || !can_play
+                    || pending.game != online.id()
+                    || pending.after != moves.len()
+                    || ply != moves.len()
+            }) {
+                self.pending = None;
+            }
             let turn = crate::game::view::turn(
                 crate::game::view::position_at(&setup, &moves, moves.len()).as_ref(),
             );
-            let movable = (can_play && turn == online.color()).then_some(online.color());
+            let mut movable = (can_play && turn == online.color()).then_some(online.color());
+            if let Some(pending) = &self.pending {
+                moves.push(pending.uci.clone());
+                ply = moves.len();
+                movable = None;
+            }
             let mut state =
                 crate::game::view::board_state(&setup, &moves, ply, online.orientation(), movable);
             let frontend = &cx
@@ -304,7 +385,12 @@ impl OnlinePage {
             state.blindfold = frontend.blindfold && online.phase == Phase::Playing;
             // On the opponent's turn a move can be queued (`premove && !correspondence`).
             let premove = frontend.premove;
-            if premove && can_play && movable.is_none() && !online.correspondence() {
+            if premove
+                && can_play
+                && movable.is_none()
+                && self.pending.is_none()
+                && !online.correspondence()
+            {
                 state.premove = Some(online.color());
             }
             (state, online.id().to_string())
@@ -516,7 +602,9 @@ impl OnlinePage {
             .child(field(
                 "Variant",
                 Some(variant_hint),
-                Select::new(&self.variant_select).into_any_element(),
+                Select::new(&self.variant_select)
+                    .accessibility_label("Variant")
+                    .into_any_element(),
             ));
         if form.correspondence {
             card = card.child(field(
@@ -682,11 +770,7 @@ impl OnlinePage {
                 .w(px(420.))
                 .items_center()
                 .gap(px(12.))
-                .child(
-                    icon("loader-circle")
-                        .size(px(28.))
-                        .text_color(palette.primary),
-                )
+                .child(widgets::spinner(px(28.)).color(palette.primary))
                 .child(widgets::heading(status, palette))
                 .child(widgets::hint(
                     summary(&online.form, label.as_deref()),

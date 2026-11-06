@@ -513,21 +513,58 @@ fn settings_commands(cx: &App) -> Vec<Command> {
                 (section == Section::Updates)
                     .then(|| crate::updates::client_version(&crate::updates::current_version())),
             )
-            // Their names in the Electron app, and what they hold.
-            .keywords(match section {
-                Section::Updates => "version about upgrade",
-                Section::Themes => "app theme colors",
-                Section::Analysis => "analysis lichess",
-                Section::Accounts => "my accounts lichess sign in log in",
-                _ => "",
-            }),
+            .keywords(crate::pages::settings::section_keywords(section)),
         );
     }
     list
 }
 
-/// Actions for the page in view, first in command mode (`pageCommands`).
+/// Actions for the page in view, first in command mode (`pageCommands`), with ⌘C and ⌘N shown
+/// beside the commands those keys run on this page.
 fn page_commands(cx: &App) -> Vec<Command> {
+    let mut commands = page_commands_unkeyed(cx);
+    let (copy, new) = if cfg!(target_os = "macos") {
+        ("⌘ C", "⌘ N")
+    } else {
+        ("Ctrl C", "Ctrl N")
+    };
+    if let Some(at) = copy_target(&commands) {
+        commands[at].kbds = copy;
+    }
+    if let Some(at) = new_target(&commands) {
+        commands[at].kbds = new;
+    }
+    commands
+}
+
+/// Which of a page's commands Copy outside a text field runs: its game's PGN, or its position's
+/// FEN where it has no game.
+fn copy_target(commands: &[Command]) -> Option<usize> {
+    [":copy-pgn", ":copy-fen"].into_iter().find_map(|kind| {
+        commands
+            .iter()
+            .position(|command| command.id.ends_with(kind))
+    })
+}
+
+/// Which of a page's commands New runs.
+fn new_target(commands: &[Command]) -> Option<usize> {
+    commands
+        .iter()
+        .position(|command| command.id.ends_with(":new-game") || command.id == "studies:new")
+}
+
+/// The page's keys beside its commands, by id (`page_commands`).
+#[cfg(test)]
+pub(crate) fn page_command_keys(cx: &App) -> Vec<(String, &'static str)> {
+    page_commands(cx)
+        .into_iter()
+        .filter(|command| !command.kbds.is_empty())
+        .map(|command| (command.id.to_string(), command.kbds))
+        .collect()
+}
+
+fn page_commands_unkeyed(cx: &App) -> Vec<Command> {
     let zen = cx
         .global::<SettingsHandle>()
         .0
@@ -614,6 +651,15 @@ fn page_actions<V: 'static, A: Copy + 'static>(
         .collect()
 }
 
+/// A page's flip command, with the F its page takes for it.
+fn flip_key(command: Command) -> Command {
+    if command.id.ends_with("flip") {
+        command.kbds("F")
+    } else {
+        command
+    }
+}
+
 /// The computer game's actions its buttons allow now.
 fn computer_commands(cx: &App) -> Vec<Command> {
     use crate::pages::computer::{Action, ComputerPage};
@@ -629,6 +675,7 @@ fn computer_commands(cx: &App) -> Vec<Command> {
             Action::Resign => ("resign", "Resign", "flag", "give up"),
             Action::NewGame => ("new-game", "New game", "rotate-ccw", "restart"),
             Action::SwitchSides => ("switch-sides", "Switch sides", "repeat", "colour color"),
+            Action::CopyPgn => ("copy-pgn", "Copy PGN", "copy", "game moves clipboard"),
             Action::Review => ("review", "Review game", "microscope", "analyse analysis"),
         },
         ComputerPage::act,
@@ -648,6 +695,12 @@ fn live_commands(cx: &App) -> Vec<Command> {
                 LiveAction::Resign => ("resign", "Resign", "flag", "give up"),
                 LiveAction::Abort => ("abort", "Abort", "ban", "cancel"),
                 LiveAction::Rematch => ("rematch", "Rematch", "repeat", "again"),
+                LiveAction::NewOpponent => (
+                    "new-opponent",
+                    "New opponent",
+                    "users",
+                    "seek again same time control",
+                ),
                 LiveAction::Analyse => ("analyse", "Analyse", "microscope", "analysis review"),
                 LiveAction::NewGame => ("new-game", "New game", "plus", "another seek"),
                 LiveAction::CancelSeek => ("cancel-seek", "Cancel seek", "x", "stop waiting"),
@@ -660,6 +713,7 @@ fn live_commands(cx: &App) -> Vec<Command> {
                 move |window, cx| run_live_action(action, window, cx),
             )
             .keywords(keywords)
+            .kbds(if action == LiveAction::Flip { "F" } else { "" })
         })
         .collect()
 }
@@ -678,6 +732,12 @@ fn puzzle_commands(cx: &App) -> Vec<Command> {
             Action::Hint => ("hint", "Hint", "lightbulb", "clue help"),
             Action::Solution => ("solution", "Solution", "eye", "show answer give up"),
             Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            Action::Analyse => (
+                "analyse",
+                "Analysis board",
+                "microscope",
+                "analyse study review",
+            ),
             Action::Next => ("next", "Next puzzle", "arrow-right", "another skip"),
             Action::Rush(action) => {
                 use crate::pages::puzzles::RushAction;
@@ -694,8 +754,14 @@ fn puzzle_commands(cx: &App) -> Vec<Command> {
                 }
             }
         },
-        |page: &mut PuzzlesPage, action, _, cx| page.act(action, cx),
+        |page: &mut PuzzlesPage, action, window, cx| match action {
+            Action::Analyse => page.analyse(window, cx),
+            action => page.act(action, cx),
+        },
     )
+    .into_iter()
+    .map(flip_key)
+    .collect()
 }
 
 /// The watched game's actions, as its panel's buttons offer them.
@@ -730,6 +796,7 @@ fn watch_commands(cx: &App) -> Vec<Command> {
         WatchPage::act,
     )
     .into_iter()
+    .map(flip_key)
     .chain(channels)
     .collect()
 }
@@ -758,6 +825,9 @@ fn openings_commands(cx: &App) -> Vec<Command> {
         },
         OpeningsPage::act,
     )
+    .into_iter()
+    .map(flip_key)
+    .collect()
 }
 
 /// The Tournaments page's actions: the schedule's, or the open event's.
@@ -855,6 +925,9 @@ fn practice_commands(cx: &App) -> Vec<Command> {
         },
         PracticePage::act,
     )
+    .into_iter()
+    .map(flip_key)
+    .collect()
 }
 
 /// Game history's actions: the open game's, or the synced games'.
@@ -987,6 +1060,9 @@ fn editor_commands(cx: &App) -> Vec<Command> {
         },
         EditorPage::act,
     )
+    .into_iter()
+    .map(flip_key)
+    .collect()
 }
 
 /// The game over the board's actions, as its panel's buttons offer them.
@@ -1017,6 +1093,9 @@ fn local_commands(cx: &App) -> Vec<Command> {
         },
         LocalPage::act,
     )
+    .into_iter()
+    .map(flip_key)
+    .collect()
 }
 
 /// The study bar's menus over the analysis board: the study's and its chapters' actions.
@@ -1053,8 +1132,29 @@ fn study_commands(cx: &App) -> Vec<Command> {
                 StudyAction::DuplicateChapter => {
                     ("duplicate-chapter", "Duplicate chapter", "copy", "copy")
                 }
+                StudyAction::MoveChapterUp => (
+                    "move-chapter-up",
+                    "Move chapter up",
+                    "chevron-up",
+                    "reorder",
+                ),
+                StudyAction::MoveChapterDown => (
+                    "move-chapter-down",
+                    "Move chapter down",
+                    "chevron-down",
+                    "reorder",
+                ),
                 StudyAction::RemoveChapter => {
                     ("delete-chapter", "Delete chapter", "trash-2", "remove")
+                }
+                StudyAction::PreviousChapter => (
+                    "previous-chapter",
+                    "Previous chapter",
+                    "chevron-left",
+                    "back",
+                ),
+                StudyAction::NextChapter => {
+                    ("next-chapter", "Next chapter", "chevron-right", "forward")
                 }
             };
             let bar = bar.downgrade();
@@ -1105,6 +1205,13 @@ fn analysis_commands() -> Vec<Command> {
             on_board(|board, window, cx| board.copy_pgn(window, cx)),
         )
         .keywords("game moves clipboard"),
+        Command::new(
+            "analysis:copy-line",
+            "Copy line",
+            icon("list-tree"),
+            on_board(|board, window, cx| board.copy_shown_line(window, cx)),
+        )
+        .keywords("variation moves pgn clipboard"),
         Command::new(
             "analysis:import",
             "Import a position or game…",
@@ -1251,7 +1358,24 @@ fn app_commands(cx: &App) -> Vec<Command> {
             icon("panel-left"),
             crate::shell::toggle_sidebar,
         )
-        .keywords("toggle navigation"),
+        .keywords("toggle navigation")
+        .kbds(if cfg!(target_os = "macos") {
+            "⌃ ⌘ S"
+        } else {
+            "Ctrl B"
+        }),
+        Command::new(
+            "app:shortcuts",
+            "Keyboard shortcuts",
+            icon("keyboard"),
+            crate::shortcuts::open,
+        )
+        .keywords("keys hotkeys help")
+        .kbds(if cfg!(target_os = "macos") {
+            "⌘ /"
+        } else {
+            "Ctrl /"
+        }),
     ];
     // Studies' Lichess tab is there only with an account.
     if connected {
@@ -1625,6 +1749,56 @@ fn pasted(text: &str) -> Vec<Command> {
             },
         ),
     ]
+}
+
+/// Paste outside a text field: what the clipboard holds opens as Quick Pick's first suggestion
+/// for it would (a game or position on the analysis board, a Lichess link where it belongs).
+/// Under a dialog nothing happens; anything else is said in a notice.
+pub fn open_pasted(window: &mut Window, cx: &mut App) {
+    use gpui_kit::component::WindowExt as _;
+    if window.has_active_dialog(cx) {
+        return;
+    }
+    let text = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default();
+    match pasted(text.trim()).into_iter().next() {
+        Some(command) => (command.run)(window, cx),
+        None => window.push_notification("Copy a PGN, a FEN or a Lichess link to open it", cx),
+    }
+}
+
+/// New (⌘N): what the page's own New does, asking first where it asks — a game against the
+/// computer, over the board or on Lichess, a study, a fresh analysis board. Under a dialog, or
+/// on a page with nothing to start, nothing happens.
+pub fn new_on_page(window: &mut Window, cx: &mut App) {
+    use gpui_kit::component::WindowExt as _;
+    if window.has_active_dialog(cx) {
+        return;
+    }
+    if crate::shell::current_page(cx) == Some(Page::Analysis) {
+        crate::shell::new_analysis(window, cx);
+        return;
+    }
+    let commands = page_commands(cx);
+    if let Some(at) = new_target(&commands) {
+        (commands[at].run)(window, cx);
+    }
+}
+
+/// Copy outside a text field: the page's game as PGN, or its position as FEN where it has no
+/// game (the board editor), as its own Copy command would. Under a dialog, or on a page with
+/// nothing to copy, nothing happens.
+pub fn copy_shown(window: &mut Window, cx: &mut App) {
+    use gpui_kit::component::WindowExt as _;
+    if window.has_active_dialog(cx) {
+        return;
+    }
+    let commands = page_commands(cx);
+    if let Some(at) = copy_target(&commands) {
+        (commands[at].run)(window, cx);
+    }
 }
 
 /// Numbered moves (`1. e4 e5 2. Nf3`, with or without PGN headers) the analysis board can play.
@@ -2051,7 +2225,7 @@ impl Render for CommandPalette {
 }
 
 /// A shortcut's keys as `UKbd` chips (size sm).
-fn kbd(keys: &'static str, palette: &Palette) -> impl IntoElement {
+pub(crate) fn kbd(keys: &str, palette: &Palette) -> impl IntoElement {
     h_flex()
         .flex_none()
         .gap(px(2.))

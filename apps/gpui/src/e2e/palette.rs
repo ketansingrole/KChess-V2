@@ -351,6 +351,12 @@ fn a_broadcast_board_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppConte
     wait_until_closed(&mut app);
     app.wait_gone("broadcast-analyse");
 
+    // Escape steps back too: from a board to all boards.
+    open_board(&mut app);
+    app.press("escape");
+    app.wait_gone("broadcast-analyse");
+    app.find("broadcast-back");
+
     open_board(&mut app);
     app.press("secondary-k");
     app.type_text(">Analyse");
@@ -359,6 +365,25 @@ fn a_broadcast_board_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppConte
     wait_until_closed(&mut app);
     assert_eq!(page(&mut app), Some(Page::Analysis));
     assert_eq!(app.find("tree-e2e4 e7e5 g1f3").selected(), Some(true));
+}
+
+/// Escape leaves a broadcast for the list of them, as its back button does.
+#[gpui_kit::test]
+fn escape_leaves_a_broadcast(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::BROADCAST_ROUNDS;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.press("secondary-k");
+    app.type_text(&format!(
+        "https://lichess.org/broadcast/kchess-open/round-1/{}",
+        BROADCAST_ROUNDS[0]
+    ));
+    wait_for_first(&mut app, "Watch this broadcast");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    app.find("broadcast-back");
+    app.press("escape");
+    app.wait_gone("broadcast-back");
 }
 
 /// A Lichess tournament link opens the event on the Tournaments page, signed in or not.
@@ -396,7 +421,7 @@ fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {
     app.press("enter");
     wait_until_closed(&mut app);
     app.wait_gone("tournament-join");
-    app.find("tournaments-refresh");
+    app.find(("tournaments-filter", 0usize));
 }
 
 /// A Lichess TV link opens that channel on Watch → TV, from whichever tab was showing.
@@ -725,4 +750,129 @@ fn a_watched_game_is_analysed_from_its_button_and_quick_pick(cx: &mut gpui_kit::
         crate::shell::current_page(cx) == Some(Page::Analysis)
     });
     app.find("tree-e2e4 c7c5");
+}
+
+/// Paste outside a text field opens what was copied: moves on the analysis board, a FEN there
+/// too; text that is neither leaves the page as it was, and a text field still takes its paste.
+#[gpui_kit::test]
+fn a_copied_game_is_opened_with_paste(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Puzzles");
+    let copy = |app: &mut Harness, text: &str| {
+        app.cx
+            .write_to_clipboard(gpui_kit::ClipboardItem::new_string(text.to_string()))
+    };
+    let page = |app: &mut Harness| app.cx.update(|cx| crate::shell::current_page(cx));
+
+    copy(&mut app, "hello");
+    app.press("secondary-v");
+    assert_eq!(page(&mut app), Some(crate::pages::Page::Puzzles));
+
+    copy(&mut app, "1. e4 e5 2. Nf3");
+    app.press("secondary-v");
+    app.wait_for("the moves on the analysis board", |_, cx| {
+        crate::shell::current_page(cx) == Some(crate::pages::Page::Analysis)
+    });
+    app.find("tree-e2e4 e7e5 g1f3");
+
+    // In Quick Pick's field the text is pasted as text.
+    app.press("secondary-k");
+    app.press("secondary-v");
+    wait_for_first(&mut app, "Analyse these moves");
+    app.press("escape");
+    wait_until_closed(&mut app);
+
+    copy(
+        &mut app,
+        "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1",
+    );
+    app.press("secondary-v");
+    // The moves on the board are not saved: replacing them asks first.
+    app.click_label("Replace");
+    app.wait_gone("tree-e2e4 e7e5 g1f3");
+    app.click_square("d7", true);
+    app.click_square("d5", true);
+    app.find("tree-d7d5");
+}
+
+/// Copy outside a text field copies the board: the analysis board's game as PGN, the board
+/// editor's position as FEN; a page with no board leaves the clipboard alone.
+#[gpui_kit::test]
+fn copy_outside_a_text_field_copies_the_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let copy = |app: &mut Harness, text: &str| {
+        app.cx
+            .write_to_clipboard(gpui_kit::ClipboardItem::new_string(text.to_string()))
+    };
+    let copied = |app: &mut Harness| {
+        app.cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap_or_default()
+    };
+
+    app.open("Puzzles");
+    copy(&mut app, "kept");
+    app.press("secondary-c");
+    app.tick();
+    assert_eq!(copied(&mut app), "kept");
+
+    copy(&mut app, "1. e4 e5 2. Nf3");
+    app.press("secondary-v");
+    app.find("tree-e2e4 e7e5 g1f3");
+    copy(&mut app, "kept");
+    app.press("secondary-c");
+    app.tick();
+    assert!(
+        copied(&mut app).contains("1. e4 e5 2. Nf3"),
+        "{}",
+        copied(&mut app)
+    );
+
+    app.open("Board editor");
+    app.press("secondary-c");
+    app.tick();
+    assert_eq!(
+        copied(&mut app),
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    );
+
+    // A text field copies its own text.
+    app.press("secondary-k");
+    app.type_text("knight");
+    app.press("secondary-a");
+    app.press("secondary-c");
+    app.tick();
+    assert_eq!(copied(&mut app), "knight");
+}
+
+/// Find (⌘F) searches the page: on Openings it goes to the page's own search field, with what
+/// was typed before selected so it is typed over; a page not showing one opens Quick Pick.
+#[gpui_kit::test]
+fn find_searches_the_page_or_opens_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let field = "Search openings";
+    let typed = |app: &mut Harness| {
+        app.with_window(|window, _| {
+            use gpui_kit::test::TestQueryExt as _;
+            window
+                .try_find_by_label(field)
+                .and_then(|field| field.value().map(str::to_string))
+        })
+    };
+    app.open("Openings");
+    app.press("secondary-f");
+    app.type_text("Sicilian");
+    app.tick();
+    assert_eq!(typed(&mut app).as_deref(), Some("Sicilian"));
+    app.press("secondary-f");
+    app.type_text("French");
+    app.tick();
+    assert_eq!(typed(&mut app).as_deref(), Some("French"));
+
+    // Watch keeps its broadcasts' field while TV is shown, but does not draw it.
+    app.open("Watch");
+    app.press("secondary-f");
+    app.type_text("puzzles");
+    wait_for_first(&mut app, "Puzzles");
 }

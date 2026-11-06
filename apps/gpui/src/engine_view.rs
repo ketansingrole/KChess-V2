@@ -103,6 +103,7 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
 
 /// Each line's score and its moves from `fen` (in `variant`, a Lichess key), a click playing the
 /// line up to the move (`on_play`); `pending` rows wait for lines still to come.
+#[allow(clippy::too_many_arguments)]
 pub fn engine_lines(
     fen: &str,
     variant: &str,
@@ -111,6 +112,7 @@ pub fn engine_lines(
     ended: Option<&'static str>,
     on_play: PlayLine,
     palette: &Palette,
+    figurine: crate::notation::Figurine,
 ) -> Div {
     let mut rows: Vec<AnyElement> = Vec::new();
     if let Some(ended) = ended {
@@ -173,7 +175,12 @@ pub fn engine_lines(
                                 .cursor_pointer()
                                 .hover(|chip| chip.bg(tint(palette.primary, 24.)))
                                 .on_click(move |_, window, cx| on_play(&pv, at, window, cx))
-                                .child(played.label)
+                                .child(crate::notation::shown(
+                                    &played.label,
+                                    &figurine
+                                        .as_ref()
+                                        .map(|figurine| figurine.in_color(palette.toned)),
+                                ))
                         }),
                     ))
                     .into_any_element(),

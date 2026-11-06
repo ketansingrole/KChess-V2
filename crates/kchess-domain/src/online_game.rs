@@ -576,6 +576,46 @@ mod tests {
         assert_eq!(outcome_line(Some("white"), "stalemate", "white"), "You won");
     }
 
+    /// A 5+5 game: neither clock runs until both sides have moved, as on Lichess. A clock that
+    /// ran from the start snapped back to 5:00 when the first move arrived.
+    #[test]
+    fn the_clocks_start_once_both_sides_have_moved() {
+        let mut model = Model::idle();
+        model.online_phase = "playing".into();
+        model.online_id = "AbCd1234".into();
+        model.online_account = "Alice".into();
+        model.online_color = "white".into();
+        let clock_after = |model: &Model, moves: &str| {
+            let result = transition(
+                "onlineGameEvent",
+                vec![
+                    state_json(model),
+                    json!({
+                        "type": "gameState",
+                        "moves": moves,
+                        "wtime": 300_000,
+                        "btime": 300_000,
+                        "status": "started",
+                    }),
+                    ctx(0.0),
+                ],
+            );
+            let set = effects(&result)
+                .into_iter()
+                .find(|effect| effect["effect"] == json!("clockSet"))
+                .expect("the clocks are set");
+            (set["ticking"].clone(), result["state"].clone())
+        };
+        let (ticking, state) = clock_after(&model, "");
+        assert_eq!(ticking, Value::Null, "before White's first move");
+        let model: Model = serde_json::from_value(state).unwrap();
+        let (ticking, state) = clock_after(&model, "e2e4");
+        assert_eq!(ticking, Value::Null, "before Black's first move");
+        let model: Model = serde_json::from_value(state).unwrap();
+        let (ticking, _) = clock_after(&model, "e2e4 e7e5");
+        assert_eq!(ticking, json!("white"));
+    }
+
     #[test]
     fn a_game_reads_both_players_ratings() {
         let mut model = Model::idle();

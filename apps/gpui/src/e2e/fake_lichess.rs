@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -50,6 +50,9 @@ pub struct Session {
     pub moves: Vec<String>,
     /// The game's Lichess variant key; standard when unset.
     pub variant: Option<&'static str>,
+    /// The game's board stream says it is correspondence: three days a move, no clock. (Its
+    /// listing stays rapid, so it still comes to the board on its own.)
+    pub correspondence: bool,
     /// Lichess's `status`, once the game has ended; `started` until then.
     pub finished: Option<&'static str>,
     pub winner: Option<&'static str>,
@@ -58,6 +61,8 @@ pub struct Session {
     pub takeback_offered: bool,
     /// The app's writes, in order ("POST /api/board/game/E2eGame1/move/e2e4").
     pub writes: Vec<String>,
+    /// The account's game download waits until this is cleared: a sync still running.
+    pub hold_games: bool,
     /// Counts changes: a game stream sends the state again whenever this moves on.
     version: usize,
 }
@@ -262,12 +267,17 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             .unwrap_or_else(PoisonError::into_inner);
         sessions.get(login).cloned()
     });
-    // A player's activity is public too: a few weeks of it, which each name staggers.
+    // A player's activity is public too: a few weeks of it, which each name staggers. Frank's
+    // fails the first time it is asked for (a failed timeline tried again).
     if let Some(name) = request
         .path
         .strip_prefix("/api/user/")
         .and_then(|rest| rest.strip_suffix("/activity"))
     {
+        static FRANK_ASKED: AtomicBool = AtomicBool::new(false);
+        if name == "frank" && !FRANK_ASKED.swap(true, Ordering::SeqCst) {
+            return refuse(&mut out, &json!({ "error": "Not now" }));
+        }
         return reply(&mut out, &activity(name));
     }
     // Profiles are public: many at once, by the comma-separated names in the body.
@@ -325,8 +335,17 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             ] }),
         );
     }
-    // Leaderboards are public, so they are asked for without the login.
+    // Presence is public: nobody asked about is online.
+    if request.path == "/api/users/status" {
+        return reply(&mut out, &json!([]));
+    }
+    // Leaderboards are public, so they are asked for without the login. Racing Kings' fails the
+    // first time it is asked for, and answers after that (a failed load tried again).
     if let Some(perf) = request.path.strip_prefix("/api/player/top/100/") {
+        static RACING_KINGS_ASKED: AtomicBool = AtomicBool::new(false);
+        if perf == "racingKings" && !RACING_KINGS_ASKED.swap(true, Ordering::SeqCst) {
+            return refuse(&mut out, &json!({ "error": "Not now" }));
+        }
         let user = |username: &str, title: Option<&str>, rating: u32, progress: i32| {
             json!({
                 "username": username,
@@ -373,6 +392,28 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                     "solution": ["h5f7"],
                     "rating": 1100,
                     "themes": ["mateIn1", "short"],
+                },
+            }),
+        );
+    }
+    // Anonymous training draws a puzzle, numbered on each draw; only for one theme, so the pages
+    // other tests open still find Lichess out of reach.
+    if (request.method.as_str(), request.path.as_str()) == ("GET", "/api/puzzle/next")
+        && request.query.contains(&format!("angle={TRAINED_THEME}"))
+    {
+        static DRAWN: AtomicUsize = AtomicUsize::new(0);
+        let drawn = DRAWN.fetch_add(1, Ordering::Relaxed);
+        return reply(
+            &mut out,
+            &json!({
+                "game": { "id": LINKED_GAME },
+                "puzzle": {
+                    "id": format!("KcTr{drawn}"),
+                    "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                    "lastMove": "g8f6",
+                    "solution": ["h5f7"],
+                    "rating": 1100,
+                    "themes": [TRAINED_THEME],
                 },
             }),
         );
@@ -532,12 +573,25 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 },
             )
         }
+        // Joining the public arena, with its entry code when one is given.
+        ("POST", p) if p == format!("/api/tournament/{ARENA}/join") => {
+            let mut session = session.lock();
+            session.writes.push(format!("POST {p} {}", request.body));
+            reply(&mut out, &json!({ "ok": true }))
+        }
         ("POST", p) if p.starts_with("/api/board/game/") => {
             write_game(&session, p);
             reply(&mut out, &json!({ "ok": true }))
         }
+        // A seek is recorded with what it asks for; nobody takes it up.
+        ("POST", "/api/board/seek") => {
+            session
+                .lock()
+                .writes
+                .push(format!("POST /api/board/seek {}", request.body));
+            reply(&mut out, &json!({}))
+        }
         ("GET", "/api/challenge") => reply(&mut out, &json!({ "in": [], "out": [] })),
-        ("GET", "/api/users/status") => reply(&mut out, &json!([])),
         ("GET", "/api/timeline") => reply(&mut out, &json!({ "entries": [], "users": {} })),
         ("GET", p) if p.ends_with("/chat") || p.starts_with("/api/team/of/") => {
             reply(&mut out, &json!([]))
@@ -545,7 +599,12 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         ("GET", p) if p.starts_with("/api/crosstable/") => {
             reply(&mut out, &json!({ "users": {}, "nbGames": 0 }))
         }
-        ("GET", p) if p.starts_with("/api/games/user/") => ndjson(&mut out),
+        ("GET", p) if p.starts_with("/api/games/user/") => {
+            while session.lock().hold_games {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            ndjson(&mut out)
+        }
         ("POST", "/api/games/export/_ids") => ndjson(&mut out),
         _ => not_found(&mut out),
     }
@@ -642,6 +701,8 @@ pub const BROADCAST_ROUNDS: [&str; 2] = ["kcRound1", "kcRound2"];
 pub const BROADCAST_BOARD: &str = "[Event \"KChess Open\"]\n[White \"Ada\"]\n[Black \"Bo\"]\n\
 [Result \"*\"]\n[ChapterURL \"https://lichess.org/broadcast/kchess-open/round-1/kcRound1/kcBoard1\"]\n\n\
 1. e4 e5 2. Nf3 *\n\n\n";
+/// The theme anonymous training draws puzzles in (each one Qxf7#).
+pub const TRAINED_THEME: &str = "mateIn1";
 /// The puzzle a pasted lichess.org/training link opens.
 pub const LINKED_PUZZLE: &str = "KcPz1";
 const LINKED_PGN: &str = "[Event \"Rated rapid game\"]\n[Site \"https://lichess.org/kchessE2\"]\n\
@@ -759,7 +820,7 @@ fn summary(elsewhere: bool, variant: Option<&str>) -> Value {
 }
 
 fn full(session: &Session) -> Value {
-    json!({
+    let mut full = json!({
         "type": "gameFull",
         "id": GAME,
         "rated": false,
@@ -772,7 +833,14 @@ fn full(session: &Session) -> Value {
         "black": { "id": OPPONENT.to_lowercase(), "name": OPPONENT, "rating": 1700 },
         "initialFen": "startpos",
         "state": state(session)
-    })
+    });
+    if session.correspondence {
+        full["clock"] = Value::Null;
+        full["daysPerTurn"] = json!(3);
+        full["speed"] = json!("correspondence");
+        full["perf"] = json!({ "name": "Correspondence" });
+    }
+    full
 }
 
 fn state(session: &Session) -> Value {
@@ -1018,6 +1086,32 @@ fn showcase_games(username: &str) -> Vec<Value> {
             if let Some(winner) = winner {
                 game["winner"] = json!(winner);
             }
+            // `pgnInJson`, as the export sends it: the moves numbered, under the players' tags.
+            let result = match winner {
+                Some("white") => "1-0",
+                Some(_) => "0-1",
+                None => "1/2-1/2",
+            };
+            let (white_name, black_name) = if white {
+                (user["name"].as_str().unwrap_or_default(), opponent)
+            } else {
+                (opponent, user["name"].as_str().unwrap_or_default())
+            };
+            let movetext: Vec<String> = moves
+                .split_whitespace()
+                .enumerate()
+                .map(|(ply, san)| {
+                    if ply % 2 == 0 {
+                        format!("{}. {san}", ply / 2 + 1)
+                    } else {
+                        san.to_string()
+                    }
+                })
+                .collect();
+            game["pgn"] = json!(format!(
+                "[White \"{white_name}\"]\n[Black \"{black_name}\"]\n[Result \"{result}\"]\n\n{} {result}\n",
+                movetext.join(" ")
+            ));
             game
         })
         .collect()

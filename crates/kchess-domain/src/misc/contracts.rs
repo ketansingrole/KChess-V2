@@ -383,6 +383,11 @@ const CORE: &[Row] = &[
         &[Valid("assertRepertoireKey"), Position],
     ),
     ("clearRepertoireMisses", 1, &[Valid("assertRepertoireKey")]),
+    (
+        "restoreRepertoireMisses",
+        2,
+        &[Valid("assertRepertoireKey"), Valid("assertSessionObject")],
+    ),
     ("viewPreferences", 0, &[]),
     ("customThemes", 0, &[]),
     (

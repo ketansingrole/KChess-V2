@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState, Undo};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{
     Disableable as _, IndexPath, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -99,6 +99,8 @@ pub struct LocalPage {
     clock_layout: Entity<SelectState<Vec<SharedString>>>,
     save: Option<Task<()>>,
     ticker: Option<Task<()>>,
+    /// Each player's low-time warning.
+    low_time: crate::game::low_time::LowTime,
     clock_ticker: Option<Task<()>>,
     /// What the clocks showed at the last tick: a tick redraws only when a clock face changes
     /// (each second, each tenth in the last ten).
@@ -115,6 +117,8 @@ pub struct LocalPage {
     /// What the game's clock faces showed at its last tick (`ticked` is the chess clock's).
     faces_ticked: Option<[String; 2]>,
     focus: FocusHandle,
+    /// The mouse wheel over the board, which steps through the moves.
+    wheel: crate::game::view::Wheel,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -245,6 +249,7 @@ impl LocalPage {
             clock_layout,
             save: None,
             ticker: None,
+            low_time: Default::default(),
             clock_ticker: None,
             ticked: None,
             layout: PlayLayout::default(),
@@ -258,6 +263,7 @@ impl LocalPage {
             faces_ticked: None,
             exporter: cx.new(|_| Exporter::default()),
             focus: cx.focus_handle(),
+            wheel: Default::default(),
             _subscriptions: subscriptions,
         };
         let (source, has_play) = (page.game.archive_snapshot(0.), page.has_play());
@@ -322,7 +328,7 @@ impl LocalPage {
     }
 
     /// The board faces whoever is to move while automatic turning is on.
-    fn orientation(&self, cx: &App) -> Color {
+    pub(crate) fn orientation(&self, cx: &App) -> Color {
         if self.auto_flip(cx) && !self.game.over(self.now()) {
             self.turn()
         } else {
@@ -523,6 +529,18 @@ impl LocalPage {
                         if fell {
                             this.ticker = None;
                             this.changed(cx);
+                        }
+                        if !fell && !this.game.over(now) {
+                            for color in ["white", "black"] {
+                                let initial = this.game.state["clock"][color]["minutes"]
+                                    .as_f64()
+                                    .unwrap_or_default()
+                                    * 60.;
+                                let remaining = this.game.remaining(color, now);
+                                if this.low_time.crossed(color, remaining, initial) {
+                                    crate::sound::play(crate::sound::Sound::LowTime, cx);
+                                }
+                            }
                         }
                         let shown = ["white", "black"]
                             .map(|side| clock_face(this.game.remaining(side, now)));
@@ -886,7 +904,7 @@ impl LocalPage {
     }
 
     /// Keys when the page itself has focus (not a text field): in the clock, Space presses the
-    /// running clock and P pauses; on the board, the arrows step through the moves.
+    /// running clock and P pauses; on the board, the arrows step through the moves and F flips it.
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus.is_focused(window) || event.keystroke.modifiers.modified() {
             return;
@@ -910,6 +928,8 @@ impl LocalPage {
                 }
                 _ => return,
             }
+        } else if key == "f" {
+            self.flip(cx);
         } else if let Some(ply) = view::navigate(key, self.shown_ply(), self.moves().len()) {
             self.show_ply(ply, cx);
         } else {
@@ -967,7 +987,8 @@ impl LocalPage {
             } else {
                 "Ready"
             };
-            let (background, foreground) = if flagged {
+            // Red when time is up, and while the last ten seconds run.
+            let (background, foreground) = if flagged || (running && widgets::low_time(&time)) {
                 (palette.error, palette.bg)
             } else if running {
                 (palette.primary, palette.bg)
@@ -980,7 +1001,12 @@ impl LocalPage {
                 let lines = [
                     (format!("Player {index}"), 14., true, 0.75),
                     (time.clone(), 120., true, 1.),
-                    (format!("{moves} moves"), 14., false, 0.75),
+                    (
+                        crate::widgets::format_counted(moves as f64, "move", "moves"),
+                        14.,
+                        false,
+                        0.75,
+                    ),
                     (state.to_string(), 12., true, 1.),
                 ];
                 let rgb = Rgba::from(foreground);
@@ -1035,12 +1061,9 @@ impl LocalPage {
                         .line_height(px(120.))
                         .child(time.clone()),
                 )
-                .child(
-                    div()
-                        .text_size(px(14.))
-                        .opacity(0.75)
-                        .child(format!("{moves} moves")),
-                )
+                .child(div().text_size(px(14.)).opacity(0.75).child(
+                    crate::widgets::format_counted(moves as f64, "move", "moves"),
+                ))
                 .child(
                     div()
                         .text_size(px(12.))
@@ -1086,8 +1109,11 @@ impl LocalPage {
         .child(face(Side::Top, 1, cx))
         .child(face(Side::Bottom, 2, cx));
         let [top_minutes, bottom_minutes, increment] = &self.clock_inputs;
-        let small_input =
-            |input: &Entity<InputState>| div().w(px(64.)).child(Input::new(input).small());
+        let small_input = |input: &Entity<InputState>, name: &'static str| {
+            div()
+                .w(px(64.))
+                .child(Input::new(input).small().aria_label(name))
+        };
         v_flex()
             .id("local-clock")
             .size_full()
@@ -1170,11 +1196,11 @@ impl LocalPage {
                         h_flex()
                             .gap(px(4.))
                             .text_size(px(14.))
-                            .child(small_input(top_minutes))
+                            .child(small_input(top_minutes, "Player 1 minutes"))
                             .child(div().text_color(palette.text_muted).child("/"))
-                            .child(small_input(bottom_minutes))
+                            .child(small_input(bottom_minutes, "Player 2 minutes"))
                             .child("min +")
-                            .child(small_input(increment))
+                            .child(small_input(increment, "Increment in seconds"))
                             .child("s"),
                     ),
             )
@@ -1313,6 +1339,19 @@ impl Render for LocalPage {
             .gap(widgets::STACK_GAP)
             .child(line(!orientation, None))
             .child(crate::board::cached(&self.board))
+            // The mouse wheel over the board steps through the moves.
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                let Some(key) = this
+                    .wheel
+                    .turn(event.delta.pixel_delta(window.line_height()))
+                else {
+                    return;
+                };
+                if let Some(ply) = view::navigate(key, this.shown_ply(), this.moves().len()) {
+                    this.show_ply(ply, cx);
+                }
+                cx.stop_propagation();
+            }))
             .child(line(orientation, Some(widgets::move_row(entry, voice))))
             .children(voice_line)
             .children(self.move_message.clone().map(|message| {
@@ -1341,6 +1380,17 @@ impl Render for LocalPage {
         self.layout
             .render("local-page", board_column, panel, window, cx)
             .track_focus(&self.focus)
+            // ⌘Z outside the move box takes back, as the button does.
+            .on_action(
+                cx.listener(|this, _: &Undo, window, cx| this.act(Action::TakeBack, window, cx)),
+            )
+            // A click anywhere on the page gives the keys back to it, before a text field (the
+            // move box) takes them for itself, as on the analysis board.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .on_key_down(cx.listener(Self::key))
             .into_any_element()
     }
@@ -1518,15 +1568,20 @@ impl LocalPage {
                 &sans,
                 shown,
                 view::first_move(self.setup()),
-                "White moves first. The first move starts the clock.".into(),
+                if self.game.state["times"].is_null() {
+                    "No moves yet".into()
+                } else {
+                    "The first move starts the clock".into()
+                },
                 select.clone(),
+                crate::notation::figurine(cx),
                 &palette,
             )))
             .child(widgets::move_controls(
                 shown,
                 moves.len(),
                 select,
-                ("Flip board".into(), flip),
+                ("Flip board".into(), Some("F"), flip),
             ))
             .child(
                 h_flex()
@@ -1587,6 +1642,7 @@ impl LocalPage {
                             .when(narrow, |button| button.min_w(relative(0.45)))
                             .icon(icon("plus"))
                             .label("New game")
+                            .tooltip_with_action("New game", &crate::menu::New, None)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.open_new_game(window, cx)),
                             ),
@@ -1614,6 +1670,7 @@ impl LocalPage {
                             &self.exporter,
                             self.game_export(cx),
                             Anchor::BottomCenter,
+                            false,
                             cx,
                         )
                         .into_any_element()
@@ -1965,7 +2022,7 @@ impl Render for NewGame {
                         .child(
                             widgets::field(
                                 "Position number (0–959)",
-                                Input::new(&self.number),
+                                Input::new(&self.number).aria_label("Position number (0–959)"),
                                 self.number960(cx)
                                     .is_none()
                                     .then(|| "Enter a number from 0 to 959".into()),
@@ -1994,7 +2051,7 @@ impl Render for NewGame {
             .when(variant != "chess960", |form| {
                 form.child(widgets::field(
                     "Start from a FEN (optional)",
-                    Input::new(&self.fen),
+                    Input::new(&self.fen).aria_label("Start from a FEN (optional)"),
                     self.fen_problem(cx),
                     &palette,
                 ))
@@ -2004,12 +2061,20 @@ impl Render for NewGame {
                     .gap(px(12.))
                     .items_start()
                     .child(
-                        widgets::field("Clock", Select::new(&self.clock), None, &palette).flex_1(),
+                        widgets::field(
+                            "Clock",
+                            Select::new(&self.clock).accessibility_label("Clock"),
+                            None,
+                            &palette,
+                        )
+                        .flex_1(),
                     )
                     .child(
                         widgets::field(
                             "Black's minutes (odds)",
-                            Input::new(&self.odds).disabled(no_clock),
+                            Input::new(&self.odds)
+                                .aria_label("Black's minutes (odds)")
+                                .disabled(no_clock),
                             None,
                             &palette,
                         )

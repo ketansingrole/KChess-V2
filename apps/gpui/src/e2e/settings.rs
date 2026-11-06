@@ -126,3 +126,63 @@ fn a_category_opened_in_a_short_window_scrolls_into_the_sidebar(cx: &mut gpui_ki
     let updates = app.find("5-2").bounds();
     assert!(updates.bottom() <= footer.top());
 }
+
+#[gpui_kit::test]
+fn moves_can_be_shown_with_piece_symbols(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Appearance");
+    let symbols = ("notation", 1usize);
+    assert_eq!(app.find(("notation", 0usize)).selected(), Some(true));
+    app.click(symbols);
+    assert_eq!(app.find(symbols).selected(), Some(true));
+    app.wait_for_saved("figurineNotation", json!(true));
+    assert!(app.cx.update(|cx| crate::notation::figurine(cx)).is_some());
+    // Only what is shown changes: a screen reader still hears the move in letters.
+    app.click("0-0");
+    app.open("Analysis board");
+    app.find("chess-board");
+    app.click_square("g1", true);
+    app.click_square("f3", true);
+    assert_eq!(app.find("tree-g1f3").label(), Some("Nf3"));
+}
+
+/// ⌘K finds a category by any row title it shows, so a new row is found as soon as it is added.
+#[gpui_kit::test]
+fn every_settings_row_is_found_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::settings::{DRAWN_TITLES, SettingsPage, section_keywords, sections};
+    let mut app = Harness::start(cx);
+    let mut checked = 0;
+    for (section, label, _) in sections() {
+        app.open_settings(label);
+        app.with_window(|_, _| ());
+        // Only this category's titles: redraw it on its own.
+        DRAWN_TITLES.with(|titles| titles.borrow_mut().clear());
+        app.with_window(|_, cx| {
+            if let Some(page) =
+                crate::shell::view_of::<SettingsPage>(crate::pages::Page::Settings, cx)
+            {
+                page.update(cx, |_, cx| cx.notify());
+            }
+        });
+        app.with_window(|_, _| ());
+        let keywords = section_keywords(section).to_lowercase();
+        for title in DRAWN_TITLES.with(|titles| titles.borrow().clone()) {
+            assert!(
+                keywords.contains(&title.to_lowercase()),
+                "{label}: {title:?} is missing from section_keywords"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 40, "only {checked} row titles were drawn");
+}
+
+#[gpui_kit::test]
+fn a_row_title_finds_its_category_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.press("secondary-k");
+    app.type_text("#piece notation");
+    super::palette::wait_for_first(&mut app, "Appearance");
+    app.press("enter");
+    app.find(("notation", 1usize));
+}

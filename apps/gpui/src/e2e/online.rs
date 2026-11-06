@@ -64,9 +64,16 @@ fn play_online_asks_to_connect_and_offers_the_computer(cx: &mut gpui_kit::TestAp
 #[gpui_kit::test]
 fn a_tournament_list_that_cannot_load_can_be_refreshed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = open(cx, "Tournaments", true);
-    wait_until_enabled(&mut app, "tournaments-refresh");
-    app.click("tournaments-refresh");
-    wait_until_enabled(&mut app, "tournaments-refresh");
+    wait_until_enabled(&mut app, "tournaments-try-again");
+    // The failure takes the list's place, without the key to a schedule that is not there.
+    app.find("tournaments-error");
+    assert!(!app.shows("tournaments-legend"));
+    // It offers to try again in its place, as the other pages' failed loads do, and only there:
+    // Refresh beside it would be a second button for the same thing.
+    assert!(!app.shows("tournaments-refresh"));
+    app.click("tournaments-try-again");
+    wait_until_enabled(&mut app, "tournaments-try-again");
+    assert!(!app.shows("tournaments-refresh"));
 
     // The list shows every tournament, or only those that can be played here.
     assert_eq!(
@@ -101,20 +108,27 @@ fn watch_shows_its_feed_failing_and_the_following_and_broadcast_tabs(
 ) {
     let mut app = open(cx, "Watch", true);
     assert_eq!(app.find(("watch-tabs", 0usize)).selected(), Some(true));
-    // The TV feed cannot connect: it can be asked again.
-    assert!(app.enabled("watch-retry"));
-    assert!(app.enabled("watch-channels-refresh"));
+    // Neither the channels nor the feed load: the page says so once, and can be asked again.
+    assert!(app.enabled("watch-try-again"));
+    assert!(!app.shows("watch-retry"));
+    assert!(!app.shows("watch-channels-refresh"));
+    app.click("watch-try-again");
+    app.find("watch-try-again");
 
     app.click(("watch-tabs", 1usize));
     assert_eq!(app.find(("watch-tabs", 1usize)).selected(), Some(true));
     assert!(app.enabled("watch-friends-refresh"));
+    // Nobody is followed: the header says where to follow players, and nothing more.
+    assert!(!app.shows("watch-friends-none"));
 
     app.click(("watch-tabs", 2usize));
     assert_eq!(app.find(("watch-tabs", 2usize)).selected(), Some(true));
     assert!(app.enabled("broadcasts-retry"));
+    // TV's failure stays on TV: Broadcasts says only its own.
+    assert!(!app.shows("watch-error"));
 
     app.click(("watch-tabs", 0usize));
-    assert!(app.enabled("watch-channels-refresh"));
+    assert!(app.enabled("watch-try-again"));
 }
 
 #[gpui_kit::test]
@@ -227,9 +241,7 @@ fn a_player_is_followed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
 fn the_timeline_shows_what_followed_players_did(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in(cx, false);
     app.open("Following");
-    app.click_label("Lichess username to follow");
-    app.type_text("carol");
-    app.click("friends-follow");
+    follow(&mut app, "carol");
     let line = app
         .find(gpui_kit::ElementId::NamedInteger(
             "friends-timeline-player".into(),
@@ -250,19 +262,67 @@ fn the_timeline_shows_what_followed_players_did(cx: &mut gpui_kit::TestAppContex
     );
 }
 
+/// A timeline that could not be read is tried again from where its failure shows.
+#[gpui_kit::test]
+fn a_failed_timeline_can_be_tried_again(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Following");
+    follow(&mut app, "frank");
+    // A text button is still a 24 px target (WCAG 2.5.8).
+    let retry = app.find("friends-timeline-retry").bounds();
+    assert!(retry.size.height >= gpui_kit::px(24.), "{retry:?}");
+    app.click("friends-timeline-retry");
+    app.find(gpui_kit::ElementId::NamedInteger(
+        "friends-timeline-player".into(),
+        1,
+    ));
+    assert!(!app.shows("friends-timeline-retry"));
+}
+
+/// A sync of a big account takes minutes: following a player meanwhile works at once, and Sync
+/// all waits for the running sync. (A single busy flag used to disable Follow until it ended.)
+#[gpui_kit::test]
+fn following_works_while_games_sync(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = Harness::signed_in(cx, false);
+    app.open("Following");
+    lichess.lock().hold_games = true;
+    app.with_window(|window, cx| {
+        crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.sync(None, window, cx))
+    });
+    app.wait_for("the sync to start", |_, cx| {
+        crate::accounts::handle(cx).read(cx).syncing()
+    });
+    follow(&mut app, "dana");
+    app.wait_for("dana to be followed", |_, cx| {
+        crate::accounts::handle(cx)
+            .read(cx)
+            .tracked()
+            .iter()
+            .any(|friend| friend["username"].as_str() == Some("dana"))
+    });
+    app.wait_for("Sync all to wait for the sync", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find(gpui_kit::ElementId::from("friends-sync"))
+            .is_some_and(|sync| sync.disabled() == Some(true))
+    });
+    lichess.lock().hold_games = false;
+    app.wait_for("the syncs to end", |_, cx| {
+        !crate::accounts::handle(cx).read(cx).working()
+    });
+}
+
 /// A player who finished a game since their sync is marked, and so is Sync all, from their profile
 /// alone; syncing takes the mark away.
 #[gpui_kit::test]
 fn players_with_games_to_sync_are_marked(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in(cx, false);
     app.open("Following");
-    app.click_label("Lichess username to follow");
-    app.type_text("dana");
-    app.click("friends-follow");
+    follow(&mut app, "dana");
     let new_games = ("friend-new-games", 0usize);
     app.wait_for("the follow's sync", |_, cx| {
         let accounts = crate::accounts::handle(cx).read(cx);
-        !accounts.busy
+        !accounts.working()
             && accounts
                 .tracked()
                 .iter()
@@ -285,6 +345,12 @@ fn players_with_games_to_sync_are_marked(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn insights_without_games_lead_to_following_or_analysis(cx: &mut gpui_kit::TestAppContext) {
     let mut app = open(cx, "Lichess insights", true);
+    // With no games there is nothing to filter.
+    app.find("insights-follow");
+    assert!(app.with_window(|window, _| {
+        use gpui_kit::test::TestQueryExt as _;
+        window.try_find_by_label("Speed").is_none()
+    }));
     app.click("insights-analyse");
     assert_eq!(page(&mut app), Some(Page::Analysis));
     app.open("Lichess insights");
@@ -358,4 +424,46 @@ fn a_player_is_messaged_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     super::palette::wait_for_first(&mut app, "Message");
     app.press("enter");
     app.find("message-send");
+}
+
+/// With players followed and none of them playing, Watch's Following tab says so.
+#[gpui_kit::test]
+fn watch_says_when_no_followed_player_is_playing(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.open("Following");
+    follow(&mut app, "dana");
+    app.wait_for("the follow", |_, cx| {
+        !crate::accounts::handle(cx).read(cx).tracked().is_empty()
+    });
+    // The follow's toasts are still up; they leave the page's tabs in reach.
+    app.open("Watch");
+    app.click(("watch-tabs", 1usize));
+    assert_eq!(app.find(("watch-tabs", 1usize)).selected(), Some(true));
+    app.find("watch-friends-none");
+}
+
+/// A leaderboard that could not load says so with Try again, which loads it once Lichess answers.
+#[gpui_kit::test]
+fn a_failed_leaderboard_can_be_tried_again(cx: &mut gpui_kit::TestAppContext) {
+    // The stand-in Lichess fails Racing Kings' leaderboard once.
+    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    app.cx
+        .update(|cx| crate::prefs::set(cx, "kchess:leaderboard-perf", "racingKings".to_string()));
+    app.open("Players");
+    app.click("players-board-retry");
+    app.find(("players-board-row", 0usize));
+}
+
+/// Follow `name` from the Following page. Follow waits while the accounts are busy, as they are
+/// with signing in's first sync, so the click waits for it too.
+fn follow(app: &mut Harness, name: &str) {
+    app.click_label("Lichess username to follow");
+    app.type_text(name);
+    app.wait_for("Follow", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find(gpui_kit::ElementId::from("friends-follow"))
+            .is_some_and(|follow| follow.disabled() != Some(true))
+    });
+    app.click("friends-follow");
 }

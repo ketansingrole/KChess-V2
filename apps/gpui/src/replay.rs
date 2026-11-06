@@ -30,6 +30,8 @@ pub struct GameReplay {
     board: Entity<ChessBoard>,
     layout: PlayLayout,
     focus: FocusHandle,
+    /// The mouse wheel over the board, which steps through the moves.
+    wheel: crate::game::view::Wheel,
 }
 
 impl Focusable for GameReplay {
@@ -63,6 +65,7 @@ impl GameReplay {
             board,
             layout: PlayLayout::default(),
             focus: cx.focus_handle(),
+            wheel: Default::default(),
         }
     }
 
@@ -106,7 +109,10 @@ impl GameReplay {
         if !self.focus.is_focused(window) || event.keystroke.modifiers.modified() {
             return;
         }
-        if let Some(ply) = view::navigate(&event.keystroke.key, self.ply, self.moves.len()) {
+        if event.keystroke.key == "f" {
+            self.flip(cx);
+            cx.stop_propagation();
+        } else if let Some(ply) = view::navigate(&event.keystroke.key, self.ply, self.moves.len()) {
             self.show(ply, cx);
             cx.stop_propagation();
         }
@@ -177,6 +183,19 @@ impl Render for GameReplay {
             .gap(widgets::STACK_GAP)
             .child(line(!orientation))
             .child(crate::board::cached(&self.board))
+            // The mouse wheel over the board steps through the moves.
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                let Some(key) = this
+                    .wheel
+                    .turn(event.delta.pixel_delta(window.line_height()))
+                else {
+                    return;
+                };
+                if let Some(ply) = view::navigate(key, this.ply, this.moves.len()) {
+                    this.show(ply, cx);
+                }
+                cx.stop_propagation();
+            }))
             .child(line(orientation));
 
         let page = cx.entity().downgrade();
@@ -206,13 +225,14 @@ impl Render for GameReplay {
                 view::first_move(&self.setup),
                 "No moves to review".into(),
                 select.clone(),
+                crate::notation::figurine(cx),
                 &palette,
             )))
             .child(widgets::move_controls(
                 self.ply,
                 self.moves.len(),
                 select,
-                ("Flip board".into(), flip),
+                ("Flip board".into(), Some("F"), flip),
             ));
         div()
             .size_full()

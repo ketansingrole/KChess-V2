@@ -69,6 +69,33 @@ fn clipboard(app: &mut Harness) -> Option<String> {
     app.cx.read_from_clipboard().and_then(|item| item.text())
 }
 
+/// The move list names the opening the moves up to the shown one reached, as the game pages do,
+/// and not once Settings hide opening names.
+#[gpui_kit::test]
+fn the_move_list_names_the_opening(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.drag_square("e7", "e5", true);
+    app.drag_square("g1", "f3", true);
+    assert_eq!(
+        app.find("analysis-opening").label(),
+        Some("C40 King's Knight Opening")
+    );
+    // Back a move: the opening as it stood then.
+    app.press("left");
+    assert_eq!(
+        app.find("analysis-opening").label(),
+        Some("C20 King's Pawn Game")
+    );
+    app.cx
+        .update(|cx| crate::settings::change(cx, |s| s.frontend.show_opening_name = false));
+    app.wait_for("the name to go", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window.try_find("analysis-opening").is_none()
+    });
+}
+
 #[gpui_kit::test]
 fn moves_played_on_the_board_fill_the_move_list(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
@@ -120,6 +147,40 @@ fn the_arrow_keys_step_through_the_moves(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
     app.press("up");
     assert!(!app.enabled("analysis-back"));
+    // End and Home do the same.
+    app.press("end");
+    assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
+    app.press("home");
+    assert!(!app.enabled("analysis-back"));
+}
+
+#[gpui_kit::test]
+fn shift_and_the_arrows_go_into_and_out_of_a_variation(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 (1... c5 2. Nf3 d6) 2. Nf3 *");
+    app.click("tree-e2e4");
+    app.press("shift-right");
+    assert_eq!(selected(&mut app, "e2e4 c7c5"), Some(true));
+    app.press("right");
+    app.press("right");
+    assert_eq!(selected(&mut app, "e2e4 c7c5 g1f3 d7d6"), Some(true));
+    app.press("shift-left");
+    assert_eq!(selected(&mut app, "e2e4"), Some(true));
+    // On the main line there is nothing to leave.
+    app.press("right");
+    app.press("shift-left");
+    assert_eq!(selected(&mut app, "e2e4 e7e5"), Some(true));
+}
+
+#[gpui_kit::test]
+fn e_shows_the_explorer_and_the_moves_again(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 *");
+    app.click("tree-e2e4");
+    app.press("e");
+    assert_eq!(app.find("Explorer").selected(), Some(true));
+    app.press("e");
+    assert_eq!(app.find("Moves").selected(), Some(true));
 }
 
 #[gpui_kit::test]
@@ -196,6 +257,71 @@ fn a_comment_and_an_annotation_stay_with_the_move(cx: &mut gpui_kit::TestAppCont
     assert_eq!(app.find("glyph-4").checked(), Some(true));
 }
 
+/// ⌘Z and ⇧⌘Z (Ctrl+Z, Ctrl+Y) undo and redo the tree's edits, a comment's typing as one step,
+/// and the board's ⋯ menu offers them too. A new document starts with nothing to undo.
+#[gpui_kit::test]
+fn edits_are_undone_and_redone(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 2. Nf3 (2. Bc4) *");
+    let undo = |app: &mut Harness| app.press("secondary-z");
+    let redo = |app: &mut Harness| app.press("shift-secondary-z");
+    // The import is where the history starts.
+    app.click("analysis-more");
+    app.click_label("Undo");
+    app.find("tree-e2e4 e7e5 g1f3");
+
+    // A comment, typed letter by letter, is one step.
+    app.click("tree-e2e4 e7e5");
+    app.click("add-comment");
+    app.type_text("Symmetrical.");
+    app.find("comment-e2e4 e7e5");
+    app.click("chess-board");
+    undo(&mut app);
+    app.wait_gone("comment-e2e4 e7e5");
+    redo(&mut app);
+    app.find("comment-e2e4 e7e5");
+
+    // A promotion, then a deletion, undone in turn and redone.
+    app.click("tree-e2e4 e7e5 f1c4");
+    app.click("analysis-more");
+    app.click_label("Make main line");
+    app.click("analysis-more");
+    app.click_label("Delete from here");
+    app.wait_gone("tree-e2e4 e7e5 f1c4");
+    undo(&mut app);
+    app.find("tree-e2e4 e7e5 f1c4");
+    assert_eq!(selected(&mut app, "e2e4 e7e5 f1c4"), Some(true));
+    assert!(app.with_window(|_, cx| {
+        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+            crate::pages::Page::Analysis,
+            cx,
+        )
+        .is_some_and(|page| page.read(cx).pgn().contains("2. Bc4 ( 2. Nf3 )"))
+    }));
+    undo(&mut app);
+    assert!(app.with_window(|_, cx| {
+        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+            crate::pages::Page::Analysis,
+            cx,
+        )
+        .is_some_and(|page| page.read(cx).pgn().contains("2. Nf3 ( 2. Bc4 )"))
+    }));
+    redo(&mut app);
+    redo(&mut app);
+    app.wait_gone("tree-e2e4 e7e5 f1c4");
+
+    // A move played after an undo drops what could be redone.
+    undo(&mut app);
+    app.find("tree-e2e4 e7e5 f1c4");
+    app.click_square("g8", true);
+    app.click_square("f6", true);
+    app.find("tree-e2e4 e7e5 f1c4 g8f6");
+    redo(&mut app);
+    app.find("tree-e2e4 e7e5 f1c4");
+    undo(&mut app);
+    app.wait_gone("tree-e2e4 e7e5 f1c4 g8f6");
+}
+
 #[gpui_kit::test]
 fn the_analysis_with_its_comments_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
@@ -218,25 +344,63 @@ fn moves_are_deleted_from_here_and_a_new_analysis_starts_empty(cx: &mut gpui_kit
     import(&mut app, "1. e4 e5 2. Nf3 *");
     app.click("tree-e2e4 e7e5");
 
+    // Deleting asks nothing: its notice's Undo brings the moves back.
     app.click("analysis-more");
     app.click_label("Delete from here");
-    app.click("cancel");
-    app.find("tree-e2e4 e7e5 g1f3");
-
-    app.click("analysis-more");
-    app.click_label("Delete from here");
-    app.click("ok");
     app.find("tree-e2e4");
     app.wait_for("the deleted moves to go", |window, _| {
         window.try_find("tree-e2e4 e7e5").is_none()
     });
     assert!(!app.shows("tree-e2e4 e7e5 g1f3"));
+    app.click("undo-delete-moves");
+    app.find("tree-e2e4 e7e5 g1f3");
+    assert_eq!(selected(&mut app, "e2e4 e7e5"), Some(true));
+
+    app.click("analysis-more");
+    app.click_label("Delete from here");
+    app.wait_for("the deleted moves to go", |window, _| {
+        window.try_find("tree-e2e4 e7e5").is_none()
+    });
 
     app.click("analysis-more");
     app.click_label("New analysis");
     app.wait_for("the board to be empty", |window, _| {
         window.try_find("tree-e2e4").is_none()
     });
+}
+
+/// ⌘N starts a new analysis board, asking first when its moves would be lost.
+#[gpui_kit::test]
+fn new_starts_an_empty_analysis_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 *");
+    app.press("secondary-n");
+    app.click_label("Replace");
+    app.wait_for("the board to be empty", |window, _| {
+        window.try_find("tree-e2e4").is_none()
+    });
+}
+
+/// Backspace (or Delete) on the board deletes from the move shown, as the move's menu does, and
+/// ⌘Z brings the moves back.
+#[gpui_kit::test]
+fn backspace_deletes_from_the_move_shown(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 2. Nf3 *");
+    app.click("tree-e2e4 e7e5");
+    app.press("backspace");
+    app.wait_for("the deleted moves to go", |window, _| {
+        window.try_find("tree-e2e4 e7e5").is_none()
+    });
+    app.find("tree-e2e4");
+    app.press("secondary-z");
+    app.find("tree-e2e4 e7e5 g1f3");
+    app.click("tree-e2e4 e7e5 g1f3");
+    app.press("delete");
+    app.wait_for("the last move to go", |window, _| {
+        window.try_find("tree-e2e4 e7e5 g1f3").is_none()
+    });
+    app.find("tree-e2e4 e7e5");
 }
 
 #[gpui_kit::test]
@@ -309,6 +473,51 @@ fn the_editor_starts_from_the_standard_position(cx: &mut gpui_kit::TestAppContex
     for key in ["K", "Q", "k", "q"] {
         assert_eq!(app.find(format!("castling-{key}")).checked(), Some(true));
     }
+}
+
+/// ⌘Z takes back the editor's changes one by one, and ⇧⌘Z redoes them.
+#[gpui_kit::test]
+fn the_editor_undoes_and_redoes_its_changes(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = editor(cx);
+    app.click("clear-board");
+    wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
+    app.click(("editor-turn", 1usize));
+    wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 b - - 0 1");
+    app.press("secondary-z");
+    wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
+    app.press("secondary-z");
+    wait_for_fen(&mut app, START_FEN);
+    // Nothing more to undo: the start stays.
+    app.press("secondary-z");
+    wait_for_fen(&mut app, START_FEN);
+    app.press("shift-secondary-z");
+    wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
+    // A new change drops what was undone.
+    app.click("start-position");
+    wait_for_fen(&mut app, START_FEN);
+    app.press("shift-secondary-z");
+    wait_for_fen(&mut app, START_FEN);
+    app.press("secondary-z");
+    wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
+}
+
+/// F turns the editor's board, as its button does.
+#[gpui_kit::test]
+fn f_flips_the_editors_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = editor(cx);
+    let orientation = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<crate::pages::editor::EditorPage>(
+                crate::pages::Page::Editor,
+                cx,
+            )
+            .map(|page| page.read(cx).orientation())
+        })
+    };
+    let before = orientation(&mut app).expect("the page");
+    app.click(("editor-turn", 0usize));
+    app.press("f");
+    assert_eq!(orientation(&mut app), Some(!before));
 }
 
 /// The editor sets up positions in the other variants: Horde's start, read by Horde's rules and
@@ -805,4 +1014,202 @@ fn the_editors_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     settle(&mut app);
     run(&mut app, "Starting position");
     wait_for_fen(&mut app, START_FEN);
+}
+
+/// Drop `name` holding `text` on the window, as Finder or Explorer would.
+fn drop_file(app: &mut Harness, name: &str, text: &str) -> tempfile::TempDir {
+    let folder = tempfile::tempdir().expect("a folder");
+    let path = folder.path().join(name);
+    std::fs::write(&path, text).expect("the file");
+    app.with_window(|window, cx| {
+        let paths = gpui_kit::ExternalPaths(std::iter::once(path).collect());
+        crate::shell::open_dropped(&paths, window, cx);
+    });
+    settle(app);
+    folder
+}
+
+/// A PGN file dropped on the window opens on the analysis board, from any page; over unsaved
+/// analysis it asks first.
+#[gpui_kit::test]
+fn a_dropped_pgn_file_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Puzzles");
+    let _file = drop_file(&mut app, "game.pgn", "1. e4 e5 2. Nf3 *");
+    app.find("tree-e2e4 e7e5 g1f3");
+    assert_eq!(
+        app.cx.update(|cx| crate::shell::current_page(cx)),
+        Some(crate::pages::Page::Analysis)
+    );
+    assert!(!app.shows("import-run"));
+    // The board now holds unsaved moves: another file asks before replacing them.
+    let _file = drop_file(&mut app, "other.PGN", "1. d4 d5 *");
+    app.click("ok");
+    settle(&mut app);
+    app.find("tree-d2d4 d7d5");
+    assert!(!app.shows("tree-e2e4"));
+    assert!(!app.shows("import-run"));
+}
+
+/// A dropped FEN opens that position; a file the import cannot read keeps the dialog open with
+/// the reason, and a file that is not a game is refused.
+#[gpui_kit::test]
+fn a_dropped_file_that_is_no_game_is_refused(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    let fen = "8/8/8/4k3/8/8/4P3/4K3 w - - 0 1";
+    let _file = drop_file(&mut app, "ending.fen", fen);
+    assert_eq!(shown_fen(&mut app), fen);
+    let _file = drop_file(&mut app, "notes.txt", "not a game");
+    app.find("import-error");
+    app.click("import-cancel");
+    settle(&mut app);
+    let _file = drop_file(&mut app, "board.png", "png");
+    assert!(!app.shows("import-run"));
+}
+
+/// The import's Open file… reads a PGN file from disk, as if it were pasted.
+#[gpui_kit::test]
+fn the_import_opens_a_pgn_file(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    let folder = tempfile::tempdir().expect("a folder");
+    let path = folder.path().join("game.pgn");
+    std::fs::write(&path, "1. c4 e5 *").expect("the file");
+    app.click("analysis-import");
+    app.click("import-file");
+    let started = std::time::Instant::now();
+    while !app.cx.did_prompt_for_paths() {
+        assert!(started.elapsed() < super::TIMEOUT, "no open dialog");
+        app.tick();
+    }
+    app.cx
+        .simulate_path_prompt_response(move |_| Some(vec![path]));
+    settle(&mut app);
+    app.find("tree-c2c4 e7e5");
+    assert!(!app.shows("import-run"));
+}
+
+/// A file dragged over the window shows where it will go, and only a file from outside the app:
+/// the zone is hidden before the drag, while it is over the window, and after it leaves.
+#[gpui_kit::test]
+fn a_dragged_file_shows_where_it_will_open(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::InputEvent as _;
+    let mut app = Harness::start(cx);
+    app.open("Puzzles");
+    assert!(!app.shows("drop-zone"));
+    let position = app.with_window(|window, _| {
+        let size = window.viewport_size();
+        gpui_kit::point(size.width * 0.6, size.height * 0.5)
+    });
+    let paths = gpui_kit::ExternalPaths(std::iter::once("game.pgn".into()).collect());
+    app.with_window(|window, cx| {
+        window.dispatch_event(
+            gpui_kit::FileDropEvent::Entered { position, paths }.to_platform_input(),
+            cx,
+        );
+        window.dispatch_event(
+            gpui_kit::FileDropEvent::Pending { position }.to_platform_input(),
+            cx,
+        );
+    });
+    settle(&mut app);
+    assert!(app.shows("drop-zone"));
+    app.with_window(|window, cx| {
+        window.dispatch_event(gpui_kit::FileDropEvent::Exited.to_platform_input(), cx)
+    });
+    settle(&mut app);
+    assert!(!app.shows("drop-zone"));
+}
+
+/// X shows the opponent's threat, as on Lichess: the engine searches the position with the other
+/// side to move, Space does not play the threat's move, and X again goes back. In check there is
+/// no threat to show.
+#[gpui_kit::test]
+fn x_shows_the_threat(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    let page = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
+                crate::pages::Page::Analysis,
+                cx,
+            )
+            .expect("the analysis board")
+        })
+    };
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    app.find("tree-e2e4");
+    wait_for_search(&mut app);
+    app.click("chess-board");
+    app.press("x");
+    let analysis = page(&mut app);
+    let threat = app
+        .cx
+        .update(|cx| analysis.read(cx).threat_shown())
+        .expect("a threat to search");
+    // White to move again, en passant forgotten.
+    assert_eq!(
+        threat,
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1"
+    );
+    app.wait_for("the threat to be searched", |_, cx| {
+        analysis
+            .read(cx)
+            .engine_text(cx)
+            .starts_with("Threat · Depth ")
+    });
+    // Space plays the best move of the position shown, never the threat's.
+    app.press("space");
+    settle(&mut app);
+    assert!(!app.shows("tree-e2e4 e7e5"));
+    assert_eq!(
+        app.cx.update(|cx| analysis.read(cx).shown_fen()),
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+    );
+    app.press("x");
+    assert_eq!(app.cx.update(|cx| analysis.read(cx).threat_shown()), None);
+    wait_for_search(&mut app);
+
+    // In check the side to move cannot pass: no threat, the ordinary search.
+    import(
+        &mut app,
+        "rnbqkbnr/ppppp1pp/8/5p1Q/4P3/8/PPPP1PPP/RNB1KBNR b KQkq - 1 2",
+    );
+    app.click("chess-board");
+    app.press("x");
+    assert_eq!(app.cx.update(|cx| analysis.read(cx).threat_shown()), None);
+    wait_for_search(&mut app);
+}
+
+/// Copy line copies the moves to the one shown, without the side lines or what follows.
+#[gpui_kit::test]
+fn the_line_to_a_move_is_copied(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 (1... c5 2. Nf3) 2. Nf3 Nc6 *");
+    app.click("tree-e2e4 e7e5 g1f3");
+    app.click("analysis-more");
+    app.click_label("Copy line");
+    let copied = app
+        .cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default();
+    assert!(copied.contains("1. e4 e5 2. Nf3 *"), "{copied}");
+    assert!(
+        !copied.contains("c5") && !copied.contains("Nc6"),
+        "{copied}"
+    );
+
+    // Quick Pick copies the line to the move shown, as the menu does.
+    app.click("tree-e2e4 e7e5");
+    app.press("secondary-k");
+    app.type_text("Copy line");
+    super::palette::wait_for_first(&mut app, "Copy line");
+    app.press("enter");
+    super::palette::wait_until_closed(&mut app);
+    let copied = app
+        .cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default();
+    assert!(copied.contains("1. e4 e5 *"), "{copied}");
 }

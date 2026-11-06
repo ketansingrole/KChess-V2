@@ -69,7 +69,9 @@ pub fn default_settings() -> Result<Settings, String> {
             show_opening_name: true,
             swipe_navigation: true,
             swipe_indicator: true,
-            puzzle_auto_next: true,
+            puzzle_auto_next: false,
+            confirm_correspondence: true,
+            figurine_notation: false,
         },
     })
 }

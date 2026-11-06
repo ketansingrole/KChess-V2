@@ -185,6 +185,17 @@ impl OnlineState {
 
     /// `onlineGameView`: the live position, the SAN history, the moves this side made, whether
     /// it is a correspondence game, and the rematch's options.
+    /// A real-time game of the account's is on, its clock running on Lichess whether or not
+    /// KChess stays open (`beforeunload` on lichess.org asks first too).
+    pub fn live_game_on(&self) -> bool {
+        let on = match self.phase {
+            Phase::Playing => true,
+            Phase::Disconnected => !self.id().is_empty(),
+            _ => false,
+        };
+        on && !self.correspondence()
+    }
+
     pub fn view(&self) -> Value {
         rules("onlineGameView", std::slice::from_ref(&self.model)).unwrap_or(Value::Null)
     }
@@ -253,6 +264,15 @@ impl OnlineState {
         }
         cx.notify();
         next
+    }
+
+    /// Put the state in a phase as the rules would (tests): the model too, which the phase is
+    /// derived from again whenever a late answer lands.
+    #[cfg(test)]
+    pub(crate) fn set_phase(&mut self, phase: &str, cx: &mut Context<Self>) {
+        self.model["onlinePhase"] = json!(phase);
+        self.sync_phase(cx);
+        cx.notify();
     }
 
     fn sync_phase(&mut self, cx: &mut Context<Self>) {
@@ -482,6 +502,39 @@ impl OnlineState {
         if options.is_object() {
             self.start(Some(options), cx);
         }
+    }
+
+    /// The last game's kind as a seek against anyone (Lichess's _New opponent_): its clock,
+    /// rating and variant, either colour. None for one a seek cannot repeat: correspondence, or
+    /// from a set-up position.
+    pub fn new_opponent_form(&self) -> Option<Form> {
+        let options = self.view()["rematch"].clone();
+        if !options.is_object() || !options["days"].is_null() || !options["fen"].is_null() {
+            return None;
+        }
+        Some(Form {
+            minutes: options["minutes"].as_f64()?,
+            increment: options["increment"].as_f64().unwrap_or_default(),
+            target: String::new(),
+            color: "random".into(),
+            rated: options["rated"] == json!(true),
+            variant: options["variant"]
+                .as_str()
+                .unwrap_or("standard")
+                .to_string(),
+            correspondence: false,
+            days: self.form.days,
+        })
+    }
+
+    /// Seek the last game's kind again; the form is left as it was.
+    pub fn new_opponent(&mut self, cx: &mut Context<Self>) {
+        let Some(form) = self.new_opponent_form() else {
+            return;
+        };
+        let kept = std::mem::replace(&mut self.form, form);
+        self.start(None, cx);
+        self.form = kept;
     }
 
     pub fn reconnect(&mut self, cx: &mut Context<Self>) {

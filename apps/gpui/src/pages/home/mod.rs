@@ -3,7 +3,7 @@
 //! It reads the unfinished computer game and the accounts again each time it is shown.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::Value;
@@ -22,6 +22,14 @@ use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 
 mod lichess;
+
+/// A game's variant by name, when it is not standard chess.
+fn variant_of(game: &Value) -> Option<String> {
+    game["setup"]["variant"]
+        .as_str()
+        .filter(|variant| *variant != "standard")
+        .map(crate::game::variant_label)
+}
 
 /// Recent games on Home (`localGames`).
 const RECENT: usize = 6;
@@ -42,6 +50,8 @@ pub struct HomePage {
     continue_game: Option<(Unfinished, Value)>,
     /// The position on the board, and what it was drawn from.
     board: Option<(String, Entity<ChessBoard>)>,
+    /// The last game's opening, by the game and its length, worked out once.
+    last_opening: Option<((String, usize), Option<String>)>,
     /// Your Lichess activity, once an account is connected, and the account it shows.
     activity: Option<(String, Entity<lichess::LichessActivity>)>,
     /// The page's content, as last laid out: it, not the window, decides what goes beside what.
@@ -172,15 +182,19 @@ fn played_games(cx: &App) -> Vec<Value> {
 impl HomePage {
     pub fn new(cx: &mut Context<Self>) -> HomePage {
         let played = cx.global::<PlayedHandle>().0.clone();
+        // The last game's opening shows only while opening names are.
+        let settings = cx.global::<crate::settings::SettingsHandle>().0.clone();
         let mut page = HomePage {
             continue_game: None,
             board: None,
+            last_opening: None,
             activity: None,
             area: Measured::default(),
             focus: cx.focus_handle(),
             _subscriptions: vec![
                 cx.observe(&played, |_, _, cx| cx.notify()),
                 cx.observe(&crate::accounts::handle(cx), |_, _, cx| cx.notify()),
+                cx.observe(&settings, |_, _, cx| cx.notify()),
             ],
         };
         page.refresh(cx);
@@ -423,22 +437,59 @@ impl Render for HomePage {
                 }),
                 None,
             ),
-            // The last game, as its row in Recent games says it: who won, and against whom.
-            (None, Some(game)) => (
-                Some((crate::pages::history::opponent(game), None)),
-                Some(
-                    h_flex()
-                        .gap(px(8.))
-                        .child(crate::pages::history::badge(
-                            &crate::pages::history::outcome(game),
-                            None,
-                            &palette,
-                        ))
-                        .child(short_date(game["startedAt"].as_f64().unwrap_or_default()))
-                        .into_any_element(),
-                ),
-                game["id"].as_str().map(str::to_string),
-            ),
+            // The last game, as its row in Recent games says it: who won, and against whom; and
+            // the opening it was.
+            (None, Some(game)) => {
+                let key = (
+                    game["id"].as_str().unwrap_or_default().to_string(),
+                    game["moves"].as_array().map_or(0, Vec::len),
+                );
+                if self
+                    .last_opening
+                    .as_ref()
+                    .is_none_or(|(seen, _)| *seen != key)
+                {
+                    let name = crate::pages::history::opening_name(game);
+                    self.last_opening = Some((key, name));
+                }
+                // A variant game is named by its variant, as its row is; a standard one by its
+                // opening, while opening names are shown.
+                let opening = variant_of(game).or_else(|| {
+                    self.last_opening
+                        .as_ref()
+                        .and_then(|(_, name)| name.clone())
+                        .filter(|_| crate::pages::history::opening_names_shown(cx))
+                });
+                (
+                    Some((crate::pages::history::opponent(game), None)),
+                    Some(
+                        v_flex()
+                            .gap(px(6.))
+                            .child(
+                                h_flex()
+                                    .gap(px(8.))
+                                    .child(crate::pages::history::badge(
+                                        &crate::pages::history::outcome(game),
+                                        None,
+                                        &palette,
+                                    ))
+                                    .child(short_date(
+                                        game["startedAt"].as_f64().unwrap_or_default(),
+                                    )),
+                            )
+                            .children(opening.map(|opening| {
+                                div()
+                                    .id("home-opening")
+                                    .test_support()
+                                    .truncate()
+                                    .aria_label(opening.clone())
+                                    .child(opening)
+                            }))
+                            .into_any_element(),
+                    ),
+                    game["id"].as_str().map(str::to_string),
+                )
+            }
             (None, None) => (None, None, None),
         };
         let unfinished = self.continue_game.is_some();
@@ -555,6 +606,8 @@ impl Render for HomePage {
         };
 
         games.truncate(RECENT);
+        // Before the first game there is nothing to list: the board's card already starts one.
+        let has_games = !games.is_empty();
         let recent = widgets::card(&palette)
             .flex_1()
             .min_w_0()
@@ -564,33 +617,21 @@ impl Render for HomePage {
                     .justify_between()
                     .mb(px(4.))
                     .child(widgets::heading("Recent games", &palette))
-                    .when(!games.is_empty(), |header| {
-                        header.child(
-                            // The arrow trails the label (`trailing-icon`).
-                            Button::new("home-view-all")
-                                .text()
-                                .xsmall()
-                                .accessibility_label("View all")
-                                .child(
-                                    h_flex()
-                                        .gap(px(4.))
-                                        .child("View all")
-                                        .child(icon("arrow-right").size(px(14.))),
-                                )
-                                .on_click(|_, window, cx| {
-                                    crate::shell::open(Page::History, window, cx)
-                                }),
-                        )
-                    }),
+                    .child(
+                        // The arrow trails the label (`trailing-icon`).
+                        widgets::text_button("home-view-all")
+                            .accessibility_label("View all")
+                            .child(
+                                h_flex()
+                                    .gap(px(4.))
+                                    .child("View all")
+                                    .child(icon("arrow-right").size(px(14.))),
+                            )
+                            .on_click(|_, window, cx| {
+                                crate::shell::open(Page::History, window, cx)
+                            }),
+                    ),
             )
-            .when(games.is_empty(), |card| {
-                card.child(
-                    widgets::empty_state(icon("history"), "No saved games yet", None, &palette)
-                        .flex_1()
-                        .justify_center()
-                        .py(px(24.)),
-                )
-            })
             .child(
                 v_flex()
                     .mx(px(-12.))
@@ -598,9 +639,13 @@ impl Render for HomePage {
                         let id = game["id"].as_str().unwrap_or_default().to_string();
                         h_flex()
                             .id(("home-game", index))
+                            .test_support()
                             .role(Role::Button)
                             .keyboard_focus(palette.primary)
-                            .aria_label(names(&game))
+                            .aria_label(match variant_of(&game) {
+                                Some(variant) => format!("{}, {variant}", names(&game)),
+                                None => names(&game),
+                            })
                             .gap(px(12.))
                             .px(px(12.))
                             .py(px(8.))
@@ -629,9 +674,15 @@ impl Render for HomePage {
                                     .flex_none()
                                     .text_right()
                                     .text_color(palette.text_muted)
-                                    .child(crate::pages::history::move_count(
-                                        game["moves"].as_array().map_or(0, Vec::len),
-                                    )),
+                                    .child({
+                                        let count = crate::pages::history::move_count(
+                                            game["moves"].as_array().map_or(0, Vec::len),
+                                        );
+                                        match variant_of(&game) {
+                                            Some(variant) => format!("{variant} · {count}"),
+                                            None => count,
+                                        }
+                                    }),
                             )
                             .child(
                                 div()
@@ -716,7 +767,7 @@ impl Render for HomePage {
             .min_w_0()
             .gap(px(16.))
             .child(tiles)
-            .child(recent);
+            .when(has_games, |starts| starts.child(recent));
         // The connect card is one more card in the grid; a connected account's section, with its
         // own heading, stands further off.
         let section_gap = match (connect.is_some(), stacked) {

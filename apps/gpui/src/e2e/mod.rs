@@ -28,6 +28,7 @@ mod screens;
 mod settings;
 mod shell;
 mod studies;
+mod tournaments;
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -125,7 +126,7 @@ impl Harness {
         // dropped, as the disabled button would be: Windows CI, slow enough to ask while the first
         // account synced, timed out `switching_accounts_moves_the_event_stream` waiting for it.
         self.wait_for("the accounts to be free for a sign-in", |_, cx| {
-            !crate::accounts::handle(cx).read(cx).busy
+            !crate::accounts::handle(cx).read(cx).working()
         });
         self.cx
             .update_window(self.window, |_, window, cx| {
@@ -180,6 +181,7 @@ impl Harness {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::menu::init(cx);
+            crate::notifications::init(cx);
             // Dialogs and popovers appear at rest: their entrance runs on the real clock, so a
             // click could otherwise land on a dialog still sliding in and be lost (seen once
             // dependencies were optimized and the tests outran the 250 ms slide).

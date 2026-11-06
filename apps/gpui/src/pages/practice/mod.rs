@@ -240,6 +240,48 @@ impl PracticePage {
                     drill.update(cx, |drill, cx| drill.key(event, window, cx));
                 }
             }
+            // Return or Space goes on to a lesson's next step once this one is read or passed.
+            "endgames"
+                if self.focus.is_focused(window)
+                    && !event.keystroke.modifiers.modified()
+                    && matches!(event.keystroke.key.as_str(), "enter" | "space") =>
+            {
+                let next = self
+                    .lesson(cx)
+                    .and_then(|lesson| lesson.read(cx).next_on_return());
+                if let Some(next) = next {
+                    self.act(Action::Lesson(next), window, cx);
+                    cx.stop_propagation();
+                }
+            }
+            // F turns an endgame drill's or lesson's board, as its button does.
+            "endgames"
+                if self.focus.is_focused(window)
+                    && !event.keystroke.modifiers.modified()
+                    && event.keystroke.key == "f" =>
+            {
+                let flip = self.actions(cx).into_iter().find(|action| {
+                    matches!(
+                        action,
+                        Action::Drill(endgame_drills::DrillAction::Flip)
+                            | Action::Lesson(endgame_lesson::LessonAction::Flip)
+                    )
+                });
+                if let Some(flip) = flip {
+                    self.act(flip, window, cx);
+                    cx.stop_propagation();
+                }
+            }
+            // A mistake's board: F turns it, and a finished one's moves step back and forth.
+            "mistakes"
+                if self.focus.is_focused(window) && !event.keystroke.modifiers.modified() =>
+            {
+                if let Some(mistakes) = &self.mistakes
+                    && mistakes.update(cx, |mistakes, cx| mistakes.key(&event.keystroke.key, cx))
+                {
+                    cx.stop_propagation();
+                }
+            }
             _ => {}
         }
     }
@@ -289,6 +331,15 @@ impl Render for PracticePage {
                     }
                 }),
             )
+            // On an endgame's or a mistake's board a click gives the keys back to the page,
+            // before a text field takes them.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if event.button == MouseButton::Left
+                    && matches!(Self::tab(cx), "endgames" | "mistakes")
+                {
+                    window.focus(&this.focus, cx);
+                }
+            }))
             .child(
                 div()
                     .flex_none()

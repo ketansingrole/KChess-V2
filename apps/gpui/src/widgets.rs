@@ -213,8 +213,29 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
         )
 }
 
-/// `.player-clock`: a side's time, highlighted while it runs.
+/// Something under way: the loader turning, at `size`, in the text's color unless given one.
+/// Every wait in the app uses it; a still `loader-circle` icon reads as stuck.
+pub fn spinner(size: Pixels) -> gpui_kit::component::spinner::Spinner {
+    gpui_kit::component::spinner::Spinner::new()
+        .icon(icon("loader-circle"))
+        .with_size(size)
+        // An even turn: easing in and out reads as a stutter on a ring of dots.
+        .ease(|delta| delta)
+}
+
+/// Escape with no modifier, which takes a detail view (a game, an event, a line) back to its list.
+pub(crate) fn is_escape(event: &KeyDownEvent) -> bool {
+    event.keystroke.key == "escape" && !event.keystroke.modifiers.modified()
+}
+
+/// A clock's last ten seconds, which `formatClock` alone shows with tenths ("0:09.4").
+pub(crate) fn low_time(text: &str) -> bool {
+    text.starts_with("0:0") && text.contains('.')
+}
+
+/// `.player-clock`: a side's time, highlighted while it runs, and red in its last ten seconds.
 pub fn clock(text: SharedString, active: bool, palette: &Palette) -> Div {
+    let low = low_time(&text);
     div()
         .min_w(px(72.))
         .px(px(8.))
@@ -224,15 +245,15 @@ pub fn clock(text: SharedString, active: bool, palette: &Palette) -> Div {
         .text_size(px(16.))
         .font_weight(FontWeight::MEDIUM)
         .font_features(tabular())
-        .bg(if active {
-            palette.primary
-        } else {
-            palette.accented
+        .bg(match (active, low) {
+            (true, true) => palette.error,
+            (true, false) => palette.primary,
+            (false, _) => palette.accented,
         })
-        .text_color(if active {
-            palette.inverted
-        } else {
-            palette.text_muted
+        .text_color(match (active, low) {
+            (true, _) => palette.inverted,
+            (false, true) => palette.error,
+            (false, false) => palette.text_muted,
         })
         .child(text)
 }
@@ -270,6 +291,8 @@ pub enum Tone {
 pub struct StatusBanner {
     tone: Tone,
     glyph: Option<Icon>,
+    /// Something is under way: the spinner in place of the glyph.
+    busy: bool,
     title: SharedString,
     detail: Option<SharedString>,
     extra: Option<AnyElement>,
@@ -281,6 +304,7 @@ impl StatusBanner {
         StatusBanner {
             tone,
             glyph: Some(glyph),
+            busy: false,
             title,
             detail: None,
             extra: None,
@@ -288,11 +312,18 @@ impl StatusBanner {
         }
     }
 
+    /// Show the spinner in place of the glyph while `busy`.
+    pub fn busy(mut self, busy: bool) -> StatusBanner {
+        self.busy = busy;
+        self
+    }
+
     /// The game going on as usual: its title and detail on one plain line, no surface or icon.
     pub fn turn(title: SharedString) -> StatusBanner {
         StatusBanner {
             tone: Tone::Plain,
             glyph: None,
+            busy: false,
             title,
             detail: None,
             extra: None,
@@ -352,10 +383,20 @@ impl RenderOnce for StatusBanner {
             .when(self.announce, |banner| {
                 banner.child(live_region("status-live", self.title.clone()))
             })
-            .children(
-                self.glyph
-                    .map(|glyph| glyph.size(px(16.)).flex_none().text_color(icon_color)),
-            )
+            .children(self.glyph.map(|glyph| {
+                if self.busy {
+                    div()
+                        .flex_none()
+                        .child(spinner(px(16.)).color(icon_color))
+                        .into_any_element()
+                } else {
+                    glyph
+                        .size(px(16.))
+                        .flex_none()
+                        .text_color(icon_color)
+                        .into_any_element()
+                }
+            }))
             .child(
                 div()
                     .flex()
@@ -421,6 +462,7 @@ fn move_at(index: usize, first: FirstMove) -> FirstMove {
 /// `.moves-list`: the game's moves as a scoresheet, ruled numbered pairs on the panel itself, the
 /// one on the board highlighted, numbered from the game's `first` move. `select` is called with the
 /// ply to show (1 for the first move).
+#[allow(clippy::too_many_arguments)]
 pub fn moves_list(
     id: impl Into<ElementId>,
     sans: &[String],
@@ -428,6 +470,7 @@ pub fn moves_list(
     first: FirstMove,
     empty: SharedString,
     select: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
+    figurine: crate::notation::Figurine,
     palette: &Palette,
 ) -> impl IntoElement {
     let number_cell = |text: String| {
@@ -483,7 +526,7 @@ pub fn moves_list(
                 })
                 .hover(|cell| cell.bg(palette.accented))
                 .on_click(move |_, window, cx| select(index + 1, window, cx))
-                .child(san.clone())
+                .child(crate::notation::shown(san, &figurine))
                 .into_any_element(),
         );
     }
@@ -498,7 +541,14 @@ pub fn moves_list(
         .line_height(px(20.))
         .font_features(tabular())
         .when(sans.is_empty(), |list| {
-            list.child(div().text_color(palette.text_muted).child(empty))
+            list.child(
+                div()
+                    .id("moves-empty")
+                    .test_support()
+                    .aria_label(empty.clone())
+                    .text_color(palette.text_muted)
+                    .child(empty),
+            )
         })
         .when(!sans.is_empty(), |list| {
             list.border_t_1().border_color(palette.border)
@@ -520,13 +570,18 @@ pub fn moves_list(
         }))
 }
 
-/// `.move-controls`: first, previous, next and last move, and a board flip.
+/// `.move-controls`: first, previous, next and last move, and a board flip: its label, the key
+/// that does the same on the page (named in the tooltip), and what a click does.
 pub fn move_controls(
     ply: usize,
     count: usize,
     select: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
-    flip: (SharedString, ClickHandler),
+    flip: (SharedString, Option<&'static str>, ClickHandler),
 ) -> impl IntoElement {
+    let flip_tooltip: SharedString = match flip.1 {
+        Some(key) => format!("{} ({key})", flip.0).into(),
+        None => flip.0.clone(),
+    };
     let targets = [
         ("skip-back", "Go to start", 0, ply == 0),
         (
@@ -573,9 +628,9 @@ pub fn move_controls(
                 .ghost()
                 .small()
                 .icon(icon("arrow-up-down"))
-                .tooltip(flip.0.clone())
+                .tooltip(flip_tooltip)
                 .accessibility_label(flip.0)
-                .on_click(flip.1),
+                .on_click(flip.2),
         )
 }
 
@@ -608,6 +663,52 @@ pub fn hint(text: impl Into<SharedString>, palette: &Palette) -> Div {
         .text_size(px(12.))
         .line_height(relative(1.5))
         .text_color(palette.text_muted)
+        .child(text.into())
+}
+
+/// A button that reads as text (`variant="link"`): small, but still a 24 px target (WCAG 2.5.8),
+/// which its text alone is not.
+pub fn text_button(id: impl Into<ElementId>) -> Button {
+    Button::new(id).text().xsmall().min_h(px(24.))
+}
+
+/// The way out of a failed load that fills its place: one primary Try again.
+pub fn try_again(id: impl Into<ElementId>) -> Button {
+    Button::new(id)
+        .primary()
+        .icon(icon("rotate-cw"))
+        .label("Try again")
+}
+
+/// A load that failed inside a card: what went wrong, in `color`, and a small Try again.
+pub fn retry_line(
+    id: &'static str,
+    message: impl Into<SharedString>,
+    color: Hsla,
+    retry: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    h_flex()
+        .flex_wrap()
+        .gap(px(8.))
+        .text_size(px(13.))
+        .text_color(color)
+        .child(message.into())
+        .child(
+            text_button(id)
+                .icon(icon("rotate-cw"))
+                .label("Try again")
+                .on_click(retry),
+        )
+}
+
+/// Something loading: the turning spinner and a muted line ("Loading…"), as a hint reads.
+pub fn loading(text: impl Into<SharedString>, palette: &Palette) -> Div {
+    h_flex()
+        .gap(px(8.))
+        .text_size(px(12.))
+        .line_height(relative(1.5))
+        .text_color(palette.text_muted)
+        .child(spinner(px(12.)))
         .child(text.into())
 }
 
@@ -1346,6 +1447,12 @@ pub fn format_count(count: f64) -> String {
     out
 }
 
+/// A count with its noun: "1 request", "2,048 requests".
+pub fn format_counted(count: f64, one: &str, many: &str) -> String {
+    let shown = format_count(count);
+    format!("{shown} {}", if shown == "1" { one } else { many })
+}
+
 /// `formatBytes`: "312 MB", "1.5 GB".
 pub fn format_bytes(bytes: f64) -> String {
     if !bytes.is_finite() || bytes <= 0. {
@@ -1531,6 +1638,83 @@ mod tests {
 
     use crate::theme::{Palette, colors};
 
+    #[test]
+    fn a_count_of_one_takes_the_singular() {
+        use super::format_counted;
+        assert_eq!(format_counted(1., "request", "requests"), "1 request");
+        assert_eq!(format_counted(0., "game", "games"), "0 games");
+        assert_eq!(
+            format_counted(2048., "request", "requests"),
+            "2,048 requests"
+        );
+    }
+
+    /// Every wait turns: the loader icon appears only inside `spinner`, never as a still glyph
+    /// (the Lichess seek card once showed one that never moved), and "Loading…" lines come
+    /// with it through `loading`.
+    #[test]
+    fn every_loader_is_the_turning_spinner() {
+        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).expect("the source folder") {
+                let path = entry.expect("an entry").path();
+                if path.is_dir() {
+                    walk(&path, found);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let text = std::fs::read_to_string(&path).expect("a source file");
+                    let uses = text.matches("icon(\"loader-circle\")").count();
+                    let allowed = usize::from(path.ends_with("src/widgets.rs"));
+                    // A wait written as a plain hint has no spinner: `loading` has one.
+                    let still_text = text.contains("hint(\"Loading");
+                    if uses > allowed || still_text {
+                        found.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        assert!(found.is_empty(), "a still loader in {found:?}");
+    }
+
+    /// A select's placeholder and value are never its accessible name (GPUI Kit 0.9), so each one
+    /// is named where it is built. Most of the unnamed ones sat behind a connected account, where
+    /// the end-to-end audit cannot reach.
+    #[test]
+    fn every_select_is_named() {
+        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).expect("the source folder") {
+                let path = entry.expect("an entry").path();
+                if path.is_dir() {
+                    if !path.ends_with("e2e") {
+                        walk(&path, found);
+                    }
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let text = std::fs::read_to_string(&path).expect("a source file");
+                    let lines: Vec<&str> = text.lines().collect();
+                    for (index, line) in lines.iter().enumerate() {
+                        if !line.contains("Select::new(") || line.trim_start().starts_with("//") {
+                            continue;
+                        }
+                        // The builder chain that follows, up to where the element is handed on.
+                        let chain = lines[index..lines.len().min(index + 8)].join("\n");
+                        if !chain.contains("accessibility_label") {
+                            found.push(format!("{}:{}", path.display(), index + 1));
+                        }
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        assert!(found.is_empty(), "an unnamed select at {found:?}");
+    }
+
     /// A move list in a window whose page holds the keys, as a game page's does.
     struct Page {
         focus: FocusHandle,
@@ -1551,6 +1735,7 @@ mod tests {
                     super::FirstMove::default(),
                     "No moves".into(),
                     move |ply, _, _| chosen.set(Some(ply)),
+                    None,
                     &palette,
                 ))
         }
@@ -1651,5 +1836,16 @@ mod tests {
         step(&mut |window, cx| window.focus_next(cx));
         step(&mut |window, cx| window.press("space", cx));
         assert_eq!(chosen.take(), Some(2));
+    }
+
+    /// A clock turns red only in its last ten seconds, when it shows tenths.
+    #[test]
+    fn only_the_last_ten_seconds_are_low() {
+        assert!(super::low_time("0:09.4"));
+        assert!(super::low_time("0:00.0"));
+        assert!(!super::low_time("0:10"));
+        assert!(!super::low_time("1:05"));
+        assert!(!super::low_time("1:00:05"));
+        assert!(!super::low_time("2d 4h"));
     }
 }

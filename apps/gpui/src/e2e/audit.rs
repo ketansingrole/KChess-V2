@@ -4,7 +4,7 @@
 
 use std::fmt::Write as _;
 
-use gpui_kit::test::{ElementSnapshot, TestQueryExt as _};
+use gpui_kit::test::{ElementSnapshot, TestQueryExt as _, TestWindowExt as _};
 use gpui_kit::{Role, px, size};
 
 use super::{Harness, SIZES};
@@ -174,5 +174,302 @@ fn describe(control: &ElementSnapshot) -> String {
     match control.label() {
         Some(label) => format!("{:?} {label:?}", control.role()),
         None => format!("{:?} {:?}", control.role(), control.path().last()),
+    }
+}
+
+/// The board editor's settings scroll under its actions, which stay inside the panel at every size
+/// (they were cut off at its foot in a laptop-sized window).
+#[gpui_kit::test]
+fn the_board_editors_actions_stay_in_its_panel(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.with_window(|window, cx| crate::shell::open(Page::Editor, window, cx));
+    for (width, height) in SIZES {
+        app.cx
+            .simulate_window_resize(app.window, size(px(width), px(height)));
+        for _ in 0..20 {
+            app.tick();
+        }
+        let bounds = |app: &mut Harness, id: &'static str| {
+            app.with_window(|window, _| window.try_find(id).map(|found| found.bounds()))
+                .unwrap_or_else(|| panic!("no {id}"))
+        };
+        let panel = bounds(&mut app, "editor-panel");
+        for action in ["analyse-position", "play-stockfish", "play-friend"] {
+            let button = bounds(&mut app, action);
+            assert!(
+                button.bottom() <= panel.bottom() && button.top() >= panel.top(),
+                "{action} at {width}x{height}: {button:?} outside the panel {panel:?}"
+            );
+        }
+    }
+}
+
+/// The same audit with something on every list: played games of both kinds (one a variant), a
+/// puzzle attempt and a study. Empty pages hide the rows whose columns crowd a narrow window.
+#[gpui_kit::test]
+fn every_page_with_content_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    seed(&mut app);
+    let mut findings = Findings::default();
+    let mut pages: Vec<(Page, &str)> = crate::shell::nav()
+        .iter()
+        .map(|(page, label, _)| (*page, *label))
+        .collect();
+    pages.push((Page::Settings, "Settings"));
+    for (width, height) in SIZES {
+        app.cx
+            .simulate_window_resize(app.window, size(px(width), px(height)));
+        for &(page, label) in &pages {
+            app.with_window(|window, cx| crate::shell::open(page, window, cx));
+            for _ in 0..20 {
+                app.tick();
+            }
+            let controls = app.with_window(|window, _| window.elements());
+            check(
+                &format!("{label} at {width}×{height}"),
+                width,
+                &controls,
+                &mut findings,
+            );
+        }
+    }
+    assert!(
+        findings.problems.is_empty() && findings.small.is_empty(),
+        "with content:\n  {}",
+        findings
+            .problems
+            .iter()
+            .chain(&findings.small)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+}
+
+/// Every tab of every page and every settings section, not only those a page opens on: the chess
+/// clock's time fields once had no names, behind Over the board's second tab.
+#[gpui_kit::test]
+fn every_tab_and_settings_section_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let mut findings = Findings::default();
+    let settle = |app: &mut Harness| {
+        for _ in 0..20 {
+            app.tick();
+        }
+    };
+    for (width, height) in SIZES {
+        app.cx
+            .simulate_window_resize(app.window, size(px(width), px(height)));
+        for (page, label, _) in crate::shell::nav().iter() {
+            let (page, label) = (*page, *label);
+            app.with_window(|window, cx| crate::shell::open(page, window, cx));
+            settle(&mut app);
+            let tabs = app.with_window(|window, _| {
+                window
+                    .elements()
+                    .into_iter()
+                    .filter(|e| e.visible() && e.role() == Some(Role::Tab))
+                    .filter_map(|e| Some((e.path().last()?.clone(), e.label()?.to_string())))
+                    .collect::<Vec<_>>()
+            });
+            for (id, tab) in tabs {
+                let shown = app.with_window(|window, cx| {
+                    let shown = window.try_find(id.clone()).is_some();
+                    if shown {
+                        window.click(id.clone(), cx);
+                    }
+                    shown
+                });
+                if !shown {
+                    continue;
+                }
+                settle(&mut app);
+                let controls = app.with_window(|window, _| window.elements());
+                check(
+                    &format!("{label} → {tab} at {width}×{height}"),
+                    width,
+                    &controls,
+                    &mut findings,
+                );
+            }
+        }
+        for (section, label, _) in crate::pages::settings::sections() {
+            app.with_window(|window, cx| crate::shell::open_settings(section, window, cx));
+            settle(&mut app);
+            let controls = app.with_window(|window, _| window.elements());
+            check(
+                &format!("Settings → {label} at {width}×{height}"),
+                width,
+                &controls,
+                &mut findings,
+            );
+        }
+    }
+    findings.problems.sort();
+    findings.problems.dedup();
+    findings.small.sort();
+    findings.small.dedup();
+    assert!(
+        findings.problems.is_empty() && findings.small.is_empty(),
+        "behind a tab:\n  {}",
+        findings
+            .problems
+            .iter()
+            .chain(&findings.small)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+}
+
+/// The dialogs a fresh profile opens: the computer's game options, a new game over the board,
+/// the import dialogs and the shortcut list, each opened in the largest window and then checked at
+/// every size while it stays open.
+#[gpui_kit::test]
+fn every_dialog_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let mut findings = Findings::default();
+    let settle = |app: &mut Harness| {
+        for _ in 0..20 {
+            app.tick();
+        }
+    };
+    let dialogs: [(Page, &str, &str); 5] = [
+        (Page::Computer, "game-options", "Game options"),
+        (Page::Local, "local-new", "New game over the board"),
+        (
+            Page::Analysis,
+            "analysis-import",
+            "Import into the analysis board",
+        ),
+        (Page::Studies, "empty-import", "Import a study"),
+        (Page::Dashboard, "?", "Keyboard shortcuts"),
+    ];
+    let (widest, tallest) = SIZES[SIZES.len() - 1];
+    for (page, opener, label) in dialogs {
+        app.cx
+            .simulate_window_resize(app.window, size(px(widest), px(tallest)));
+        app.with_window(|window, cx| crate::shell::open(page, window, cx));
+        settle(&mut app);
+        if opener == "?" {
+            app.press("?");
+        } else {
+            app.click(opener);
+        }
+        for (width, height) in SIZES {
+            app.cx
+                .simulate_window_resize(app.window, size(px(width), px(height)));
+            settle(&mut app);
+            // Only the dialog's own controls: the page under its overlay takes no clicks.
+            let controls: Vec<ElementSnapshot> = app.with_window(|window, _| {
+                window
+                    .elements()
+                    .into_iter()
+                    .filter(|e| {
+                        e.path()
+                            .iter()
+                            .any(|part| *part == gpui_kit::ElementId::from("dialog"))
+                    })
+                    .collect()
+            });
+            assert!(!controls.is_empty(), "{label} opens a dialog");
+            check(
+                &format!("{label} at {width}×{height}"),
+                width,
+                &controls,
+                &mut findings,
+            );
+        }
+        app.press("escape");
+        settle(&mut app);
+    }
+    findings.problems.sort();
+    findings.problems.dedup();
+    findings.small.sort();
+    findings.small.dedup();
+    assert!(
+        findings.problems.is_empty() && findings.small.is_empty(),
+        "in a dialog:\n  {}",
+        findings
+            .problems
+            .iter()
+            .chain(&findings.small)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+}
+
+/// Games, a puzzle attempt and a study, kept by the core before the pages are opened.
+fn seed(app: &mut Harness) {
+    let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    app.cx.update(|cx| {
+        let played = cx.global::<crate::played::PlayedHandle>().0.clone();
+        played.update(cx, |played, cx| {
+            for (index, (variant, result)) in [
+                ("standard", "1-0"),
+                ("atomic", "0-1"),
+                ("standard", "1/2-1/2"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                played.save(
+                    serde_json::json!({
+                        "id": format!("audit-{index}"),
+                        "source": "computer",
+                        "setup": { "variant": variant, "fen": start },
+                        "moves": ["e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"],
+                        "white": "You",
+                        "black": "Stockfish · Club Player",
+                        "result": result,
+                        "reason": "checkmate",
+                        "finished": true,
+                        "timeControl": "300+3",
+                        "startedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
+                        "updatedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
+                    }),
+                    cx,
+                );
+            }
+        });
+    });
+    let day = crate::game::puzzle::local_day();
+    let calls = [
+        (
+            "recordPuzzleAttempt",
+            serde_json::json!({
+                "puzzle": {
+                    "id": "aaaaa",
+                    "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 2 4",
+                    "solution": ["f3f7", "e8f7"],
+                    "rating": 1500,
+                    "themes": ["mateIn1", "short", "opening"],
+                },
+                "mode": "practice", "retry": false, "win": false, "revealed": false,
+                "hinted": false, "found": 1, "wrong": 1, "total": 2, "day": day,
+            }),
+        ),
+        (
+            "studyCommand",
+            serde_json::json!({
+                "op": "saveChapters",
+                "name": "A study with a fairly long name to wrap",
+                "chapters": [
+                    { "name": "King pawn", "pgn": "1. e4 e5 *" },
+                    { "name": "Queen pawn", "pgn": "1. d4 d5 *" },
+                ],
+            }),
+        ),
+    ];
+    for (method, argument) in calls {
+        let done = app.cx.update(|cx| {
+            cx.global::<crate::core::AppCore>()
+                .call(method, vec![argument])
+        });
+        app.cx
+            .foreground_executor()
+            .block_test(done)
+            .unwrap_or_else(|cause| panic!("{method}: {cause:?}"));
     }
 }

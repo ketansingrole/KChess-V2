@@ -1039,6 +1039,15 @@ struct Settings {
     swipe_navigation: bool,
     swipe_indicator: bool,
     puzzle_auto_next: bool,
+    /// Newer than the other settings: a frontend that does not send it keeps the default, on.
+    #[serde(default = "on")]
+    confirm_correspondence: bool,
+    #[serde(default)]
+    figurine_notation: bool,
+}
+
+fn on() -> bool {
+    true
 }
 
 /// The message of each setting.
@@ -1072,6 +1081,8 @@ fn settings_messages(keys: &[&str]) -> Msg {
         ["showOpeningName"] => "Invalid opening name setting.",
         ["swipeNavigation" | "swipeIndicator"] => "Invalid swipe setting.",
         ["puzzleAutoNext"] => "Invalid puzzle setting.",
+        ["confirmCorrespondence"] => "Invalid move confirmation setting.",
+        ["figurineNotation"] => "Invalid notation setting.",
         ["notificationsEnabled"] => NOTIFY,
         [key] if key.starts_with("notify") => NOTIFY,
         _ => "Invalid settings.",
@@ -1768,6 +1779,9 @@ struct GamePageQuery {
     result: Option<GameResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rated: Option<bool>,
+    /// Part of an opponent's name or an opening's; blank is no search.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search: Option<String>,
     offset: u64,
     limit: u64,
 }
@@ -1780,15 +1794,25 @@ enum GameResult {
     Draw,
 }
 
+const GAME_SEARCH: &str = "Invalid game search.";
+
 fn assert_game_page_query(value: J) -> Checked<GamePageQuery> {
     let mut query: GamePageQuery = decode(value, |keys| match keys {
         ["account"] => Some(USERNAME),
         ["offset"] => Some("Invalid game offset."),
         ["limit"] => Some("Invalid game page size."),
+        ["search"] => Some(GAME_SEARCH),
         _ => None,
     })?;
     if let Some(account) = &query.account {
         query.account = Some(username(account, "account")?);
+    }
+    if let Some(search) = query.search.take() {
+        let search = search.trim();
+        if search.chars().count() > 100 {
+            return Err(GAME_SEARCH.into());
+        }
+        query.search = (!search.is_empty()).then(|| search.to_string());
     }
     within(query.offset, 0, MAX_SAFE, Some("Invalid game offset."), "")?;
     within(query.limit, 1, 100, Some("Invalid game page size."), "")?;
@@ -2026,6 +2050,34 @@ struct StudyChapter {
     chapter_id: String,
 }
 
+/// `restoreChapter`: a removed chapter (its id, name and PGN) back at its place in the study.
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct RestoreChapter {
+    op: String,
+    id: String,
+    chapter: ChapterEntry,
+    index: u32,
+}
+
+/// `moveChapter`: a study's chapter to its new place.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", expecting = "an object")]
+struct MoveChapter {
+    op: String,
+    id: String,
+    chapter_id: String,
+    index: u32,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(expecting = "an object")]
+struct ChapterEntry {
+    id: String,
+    name: String,
+    pgn: String,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", expecting = "an object")]
 struct MarkCloud {
@@ -2067,6 +2119,22 @@ fn assert_study_command_shape(value: J) -> Checked<Value> {
     if !value.is_object() {
         let error = decode::<SaveStudy>(value, plain).err();
         return Err(error.unwrap_or_else(|| "invalid type, expected an object".into()));
+    }
+    // Commands newer than the recorded ones (Undo's restore, moving a chapter): told apart
+    // before them, so their answers (an unknown command lists theirs) stay as recorded.
+    if value.get("op").and_then(J::str) == Some("restoreChapter") {
+        let restore: RestoreChapter = decode(value, plain)?;
+        local_id(&restore.id, "id")?;
+        local_id(&restore.chapter.id, "chapter.id")?;
+        study_name(&restore.chapter.name, "chapter.name")?;
+        study_pgn(&restore.chapter.pgn, "chapter.pgn")?;
+        return out(&restore);
+    }
+    if value.get("op").and_then(J::str) == Some("moveChapter") {
+        let moved: MoveChapter = decode(value, plain)?;
+        local_id(&moved.id, "id")?;
+        local_id(&moved.chapter_id, "chapterId")?;
+        return out(&moved);
     }
     let tag = value.get("op").cloned().unwrap_or(J::Undef);
     let op: StudyOp = decode(tag, plain).map_err(|error| format!("op: {error}"))?;
@@ -2367,6 +2435,63 @@ mod tests {
         validator(method).expect(method)(vec![value])
     }
 
+    fn restore_chapter(pgn: &str) -> J {
+        let chapter = obj(vec![
+            ("id", J::Str("c1".into())),
+            ("name", J::Str("Rook endings".into())),
+            ("pgn", J::Str(pgn.into())),
+        ]);
+        obj(vec![
+            ("op", J::Str("restoreChapter".into())),
+            ("id", J::Str("s1".into())),
+            ("chapter", chapter),
+            ("index", J::Num(1.0)),
+            ("extra", J::Str("dropped".into())),
+        ])
+    }
+
+    /// Undo's `restoreChapter` takes the chapter whole and its place (the core reads its PGN).
+    #[test]
+    fn a_chapter_to_restore_is_checked() {
+        assert_eq!(
+            run("assertStudyCommandShape", restore_chapter("1. e4 *")),
+            Ok(json!({
+                "op": "restoreChapter",
+                "id": "s1",
+                "chapter": { "id": "c1", "name": "Rook endings", "pgn": "1. e4 *" },
+                "index": 1,
+            }))
+        );
+        let without_chapter = obj(vec![
+            ("op", J::Str("restoreChapter".into())),
+            ("id", J::Str("s1".into())),
+            ("index", J::Num(0.0)),
+        ]);
+        assert!(run("assertStudyCommandShape", without_chapter).is_err());
+    }
+
+    /// `moveChapter` takes a chapter and its new place.
+    #[test]
+    fn a_chapter_to_move_is_checked() {
+        let moved = obj(vec![
+            ("op", J::Str("moveChapter".into())),
+            ("id", J::Str("s1".into())),
+            ("chapterId", J::Str("c1".into())),
+            ("index", J::Num(2.0)),
+            ("extra", J::Str("dropped".into())),
+        ]);
+        assert_eq!(
+            run("assertStudyCommandShape", moved),
+            Ok(json!({ "op": "moveChapter", "id": "s1", "chapterId": "c1", "index": 2 }))
+        );
+        let without_place = obj(vec![
+            ("op", J::Str("moveChapter".into())),
+            ("id", J::Str("s1".into())),
+            ("chapterId", J::Str("c1".into())),
+        ]);
+        assert!(run("assertStudyCommandShape", without_place).is_err());
+    }
+
     fn settings() -> Vec<(&'static str, J)> {
         let mut fields = vec![
             ("appearance", J::Str("system".into())),
@@ -2415,6 +2540,8 @@ mod tests {
             "swipeNavigation",
             "swipeIndicator",
             "puzzleAutoNext",
+            "confirmCorrespondence",
+            "figurineNotation",
         ] {
             fields.push((flag, J::Bool(true)));
         }
@@ -2428,6 +2555,30 @@ mod tests {
         assert_eq!(normalized["engineLevels"], json!(["club", "gm"]));
         let keys: Vec<&String> = normalized.as_object().unwrap().keys().collect();
         assert_eq!(keys[..3], ["appearance", "boardTheme", "lightTheme"]);
+    }
+
+    /// A frontend from before move confirmation sends no `confirmCorrespondence`: its settings
+    /// still save, with confirmation on.
+    #[test]
+    fn settings_without_move_confirmation_keep_it_on() {
+        let older: Vec<_> = settings()
+            .into_iter()
+            .filter(|(key, _)| *key != "confirmCorrespondence")
+            .collect();
+        let normalized = run("assertSettings", obj(older)).unwrap();
+        assert_eq!(normalized["confirmCorrespondence"], json!(true));
+        let mut off = settings();
+        off.retain(|(key, _)| *key != "confirmCorrespondence");
+        off.push(("confirmCorrespondence", J::Bool(false)));
+        let normalized = run("assertSettings", obj(off)).unwrap();
+        assert_eq!(normalized["confirmCorrespondence"], json!(false));
+        let mut wrong = settings();
+        wrong.retain(|(key, _)| *key != "confirmCorrespondence");
+        wrong.push(("confirmCorrespondence", J::Num(1.0)));
+        assert_eq!(
+            run("assertSettings", obj(wrong)).unwrap_err(),
+            "Invalid move confirmation setting."
+        );
     }
 
     #[test]
