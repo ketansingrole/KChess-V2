@@ -368,4 +368,3 @@ pub(super) fn assert_study_id(value: J) -> Checked<String> {
     }
     assert_lichess_id(value)
 }
-

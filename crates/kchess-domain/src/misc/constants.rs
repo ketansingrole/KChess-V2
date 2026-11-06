@@ -190,4 +190,3 @@ pub const MAX_CHAPTERS: usize = 64;
 pub const MAX_MOVES: usize = 1024;
 /// `Number.MAX_SAFE_INTEGER`
 pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
-
