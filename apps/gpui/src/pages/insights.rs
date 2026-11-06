@@ -145,7 +145,7 @@ fn blunder_rate(entry: &Value) -> Option<f64> {
 }
 
 /// Time use: the clock against the opponent's, blunders short of time, and time by phase.
-fn time_use(time: &Value, palette: &Palette) -> Option<Stateful<Div>> {
+fn time_use(time: &Value, palette: &Palette) -> Option<AnyElement> {
     let games = time["games"].as_f64()?;
     let clock_at = time["clockAt"]
         .as_array()
@@ -211,6 +211,7 @@ fn time_use(time: &Value, palette: &Palette) -> Option<Stateful<Div>> {
     Some(
         v_flex()
             .id("insights-time-use")
+            .test_support()
             .gap(px(8.))
             .child(widgets::heading("Time use", palette))
             .child(widgets::hint(
@@ -226,7 +227,8 @@ fn time_use(time: &Value, palette: &Palette) -> Option<Stateful<Div>> {
                     .children(clock_at)
                     .children(blunders),
             )
-            .child(v_flex().max_w(px(480.)).children(phases)),
+            .child(v_flex().max_w(px(480.)).children(phases))
+            .into_any_element(),
     )
 }
 

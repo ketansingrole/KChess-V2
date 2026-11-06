@@ -377,11 +377,11 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
 fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppContext) {
     use crate::pages::{Page, insights::InsightsPage};
     use gpui_kit::test::TestWindowExt as _;
-    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
     app.open("Insights");
     app.wait_for("the first report", |_, cx| {
         crate::shell::view_of::<InsightsPage>(Page::Insights, cx)
-            .is_some_and(|page| page.read(cx).loaded())
+            .is_some_and(|page| page.read(cx).report_total().is_some_and(|total| total > 0.))
     });
     let shown = |app: &mut Harness| {
         app.with_window(|window, _| {
