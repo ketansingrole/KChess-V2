@@ -853,8 +853,7 @@ fn a_cancelled_link_import_leaves_the_board_alone(cx: &mut gpui_kit::TestAppCont
     import(&mut app, "1. d4 d5 *");
     app.find("tree-d2d4 d7d5");
     app.click("analysis-import");
-    fill_in_dialog(
-        &mut app,
+    app.fill_in_dialog(
         "FEN, PGN or Lichess link",
         &format!("https://lichess.org/{HELD_GAME}"),
     );
