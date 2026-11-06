@@ -535,6 +535,24 @@ mod tests {
         assert_eq!(info.outcome, Some(json!({})));
     }
 
+    /// Antichess ends when the side to move has no pieces, which wins it: the other side
+    /// running out of pieces first does not end it.
+    #[test]
+    fn antichess_ends_when_the_side_to_move_has_no_pieces() {
+        let antichess = |fen| {
+            rules::setup_position(
+                shakmaty::variant::Variant::Antichess,
+                rules::parse_fen(fen).unwrap(),
+            )
+            .unwrap()
+        };
+        let info = super::info(&antichess("8/8/8/8/8/8/8/k7 b - - 0 1"));
+        assert!(!info.variant_end && !info.end, "{info:?}");
+        let info = super::info(&antichess("8/8/8/8/8/8/8/K7 b - - 0 1"));
+        assert!(info.variant_end && info.end, "{info:?}");
+        assert_eq!(info.outcome, Some(json!({ "winner": "black" })));
+    }
+
     #[test]
     fn lists_castling_both_ways_for_the_board() {
         let pos = rules::standard_from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1").unwrap();
