@@ -335,7 +335,7 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
     use crate::pages::{Page, insights::InsightsPage};
     use gpui_kit::test::TestQueryExt as _;
     let (mut app, _lichess) = Harness::signed_in(cx, false);
-    app.open("Lichess insights");
+    app.open("Insights");
     let page = |app: &mut Harness| {
         app.cx
             .update(|cx| crate::shell::view_of::<InsightsPage>(Page::Insights, cx))

@@ -100,7 +100,7 @@ pub(crate) fn nav() -> [(Page, &'static str, Icon); 16] {
         (Page::Online, "Play on Lichess", icon("globe-2")),
         (Page::Tournaments, "Tournaments", icon("trophy")),
         (Page::Watch, "Watch", icon("tv")),
-        (Page::Insights, "Lichess insights", icon("chart-pie")),
+        (Page::Insights, "Insights", icon("chart-pie")),
         (Page::Friends, "Following", icon("users")),
         (Page::Players, "Players", icon("user-search")),
     ]

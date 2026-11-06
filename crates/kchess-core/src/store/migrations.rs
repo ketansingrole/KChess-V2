@@ -240,6 +240,21 @@ pub const MIGRATIONS: &[&str] = &[
     "ALTER TABLE accounts ADD COLUMN syncedPlayTime INTEGER;",
     "ALTER TABLE settings ADD COLUMN confirmCorrespondence INTEGER NOT NULL DEFAULT 1;",
     "ALTER TABLE settings ADD COLUMN figurineNotation INTEGER NOT NULL DEFAULT 0;",
+    // Chess.com players whose games are synced (kept in `games` under `name@chess.com`), and each
+    // monthly archive's validators: a month that has ended and was read in full is not asked again.
+    r#"CREATE TABLE chesscom_accounts (
+    username TEXT PRIMARY KEY COLLATE NOCASE,
+    addedAt INTEGER NOT NULL,
+    lastSyncedAt INTEGER
+  );
+  CREATE TABLE chesscom_archives (
+    username TEXT NOT NULL COLLATE NOCASE REFERENCES chesscom_accounts(username) ON DELETE CASCADE,
+    month TEXT NOT NULL,
+    etag TEXT,
+    lastModified TEXT,
+    complete INTEGER NOT NULL,
+    PRIMARY KEY (username, month)
+  );"#,
 ];
 
 fn storage_error(cause: rusqlite::Error) -> CoreError {

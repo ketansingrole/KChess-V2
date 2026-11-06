@@ -283,22 +283,36 @@ impl ReviewHost for ReviewBridge {
                     .call_async("store.games.loadData", &[])
                     .await?,
             )?;
-            // Your own accounts: the connected ones, or the first one added when none is.
-            let own: Vec<String> = data
+            // Your own accounts: the connected ones, or the first one added when none is, and
+            // every Chess.com player added (they are added by name, as your own).
+            let mut own: Vec<String> = data
                 .accounts
                 .iter()
                 .filter(|account| account.connected)
                 .map(|account| account.username.clone())
                 .collect();
-            if !own.is_empty() {
-                return Ok(own);
+            if own.is_empty() {
+                own.extend(
+                    data.accounts
+                        .into_iter()
+                        .take(1)
+                        .map(|account| account.username),
+                );
             }
-            Ok(data
-                .accounts
-                .into_iter()
-                .take(1)
-                .map(|account| account.username)
-                .collect())
+            let chesscom = self
+                .database
+                .call_async("store.chesscom.accounts", &[])
+                .await?;
+            own.extend(
+                chesscom
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|row| row.get("username").and_then(Value::as_str))
+                    .map(kchess_domain::chesscom::account_of),
+            );
+            Ok(own)
         })
     }
 

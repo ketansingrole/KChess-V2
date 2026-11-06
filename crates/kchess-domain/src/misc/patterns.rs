@@ -19,9 +19,25 @@ pub fn username(s: &str) -> bool {
     run(s, 2, 30, |b| alnum(b) || b == b'_' || b == b'-')
 }
 
-/// `^[a-zA-Z0-9]{8,12}$` (GAME_ID)
+/// `^[a-zA-Z0-9]{8,12}$|^cc-[ld][0-9]{1,20}$` (GAME_ID): a Lichess game, or a Chess.com one
+/// (`cc-l` live, `cc-d` daily, then its number). The dash keeps the two apart.
 pub fn game_id(s: &str) -> bool {
-    run(s, 8, 12, alnum)
+    run(s, 8, 12, alnum) || chesscom_game_id(s)
+}
+
+/// `^cc-[ld][0-9]{1,20}$`: a Chess.com game as KChess keeps it.
+pub fn chesscom_game_id(s: &str) -> bool {
+    crate::chesscom::is_game_id(s)
+}
+
+/// `^[a-zA-Z0-9_-]{3,25}$`: what Chess.com accepts as a name.
+pub fn chesscom_username(s: &str) -> bool {
+    crate::chesscom::is_username(s)
+}
+
+/// The account games are kept under: a Lichess username, or `name@chess.com`.
+pub fn game_account(s: &str) -> bool {
+    username(s) || crate::chesscom::username_of(s).is_some()
 }
 
 /// `^[a-zA-Z0-9]{3,12}$` (PUZZLE_ID)
