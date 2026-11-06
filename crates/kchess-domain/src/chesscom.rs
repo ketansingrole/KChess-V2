@@ -365,6 +365,52 @@ mod tests {
         assert_eq!(speed("1500", "rapid"), "classical");
         assert_eq!(speed("1800+30", "rapid"), "classical");
         assert_eq!(speed("1/86400", "daily"), "correspondence");
+        // Either sign of a daily game is enough.
+        assert_eq!(speed("1/86400", ""), "correspondence");
+        assert_eq!(speed("600", "daily"), "correspondence");
+        // Each bound starts the next speed, as on Lichess.
+        assert_eq!(speed("29", "bullet"), "ultraBullet");
+        assert_eq!(speed("30", "bullet"), "bullet");
+        assert_eq!(speed("179", "bullet"), "bullet");
+        assert_eq!(speed("180", "blitz"), "blitz");
+        assert_eq!(speed("479", "blitz"), "blitz");
+        assert_eq!(speed("480", "blitz"), "rapid");
+        assert_eq!(speed("1499", "rapid"), "rapid");
+    }
+
+    #[test]
+    fn a_game_starts_at_its_utc_date_and_time() {
+        let created_at = |date: &str, time: &str| {
+            let pgn = PGN
+                .replace("2024.03.05\"]\n[UTCTime", &format!("{date}\"]\n[UTCTime"))
+                .replace("10:20:30", time);
+            game_row("alice", &game("chess", "win", "resigned", &pgn)).unwrap()["createdAt"].clone()
+        };
+        // Expected values from Python's `datetime`; January, February, leap days, century
+        // years and every clock field each take their own part of the conversion.
+        for (date, time, millis) in [
+            ("2024.02.29", "23:59:59", 1_709_251_199_000_i64),
+            ("2000.01.01", "00:00:00", 946_684_800_000),
+            ("1999.12.31", "12:34:56", 946_643_696_000),
+            ("2100.03.01", "00:00:00", 4_107_542_400_000),
+            ("2023.01.15", "08:05:09", 1_673_769_909_000),
+        ] {
+            assert_eq!(created_at(date, time), millis, "{date} {time}");
+        }
+        // A date that is no date falls back to the game's end.
+        for date in [
+            "2024.13.05",
+            "2024.00.05",
+            "2024.03.32",
+            "2024.03.00",
+            "2024.03",
+        ] {
+            assert_eq!(
+                created_at(date, "10:20:30"),
+                1_709_634_000_000_i64,
+                "{date}"
+            );
+        }
     }
 
     #[test]
@@ -411,5 +457,12 @@ mod tests {
             archive_month("https://api.chess.com/pub/player/a/games"),
             None
         );
+        for url in [
+            "https://api.chess.com/pub/player/a/games/24/03",
+            "https://api.chess.com/pub/player/a/games/2024/3",
+            "https://api.chess.com/pub/player/a/games/2024/0x",
+        ] {
+            assert_eq!(archive_month(url), None, "{url}");
+        }
     }
 }
