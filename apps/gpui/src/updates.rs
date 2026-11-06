@@ -515,7 +515,7 @@ async fn download(
             Err(Stop::Dropped(cause)) if resumes < RESUMES => {
                 resumes += 1;
                 log(&format!(
-                    "download dropped at {} of {} bytes, resuming ({resumes}/{RESUMES})",
+                    "{cause} at {} of {} bytes, resuming ({resumes}/{RESUMES})",
                     part.received, part.total
                 ));
                 tokio::time::sleep(RESUME_AFTER * 2u32.pow(resumes - 1)).await;
