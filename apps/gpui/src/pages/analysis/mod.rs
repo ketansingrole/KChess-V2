@@ -616,6 +616,12 @@ impl AnalysisPage {
 
     /// Play a move from the position shown; false when it is not kept (not legal there, or a
     /// wrong answer while practising).
+    /// A move on the board, as a click would make it.
+    #[cfg(test)]
+    pub(crate) fn play_for_test(&mut self, uci: &str, cx: &mut Context<Self>) -> bool {
+        self.play(uci, cx)
+    }
+
     fn play(&mut self, uci: &str, cx: &mut Context<Self>) -> bool {
         if let Some(kept) = self.practice_attempt(uci, cx) {
             return kept;
@@ -794,6 +800,11 @@ impl AnalysisPage {
         &self.chapter
     }
 
+    /// Whether the board holds edits its study has not been sent yet.
+    pub fn unsaved_study_edits(&self) -> bool {
+        !self.study.is_empty() && self.root.to_pgn() != self.study_pgn
+    }
+
     pub fn study_error(&self) -> Option<&str> {
         self.study_error.as_deref()
     }
@@ -839,7 +850,7 @@ impl AnalysisPage {
         }
         // Counted as saved while the core writes it; a failure makes it unsaved again.
         let previous = std::mem::replace(&mut self.study_pgn, text.clone());
-        let study = self.study.clone();
+        let (study, chapter) = (self.study.clone(), self.chapter.clone());
         let command = library.read(cx).command(json!({
             "op": "save",
             "name": name,
@@ -857,7 +868,9 @@ impl AnalysisPage {
                     // Another window changed the chapter: the board keeps its moves as an unsaved
                     // copy rather than overwriting that window's, or blocking every later save.
                     Err(cause)
-                        if crate::studies::is_stale(cause.as_str()) && this.study == study =>
+                        if crate::studies::is_stale(cause.as_str())
+                            && this.study == study
+                            && this.chapter == chapter =>
                     {
                         this.study.clear();
                         this.chapter.clear();

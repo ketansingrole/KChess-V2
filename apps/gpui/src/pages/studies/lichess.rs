@@ -343,7 +343,13 @@ impl StudiesPage {
                 {
                     let chapter = analysis.read(cx).chapter_id().to_string();
                     analysis.update(cx, |analysis, cx| {
-                        let _ = analysis.open_study(&saved, Some(&chapter), cx);
+                        // Edits made while the cloud copy downloaded are not replaced by it: their
+                        // save, refused against the new copy, keeps them as an unsaved copy.
+                        if analysis.unsaved_study_edits() {
+                            drop(analysis.flush_study(cx));
+                        } else {
+                            let _ = analysis.open_study(&saved, Some(&chapter), cx);
+                        }
                     });
                 }
                 let _ = page.update(cx, |page, cx| {
