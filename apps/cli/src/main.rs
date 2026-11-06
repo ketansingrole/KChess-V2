@@ -127,8 +127,11 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
     })
 }
 
+/// A result on stdout. `println!` panics when the reader has gone (`kchess-cli … | head -1`):
+/// a closed pipe ends the output quietly instead.
 fn print(value: &Value) {
-    println!("{value}");
+    use std::io::Write as _;
+    let _ = writeln!(std::io::stdout().lock(), "{value}");
 }
 
 fn method_names() -> Vec<&'static str> {

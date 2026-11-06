@@ -139,6 +139,41 @@ async fn a_quick_pass_shows_first_then_the_deep_pass_completes_and_finds_the_blu
     rig.reviews.stop_reviews().await;
 }
 
+/// A review asked for while the queue was deciding it had nothing to do found it still running
+/// and left the work to it; the queue then stopped without looking again, so the review waited
+/// for the five-minute recheck.
+#[tokio::test]
+async fn a_review_asked_for_while_the_queue_finds_nothing_still_runs() {
+    let store = MemoryStore::new();
+    let recording = support::host();
+    let log = log_path("asked-while-idle");
+    let ctx = context(&recording, scheduler(4, false), "review", &log);
+    let reviews = Reviews::new(ctx, store.clone());
+    let host = ScriptedHost::new(store.clone(), settings("recent", true));
+    let (release, held) = tokio::sync::oneshot::channel();
+    *host.hold_settings.lock().expect("hold") = Some(held);
+    // The queue's pass starts and waits in its settings read, with no game to review.
+    reviews.setup_reviews(host.clone());
+    wait_until(WAIT, "the queue's pass", || {
+        (host
+            .settings_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 0)
+        .then_some(())
+    })
+    .await;
+    reviews
+        .request_review(request(&SCHOLARS))
+        .await
+        .expect("the request");
+    let _ = release.send(());
+    wait_until(WAIT, "the asked-for review", || {
+        host.complete_updates().into_iter().next()
+    })
+    .await;
+    reviews.stop_reviews().await;
+}
+
 #[tokio::test]
 async fn a_request_for_a_finished_review_answers_from_the_store() {
     let rig = rig("review", "stored", false, "off", true);

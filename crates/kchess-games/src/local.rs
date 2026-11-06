@@ -156,4 +156,25 @@ mod tests {
         let paused = game.remaining("black", 11_000.);
         assert_eq!(game.remaining("black", 40_000.), paused);
     }
+
+    /// `1e306` minutes made both times infinite, stored as `null`: every later move failed to
+    /// read the state, and the game could only be reset. Negative minutes flagged at once.
+    #[test]
+    fn a_clock_no_game_can_have_is_refused_at_the_start() {
+        let mut game = LocalGame::new(None, 0.).unwrap();
+        let setup = game.state["setup"].clone();
+        for (minutes, increment) in [(1e306, 0.), (-5., 0.), (5., -1.), (181., 0.), (5., 1e9)] {
+            let side = json!({ "minutes": minutes, "increment": increment });
+            let clock = json!({ "white": side, "black": { "minutes": 5, "increment": 0 } });
+            assert!(
+                game.start(setup.clone(), clock, 0.).is_err(),
+                "{minutes} {increment}"
+            );
+            assert_eq!(game.play("e2e4", 1.).unwrap().0.as_deref(), Some("e4"));
+            game.takeback(2.).unwrap();
+        }
+        let clock = json!({ "white": { "minutes": 180, "increment": 180 }, "black": { "minutes": 0, "increment": 0 } });
+        game.start(setup, clock, 0.)
+            .expect("the longest and shortest clocks");
+    }
 }

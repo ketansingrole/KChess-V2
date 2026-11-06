@@ -912,8 +912,17 @@ async fn pump(s: Arc<Shared>) {
         state.pumping = true;
         s.idle_tx.send_replace(false);
     }
-    if let Err(cause) = pump_loop(&s).await {
+    // A failed or panicking pass still ends as a pass: `pumping` and `idle` must be reset, or no
+    // review runs again and quitting waits on `idle` forever. It looks again later, since the
+    // timer that started it has fired and nothing else may.
+    let failure = match crate::tasks::caught(pump_loop(&s)).await {
+        Ok(Ok(())) => None,
+        Ok(Err(cause)) => Some(cause.to_string()),
+        Err(_) => Some("a review step panicked".to_string()),
+    };
+    if let Some(cause) = failure {
         host_log(&s, Level::Warn, &format!("Review queue failed: {cause}"));
+        schedule_recheck(&s, RECHECK_MS);
     }
     {
         let mut state = lock(&s.state);
@@ -922,10 +931,19 @@ async fn pump(s: Arc<Shared>) {
         s.idle_tx.send_replace(true);
     }
     send_status(&s);
-    let arm_idle = {
+    let (arm_idle, asked) = {
         let state = lock(&s.state);
-        state.host.is_some() && state.running.is_none() && state.asked.is_empty()
+        let present = state.host.is_some();
+        (
+            present && state.running.is_none() && state.asked.is_empty(),
+            present && !state.asked.is_empty(),
+        )
     };
+    // A review asked for while this pass was deciding it had nothing to do found it still
+    // pumping and left the work to it: it would otherwise wait for the next recheck.
+    if asked {
+        kick(&s);
+    }
     if arm_idle {
         let weak = Arc::downgrade(&s);
         let timer = after(IDLE_MS, move || {

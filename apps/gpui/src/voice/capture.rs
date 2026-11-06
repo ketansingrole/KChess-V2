@@ -155,15 +155,16 @@ pub fn start() -> Result<(Capture, mpsc::UnboundedReceiver<Chunk>), CaptureError
             .description()
             .map(|description| description.name().to_string())
             .unwrap_or_default();
-        let _ = ready.send(Ok((f64::from(rate), name)));
+        // The caller gave up waiting (`await_open`): nobody owns this stream, so it closes.
+        if ready.send(Ok((f64::from(rate), name))).is_err() {
+            return;
+        }
         while !flag.load(Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(50));
         }
         drop(stream);
     });
-    let (sample_rate, device) = opened
-        .recv_timeout(Duration::from_secs(10))
-        .map_err(|_| CaptureError::Busy("the microphone did not answer".into()))??;
+    let (sample_rate, device) = await_open(opened, &stop, OPEN_TIMEOUT)?;
     Ok((
         Capture {
             stop,
@@ -172,6 +173,26 @@ pub fn start() -> Result<(Capture, mpsc::UnboundedReceiver<Chunk>), CaptureError
         },
         receiver,
     ))
+}
+
+/// How long a microphone may take to open.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The opened stream's rate and device name. On a timeout the capture thread is told to stop and
+/// its late answer goes nowhere, so a microphone that opens afterwards (a slow headset, a
+/// permission prompt answered late) closes at once instead of staying on for the session.
+fn await_open(
+    opened: std::sync::mpsc::Receiver<Result<(f64, String), CaptureError>>,
+    stop: &AtomicBool,
+    timeout: Duration,
+) -> Result<(f64, String), CaptureError> {
+    match opened.recv_timeout(timeout) {
+        Ok(answer) => answer,
+        Err(_) => {
+            stop.store(true, Ordering::Relaxed);
+            Err(CaptureError::Busy("the microphone did not answer".into()))
+        }
+    }
 }
 
 fn classify(cause: &cpal::Error) -> CaptureError {
@@ -282,7 +303,27 @@ pub fn level(audio: &[f32]) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{level, parse_wav, pcm_base64};
+    use super::{
+        AtomicBool, CaptureError, Duration, Ordering, await_open, level, parse_wav, pcm_base64,
+    };
+
+    /// A microphone that answered after the 10 s wait stayed open for the rest of the session:
+    /// nothing told its thread to stop, and its answer was taken as delivered.
+    #[test]
+    fn a_microphone_that_answers_late_is_closed() {
+        let stop = AtomicBool::new(false);
+        let (ready, opened) = std::sync::mpsc::channel::<Result<(f64, String), CaptureError>>();
+        let answer = await_open(opened, &stop, Duration::from_millis(10));
+        assert!(matches!(answer, Err(CaptureError::Busy(_))));
+        assert!(
+            stop.load(Ordering::Relaxed),
+            "the capture thread is told to stop"
+        );
+        assert!(
+            ready.send(Ok((48_000.0, "Late headset".into()))).is_err(),
+            "the late answer goes nowhere, so the thread drops its stream"
+        );
+    }
 
     fn wav(samples: &[i16], rate: u32, channels: u16) -> Vec<u8> {
         let data: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();

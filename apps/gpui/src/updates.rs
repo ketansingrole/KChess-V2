@@ -1624,7 +1624,7 @@ impl Updates {
         if install.package == Package::WindowsInstaller {
             // The installer closes this app: it starts as the app quits, after the core closes.
             self.restart = true;
-            return cx.quit();
+            return crate::core::quit_saved(cx);
         }
         self.staged = None;
         // Off the UI thread: the package manager may wait for a password.
