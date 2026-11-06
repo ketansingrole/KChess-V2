@@ -2,24 +2,6 @@
 
 use super::*;
 
-/// `reportRendererError`: a fixed page route, a message and a short info string, and no other keys.
-#[derive(Deserialize, Serialize)]
-#[serde(expecting = "an object")]
-#[serde(deny_unknown_fields)]
-pub(super) struct RendererError {
-    route: String,
-    message: String,
-    info: String,
-}
-
-pub(super) fn assert_renderer_error(value: J) -> Checked<RendererError> {
-    let error: RendererError = decode(value, plain)?;
-    one_of(&error.route, RENDERER_ROUTES, None, "route")?;
-    max_chars(&error.message, 1000, None, "message")?;
-    max_chars(&error.info, 160, None, "info")?;
-    Ok(error)
-}
-
 /// `assertNewArena`: the arena's clock, schedule and options, and no other keys.
 #[derive(Deserialize, Serialize)]
 #[serde(expecting = "an object")]
@@ -90,58 +72,6 @@ pub(super) fn assert_new_arena(value: J) -> Checked<NewArena> {
         max_chars(description, 2000, None, "description")?;
     }
     Ok(arena)
-}
-
-/// `assertExport`: a file name and kind, then that the data is the file it claims to be. A
-/// binary export arrives as its length and first bytes; it goes back as `null`, and the caller
-/// keeps its own bytes.
-#[derive(Deserialize, Serialize)]
-#[serde(expecting = "an object")]
-pub(super) struct ExportRequest {
-    name: String,
-    kind: ExportKind,
-}
-
-#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub(super) enum ExportKind {
-    Gif,
-    Png,
-    Pgn,
-}
-
-pub(super) fn assert_export(value: J) -> Checked<Value> {
-    let data = value.get("data").cloned().unwrap_or(J::Undef);
-    let request: ExportRequest = decode(value, |keys| match keys {
-        ["kind"] => Some("Invalid export."),
-        _ => None,
-    })?;
-    let file_name = Some("Invalid file name.");
-    matches(&request.name, patterns::file_name, file_name, "name", "")?;
-    let invalid = || "Invalid export.".to_string();
-    let data = match (request.kind, data) {
-        (ExportKind::Pgn, J::Str(text)) => {
-            max_chars(&text, 2_000_000, None, "data")?;
-            Value::String(text)
-        }
-        (ExportKind::Gif | ExportKind::Png, J::Bytes { len, head }) => {
-            let magic: &[u8] = match request.kind {
-                ExportKind::Gif => b"GIF8",
-                _ => &[137, 80, 78, 71],
-            };
-            if len > EXPORT_MAX || head.as_slice() != magic {
-                return Err(invalid());
-            }
-            Value::Null
-        }
-        (_, J::Str(_) | J::Bytes { .. }) => return Err(invalid()),
-        _ => return Err("data: invalid type, expected a string or a Uint8Array".into()),
-    };
-    let mut normalized = out(&request)?;
-    if let Value::Object(fields) = &mut normalized {
-        fields.insert("data".into(), data);
-    }
-    Ok(normalized)
 }
 
 #[derive(Deserialize, Serialize)]
@@ -344,23 +274,6 @@ pub(super) fn assert_theme(value: J) -> Checked<Theme> {
         String::new,
     )?;
     Ok(theme)
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(expecting = "an object")]
-pub(super) struct Notification {
-    kind: String,
-    title: String,
-    body: String,
-}
-
-pub(super) fn assert_notification(value: J) -> Checked<Notification> {
-    const MSG: Msg = Some("Invalid notification.");
-    let notification: Notification = decode(value, always!("Invalid notification."))?;
-    one_of(&notification.kind, NOTIFICATION_KINDS, MSG, "")?;
-    max_chars(&notification.title, 120, MSG, "")?;
-    max_chars(&notification.body, 400, MSG, "")?;
-    Ok(notification)
 }
 
 /// The settings the core keeps (`CORE_SETTINGS_KEYS`), in its order.

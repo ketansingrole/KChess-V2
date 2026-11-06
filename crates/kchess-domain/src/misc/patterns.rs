@@ -105,13 +105,6 @@ pub fn since(s: &str) -> bool {
     }
 }
 
-/// `^[\w .()+-]{1,80}$`: a file name to export.
-pub fn file_name(s: &str) -> bool {
-    run(s, 1, 80, |b| {
-        alnum(b) || matches!(b, b'_' | b' ' | b'.' | b'(' | b')' | b'+' | b'-')
-    })
-}
-
 /// `^[a-zA-Z0-9]*$`-style castling and en-passant pieces of the FEN pattern.
 fn castling_letter(b: u8) -> bool {
     matches!(b, b'K' | b'Q' | b'k' | b'q' | b'A'..=b'H' | b'a'..=b'h')

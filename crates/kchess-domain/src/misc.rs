@@ -36,7 +36,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Result<Value, String>> {
     if is_check {
         return Some(
             inputs(user, sidecar)
-                .and_then(|values| contracts::argument_call(method, &values))
+                .and_then(|values| contracts::argument_call(&values))
                 .map(J::into_value),
         );
     }

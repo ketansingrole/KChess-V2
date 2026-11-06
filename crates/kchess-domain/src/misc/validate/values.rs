@@ -337,23 +337,6 @@ pub(super) fn assert_boolean(value: J) -> Checked<bool> {
     decode(value, plain)
 }
 
-/// `setInterfaceZoom`: `auto` or one of the zoom steps (`ZOOM_PERCENTS`).
-pub(super) fn assert_interface_zoom(value: J) -> Checked<Value> {
-    const PERCENTS: [u64; 13] = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300];
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Zoom {
-        Percent(u64),
-        Auto(String),
-    }
-    let invalid = || "Invalid interface zoom.".to_string();
-    match decode::<Zoom>(value, plain).map_err(|_| invalid())? {
-        Zoom::Auto(text) if text == "auto" => Ok(Value::String(text)),
-        Zoom::Percent(percent) if PERCENTS.contains(&percent) => Ok(Value::from(percent)),
-        _ => Err(invalid()),
-    }
-}
-
 /// `CORE_CONTRACTS` `chapterName`: a trimmed name of 1 to 100 characters.
 pub(super) fn assert_chapter_name(value: J) -> Checked<String> {
     let text: String = decode(value, plain)?;
@@ -386,32 +369,3 @@ pub(super) fn assert_study_id(value: J) -> Checked<String> {
     assert_lichess_id(value)
 }
 
-/// `completeQuit`: a request id (8-4-4-4-12 hexadecimal
-/// digits, in either case).
-pub(super) fn assert_uuid(value: J) -> Checked<String> {
-    let text: String = decode(value, plain)?;
-    let groups: Vec<&str> = text.split('-').collect();
-    const LENGTHS: [usize; 5] = [8, 4, 4, 4, 12];
-    let uuid = groups.len() == LENGTHS.len()
-        && groups.iter().zip(LENGTHS).all(|(group, length)| {
-            group.len() == length && group.bytes().all(|b| b.is_ascii_hexdigit())
-        });
-    ensure(uuid, None, "", || "a UUID".into())?;
-    Ok(text)
-}
-
-/// `recordPerformance` name: one of the frontend's timings (`PERFORMANCE_NAMES`).
-pub(super) fn assert_performance_name(value: J) -> Checked<String> {
-    let text: String = decode(value, plain)?;
-    let known = is_performance_name(&text);
-    ensure(known, None, "", || "a performance timing name".into())?;
-    Ok(text)
-}
-
-/// `recordPerformance` value: a finite duration from 0 to 300,000 ms.
-pub(super) fn assert_timing_value(value: J) -> Checked<f64> {
-    let ms: f64 = decode(value, plain)?;
-    finite(ms, None, "")?;
-    within(ms, 0.0, 300_000.0, None, "")?;
-    Ok(ms)
-}
