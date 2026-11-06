@@ -90,6 +90,12 @@ impl EngineContext {
 
 /// `kchess_domain` rules and validators by their TypeScript name, with JSON arguments.
 pub(crate) fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
+    // Most calls skip writing the arguments out and reading the answer back (`call_value`
+    // answers as `call` does). Trees and deep arguments keep going through JSON text, so their
+    // answer is never built and dropped on this thread's smaller stack.
+    if !kchess_domain::api::needs_large_stack(method, &args) {
+        return kchess_domain::api::call_value(method, &args).map_err(CoreError::new);
+    }
     let text = serde_json::to_string(&args).map_err(|cause| CoreError::new(cause.to_string()))?;
     let output = kchess_domain::api::call(method, &text).map_err(CoreError::new)?;
     serde_json::from_str(&output).map_err(|cause| CoreError::new(cause.to_string()))
