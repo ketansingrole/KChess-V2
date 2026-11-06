@@ -153,7 +153,8 @@ Developer ID build's update must pass `anchor apple generic` with the same team 
 identifier, a Windows build's the same certificate; an ad hoc Mac build accepts a valid build of
 itself, ad hoc or Developer ID). It then replaces the `.app`, runs the NSIS installer silently
 (`--updated /S`), replaces the AppImage, or installs the `.deb` with `pkexec dpkg -i`. A download
-whose connection drops resumes from the bytes it has (`Range`). What each update downloads, and
+whose connection drops resumes from the bytes it has (`Range`), and downloads are kept from one
+start to the next: a checked package is used again, and one cut short carries on. What each update downloads, and
 the plan to send only the files that changed, is in
 [the updater measurements](benchmarks/2026-11-06-updater.md).
 

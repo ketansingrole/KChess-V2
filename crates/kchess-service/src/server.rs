@@ -499,9 +499,9 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
             Frame::Call { id, method, args } => {
                 let (core, sender, running) =
                     (Arc::clone(&state.core), sender.clone(), Arc::clone(&calls));
-                // The call is registered before it can finish (the lock is held over the spawn),
-                // so a quick call never leaves its handle behind, and only one of the call and a
-                // `Cancel` answers: whichever takes the handle out.
+                // Held until the call is registered: another worker may finish a quick call
+                // before `spawn` returns, and its `remove` must find the entry, or the entry
+                // (and the finished task it keeps allocated) would stay until the window closes.
                 let Ok(mut registered) = calls.lock() else {
                     break;
                 };

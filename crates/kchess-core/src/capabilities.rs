@@ -122,15 +122,19 @@ impl Capabilities {
             .lock()
             .map_err(|_| CoreError::new("The host is unavailable."))?
             .insert(id, (target, send));
+        // Forgotten however the wait ends: a caller that was cancelled while its window had
+        // gone would otherwise leave the entry until the core closed.
+        let _forget = crate::tasks::on_drop(|| {
+            if let Ok(mut pending) = self.pending.lock() {
+                pending.remove(&id);
+            }
+        });
         let request = json!({ "id": id, "kind": kind, "payload": payload });
         match target {
             Some(target) => self.host.emit_to(target, "host:request", request),
             None => self.host.emit("host:request", request),
         }
         let answer = tokio::time::timeout(deadline, receive).await;
-        if let Ok(mut pending) = self.pending.lock() {
-            pending.remove(&id);
-        }
         match answer {
             Ok(Ok(Ok(value))) => Ok(value),
             Ok(Ok(Err(message))) => Err(CoreError::new(message)),

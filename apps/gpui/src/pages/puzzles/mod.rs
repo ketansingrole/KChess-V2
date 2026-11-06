@@ -579,6 +579,9 @@ impl PuzzlesPage {
             .puzzle_auto_next;
         if solved && auto_next {
             let key = self.session.puzzle_key();
+            // An earlier puzzle's countdown has nothing left to do (it was replaced): dropped,
+            // not kept with every puzzle solved since the page opened.
+            self.timers.clear();
             self.timers.push(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(AUTO_NEXT_DELAY).await;
                 let _ = this.update(cx, |this, cx| {

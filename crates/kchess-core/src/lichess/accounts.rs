@@ -1257,8 +1257,9 @@ impl Lichess {
         let generation = self.next_sync.fetch_add(1, Ordering::SeqCst) + 1;
         let (send, receive) = watch::channel(None);
         lock(&self.syncs).insert(key.clone(), (generation, receive));
-        let result = self.run_sync(row, play_time).await;
-        {
+        // Forgotten however the run ends: a cancelled call left its entry behind, and every
+        // later sync of this player joined it and failed at once ("Sync was cancelled.").
+        let forget = crate::tasks::on_drop(|| {
             let mut syncs = lock(&self.syncs);
             if syncs
                 .get(&key)
@@ -1266,7 +1267,9 @@ impl Lichess {
             {
                 syncs.remove(&key);
             }
-        }
+        });
+        let result = self.run_sync(row, play_time).await;
+        drop(forget);
         let shared = result.clone();
         let _ = send.send(Some(shared));
         if let Ok(fetched) = &result {
