@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use super::{Built, Identity, copy_program, copy_voice};
-use crate::util::{Result, root, run, say};
+use crate::util::{Result, root, run, run_redacted, say};
 
 const MICROPHONE: &str =
     "KChess uses your microphone to recognize spoken chess moves and square names on this device.";
@@ -156,7 +156,7 @@ fn notarize(apps: &[&Path], stage: &Path) -> Result {
     }
     let upload = text(&stage.join("notarize.zip"));
     run("ditto", &["-c", "-k", &text(&folder), &upload])?;
-    run(
+    run_redacted(
         "xcrun",
         &[
             "notarytool",
@@ -170,6 +170,7 @@ fn notarize(apps: &[&Path], stage: &Path) -> Result {
             &team,
             "--wait",
         ],
+        &[&password],
     )?;
     let _ = std::fs::remove_file(&upload);
     let _ = std::fs::remove_dir_all(&folder);

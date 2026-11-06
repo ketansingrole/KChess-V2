@@ -1772,7 +1772,9 @@ impl Render for ComputerPage {
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 // The arrows step through the moves when no text field has the keys.
-                if !this.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+                if !crate::board::page_has_keys(&this.focus, window, cx)
+                    || event.keystroke.modifiers.modified()
+                {
                     return;
                 }
                 if crate::shell::zen_key(&event.keystroke.key, cx) {

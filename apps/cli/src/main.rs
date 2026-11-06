@@ -296,7 +296,20 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 if kchess_domain::misc::ASSISTANCE_METHODS.contains(&method) {
                     core.call("resumeOnline", vec![]).await?;
                 }
-                print(&core.call(method, parameters).await?);
+                // A method may ask the host meanwhile (a sign-in opens its page), as login does.
+                let call = core.call(method, parameters);
+                tokio::pin!(call);
+                let answer = loop {
+                    tokio::select! {
+                        answer = &mut call => break answer?,
+                        Some(event) = events.recv() => {
+                            if event.name == "host:request" {
+                                core.answer(&event.payload).await;
+                            }
+                        }
+                    }
+                };
+                print(&answer);
             }
             "analyze" => {
                 let request = analysis_request(&args[1..])?;
@@ -697,10 +710,29 @@ fn for_the_cli(cause: &str) -> String {
     .fold(cause.to_string(), |text, (app, cli)| text.replace(app, cli))
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+/// The stack of every thread the CLI runs the core on: what macOS and Linux give a main thread.
+/// Windows gives its main thread 1 MB, which an embedded sign-in overflows in a debug build.
+const STACK: usize = 8 * 1024 * 1024;
+
+fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    match run(&argv).await {
+    let cli = std::thread::Builder::new()
+        .name("kchess-cli".into())
+        .stack_size(STACK)
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(STACK)
+                .build()
+                .map_err(|cause| format!("Could not start: {cause}"))?;
+            runtime.block_on(run(&argv))
+        });
+    let result = match cli.map(std::thread::JoinHandle::join) {
+        Ok(Ok(result)) => result,
+        Ok(Err(panic)) => std::panic::resume_unwind(panic),
+        Err(cause) => Err(format!("Could not start: {cause}")),
+    };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(cause) => {
             eprintln!("[cli] Command failed: {}", for_the_cli(&cause));

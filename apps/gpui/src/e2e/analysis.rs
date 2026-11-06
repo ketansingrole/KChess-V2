@@ -140,6 +140,53 @@ fn the_arrow_keys_step_through_the_moves(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.enabled("analysis-back"));
 }
 
+/// A promotion from the keyboard: the cursor walks from e2 to the pawn on a7, Enter picks it up,
+/// Up and Enter play it to a8, and the picker takes the arrows and Enter (Left from the queen
+/// goes round to the knight). The keys the board does not take still reach the page.
+#[gpui_kit::test]
+fn a_pawn_is_promoted_from_the_keyboard(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "4k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+    app.tab_to_board();
+    for key in ["up", "up", "up", "up", "up", "left", "left", "left", "left"] {
+        app.press(key);
+    }
+    assert_eq!(app.square_name("a7"), "a7, white pawn");
+    let a7 = ("square", usize::from(shakmaty::Square::A7));
+    app.press("enter");
+    assert_eq!(app.find(a7).selected(), Some(true));
+    // A square the pawn cannot reach lets go of it, as a click there does.
+    app.press("right");
+    assert_eq!(app.square_name("b7"), "b7, empty");
+    app.press("enter");
+    assert_eq!(app.find(a7).selected(), Some(false));
+    app.press("left");
+    app.press("enter");
+    app.press("up");
+    assert_eq!(app.square_name("a8"), "a8, empty, legal move");
+    app.press("enter");
+    app.find("promotion-choices");
+    assert_eq!(app.find("Queen").selected(), Some(true));
+    app.press("left");
+    assert_eq!(app.find("Knight").selected(), Some(true));
+    app.press("enter");
+    assert_eq!(selected(&mut app, "a7a8n"), Some(true));
+    assert_eq!(app.square_name("a8"), "a8, white knight");
+    // F turns the board and Home goes back to the start: the board hands them to the page.
+    let board = app.find("chess-board").bounds();
+    let a8 = app
+        .find(("square", usize::from(shakmaty::Square::A8)))
+        .bounds();
+    assert!(a8.top() < board.center().y);
+    app.press("f");
+    let a8 = app
+        .find(("square", usize::from(shakmaty::Square::A8)))
+        .bounds();
+    assert!(a8.top() > board.center().y, "the board is turned");
+    app.press("home");
+    assert!(!app.enabled("analysis-back"));
+}
+
 #[gpui_kit::test]
 fn shift_and_the_arrows_go_into_and_out_of_a_variation(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
@@ -794,6 +841,34 @@ fn a_lichess_game_link_imports_the_game(cx: &mut gpui_kit::TestAppContext) {
     app.wait_gone("import-run");
     app.find("tree-e2e4 e7e5 g1f3 b8c6 f1b5 a7a6");
     assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
+}
+
+/// A slow link's game arriving after the import was cancelled does not replace the board.
+#[gpui_kit::test]
+fn a_cancelled_link_import_leaves_the_board_alone(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::{HELD_GAME, HELD_GAME_ASKED, HELD_GAME_RELEASED};
+    use std::sync::atomic::Ordering;
+    let mut app = analysis(cx);
+    app.online();
+    import(&mut app, "1. d4 d5 *");
+    app.find("tree-d2d4 d7d5");
+    app.click("analysis-import");
+    fill_in_dialog(
+        &mut app,
+        "FEN, PGN or Lichess link",
+        &format!("https://lichess.org/{HELD_GAME}"),
+    );
+    app.click("import-run");
+    app.wait_for("the export to be asked for", |_, _| {
+        HELD_GAME_ASKED.load(Ordering::SeqCst)
+    });
+    app.click("import-cancel");
+    settle(&mut app);
+    HELD_GAME_RELEASED.store(true, Ordering::SeqCst);
+    settle(&mut app);
+    settle(&mut app);
+    app.find("tree-d2d4 d7d5");
+    assert!(!app.shows("tree-e2e4"), "the late game replaced the board");
 }
 
 /// The FEN of the position the analysis board shows.

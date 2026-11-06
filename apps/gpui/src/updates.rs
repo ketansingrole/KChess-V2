@@ -1054,9 +1054,12 @@ fn tidy(install: Option<&Install>, root: Option<&Path>) {
             package: Package::Deb,
             path,
         }) => {
-            // A helper that stopped before installing it.
+            // What a helper stopped before it finished left: its package, a half-written outcome.
             if let Some(root) = root {
-                let _ = std::fs::remove_file(InstallLock::path(root, path).with_extension("deb"));
+                let held = InstallLock::path(root, path);
+                for left in ["deb", "outcome.log", "outcome.new"] {
+                    let _ = std::fs::remove_file(held.with_extension(left));
+                }
             }
         }
         _ => {}
@@ -1072,11 +1075,34 @@ fn apply_on_quit(staged: &Path, install: &Install, reopen: bool) -> Result<(), S
     let lock = InstallLock::take(&root, &install.path)?;
     if install.package != Package::Deb {
         apply(staged, install, &lock, reopen)?;
-        std::mem::forget(lock);
-        return Ok(());
+    } else {
+        deb_helper(
+            &root,
+            staged,
+            install,
+            &lock,
+            std::process::id(),
+            "pkexec".as_ref(),
+        )?;
     }
-    let held = InstallLock::path(&root, &install.path);
-    let (package, failed) = (held.with_extension("deb"), held.with_extension("failed"));
+    // Held until this process exits; the installer or helper holds it from the start.
+    std::mem::forget(lock);
+    Ok(())
+}
+
+/// Hand the staged .deb and the installation's `lock` to a helper that installs it with
+/// `elevate dpkg -i` once process `after` (this app) has exited, and records how that went for
+/// the next start (`last_install_error`).
+fn deb_helper(
+    root: &Path,
+    staged: &Path,
+    install: &Install,
+    lock: &InstallLock,
+    after: u32,
+    elevate: &std::ffi::OsStr,
+) -> Result<std::process::Child, String> {
+    let held = InstallLock::path(root, &install.path);
+    let package = held.with_extension("deb");
     // Out of this app's download folder, which the next start may clear: the helper's now.
     std::fs::rename(staged, &package)
         .map_err(|cause| format!("The update could not be installed ({cause})"))?;
@@ -1085,36 +1111,71 @@ fn apply_on_quit(staged: &Path, install: &Install, reopen: bool) -> Result<(), S
         .arg(DEB_HELPER)
         .arg("kchess-update")
         .arg(&package)
-        .arg(std::process::id().to_string())
-        .arg(&failed)
+        .arg(after.to_string())
+        .arg(held.with_extension(OUTCOME))
+        .arg(elevate)
         .stdin(lock.inherited()?)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
-    if let Err(cause) = helper {
+    helper.map_err(|cause| {
         let _ = std::fs::remove_file(&package);
-        return Err(format!("The update could not be installed ({cause})."));
-    }
-    // Held until this process exits; the helper holds it from the start.
-    std::mem::forget(lock);
-    Ok(())
+        format!("The update could not be installed ({cause}).")
+    })
 }
 
-/// Installs the .deb (`$1`) once KChess (`$2`) has exited, and notes a failure (`$3`) for the next
-/// start. Its standard input is the installation's lock (`InstallLock::inherited`), kept until
-/// the package manager is done and the package removed.
+/// The extension of the file a .deb helper records its outcome in, beside the installation's lock.
+const OUTCOME: &str = "outcome";
+
+/// Installs the .deb (`$1`) with `$4 dpkg -i` once KChess (`$2`) has exited, and records the exit
+/// status and what the package manager said (`$3`) for the next start. Its standard input is the
+/// installation's lock (`InstallLock::inherited`), kept on descriptor 9 until the package
+/// manager is done, the outcome recorded and the package removed.
 const DEB_HELPER: &str = r#"exec 9<&0 0</dev/null
 while kill -0 "$2" 2>/dev/null; do sleep 0.2; done
-if pkexec dpkg -i "$1" 9<&-; then rm -f "$3"; else echo failed > "$3"; fi
-rm -f "$1""#;
+"$4" dpkg -i "$1" 9<&- >/dev/null 2>"$3.log"
+echo $? > "$3.new"
+tail -c 2000 "$3.log" >> "$3.new"
+mv -f "$3.new" "$3"
+rm -f "$1" "$3.log""#;
 
-/// What the helper installing a .deb left for this start: whether it failed.
-fn last_install_failed(install: Option<&Install>, root: Option<&Path>) -> bool {
+/// `pkexec`'s status when the person dismissed its password prompt.
+const DISMISSED: &str = "126";
+
+/// What the helper installing a .deb on quit left for this start: the error to show when the
+/// package manager failed. An update installed, or a password prompt dismissed, shows nothing.
+/// A helper still running records its outcome for a later start.
+fn last_install_error(install: Option<&Install>, root: Option<&Path>) -> Option<String> {
     let (Some(install), Some(root)) = (install, root) else {
-        return false;
+        return None;
     };
-    let failed = InstallLock::path(root, &install.path).with_extension("failed");
-    std::fs::remove_file(failed).is_ok()
+    let held = InstallLock::path(root, &install.path);
+    // What the helpers of earlier versions left: a failure, without its cause.
+    if std::fs::remove_file(held.with_extension("failed")).is_ok() {
+        log("the last update was not installed");
+        return Some("The last update was not installed".into());
+    }
+    let outcome = held.with_extension(OUTCOME);
+    let recorded = std::fs::read_to_string(&outcome).ok()?;
+    let _ = std::fs::remove_file(&outcome);
+    let (status, said) = recorded.split_once('\n').unwrap_or((&recorded, ""));
+    match status.trim() {
+        "0" => {
+            log("the update was installed");
+            None
+        }
+        DISMISSED => {
+            log("the update was not installed: permission was not given");
+            None
+        }
+        status => {
+            log(&format!(
+                "the update was not installed (status {status}): {}",
+                said.trim()
+            ));
+            Some("The last update was not installed".into())
+        }
+    }
 }
 
 pub fn init(cx: &mut App) {
@@ -1124,7 +1185,7 @@ pub fn init(cx: &mut App) {
         .flatten();
     let root = install.as_ref().and_then(|_| downloads_root().ok());
     tidy(install.as_ref(), root.as_deref());
-    let failed = last_install_failed(install.as_ref(), root.as_deref());
+    let failed = last_install_error(install.as_ref(), root.as_deref());
     let feed = std::env::var("KCHESS_UPDATE_FEED")
         .ok()
         .filter(|feed| !feed.is_empty())
@@ -1143,7 +1204,7 @@ pub fn init(cx: &mut App) {
         })
         .detach();
         let mut updates = Updates {
-            phase: if failed {
+            phase: if failed.is_some() {
                 Phase::Error
             } else if feed.is_some() {
                 Phase::Idle
@@ -1157,7 +1218,7 @@ pub fn init(cx: &mut App) {
             released: None,
             checked_at: None,
             progress: None,
-            error: failed.then(|| "The last update was not installed".to_string()),
+            error: failed,
             release: None,
             staged: None,
             restart: false,
@@ -1450,7 +1511,7 @@ mod tests {
     use super::{
         BRIDGE_FOLDER, INSTALLING, Install, InstallLock, Package, Release, Signer, Workspace,
         aside, asset_name, detect, digest_for, download, downloads_in, incoming,
-        last_install_failed, latest, offer, parse_version, rename_bridge_folder, replace_by,
+        last_install_error, latest, offer, parse_version, rename_bridge_folder, replace_by,
         signed_alike, swap_file, tidy,
     };
     use sha2::{Digest, Sha256};
@@ -1707,9 +1768,119 @@ mod tests {
         drop(helper);
         tidy(Some(&install), Some(&root));
         assert!(!package.exists());
+        // An earlier version's helper notes only that it failed.
         std::fs::write(held.with_extension("failed"), "failed").unwrap();
-        assert!(last_install_failed(Some(&install), Some(&root)));
-        assert!(!last_install_failed(Some(&install), Some(&root)));
+        assert!(last_install_error(Some(&install), Some(&root)).is_some());
+        assert_eq!(last_install_error(Some(&install), Some(&root)), None);
+        // Installed, or the password prompt dismissed: nothing to show. A failure is, once.
+        let outcome = held.with_extension("outcome");
+        for quiet in ["0\n", "126\n"] {
+            std::fs::write(&outcome, quiet).unwrap();
+            assert_eq!(last_install_error(Some(&install), Some(&root)), None);
+            assert!(!outcome.exists());
+        }
+        std::fs::write(&outcome, "1\ndpkg: error processing archive\n").unwrap();
+        assert!(last_install_error(Some(&install), Some(&root)).is_some());
+        assert_eq!(last_install_error(Some(&install), Some(&root)), None);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// Review 2026-10-27 #7: install-on-quit's helper waited for the password while the app's
+    /// download folder, and the .deb in it, were the exited app's, so a KChess started meanwhile
+    /// deleted the package before dpkg opened it, and the failure went unseen. The helper now
+    /// owns the package and the installation's lock until the package manager is done, and the
+    /// next start reads what happened.
+    #[cfg(unix)]
+    #[test]
+    fn a_start_while_the_deb_helper_waits_for_a_password_leaves_its_package() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _processes = processes();
+        let folder = scratch("deb-relaunch");
+        let root = downloads_in(&folder.join("cache")).unwrap();
+        let install = Install {
+            package: Package::Deb,
+            path: folder.join("kchess"),
+        };
+        let app = Workspace::open(&root).unwrap();
+        let staged = app.path.join("KChess.deb");
+        std::fs::write(&staged, "deb").unwrap();
+        // Stands in for `pkexec dpkg -i PACKAGE`: waits (for a password) until answered, reads
+        // the package as dpkg would, then fails as dpkg does.
+        let (asked, answer, read) = (
+            folder.join("asked"),
+            folder.join("answer"),
+            folder.join("read"),
+        );
+        let elevate = folder.join("pkexec");
+        std::fs::write(
+            &elevate,
+            format!(
+                "#!/bin/sh\n: > '{asked}'\nwhile [ ! -e '{answer}' ]; do sleep 0.02; done\n\
+                 cat \"$3\" > '{read}' || exit 9\necho 'dpkg: error processing archive' >&2\n\
+                 exit 1\n",
+                asked = asked.display(),
+                answer = answer.display(),
+                read = read.display(),
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&elevate, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // The app quitting: it hands the package and the lock over, then exits.
+        let quit = folder.join("quit");
+        let mut running = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(r#"while [ ! -e "$1" ]; do sleep 0.02; done"#)
+            .arg("app")
+            .arg(&quit)
+            .spawn()
+            .unwrap();
+        let lock = InstallLock::take(&root, &install.path).unwrap();
+        let mut helper = super::deb_helper(
+            &root,
+            &staged,
+            &install,
+            &lock,
+            running.id(),
+            elevate.as_os_str(),
+        )
+        .unwrap();
+        let package = InstallLock::path(&root, &install.path).with_extension("deb");
+        assert!(!staged.exists() && package.exists(), "the helper's package");
+        drop(lock);
+        drop(app);
+        std::fs::write(&quit, "").unwrap();
+        running.wait().unwrap();
+        let started = std::time::Instant::now();
+        while !asked.exists() {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(10),
+                "the helper never asked for permission"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // A KChess starts while the password is asked for: it tidies and clears stopped apps'
+        // folders, but the helper's package and lock stay, and there is nothing to report yet.
+        tidy(Some(&install), Some(&root));
+        let relaunched = Workspace::open(&root).unwrap();
+        assert_eq!(last_install_error(Some(&install), Some(&root)), None);
+        assert!(
+            package.exists(),
+            "the package waits for the package manager"
+        );
+        assert!(InstallLock::take(&root, &install.path).is_err());
+        std::fs::write(&answer, "").unwrap();
+        assert!(helper.wait().unwrap().success());
+        assert_eq!(std::fs::read_to_string(&read).unwrap(), "deb");
+        assert!(!package.exists(), "the helper removes its package");
+        // The next start says the update was not installed, once.
+        drop(relaunched);
+        tidy(Some(&install), Some(&root));
+        let _next = Workspace::open(&root).unwrap();
+        assert_eq!(
+            last_install_error(Some(&install), Some(&root)).as_deref(),
+            Some("The last update was not installed")
+        );
+        assert_eq!(last_install_error(Some(&install), Some(&root)), None);
         let _ = std::fs::remove_dir_all(&folder);
     }
 

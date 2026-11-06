@@ -906,7 +906,9 @@ impl LocalPage {
     /// Keys when the page itself has focus (not a text field): in the clock, Space presses the
     /// running clock and P pauses; on the board, the arrows step through the moves and F flips it.
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+        if !crate::board::page_has_keys(&self.focus, window, cx)
+            || event.keystroke.modifiers.modified()
+        {
             return;
         }
         let key = event.keystroke.key.as_str();

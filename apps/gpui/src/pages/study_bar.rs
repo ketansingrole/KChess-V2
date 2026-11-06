@@ -277,20 +277,38 @@ impl StudyBar {
         .detach();
     }
 
-    fn select_chapter(&mut self, chapter: String, cx: &mut Context<Self>) {
+    /// Show another chapter once the board's edits are saved: a save another window's change
+    /// refused keeps them on the board as an unsaved copy instead of losing them.
+    pub(crate) fn select_chapter(&mut self, chapter: String, cx: &mut Context<Self>) {
         let Some(analysis) = self.analysis.upgrade() else {
             return;
         };
         let study = analysis.read(cx).study_id().to_string();
-        if analysis.read(cx).chapter_id() == chapter {
+        let from = analysis.read(cx).chapter_id().to_string();
+        if from == chapter {
             return;
         }
-        self.chapter_error = analysis
-            .update(cx, |analysis, cx| {
-                analysis.open_study(&study, Some(&chapter), cx)
-            })
-            .err();
-        cx.notify();
+        let flushed = analysis.update(cx, |analysis, cx| analysis.flush_study(cx));
+        cx.spawn(async move |this, cx| {
+            let saved = flushed.await;
+            let _ = this.update(cx, |this, cx| {
+                // The board moved on meanwhile, or its save was refused: it stays as it is.
+                let still = {
+                    let board = analysis.read(cx);
+                    board.study_id() == study && board.chapter_id() == from
+                };
+                if saved.is_err() || !still {
+                    return;
+                }
+                this.chapter_error = analysis
+                    .update(cx, |analysis, cx| {
+                        analysis.open_study(&study, Some(&chapter), cx)
+                    })
+                    .err();
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Run a chapter command once the board's edits are saved, then show the chapter it names.

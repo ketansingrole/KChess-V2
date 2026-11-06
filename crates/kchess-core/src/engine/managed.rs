@@ -271,9 +271,8 @@ pub async fn install_managed_engine(
     host: &dyn Host,
     location: &ManagedLocation,
 ) -> Result<InstallResult> {
-    let lock = dir_lock(&location.dir);
-    let _held = lock.lock().await;
-    let result = install(host, location).await;
+    let held = dir_lock(&location.dir).lock_owned().await;
+    let result = install(host, location, held).await;
     log_mutation_failure(host, &location.dir, &result);
     result
 }
@@ -310,7 +309,11 @@ where
     result
 }
 
-async fn install(host: &dyn Host, location: &ManagedLocation) -> Result<InstallResult> {
+async fn install(
+    host: &dyn Host,
+    location: &ManagedLocation,
+    held: tokio::sync::OwnedMutexGuard<()>,
+) -> Result<InstallResult> {
     if crate::app_store() {
         return Err(CoreError::new(
             "The App Store version uses the Stockfish it comes with.",
@@ -408,19 +411,41 @@ async fn install(host: &dyn Host, location: &ManagedLocation) -> Result<InstallR
         return Err(error);
     }
 
-    let commit = {
+    // The engine owners stay suspended, and the folder locked, until both renames are done: the
+    // blocking task owns the guards, and finishes even when this call is dropped between them
+    // (its connection closed), so the executable and its VERSION are replaced together.
+    let suspended = match &location.handoff {
+        Some(handoff) => {
+            let suspended = tokio::time::timeout(location.exit_deadline, handoff.suspend())
+                .await
+                .map_err(|_| CoreError::new(EXIT_TIMEOUT_MESSAGE))
+                .and_then(|suspended| suspended);
+            match suspended {
+                Ok(suspended) => Some(suspended),
+                Err(error) => {
+                    discard(&[pending, pending_version]).await;
+                    return Err(error);
+                }
+            }
+        }
+        None => None,
+    };
+    let renamed = {
         let (pending, path) = (pending.clone(), path.clone());
         let (pending_version, version_path) = (pending_version.clone(), dir.join(VERSION_FILE));
-        move || async move {
-            tokio::fs::rename(&pending, &path)
-                .await
+        tokio::task::spawn_blocking(move || {
+            let _guards = (held, suspended);
+            std::fs::rename(&pending, &path)
                 .map_err(|cause| io_error("Could not replace the Stockfish executable", cause))?;
-            tokio::fs::rename(&pending_version, &version_path)
-                .await
+            std::fs::rename(&pending_version, &version_path)
                 .map_err(|cause| io_error("Could not record the Stockfish version", cause))
-        }
+        })
     };
-    if let Err(error) = with_handoff(location, commit).await {
+    let committed = renamed
+        .await
+        .map_err(|_| CoreError::new("Could not replace the Stockfish executable."))
+        .and_then(|renamed| renamed);
+    if let Err(error) = committed {
         discard(&[pending, pending_version]).await;
         return Err(error);
     }

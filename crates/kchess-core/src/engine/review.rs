@@ -1003,6 +1003,11 @@ async fn publish(s: &Shared, job: &Job, review: StoredReview) -> Result<()> {
         Err(_) if !current() => return Ok(()),
         Err(cause) => return Err(cause),
     };
+    // A live game began meanwhile: keep what was done, but tell no window until it is over
+    // (the pages read it again then).
+    if host.busy() == Some(Pause::Online) {
+        return Ok(());
+    }
     host.update(update);
     Ok(())
 }
