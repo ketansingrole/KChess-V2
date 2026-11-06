@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use super::client::{Failure, LichessClient, Ndjson, TokenSource, authorize};
 use super::reviews::review_from_lichess;
 use crate::capabilities::Capabilities;
-use crate::error::{CoreError, Result as CoreResult};
+use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::{Host, Level};
 use crate::store::games::EXPORTED_GAME_CACHE;
 
@@ -301,6 +301,12 @@ pub fn now_ms() -> i64 {
 
 /// Percent-encodes one path segment (a username), as openapi-fetch does for `{username}`.
 pub fn path_segment(text: &str) -> String {
+    // `.` and `..` (also when percent-encoded, `%2e`) are dot segments that URL parsing resolves,
+    // so an id from a response could otherwise send an authorized request to another path. As
+    // the literal text `%2E` they name nothing.
+    if text == "." || text == ".." {
+        return "%252E".repeat(text.len());
+    }
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
@@ -631,7 +637,10 @@ impl Lichess {
             .await
         {
             Ok(value) => Ok(Reply::Done(value)),
-            Err(failure) if matches!(failure.status(), Some(401) | Some(403)) => {
+            // Only a refused login asks to reconnect: a 403 for a reason Lichess gave ("not
+            // your study", a closed tournament) said "reconnect your account", and reconnecting
+            // changed nothing.
+            Err(Failure::Lichess(error)) if error.kind() == ErrorKind::Login => {
                 Ok(Reply::NeedsReconnect)
             }
             Err(failure) => Err(failure.into()),
@@ -1836,6 +1845,14 @@ mod tests {
     fn path_segments_are_encoded() {
         assert_eq!(path_segment("Magnus_C-1"), "Magnus_C-1");
         assert_eq!(path_segment("a/b c"), "a%2Fb%20c");
+        for dots in [".", ".."] {
+            let url = reqwest::Url::parse(&format!(
+                "https://lichess.org/api/broadcast/{}/x",
+                path_segment(dots)
+            ))
+            .unwrap();
+            assert!(url.path().starts_with("/api/broadcast/%252E"), "{url}");
+        }
     }
 
     #[test]

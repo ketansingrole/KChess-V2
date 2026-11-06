@@ -607,7 +607,12 @@ impl AnalysisPage {
                             .when(engine_on && self.engine_busy, |row| {
                                 row.child(crate::widgets::spinner(px(12.)))
                             })
-                            .child(div().truncate().child(status)),
+                            .child(
+                                div()
+                                    .truncate()
+                                    .font_features(crate::widgets::tabular())
+                                    .child(status),
+                            ),
                     ),
             )
             .child(settings_button);

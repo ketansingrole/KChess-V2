@@ -337,6 +337,20 @@ pub struct Clock {
     pub increment: f64,
 }
 
+impl Clock {
+    /// A clock a game may start with: what a saved session keeps (`clock_side`, 0 to 180
+    /// minutes and seconds). `1e306` minutes made the times infinite, which are stored as
+    /// `null` and failed every later move, so the game could only be reset.
+    pub fn checked(self) -> Result<Clock, String> {
+        let fits = |value: f64| (0.0..=180.0).contains(&value);
+        if fits(self.minutes) && fits(self.increment) {
+            Ok(self)
+        } else {
+            Err("A clock is 0 to 180 minutes with an increment of 0 to 180 seconds.".into())
+        }
+    }
+}
+
 /// Each side's remaining time in milliseconds.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Times {

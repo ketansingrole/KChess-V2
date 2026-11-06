@@ -122,17 +122,21 @@ impl Store {
         if !available {
             return;
         }
-        for entry in result["legacyTokens"]
+        let tokens = result["legacyTokens"]
             .as_array()
             .cloned()
-            .unwrap_or_default()
-        {
+            .unwrap_or_default();
+        for entry in &tokens {
             let account = entry["account"].clone();
             let token = entry["token"].as_str().unwrap_or_default();
             let _ = self.db.call(
                 "store.games.importTokenCiphertext",
                 &[account, json!(encrypt(token))],
             );
+        }
+        // As the facade's `migrate`: the earlier database's plaintext copies go once sealed.
+        if !tokens.is_empty() {
+            let _ = self.db.call("store.games.scrubLegacyTokens", &[]);
         }
     }
 

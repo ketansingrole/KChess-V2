@@ -6,11 +6,12 @@ Features worth building next, roughly in order.
   History, background reviews, insights and mistake drills, as Lichess games are.
 - [x] **Chess.com on Home**: Home's activity card for a Chess.com player (their ratings from the
   synced games, and Sync), when no Lichess account is connected.
-- [ ] **Guess the Move**: play through a master game (from the Masters explorer or a broadcast),
-  guessing each move; score every guess against the move played and the engine's evaluation.
-- [ ] **Spaced repetition** for the repertoire and the opening trainer: schedule each line for
-  review over time, not only favour the lines missed.
-- [ ] **Drop a PGN file anywhere** in the window to open it: one game on the analysis board,
-  several as a study import.
+- [x] **Guess the Move**: play through a master game (from the Masters explorer, or any PGN),
+  guessing one side's moves; each guess scores against the move played, or against the engine
+  when it is nearly as good.
+- [x] **Spaced repetition** for the repertoire and the opening trainer: each line is scheduled
+  for review over time (SM-2), not only by the lines missed.
+- [x] **Drop a PGN file anywhere** in the window to open it: one game or a FEN on the analysis
+  board, several as a study import.
 - [x] **Time use in Insights**: from the clocks synced games carry, results short of time, the
   clock against the opponent's, blunders short of time and time per move by phase.

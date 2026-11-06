@@ -20,7 +20,17 @@ use crate::secrets::{self, Credentials};
 
 const DEADLINE: Duration = Duration::from_secs(30);
 
-type Pending = Mutex<HashMap<u64, oneshot::Sender<std::result::Result<Value, String>>>>;
+/// Each unanswered request: the connection it was routed to (`None` when every client heard it),
+/// and where its answer goes.
+type Pending = Mutex<
+    HashMap<
+        u64,
+        (
+            Option<u64>,
+            oneshot::Sender<std::result::Result<Value, String>>,
+        ),
+    >,
+>;
 
 pub struct Capabilities {
     host: Arc<dyn Host>,
@@ -111,7 +121,7 @@ impl Capabilities {
         self.pending
             .lock()
             .map_err(|_| CoreError::new("The host is unavailable."))?
-            .insert(id, send);
+            .insert(id, (target, send));
         // Forgotten however the wait ends: a caller that was cancelled while its window had
         // gone would otherwise leave the entry until the core closed.
         let _forget = crate::tasks::on_drop(|| {
@@ -133,9 +143,22 @@ impl Capabilities {
         }
     }
 
-    /// `host.reply(id, answer)`: `{ value }` or `{ error }`. Unknown ids are ignored.
+    /// `host.reply(id, answer)`: `{ value }` or `{ error }`. Unknown ids are ignored, and so is
+    /// an answer from any client but the one the request was sent to: another client of the
+    /// shared core could otherwise answer a window's `secrets.decrypt` with a token of its own.
     pub fn reply(&self, id: u64, answer: &Value) {
-        let Some(send) = self.pending.lock().ok().and_then(|mut p| p.remove(&id)) else {
+        let Some(send) = self.pending.lock().ok().and_then(|mut pending| {
+            let replier = crate::connection::current();
+            match pending.get(&id) {
+                // In-process callers run outside any connection's scope; every socket client's
+                // call is scoped (`Core::call_client`).
+                Some((Some(target), _)) if replier.is_some_and(|replier| replier != *target) => {
+                    None
+                }
+                Some(_) => pending.remove(&id).map(|(_, send)| send),
+                None => None,
+            }
+        }) else {
             return;
         };
         let result = match answer.get("error").and_then(Value::as_str) {
@@ -246,6 +269,24 @@ fn text(value: Value) -> Result<String> {
         .ok_or_else(|| CoreError::new("The host answered with something other than text."))
 }
 
+/// Whether a frontend may open `url` for `openExternal`: any `https://` page, or a plain-http
+/// page on this machine's loopback address (`127.0.0.1`, as the test servers listen). The URL is
+/// parsed, so `http://127.0.0.1.example.com/` or `http://127.0.0.1@example.com/` is not local,
+/// and nothing with a login in it opens.
+pub fn opens_in_browser(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return false;
+    }
+    match parsed.scheme() {
+        "https" => parsed.host_str().is_some(),
+        "http" => parsed.host_str() == Some("127.0.0.1"),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,5 +323,39 @@ mod tests {
         assert!(caps.on_battery().await.unwrap());
         assert_eq!(caps.focus().await.unwrap_err().message, "Not supported.");
         assert!(caps.pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn only_web_pages_and_this_machine_open() {
+        assert!(opens_in_browser("https://lichess.org/oauth?state=x"));
+        assert!(opens_in_browser("http://127.0.0.1:8123/callback"));
+        for refused in [
+            "http://127.0.0.1.evil.example/",
+            "http://127.0.0.1@evil.example/",
+            "https://user:pass@lichess.org/",
+            "http://lichess.org/",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "-https://lichess.org",
+            "",
+        ] {
+            assert!(!opens_in_browser(refused), "{refused}");
+        }
+    }
+
+    /// A request routed to one client is answered by that client alone.
+    #[tokio::test]
+    async fn only_the_asked_client_answers() {
+        let (send, receive) = oneshot::channel();
+        let echo = Arc::new(Echo(Mutex::new(None)));
+        let caps = Capabilities::new(echo);
+        caps.pending.lock().unwrap().insert(7, (Some(2), send));
+        crate::connection::scope(3, async { caps.reply(7, &json!({ "value": "forged" })) }).await;
+        assert!(
+            caps.pending.lock().unwrap().contains_key(&7),
+            "another client's answer"
+        );
+        crate::connection::scope(2, async { caps.reply(7, &json!({ "value": "real" })) }).await;
+        assert_eq!(receive.await.unwrap(), Ok(json!("real")));
     }
 }

@@ -116,9 +116,9 @@ fn started_at(game: &Game) -> Option<i64> {
     let date = game.header("UTCDate")?;
     let mut day = date.split('.').map(|part| part.parse::<i64>().ok());
     let (year, month, day) = (day.next()??, day.next()??, day.next()??);
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
+    // Bounded years (±9999): an archive's `[UTCDate "300000000.01.01"]` overflowed the
+    // arithmetic below, a panic in release builds that failed the month's sync every time.
+    let days = crate::calendar::days_from_civil(year, month, day)?;
     let mut time = game
         .header("UTCTime")
         .unwrap_or("00:00:00")
@@ -129,14 +129,9 @@ fn started_at(game: &Game) -> Option<i64> {
         time.next().flatten().unwrap_or(0),
         time.next().flatten().unwrap_or(0),
     );
-    // Days from the civil date (Howard Hinnant's algorithm).
-    let shifted = if month <= 2 { year - 1 } else { year };
-    let era = shifted.div_euclid(400);
-    let year_of_era = shifted - era * 400;
-    let month_index = (month + 9) % 12;
-    let day_of_year = (153 * month_index + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    let days = era * 146_097 + day_of_era - 719_468;
+    if !(0..24).contains(&hours) || !(0..60).contains(&minutes) || !(0..=60).contains(&seconds) {
+        return None;
+    }
     Some(((days * 24 + hours) * 60 + minutes) * 60_000 + seconds * 1000)
 }
 
@@ -200,7 +195,7 @@ pub fn game_row(username: &str, game: &Value) -> Option<Value> {
     let ended_at = game
         .get("end_time")
         .and_then(Value::as_i64)
-        .map(|s| s * 1000);
+        .and_then(|s| s.checked_mul(1000));
     let started = started_at(&parsed).or(ended_at).unwrap_or(0);
     let rating = |side: &Value| side.get("rating").and_then(Value::as_i64);
     Some(json!({
@@ -302,6 +297,34 @@ mod tests {
         assert_eq!(row["status"], "mate");
         assert_eq!(row["account"], "BOB@chess.com");
         assert!(game_row("carol", &game("chess", "win", "resigned", PGN)).is_none());
+    }
+
+    /// Each of these headers overflowed the date arithmetic: a panic in a release build (overflow
+    /// checks are on), so one such game failed its whole month's sync on every try.
+    #[test]
+    fn an_impossible_date_or_time_falls_back_instead_of_overflowing() {
+        let end_time = 1_709_634_000_i64;
+        for (date, time) in [
+            ("300000000.01.01", "00:00:00"),
+            ("9223372036854775807.01.01", "00:00:00"),
+            ("-9223372036854775808.01.01", "00:00:00"),
+            ("2024.03.05", "9223372036854775807:0:0"),
+            ("2024.03.05", "0:9223372036854775807:0"),
+            ("2024.03.05", "-1:00:00"),
+        ] {
+            let pgn = PGN
+                .replace("[UTCDate \"2024.03.05\"]", &format!("[UTCDate \"{date}\"]"))
+                .replace("[UTCTime \"10:20:30\"]", &format!("[UTCTime \"{time}\"]"));
+            assert!(
+                pgn.contains(date) && pgn.contains(time),
+                "the fixture has both headers"
+            );
+            let row = game_row("alice", &game("chess", "win", "checkmated", &pgn)).expect("row");
+            assert_eq!(row["createdAt"], json!(end_time * 1000), "{date} {time}");
+        }
+        let mut huge = game("chess", "win", "checkmated", PGN);
+        huge["end_time"] = json!(i64::MAX);
+        assert!(game_row("alice", &huge).is_some());
     }
 
     #[test]

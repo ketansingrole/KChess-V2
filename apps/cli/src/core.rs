@@ -47,7 +47,7 @@ struct StderrHost {
 impl Host for StderrHost {
     fn log(&self, level: Level, scope: &str, message: &str) {
         if matches!(level, Level::Warn | Level::Error) {
-            eprintln!("[{scope}] {message}");
+            eprintln!("[{scope}] {}", kchess_core::redact::redact(message));
         }
     }
 
@@ -98,8 +98,7 @@ fn config(options: &Options) -> Config {
         .unwrap_or_default();
     Config {
         managed_engine_dir: Some(home.join(".kchess/engines/stockfish/current")),
-        bundled_engine_path: std::env::var_os("KCHESS_ENGINE_PATH")
-            .filter(|path| !path.is_empty())
+        bundled_engine_path: kchess_core::dev_override("KCHESS_ENGINE_PATH")
             .map(PathBuf::from)
             .or_else(|| beside(&executable("stockfish"))),
         // Fairy-Stockfish for variants: beside the executable, or (a build in this repository)
@@ -142,7 +141,7 @@ impl CoreClient {
             .map_err(|cause| format!("The profile folder is unavailable: {cause}"))?;
         let config = config(options);
         let (events, received) = mpsc::unbounded_channel();
-        let service = std::env::var_os("KCHESS_SERVICE_BINARY")
+        let service = kchess_core::dev_override("KCHESS_SERVICE_BINARY")
             .map(PathBuf::from)
             .or_else(|| beside(&executable("kchess-service")));
         let backend = match service {
@@ -217,7 +216,7 @@ impl CoreClient {
         };
         let reply = match request["kind"].as_str().unwrap_or_default() {
             "openExternal" => match request["payload"].as_str() {
-                Some(url) if url.starts_with("https://") || url.starts_with("http://127.0.0.1") => {
+                Some(url) if kchess_core::capabilities::opens_in_browser(url) => {
                     if self.browser == Browser::Open && open_browser(url).is_ok() {
                         eprintln!("Opened {url}");
                     } else {

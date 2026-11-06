@@ -208,28 +208,42 @@ pub async fn wait_for_redirect(
     } = redirect;
     let deadline = tokio::time::sleep(timeout);
     tokio::pin!(deadline);
+    // Each connection's request head is read on its own, so one that connects and sends nothing
+    // cannot hold up the browser's callback behind it; dropped (and aborted) on return.
+    let mut heads = tokio::task::JoinSet::new();
     loop {
-        let accepted = tokio::select! {
+        let (mut socket, head) = tokio::select! {
             _ = cancel.cancelled() => return Err(CoreError::aborted("Core closed.")),
             _ = &mut deadline => return Err(CoreError::new(timed_out)),
-            accepted = listener.accept() => accepted,
-        };
-        let (mut socket, _) = match accepted {
-            Ok(accepted) => accepted,
-            Err(cause) => {
-                return Err(CoreError::new(format!(
-                    "Could not open OAuth callback: {cause}"
-                )));
+            accepted = listener.accept(), if heads.len() < PENDING_HEADS => {
+                let (mut socket, _) = accepted.map_err(|cause| {
+                    CoreError::new(format!("Could not open OAuth callback: {cause}"))
+                })?;
+                heads.spawn(async move {
+                    let head = tokio::time::timeout(HEAD_TIMEOUT, read_head(&mut socket)).await;
+                    (socket, head)
+                });
+                continue;
             }
+            Some(read) = heads.join_next() => match read {
+                Ok(read) => read,
+                Err(_) => continue,
+            },
         };
-        let Ok(Ok(head)) = tokio::time::timeout(HEAD_TIMEOUT, read_head(&mut socket)).await else {
+        let Ok(Ok(head)) = head else {
             let _ = socket.shutdown().await;
             continue;
         };
         let callback = request_target(&head)
             .as_deref()
             .and_then(parse_target)
-            .filter(|callback| callback.path == path && callback.state.as_deref() == Some(state));
+            .filter(|callback| {
+                callback.path == path
+                    && callback
+                        .state
+                        .as_deref()
+                        .is_some_and(|given| same_secret(given, state))
+            });
         let Some(callback) = callback else {
             let _ = socket.write_all(not_found()).await;
             hand_back(socket);
@@ -244,6 +258,19 @@ pub async fn wait_for_redirect(
         hand_back(socket);
         return Ok(callback);
     }
+}
+
+/// Request heads read at once; a connection past this waits for one of them to end (at most
+/// `HEAD_TIMEOUT`).
+const PENDING_HEADS: usize = 16;
+
+/// `a == b` in time that depends on their lengths only.
+fn same_secret(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes()
+            .zip(b.bytes())
+            .fold(0u8, |difference, (x, y)| difference | (x ^ y))
+            == 0
 }
 
 /// `wait_for_redirect` for a Lichess login, answering its code.
@@ -445,5 +472,50 @@ mod tests {
         assert_eq!(callback.state.as_deref(), Some("xyz"));
         assert_eq!(callback.code.as_deref(), Some("abc"));
         assert_eq!(parse_target("/callback?state=x&code=").unwrap().code, None);
+    }
+
+    /// A local process that connects to the callback port and sends nothing held up the real
+    /// callback behind it for five seconds each time; now heads are read side by side.
+    #[tokio::test]
+    async fn a_silent_connection_does_not_hold_up_the_callback() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let silent: Vec<TcpStream> =
+            futures_util::future::join_all((0..4).map(|_| TcpStream::connect(address)))
+                .await
+                .into_iter()
+                .map(Result::unwrap)
+                .collect();
+        let browser = tokio::spawn(async move {
+            let mut socket = TcpStream::connect(address).await.unwrap();
+            socket
+                .write_all(b"GET /callback?code=abc&state=ST HTTP/1.1\r\nHost: x\r\n\r\n")
+                .await
+                .unwrap();
+            let mut answer = Vec::new();
+            let _ = socket.read_to_end(&mut answer).await;
+        });
+        let started = std::time::Instant::now();
+        let code = wait_for_callback(
+            &listener,
+            "ST",
+            &default_look(),
+            Duration::from_secs(30),
+            &CancellationToken::new(),
+            &|| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, "abc");
+        assert!(started.elapsed() < HEAD_TIMEOUT, "{:?}", started.elapsed());
+        drop(silent);
+        browser.abort();
+    }
+
+    #[test]
+    fn the_state_compares_whole() {
+        assert!(same_secret("abc", "abc"));
+        assert!(!same_secret("abc", "abd"));
+        assert!(!same_secret("abc", "ab"));
     }
 }

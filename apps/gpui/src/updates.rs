@@ -1,7 +1,8 @@
 //! App updates: the GPUI app checks the release feed
 //! the Electron app reads (GitHub releases of KChess), downloads the package it was installed from
 //! (packaged in Electron's formats), checks it against the release's
-//! `SHA256SUMS.txt` and against the running app's signature, and installs it on restart or when
+//! `SHA256SUMS.txt` (itself signed with the release key, `update-key.pub`) and against the
+//! running app's signature, and installs it on restart or when
 //! KChess quits: a new bundle on macOS, the installer run silently on Windows (as Electron's
 //! updater does), a new AppImage, or the .deb through the package manager.
 //!
@@ -172,6 +173,35 @@ pub fn asset_name(version: &str, package: Package) -> Option<String> {
         Package::Deb => ("linux", if arm { "arm64" } else { "amd64" }, "deb"),
     };
     Some(format!("{PREFIX}-{version}-{platform}-{arch}.{extension}"))
+}
+
+/// The release key's public half (`update-key.pub`): its one line that is not a comment, the
+/// base64 of a 32-byte Ed25519 key. `None` until a key is made (`cargo xtask update-key`).
+pub fn update_key() -> Option<Vec<u8>> {
+    parse_update_key(include_str!("../update-key.pub"))
+}
+
+pub fn parse_update_key(file: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    let line = file
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))?;
+    base64::engine::general_purpose::STANDARD
+        .decode(line)
+        .ok()
+        .filter(|key| key.len() == 32)
+}
+
+/// Whether `signature` (base64, `SHA256SUMS.txt.sig`) is `key`'s Ed25519 signature of `sums`.
+pub fn sums_signed_by(key: &[u8], sums: &[u8], signature: &str) -> Result<(), String> {
+    use base64::Engine as _;
+    let signature = base64::engine::general_purpose::STANDARD
+        .decode(signature.trim())
+        .map_err(|_| "The release's checksum signature could not be read")?;
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
+        .verify(sums, &signature)
+        .map_err(|_| "The release's checksums are not signed by KChess".to_string())
 }
 
 /// The SHA-256 a `SHA256SUMS.txt` lists for `name`.
@@ -612,22 +642,64 @@ async fn download(
     folder: PathBuf,
     progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
 ) -> Result<PathBuf, String> {
-    let client = http()?;
-    let sums = release
+    download_signed(release, asset, folder, progress, update_key()).await
+}
+
+/// A small release file's text (the checksums or their signature).
+async fn small_file(
+    client: &reqwest::Client,
+    release: &Release,
+    name: &str,
+    missing: &'static str,
+    failure: &'static str,
+) -> Result<String, String> {
+    let entry = release
         .assets
         .iter()
-        .find(|entry| entry.name == "SHA256SUMS.txt")
-        .ok_or("The release lists no checksums")?;
-    let sums = client
-        .get(&sums.browser_download_url)
+        .find(|entry| entry.name == name)
+        .ok_or(missing)?;
+    client
+        .get(&entry.browser_download_url)
         .timeout(Duration::from_secs(60))
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
-        .map_err(failed("Could not download the checksums"))?
+        .map_err(failed(failure))?
         .text()
         .await
-        .map_err(failed("Could not download the checksums"))?;
+        .map_err(failed(failure))
+}
+
+/// `download`, with the checksums required to be signed by `key` when there is one. The
+/// checksums sit in the same release as the packages, so on their own they only catch a broken
+/// download: the signature is what stops a replaced package.
+async fn download_signed(
+    release: Release,
+    asset: Asset,
+    folder: PathBuf,
+    progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
+    key: Option<Vec<u8>>,
+) -> Result<PathBuf, String> {
+    let client = http()?;
+    let sums = small_file(
+        &client,
+        &release,
+        "SHA256SUMS.txt",
+        "The release lists no checksums",
+        "Could not download the checksums",
+    )
+    .await?;
+    if let Some(key) = key {
+        let signature = small_file(
+            &client,
+            &release,
+            "SHA256SUMS.txt.sig",
+            "The release's checksums are not signed",
+            "Could not download the checksum signature",
+        )
+        .await?;
+        sums_signed_by(&key, sums.as_bytes(), &signature)?;
+    }
     let expected =
         digest_for(&sums, &asset.name).ok_or("The release lists no checksum for this package")?;
     let fail = |cause: std::io::Error| cause.to_string();
@@ -817,9 +889,35 @@ async fn fetch(
         _ => file,
     };
     if let Some(install) = install {
-        signed_alike(&running_signer(&install), &signer(package, &staged))?;
+        let running = running_signer(&install);
+        signed_alike(&running, &signer(package, &staged))?;
+        if package == Package::MacZip
+            && let (Some(team), Some(app)) = (&running.identity, &running.app)
+            && !meets_requirement(&staged, &developer_requirement(app, team))
+        {
+            return Err("The update is not signed by KChess's developer".into());
+        }
     }
     Ok(staged)
+}
+
+/// What a Developer ID build's update must satisfy: signed through Apple's own certificate
+/// chain, as `app`, by `team`. The team and identifier `codesign --display` prints are the
+/// bundle's own claims, which a self-signed certificate can make; this requirement is not.
+fn developer_requirement(app: &str, team: &str) -> String {
+    format!(
+        "=anchor apple generic and identifier \"{app}\" and certificate leaf[subject.OU] = \"{team}\""
+    )
+}
+
+/// Whether the bundle at `path` passes `codesign --verify` against `requirement`.
+fn meets_requirement(path: &Path, requirement: &str) -> bool {
+    Command::new("codesign")
+        .args(["--verify", "--deep", "--strict", "-R", requirement])
+        .arg(path)
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 /// Put the staged update in place of `install`, which `lock` holds; with `reopen`, open the new
@@ -1331,9 +1429,8 @@ pub fn init(cx: &mut App) {
         }
     }
     let failed = last_install_error(install.as_ref(), root.as_deref());
-    let feed = std::env::var("KCHESS_UPDATE_FEED")
-        .ok()
-        .filter(|feed| !feed.is_empty())
+    let feed = kchess_core::dev_override("KCHESS_UPDATE_FEED")
+        .map(|feed| feed.to_string_lossy().into_owned())
         .filter(|_| !store)
         .or_else(|| install.is_some().then(|| FEED.to_string()));
     let workspace = feed.as_ref().and_then(|_| {
@@ -1624,7 +1721,7 @@ impl Updates {
         if install.package == Package::WindowsInstaller {
             // The installer closes this app: it starts as the app quits, after the core closes.
             self.restart = true;
-            return cx.quit();
+            return crate::core::quit_saved(cx);
         }
         self.staged = None;
         // Off the UI thread: the package manager may wait for a password.
@@ -1659,6 +1756,8 @@ impl Updates {
         self.release
             .as_ref()
             .and_then(|release| release.html_url.clone())
+            // Only the repository's own pages open from here, whatever the feed answered.
+            .filter(|url| url.starts_with(&format!("https://github.com/{REPOSITORY}/")))
             .unwrap_or_else(|| format!("https://github.com/{REPOSITORY}/releases"))
     }
 }

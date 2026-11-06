@@ -72,13 +72,24 @@ pub fn valid_host_id(id: &str) -> bool {
 }
 
 /// What is kept of a sign-in, sealed by the credential store.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Tokens {
     pub access: String,
     pub refresh: String,
     /// Milliseconds since the epoch.
     pub expires_at: f64,
+}
+
+/// Never the tokens themselves, so a stray `{:?}` cannot log them.
+impl std::fmt::Debug for Tokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tokens")
+            .field("access", &"[redacted]")
+            .field("refresh", &"[redacted]")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 impl Tokens {
@@ -351,21 +362,33 @@ impl Ai {
         Ok(url.into())
     }
 
+    /// A request's status and whole body, within `ANSWER_TIMEOUT` and the core's lifetime. The
+    /// deadline covered only the headers: a server that sent them and then stalled the body kept
+    /// the call, and the sign-in refresh lock it holds, forever, so every later AI call waited.
+    async fn answered(
+        &self,
+        sent: impl std::future::Future<Output = reqwest::Result<reqwest::Response>>,
+    ) -> std::result::Result<(u16, String), Refusal> {
+        let read = async {
+            let response = sent.await?;
+            let status = response.status().as_u16();
+            Ok::<_, reqwest::Error>((status, response.text().await?))
+        };
+        tokio::select! {
+            answer = tokio::time::timeout(ANSWER_TIMEOUT, read) => answer
+                .map_err(|_| Refusal::new(Problem::Unavailable, "timeout"))?
+                .map_err(|cause| Refusal::new(Problem::Unavailable, cause.without_url().to_string())),
+            () = self.lifetime.cancelled() => Err(Refusal::new(Problem::Unavailable, "closing")),
+        }
+    }
+
     async fn token(&self, form: &[(&str, &str)]) -> std::result::Result<TokenResponse, Refusal> {
         let sent = self
             .client
             .post(format!("{}/api/accounts/oauth/token", self.auth))
             .form(form)
             .send();
-        let response = tokio::time::timeout(ANSWER_TIMEOUT, sent)
-            .await
-            .map_err(|_| Refusal::new(Problem::Unavailable, "timeout"))?
-            .map_err(|cause| Refusal::new(Problem::Unavailable, cause.without_url().to_string()))?;
-        let status = response.status().as_u16();
-        let body = response
-            .text()
-            .await
-            .map_err(|cause| Refusal::new(Problem::Unavailable, cause.without_url().to_string()))?;
+        let (status, body) = self.answered(sent).await?;
         if status != 200 {
             let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
             let code = parsed["error"]
@@ -458,15 +481,7 @@ impl Ai {
             .get(format!("{}/v1/models", self.api))
             .bearer_auth(access)
             .send();
-        let response = tokio::time::timeout(ANSWER_TIMEOUT, sent)
-            .await
-            .map_err(|_| Refusal::new(Problem::Unavailable, "timeout"))?
-            .map_err(|cause| Refusal::new(Problem::Unavailable, cause.without_url().to_string()))?;
-        let status = response.status().as_u16();
-        let body = response
-            .text()
-            .await
-            .map_err(|cause| Refusal::new(Problem::Unavailable, cause.without_url().to_string()))?;
+        let (status, body) = self.answered(sent).await?;
         if status != 200 {
             return Err(refused(status, &body));
         }
@@ -712,6 +727,26 @@ mod tests {
             "HTTP/1.1 {status}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
             body.len()
         )
+    }
+
+    /// The deadline covered only the headers: a server that sent them and stalled the body kept
+    /// `models` (and the sign-in refresh lock held around it) waiting forever, even as the core
+    /// closed.
+    #[tokio::test]
+    async fn a_body_that_never_ends_does_not_hold_the_call() {
+        let stalled = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{\"models\":".to_string();
+        let (origin, _served) = serve(vec![stalled]).await;
+        let lifetime = CancellationToken::new();
+        let ai = Ai::new(Some(origin), lifetime.clone()).unwrap();
+        let closing = lifetime.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            closing.cancel();
+        });
+        let answer = tokio::time::timeout(Duration::from_secs(10), ai.models("token"))
+            .await
+            .expect("the call ends when the core closes");
+        assert!(answer.is_err());
     }
 
     #[tokio::test]

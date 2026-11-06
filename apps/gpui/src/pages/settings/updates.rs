@@ -3,7 +3,7 @@
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
-use gpui_kit::component::{Disableable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::types::Settings;
@@ -39,7 +39,7 @@ pub fn ask_restart(window: &mut Window, cx: &mut App) {
     let handle = cx.global::<UpdatesHandle>().0.clone();
     let version = handle.read(cx).version.clone().unwrap_or_default();
     let cost = restart_cost(cx);
-    window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+    crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
         let handle = handle.clone();
         dialog
             .title(format!("Restart and install KChess {version}?"))

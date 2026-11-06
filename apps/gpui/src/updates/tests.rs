@@ -637,23 +637,43 @@ fn serve(files: Vec<(String, Vec<u8>)>) -> String {
 /// A feed whose latest release is `version`, with `package` and `sums` (given the package's
 /// real digest); the feed's URL.
 fn feed(version: &str, package: &[u8], sums: impl Fn(&str, &str) -> String) -> String {
+    feed_signed(version, package, sums, |_| None)
+}
+
+/// `feed`, with `sign` giving the checksums' `SHA256SUMS.txt.sig` (none when `None`).
+fn feed_signed(
+    version: &str,
+    package: &[u8],
+    sums: impl Fn(&str, &str) -> String,
+    sign: impl Fn(&[u8]) -> Option<String>,
+) -> String {
     let name = asset_name(version, Package::AppImage).unwrap();
     let digest: String = Sha256::digest(package)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
+    let sums = sums(&digest, &name).into_bytes();
+    let signature = sign(&sums);
     // The release names its assets' URLs, so they are served first.
-    let assets = serve(vec![
+    let mut files = vec![
         (format!("/{name}"), package.to_vec()),
-        ("/SHA256SUMS.txt".into(), sums(&digest, &name).into_bytes()),
-    ]);
+        ("/SHA256SUMS.txt".into(), sums),
+    ];
+    if let Some(signature) = &signature {
+        files.push(("/SHA256SUMS.txt.sig".into(), signature.clone().into_bytes()));
+    }
+    let assets = serve(files);
+    let mut listed = vec![
+        serde_json::json!({ "name": name, "browser_download_url": format!("{assets}/{name}"), "size": package.len() }),
+        serde_json::json!({ "name": "SHA256SUMS.txt", "browser_download_url": format!("{assets}/SHA256SUMS.txt") }),
+    ];
+    if signature.is_some() {
+        listed.push(serde_json::json!({ "name": "SHA256SUMS.txt.sig", "browser_download_url": format!("{assets}/SHA256SUMS.txt.sig") }));
+    }
     let release = serde_json::json!({
         "tag_name": format!("v{version}"),
         "html_url": "https://example.invalid/release",
-        "assets": [
-            { "name": name, "browser_download_url": format!("{assets}/{name}"), "size": package.len() },
-            { "name": "SHA256SUMS.txt", "browser_download_url": format!("{assets}/SHA256SUMS.txt") },
-        ],
+        "assets": listed,
     });
     serve(vec![(
         "/repos/ketansingrole/KChess-V2/releases/latest".into(),
@@ -961,6 +981,14 @@ fn block_on<T: Send + 'static>(work: impl std::future::Future<Output = T> + Send
 }
 
 async fn check_and_download(feed: String, folder: PathBuf) -> Result<PathBuf, String> {
+    check_and_download_signed(feed, folder, None).await
+}
+
+async fn check_and_download_signed(
+    feed: String,
+    folder: PathBuf,
+    key: Option<Vec<u8>>,
+) -> Result<PathBuf, String> {
     let release: Release = latest(feed).await?;
     let version =
         offer(&release, "2026.10.12", Some(Package::AppImage)).ok_or("no update offered")?;
@@ -972,7 +1000,104 @@ async fn check_and_download(feed: String, folder: PathBuf) -> Result<PathBuf, St
         .cloned()
         .unwrap();
     let (progress, _heard) = futures::channel::mpsc::unbounded();
-    download(release, asset, folder, progress).await
+    super::download_signed(release, asset, folder, progress, key).await
+}
+
+fn key_pair() -> ring::signature::Ed25519KeyPair {
+    let random = ring::rand::SystemRandom::new();
+    let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&random).unwrap();
+    ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap()
+}
+
+fn base64(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// A release whose packages and checksums were both replaced (anyone who can change release
+/// assets can rewrite SHA256SUMS.txt) is refused: the checksums must carry the release
+/// key's signature.
+#[test]
+fn an_update_needs_checksums_signed_by_the_release_key() {
+    use ring::signature::KeyPair as _;
+    let folder = scratch("signed");
+    let package = b"the new KChess".to_vec();
+    let release_key = key_pair();
+    let public = release_key.public_key().as_ref().to_vec();
+    let sums = |digest: &str, name: &str| format!("{digest}  {name}\n");
+
+    let url = feed_signed("2026.11.0", &package, sums, |sums| {
+        Some(base64(release_key.sign(sums).as_ref()))
+    });
+    let file = block_on(check_and_download_signed(
+        url,
+        folder.join("ok"),
+        Some(public.clone()),
+    ))
+    .unwrap();
+    assert_eq!(std::fs::read(&file).unwrap(), package);
+
+    let url = feed("2026.11.0", &package, sums);
+    assert_eq!(
+        block_on(check_and_download_signed(
+            url,
+            folder.join("unsigned"),
+            Some(public.clone())
+        )),
+        Err("The release's checksums are not signed".into())
+    );
+
+    let other_key = key_pair();
+    let url = feed_signed("2026.11.0", &package, sums, |sums| {
+        Some(base64(other_key.sign(sums).as_ref()))
+    });
+    assert_eq!(
+        block_on(check_and_download_signed(
+            url,
+            folder.join("forged"),
+            Some(public.clone())
+        )),
+        Err("The release's checksums are not signed by KChess".into())
+    );
+    assert!(!folder.join("forged").exists(), "nothing downloaded");
+
+    let url = feed_signed("2026.11.0", &package, sums, |_| Some("not base64!".into()));
+    assert_eq!(
+        block_on(check_and_download_signed(
+            url,
+            folder.join("garbled"),
+            Some(public)
+        )),
+        Err("The release's checksum signature could not be read".into())
+    );
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn the_release_key_file_holds_one_key_or_none() {
+    use super::parse_update_key;
+    assert_eq!(parse_update_key("# only comments\n\n"), None);
+    let key = base64(&[7u8; 32]);
+    assert_eq!(
+        parse_update_key(&format!("# comment\n{key}\n")),
+        Some(vec![7u8; 32])
+    );
+    assert_eq!(parse_update_key(&base64(&[7u8; 31])), None, "wrong length");
+    // The committed file is either empty of keys or holds a valid one.
+    let committed = include_str!("../update-key.pub");
+    let has_key_line = committed
+        .lines()
+        .any(|line| !line.trim().is_empty() && !line.trim().starts_with('#'));
+    assert_eq!(super::update_key().is_some(), has_key_line);
+}
+
+#[test]
+fn a_developer_id_update_must_be_signed_through_apple() {
+    assert_eq!(
+        super::developer_requirement("com.kchess.app", "TEAM123"),
+        "=anchor apple generic and identifier \"com.kchess.app\" \
+         and certificate leaf[subject.OU] = \"TEAM123\""
+    );
 }
 
 #[test]
