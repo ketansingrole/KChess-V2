@@ -1124,6 +1124,61 @@ mod fen_tests {
         assert_eq!(make_fen(&pos), "k7/8/8/8/8/8/P7/Q6K w - - 0 1");
     }
 
+    /// Each variant's own rules for a playable position, as chessops checks them.
+    #[test]
+    fn each_variant_refuses_what_chessops_refuses() {
+        use Variant::*;
+        let cases: &[(Variant, &str, bool)] = &[
+            (Chess, START, true),
+            (Chess, "8/8/8/8/8/8/8/8 w - - 0 1", false),
+            (Chess, "k7/8/8/8/8/8/8/K6K w - - 0 1", false),
+            (Chess, "8/8/8/8/8/8/8/K7 w - - 0 1", false),
+            (Chess, "k7/8/8/8/8/8/8/K7 b - - 0 1", true),
+            (Chess, "k7/8/8/8/8/8/8/RK6 w - - 0 1", false),
+            (Chess, "k6P/8/8/8/8/8/8/K7 w - - 0 1", false),
+            (KingOfTheHill, "k7/8/8/8/8/8/8/RK6 w - - 0 1", false),
+            (ThreeCheck, "k6P/8/8/8/8/8/8/K7 w - - 0 1", false),
+            (Crazyhouse, "k7/8/8/8/8/8/8/K7[Q] w - - 0 1", true),
+            (Crazyhouse, "k7/8/8/8/8/8/8/K7[K] w - - 0 1", false),
+            (Crazyhouse, "k7/8/8/8/8/8/8/K7[k] w - - 0 1", false),
+            (Crazyhouse, "k7/8/8/8/8/8/8/RK6[] w - - 0 1", false),
+            (Atomic, "k7/8/8/8/8/8/8/K7 w - - 0 1", true),
+            (Atomic, "8/8/8/8/8/8/8/8 w - - 0 1", false),
+            (Atomic, "k7/8/8/8/8/8/8/RK6 w - - 0 1", false),
+            (Atomic, "k6P/8/8/8/8/8/8/K7 w - - 0 1", false),
+            (Antichess, "8/8/8/8/8/8/8/N7 w - - 0 1", true),
+            (Antichess, "8/8/8/8/8/8/8/8 w - - 0 1", false),
+            (Antichess, "7P/8/8/8/8/8/8/N7 w - - 0 1", false),
+            (RacingKings, "8/8/8/8/8/8/krbnNBRK/qrbnNBRQ w - - 0 1", true),
+            (
+                RacingKings,
+                "8/8/8/8/8/8/krbnNBRK/qrbnNBRP w - - 0 1",
+                false,
+            ),
+            (RacingKings, "8/8/8/8/8/8/k5rK/7R w - - 0 1", false),
+            (
+                Horde,
+                "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1",
+                true,
+            ),
+            (Horde, "rnbqkbnr/pppppppp/8/8/8/8/8/P7 w kq - 0 1", true),
+            (Horde, "rnbqkbnP/pppppppp/8/8/8/8/8/P7 w kq - 0 1", false),
+            (Horde, "rnbqkbnr/pppppppp/8/8/8/8/8/K7 w kq - 0 1", false),
+            (Horde, "8/8/8/8/8/8/8/P7 w - - 0 1", false),
+        ];
+        // A Crazyhouse game holds 64 pieces at most, on the board and in hand.
+        let kings = "k7/8/8/8/8/8/8/K7";
+        for (in_hand, valid) in [(62, true), (63, false)] {
+            let fen = format!("{kings}[{}] w - - 0 1", "Q".repeat(in_hand));
+            let position = parse_fen(&fen).and_then(|setup| setup_position(Crazyhouse, setup));
+            assert_eq!(position.is_some(), valid, "{in_hand} in hand");
+        }
+        for &(variant, fen, valid) in cases {
+            let position = parse_fen(fen).and_then(|setup| setup_position(variant, setup));
+            assert_eq!(position.is_some(), valid, "{variant:?} {fen}");
+        }
+    }
+
     /// A Crazyhouse pocket holds at most 64 pieces.
     #[test]
     fn a_pocket_holds_at_most_64_pieces() {
