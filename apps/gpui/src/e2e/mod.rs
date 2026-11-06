@@ -240,6 +240,19 @@ impl Harness {
             .expect("the main window is open")
     }
 
+    /// Drop a file named `name` holding `text` on the window, as Finder or Explorer would; the
+    /// folder holding it lasts as long as what this returns.
+    pub fn drop_file(&mut self, name: &str, text: &[u8]) -> tempfile::TempDir {
+        let folder = tempfile::tempdir().expect("a folder");
+        let path = folder.path().join(name);
+        std::fs::write(&path, text).expect("the file");
+        self.with_window(|window, cx| {
+            let paths = gpui_kit::ExternalPaths(std::iter::once(path).collect());
+            crate::shell::open_dropped(&paths, window, cx);
+        });
+        folder
+    }
+
     /// Wait, in real time, until `ready` holds for a fresh frame; `what` names it on failure.
     pub fn wait_for(&mut self, what: &str, mut ready: impl FnMut(&mut Window, &mut App) -> bool) {
         let started = Instant::now();
