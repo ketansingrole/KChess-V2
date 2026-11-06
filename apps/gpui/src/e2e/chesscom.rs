@@ -53,6 +53,49 @@ fn a_chesscom_player_is_synced_listed_counted_and_removed(cx: &mut gpui_kit::Tes
     app.find("history-chesscom");
 }
 
+/// Without a Lichess account, Home's activity is the Chess.com player's: ratings from the games
+/// synced here, since Chess.com has no profile KChess reads.
+#[gpui_kit::test]
+fn home_shows_a_chesscom_players_activity(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.open_settings("Accounts");
+    app.click_label("Chess.com username");
+    app.type_text("e2e_dave");
+    app.click("chesscom-add");
+    app.find("chesscom-sync-e2e_dave");
+
+    app.open("Home");
+    app.wait_for("the Rapid card", |window, _| {
+        window
+            .try_find(gpui_kit::ElementId::from("home-perf-rapid"))
+            .and_then(|card| card.label().map(str::to_string))
+            .is_some_and(|label| label == "Rapid rating 1500")
+    });
+    let summary = app.cx.update(|cx| {
+        let home = crate::shell::view_of::<crate::pages::home::HomePage>(Page::Dashboard, cx)
+            .expect("Home");
+        let card = home.read(cx).activity().expect("the activity card");
+        let (heading, handle, games) = card.read(cx).summary();
+        (heading, handle, games)
+    });
+    assert_eq!(summary, ("Chess.com", "@e2e_dave".to_string(), 2.));
+    app.find("home-record");
+    assert!(
+        !app.shows("home-connect"),
+        "the player's card stands for the connect line"
+    );
+    assert!(!app.shows("home-perf-blitz"), "only the speed played");
+
+    // Sync games asks Chess.com for the player's games.
+    app.click("home-sync");
+    app.wait_for("the sync to finish", |_, cx| {
+        !crate::accounts::handle(cx).read(cx).syncing()
+    });
+    app.find("home-perf-rapid");
+}
+
 #[gpui_kit::test]
 fn an_unknown_chesscom_player_is_not_added(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
