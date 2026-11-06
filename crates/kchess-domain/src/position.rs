@@ -535,6 +535,16 @@ mod tests {
         assert_eq!(info.outcome, Some(json!({})));
     }
 
+    /// Bare kings: moves remain, yet the game is drawn and over.
+    #[test]
+    fn bare_kings_end_the_game_in_a_draw() {
+        let pos = rules::standard_from_fen("k7/8/8/8/8/8/8/7K w - - 0 1").unwrap();
+        let info = super::info(&pos);
+        assert!(info.insufficient && info.end && !info.variant_end, "{info:?}");
+        assert!(!info.stalemate && !info.checkmate);
+        assert_eq!(info.outcome, Some(json!({})));
+    }
+
     /// Antichess ends when the side to move has no pieces, which wins it: the other side
     /// running out of pieces first does not end it.
     #[test]
