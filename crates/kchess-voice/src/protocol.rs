@@ -213,6 +213,10 @@ mod tests {
             r#"{{"sampleRate":16000,"grammar":["{}"]}}"#,
             "a".repeat(MAX_PHRASE_CHARS + 1)
         );
+        assert_eq!(
+            read_request(&mut frame(b'A', &[1, 2, 3]).as_slice()).expect("read"),
+            Some(Request::Invalid("odd audio length"))
+        );
         for bytes in [
             frame(b'A', &[1, 2, 3]),
             frame(b'F', &[0]),
