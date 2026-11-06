@@ -1732,7 +1732,10 @@ mod tests {
         }
         // The title bar's "Updating N%" is anchored on the right, so a proportional figure
         // moved the button's left edge with every percent.
-        let shell = std::fs::read_to_string(src.join("../shell.rs")).expect("the shell's source");
+        // A Windows checkout may end its lines in CRLF.
+        let shell = std::fs::read_to_string(src.join("../shell.rs"))
+            .expect("the shell's source")
+            .replace("\r\n", "\n");
         let button = &shell[shell.find("fn update_button").expect("the update button")..];
         assert!(
             button[..button.find("\n}\n").expect("its end")]
