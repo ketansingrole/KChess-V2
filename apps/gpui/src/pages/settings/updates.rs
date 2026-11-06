@@ -66,9 +66,10 @@ pub const SOURCE: &str = "https://github.com/ketansingrole/KChess-V2";
 pub const ISSUES: &str = "https://github.com/ketansingrole/KChess-V2/issues";
 
 /// A small muted link that opens `url` in the browser.
-fn link(id: &'static str, label: &'static str, url: String, palette: &Palette) -> Stateful<Div> {
+fn link(id: &'static str, label: &'static str, url: String, palette: &Palette) -> impl IntoElement {
     div()
         .id(id)
+        .test_support()
         .role(Role::Link)
         .keyboard_focus(palette.primary)
         .aria_label(label)
