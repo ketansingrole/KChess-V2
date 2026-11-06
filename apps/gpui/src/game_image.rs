@@ -356,7 +356,11 @@ pub fn rotated_text_image(
     rotation: u16,
     scale: f32,
 ) -> Result<Arc<gpui_kit::RenderImage>, String> {
-    let pixmap = rotated_text(lines, color, rotation, scale)?;
+    render_image(rotated_text(lines, color, rotation, scale)?)
+}
+
+/// `pixmap` as GPUI draws a picture.
+fn render_image(pixmap: Pixmap) -> Result<Arc<gpui_kit::RenderImage>, String> {
     let (width, height) = (pixmap.width(), pixmap.height());
     let mut pixels = pixmap.take();
     // GPUI draws straight-alpha BGRA; the pixmap is premultiplied RGBA.
@@ -486,7 +490,8 @@ pub fn game_gif(
 #[cfg(test)]
 mod tests {
     use super::{
-        ImageOptions, TextLine, game_gif, position_png, rotated_text_image, rotated_text_png,
+        ImageOptions, Pixmap, Rect, TextLine, game_gif, position_png, render_image,
+        rotated_text_png,
     };
     use std::sync::atomic::AtomicBool;
 
@@ -507,25 +512,33 @@ mod tests {
         assert_eq!(size(90), (120, 560));
     }
 
-    /// The face drawn from its own image looks as the PNG did once GPUI decoded it (straight-alpha
-    /// RGBA with red and blue swapped), to within rounding.
+    /// A turned face drawn from its own image looks as its PNG did once GPUI decoded it
+    /// (straight-alpha RGBA with red and blue swapped), to within rounding. Drawn from shapes in
+    /// part-transparent colours rather than text, which needs the system's fonts (CI's Linux
+    /// runner has none).
     #[test]
-    fn a_turned_face_image_matches_its_png() {
-        let lines = [TextLine {
-            text: "4:59".into(),
-            size: 120.,
-            bold: true,
-            opacity: 0.75,
-        }];
-        let png = rotated_text_png(&lines, "#2266aa", 90, 2.).unwrap();
+    fn a_picture_to_draw_matches_its_png() {
+        use resvg::tiny_skia::{Paint as Fill, Transform};
+        let mut pixmap = Pixmap::new(64, 48).unwrap();
+        for (index, (r, g, b, a)) in [(34, 102, 170, 255), (200, 40, 90, 191), (255, 255, 255, 64)]
+            .into_iter()
+            .enumerate()
+        {
+            let mut fill = Fill::default();
+            fill.set_color_rgba8(r, g, b, a);
+            let at = index as f32 * 12.;
+            let rect = Rect::from_xywh(at, at / 2., 30., 30.).unwrap();
+            pixmap.fill_rect(rect, &fill, Transform::identity(), None);
+        }
+        let png = pixmap.encode_png().unwrap();
         let mut decoded = image::load_from_memory(&png).unwrap().into_rgba8();
         for pixel in decoded.as_chunks_mut::<4>().0 {
             pixel.swap(0, 2);
         }
-        let drawn = rotated_text_image(&lines, "#2266aa", 90, 2.).unwrap();
+        let drawn = render_image(pixmap).unwrap();
         let bytes = drawn.as_bytes(0).unwrap();
-        assert_eq!(drawn.size(0).width.0 as u32, decoded.width());
-        assert_eq!(drawn.size(0).height.0 as u32, decoded.height());
+        assert_eq!(drawn.size(0).width.0, 64);
+        assert_eq!(drawn.size(0).height.0, 48);
         let worst = bytes
             .iter()
             .zip(decoded.as_raw())
@@ -534,8 +547,8 @@ mod tests {
             .unwrap();
         assert!(worst <= 1, "a channel differs by {worst}");
         assert!(
-            bytes.chunks(4).any(|pixel| pixel[3] > 0),
-            "the text is drawn"
+            bytes.chunks(4).any(|pixel| pixel[3] > 0 && pixel[3] < 255),
+            "part-transparent pixels are compared"
         );
     }
 
