@@ -106,7 +106,9 @@ impl GameReplay {
     }
 
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.focus.is_focused(window) || event.keystroke.modifiers.modified() {
+        if !crate::board::page_has_keys(&self.focus, window, cx)
+            || event.keystroke.modifiers.modified()
+        {
             return;
         }
         if event.keystroke.key == "f" {

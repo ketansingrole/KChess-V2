@@ -242,7 +242,7 @@ impl PracticePage {
             }
             // Return or Space goes on to a lesson's next step once this one is read or passed.
             "endgames"
-                if self.focus.is_focused(window)
+                if crate::board::page_has_keys(&self.focus, window, cx)
                     && !event.keystroke.modifiers.modified()
                     && matches!(event.keystroke.key.as_str(), "enter" | "space") =>
             {
@@ -256,7 +256,7 @@ impl PracticePage {
             }
             // F turns an endgame drill's or lesson's board, as its button does.
             "endgames"
-                if self.focus.is_focused(window)
+                if crate::board::page_has_keys(&self.focus, window, cx)
                     && !event.keystroke.modifiers.modified()
                     && event.keystroke.key == "f" =>
             {
@@ -274,7 +274,8 @@ impl PracticePage {
             }
             // A mistake's board: F turns it, and a finished one's moves step back and forth.
             "mistakes"
-                if self.focus.is_focused(window) && !event.keystroke.modifiers.modified() =>
+                if crate::board::page_has_keys(&self.focus, window, cx)
+                    && !event.keystroke.modifiers.modified() =>
             {
                 if let Some(mistakes) = &self.mistakes
                     && mistakes.update(cx, |mistakes, cx| mistakes.key(&event.keystroke.key, cx))

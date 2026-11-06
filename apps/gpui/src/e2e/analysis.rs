@@ -154,6 +154,53 @@ fn the_arrow_keys_step_through_the_moves(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.enabled("analysis-back"));
 }
 
+/// A promotion from the keyboard: the cursor walks from e2 to the pawn on a7, Enter picks it up,
+/// Up and Enter play it to a8, and the picker takes the arrows and Enter (Left from the queen
+/// goes round to the knight). The keys the board does not take still reach the page.
+#[gpui_kit::test]
+fn a_pawn_is_promoted_from_the_keyboard(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "4k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+    app.tab_to_board();
+    for key in ["up", "up", "up", "up", "up", "left", "left", "left", "left"] {
+        app.press(key);
+    }
+    assert_eq!(app.square_name("a7"), "a7, white pawn");
+    let a7 = ("square", usize::from(shakmaty::Square::A7));
+    app.press("enter");
+    assert_eq!(app.find(a7).selected(), Some(true));
+    // A square the pawn cannot reach lets go of it, as a click there does.
+    app.press("right");
+    assert_eq!(app.square_name("b7"), "b7, empty");
+    app.press("enter");
+    assert_eq!(app.find(a7).selected(), Some(false));
+    app.press("left");
+    app.press("enter");
+    app.press("up");
+    assert_eq!(app.square_name("a8"), "a8, empty, legal move");
+    app.press("enter");
+    app.find("promotion-choices");
+    assert_eq!(app.find("Queen").selected(), Some(true));
+    app.press("left");
+    assert_eq!(app.find("Knight").selected(), Some(true));
+    app.press("enter");
+    assert_eq!(selected(&mut app, "a7a8n"), Some(true));
+    assert_eq!(app.square_name("a8"), "a8, white knight");
+    // F turns the board and Home goes back to the start: the board hands them to the page.
+    let board = app.find("chess-board").bounds();
+    let a8 = app
+        .find(("square", usize::from(shakmaty::Square::A8)))
+        .bounds();
+    assert!(a8.top() < board.center().y);
+    app.press("f");
+    let a8 = app
+        .find(("square", usize::from(shakmaty::Square::A8)))
+        .bounds();
+    assert!(a8.top() > board.center().y, "the board is turned");
+    app.press("home");
+    assert!(!app.enabled("analysis-back"));
+}
+
 #[gpui_kit::test]
 fn shift_and_the_arrows_go_into_and_out_of_a_variation(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
