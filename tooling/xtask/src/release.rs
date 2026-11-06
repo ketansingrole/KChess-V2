@@ -162,6 +162,13 @@ pub fn verify_release() -> Result {
         say("Not a tag: CI is not required for a manual Release build.");
         return Ok(());
     }
+    if crate::update_key::public_key().is_none() {
+        return Err(
+            "apps/gpui/update-key.pub holds no release key, so installed apps could not tell \
+             this release's checksums from replaced ones. Run `cargo xtask update-key`."
+                .into(),
+        );
+    }
     let commit = output("git", &["rev-parse", "HEAD"])?.trim().to_string();
     let run = output(
         "gh",

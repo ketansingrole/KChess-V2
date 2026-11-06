@@ -169,6 +169,9 @@ fn build(skip: bool) -> Result<Built> {
             "kchess-cli",
             "-p",
             "kchess-voice",
+            // A shipped build ignores the development overrides (`kchess_core::dev_overrides`).
+            "--features",
+            "kchess-core/packaged",
         ]);
         // What a Mac Electron app from before 2026.10.12 updates to (`mac::bridge`).
         if cfg!(target_os = "macos") {
