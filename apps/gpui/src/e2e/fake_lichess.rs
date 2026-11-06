@@ -544,7 +544,7 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 // reopened this stream read as the seek's game: the core took it up and cancelled
                 // the seek, before it was sent when the run was slow (New opponent, Linux CI).
                 (
-                    session.game,
+                    session.game && session.finished.is_none(),
                     session.elsewhere,
                     session.variant,
                 )
