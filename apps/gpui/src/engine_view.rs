@@ -101,19 +101,31 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
     .flex_none()
 }
 
-/// Each line's score and its moves from `fen` (in `variant`, a Lichess key), a click playing the
-/// line up to the move (`on_play`); `pending` rows wait for lines still to come.
-#[allow(clippy::too_many_arguments)]
+/// What the engine panel lists (`engine_lines`): the `lines` searched from `fen` (in `variant`, a
+/// Lichess key), how many rows wait for lines still to come (`pending`), and, when there is
+/// nothing to search, why (`ended`).
+pub struct EngineLines<'a> {
+    pub fen: &'a str,
+    pub variant: &'a str,
+    pub lines: &'a [Value],
+    pub pending: usize,
+    pub ended: Option<&'static str>,
+}
+
+/// Each line's score and its moves, a click playing the line up to the move (`on_play`).
 pub fn engine_lines(
-    fen: &str,
-    variant: &str,
-    lines: &[Value],
-    pending: usize,
-    ended: Option<&'static str>,
+    shown: EngineLines<'_>,
     on_play: PlayLine,
     palette: &Palette,
     figurine: crate::notation::Figurine,
 ) -> Div {
+    let EngineLines {
+        fen,
+        variant,
+        lines,
+        pending,
+        ended,
+    } = shown;
     let mut rows: Vec<AnyElement> = Vec::new();
     if let Some(ended) = ended {
         rows.push(

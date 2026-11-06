@@ -1208,9 +1208,11 @@ impl WatchPage {
             .child(banner)
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
                 "broadcast-moves",
-                &sans,
-                ply,
-                view::first_move(&setup),
+                widgets::MoveSheet {
+                    sans: &sans,
+                    shown: ply,
+                    first: view::first_move(&setup),
+                },
                 "No moves yet".into(),
                 select.clone(),
                 crate::notation::figurine(cx),

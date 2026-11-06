@@ -2868,12 +2868,13 @@ impl AnalysisPage {
                 {
                     let page = cx.entity().downgrade();
                     crate::engine_view::engine_lines(
-                        &self.engine_fen(),
-                        self.root.variant(),
-                        &lines,
-                        if using_cloud { 0 } else { prefs_lines(cx) },
-                        over.map(|_| "Nothing to analyse"),
-                        // A threat's line starts from a position that is not on the board.
+                        crate::engine_view::EngineLines {
+                            fen: &self.engine_fen(),
+                            variant: self.root.variant(),
+                            lines: &lines,
+                            pending: if using_cloud { 0 } else { prefs_lines(cx) },
+                            ended: over.map(|_| "Nothing to analyse"),
+                        }, // A threat's line starts from a position that is not on the board.
                         std::rc::Rc::new(move |pv: &[String], at, _: &mut Window, cx: &mut App| {
                             if !threat {
                                 let _ = page.update(cx, |page, cx| page.play_line(pv, at, cx));

@@ -1156,9 +1156,11 @@ impl OnlinePage {
             .children(notices)
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
                 "online-moves",
-                &sans,
-                ply,
-                view::first_move(&setup),
+                widgets::MoveSheet {
+                    sans: &sans,
+                    shown: ply,
+                    first: view::first_move(&setup),
+                },
                 "No moves yet".into(),
                 select,
                 crate::notation::figurine(cx),

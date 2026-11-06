@@ -95,7 +95,6 @@ const KEYS: &[(&str, &str)] = &[
 pub struct Palette {
     pub dark: bool,
     pub bg: Hsla,
-    pub muted: Hsla,
     pub elevated: Hsla,
     pub accented: Hsla,
     pub border: Hsla,
@@ -129,7 +128,6 @@ impl Palette {
         Palette {
             dark,
             bg: c("--ui-bg"),
-            muted: c("--ui-bg-muted"),
             elevated: c("--ui-bg-elevated"),
             accented: c("--ui-bg-accented"),
             border: c("--ui-border"),

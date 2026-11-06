@@ -724,9 +724,11 @@ impl WatchPage {
             .children(head_to_head)
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
                 "watch-moves",
-                &sans,
-                self.live.shown_ply(),
-                setup.as_ref().map(view::first_move).unwrap_or_default(),
+                widgets::MoveSheet {
+                    sans: &sans,
+                    shown: self.live.shown_ply(),
+                    first: setup.as_ref().map(view::first_move).unwrap_or_default(),
+                },
                 empty.into(),
                 select.clone(),
                 crate::notation::figurine(cx),

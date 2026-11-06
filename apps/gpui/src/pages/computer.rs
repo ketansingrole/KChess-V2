@@ -1697,9 +1697,11 @@ impl Render for ComputerPage {
             ))
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
                 "computer-moves",
-                &sans,
-                ply,
-                first,
+                widgets::MoveSheet {
+                    sans: &sans,
+                    shown: ply,
+                    first,
+                },
                 "No moves yet".into(),
                 select.clone(),
                 crate::notation::figurine(cx),

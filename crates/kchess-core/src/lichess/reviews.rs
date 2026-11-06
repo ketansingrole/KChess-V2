@@ -10,7 +10,7 @@ use serde_json::{Map, Number, Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::accounts::{Lichess, now_ms};
-use super::client::{Failure, LichessClient};
+use super::client::{Failure, LichessClient, Ndjson};
 use super::decode::{Loose, read};
 use crate::error::{CoreError, Result as CoreResult};
 use kchess_domain::{js, records, replay, review as domain_review};
@@ -273,10 +273,20 @@ pub(crate) async fn collect_lines(
 ) -> Result<Vec<String>, Failure> {
     let mut lines = Vec::new();
     client
-        .ndjson(method, path, query, body, auth, cancel, |line| {
-            lines.push(line.to_string());
-            Ok(())
-        })
+        .ndjson(
+            Ndjson {
+                method,
+                path,
+                query,
+                body,
+                auth,
+            },
+            cancel,
+            |line| {
+                lines.push(line.to_string());
+                Ok(())
+            },
+        )
         .await?;
     Ok(lines)
 }

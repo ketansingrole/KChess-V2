@@ -179,20 +179,33 @@ fn hand_back(mut socket: TcpStream) {
     tokio::spawn(async move { crate::loopback::close_after_client(&mut socket).await });
 }
 
+/// The callback a sign-in waits for (`wait_for_redirect`): its `path` and `state`, the page the
+/// browser is shown (for an authorized sign-in or not), and how long to wait before failing with
+/// `timed_out`.
+pub struct Redirect<'a> {
+    pub path: &'a str,
+    pub state: &'a str,
+    pub page: &'a (dyn Fn(bool) -> String + Sync),
+    pub timed_out: &'a str,
+    pub timeout: Duration,
+}
+
 /// Waits for the one callback that may end a sign-in: `path` with this `state`. Favicon
 /// requests, port probes and forged callbacks get a 404 and do not end it. `on_return` runs as
 /// soon as the browser hands the sign-in back, before the token exchange.
-#[allow(clippy::too_many_arguments)]
 pub async fn wait_for_redirect(
     listener: &TcpListener,
-    path: &str,
-    state: &str,
-    page: &(dyn Fn(bool) -> String + Sync),
-    timed_out: &str,
-    timeout: Duration,
+    redirect: Redirect<'_>,
     cancel: &CancellationToken,
     on_return: &(dyn Fn() + Sync),
 ) -> CoreResult<Callback> {
+    let Redirect {
+        path,
+        state,
+        page,
+        timed_out,
+        timeout,
+    } = redirect;
     let deadline = tokio::time::sleep(timeout);
     tokio::pin!(deadline);
     loop {
@@ -243,17 +256,14 @@ pub async fn wait_for_callback(
     on_return: &(dyn Fn() + Sync),
 ) -> CoreResult<String> {
     let page = |authorized| callback_page(authorized, look);
-    let callback = wait_for_redirect(
-        listener,
-        "/callback",
+    let redirect = Redirect {
+        path: "/callback",
         state,
-        &page,
-        "Lichess login timed out.",
+        page: &page,
+        timed_out: "Lichess login timed out.",
         timeout,
-        cancel,
-        on_return,
-    )
-    .await?;
+    };
+    let callback = wait_for_redirect(listener, redirect, cancel, on_return).await?;
     callback
         .code
         .ok_or_else(|| CoreError::new("Lichess login was not completed."))

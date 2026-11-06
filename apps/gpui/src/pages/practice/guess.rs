@@ -806,9 +806,11 @@ impl GuessMoves {
         let shown = self.viewing.unwrap_or(self.ply);
         let moves = widgets::moves_list(
             "guess-moves",
-            &game.sans[..self.ply.min(game.sans.len())],
-            shown,
-            view::first_move(&game.setup),
+            widgets::MoveSheet {
+                sans: &game.sans[..self.ply.min(game.sans.len())],
+                shown,
+                first: view::first_move(&game.setup),
+            },
             "No moves yet".into(),
             move |ply, _, cx| {
                 let _ = page.update(cx, |this, cx| this.view(ply, cx));

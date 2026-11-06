@@ -572,11 +572,13 @@ impl WatchPage {
                         .unwrap_or_default()
                 };
                 panel.child(crate::engine_view::engine_lines(
-                    &fen,
-                    "standard",
-                    &broadcasts.engine.engine.lines(),
-                    crate::prefs::get::<usize>(cx, LINES, 3).clamp(1, 5),
-                    terminal.map(|_| "Nothing to analyse"),
+                    crate::engine_view::EngineLines {
+                        fen: &fen,
+                        variant: "standard",
+                        lines: &broadcasts.engine.engine.lines(),
+                        pending: crate::prefs::get::<usize>(cx, LINES, 3).clamp(1, 5),
+                        ended: terminal.map(|_| "Nothing to analyse"),
+                    },
                     std::rc::Rc::new(move |pv: &[String], at, _: &mut Window, cx: &mut App| {
                         let _ = page.update(cx, |page, cx| page.explore(pv, at, cx));
                     }),
