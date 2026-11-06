@@ -10,7 +10,8 @@ on:
     inputs:
       count:
         description: Runs of each test
-        default: '3'
+        type: number
+        default: 3
 
 permissions:
   contents: read
@@ -30,6 +31,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install GPUI build libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
@@ -44,7 +47,9 @@ jobs:
       # `--test-threads=40` does on a 10-core Mac.
       - name: Oversubscribed tests
         shell: bash
+        env:
+          STRESS_COUNT: ${{ inputs.count || 3 }}
         run: |
           threads=$(( $(nproc 2>/dev/null || sysctl -n hw.ncpu) * 4 ))
           cargo nextest run -p kchess-gpui -p kchess-core -p kchess-service --locked \
-            --test-threads "$threads" --stress-count "${{ inputs.count || '3' }}"
+            --test-threads "$threads" --stress-count "$STRESS_COUNT"

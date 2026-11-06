@@ -20,6 +20,8 @@ jobs:
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '1'
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: package

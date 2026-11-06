@@ -20,6 +20,7 @@ jobs:
       # Run trusted publishing code from main, never code supplied by a release asset.
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           ref: main
       - name: Download and verify the published Snap
         env:
