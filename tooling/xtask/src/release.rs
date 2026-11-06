@@ -62,12 +62,6 @@ pub fn next_version(tags: &[&str], year: u32, month: u32) -> Result<String> {
     ))
 }
 
-/// The UTC year and month now.
-fn utc_month() -> (u32, u32) {
-    let (year, month, _) = utc_date();
-    (year, month)
-}
-
 /// The UTC date now, from the system clock (days since 1970 → civil date).
 fn utc_date() -> (u32, u32, u32) {
     let seconds = std::time::SystemTime::now()
@@ -572,10 +566,8 @@ mod tests {
 
     #[test]
     fn the_clock_reads_a_month() {
-        let (year, month) = utc_month();
-        assert!(year >= 2026 && (1..=12).contains(&month));
-        let (_, _, day) = utc_date();
-        assert!((1..=31).contains(&day));
+        let (year, month, day) = utc_date();
+        assert!(year >= 2026 && (1..=12).contains(&month) && (1..=31).contains(&day));
     }
 
     #[test]
