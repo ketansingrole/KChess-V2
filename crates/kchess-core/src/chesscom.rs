@@ -63,6 +63,16 @@ struct Answer {
     body: Vec<u8>,
 }
 
+/// One month of a player's archive as the store keeps it: its validators for the next request,
+/// whether the month is over, and the games read from it.
+struct MonthArchive<'a> {
+    month: &'a str,
+    etag: Option<&'a str>,
+    last_modified: Option<&'a str>,
+    complete: bool,
+    games: &'a [Value],
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
@@ -376,8 +386,14 @@ impl Chesscom {
             }
             let ended = month.as_str() < now.as_str();
             if fetched >= MAX_GAMES as usize {
-                self.save(name, month, None, None, ended, &[], &current)
-                    .await?;
+                let archive = MonthArchive {
+                    month,
+                    etag: None,
+                    last_modified: None,
+                    complete: ended,
+                    games: &[],
+                };
+                self.save(name, archive, &current).await?;
                 continue;
             }
             let validator = |key| {
@@ -394,16 +410,14 @@ impl Chesscom {
             match answer.status {
                 StatusCode::NOT_MODIFIED => {
                     if ended {
-                        self.save(
-                            name,
+                        let archive = MonthArchive {
                             month,
-                            validator("etag"),
-                            validator("lastModified"),
-                            true,
-                            &[],
-                            &current,
-                        )
-                        .await?;
+                            etag: validator("etag"),
+                            last_modified: validator("lastModified"),
+                            complete: true,
+                            games: &[],
+                        };
+                        self.save(name, archive, &current).await?;
                     }
                 }
                 StatusCode::OK => {
@@ -416,16 +430,14 @@ impl Chesscom {
                         .filter_map(|game| game_row(name, game))
                         .collect();
                     fetched += games.len();
-                    self.save(
-                        name,
+                    let archive = MonthArchive {
                         month,
-                        answer.etag.as_deref(),
-                        answer.last_modified.as_deref(),
-                        ended,
-                        &games,
-                        &current,
-                    )
-                    .await?;
+                        etag: answer.etag.as_deref(),
+                        last_modified: answer.last_modified.as_deref(),
+                        complete: ended,
+                        games: &games,
+                    };
+                    self.save(name, archive, &current).await?;
                 }
                 StatusCode::NOT_FOUND | StatusCode::GONE => {}
                 _ => return Err(unreachable()),
@@ -442,15 +454,10 @@ impl Chesscom {
         Ok(fetched)
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn save(
         &self,
         name: &str,
-        month: &str,
-        etag: Option<&str>,
-        last_modified: Option<&str>,
-        complete: bool,
-        games: &[Value],
+        archive: MonthArchive<'_>,
         current: &(dyn Fn() -> bool + Sync),
     ) -> Result<()> {
         if !current() {
@@ -458,11 +465,11 @@ impl Chesscom {
         }
         let archive = json!({
             "username": name,
-            "month": month,
-            "etag": etag,
-            "lastModified": last_modified,
-            "complete": complete,
-            "games": games,
+            "month": archive.month,
+            "etag": archive.etag,
+            "lastModified": archive.last_modified,
+            "complete": archive.complete,
+            "games": archive.games,
         });
         self.database
             .call_async_with("store.chesscom.saveArchive", || {

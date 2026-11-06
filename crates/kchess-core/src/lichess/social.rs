@@ -10,7 +10,7 @@ use super::accounts::{
     Lichess, LichessGame, Reply, no_such_user, normalize_game, parse_game, path_segment,
     profile_key,
 };
-use super::client::Failure;
+use super::client::{Failure, Ndjson};
 use crate::error::{CoreError, Result as CoreResult};
 use kchess_domain::records::RATING_DISPLAY_NAMES;
 
@@ -186,6 +186,7 @@ impl Lichess {
                         "application/vnd.lichess.v3+json",
                         None,
                         self.lifetime(),
+                        None,
                     )
                     .await
             })
@@ -328,15 +329,17 @@ impl Lichess {
                 let mut lines = Vec::new();
                 self.client()
                     .ndjson(
-                        reqwest::Method::GET,
-                        "/api/games/export/bookmarks",
-                        &[
-                            ("max", BOOKMARKS_MAX.to_string()),
-                            ("moves", "false".to_string()),
-                            ("opening", "true".to_string()),
-                        ],
-                        None,
-                        Some(&super::client::authorize(&token)),
+                        Ndjson {
+                            method: reqwest::Method::GET,
+                            path: "/api/games/export/bookmarks",
+                            query: &[
+                                ("max", BOOKMARKS_MAX.to_string()),
+                                ("moves", "false".to_string()),
+                                ("opening", "true".to_string()),
+                            ],
+                            body: None,
+                            auth: Some(&super::client::authorize(&token)),
+                        },
                         self.lifetime(),
                         |line| {
                             lines.push(line.to_string());

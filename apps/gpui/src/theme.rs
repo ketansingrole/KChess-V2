@@ -92,12 +92,9 @@ const KEYS: &[(&str, &str)] = &[
 /// KChess's own colors, by name, for what GPUI Kit's theme has no slot for
 /// (accented backgrounds, toned and dimmed text, wins and losses): `cx.global::<Palette>()`.
 #[derive(Clone, Copy)]
-// The whole palette, as the stylesheet defines it; each view reads what it paints with.
-#[allow(dead_code)]
 pub struct Palette {
     pub dark: bool,
     pub bg: Hsla,
-    pub muted: Hsla,
     pub elevated: Hsla,
     pub accented: Hsla,
     pub border: Hsla,
@@ -131,7 +128,6 @@ impl Palette {
         Palette {
             dark,
             bg: c("--ui-bg"),
-            muted: c("--ui-bg-muted"),
             elevated: c("--ui-bg-elevated"),
             accented: c("--ui-bg-accented"),
             border: c("--ui-border"),

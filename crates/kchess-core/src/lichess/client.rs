@@ -38,6 +38,16 @@ pub struct TextLimit<'a> {
     pub message: &'a str,
 }
 
+/// An NDJSON request (`Client::ndjson`): `body` is the comma-separated id list of the `_ids`
+/// exports, sent as `text/plain`.
+pub struct Ndjson<'a> {
+    pub method: reqwest::Method,
+    pub path: &'a str,
+    pub query: &'a [(&'a str, String)],
+    pub body: Option<String>,
+    pub auth: Option<&'a str>,
+}
+
 /// A failed Lichess call: the API's own error (with its status and endpoint), or a failure of
 /// the core itself (a rejected request, a stalled stream, an abort).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -382,7 +392,8 @@ impl LichessClient {
     }
 
     /// A text response (`parseAs: 'text'`), such as a game exported as PGN. An empty body is a
-    /// valid answer here, as it is for `unwrap`.
+    /// valid answer here, as it is for `unwrap`. With a `limit`, the decoded size is bounded
+    /// before the response finishes.
     pub async fn get_text(
         &self,
         path: &str,
@@ -390,13 +401,14 @@ impl LichessClient {
         accept: &str,
         auth: Option<&str>,
         cancel: &CancellationToken,
+        limit: Option<TextLimit<'_>>,
     ) -> Result<String> {
         let mut headers = vec![("Accept", accept.to_string())];
         headers.extend(auth_header(auth));
         let admitted = self
             .call(reqwest::Method::GET, path, query, &headers, None, cancel)
             .await?;
-        self.read_text(admitted, "GET", path, cancel, None).await
+        self.read_text(admitted, "GET", path, cancel, limit).await
     }
 
     /// One game from `POST /api/games/export/_ids`, which Lichess answers without an account;
@@ -422,39 +434,21 @@ impl LichessClient {
         self.read_text(admitted, "POST", path, cancel, None).await
     }
 
-    /// A text download whose decoded size is bounded before the response finishes.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn get_text_bounded(
-        &self,
-        path: &str,
-        query: &[(&str, String)],
-        accept: &str,
-        auth: Option<&str>,
-        cancel: &CancellationToken,
-        limit: TextLimit<'_>,
-    ) -> Result<String> {
-        let mut headers = vec![("Accept", accept.to_string())];
-        headers.extend(auth_header(auth));
-        let admitted = self
-            .call(reqwest::Method::GET, path, query, &headers, None, cancel)
-            .await?;
-        self.read_text(admitted, "GET", path, cancel, Some(limit))
-            .await
-    }
-
     /// An NDJSON response, read line by line as it arrives (`parseAs: 'stream'`). `body` is the
     /// comma-separated id list of the `_ids` exports, sent as `text/plain`.
-    #[allow(clippy::too_many_arguments)]
     pub async fn ndjson<F: FnMut(&str) -> Result<()>>(
         &self,
-        method: reqwest::Method,
-        path: &str,
-        query: &[(&str, String)],
-        body: Option<String>,
-        auth: Option<&str>,
+        request: Ndjson<'_>,
         cancel: &CancellationToken,
         on_line: F,
     ) -> Result<()> {
+        let Ndjson {
+            method,
+            path,
+            query,
+            body,
+            auth,
+        } = request;
         let mut headers = vec![("Accept", "application/x-ndjson".to_string())];
         headers.extend(auth_header(auth));
         let body = body.map(|text| ("text/plain", text));

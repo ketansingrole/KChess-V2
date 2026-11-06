@@ -17,7 +17,7 @@ use super::{
 use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
 use crate::lichess::accounts::{Lichess, path_segment};
-use crate::lichess::client::{Failure, parse_json};
+use crate::lichess::client::{Failure, Ndjson, parse_json};
 use crate::lichess::decode::{Loose, read};
 use crate::lichess::stream::STALLED;
 
@@ -369,11 +369,13 @@ impl Inner {
                 .lichess
                 .client()
                 .ndjson(
-                    reqwest::Method::GET,
-                    &path,
-                    &[],
-                    None,
-                    None,
+                    Ndjson {
+                        method: reqwest::Method::GET,
+                        path: &path,
+                        query: &[],
+                        body: None,
+                        auth: None,
+                    },
                     token,
                     move |line| {
                         if token_for_lines.is_cancelled() || !inner.is_current(session) {
@@ -732,11 +734,13 @@ impl Inner {
         self.lichess
             .client()
             .ndjson(
-                reqwest::Method::GET,
-                &path,
-                &[],
-                None,
-                None,
+                Ndjson {
+                    method: reqwest::Method::GET,
+                    path: &path,
+                    query: &[],
+                    body: None,
+                    auth: None,
+                },
                 token,
                 |line| {
                     if token.is_cancelled() || !self.is_current(session) {
