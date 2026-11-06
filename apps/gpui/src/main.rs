@@ -28,6 +28,7 @@ mod interface_zoom;
 mod log;
 mod menu;
 mod microphone;
+mod motion;
 mod name_dialog;
 mod network;
 mod notation;
@@ -107,6 +108,7 @@ fn main() {
     });
     app.run(move |cx| {
         gpui_kit::init(cx);
+        motion::init(cx);
         menu::init(cx);
         notifications::init(cx);
         if let Err(message) = core::start(data_dir, cx) {

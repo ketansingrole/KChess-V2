@@ -1086,6 +1086,9 @@ impl Workspace {
                 cx.global::<crate::core::AppCore>()
                     .bridge
                     .focus(window.is_window_active());
+                if window.is_window_active() {
+                    crate::motion::refresh(cx);
+                }
             }),
             cx.subscribe_in(
                 &settings,
