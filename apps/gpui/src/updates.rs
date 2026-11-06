@@ -403,9 +403,9 @@ async fn download(
         .map_err(|cause| cause.to_string())?;
     let mut hasher = Sha256::new();
     let mut received = 0u64;
-    let mut body = response.bytes_stream();
-    while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(failed("The download stopped"))?;
+    // A dropped connection picks up at the byte it reached instead of starting over.
+    let mut body = kchess_core::download::Resumable::new(&client, response, None);
+    while let Some(chunk) = body.chunk().await.map_err(failed("The download stopped"))? {
         hasher.update(&chunk);
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await

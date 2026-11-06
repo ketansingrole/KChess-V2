@@ -534,7 +534,8 @@ impl VoiceModelCache {
     }
 
     async fn download(&self, url: &str, zip: &Path) -> Result<u64> {
-        let mut response = self
+        let deadline = std::time::Instant::now() + DOWNLOAD_TIMEOUT;
+        let response = self
             .inner
             .client
             .get(url)
@@ -556,7 +557,10 @@ impl VoiceModelCache {
             .await
             .map_err(|cause| io_error("Could not stage the voice model", cause))?;
         let mut received = 0_u64;
-        while let Some(chunk) = response
+        // A dropped connection picks up at the byte it reached instead of starting over.
+        let mut body =
+            crate::download::Resumable::new(&self.inner.client, response, Some(deadline));
+        while let Some(chunk) = body
             .chunk()
             .await
             .map_err(|cause| CoreError::new(error_text(&cause)))?
