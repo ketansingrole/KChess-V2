@@ -247,6 +247,13 @@ mod tests {
             let bytes = answer.recv().unwrap().expect("picture");
             assert_eq!(format_of(&bytes), Some(ImageFormat::Png));
         }
-        assert_eq!(connections.load(Ordering::SeqCst), 1);
+        // A client per picture opened one connection each, every time (5). The pool can still
+        // open a second when a request starts before the last answer's connection is back in it
+        // (seen under a loaded test run), so reuse is what is checked, not a count of one.
+        let opened = connections.load(Ordering::SeqCst);
+        assert!(
+            opened < 5,
+            "every picture opened its own connection ({opened})"
+        );
     }
 }
