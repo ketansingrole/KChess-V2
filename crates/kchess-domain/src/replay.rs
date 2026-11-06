@@ -361,6 +361,9 @@ mod tests {
             replay_positions_count(START, &["f2f3", "e7e5", "g2g4", "d8h4"]),
             5
         );
+        // The start and each move played before the first illegal one.
+        assert_eq!(replay_positions_count(START, &["e2e4", "e7e5", "e1e3"]), 3);
+        assert_eq!(replay_positions_count("not a fen", &["e2e4"]), 0);
     }
 }
 
