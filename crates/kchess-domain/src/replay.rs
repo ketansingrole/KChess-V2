@@ -332,6 +332,26 @@ mod tests {
         assert_eq!(bare[1].end, Some("draw"));
     }
 
+    /// Each position's side to move and end, the end only when asked for.
+    #[test]
+    fn turns_follow_the_replay() {
+        let mate = ["f2f3", "e7e5", "g2g4", "d8h4"];
+        let turns = replay_turns(START, &mate);
+        assert_eq!(
+            turns,
+            [
+                (true, None),
+                (false, None),
+                (true, None),
+                (false, None),
+                (true, Some("checkmate")),
+            ]
+        );
+        let unchecked = replay_turns_with_end(START, &mate, false);
+        assert_eq!(unchecked.last(), Some(&(true, None)));
+        assert_eq!(replay_turns(START, &["e2e4", "e2e4"]).len(), 2);
+    }
+
     #[test]
     fn positions_mark_checkmate() {
         let positions = replay_positions(START, &["f2f3", "e7e5", "g2g4", "d8h4"]);
