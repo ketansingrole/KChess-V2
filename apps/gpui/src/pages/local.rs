@@ -1054,13 +1054,7 @@ impl LocalPage {
                         .opacity(0.75)
                         .child(format!("Player {index}")),
                 )
-                .child(
-                    div()
-                        .text_size(px(120.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .line_height(px(120.))
-                        .child(time.clone()),
-                )
+                .child(crate::widgets::timer(time.clone(), px(120.)))
                 .child(div().text_size(px(14.)).opacity(0.75).child(
                     crate::widgets::format_counted(moves as f64, "move", "moves"),
                 ))

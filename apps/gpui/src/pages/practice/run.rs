@@ -228,15 +228,13 @@ pub fn hud(
         .items_end()
         .justify_between()
         .gap(px(12.))
-        .child(crate::widgets::timer(
-            clock.text(),
-            px(40.),
-            if clock.low() {
+        .child(
+            crate::widgets::timer(clock.text(), px(40.)).text_color(if clock.low() {
                 palette.loss
             } else {
                 palette.text
-            },
-        ))
+            }),
+        )
         .child(
             v_flex()
                 .items_end()
