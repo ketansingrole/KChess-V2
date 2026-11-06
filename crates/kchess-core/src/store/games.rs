@@ -20,7 +20,6 @@ use serde_json::{Value, json};
 use super::StoreContext;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
-use kchess_domain::api;
 use kchess_domain::calendar::civil_from_days;
 
 /// Games kept per account.
@@ -475,9 +474,7 @@ pub(super) fn now_ms() -> i64 {
 
 /// A validator or domain rule from `kchess-domain`, by its TypeScript name.
 fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
-    let text = serde_json::to_string(&args).map_err(|cause| CoreError::new(cause.to_string()))?;
-    let output = api::call(method, &text).map_err(CoreError::new)?;
-    serde_json::from_str(&output).map_err(|cause| CoreError::new(cause.to_string()))
+    crate::engine::domain(method, args)
 }
 
 /// `rulesLossless(name, value)` with no special values to carry.

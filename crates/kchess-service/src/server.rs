@@ -135,7 +135,9 @@ impl Host for ServiceHost {
             let at = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |since| since.as_millis());
-            let _ = writeln!(file, "{at} {} [{scope}] {message}", level.name());
+            // One write per line: `writeln!` on an unbuffered file writes each piece separately.
+            let line = format!("{at} {} [{scope}] {message}\n", level.name());
+            let _ = file.write_all(line.as_bytes());
         }
     }
 
