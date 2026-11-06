@@ -1216,3 +1216,41 @@ fn the_line_to_a_move_is_copied(cx: &mut gpui_kit::TestAppContext) {
         .unwrap_or_default();
     assert!(copied.contains("1. e4 e5 *"), "{copied}");
 }
+
+/// A step through the moves slides its piece, but not with Reduce motion on, and not while the
+/// last step's slide is still under way (an arrow key held): that position stands at once. Slides
+/// are timed by the test's clock, so each holds still until the clock moves past it.
+#[gpui_kit::test]
+fn pieces_slide_only_when_there_is_time_to(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    import(&mut app, "1. e4 e5 2. Nf3 d6 *");
+    app.click("tree-e2e4 e7e5 g1f3 d7d6");
+    let slide = ("board-slide", 0usize);
+    let settle = |app: &mut Harness| {
+        app.cx
+            .executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        app.cx.run_until_parked();
+    };
+    settle(&mut app);
+    // The harness runs with Reduce motion on.
+    app.press("left");
+    assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
+    assert!(!app.shows(slide), "Reduce motion stills the piece");
+
+    app.cx.update(|cx| cx.set_reduce_motion(false));
+    settle(&mut app);
+    app.press("left");
+    assert_eq!(selected(&mut app, "e2e4 e7e5"), Some(true));
+    assert!(app.shows(slide), "the knight slides back");
+    // The next step comes before that slide ends: it stands at once.
+    app.press("left");
+    assert_eq!(selected(&mut app, "e2e4"), Some(true));
+    assert!(!app.shows(slide), "a step during a slide stands at once");
+    settle(&mut app);
+    app.press("right");
+    assert!(
+        app.shows(slide),
+        "a step after the slide ended slides again"
+    );
+}
