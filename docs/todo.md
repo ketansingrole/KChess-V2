@@ -12,3 +12,5 @@ Features worth building next, roughly in order.
   review over time, not only favour the lines missed.
 - [ ] **Drop a PGN file anywhere** in the window to open it: one game on the analysis board,
   several as a study import.
+- [x] **Time use in Insights**: from the clocks synced games carry, results short of time, the
+  clock against the opponent's, blunders short of time and time per move by phase.

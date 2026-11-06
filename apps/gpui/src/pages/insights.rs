@@ -1,6 +1,6 @@
 //! Insights: an account's synced games (Lichess or Chess.com) broken down by colour,
-//! speed, opponent, length, day, time of day, ending and opening, filtered by speed, period and
-//! rated or casual.
+//! speed, opponent, length, clock, day, time of day, ending and opening, with time use from the
+//! games' clocks, filtered by speed, period and rated or casual.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -113,6 +113,121 @@ fn best_and_weakest(openings: &[Value]) -> Option<(String, String)> {
             bottom["name"].as_str().unwrap_or_default().to_string(),
         )
     })
+}
+
+/// Results of the games where the player's clock fell under a tenth of its start, and of the
+/// rest; none without clocked games.
+fn by_clock(time: &Value) -> Vec<(String, (f64, f64, f64))> {
+    if time.is_null() {
+        return Vec::new();
+    }
+    [("Short of time", "trouble"), ("Time to spare", "spare")]
+        .into_iter()
+        .filter(|(_, key)| time[*key]["total"].as_f64().unwrap_or_default() > 0.)
+        .map(|(label, key)| (label.to_string(), record(&time[key])))
+        .collect()
+}
+
+/// Seconds as a short duration: `4.2 s`, `1 min 5 s`.
+fn seconds(value: f64) -> String {
+    if value < 60. {
+        format!("{value:.1} s")
+    } else {
+        let whole = value.round() as i64;
+        format!("{} min {} s", whole / 60, whole % 60)
+    }
+}
+
+/// Blunders per hundred moves.
+fn blunder_rate(entry: &Value) -> Option<f64> {
+    let moves = entry["moves"].as_f64().filter(|moves| *moves > 0.)?;
+    Some(100. * entry["blunders"].as_f64().unwrap_or_default() / moves)
+}
+
+/// Time use: the clock against the opponent's, blunders short of time, and time by phase.
+fn time_use(time: &Value, palette: &Palette) -> Option<Stateful<Div>> {
+    let games = time["games"].as_f64()?;
+    let clock_at = time["clockAt"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|entry| {
+            let percent = |key: &str| entry[key].as_f64().unwrap_or_default().round();
+            figure(
+                &format!("Clock at move {}", entry["move"]),
+                format!("{}% left", percent("player")),
+                Some(format!("Opponent {}%", percent("opponent"))),
+                palette,
+            )
+        });
+    let blunders = time.get("blunders").and_then(|blunders| {
+        let short = blunder_rate(&blunders["short"]);
+        let spare = blunder_rate(&blunders["spare"]);
+        let (value, sub) = match (short, spare) {
+            (Some(short), spare) => (
+                format!("{short:.1}"),
+                spare.map(|spare| format!("{spare:.1} with time to spare")),
+            ),
+            (None, Some(spare)) => ("–".into(), Some(format!("{spare:.1} with time to spare"))),
+            (None, None) => return None,
+        };
+        Some(figure(
+            "Blunders per 100 moves short of time",
+            value,
+            sub,
+            palette,
+        ))
+    });
+    let phases = time["phases"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|entry| {
+            let name = match entry["phase"].as_str().unwrap_or_default() {
+                "opening" => "Opening",
+                "middlegame" => "Middlegame",
+                _ => "Endgame",
+            };
+            let mut detail = format!(
+                "{} a move",
+                seconds(entry["seconds"].as_f64().unwrap_or_default())
+            );
+            if let Some(share) = entry["share"].as_f64() {
+                detail.push_str(&format!(" · {}% of your time", share.round()));
+            }
+            h_flex()
+                .justify_between()
+                .gap(px(12.))
+                .py(px(4.))
+                .text_size(px(13.))
+                .child(div().child(name))
+                .child(
+                    div()
+                        .text_color(palette.text_muted)
+                        .font_features(widgets::tabular())
+                        .child(detail),
+                )
+        });
+    Some(
+        v_flex()
+            .id("insights-time-use")
+            .gap(px(8.))
+            .child(widgets::heading("Time use", palette))
+            .child(widgets::hint(
+                widgets::format_counted(games, "game with clocks", "games with clocks"),
+                palette,
+            ))
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .items_start()
+                    .gap(px(32.))
+                    .py(px(4.))
+                    .children(clock_at)
+                    .children(blunders),
+            )
+            .child(v_flex().max_w(px(480.)).children(phases)),
+    )
 }
 
 fn choices(items: &[(&str, &str)]) -> Vec<Choice> {
@@ -362,6 +477,15 @@ impl InsightsPage {
     pub(crate) fn show_report_variants(&mut self, variants: &[&str], cx: &mut Context<Self>) {
         if let Some(report) = &mut self.report {
             report["variants"] = json!(variants);
+        }
+        cx.notify();
+    }
+
+    /// As if the last report had had `time` as its time use.
+    #[cfg(test)]
+    pub(crate) fn show_time_use(&mut self, time: Value, cx: &mut Context<Self>) {
+        if let Some(report) = &mut self.report {
+            report["timeUse"] = time;
         }
         cx.notify();
     }
@@ -734,6 +858,7 @@ impl InsightsPage {
             ),
             ("By opponent rating", list("byOpponent", &text("label"))),
             ("By game length", list("byLength", &text("label"))),
+            ("By clock", by_clock(&report["timeUse"])),
             (
                 "By day",
                 report["byWeekday"]
@@ -752,6 +877,11 @@ impl InsightsPage {
                 }),
             ),
         ];
+        // Without clocked games there is nothing to break down by clock.
+        let parts: Vec<(&'static str, Rows)> = parts
+            .into_iter()
+            .filter(|(title, rows)| *title != "By clock" || !rows.is_empty())
+            .collect();
         let openings = report["byOpening"].as_array().cloned().unwrap_or_default();
         let best = best_and_weakest(&openings);
         // Each section's height for balancing: its title and a row per entry.
@@ -777,6 +907,7 @@ impl InsightsPage {
         v_flex()
             .gap(px(28.))
             .child(h_flex().items_start().gap(px(40.)).children(column_list))
+            .children(time_use(&report["timeUse"], palette))
             .child(
                 v_flex()
                     .gap(px(8.))
@@ -815,7 +946,7 @@ impl InsightsPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{balance, best_and_weakest, by_time, speed_name};
+    use super::{balance, best_and_weakest, blunder_rate, by_clock, by_time, seconds, speed_name};
     use serde_json::json;
 
     /// Electron's columns put colour, speed and opponent rating first; length and day next;
@@ -854,5 +985,26 @@ mod tests {
         assert_eq!(best_and_weakest(&openings[..1]), None);
         assert_eq!(speed_name("ultraBullet"), "UltraBullet");
         assert_eq!(speed_name("blitz"), "Blitz");
+    }
+
+    #[test]
+    fn clock_figures_read_as_words() {
+        assert!(by_clock(&serde_json::Value::Null).is_empty());
+        let time = json!({
+            "trouble": { "win": 1, "draw": 0, "loss": 2, "total": 3 },
+            "spare": { "win": 0, "draw": 0, "loss": 0, "total": 0 },
+        });
+        assert_eq!(
+            by_clock(&time),
+            vec![("Short of time".to_string(), (1., 0., 2.))],
+            "a side with no games is left out"
+        );
+        assert_eq!(seconds(4.25), "4.2 s");
+        assert_eq!(seconds(65.), "1 min 5 s");
+        assert_eq!(
+            blunder_rate(&json!({ "moves": 50, "blunders": 2 })),
+            Some(4.)
+        );
+        assert_eq!(blunder_rate(&json!({ "moves": 0, "blunders": 0 })), None);
     }
 }
