@@ -7,7 +7,7 @@ pub mod archive;
 pub mod computer;
 pub mod local;
 
-use serde::Deserialize as _;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 /// A random number in [0, 1), like `Math.random()`, for the rules that draw from them.
@@ -32,16 +32,32 @@ pub fn rules(method: &str, args: &[Value]) -> Result<Value, String> {
     if !kchess_domain::api::needs_large_stack(method, args) {
         return kchess_domain::api::call_value(method, args);
     }
-    let text = kchess_domain::api::call(method, &Value::Array(args.to_vec()).to_string())?;
-    // A game's tree nests once a move: past JSON's usual limit of 128 once it runs some 64 plies.
-    let mut reader = serde_json::Deserializer::from_str(&text);
-    reader.disable_recursion_limit();
-    let answer = Value::deserialize(&mut reader)
-        .map_err(|e| format!("{method} answered something unreadable: {e}"))?;
-    reader
-        .end()
-        .map_err(|e| format!("{method} answered something unreadable: {e}"))?;
-    Ok(answer)
+    rules_as(method, args)
+}
+
+/// A rules method's answer read straight into `T`. A deep answer (a game tree nests once a ply,
+/// some 2,000 levels at the 1024-ply limit) is called, parsed and read on the domain's large
+/// stack, so no deep intermediate `Value` is walked or dropped on the caller's thread: a crafted
+/// 800-ply PGN overflowed a 1 MiB thread (Windows' main thread) doing that.
+pub fn rules_as<T: DeserializeOwned + Send>(method: &str, args: &[Value]) -> Result<T, String> {
+    if !kchess_domain::api::needs_large_stack(method, args) {
+        let value = kchess_domain::api::call_value(method, args)?;
+        return serde_json::from_value(value)
+            .map_err(|e| format!("{method} answered something unreadable: {e}"));
+    }
+    let call = Value::Array(args.to_vec()).to_string();
+    kchess_domain::api::on_large_stack(|| {
+        let text = kchess_domain::api::call(method, &call)?;
+        // Past JSON's usual limit of 128 once a tree runs some 64 plies; `call` bounds the depth.
+        let mut reader = serde_json::Deserializer::from_str(&text);
+        reader.disable_recursion_limit();
+        let answer = T::deserialize(&mut reader)
+            .map_err(|e| format!("{method} answered something unreadable: {e}"))?;
+        reader
+            .end()
+            .map_err(|e| format!("{method} answered something unreadable: {e}"))?;
+        Ok(answer)
+    })
 }
 
 /// Run a session transition: the rules answer with the finished transition or with the next
@@ -131,5 +147,42 @@ mod tests {
             plies += 1;
         }
         assert_eq!(plies, 200);
+    }
+
+    /// A deepest legal tree (1024 plies) read on a 1 MiB thread, as on Windows' main thread:
+    /// reading the answer back there overflowed the stack and aborted the app on a dropped PGN.
+    #[derive(serde::Deserialize)]
+    struct Node {
+        children: Vec<Node>,
+    }
+
+    #[test]
+    fn the_deepest_tree_reads_on_a_small_stack() {
+        let shuffle = ["Nf3", "Nf6", "Ng1", "Ng8"];
+        let moves: Vec<String> = (0..1024)
+            .map(|ply| {
+                let number = format!("{}. ", ply / 2 + 1);
+                let prefix = if ply % 2 == 0 { number.as_str() } else { "" };
+                format!("{prefix}{}", shuffle[ply % 4])
+            })
+            .collect();
+        let pgn = Value::String(format!("{} *", moves.join(" ")));
+        let plies = std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(move || {
+                let tree: Node = rules_as("treeFromPgn", &[pgn]).unwrap();
+                let (mut node, mut plies) = (&tree, 0);
+                while let Some(next) = node.children.first() {
+                    node = next;
+                    plies += 1;
+                }
+                // Dropping the tree recurses once a ply too, here on the small stack.
+                drop(tree);
+                plies
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(plies, 1024);
     }
 }
