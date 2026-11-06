@@ -331,11 +331,15 @@ async fn a_window_that_stops_reading_is_cut_off_and_cleaned_up() {
     .expect("hello");
     gpui.call("library", vec![]).await.expect("joined");
 
-    // Every focus change moves the alerts and queues an event for the stalled window.
+    // Every focus change moves the alerts and queues an event for every window, the stalled one
+    // included. GPUI's window reads its own: a call's answer comes after the events queued before
+    // it, so answering one every 512 changes keeps it well inside its queue. Without that it was
+    // the one cut off on a loaded Windows runner, behind on a 40 000-event burst ("The KChess core
+    // stopped" at the next call), while the stalled window's backlog still grows past the queue.
     for round in 0..40_000 {
         gpui.focus(round % 2 == 0);
-        if round % 128 == 0 {
-            tokio::time::sleep(Duration::from_millis(1)).await;
+        if round % 512 == 511 {
+            gpui.call("library", vec![]).await.expect("kept up");
         }
     }
     gpui.call("library", vec![]).await.expect("still served");
