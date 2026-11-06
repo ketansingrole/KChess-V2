@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fixtures::{Recording, Reply, http_client, serve};
-use kchess_core::lichess::client::{Failure, LichessClient, authorize, urlencoded};
+use kchess_core::lichess::client::{Failure, LichessClient, Ndjson, authorize, urlencoded};
 use kchess_core::lichess::policy::{Policy, is_stream};
 use kchess_core::{CoreError, ErrorKind};
 use serde_json::Value;
@@ -268,11 +268,13 @@ async fn ndjson_lines_reach_the_caller_while_the_stream_is_open() {
         async move {
             client
                 .ndjson(
-                    reqwest::Method::GET,
-                    "/api/stream/event",
-                    &[],
-                    None,
-                    Some("Bearer lip_x"),
+                    Ndjson {
+                        method: reqwest::Method::GET,
+                        path: "/api/stream/event",
+                        query: &[],
+                        body: None,
+                        auth: Some("Bearer lip_x"),
+                    },
                     &cancel,
                     |line| {
                         let _ = lines_out.send(line.to_string());
@@ -298,11 +300,13 @@ async fn an_ndjson_error_is_logged_with_the_request() {
     let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
     let failure = client
         .ndjson(
-            reqwest::Method::GET,
-            "/api/games/user/nobody",
-            &[],
-            None,
-            None,
+            Ndjson {
+                method: reqwest::Method::GET,
+                path: "/api/games/user/nobody",
+                query: &[],
+                body: None,
+                auth: None,
+            },
             &CancellationToken::new(),
             |_| Ok(()),
         )
@@ -332,11 +336,13 @@ async fn cancelling_an_open_stream_ends_the_read_with_an_abort() {
     });
     let failure = client
         .ndjson(
-            reqwest::Method::GET,
-            "/api/stream/event",
-            &[],
-            None,
-            None,
+            Ndjson {
+                method: reqwest::Method::GET,
+                path: "/api/stream/event",
+                query: &[],
+                body: None,
+                auth: None,
+            },
             &cancel,
             |_| Ok(()),
         )
@@ -361,11 +367,13 @@ async fn streamed_bytes_are_counted_for_the_account_that_read_them() {
         async move {
             client
                 .ndjson(
-                    reqwest::Method::GET,
-                    "/api/games/user/Alice",
-                    &[],
-                    None,
-                    None,
+                    Ndjson {
+                        method: reqwest::Method::GET,
+                        path: "/api/games/user/Alice",
+                        query: &[],
+                        body: None,
+                        auth: None,
+                    },
                     &cancel,
                     |_| Ok(()),
                 )
@@ -410,11 +418,13 @@ async fn active_stream_outlives_its_header_deadline_and_remains_cancellable() {
         async move {
             client
                 .ndjson(
-                    reqwest::Method::GET,
-                    "/api/tv/blitz/feed",
-                    &[],
-                    None,
-                    None,
+                    Ndjson {
+                        method: reqwest::Method::GET,
+                        path: "/api/tv/blitz/feed",
+                        query: &[],
+                        body: None,
+                        auth: None,
+                    },
                     &cancel,
                     |line| {
                         observed.send(line.to_string()).expect("observer");
@@ -475,11 +485,13 @@ async fn ordinary_and_error_response_bodies_keep_their_deadline() {
         let error = if stream {
             client
                 .ndjson(
-                    reqwest::Method::GET,
-                    "/api/stream/event",
-                    &[],
-                    None,
-                    None,
+                    Ndjson {
+                        method: reqwest::Method::GET,
+                        path: "/api/stream/event",
+                        query: &[],
+                        body: None,
+                        auth: None,
+                    },
                     &cancel,
                     |_| Ok(()),
                 )
@@ -502,31 +514,31 @@ async fn text_limit_counts_utf16_units_while_collecting_chunks() {
     let (client, _) = client_for(&fixture.base, Arc::new(Recording::default()));
     let cancel = CancellationToken::new();
     let text = client
-        .get_text_bounded(
+        .get_text(
             "/text",
             &[],
             "text/plain",
             None,
             &cancel,
-            TextLimit {
+            Some(TextLimit {
                 utf16_units: 4,
                 message: "too large",
-            },
+            }),
         )
         .await
         .unwrap();
     assert_eq!(text, "a😀é");
     let error = client
-        .get_text_bounded(
+        .get_text(
             "/text",
             &[],
             "text/plain",
             None,
             &cancel,
-            TextLimit {
+            Some(TextLimit {
                 utf16_units: 3,
                 message: "too large",
-            },
+            }),
         )
         .await
         .unwrap_err();
@@ -555,6 +567,7 @@ async fn a_request_redirected_to_a_web_page_fails_instead_of_returning_the_page(
             "application/x-chess-pgn",
             None,
             &CancellationToken::new(),
+            None,
         )
         .await
         .unwrap_err();
@@ -591,11 +604,13 @@ async fn one_exported_game_does_not_wait_for_a_running_bulk_export() {
         tokio::spawn(async move {
             client
                 .ndjson(
-                    reqwest::Method::GET,
-                    "/api/games/user/Alice",
-                    &[],
-                    None,
-                    None,
+                    Ndjson {
+                        method: reqwest::Method::GET,
+                        path: "/api/games/user/Alice",
+                        query: &[],
+                        body: None,
+                        auth: None,
+                    },
                     &sync,
                     |_| Ok(()),
                 )

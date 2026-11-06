@@ -266,7 +266,7 @@ pub fn init(cx: &mut App) {
     // Everything is saved, with the window still open to say what could not be, before quitting.
     cx.on_action(|_: &Quit, cx| {
         unless_leaving_a_game("Quit", cx, |cx| {
-            crate::core::prepare_quit(cx, "Quit without saving", |cx| cx.quit(), |_| {});
+            crate::core::prepare_quit(cx, "Quit without saving", crate::core::quit_saved, |_| {});
         });
     });
     cx.on_action(|_: &Hide, cx| cx.hide());

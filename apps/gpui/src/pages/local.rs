@@ -1578,9 +1578,11 @@ impl LocalPage {
             ))
             .child(div().flex_1().min_h(px(120.)).child(widgets::moves_list(
                 "local-moves",
-                &sans,
-                shown,
-                view::first_move(self.setup()),
+                widgets::MoveSheet {
+                    sans: &sans,
+                    shown,
+                    first: view::first_move(self.setup()),
+                },
                 if self.game.state["times"].is_null() {
                     "No moves yet".into()
                 } else {

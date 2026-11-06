@@ -3,7 +3,8 @@
 //!
 //! Admission: at most two requests are in flight, interactive requests (game moves and their
 //! resign/abort/draw/takeback family) go before the rest, a 429 starts a cooldown that the next
-//! request waits out (`Retry-After`, capped at 5 minutes, 60 seconds when absent), a request
+//! request waits out (`Retry-After`, capped at 5 minutes, 60 seconds when absent) without holding
+//! a lane, and that interactive requests wait out only when one of them was refused, a request
 //! that is not a stream has 30 seconds to answer, and game exports hold a lane of their own
 //! until their body is read, cancelled or fails. Nothing here retries: an ambiguous mutation is
 //! never replayed.
@@ -37,6 +38,8 @@ const MAX_WAITING: usize = 500;
 const BULK_HOLD: Duration = Duration::from_secs(600);
 const DEFAULT_COOLDOWN: Duration = Duration::from_secs(60);
 const MAX_COOLDOWN: Duration = Duration::from_secs(300);
+/// The shortest cooldown, in seconds: `Retry-After: 0` must not let a refused burst repeat at once.
+const MIN_COOLDOWN: f64 = 1.0;
 
 /// `UNATTRIBUTED`: traffic made outside any `with_usage` scope.
 const UNATTRIBUTED_KIND: &str = "other";
@@ -189,7 +192,10 @@ pub struct Policy {
     lifetime: CancellationToken,
     timeout: Duration,
     lanes: Mutex<Lanes>,
+    /// A 429 answered to a background request (a sync, an export): background requests wait.
     cooldown_until: Mutex<Option<Instant>>,
+    /// A 429 answered to an interactive request: every request waits.
+    interactive_cooldown_until: Mutex<Option<Instant>>,
     accounting: Mutex<Accounting>,
 }
 
@@ -256,15 +262,15 @@ pub fn is_foreground(url: &str) -> bool {
 }
 
 /// The cooldown a 429 starts: `Retry-After` in seconds, at most 5 minutes; 60 seconds when the
-/// header is missing or not a positive number.
+/// header is missing or not a number, and at least a second when it says 0.
 pub fn cooldown_for(headers: &HeaderMap) -> Duration {
     let seconds = headers
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
         .and_then(|text| text.trim().parse::<f64>().ok());
     match seconds {
-        Some(seconds) if seconds.is_finite() && seconds > 0.0 => {
-            Duration::from_secs_f64(seconds.min(MAX_COOLDOWN.as_secs_f64()))
+        Some(seconds) if seconds.is_finite() && seconds >= 0.0 => {
+            Duration::from_secs_f64(seconds.clamp(MIN_COOLDOWN, MAX_COOLDOWN.as_secs_f64()))
         }
         _ => DEFAULT_COOLDOWN,
     }
@@ -300,6 +306,7 @@ impl Policy {
             timeout,
             lanes: Mutex::new(Lanes::default()),
             cooldown_until: Mutex::new(None),
+            interactive_cooldown_until: Mutex::new(None),
             accounting: Mutex::new(Accounting::default()),
         })
     }
@@ -458,18 +465,8 @@ impl Policy {
         url: &str,
         cancel: &CancellationToken,
     ) -> Result<reqwest::Response> {
-        let priority = if is_foreground(url) { 2 } else { 1 };
-        let _slot = self.acquire_slot(priority, cancel).await?;
-        let cooldown = *lock(&self.cooldown_until);
-        if let Some(until) = cooldown {
-            let now = Instant::now();
-            if until > now {
-                tokio::select! {
-                    _ = tokio::time::sleep(until - now) => {}
-                    _ = cancel.cancelled() => return Err(aborted()),
-                }
-            }
-        }
+        let interactive = is_foreground(url);
+        let _slot = self.admit(interactive, cancel).await?;
         let fut = self.http.execute(request);
         // The deadline covers the headers; `read_body` extends it to the body of a non-stream.
         let response = tokio::select! {
@@ -486,7 +483,12 @@ impl Policy {
         };
         if response.status().as_u16() == 429 {
             let cooldown = cooldown_for(response.headers());
-            *lock(&self.cooldown_until) = Some(Instant::now() + cooldown);
+            let until = if interactive {
+                &self.interactive_cooldown_until
+            } else {
+                &self.cooldown_until
+            };
+            *lock(until) = Some(Instant::now() + cooldown);
             let retry = response
                 .headers()
                 .get(reqwest::header::RETRY_AFTER)
@@ -504,6 +506,43 @@ impl Policy {
             );
         }
         Ok(response)
+    }
+
+    /// What is left of the cooldown a request of this kind waits out. A background request that
+    /// Lichess rate-limited (a game sync during a blitz game) must not hold up the player's moves,
+    /// which have limits of their own.
+    fn cooldown_left(&self, interactive: bool) -> Option<Duration> {
+        let now = Instant::now();
+        let mut until = *lock(&self.interactive_cooldown_until);
+        if !interactive {
+            until = until.max(*lock(&self.cooldown_until));
+        }
+        until
+            .and_then(|until| until.checked_duration_since(now))
+            .filter(|left| !left.is_zero())
+    }
+
+    /// A lane for a request, once its cooldown is over. The cooldown is waited out without a lane,
+    /// so requests sleeping through it never keep the ones it does not apply to from running.
+    async fn admit(
+        self: &Arc<Self>,
+        interactive: bool,
+        cancel: &CancellationToken,
+    ) -> Result<Slot> {
+        let priority = if interactive { 2 } else { 1 };
+        loop {
+            if let Some(left) = self.cooldown_left(interactive) {
+                tokio::select! {
+                    () = tokio::time::sleep(left) => {}
+                    () = cancel.cancelled() => return Err(aborted()),
+                }
+            }
+            let slot = self.acquire_slot(priority, cancel).await?;
+            // A 429 that arrived while this waited for its lane starts another wait.
+            if self.cooldown_left(interactive).is_none() {
+                return Ok(slot);
+            }
+        }
     }
 
     async fn acquire_slot(
@@ -663,6 +702,35 @@ mod tests {
         assert_eq!(cooldown_for(&headers), Duration::from_secs(300));
         headers.insert(reqwest::header::RETRY_AFTER, "soon".parse().unwrap());
         assert_eq!(cooldown_for(&headers), Duration::from_secs(60));
+        // "Retry at once" used to become the 60-second default.
+        headers.insert(reqwest::header::RETRY_AFTER, "0".parse().unwrap());
+        assert_eq!(cooldown_for(&headers), Duration::from_secs(1));
+    }
+
+    /// A game sync rate-limited during a blitz game set one cooldown for every request, and the
+    /// next move slept through it (60 s and more) holding a lane: the player lost on time. Now a
+    /// background 429 holds back background requests only, and they wait without a lane.
+    #[tokio::test]
+    async fn a_rate_limited_sync_does_not_hold_up_moves() {
+        let policy = quiet_policy();
+        let cancel = CancellationToken::new();
+        *lock(&policy.cooldown_until) = Some(Instant::now() + Duration::from_secs(60));
+        let mut sync = Box::pin(policy.admit(false, &cancel));
+        let mut other = Box::pin(policy.admit(false, &cancel));
+        queue(&mut sync).await;
+        queue(&mut other).await;
+        assert_eq!(lock(&policy.lanes).active, 0, "waiting without a lane");
+        let first = tokio::time::timeout(Duration::from_secs(1), policy.admit(true, &cancel))
+            .await
+            .expect("a move is admitted at once")
+            .expect("slot");
+        drop(first);
+        // A 429 on a move holds back everything.
+        *lock(&policy.interactive_cooldown_until) = Some(Instant::now() + Duration::from_secs(60));
+        let mut moved = Box::pin(policy.admit(true, &cancel));
+        queue(&mut moved).await;
+        cancel.cancel();
+        assert!(sync.await.is_err() && other.await.is_err() && moved.await.is_err());
     }
 
     struct Quiet;

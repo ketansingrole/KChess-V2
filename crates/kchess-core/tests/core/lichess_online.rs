@@ -1354,6 +1354,31 @@ async fn a_malformed_line_on_the_event_stream_is_reported_as_it_arrives() {
     online.close();
 }
 
+/// A record the checks refuse, replayed by Lichess on every connect, used to count as progress:
+/// the stream reconnected about once a second forever instead of backing off and giving up.
+#[tokio::test]
+async fn a_refused_record_on_every_connect_backs_off_instead_of_reconnecting_each_second() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&attempts);
+    let fixture = serve(move |seen| match (seen.method.as_str(), seen.path()) {
+        ("GET", "/api/stream/event") => {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Reply::Text(200, "application/x-ndjson", "not a record\n".to_string())
+        }
+        _ => refuse(seen),
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online.stay_connected("Alice");
+    wait_requests(&fixture, "/api/stream/event", 1).await;
+    // Backing off: connects at 0 s, 1 s and 3 s, then 7 s. Once a second would be five by now.
+    tokio::time::sleep(Duration::from_millis(4_500)).await;
+    let seen = attempts.load(Ordering::SeqCst);
+    assert!(seen <= 3, "reconnected {seen} times in 4.5 s");
+    online.close();
+}
+
 /// Challenges sent to a connected account whose event stream is not open reached no inbox: the
 /// ongoing refresh lists them (`GET /api/challenge`) for every account but the one streaming, and a
 /// later listing without one removes it.

@@ -520,20 +520,29 @@ fn move_at(index: usize, first: FirstMove) -> FirstMove {
     }
 }
 
+/// The moves a scoresheet lists (`moves_list`): their SAN, the ply on the board (0 before the
+/// first move) and the game's `first` move, which numbers them.
+pub struct MoveSheet<'a> {
+    pub sans: &'a [String],
+    pub shown: usize,
+    pub first: FirstMove,
+}
+
 /// `.moves-list`: the game's moves as a scoresheet, ruled numbered pairs on the panel itself, the
-/// one on the board highlighted, numbered from the game's `first` move. `select` is called with the
-/// ply to show (1 for the first move).
-#[allow(clippy::too_many_arguments)]
+/// one on the board highlighted. `select` is called with the ply to show (1 for the first move).
 pub fn moves_list(
     id: impl Into<ElementId>,
-    sans: &[String],
-    ply: usize,
-    first: FirstMove,
+    sheet: MoveSheet<'_>,
     empty: SharedString,
     select: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
     figurine: crate::notation::Figurine,
     palette: &Palette,
 ) -> impl IntoElement {
+    let MoveSheet {
+        sans,
+        shown: ply,
+        first,
+    } = sheet;
     let number_cell = |text: String| {
         div()
             .px(px(8.))
@@ -1825,9 +1834,11 @@ mod tests {
                 .track_focus(&self.focus)
                 .child(super::moves_list(
                     "moves",
-                    &["e4".into(), "e5".into()],
-                    2,
-                    super::FirstMove::default(),
+                    super::MoveSheet {
+                        sans: &["e4".into(), "e5".into()],
+                        shown: 2,
+                        first: super::FirstMove::default(),
+                    },
                     "No moves".into(),
                     move |ply, _, _| chosen.set(Some(ply)),
                     None,

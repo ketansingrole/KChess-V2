@@ -14,3 +14,12 @@ digits. The patch also measures the glyph at the size it is drawn and uses the b
 both. `test_large_system_font_glyphs_are_not_clipped` keeps it.
 
 `rg "KChess patch" vendor/gpui-pre-apple` lists the changed lines.
+
+## Why `vendor/gpui` is here
+
+`vendor/gpui/src` holds five sources of the upstream, unpatched `gpui-pre` 0.3.11 (`scene.rs`,
+`geometry.rs`, `color.rs`, `window.rs`, `platform.rs`). They are not compiled: the published crate
+ships them so its build script (`build.rs`, macOS only) can generate the Metal shaders' header,
+`scene.h`, from the scene's types. They are not a stale copy of `../gpui-pre`: the KChess patches
+there change function bodies, not the types the header is generated from. When GPUI is updated,
+replace these files with the new release's, as the published crate has them.
