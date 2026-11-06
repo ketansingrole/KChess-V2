@@ -874,6 +874,23 @@ mod tests {
     use super::*;
     use regex::Regex;
 
+    /// A Result header is read in any dash and written as the PGN standard spells it.
+    #[test]
+    fn result_headers_are_normalized() {
+        for (written, read) in [
+            ("1-0", "1-0"),
+            ("1–0", "1-0"),
+            ("0-1", "0-1"),
+            ("0—1", "0-1"),
+            ("1/2–1/2", "1/2-1/2"),
+            ("1/2-1/2", "1/2-1/2"),
+            ("draw", "*"),
+        ] {
+            let game = &parse_pgn(&format!("[Result \"{written}\"]\n\n*"))[0];
+            assert_eq!(game.header("Result"), Some(read), "{written}");
+        }
+    }
+
     /// Lichess adds a Site and names each chapter: a study still matches its download.
     #[test]
     fn a_study_matches_its_download_without_the_headers_lichess_adds() {
