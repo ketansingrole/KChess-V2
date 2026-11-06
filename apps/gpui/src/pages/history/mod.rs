@@ -474,8 +474,9 @@ impl HistoryPage {
         })
     }
 
-    /// The Lichess tab searched for `text`, as typed in its field (screenshots).
-    #[cfg(test)]
+    /// The Lichess tab searched for `text`, as typed in its field (the screenshots, which are
+    /// taken on macOS).
+    #[cfg(all(test, target_os = "macos"))]
     pub(crate) fn search_lichess(
         &mut self,
         text: &str,
