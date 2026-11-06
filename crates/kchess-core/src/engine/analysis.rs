@@ -217,6 +217,13 @@ impl Analysis {
         }
     }
 
+    /// Finishes once every connection's analysis queued so far has ended (`AnalysisEngine::settled`).
+    pub async fn settled(&self) {
+        for engine in self.all() {
+            engine.settled().await;
+        }
+    }
+
     /// `stopAnalysis` from a client: stops the calling connection's analysis only.
     pub fn stop_mine(&self, kill: bool) {
         let connection = crate::connection::current_or_app();
@@ -531,6 +538,21 @@ impl AnalysisEngine {
     /// with `kill`, also closes the engine.
     pub fn stop_analysis(&self, kill: bool) {
         stop_locked(&mut lock(&self.shared.state), kill);
+    }
+
+    /// Finishes once every analysis queued so far has ended: its final update sent and it no
+    /// longer current. It takes its own place in the `serial` line, so an analysis queued after
+    /// it still waits its turn.
+    pub async fn settled(&self) {
+        let (link, prev) = {
+            let mut state = lock(&self.shared.state);
+            let (link, queued) = oneshot::channel::<()>();
+            (link, state.serial.replace(queued))
+        };
+        if let Some(prev) = prev {
+            let _ = prev.await;
+        }
+        drop(link);
     }
 }
 
