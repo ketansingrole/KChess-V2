@@ -576,34 +576,29 @@ impl ChessBoard {
             self.animation = None;
             return;
         }
+        let duration = std::time::Duration::from_secs_f64(duration / 1000.);
         self.animation = Some(Animation {
             moves,
             start: now,
-            duration: std::time::Duration::from_secs_f64(duration / 1000.),
+            duration,
         });
+        // The frames between are drawn on the display's own clock (`render` asks for the next
+        // one while the slide runs), so a 120 Hz screen slides at 120 Hz, in step with its
+        // refresh; this only ends the slide, for a window that draws no more frames (hidden,
+        // or a test's, which has no frame clock).
         self._animating = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(16))
-                    .await;
-                let going = this
-                    .update(cx, |this, cx| {
-                        cx.notify();
-                        let now = cx.background_executor().now();
-                        let done = this
-                            .animation
-                            .as_ref()
-                            .is_none_or(|animation| animation.ended(now));
-                        if done {
-                            this.animation = None;
-                        }
-                        !done
-                    })
-                    .unwrap_or(false);
-                if !going {
-                    return;
+            cx.background_executor().timer(duration).await;
+            let _ = this.update(cx, |this, cx| {
+                let now = cx.background_executor().now();
+                if this
+                    .animation
+                    .as_ref()
+                    .is_none_or(|animation| animation.ended(now))
+                {
+                    this.animation = None;
                 }
-            }
+                cx.notify();
+            });
         }));
     }
 
@@ -1960,7 +1955,11 @@ impl Render for ChessBoard {
             self.animation
                 .as_ref()
                 .map(|animation| {
-                    let t = animation.progress(cx.background_executor().now());
+                    let now = cx.background_executor().now();
+                    if !animation.ended(now) {
+                        window.request_animation_frame();
+                    }
+                    let t = animation.progress(now);
                     animation
                         .moves
                         .iter()
