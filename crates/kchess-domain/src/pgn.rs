@@ -891,6 +891,15 @@ mod tests {
         }
     }
 
+    /// Only a result outside every variation is the game's.
+    #[test]
+    fn a_result_inside_a_variation_is_not_the_games() {
+        let game = &parse_pgn("1. e4 (1. d4 0-1) e5")[0];
+        assert_ne!(game.header("Result"), Some("0-1"));
+        let game = &parse_pgn("1. e4 (1. d4) e5 0-1")[0];
+        assert_eq!(game.header("Result"), Some("0-1"));
+    }
+
     /// Lichess adds a Site and names each chapter: a study still matches its download.
     #[test]
     fn a_study_matches_its_download_without_the_headers_lichess_adds() {
