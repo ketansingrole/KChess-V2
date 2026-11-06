@@ -1625,6 +1625,13 @@ impl PuzzlesPage {
         }
     }
 
+    /// A Storm, Streak or Rush run is going.
+    pub(crate) fn run_going(&self, cx: &App) -> bool {
+        self.rush
+            .as_ref()
+            .is_some_and(|rush| rush.read(cx).running())
+    }
+
     /// The Storm · Streak · Rush view, while its tab is shown.
     fn shown_rush(&self, cx: &App) -> Option<Entity<rush::PuzzleRush>> {
         (crate::prefs::get::<String>(cx, TAB, "train".into()) == "rush")

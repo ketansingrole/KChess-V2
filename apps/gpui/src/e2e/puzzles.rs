@@ -219,11 +219,18 @@ fn quick_pick_starts_and_ends_a_storm_run(cx: &mut gpui_kit::TestAppContext) {
         app.press("enter");
         super::palette::wait_until_closed(app);
     };
+    let cost = |app: &mut Harness| {
+        app.with_window(|_, cx| crate::pages::settings::updates::restart_cost(cx))
+    };
+    assert_eq!(cost(&mut app), None);
     run(&mut app, "Start run");
     app.find("rush-end");
     assert!(!app.shows("rush-skip"));
+    // Restarting into an update would end the run, so its question says so.
+    assert_eq!(cost(&mut app), Some("Your puzzle run ends"));
     run(&mut app, "End run");
     app.find("rush-again");
+    assert_eq!(cost(&mut app), None);
     run(&mut app, "Back to modes");
     app.find("rush-start");
 

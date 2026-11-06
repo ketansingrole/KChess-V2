@@ -303,6 +303,11 @@ impl PuzzleRush {
         cx.notify();
     }
 
+    /// A timed or survival run is going: a restart ends it.
+    pub(crate) fn running(&self) -> bool {
+        self.stage == Stage::Running
+    }
+
     fn over(&self) -> bool {
         self.state["over"].is_string()
     }

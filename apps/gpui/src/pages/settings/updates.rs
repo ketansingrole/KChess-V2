@@ -14,20 +14,42 @@ use crate::theme::Palette;
 use crate::updates::{Phase, Updates, UpdatesHandle};
 use crate::widgets::{self, KeyboardFocus as _, Look};
 
-/// `RESTART_UPDATE_DESCRIPTION`.
-pub const RESTART_DESCRIPTION: &str = "KChess will close and reopen. Finish any game or timed puzzle run first; an unfinished local game or run will be lost, and an online game's clock will keep running.";
+/// What a restart now would cost: a real-time Lichess game's clock keeps running, and a timed
+/// puzzle run ends. Games against the computer and over the board are saved and resumed.
+pub fn restart_cost(cx: &App) -> Option<&'static str> {
+    let live = cx
+        .try_global::<crate::online::OnlineHandle>()
+        .is_some_and(|_| crate::online::handle(cx).read(cx).live_game_on());
+    if live {
+        return Some(
+            "Your Lichess game is still on, and its clock keeps running while KChess restarts",
+        );
+    }
+    let run = crate::shell::view_of::<crate::pages::puzzles::PuzzlesPage>(
+        crate::pages::Page::Puzzles,
+        cx,
+    )
+    .is_some_and(|puzzles| puzzles.read(cx).run_going(cx));
+    run.then_some("Your puzzle run ends")
+}
 
 /// Ask, then restart into the downloaded update (the Updates section and the top bar's button).
+/// The question names what a restart would cost now; unfinished games here are resumed.
 pub fn ask_restart(window: &mut Window, cx: &mut App) {
     let handle = cx.global::<UpdatesHandle>().0.clone();
     let version = handle.read(cx).version.clone().unwrap_or_default();
+    let cost = restart_cost(cx);
     window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
         let handle = handle.clone();
         dialog
             .title(format!("Restart and install KChess {version}?"))
-            .description(RESTART_DESCRIPTION)
+            .description(cost.unwrap_or("KChess closes and reopens"))
             .ok_text("Restart and install")
-            .ok_variant(ButtonVariant::Primary)
+            .ok_variant(if cost.is_some() {
+                ButtonVariant::Danger
+            } else {
+                ButtonVariant::Primary
+            })
             .cancel_text("Cancel")
             .show_cancel(true)
             .on_ok(move |_, _, cx| {

@@ -310,7 +310,7 @@ impl SidebarInputs {
             back: workspace.back,
             game_mark: game_mark(cx),
             online: crate::network::online(cx),
-            accounts_busy: accounts.working(),
+            accounts_busy: accounts.busy,
             active: accounts.active(cx),
             connected: accounts.connected(),
         }
@@ -331,6 +331,8 @@ struct TopbarInputs {
 #[derive(PartialEq)]
 struct UpdateInputs {
     phase: crate::updates::Phase,
+    /// A real-time game is on: the button waits until it ends.
+    live_game: bool,
     version: Option<String>,
     current: String,
     progress: Option<(u64, u64)>,
@@ -346,6 +348,7 @@ impl TopbarInputs {
             working: working(cx),
             update: UpdateInputs {
                 phase: updates.phase,
+                live_game: crate::online::handle(cx).read(cx).live_game_on(),
                 version: updates.version.clone(),
                 current: updates.current.clone(),
                 progress: updates.progress,
@@ -2089,6 +2092,10 @@ fn account_button(expanded: bool, cx: &App) -> AnyElement {
 /// A newer KChess, its download, or the restart that installs it.
 fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
     use crate::updates::{Phase, UpdatesHandle};
+    // Not during a real-time game: the update waits in Settings → Updates until it ends.
+    if crate::online::handle(cx).read(cx).live_game_on() {
+        return None;
+    }
     let handle = cx.global::<UpdatesHandle>().0.clone();
     let updates = handle.read(cx);
     let version = updates.version.clone()?;

@@ -24,6 +24,32 @@ fn past_the_opening(cx: &mut gpui_kit::TestAppContext) -> (Harness, Handle) {
     (app, lichess)
 }
 
+/// A downloaded update waits while a real-time game is on: no Restart to update in the top bar,
+/// and restarting from Settings says the clock keeps running. A game against the computer or over
+/// the board would be resumed, so only this asks so pointedly.
+#[gpui_kit::test]
+fn an_update_waits_for_the_live_game(cx: &mut gpui_kit::TestAppContext) {
+    use crate::updates::{Phase, UpdatesHandle};
+    let (mut app, _lichess) = in_a_game(cx);
+    app.with_window(|_, cx| {
+        let updates = cx.global::<UpdatesHandle>().0.clone();
+        updates.update(cx, |updates, cx| {
+            updates.phase = Phase::Downloaded;
+            updates.version = Some("2026.10.20".into());
+            cx.notify();
+        });
+    });
+    app.tick();
+    assert!(!app.shows("update-button"));
+    let cost = app.with_window(|_, cx| crate::pages::settings::updates::restart_cost(cx));
+    assert!(cost.is_some_and(|cost| cost.contains("clock keeps running")));
+    app.click("online-abort");
+    app.wait_for("the game to end", |_, cx| {
+        !crate::online::handle(cx).read(cx).live_game_on()
+    });
+    app.find("update-button");
+}
+
 #[gpui_kit::test]
 fn a_game_lichess_keeps_from_apps_is_offered_to_watch(cx: &mut gpui_kit::TestAppContext) {
     // A game started on another device that the Board API cannot play once opened Play on
