@@ -201,9 +201,7 @@ fn database_bytes(data_dir: &Path) -> u64 {
         .sum()
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
-}
+use crate::tasks::lock;
 
 /// The host the core's services use: `host:usage` events go to the batch, everything else to the
 /// platform host unchanged.

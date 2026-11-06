@@ -342,9 +342,7 @@ pub struct Lichess {
 
 type SyncOutcome = watch::Receiver<Option<Result<usize, CoreError>>>;
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
-}
+use crate::tasks::lock;
 
 impl Lichess {
     pub fn new(
