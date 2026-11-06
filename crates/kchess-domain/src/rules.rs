@@ -1098,4 +1098,22 @@ mod fen_tests {
         assert!(with(64).is_some());
         assert!(with(65).is_none());
     }
+
+    /// `K` and `Q` name the outermost rook, or the corner when there is none.
+    #[test]
+    fn castling_rights_name_the_outer_rooks() {
+        let rights = |fen: &str| {
+            let rights = parse_fen(fen).unwrap().castling_rights;
+            rights
+                .into_iter()
+                .map(|sq| sq.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(rights("4k3/8/8/8/8/8/8/R2RK1RR w KQ - 0 1"), ["a1", "h1"]);
+        assert_eq!(rights("4k3/8/8/8/8/8/8/4K3 w KQ - 0 1"), ["a1", "h1"]);
+        assert_eq!(rights("4k3/8/8/8/8/8/8/4K3 w K - 0 1"), ["h1"]);
+        assert_eq!(rights("1r2k1r1/8/8/8/8/8/8/4K3 w kq - 0 1"), ["b8", "g8"]);
+        assert_eq!(rights("4k3/8/8/8/8/8/8/1R2K1R1 w BG - 0 1"), ["b1", "g1"]);
+        assert!(parse_fen("4k3/8/8/8/8/8/8/RR2K2R w KQB - 0 1").is_none());
+    }
 }
