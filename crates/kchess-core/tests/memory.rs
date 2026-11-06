@@ -93,7 +93,8 @@ async fn settled() -> isize {
 }
 
 /// Runs `cycle` `warmup` times, then `batches` × `per_batch` times, sampling the settled heap
-/// after each batch. Reports, and fails beyond `allowance` bytes kept per cycle on average.
+/// after each batch. Reports, and fails beyond `allowance` bytes kept per cycle (the median
+/// batch's growth).
 async fn measure<F, Fut>(
     name: &str,
     warmup: usize,
@@ -123,7 +124,12 @@ async fn measure<F, Fut>(
     }
     let cycles = (batches * per_batch) as isize;
     let kept = *samples.last().unwrap_or(&0);
-    let per_cycle = kept / cycles;
+    // Judged by the median growth of a batch: memory the cycles keep grows by about the same in
+    // every batch, while a map or buffer sized by the work grows to its working capacity in one
+    // step, in whichever batch first needs it (seen under CI's coverage build).
+    let mut growth: Vec<isize> = samples.windows(2).map(|pair| pair[1] - pair[0]).collect();
+    growth.sort_unstable();
+    let per_cycle = growth.get(growth.len() / 2).copied().unwrap_or(0) / per_batch as isize;
     let trail: Vec<String> = samples.iter().map(|bytes| kib(*bytes)).collect();
     let tasks = alive_tasks() - tasks;
     println!(
@@ -268,7 +274,7 @@ async fn computer_moves() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cores_opened_and_closed() {
     let dir = tempfile::tempdir().expect("profile");
-    measure("core open/close", 3, 4, 5, 4096, |_| async {
+    measure("core open/close", 3, 4, 5, 512, |_| async {
         let core = open(dir.path());
         core.call("loadData", vec![]).await.expect("load");
         core.close().await;
