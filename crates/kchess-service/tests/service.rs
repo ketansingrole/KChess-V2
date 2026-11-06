@@ -540,3 +540,68 @@ fn the_binary_prints_its_release_and_protocol() {
         .expect("ran");
     assert_eq!(usage.status.code(), Some(2));
 }
+
+/// `suspend` and `close` only answer: the shared core keeps serving every window.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_window_cannot_close_the_shared_core() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (gpui, _events) = connect(profile.path(), "gpui").await;
+    let info = discovery::read_info(profile.path()).expect("core.json");
+    assert!(info.started_at > 1_600_000_000_000, "{}", info.started_at);
+    assert_eq!(gpui.call("suspend", vec![]).await, Ok(Value::Null));
+    assert_eq!(gpui.call("close", vec![]).await, Ok(Value::Null));
+    gpui.call("library", vec![]).await.expect("still served");
+    assert!(!service.is_finished());
+    service.abort();
+}
+
+/// Once a core decides to close for another release, nobody else is let in.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_closing_core_lets_nobody_in() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (gpui, _events) = connect(profile.path(), "gpui").await;
+    let socket =
+        std::path::PathBuf::from(discovery::read_info(profile.path()).expect("info").socket);
+    drop(gpui);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let token = discovery::read_token(profile.path()).expect("token");
+    let info = discovery::read_info(profile.path()).expect("core.json");
+    // Both connect before the refusal, so the second is answered after the core decided.
+    let first = transport::connect(Path::new(&info.socket))
+        .await
+        .expect("socket");
+    let second = transport::connect(Path::new(&info.socket))
+        .await
+        .expect("socket");
+    let say_hello = |stream: transport::Stream, protocol: String| {
+        let token = token.clone();
+        async move {
+            let (mut reader, mut writer) = tokio::io::split(stream);
+            let hello = Frame::Hello {
+                token,
+                kind: "test".into(),
+                release: "1999.1.0".into(),
+                protocol,
+                capabilities: Vec::new(),
+            };
+            write_frame(&mut writer, &hello).await.expect("hello");
+            read_frame(&mut reader).await.ok().flatten()
+        }
+    };
+    let refused = say_hello(first, "another-release".into()).await;
+    assert!(matches!(refused, Some(Frame::Refuse { sole: true, .. })));
+    let late = say_hello(second, protocol::protocol()).await;
+    assert!(
+        !matches!(late, Some(Frame::Welcome { .. })),
+        "welcomed into a closing core: {late:?}"
+    );
+    tokio::time::timeout(WAIT, service)
+        .await
+        .expect("the service closes")
+        .expect("joined")
+        .expect("closed cleanly");
+    assert!(!socket.exists(), "the socket goes with it");
+}
