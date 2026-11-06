@@ -82,7 +82,10 @@ fn home_shows_a_chesscom_players_activity(cx: &mut gpui_kit::TestAppContext) {
     });
     assert_eq!(summary, ("Chess.com", "@e2e_dave".to_string(), 2.));
     app.find("home-record");
-    assert!(!app.shows("home-connect"), "the player's card stands for the connect line");
+    assert!(
+        !app.shows("home-connect"),
+        "the player's card stands for the connect line"
+    );
     assert!(!app.shows("home-perf-blitz"), "only the speed played");
 
     // Sync games asks Chess.com for the player's games.

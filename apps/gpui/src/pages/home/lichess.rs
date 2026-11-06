@@ -98,9 +98,8 @@ impl LichessActivity {
             account: String::new(),
             source: Source::Lichess,
             profile: Value::Null,
-            history: cx.new(|cx| {
-                RatingHistory::new(LICHESS_HINT, window, cx).without_mode_picker()
-            }),
+            history: cx
+                .new(|cx| RatingHistory::new(LICHESS_HINT, window, cx).without_mode_picker()),
             overview: Value::Null,
             recent: Vec::new(),
             loaded: false,
@@ -310,7 +309,11 @@ impl LichessActivity {
     /// The heading, the name shown and the games counted.
     #[cfg(test)]
     pub(crate) fn summary(&self) -> (&'static str, String, f64) {
-        (self.source.heading(), format!("@{}", self.handle()), self.games())
+        (
+            self.source.heading(),
+            format!("@{}", self.handle()),
+            self.games(),
+        )
     }
 }
 
