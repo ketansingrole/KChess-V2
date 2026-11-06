@@ -320,9 +320,9 @@ async fn idle_watch(state: Arc<State>, idle: Duration) {
 /// One client, from `hello` to its last frame.
 async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
     let (mut reader, mut writer) = tokio::io::split(stream);
-    let hello = match tokio::time::timeout(HELLO_DEADLINE, read_frame(&mut reader)).await {
-        Ok(Ok(Some(hello))) => hello,
-        _ => return,
+    let Ok(Ok(Some(hello))) = tokio::time::timeout(HELLO_DEADLINE, read_frame(&mut reader)).await
+    else {
+        return;
     };
     let Frame::Hello {
         token,

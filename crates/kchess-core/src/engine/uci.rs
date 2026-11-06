@@ -15,7 +15,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use futures_util::future::join_all;
@@ -53,9 +53,7 @@ pub(crate) fn signal_aborted() -> CoreError {
     CoreError::aborted("This operation was aborted.")
 }
 
-pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
+pub(crate) use crate::tasks::lock;
 
 /// Resolves when `cancel` fires; never resolves without a token.
 pub(crate) async fn cancelled_or_pending(cancel: Option<&CancellationToken>) {

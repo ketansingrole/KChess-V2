@@ -1,0 +1,50 @@
+name: Stress
+# The app's and the core's tests oversubscribed, several times over, on every platform: timing races
+# show up here as failures with a test name, nightly, instead of as a red run on main. Four of the
+# six CI failures on main from 2026-10-29 to 2026-11-06 were such races, three of them on Windows.
+# A failure here is a bug to fix with a regression (GUARDRAILS.md), never a test to retry.
+on:
+  schedule:
+    - cron: '41 2 * * *'
+  workflow_dispatch:
+    inputs:
+      count:
+        description: Runs of each test
+        default: '3'
+
+permissions:
+  contents: read
+
+env:
+  NEXTEST_PROFILE: ci
+  GPUI_LINUX_LIBS: >-
+    libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxcb1-dev
+    libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev
+
+jobs:
+  stress:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install GPUI build libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      # CI's caches, read only: this workflow saves none of its own.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os == 'Linux' && 'check' || 'gpui' }}
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: false
+      - uses: taiki-e/install-action@cargo-nextest
+      # Four times as many tests at once as the runner has cores, as GUARDRAILS.md's
+      # `--test-threads=40` does on a 10-core Mac.
+      - name: Oversubscribed tests
+        shell: bash
+        run: |
+          threads=$(( $(nproc 2>/dev/null || sysctl -n hw.ncpu) * 4 ))
+          cargo nextest run -p kchess-gpui -p kchess-core -p kchess-service --locked \
+            --test-threads "$threads" --stress-count "${{ inputs.count || '3' }}"

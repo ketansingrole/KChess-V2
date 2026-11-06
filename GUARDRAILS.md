@@ -1,8 +1,11 @@
 # Guardrails and verification
 
 Run `cargo xtask check-fast` while editing. It checks format and lints for the workspace and runs
-the tests of every package with changes since `main` (committed, staged, unstaged or new); a
-change to `Cargo.toml` or `Cargo.lock` runs every test. This is an editing aid; related tests do
+the tests of every package with changes since `main` (committed, staged, unstaged or new) and of
+every workspace package that depends on one of them; a change to `Cargo.toml` or `Cargo.lock` runs
+every test. Tests run under cargo-nextest when it is installed (`.config/nextest.toml`), as in
+CI: all test binaries at once, each test in its own process, a hung test killed and named after
+five minutes. The app's run under `cargo test`, since each of its tests starts GPUI. This is an editing aid; related tests do
 not establish complete regression coverage.
 
 The app's end-to-end tests (`apps/gpui/src/e2e`) run the whole app headless over a fresh profile
@@ -22,7 +25,10 @@ offscreen into `<dir>/<width>x<height>/<page>.png`.
 the working tree has uncommitted or untracked files, since `check` would test those instead. Other
 branches push without it. Skip it only on purpose: `KCHESS_SKIP_PRE_PUSH=1 git push …`.
 
-Before merging, run `cargo xtask check`: `cargo fmt --check`, clippy over every target with
+Code reaches `main` through a pull request, whose CI runs `cargo xtask check` on Linux and the
+app's tests on macOS and Windows before it lands; run `check-fast` before opening it. A direct push
+to `main` (documents only, or when asked) runs `cargo xtask check` first through the hook. The
+check is `cargo fmt --check`, clippy over every target with
 warnings denied (and `unwrap`/`expect` denied in libraries and shipped binaries), the notices
 check, the release metadata, and every test, under the coverage gate when `cargo-llvm-cov` is
 installed. Packaging changes also need `cargo xtask package` on the platform they touch. CI runs
@@ -67,7 +73,8 @@ overlapping requests, cancellation, lost credentials, interrupted writes and rec
 generated or fuzzed case finds a defect, keep its seed and a focused reproducer.
 
 Timing races in the app's tests show up under load: `cargo test -p kchess-gpui -- --test-threads=40`
-runs the suite oversubscribed and should pass as reliably as a plain run. The harness runs with
+runs the suite oversubscribed and should pass as reliably as a plain run (`cargo nextest run -p
+kchess-gpui --test-threads=40 --stress-count 3` repeats it, each test in its own process). The nightly Stress workflow runs it on Windows, macOS and Linux. The harness runs with
 reduced motion, so dialogs and popovers are at rest when a test clicks them.
 
 ## Coverage and corpora

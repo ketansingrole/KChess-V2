@@ -18,9 +18,9 @@ cargo xtask install-hooks
 KCHESS_USER_DATA_DIR=/tmp/kchess-dev cargo run -p kchess-gpui
 ```
 
-While editing, `cargo xtask check-fast` checks only what changed. Pushing to `main` runs
-`cargo xtask check` through the pre-push hook. Before opening a pull request, run the same check
-CI runs:
+While editing, `cargo xtask check-fast` checks what changed and what depends on it; run it before
+opening a pull request. CI runs the full check on every pull request, on macOS, Windows and Linux.
+To run it locally as well (a push straight to `main` runs it through the pre-push hook):
 
 ```bash
 cargo xtask check

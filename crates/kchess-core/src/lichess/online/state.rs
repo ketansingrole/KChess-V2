@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -251,9 +251,7 @@ pub struct OnlineSession {
     pub(crate) inner: Arc<Inner>,
 }
 
-pub(crate) fn lock(mutex: &Mutex<State>) -> MutexGuard<'_, State> {
-    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
-}
+pub(crate) use crate::tasks::lock;
 
 pub(crate) fn aborted(message: &str) -> Failure {
     Failure::Core(CoreError::aborted(message))

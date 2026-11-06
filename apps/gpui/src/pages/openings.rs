@@ -821,7 +821,7 @@ impl OpeningsPage {
                                 .mt(px(8.))
                                 .text_size(px(12.))
                                 .text_color(palette.text_muted)
-                                .child(format!("{LIMIT} of {} openings", total)),
+                                .child(format!("{LIMIT} of {total} openings")),
                         )
                     }),
             );
