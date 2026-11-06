@@ -1090,6 +1090,20 @@ mod fen_tests {
         assert!(parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP w KQkq - 0 1").is_none());
     }
 
+    /// A pocket is written in brackets or, as some sites write it, after a ninth `/`.
+    #[test]
+    fn a_pocket_reads_in_either_form() {
+        let board = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+        for fen in [
+            format!("{board}[PPn] w - - 0 1"),
+            format!("{board}/PPn w - - 0 1"),
+        ] {
+            let pockets = parse_fen(&fen).unwrap().pockets.unwrap();
+            assert_eq!(pockets.white.pawn, 2, "{fen}");
+            assert_eq!(pockets.black.knight, 1, "{fen}");
+        }
+    }
+
     /// A Crazyhouse pocket holds at most 64 pieces.
     #[test]
     fn a_pocket_holds_at_most_64_pieces() {
