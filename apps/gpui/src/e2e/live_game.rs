@@ -416,15 +416,17 @@ fn a_finished_game_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppContext
 #[gpui_kit::test]
 fn a_seek_is_cancelled_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     use crate::online::Phase;
-    let (mut app, _lichess) = Harness::signed_in(cx, false);
+    let (mut app, lichess) = Harness::signed_in(cx, false);
     app.open("Play on Lichess");
-    app.wait_for("the startup check to finish", |_, cx| {
-        crate::online::handle(cx).read(cx).phase != Phase::Checking
-    });
-    app.with_window(|_, cx| {
-        // As the rules set it: a phase set alone was put back by a late answer (the ongoing
-        // games, the challenges) under a loaded run.
-        crate::online::handle(cx).update(cx, |online, cx| online.set_phase("seeking", cx))
+    // A real seek, so the core owns its phase. A phase the test set on the page alone was put
+    // back by the core's next report (the ongoing games, the challenges) under a loaded run, and
+    // Cancel seek never showed.
+    app.click("online-start");
+    app.wait_for("the seek", |_, cx| {
+        writes(&lichess)
+            .iter()
+            .any(|write| write.starts_with("POST /api/board/seek"))
+            && crate::online::handle(cx).read(cx).phase == Phase::Seeking
     });
     app.press("secondary-k");
     app.type_text(">Cancel seek");
@@ -514,5 +516,14 @@ fn new_opponent_seeks_the_same_game_against_anyone(cx: &mut gpui_kit::TestAppCon
         app.cx
             .update(|cx| crate::online::handle(cx).read(cx).form.clone()),
         form
+    );
+    // The seek is still on: the finished game was not announced again as the seek's game when
+    // the seek reopened the event stream (it was, and taking it up cancelled the seek, sometimes
+    // before it was even sent).
+    super::analysis::settle(&mut app);
+    assert_eq!(
+        app.cx.update(|cx| crate::online::handle(cx).read(cx).phase),
+        crate::online::Phase::Seeking,
+        "the seek was cancelled"
     );
 }
