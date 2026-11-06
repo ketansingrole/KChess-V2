@@ -133,8 +133,9 @@ can add them as a friend, challenge them or watch their current game.
 ### Training and statistics
 
 - **Opening trainer** (Practice → Openings): drill any saved study as White or Black. KChess
-  plays the other side's moves from the study and favours the lines you get wrong. Your
-  mistakes are remembered on this computer.
+  plays the other side's moves from the study: lines due for review first (each line is
+  scheduled by spaced repetition), then the lines you get wrong. The schedule and your mistakes
+  stay on this computer.
 - **Insights**: results by colour, speed, opening family, day of week, time of day, opponent
   rating gap, game length and how games ended. It also shows streaks and average accuracy,
   inaccuracies, mistakes and blunders from reviewed games. Variant games are counted apart from
