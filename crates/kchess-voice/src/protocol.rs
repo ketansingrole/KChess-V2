@@ -340,6 +340,6 @@ mod tests {
     fn an_empty_input_is_the_end_of_the_stream() {
         assert!(matches!(read_request(&mut [].as_slice()), Ok(None)));
         // A tag with no length after it is a frame cut short.
-        assert!(read_request(&mut [b'F'].as_slice()).is_err());
+        assert!(read_request(&mut b"F".as_slice()).is_err());
     }
 }
