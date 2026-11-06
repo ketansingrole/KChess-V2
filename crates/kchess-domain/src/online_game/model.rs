@@ -270,7 +270,15 @@ impl Model {
 
     /// Whose turn the position reached by the moves is.
     pub fn turn(&self) -> &'static str {
-        turn_of(&self.replayed().setup.fen)
+        // `replayed()` without its SAN and FEN: only the side to move is wanted.
+        let setup = &self.online_setup;
+        match crate::replay::replay_setup_turn(&setup.variant, &setup.fen, &self.online_moves) {
+            None => turn_of(&Setup::standard().fen),
+            // Without a move the position is the setup as given.
+            Some((0, _)) => turn_of(&setup.fen),
+            Some((_, shakmaty::Color::Black)) => "black",
+            Some((_, shakmaty::Color::White)) => "white",
+        }
     }
 
     /// Moves this side has made so far.

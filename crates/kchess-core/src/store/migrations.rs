@@ -280,6 +280,13 @@ pub fn migrate_to(db: &Connection, steps: usize) -> Result<()> {
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(storage_error)?;
     let start = usize::try_from(current).unwrap_or(0);
+    // A newer release migrated this profile: its tables have columns this one would drop or
+    // reset on its next save, so it is not opened at all (docs/shared-core.md).
+    if start > MIGRATIONS.len() {
+        return Err(CoreError::new(
+            "This profile was used by a newer KChess. Update KChess to open it.",
+        ));
+    }
     for (index, sql) in MIGRATIONS.iter().enumerate().take(steps).skip(start) {
         db.execute_batch("BEGIN IMMEDIATE").map_err(storage_error)?;
         // `index` is a loop counter, not user input: PRAGMA takes no bound parameters.
@@ -305,6 +312,23 @@ mod tests {
     fn version(db: &Connection) -> i64 {
         db.query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap()
+    }
+
+    /// An older core never opens a profile a newer release migrated, even alone.
+    #[test]
+    fn a_profile_migrated_by_a_newer_release_is_refused() {
+        let db = Connection::open_in_memory().unwrap();
+        migrate(&db).unwrap();
+        let newer = MIGRATIONS.len() as i64 + 1;
+        db.execute_batch(&format!("PRAGMA user_version = {newer}"))
+            .unwrap();
+        let refused = migrate(&db).unwrap_err();
+        assert!(
+            refused.message.contains("newer KChess"),
+            "{}",
+            refused.message
+        );
+        assert_eq!(version(&db), newer, "the newer schema is left as it was");
     }
 
     #[test]

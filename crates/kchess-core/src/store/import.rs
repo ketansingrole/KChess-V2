@@ -19,7 +19,7 @@ use super::games::{
 };
 use crate::error::{CoreError, Result};
 use crate::host::Level;
-use kchess_domain::{api, js};
+use kchess_domain::js;
 
 const PIECE_ANIMATIONS: [&str; 4] = ["none", "fast", "normal", "slow"];
 const REVIEW_AUTO: [&str; 3] = ["off", "recent", "all"];
@@ -648,9 +648,7 @@ pub fn normalize_settings(stored: &Map<String, Value>) -> Result<Map<String, Val
 }
 
 fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
-    let text = serde_json::to_string(&args).map_err(|cause| CoreError::new(cause.to_string()))?;
-    let output = api::call(method, &text).map_err(CoreError::new)?;
-    serde_json::from_str(&output).map_err(|cause| CoreError::new(cause.to_string()))
+    crate::engine::domain(method, args)
 }
 
 fn begin(db: &Connection) -> Result<()> {

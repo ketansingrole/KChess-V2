@@ -67,13 +67,14 @@ pub fn transition(
     args: &[Value],
     mut read: impl FnMut(&str) -> Result<Value, String>,
 ) -> Result<Value, String> {
-    let mut reads: Map<String, Value> = Map::new();
+    // The arguments are copied once; each round only adds the new read to the last slot.
+    let mut call = Vec::with_capacity(args.len() + 1);
+    call.extend_from_slice(args);
+    call.push(Value::Object(Map::new()));
     loop {
-        let mut call = args.to_vec();
-        call.push(Value::Object(reads.clone()));
-        let out = rules(method, &call)?;
-        if let Some(done) = out.get("done") {
-            return Ok(done.clone());
+        let mut out = rules(method, &call)?;
+        if let Some(done) = out.get_mut("done") {
+            return Ok(done.take());
         }
         let kind = out
             .get("read")
@@ -81,6 +82,9 @@ pub fn transition(
             .ok_or_else(|| format!("{method} asked for nothing it could be given"))?
             .to_string();
         let value = read(&kind)?;
+        let Some(Value::Object(reads)) = call.last_mut() else {
+            unreachable!("the reads slot is the object pushed above");
+        };
         match reads
             .entry(kind)
             .or_insert_with(|| Value::Array(Vec::new()))

@@ -171,18 +171,21 @@ pub async fn write_frame<W: AsyncWrite + Unpin>(
     writer: &mut W,
     frame: &Frame,
 ) -> std::io::Result<()> {
-    let body = serde_json::to_vec(frame)
+    // The length prefix and the body go out in one write.
+    let mut bytes = vec![0u8; 4];
+    serde_json::to_writer(&mut bytes, frame)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    if body.len() > MAX_FRAME {
+    let body = bytes.len() - 4;
+    if body > MAX_FRAME {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("a frame of {} bytes is over the limit", body.len()),
+            format!("a frame of {body} bytes is over the limit"),
         ));
     }
-    let length = u32::try_from(body.len())
+    let length = u32::try_from(body)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    writer.write_all(&length.to_be_bytes()).await?;
-    writer.write_all(&body).await?;
+    bytes[..4].copy_from_slice(&length.to_be_bytes());
+    writer.write_all(&bytes).await?;
     writer.flush().await
 }
 

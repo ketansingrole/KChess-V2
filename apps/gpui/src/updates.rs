@@ -390,6 +390,114 @@ async fn latest(feed: String) -> Result<Release, String> {
         .map_err(failed("The update server's answer could not be read"))
 }
 
+/// How many times a download that stops part way picks up again before it fails.
+const RESUMES: u32 = 4;
+/// The wait before the first resume; each later one waits twice as long.
+const RESUME_AFTER: Duration = if cfg!(test) {
+    Duration::from_millis(10)
+} else {
+    Duration::from_secs(2)
+};
+
+/// A download so far: the file, the digest of what it holds, and how much of how much.
+struct Part {
+    file: tokio::fs::File,
+    hasher: Sha256,
+    received: u64,
+    total: u64,
+}
+
+impl Part {
+    /// Start the file again from nothing: the server sent the whole package, not the rest.
+    async fn restart(&mut self) -> std::io::Result<()> {
+        self.file.set_len(0).await?;
+        tokio::io::AsyncSeekExt::seek(&mut self.file, std::io::SeekFrom::Start(0)).await?;
+        self.hasher = Sha256::new();
+        self.received = 0;
+        Ok(())
+    }
+}
+
+/// Why a download attempt ended early: for good, or with the connection, which may resume.
+enum Stop {
+    Fail(String),
+    Dropped(String),
+}
+
+/// `(first byte, whole length)` of a `Content-Range: bytes 100-199/1000` answer.
+fn content_range(value: &str) -> Option<(u64, Option<u64>)> {
+    let (range, total) = value.trim().strip_prefix("bytes ")?.split_once('/')?;
+    let first = range.split_once('-')?.0.trim().parse().ok()?;
+    Some((first, total.trim().parse().ok()))
+}
+
+/// One request for what `part` still lacks of `url`, appended to it.
+async fn receive(
+    client: &reqwest::Client,
+    url: &str,
+    part: &mut Part,
+    progress: &futures::channel::mpsc::UnboundedSender<(u64, u64)>,
+) -> Result<(), Stop> {
+    let io = |cause: std::io::Error| Stop::Fail(cause.to_string());
+    let mut request = client.get(url);
+    if part.received > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={}-", part.received));
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(failed("Could not download the update"))
+        .map_err(Stop::Dropped)?;
+    let status = response.status();
+    if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+        // What is here is not a beginning of this package: start it again.
+        part.restart().await.map_err(io)?;
+        return Err(Stop::Dropped("The download stopped".into()));
+    }
+    if status.is_server_error() {
+        log(&format!("download answered {status}"));
+        return Err(Stop::Dropped("Could not download the update".into()));
+    }
+    if !status.is_success() {
+        log(&format!("download answered {status}"));
+        return Err(Stop::Fail("Could not download the update".into()));
+    }
+    let resumed = status == reqwest::StatusCode::PARTIAL_CONTENT
+        && response
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(content_range)
+            .is_some_and(|(first, total)| {
+                if let Some(total) = total {
+                    part.total = total;
+                }
+                first == part.received
+            });
+    if !resumed {
+        if part.received > 0 {
+            part.restart().await.map_err(io)?;
+        }
+        part.total = response.content_length().unwrap_or(part.total);
+    }
+    let mut body = response.bytes_stream();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk
+            .map_err(failed("The download stopped"))
+            .map_err(Stop::Dropped)?;
+        part.hasher.update(&chunk);
+        tokio::io::AsyncWriteExt::write_all(&mut part.file, &chunk)
+            .await
+            .map_err(io)?;
+        part.received += chunk.len() as u64;
+        let _ = progress.unbounded_send((part.received, part.total));
+    }
+    if part.total > 0 && part.received < part.total {
+        return Err(Stop::Dropped("The download stopped".into()));
+    }
+    Ok(())
+}
+
 /// Download `asset` into `folder` and check it against the release's digest; the downloaded
 /// file. `progress` hears the bytes received so far.
 async fn download(
@@ -458,31 +566,38 @@ async fn download_signed(
     }
     let expected =
         digest_for(&sums, &asset.name).ok_or("The release lists no checksum for this package")?;
-    let response = client
-        .get(&asset.browser_download_url)
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(failed("Could not download the update"))?;
-    let total = response.content_length().unwrap_or(asset.size);
     let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(&folder).map_err(|cause| cause.to_string())?;
     let file_path = folder.join(&asset.name);
-    let mut file = tokio::fs::File::create(&file_path)
-        .await
-        .map_err(|cause| cause.to_string())?;
-    let mut hasher = Sha256::new();
-    let mut received = 0u64;
-    let mut body = response.bytes_stream();
-    while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(failed("The download stopped"))?;
-        hasher.update(&chunk);
-        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+    let mut part = Part {
+        file: tokio::fs::File::create(&file_path)
             .await
-            .map_err(|cause| cause.to_string())?;
-        received += chunk.len() as u64;
-        let _ = progress.unbounded_send((received, total));
+            .map_err(|cause| cause.to_string())?,
+        hasher: Sha256::new(),
+        received: 0,
+        total: asset.size,
+    };
+    // A connection that drops part way carries on from the bytes already here, as long as the
+    // server can send the rest (`Range`); the update is never started over for one dropped link.
+    let mut resumes = 0;
+    loop {
+        match receive(&client, &asset.browser_download_url, &mut part, &progress).await {
+            Ok(()) => break,
+            Err(Stop::Fail(cause)) => return Err(cause),
+            Err(Stop::Dropped(cause)) if resumes < RESUMES => {
+                resumes += 1;
+                log(&format!(
+                    "{cause} at {} of {} bytes, resuming ({resumes}/{RESUMES})",
+                    part.received, part.total
+                ));
+                tokio::time::sleep(RESUME_AFTER * 2u32.pow(resumes - 1)).await;
+            }
+            Err(Stop::Dropped(cause)) => return Err(cause),
+        }
     }
+    let Part {
+        mut file, hasher, ..
+    } = part;
     tokio::io::AsyncWriteExt::flush(&mut file)
         .await
         .map_err(|cause| cause.to_string())?;
@@ -2066,6 +2181,133 @@ mod tests {
             Err("The download stopped".into())
         );
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// A server for `body` whose first `drops` answers stop part way through and hang up; with
+    /// `ranges`, it sends what a `Range: bytes=N-` asks for. Its base URL, and the `Range` each
+    /// request asked for.
+    fn flaky(
+        body: Vec<u8>,
+        drops: usize,
+        ranges: bool,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Option<u64>>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let heard = std::sync::Arc::clone(&asked);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut request = Vec::new();
+                let mut byte = [0u8; 1];
+                while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                    request.push(byte[0]);
+                }
+                let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+                let from = request.lines().find_map(|line| {
+                    line.strip_prefix("range: bytes=")?
+                        .trim_end_matches('-')
+                        .trim()
+                        .parse::<u64>()
+                        .ok()
+                });
+                let count = {
+                    let mut asked = heard.lock().unwrap();
+                    asked.push(from);
+                    asked.len()
+                };
+                let start = if ranges {
+                    from.unwrap_or(0) as usize
+                } else {
+                    0
+                };
+                let rest = &body[start..];
+                let head = if ranges && from.is_some() {
+                    format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{}/{}\r\n",
+                        body.len() - 1,
+                        body.len()
+                    )
+                } else {
+                    "HTTP/1.1 200 OK\r\n".to_string()
+                };
+                let _ = write!(
+                    stream,
+                    "{head}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                    rest.len()
+                );
+                if count <= drops {
+                    // A third of what is left, then the connection goes.
+                    let _ = stream.write_all(&rest[..rest.len() / 3]);
+                    let _ = stream.flush();
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                    continue;
+                }
+                let _ = stream.write_all(rest);
+                let _ = stream.set_read_timeout(Some(kchess_core::loopback::HANG_UP_WAIT));
+                let _ = std::io::copy(&mut stream, &mut std::io::sink());
+            }
+        });
+        (base, asked)
+    }
+
+    /// A download whose connection dropped started over from nothing, so a slow or unsteady link
+    /// could never finish a 120 MB update; it now carries on from the bytes already received.
+    #[test]
+    fn a_dropped_download_resumes_where_it_stopped() {
+        let folder = scratch("resume");
+        let package: Vec<u8> = (0..300_000u32).map(|n| (n % 251) as u8).collect();
+        let name = asset_name("2026.11.0", Package::AppImage).unwrap();
+        let digest: String = Sha256::digest(&package)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let sums = serve(vec![(
+            "/SHA256SUMS.txt".into(),
+            format!("{digest}  {name}\n").into_bytes(),
+        )]);
+        let attempt = |server: String, target: &str| {
+            let release: Release = serde_json::from_value(serde_json::json!({
+                "tag_name": "v2026.11.0",
+                "assets": [
+                    { "name": name, "browser_download_url": format!("{server}/pkg"), "size": package.len() },
+                    { "name": "SHA256SUMS.txt", "browser_download_url": format!("{sums}/SHA256SUMS.txt") },
+                ],
+            }))
+            .unwrap();
+            let asset = release.assets[0].clone();
+            let (progress, _heard) = futures::channel::mpsc::unbounded();
+            block_on(download(release, asset, folder.join(target), progress))
+        };
+
+        // Two drops: each request asks only for what is missing, and the file is whole.
+        let (server, asked) = flaky(package.clone(), 2, true);
+        let file = attempt(server, "ranged").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), package);
+        let asked = asked.lock().unwrap().clone();
+        assert_eq!(asked.len(), 3);
+        assert_eq!(asked[0], None);
+        assert!(asked[1].is_some_and(|from| from > 0));
+        assert!(asked[2] > asked[1], "each resume starts further on");
+
+        // A server that ignores `Range` sends the whole package again, which replaces the part.
+        let (server, _) = flaky(package.clone(), 1, false);
+        let file = attempt(server, "whole").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), package);
+
+        // A link that keeps dropping gives up after its resumes.
+        let (server, asked) = flaky(package.clone(), usize::MAX, true);
+        assert_eq!(attempt(server, "gone"), Err("The download stopped".into()));
+        assert_eq!(asked.lock().unwrap().len(), 1 + super::RESUMES as usize);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_partial_answer_says_where_it_starts() {
+        use super::content_range;
+        assert_eq!(content_range("bytes 100-199/1000"), Some((100, Some(1000))));
+        assert_eq!(content_range("bytes 5-9/*"), Some((5, None)));
+        assert_eq!(content_range("items 1-2/3"), None);
     }
 
     fn block_on<T: Send + 'static>(

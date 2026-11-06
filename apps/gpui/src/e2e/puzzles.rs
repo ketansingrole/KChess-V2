@@ -586,3 +586,36 @@ fn puzzle_history_rows_fit_every_window(cx: &mut gpui_kit::TestAppContext) {
         );
     }
 }
+
+/// A puzzle failed and left unfinished when the app quits is still in the history.
+#[gpui_kit::test]
+fn a_puzzle_failed_before_quitting_is_kept(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let mut app = Harness::start(cx);
+    app.online();
+    app.cx.update(|cx| {
+        crate::prefs::set(
+            cx,
+            "kchess:puzzle-angle",
+            super::fake_lichess::TRAINED_THEME,
+        );
+    });
+    app.open("Puzzles");
+    app.wait_for("the puzzle to be playable", |window, _| {
+        window
+            .try_find("puzzle-hint")
+            .is_some_and(|hint| hint.disabled() != Some(true))
+    });
+    app.click_label("Enter a chess move in SAN or UCI");
+    app.type_text("Qh4");
+    app.press("enter");
+    let mut frames = 0;
+    app.wait_for("the wrong move to be judged", |_, _| {
+        frames += 1;
+        frames > 60
+    });
+    let mut app = app.restart();
+    app.open("Puzzles");
+    tab(&mut app, 4);
+    app.find(("puzzle-retry", 0usize));
+}

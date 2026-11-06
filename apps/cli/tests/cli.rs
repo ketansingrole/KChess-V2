@@ -204,3 +204,51 @@ fn help_and_methods_need_no_core_and_bad_commands_fail() {
         );
     }
 }
+
+/// A generic call that opens a sign-in page gets its page: the CLI answers the core's host
+/// requests while it waits, as `login` does.
+#[test]
+fn a_generic_call_answers_the_sign_in_page() {
+    use std::io::{BufRead, BufReader};
+    let profile = tempfile::tempdir().expect("a profile");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+        .args([
+            "--embedded",
+            "--no-credentials",
+            "--browser",
+            "print",
+            "--data-dir",
+        ])
+        .arg(profile.path())
+        .args(["call", "connectLichess", "[]"])
+        .env("KCHESS_USER_DATA_DIR", profile.path())
+        .env_remove("KCHESS_SERVICE_BINARY")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("kchess-cli starts");
+    let stderr = BufReader::new(child.stderr.take().expect("stderr"));
+    let (found, lines) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in stderr.lines().map_while(Result::ok) {
+            if found.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut seen = Vec::new();
+    let page = loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match lines.recv_timeout(left) {
+            Ok(line) if line.starts_with("Open this page to continue: ") => break Some(line),
+            Ok(line) => seen.push(line),
+            Err(_) => break None,
+        }
+    };
+    let _ = child.kill();
+    let _ = child.wait();
+    let page = page.unwrap_or_else(|| panic!("no sign-in page was printed: {seen:?}"));
+    assert!(page.contains("/oauth"), "{page}");
+}
