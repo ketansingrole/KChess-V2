@@ -907,6 +907,9 @@ mod tests {
         assert_ne!(game.header("Result"), Some("0-1"));
         let game = &parse_pgn("1. e4 (1. d4) e5 0-1")[0];
         assert_eq!(game.header("Result"), Some("0-1"));
+        // A movetext ending in `*` leaves the header's result alone.
+        let game = &parse_pgn("[Result \"1-0\"]\n\n1. e4 *")[0];
+        assert_eq!(game.header("Result"), Some("1-0"));
     }
 
     /// Lichess adds a Site and names each chapter: a study still matches its download.
