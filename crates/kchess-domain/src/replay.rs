@@ -322,6 +322,16 @@ mod tests {
         assert_eq!(engine_line(START, &line, false), None);
     }
 
+    /// Stalemate and bare kings are draws; a position with play left has no end.
+    #[test]
+    fn positions_mark_draws() {
+        let stalemate = replay_positions("k7/8/1Q6/8/8/8/8/K7 w - - 0 1", &["b6c7"]);
+        assert_eq!(stalemate[0].end, None);
+        assert_eq!(stalemate[1].end, Some("draw"));
+        let bare = replay_positions("k7/8/8/8/8/8/1q6/K7 w - - 0 1", &["a1b2"]);
+        assert_eq!(bare[1].end, Some("draw"));
+    }
+
     #[test]
     fn positions_mark_checkmate() {
         let positions = replay_positions(START, &["f2f3", "e7e5", "g2g4", "d8h4"]);
