@@ -266,13 +266,9 @@ macro_rules! validators {
 }
 
 validators! {
-    "assertUuid" => assert_uuid,
-    "assertPerformanceName" => assert_performance_name,
-    "assertTimingValue" => assert_timing_value,
     "assertVoiceGrammar" => assert_voice_grammar,
     "assertSampleRate" => assert_sample_rate,
     "assertVoiceAudio" => assert_voice_audio,
-    "assertRendererError" => assert_renderer_error,
     "assertUsername" => assert_username,
     "assertGameId" => assert_game_id,
     "assertGameAccount" => assert_game_account,
@@ -293,7 +289,6 @@ validators! {
     "assertTournamentSystem" => assert_tournament_system,
     "assertTournamentId" => assert_tournament_id,
     "assertTournamentPassword" => assert_tournament_password,
-    "assertExport" => assert_export,
     "assertInsightsQuery" => assert_insights_query,
     "assertPerfType" => assert_perf_type,
     "assertVariant" => assert_variant,
@@ -302,7 +297,6 @@ validators! {
     "assertOptionalAccount" => assert_optional_account,
     "assertOnlineOptions" => assert_online_options,
     "assertTheme" => assert_theme,
-    "assertNotification" => assert_notification,
     "assertCoreSettings" => assert_core_settings,
     "assertSettings" => assert_settings,
     "assertPuzzleRequest" => assert_puzzle_request,
@@ -334,7 +328,6 @@ validators! {
     "assertLookupKind" => assert_lookup_kind,
     "assertOptionalPage" => assert_optional_page,
     "assertBoolean" => assert_boolean,
-    "assertInterfaceZoom" => assert_interface_zoom,
     "assertChapterName" => assert_chapter_name,
     "assertPgnText" => assert_pgn_text,
     "assertSessionObject" => assert_session_object,
@@ -639,17 +632,6 @@ mod tests {
             run("assertLookupOptions", speeds)
                 .unwrap_err()
                 .starts_with("speeds: invalid value, expected one of ultraBullet")
-        );
-        let extra = obj(vec![
-            ("route", J::Str("/".into())),
-            ("message", J::Str("m".into())),
-            ("info", J::Str("i".into())),
-            ("extra", J::Num(1.0)),
-        ]);
-        assert!(
-            run("assertRendererError", extra)
-                .unwrap_err()
-                .starts_with("unknown field `extra`")
         );
     }
 

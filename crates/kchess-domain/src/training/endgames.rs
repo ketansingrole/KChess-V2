@@ -9,7 +9,7 @@ use super::data::data;
 use super::{Out, to_value, value_arg};
 use crate::{position, rules};
 
-/// One drill (`ENDGAME_DRILLS`); its data is shared with TypeScript.
+/// One drill (`ENDGAME_DRILLS`), from `data/training.json`.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EndgameDrill {

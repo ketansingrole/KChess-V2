@@ -665,8 +665,8 @@ impl Services {
         Some(result)
     }
 
-    /// The synchronous methods of these services: pure readings and state the TypeScript callers
-    /// read without starting work. `None` when the method is not one of them.
+    /// The synchronous methods of these services: pure readings and state callers read without
+    /// starting work. `None` when the method is not one of them.
     pub fn call_sync(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
         let result = match method {
             "online.playing" => Ok(json!(self.online.playing())),
@@ -795,7 +795,7 @@ fn reply_true<E: Into<CoreError>>(result: std::result::Result<Reply<()>, E>) -> 
     }
 }
 
-/// A service's answer as the TypeScript caller reads it: the value, or `{ needsReconnect: true }`
+/// A service's answer as a caller reads it: the value, or `{ needsReconnect: true }`
 /// when the account's login lacks the permission.
 fn reply_json<T: serde::Serialize, E: Into<CoreError>>(
     result: std::result::Result<Reply<T>, E>,
