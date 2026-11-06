@@ -60,6 +60,30 @@ pub fn ask_restart(window: &mut Window, cx: &mut App) {
     });
 }
 
+/// The landing page, the source and the issue tracker, under the version.
+pub const WEBSITE: &str = "https://ketansingrole.github.io/KChess-V2/";
+pub const SOURCE: &str = "https://github.com/ketansingrole/KChess-V2";
+pub const ISSUES: &str = "https://github.com/ketansingrole/KChess-V2/issues";
+
+/// A small muted link that opens `url` in the browser.
+fn link(id: &'static str, label: &'static str, url: String, palette: &Palette) -> Stateful<Div> {
+    div()
+        .id(id)
+        .role(Role::Link)
+        .keyboard_focus(palette.primary)
+        .aria_label(label)
+        .flex()
+        .items_center()
+        .gap(px(2.))
+        .text_size(px(12.))
+        .text_color(palette.text_muted)
+        .cursor_pointer()
+        .hover(|link| link.text_color(palette.text))
+        .on_click(move |_, _, cx| cx.open_url(&url))
+        .child(label)
+        .child(icon("arrow-up-right").size(px(12.)))
+}
+
 fn bytes(count: u64) -> String {
     widgets::format_bytes(count as f64)
 }
@@ -208,24 +232,7 @@ impl SettingsPage {
         } else {
             "Release notes"
         };
-        let notes = || {
-            let page = page.clone();
-            div()
-                .id("update-notes")
-                .role(Role::Link)
-                .keyboard_focus(palette.primary)
-                .aria_label(label)
-                .flex()
-                .items_center()
-                .gap(px(2.))
-                .text_size(px(12.))
-                .text_color(palette.text_muted)
-                .cursor_pointer()
-                .hover(|link| link.text_color(palette.text))
-                .on_click(move |_, _, cx| cx.open_url(&page))
-                .child(label)
-                .child(icon("arrow-up-right").size(px(12.)))
-        };
+        let notes = || link("update-notes", label, page.clone(), palette);
         let head = h_flex()
             .gap(px(16.))
             .flex_wrap()
@@ -316,6 +323,20 @@ impl SettingsPage {
                     )
                 })
         });
+        let about = h_flex()
+            .gap(px(16.))
+            .flex_wrap()
+            .pt(px(14.))
+            .border_t_1()
+            .border_color(palette.border)
+            .child(link("about-website", "Website", WEBSITE.into(), palette))
+            .child(link("about-source", "Source code", SOURCE.into(), palette))
+            .child(link(
+                "about-issues",
+                "Report a problem",
+                ISSUES.into(),
+                palette,
+            ));
         let status = widgets::card(palette)
             .gap(px(14.))
             .child(head)
@@ -327,7 +348,8 @@ impl SettingsPage {
                     .text_color(palette.error)
                     .child(icon("circle-alert").size(px(14.)))
                     .child(error)
-            }));
+            }))
+            .child(about);
         let can_check = updates.can_check();
         let frontend = &settings.frontend;
         v_flex().gap(px(16.)).child(status).when(can_check, |page| {
