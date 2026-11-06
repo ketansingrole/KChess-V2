@@ -17,10 +17,13 @@ const START: i64 = 1_700_000_000_000;
 /// One game every ten minutes, interleaved across the players.
 const STRIDE: i64 = 600_000;
 const REVIEWED: i64 = 2_000;
+/// Enough games for the query plans and the storage cache. The full library's database peaks at
+/// about 430 MB of temporary disk, too much to build once per test while other tests run.
+const SMALL: i64 = 50;
 
-/// A profile with `MAX_GAMES` finished games for each of `ACCOUNTS` (the first two connected),
+/// A profile with `per_account` finished games for each of `ACCOUNTS` (the first two connected),
 /// realistic move and PGN lengths, and `REVIEWED` complete reviews of Alice's newest games.
-fn seeded() -> Store {
+fn seeded(per_account: i64) -> Store {
     let store = profile();
     // The one-time import runs before the seed, so a later call does not import over it.
     store.ok("store.games.loadData", vec![]);
@@ -59,7 +62,7 @@ fn seeded() -> Store {
            printf('opponent%d', i % 700), 1400 + i % 400, 1500 + i % 300, (i % 17) - 8,
            printf('Opening %d: Variation %d', i % 60, i % 7), '{moves}', '{pgn}'
          FROM seq JOIN names ON names.n = i % {accounts_n};
-         WITH RECURSIVE seq(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM seq WHERE i < {REVIEWED} - 1)
+         WITH RECURSIVE seq(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM seq WHERE i < {reviewed} - 1)
          INSERT INTO reviews (key, gameId, source, complete, depth, data, summary, updatedAt)
          SELECT printf('review%07d', i), printf('g%07d', ({total} - 1 - i * {accounts_n}) / {accounts_n} * {accounts_n}),
            'local', 1, 18, '{{}}',
@@ -67,7 +70,8 @@ fn seeded() -> Store {
            {START} + i
          FROM seq;
          INSERT INTO game_reviews (gameId, reviewKey) SELECT gameId, key FROM reviews;",
-        total = MAX_GAMES * ACCOUNTS.len() as i64,
+        total = per_account * ACCOUNTS.len() as i64,
+        reviewed = REVIEWED.min(per_account),
     ));
     store
 }
@@ -172,7 +176,7 @@ fn count(store: &Store, sql: &str) -> i64 {
 
 #[test]
 fn a_full_library_answers_every_read_with_a_bounded_response() {
-    let store = seeded();
+    let store = seeded(MAX_GAMES);
     let total = MAX_GAMES * ACCOUNTS.len() as i64;
     assert_eq!(
         direct(&store, "store.games.loadData", &[])["gameCount"],
@@ -263,7 +267,7 @@ fn a_full_library_answers_every_read_with_a_bounded_response() {
 
 #[test]
 fn the_library_aggregates_read_the_summary_index_not_every_game() {
-    let store = seeded();
+    let store = seeded(SMALL);
     // Each of these read every game's row, moves and PGN with it, before the summary index: cold
     // at 50,000 games a rated total took 82 ms, a search's 83 ms and the overview 112–170 ms;
     // covered by the index they took 5, 23 and 8 ms.
@@ -291,11 +295,11 @@ fn the_library_aggregates_read_the_summary_index_not_every_game() {
 
 #[test]
 fn the_games_storage_is_kept_until_the_games_change() {
-    let store = seeded();
+    let store = seeded(SMALL);
     let alice =
         |store: &Store| direct(store, "store.usage.usageReport", &[])["storage"]["alice"].clone();
     let before = alice(&store);
-    assert_eq!(before["games"], json!(MAX_GAMES));
+    assert_eq!(before["games"], json!(SMALL));
     // A second connection's write is not one the core makes: the kept sums still answer.
     store.exec("DELETE FROM games WHERE account = 'Alice' AND id = 'g0000000'");
     assert_eq!(alice(&store), before);
@@ -306,14 +310,14 @@ fn the_games_storage_is_kept_until_the_games_change() {
         &[json!("Alice"), json!([]), json!(START), json!(true)],
     );
     let after = alice(&store);
-    assert_eq!(after["games"], json!(MAX_GAMES - 1));
+    assert_eq!(after["games"], json!(SMALL - 1));
     assert!(after["bytes"].as_i64() < before["bytes"].as_i64());
 }
 
 #[test]
 #[ignore = "a timing probe: cargo test --release -p kchess-core --test core library_scale_probe -- --ignored --nocapture"]
 fn library_scale_probe() {
-    let store = seeded();
+    let store = seeded(MAX_GAMES);
     eprintln!("{} games", MAX_GAMES * ACCOUNTS.len() as i64);
     for (label, method, args) in reads() {
         let (cold, warm, size) = measure(&store, method, &args, 7);
