@@ -615,6 +615,13 @@ mod tests {
         assert_eq!(fen_problem("nonsense"), Some("fen"));
         assert_eq!(fen_problem("8/8/8/8/8/8/8/8 w - - 0 1"), Some("empty"));
         assert_eq!(fen_problem("8/8/8/8/8/8/8/4K3 w - - 0 1"), Some("kings"));
+        assert_eq!(fen_problem("k7/8/8/8/8/8/8/K6K w - - 0 1"), Some("kings"));
+        assert_eq!(fen_problem("K7/8/8/8/8/8/8/8 b - - 0 1"), Some("kings"));
+        // Black's seventeenth piece counts as much as White's.
+        assert_eq!(
+            fen_problem("K7/8/8/8/8/1q6/pppppppp/qqqqqqqk b - - 0 1"),
+            Some("tooManyPieces")
+        );
         assert_eq!(
             fen_problem("4k3/4Q3/8/8/8/8/8/4K3 w - - 0 1"),
             Some("oppositeCheck")
