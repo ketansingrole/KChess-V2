@@ -6,6 +6,7 @@ pub(crate) mod endgame_drills;
 pub(crate) mod endgame_lesson;
 mod endgames;
 mod engine_move;
+pub(crate) mod guess;
 mod knight;
 pub(crate) mod mistakes;
 pub(crate) mod repertoire;
@@ -23,13 +24,14 @@ use crate::widgets::{self, Pill};
 const TAB: &str = "kchess:practice-tab";
 
 /// The tabs, in the Electron app's order: their stored names and labels.
-const TABS: [(&str, &str); 6] = [
+const TABS: [(&str, &str); 7] = [
     ("coordinates", "Coordinates"),
     ("colors", "Square colours"),
     ("knight", "Knight paths"),
     ("endgames", "Endgames"),
     ("openings", "Repertoire"),
     ("mistakes", "Your mistakes"),
+    ("guess", "Guess the move"),
 ];
 
 /// The actions of the trainer on screen, as its buttons offer them.
@@ -48,6 +50,7 @@ pub struct PracticePage {
     repertoire: Option<Entity<repertoire::Repertoire>>,
     endgames: Option<Entity<endgames::Endgames>>,
     mistakes: Option<Entity<mistakes::Mistakes>>,
+    guess: Option<Entity<guess::GuessMoves>>,
     /// The tab on screen at the last frame: Your mistakes starts at its overview when opened.
     shown_tab: Option<&'static str>,
     focus: FocusHandle,
@@ -68,6 +71,7 @@ impl PracticePage {
             repertoire: None,
             endgames: None,
             mistakes: None,
+            guess: None,
             shown_tab: None,
             focus: cx.focus_handle(),
         }
@@ -84,6 +88,23 @@ impl PracticePage {
     #[cfg(test)]
     pub(crate) fn mistakes(&self) -> Option<Entity<mistakes::Mistakes>> {
         self.mistakes.clone()
+    }
+
+    /// Guess through a game's PGN as `side`, on the Guess the move tab.
+    pub(crate) fn guess_moves(
+        &mut self,
+        pgn: &str,
+        side: Option<shakmaty::Color>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::prefs::set(cx, TAB, "guess");
+        let guess = self
+            .guess
+            .get_or_insert_with(|| cx.new(|cx| guess::GuessMoves::new(window, cx)))
+            .clone();
+        guess.update(cx, |guess, cx| guess.load(pgn, side, cx));
+        cx.notify();
     }
 
     /// The endgame lesson, while it is on screen.
@@ -206,6 +227,11 @@ impl PracticePage {
                 .get_or_insert_with(|| cx.new(|cx| repertoire::Repertoire::new(window, cx)))
                 .clone()
                 .into(),
+            "guess" => self
+                .guess
+                .get_or_insert_with(|| cx.new(|cx| guess::GuessMoves::new(window, cx)))
+                .clone()
+                .into(),
             _ => {
                 let opened = self.shown_tab != Some("mistakes");
                 let mistakes = match &self.mistakes {
@@ -301,6 +327,7 @@ impl Render for PracticePage {
                         "knight" => icon("crown"),
                         "endgames" => icon("swords"),
                         "openings" => icon("book-marked"),
+                        "guess" => icon("target"),
                         _ => icon("book-open"),
                     }),
                     label: (*label).into(),
