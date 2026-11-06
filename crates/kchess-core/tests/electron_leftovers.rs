@@ -1,8 +1,6 @@
 //! A profile the Electron app last used, opened by a core with no Electron to hand its
 //! `localStorage` over: the first library and view preference reads take it over themselves, once.
 //! The fixture is what Electron 45 wrote (`kchess-electron-legacy/tests/fixtures`).
-// Tests set process environment (`std::env::set_var`), which is unsafe in edition 2024.
-#![allow(unsafe_code)]
 
 use std::path::Path;
 use std::sync::Arc;
@@ -17,10 +15,7 @@ impl Host for Quiet {
 }
 
 fn electron_profile() -> tempfile::TempDir {
-    static SWITCH: std::sync::Once = std::sync::Once::new();
-    // SAFETY: set once, while every other test here waits on `SWITCH`; each test calls this
-    // before it opens a core or starts a thread that reads the environment.
-    SWITCH.call_once(|| unsafe { std::env::set_var("KCHESS_STORE_DEBUG", "1") });
+    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
     let profile = tempfile::tempdir().unwrap();
     let target = profile.path().join("Local Storage").join("leveldb");
     std::fs::create_dir_all(&target).unwrap();

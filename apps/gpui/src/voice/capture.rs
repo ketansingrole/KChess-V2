@@ -51,7 +51,7 @@ impl CaptureError {
 /// The test file to play instead of the microphone, while the test switch is on.
 fn test_audio() -> Option<PathBuf> {
     kchess_core::store::debug::enabled()
-        .then(|| std::env::var_os("KCHESS_TEST_VOICE_AUDIO"))
+        .then(|| kchess_core::env::var_os("KCHESS_TEST_VOICE_AUDIO"))
         .flatten()
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)

@@ -58,13 +58,8 @@ pub struct Profile {
 
 /// Opens the core against the Lichess at `base` with `Alice` connected.
 pub async fn open(base: &str) -> Profile {
-    // SAFETY: each test binary including this has one test, which calls this before any other
-    // thread reads the environment.
-    #[allow(unsafe_code)]
-    unsafe {
-        std::env::set_var("KCHESS_STORE_DEBUG", "1");
-        std::env::set_var("KCHESS_TEST_LICHESS_BASE", base);
-    }
+    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
+    kchess_core::env::set("KCHESS_TEST_LICHESS_BASE", base);
     let dir = tempfile::tempdir().unwrap();
     let host = Arc::new(SignedIn::default());
     let core = Arc::new(

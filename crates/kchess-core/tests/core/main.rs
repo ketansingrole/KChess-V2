@@ -1,7 +1,7 @@
 //! The core's integration tests as one test binary: each file here was its own binary, and linking
 //! some forty of them made every change to the core wait for the linker (2026-11-06: 45 s to
-//! rebuild them after an edit). Tests that set process environment (`std::env::set_var`) stay
-//! binaries of their own beside this directory, since the tests here share one process under
+//! rebuild them after an edit). Tests that set process-wide switches (`kchess_core::env::set`)
+//! stay binaries of their own beside this directory, since the tests here share one process under
 //! `cargo test`.
 
 #[path = "../support/lichess_http.rs"]

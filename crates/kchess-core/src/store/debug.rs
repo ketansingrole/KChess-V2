@@ -17,7 +17,7 @@ use crate::error::{CoreError, Result};
 /// `core.rs` refuses the test-only Lichess/voice overrides unless it is set, and a packaged build
 /// ignores it altogether (`crate::dev_overrides`).
 pub fn enabled() -> bool {
-    crate::dev_overrides() && std::env::var("KCHESS_STORE_DEBUG").as_deref() == Ok("1")
+    crate::dev_overrides() && crate::env::var("KCHESS_STORE_DEBUG").as_deref() == Some("1")
 }
 
 fn storage(cause: rusqlite::Error) -> CoreError {
