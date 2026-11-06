@@ -39,7 +39,9 @@ fn model(mode: &str) -> tempfile::TempDir {
 fn recognizer(folder: &Path) -> (VoiceRecognizer, Arc<Logs>) {
     let logs = Arc::new(Logs::default());
     let recognizer = VoiceRecognizer::new(logs.clone(), Some(helper()), folder.to_path_buf())
-        .with_deadlines(Duration::from_secs(10), Duration::from_millis(300));
+        // A healthy answer is a pipe round trip; a second is ample even on a loaded runner, and
+        // still short enough that the hung-helper case stays quick.
+        .with_deadlines(Duration::from_secs(10), Duration::from_secs(1));
     (recognizer, logs)
 }
 
@@ -196,7 +198,7 @@ async fn reports_a_helper_that_cannot_load_the_model() {
 }
 
 // Windows CI, 2026-11-06: the first `start` of a fresh helper failed with "Speech recognition
-// stopped" because its grammar request was held to the 300 ms per-chunk deadline and the
+// stopped" because its grammar request was held to the then 300 ms per-chunk deadline and the
 // helper's first request (creating its log file) took longer on a loaded runner. A helper that
 // is slow to take a grammar is still starting, not hung.
 #[tokio::test]
