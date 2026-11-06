@@ -874,6 +874,15 @@ mod tests {
     use super::*;
     use regex::Regex;
 
+    /// A move reads as its text, kept inline or on the heap.
+    #[test]
+    fn a_san_shows_as_its_text() {
+        assert_eq!(format!("{:?}", San::new("Nf3")), "\"Nf3\"");
+        let long = "Qa1xb2+ (sixteen)";
+        assert_eq!(format!("{:?}", San::new(long)), format!("{long:?}"));
+        assert_eq!(San::new(long).as_str(), long);
+    }
+
     const SPACE: &str = r"[\t\n\x0B\x0C\r \x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]";
 
     /// The reference patterns: the hand-written lexer must agree with them everywhere.
