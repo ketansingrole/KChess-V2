@@ -181,6 +181,9 @@ struct State {
     /// A client connected or left: the idle countdown starts or stops.
     changed: Notify,
     shutdown: Notify,
+    /// Set, under its lock, when a sole client of another release closes this core: admission
+    /// takes the same lock, so no client is welcomed into a core that is closing.
+    closing: Mutex<bool>,
 }
 
 fn now_ms() -> u64 {
@@ -240,6 +243,7 @@ pub async fn serve(options: ServeOptions) -> Result<(), String> {
         active: AtomicUsize::new(0),
         changed: Notify::new(),
         shutdown: Notify::new(),
+        closing: Mutex::new(false),
     });
     tokio::spawn(idle_watch(Arc::clone(&state), options.idle));
 
@@ -296,7 +300,13 @@ async fn idle_watch(state: Arc<State>, idle: Duration) {
         if state.active.load(Ordering::SeqCst) == 0 {
             tokio::select! {
                 () = tokio::time::sleep(idle) => {
+                    // Decided with admission held off, as a version handoff is: a client
+                    // welcomed at the deadline keeps the core open.
+                    let mut closing =
+                        state.closing.lock().unwrap_or_else(|poison| poison.into_inner());
                     if state.active.load(Ordering::SeqCst) == 0 {
+                        *closing = true;
+                        drop(closing);
                         state.shutdown.notify_one();
                         return;
                     }
@@ -340,18 +350,27 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         return;
     }
     if protocol != state.protocol {
-        let clients: Vec<ClientSummary> = state
-            .core
-            .connections()
-            .ids()
-            .into_iter()
-            .filter_map(|id| state.core.connections().info(id))
-            .map(|info| ClientSummary {
-                kind: info.kind,
-                release: info.release,
-            })
-            .collect();
-        let sole = clients.is_empty();
+        // Decided with admission held off: a client welcomed meanwhile keeps the core open.
+        let (clients, sole) = {
+            let mut closing = state
+                .closing
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let clients: Vec<ClientSummary> = state
+                .core
+                .connections()
+                .ids()
+                .into_iter()
+                .filter_map(|id| state.core.connections().info(id))
+                .map(|info| ClientSummary {
+                    kind: info.kind,
+                    release: info.release,
+                })
+                .collect();
+            let sole = clients.is_empty();
+            *closing |= sole;
+            (clients, sole)
+        };
         let _ = write_frame(
             &mut writer,
             &Frame::Refuse {
@@ -372,11 +391,24 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         return;
     }
 
-    let connection = state.core.connect(ClientInfo {
-        kind,
-        release,
-        capabilities: capabilities.into_iter().map(Into::into).collect(),
-    });
+    let connection = {
+        let closing = state
+            .closing
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if *closing {
+            // The core closes for another release; this client starts or finds the next one.
+            return;
+        }
+        let connection = state.core.connect(ClientInfo {
+            kind,
+            release,
+            capabilities: capabilities.into_iter().map(Into::into).collect(),
+        });
+        // Counted before the lock is let go, so an idle check that follows sees this client.
+        state.active.fetch_add(1, Ordering::SeqCst);
+        connection
+    };
     let (sender, mut queue) = mpsc::channel::<Frame>(QUEUE);
     let cut = Arc::new(Notify::new());
     // `welcome` comes first, then which window alerts now, then every event: a client that joins
@@ -393,7 +425,6 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         });
         state.host.add(connection, sender.clone(), Arc::clone(&cut));
     });
-    state.active.fetch_add(1, Ordering::SeqCst);
     state.changed.notify_one();
     let mut writing = tokio::spawn(async move {
         while let Some(frame) = queue.recv().await {

@@ -67,8 +67,15 @@ fn default_dir() -> PathBuf {
         .join(APP_NAME)
 }
 
-/// Where earlier releases installed the downloaded engine (`CorePlatform.managedEngineDir`).
+/// Where earlier releases installed the downloaded engine (`CorePlatform.managedEngineDir`),
+/// shared by every app on this account. An isolated profile (a scratch one, a test's) keeps its
+/// own, so installing or deleting it there never touches the person's engine.
 pub fn managed_engine_dir() -> PathBuf {
+    if isolated()
+        && let Ok(dir) = data_dir()
+    {
+        return dir.join("engines/stockfish/current");
+    }
     home().join(".kchess/engines/stockfish/current")
 }
 
@@ -150,6 +157,17 @@ pub fn variant_engine() -> Option<PathBuf> {
 mod tests {
     /// macOS names a development build after its executable: it read "kchess-gpui" in the menu
     /// bar and Dock until the executable was named as the app.
+    /// A test's profile (as any isolated one) has its own downloaded engine, never the one
+    /// every other app on the account shares.
+    #[test]
+    fn an_isolated_profile_keeps_its_own_engine() {
+        let folder = tempfile::tempdir().expect("a profile");
+        super::TEST_DATA_DIR.with_borrow_mut(|dir| *dir = Some(folder.path().to_path_buf()));
+        let engine = super::managed_engine_dir();
+        super::TEST_DATA_DIR.with_borrow_mut(|dir| *dir = None);
+        assert!(engine.starts_with(folder.path()), "{}", engine.display());
+    }
+
     #[test]
     fn the_executable_is_named_as_the_app() {
         assert_eq!(env!("CARGO_BIN_NAME"), super::APP_NAME);
