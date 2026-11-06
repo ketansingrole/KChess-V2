@@ -609,6 +609,17 @@ mod tests {
         assert_eq!(play_san(&pos, "O-O-O").unwrap().uci, "e1a1");
     }
 
+    /// `%clk` times: up to milliseconds, as Lichess writes them.
+    #[test]
+    fn reads_clock_times_to_the_millisecond() {
+        assert_eq!(clock_value("1:02:03]"), Some(3723.0));
+        assert_eq!(clock_value("0:00:05.]"), Some(5.0));
+        assert_eq!(clock_value("0:00:05.125]"), Some(5.125));
+        assert_eq!(clock_value("0:00:05.1250]"), None);
+        assert_eq!(clock_value("0:00:05"), None);
+        assert_eq!(clock_value("123456:00:05]"), None);
+    }
+
     #[test]
     fn explains_unplayable_fens() {
         assert_eq!(fen_problem(START), None);
