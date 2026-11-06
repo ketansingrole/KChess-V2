@@ -211,6 +211,8 @@ impl SettingsPage {
                 .aria_label(label)
                 .flex()
                 .items_center()
+                // A 24 px target, as every control's.
+                .min_h(px(24.))
                 .gap(px(2.))
                 .text_size(px(12.))
                 .text_color(palette.text_muted)
