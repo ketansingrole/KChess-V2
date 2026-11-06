@@ -29,12 +29,14 @@ use std::sync::{Arc, Mutex};
 use crate::error::{CoreError, Result};
 use crate::host::{Config, Host, Level};
 
-/// Filtered page counts, valid until a call that can change the stored games runs. The count is
-/// a full scan of the filter's index, while the page rows themselves are a short index range.
+/// Filtered page counts, the library overview and the storage the games take, valid until a call
+/// that can change the stored games runs. The count is a full scan of the filter's index, while
+/// the page rows themselves are a short index range; the storage reads every game's row.
 #[derive(Default)]
 pub struct StoreCache {
     counts: Mutex<HashMap<String, i64>>,
     overview: Mutex<Option<Value>>,
+    storage: Mutex<Option<Vec<(String, i64, i64)>>>,
 }
 
 impl StoreCache {
@@ -61,12 +63,26 @@ impl StoreCache {
         }
     }
 
+    /// Each account's games and the bytes they take (`usageReport`'s storage).
+    pub fn storage(&self) -> Option<Vec<(String, i64, i64)>> {
+        self.storage.lock().ok()?.clone()
+    }
+
+    pub fn remember_storage(&self, rows: &[(String, i64, i64)]) {
+        if let Ok(mut storage) = self.storage.lock() {
+            *storage = Some(rows.to_vec());
+        }
+    }
+
     pub fn clear(&self) {
         if let Ok(mut counts) = self.counts.lock() {
             counts.clear();
         }
         if let Ok(mut overview) = self.overview.lock() {
             *overview = None;
+        }
+        if let Ok(mut storage) = self.storage.lock() {
+            *storage = None;
         }
     }
 }
