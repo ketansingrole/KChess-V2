@@ -17,7 +17,7 @@ fn main() -> std::process::ExitCode {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("serve") => {}
-        // What a client of this build sends in `hello` (the Electron app asks its bundled copy).
+        // What a client of this build sends in `hello`.
         Some("version") => {
             println!(
                 "{}",
