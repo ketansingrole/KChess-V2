@@ -32,6 +32,7 @@ mod settings;
 mod shell;
 mod studies;
 mod tournaments;
+mod whats_new;
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
