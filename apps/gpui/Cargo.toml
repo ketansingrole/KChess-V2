@@ -74,8 +74,13 @@ block2 = "0.6"
 # Swapping an update's bundle with the installed one in one step (`renamex_np`; already in
 # Cargo.lock).
 libc = "0.2"
-# The Dock icon (`app.dock.setIcon` in Electron): NSApplication's icon image.
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+# The Dock icon (`app.dock.setIcon` in Electron): NSApplication's icon image; and the system's
+# reduced-motion setting (NSWorkspace).
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSAccessibility", "NSWorkspace"] }
+
+# The system's reduced-motion setting (`SystemParametersInfoW`; already in Cargo.lock).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 
 # The release version, and on Windows the executable's icon and version (`build.rs`); both
 # already in Cargo.lock.

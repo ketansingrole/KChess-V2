@@ -645,7 +645,7 @@ impl LocalPage {
             "Black"
         };
         let page = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let page = page.clone();
             dialog
                 .title(format!("Resign for {name}?"))
@@ -674,7 +674,7 @@ impl LocalPage {
                 cx,
             )
         });
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::widgets::open_dialog(window, cx, move |dialog, _, _| {
             dialog
                 .title("New game over the board")
                 .w(px(512.))
@@ -701,7 +701,7 @@ impl LocalPage {
         }
         let page = cx.entity().downgrade();
         let chosen = std::rc::Rc::new((setup, clock));
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let (page, chosen) = (page.clone(), chosen.clone());
             dialog
                 .title("Start a new game?")
@@ -1073,13 +1073,7 @@ impl LocalPage {
                         .opacity(0.75)
                         .child(format!("Player {index}")),
                 )
-                .child(
-                    div()
-                        .text_size(px(120.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .line_height(px(120.))
-                        .child(time.clone()),
-                )
+                .child(crate::widgets::timer(time.clone(), px(120.)))
                 .child(div().text_size(px(14.)).opacity(0.75).child(
                     crate::widgets::format_counted(moves as f64, "move", "moves"),
                 ))
