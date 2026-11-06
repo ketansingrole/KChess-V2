@@ -1005,9 +1005,15 @@ impl Lichess {
     }
 
     /// `exportGame`: a finished game as PGN with clocks, for the analysis board. A game fetched
-    /// once is kept (the newest of them), so without a connection it still opens.
+    /// once is kept (the newest of them), so without a connection it still opens, and a kept game
+    /// that had finished opens from the copy: a finished game does not change.
     pub async fn export_game(&self, id: &str) -> CoreResult<String> {
         let key = format!("{EXPORTED_GAME_CACHE}{id}");
+        if let Ok(Some(kept)) = self.store.read_api_cache(&key).await
+            && let Some(pgn) = kept.value.as_str().filter(|pgn| finished_pgn(pgn))
+        {
+            return Ok(pgn.to_string());
+        }
         let fetched = self
             .client
             .policy()
@@ -1835,6 +1841,15 @@ pub struct Crosstable {
 pub struct CrosstableMatchup {
     pub users: BTreeMap<String, f64>,
     pub nb_games: i64,
+}
+
+/// Whether `pgn` records a decided result (`[Result "1-0"]`, `"0-1"` or `"1/2-1/2"`); a game
+/// still being played, or one whose result is not named, is `false`.
+fn finished_pgn(pgn: &str) -> bool {
+    pgn.lines()
+        .take_while(|line| line.starts_with('['))
+        .find_map(|line| line.strip_prefix("[Result \"")?.strip_suffix("\"]"))
+        .is_some_and(|result| matches!(result, "1-0" | "0-1" | "1/2-1/2"))
 }
 
 #[cfg(test)]

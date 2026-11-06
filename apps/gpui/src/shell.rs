@@ -1165,6 +1165,10 @@ impl Workspace {
         if let Some(page) = Page::remembered() {
             workspace.choose(page, window, cx);
         }
+        // Once the window shows: the notes of an update just installed.
+        cx.defer_in(window, |_, window, cx| {
+            crate::whats_new::on_start(window, cx)
+        });
         workspace
     }
 
@@ -1233,7 +1237,24 @@ impl Workspace {
         {
             watch.update(cx, |watch, cx| watch.hidden(cx));
         }
+        // The open tournament refreshes only while Tournaments is shown.
+        if current == Page::Tournaments
+            && page != Page::Tournaments
+            && let Some(tournaments) = self
+                .pages
+                .view_of::<crate::pages::tournaments::TournamentsPage>(Page::Tournaments)
+        {
+            tournaments.update(cx, |tournaments, _| tournaments.hidden());
+        }
         self.pages.show(page, window, cx);
+        if page == Page::Tournaments
+            && current != Page::Tournaments
+            && let Some(tournaments) = self
+                .pages
+                .view_of::<crate::pages::tournaments::TournamentsPage>(Page::Tournaments)
+        {
+            tournaments.update(cx, |tournaments, cx| tournaments.shown(cx));
+        }
         if page == Page::Watch
             && current != Page::Watch
             && let Some(watch) = self

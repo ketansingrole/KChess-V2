@@ -296,7 +296,7 @@ base: core24
 grade: stable
 confinement: strict
 license: GPL-3.0-or-later
-website: https://github.com/ketansingrole/KChess-V2#readme
+website: https://ketansingrole.github.io/KChess-V2/
 source-code: https://github.com/ketansingrole/KChess-V2
 issues: https://github.com/ketansingrole/KChess-V2/issues
 contact: https://github.com/ketansingrole/KChess-V2/issues

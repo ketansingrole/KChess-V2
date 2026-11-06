@@ -12,6 +12,7 @@ use shakmaty::Color;
 use crate::game::tree::{format_eval, pv_san, winning_chances};
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::KeyboardFocus as _;
+use crate::widgets::Pressable as _;
 
 /// The evaluation bar's width.
 pub const EVAL_BAR: Pixels = px(14.);
@@ -166,7 +167,7 @@ pub fn engine_lines(
                             .font_features(crate::widgets::tabular())
                             .text_center()
                             .cursor_pointer()
-                            .hover(|eval| eval.bg(tint(palette.primary, 24.)))
+                            .pressable_fill(tint(palette.primary, 24.), palette)
                             .on_click({
                                 let on_play = on_play.clone();
                                 move |_, window, cx| on_play(&eval_pv, 0, window, cx)
@@ -187,7 +188,7 @@ pub fn engine_lines(
                                 .rounded(radii::XS)
                                 .text_color(palette.toned)
                                 .cursor_pointer()
-                                .hover(|chip| chip.bg(tint(palette.primary, 24.)))
+                                .pressable_fill(tint(palette.primary, 24.), palette)
                                 .on_click(move |_, window, cx| on_play(&pv, at, window, cx))
                                 .child(crate::notation::shown(
                                     &played.label,

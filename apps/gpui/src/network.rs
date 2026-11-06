@@ -10,6 +10,18 @@ const EVERY: Duration = Duration::from_secs(5);
 
 pub struct Network {
     pub online: bool,
+    /// Set by a test that decided `online` itself: the machine is not looked at again, so a
+    /// test on a runner with no route out does not go offline five seconds in.
+    pub pinned: bool,
+}
+
+impl Network {
+    /// Take the computer to be on a network or off it, whatever the machine says, from now on.
+    #[cfg(test)]
+    pub fn pin(&mut self, online: bool) {
+        self.online = online;
+        self.pinned = true;
+    }
 }
 
 #[derive(Clone)]
@@ -38,6 +50,7 @@ fn connected() -> bool {
 pub fn init(cx: &mut App) {
     let network = cx.new(|_| Network {
         online: connected(),
+        pinned: false,
     });
     cx.set_global(NetworkHandle(network.clone()));
     cx.spawn(async move |cx| {
@@ -45,7 +58,7 @@ pub fn init(cx: &mut App) {
             cx.background_executor().timer(EVERY).await;
             let now = cx.background_executor().spawn(async { connected() }).await;
             network.update(cx, |network, cx| {
-                if network.online != now {
+                if !network.pinned && network.online != now {
                     network.online = now;
                     cx.notify();
                 }

@@ -19,6 +19,7 @@ use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
+use crate::widgets::Pressable as _;
 
 const FLASH: Duration = Duration::from_millis(300);
 const COLOR_GRAMMAR: [&str; 3] = ["light", "dark", "[unk]"];
@@ -345,7 +346,7 @@ impl Render for SquareColors {
                     .text_size(px(16.))
                     .font_weight(FontWeight::MEDIUM)
                     .cursor_pointer()
-                    .hover(|button| button.opacity(0.9))
+                    .pressable_fade(0.9)
                     .on_click(cx.listener(move |this, _, _, cx| this.answer(color, cx)))
                     .child(label)
                     .child(key(shortcut))

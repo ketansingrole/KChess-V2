@@ -19,6 +19,7 @@ use crate::game::tree::TreeNode;
 use crate::pages::Page;
 use crate::replay::GameReplay;
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
 
 const RESULTS: [(&str, &str); 4] = [
@@ -903,7 +904,7 @@ pub fn game_row(
         .rounded(radii::MD)
         .text_size(px(13.))
         .cursor_pointer()
-        .hover(|row| row.bg(palette.accented))
+        .pressable(palette)
         .on_click(move |_, window, cx| select(window, cx))
         .child(
             div()

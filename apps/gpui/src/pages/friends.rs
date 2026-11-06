@@ -21,6 +21,7 @@ use crate::assets::icon;
 use crate::core::AppCore;
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Look};
 
 /// Presence is asked for this many players at a time, and again this often.
@@ -511,7 +512,7 @@ impl FriendsPage {
                                             .font_weight(FontWeight::MEDIUM)
                                             .truncate()
                                             .cursor_pointer()
-                                            .hover(|name| name.underline())
+                                            .pressable_link()
                                             .on_click({
                                                 let name = name.clone();
                                                 move |_, window, cx| {

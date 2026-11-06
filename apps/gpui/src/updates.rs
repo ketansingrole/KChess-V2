@@ -368,6 +368,8 @@ fn http() -> Result<reqwest::Client, String> {
         .connect_timeout(Duration::from_secs(20))
         // A server that stops sending ends the download instead of holding it forever.
         .read_timeout(IDLE)
+        // Byte-exact: the installer's size and progress are of the file as published.
+        .no_gzip()
         .build()
         .map_err(|cause| cause.to_string())
 }

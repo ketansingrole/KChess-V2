@@ -24,6 +24,11 @@ fn window(kind: &str) -> Hello {
 }
 
 /// Serves `profile` in this process; resolves when the service stops.
+/// The idle period of the tests that wait for the service to stop. It also bounds how long the
+/// first client may take to connect, since it runs from the service's start: 300 ms was too
+/// short for a loaded runner, whose client then found no service.
+const IDLE: Duration = Duration::from_secs(2);
+
 fn spawn_service(profile: &Path, idle: Duration) -> tokio::task::JoinHandle<Result<(), String>> {
     let options = ServeOptions {
         config: Config::new(profile.to_path_buf()),
@@ -240,7 +245,9 @@ async fn a_core_nobody_uses_closes_for_another_release() {
 #[tokio::test(flavor = "multi_thread")]
 async fn one_core_per_profile_and_it_stops_when_idle() {
     let profile = tempfile::tempdir().expect("profile");
-    let service = spawn_service(profile.path(), Duration::from_millis(300));
+    // The idle period runs from the start, before anyone connected: long enough that a loaded
+    // runner's first connection lands inside it.
+    let service = spawn_service(profile.path(), IDLE);
     let (gpui, mut events) = connect(profile.path(), "gpui").await;
 
     let second = serve(ServeOptions {
@@ -252,7 +259,7 @@ async fn one_core_per_profile_and_it_stops_when_idle() {
     assert!(second.contains("already running"), "{second}");
 
     // Connected, the service waits past its idle period.
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    tokio::time::sleep(IDLE * 2).await;
     assert!(!service.is_finished());
     drop(gpui);
     tokio::time::timeout(WAIT, service)
@@ -346,7 +353,7 @@ async fn a_window_that_joins_learns_which_window_alerts() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_window_that_stops_reading_is_cut_off_and_cleaned_up() {
     let profile = tempfile::tempdir().expect("profile");
-    let service = spawn_service(profile.path(), Duration::from_millis(300));
+    let service = spawn_service(profile.path(), IDLE);
     let (gpui, _gpui_events) = connect(profile.path(), "gpui").await;
 
     // A window that says hello and then never reads; it joined last, so it alerts unless the
