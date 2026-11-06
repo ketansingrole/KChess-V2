@@ -362,6 +362,24 @@ mod variant_tests {
         let antichess = replay_positions_in("antichess", last, &["a2b3"]);
         assert_eq!(antichess[1].end, Some("won"));
         assert_eq!(antichess[1].turn, "black");
+        // Left with pieces but no moves, the side to move has won too; the other side having
+        // no pieces does not end it.
+        let blocked = "8/p7/P7/8/8/8/8/8 b - - 0 1";
+        assert_eq!(
+            replay_positions_in("antichess", blocked, &[] as &[&str])[0].end,
+            Some("won")
+        );
+        let bare = "8/8/8/8/8/8/8/k7 b - - 0 1";
+        assert_eq!(
+            replay_positions_in("antichess", bare, &[] as &[&str])[0].end,
+            None
+        );
+        // King of the Hill: a king already on the hill has won for the side to move.
+        let hill = "8/8/8/8/4K3/8/8/k7 w - - 0 1";
+        assert_eq!(
+            replay_positions_in("kingOfTheHill", hill, &[] as &[&str])[0].end,
+            Some("won")
+        );
         let score = crate::api::call("endEval", r#"["won", "black"]"#).unwrap();
         assert_eq!(score, r#"{"mate":-1}"#);
         // A drop replays in Crazyhouse and not in standard chess.
