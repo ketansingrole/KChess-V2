@@ -28,6 +28,8 @@ pub fn run_with(command: &mut Command) -> Result {
 
 /// Runs `program` with `args` like `run`, but never shows the `secrets` among them: a failure
 /// message (printed and kept in build logs) names them `<redacted>`.
+// Only notarization (macOS) passes secrets; its test runs on any Unix.
+#[cfg(any(target_os = "macos", all(test, unix)))]
 pub fn run_redacted(program: &str, args: &[&str], secrets: &[&str]) -> Result {
     run_shown(Command::new(program).args(args), secrets)
 }
