@@ -360,7 +360,7 @@ pub fn rotated_text_image(
     let (width, height) = (pixmap.width(), pixmap.height());
     let mut pixels = pixmap.take();
     // GPUI draws straight-alpha BGRA; the pixmap is premultiplied RGBA.
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         gpui_kit::swap_rgba_pa_to_bgra(pixel);
     }
     let buffer =

@@ -1048,11 +1048,10 @@ impl LocalPage {
                         window.scale_factor(),
                     )
                     .ok()
-                    .map(|image| {
+                    .inspect(|image| {
                         if let Some((_, old)) = self.turned.insert(index, (key, image.clone())) {
                             cx.drop_image(old, Some(window));
                         }
-                        image
                     }),
                 };
                 image.map(|image| {

@@ -782,15 +782,14 @@ impl Core {
             reviews: self.reviews.clone(),
         }));
         location.cancel = Some(cancel_rx);
-        let result = match mutation {
+        match mutation {
             Mutation::Install => install_managed_engine(self.host.as_ref(), &location)
                 .await
                 .and_then(json),
             Mutation::Delete => delete_managed_engine(self.host.as_ref(), &location)
                 .await
                 .map(|()| Value::Null),
-        };
-        result
+        }
     }
 
     fn cancel_install(&self, id: u64) {
