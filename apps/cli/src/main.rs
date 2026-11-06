@@ -296,7 +296,20 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 if kchess_domain::misc::ASSISTANCE_METHODS.contains(&method) {
                     core.call("resumeOnline", vec![]).await?;
                 }
-                print(&core.call(method, parameters).await?);
+                // A method may ask the host meanwhile (a sign-in opens its page), as login does.
+                let call = core.call(method, parameters);
+                tokio::pin!(call);
+                let answer = loop {
+                    tokio::select! {
+                        answer = &mut call => break answer?,
+                        Some(event) = events.recv() => {
+                            if event.name == "host:request" {
+                                core.answer(&event.payload).await;
+                            }
+                        }
+                    }
+                };
+                print(&answer);
             }
             "analyze" => {
                 let request = analysis_request(&args[1..])?;

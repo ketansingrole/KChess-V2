@@ -371,6 +371,16 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             Showcase::Games(name) => ndjson_lines(&mut out, &showcase_games(&name)),
         };
     }
+    // The same game behind a slow link: its answer waits until a test lets it go.
+    if (request.method.as_str(), request.path.as_str()) == ("POST", "/api/games/export/_ids")
+        && request.body.trim() == HELD_GAME
+    {
+        HELD_GAME_ASKED.store(true, Ordering::SeqCst);
+        while !HELD_GAME_RELEASED.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        return pgn(&mut out, LINKED_PGN);
+    }
     // Games are public: the one a pasted link can fetch here.
     if (request.method.as_str(), request.path.as_str()) == ("POST", "/api/games/export/_ids")
         && request.body.trim() == LINKED_GAME
@@ -686,6 +696,10 @@ fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
 
 /// The game a Lichess link in the analysis board's import names, and its PGN.
 pub const LINKED_GAME: &str = "kchessE2";
+/// A game whose export is held until `HELD_GAME_RELEASED` (one test uses it).
+pub const HELD_GAME: &str = "kchessH1";
+pub static HELD_GAME_ASKED: AtomicBool = AtomicBool::new(false);
+pub static HELD_GAME_RELEASED: AtomicBool = AtomicBool::new(false);
 /// A public study, the chapter its link names, and one in a variant the board cannot play.
 pub const ARENA: &str = "kcArena1";
 pub const STUDY: &str = "kcStudy1";

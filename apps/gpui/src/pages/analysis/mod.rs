@@ -1849,12 +1849,17 @@ impl AnalysisPage {
                                     })
                             })
                             .child(div().flex_1())
-                            .child(
+                            .child({
+                                let page = run.clone();
                                 Button::new("import-cancel")
                                     .ghost()
                                     .label("Cancel")
-                                    .on_click(|_, window, cx| window.close_dialog(cx)),
-                            )
+                                    .on_click(move |_, window, cx| {
+                                        // A link still being fetched is dropped with it.
+                                        let _ = page.update(cx, |page, _| page.importing = None);
+                                        window.close_dialog(cx);
+                                    })
+                            })
                             .child(
                                 Button::new("import-run")
                                     .primary()
@@ -2020,7 +2025,9 @@ impl AnalysisPage {
         cx.spawn_in(window, async move |this, cx| {
             let pgn = pgn.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if this.importing != Some(turn) {
+                // Dismissed meanwhile (Cancel, Escape or a click outside): nobody waits for it.
+                if this.importing != Some(turn) || !window.has_active_dialog(cx) {
+                    this.importing = this.importing.filter(|pending| *pending != turn);
                     return;
                 }
                 this.importing = None;

@@ -812,6 +812,34 @@ fn a_lichess_game_link_imports_the_game(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(selected(&mut app, "e2e4 e7e5 g1f3"), Some(true));
 }
 
+/// A slow link's game arriving after the import was cancelled does not replace the board.
+#[gpui_kit::test]
+fn a_cancelled_link_import_leaves_the_board_alone(cx: &mut gpui_kit::TestAppContext) {
+    use super::fake_lichess::{HELD_GAME, HELD_GAME_ASKED, HELD_GAME_RELEASED};
+    use std::sync::atomic::Ordering;
+    let mut app = analysis(cx);
+    app.online();
+    import(&mut app, "1. d4 d5 *");
+    app.find("tree-d2d4 d7d5");
+    app.click("analysis-import");
+    fill_in_dialog(
+        &mut app,
+        "FEN, PGN or Lichess link",
+        &format!("https://lichess.org/{HELD_GAME}"),
+    );
+    app.click("import-run");
+    app.wait_for("the export to be asked for", |_, _| {
+        HELD_GAME_ASKED.load(Ordering::SeqCst)
+    });
+    app.click("import-cancel");
+    settle(&mut app);
+    HELD_GAME_RELEASED.store(true, Ordering::SeqCst);
+    settle(&mut app);
+    settle(&mut app);
+    app.find("tree-d2d4 d7d5");
+    assert!(!app.shows("tree-e2e4"), "the late game replaced the board");
+}
+
 /// The FEN of the position the analysis board shows.
 fn shown_fen(app: &mut Harness) -> String {
     app.with_window(|_, cx| {
