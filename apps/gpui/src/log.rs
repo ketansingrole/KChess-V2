@@ -75,7 +75,8 @@ pub fn write(level: Level, scope: &str, message: &str) {
     if level == Level::Debug && std::env::var("KCHESS_DEBUG").as_deref() != Ok("1") {
         return;
     }
-    eprintln!("{} [{scope}] {message}", level.name());
+    // Not `eprintln!`: it panics when stderr is gone (a terminal closed under a running app).
+    let _ = writeln!(std::io::stderr(), "{} [{scope}] {message}", level.name());
     if let Some(log) = LOG.get()
         && let Ok(mut log) = log.lock()
     {

@@ -27,6 +27,18 @@ mod play;
 mod sessions;
 mod start;
 
+/// One `online:state` event: which session, account, game and lane it is about, its phase, and
+/// for a failure the message and kind the page shows.
+struct StateUpdate<'a> {
+    session: u64,
+    account: &'a str,
+    game_id: &'a str,
+    lane: Lane,
+    phase: &'a str,
+    message: Option<&'a str>,
+    kind: Option<ErrorKind>,
+}
+
 impl OnlineSession {
     /// A session over `lichess` (its client, store and host), reading tokens from `tokens`.
     /// `http` must be the client `lichess` was built with, so the streams share its settings.
@@ -81,21 +93,29 @@ impl OnlineSession {
         phase: &str,
         message: Option<&str>,
     ) {
-        self.emit_state_kind(session, account, game_id, lane, phase, message, None);
+        self.emit_state_update(StateUpdate {
+            session,
+            account,
+            game_id,
+            lane,
+            phase,
+            message,
+            kind: None,
+        });
     }
 
-    /// `emit_state` with the kind of failure that caused it, so the page offers what can help.
-    #[allow(clippy::too_many_arguments)]
-    fn emit_state_kind(
-        &self,
-        session: u64,
-        account: &str,
-        game_id: &str,
-        lane: Lane,
-        phase: &str,
-        message: Option<&str>,
-        kind: Option<ErrorKind>,
-    ) {
+    /// `emit_state`, and with `kind` the kind of failure that caused it, so the page offers what
+    /// can help.
+    fn emit_state_update(&self, update: StateUpdate<'_>) {
+        let StateUpdate {
+            session,
+            account,
+            game_id,
+            lane,
+            phase,
+            message,
+            kind,
+        } = update;
         let mut payload = json!({
             "session": session,
             "account": account,
@@ -274,19 +294,19 @@ impl OnlineSession {
         if let Some(quiet) = &options.quiet {
             quiet(phase, Some(&message));
         } else if options.session == self.st().epoch {
-            self.emit_state_kind(
-                options.session,
-                &options.account,
-                &options.game_id,
-                options.lane,
+            self.emit_state_update(StateUpdate {
+                session: options.session,
+                account: &options.account,
+                game_id: &options.game_id,
+                lane: options.lane,
                 phase,
-                Some(&message),
-                Some(
+                message: Some(&message),
+                kind: Some(
                     CoreError::from(cause.clone())
                         .kind
                         .unwrap_or(ErrorKind::Unavailable),
                 ),
-            );
+            });
         }
     }
 
@@ -358,6 +378,10 @@ impl OnlineSession {
             let outcome = self
                 .read_stream(request, &line_cancel, &mut on_open, &mut on_line)
                 .await;
+            // Lichess replays pending challenges and ongoing games on every connect, so a line the
+            // checks refuse comes back each time: a connection that ended on one made no progress,
+            // or the stream would reconnect about once a second forever.
+            let malformed = line_error.is_some();
             let outcome = match line_error.take() {
                 Some(message) => Err(core(message)),
                 None => outcome,
@@ -407,7 +431,11 @@ impl OnlineSession {
                 );
                 return;
             }
-            failures = if received { 1 } else { failures + 1 };
+            failures = if received && !malformed {
+                1
+            } else {
+                failures + 1
+            };
             if failures > MAX_RECONNECTS {
                 self.log(
                     Level::Warn,

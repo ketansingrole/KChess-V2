@@ -14,7 +14,7 @@ use crate::ai::{
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::host::Level;
-use crate::lichess::oauth::{default_look, new_pkce, new_state, wait_for_redirect};
+use crate::lichess::oauth::{Redirect, default_look, new_pkce, new_state, wait_for_redirect};
 use kchess_domain::coach::{self, Brief};
 use kchess_domain::records::oauth::connection_page;
 use kchess_domain::tactics::Mates;
@@ -199,11 +199,13 @@ impl Core {
         let returned = tokio::select! {
             returned = wait_for_redirect(
                 &listener,
-                CALLBACK_PATH,
-                &state,
-                &page,
-                "ChatGPT sign-in timed out.",
-                SIGN_IN_TIMEOUT,
+                Redirect {
+                    path: CALLBACK_PATH,
+                    state: &state,
+                    page: &page,
+                    timed_out: "ChatGPT sign-in timed out.",
+                    timeout: SIGN_IN_TIMEOUT,
+                },
                 self.ai.lifetime(),
                 &|| {},
             ) => returned?,

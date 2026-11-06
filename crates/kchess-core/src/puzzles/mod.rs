@@ -196,10 +196,7 @@ impl Inner {
         let inner = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
             let (_permit, _tracked) = (permit, tracked);
-            let mut db = inner
-                .db
-                .lock()
-                .map_err(|_| CoreError::new("Puzzle service stopped. Retry the operation."))?;
+            let mut db = crate::store::usable_connection(&inner.db, inner.host.as_ref(), "puzzles");
             if inner.closed.load(Ordering::SeqCst) {
                 return Err(CoreError::new("Puzzle service closed."));
             }

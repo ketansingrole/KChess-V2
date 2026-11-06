@@ -306,13 +306,25 @@ pub(crate) fn study_command(
     let id_arg = command.get("id").and_then(Value::as_str);
 
     migrate_studies(db)?;
-    let sizes: std::collections::HashMap<String, usize> = db
+    let stored_sizes: Vec<(String, i64)> = db
         .prepare("SELECT id, textUnits FROM studies")
         .map_err(db_err)?
-        .query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)? as usize)))
+        .query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)?)))
         .map_err(db_err)?
         .collect::<std::result::Result<_, _>>()
         .map_err(db_err)?;
+    // A size no study can have (negative, or past one document) is damage: as `usize` it
+    // overflowed the sums below, a panic with the database held.
+    let sizes = stored_sizes
+        .into_iter()
+        .map(|(id, units)| {
+            usize::try_from(units)
+                .ok()
+                .filter(|units| *units <= MAX_DOCUMENT)
+                .map(|units| (id, units))
+                .ok_or_else(|| CoreError::new(DAMAGED_STUDIES))
+        })
+        .collect::<Result<std::collections::HashMap<String, usize>>>()?;
     let original = if incremental {
         read_command_studies(db, command)?
     } else {
@@ -961,6 +973,28 @@ mod tests {
             .as_str()
             .expect("id")
             .to_string()
+    }
+
+    /// A stored size of -1 became 2^64 - 1 as `usize`, and adding it to the library's size
+    /// overflowed: a panic (release builds check overflow) with the database lock held.
+    #[test]
+    fn an_impossible_stored_size_is_damage_not_a_panic() {
+        let db = database();
+        let id = create(&db, "Openings", "1. e4 *");
+        create(&db, "Endgames", "1. d4 *");
+        for units in [-1_i64, i64::MAX] {
+            db.execute(
+                "UPDATE studies SET textUnits = ?1 WHERE id = ?2",
+                params![units, id],
+            )
+            .expect("damage");
+            let error = run(
+                &db,
+                json!({ "op": "save", "name": "Third", "pgn": "1. c4 *" }),
+            )
+            .expect_err("refused");
+            assert_eq!(error.message, DAMAGED_STUDIES, "{units}");
+        }
     }
 
     #[test]

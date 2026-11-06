@@ -21,10 +21,10 @@ use serde_json::Value;
 use tokio::sync::{OnceCell, watch};
 use tokio_util::sync::CancellationToken;
 
-use super::client::{Failure, LichessClient, TokenSource, authorize};
+use super::client::{Failure, LichessClient, Ndjson, TokenSource, authorize};
 use super::reviews::review_from_lichess;
 use crate::capabilities::Capabilities;
-use crate::error::{CoreError, Result as CoreResult};
+use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::{Host, Level};
 use crate::store::games::EXPORTED_GAME_CACHE;
 
@@ -637,7 +637,10 @@ impl Lichess {
             .await
         {
             Ok(value) => Ok(Reply::Done(value)),
-            Err(failure) if matches!(failure.status(), Some(401) | Some(403)) => {
+            // Only a refused login asks to reconnect: a 403 for a reason Lichess gave ("not
+            // your study", a closed tournament) said "reconnect your account", and reconnecting
+            // changed nothing.
+            Err(Failure::Lichess(error)) if error.kind() == ErrorKind::Login => {
                 Ok(Reply::NeedsReconnect)
             }
             Err(failure) => Err(failure.into()),
@@ -846,11 +849,13 @@ impl Lichess {
                 .with_usage(&row.username, "profile", async {
                     self.client
                         .ndjson(
-                            reqwest::Method::GET,
-                            "/api/rel/following",
-                            &[],
-                            None,
-                            Some(&authorize(&token)),
+                            Ndjson {
+                                method: reqwest::Method::GET,
+                                path: "/api/rel/following",
+                                query: &[],
+                                body: None,
+                                auth: Some(&authorize(&token)),
+                            },
                             &self.lifetime,
                             |line| {
                                 lines.push(line.to_string());
@@ -1084,11 +1089,13 @@ impl Lichess {
                     let mut lines = Vec::new();
                     self.client
                         .ndjson(
-                            reqwest::Method::GET,
-                            &format!("/api/games/user/{}", path_segment(username)),
-                            &query,
-                            None,
-                            auth.as_deref(),
+                            Ndjson {
+                                method: reqwest::Method::GET,
+                                path: &format!("/api/games/user/{}", path_segment(username)),
+                                query: &query,
+                                body: None,
+                                auth: auth.as_deref(),
+                            },
                             &self.lifetime,
                             |line| {
                                 lines.push(line.to_string());
@@ -1476,11 +1483,13 @@ impl Lichess {
                         let mut lines = Vec::new();
                         self.client
                             .ndjson(
-                                method,
-                                path,
-                                query,
-                                body,
-                                auth.as_deref(),
+                                Ndjson {
+                                    method,
+                                    path,
+                                    query,
+                                    body,
+                                    auth: auth.as_deref(),
+                                },
                                 &self.lifetime,
                                 |line| {
                                     lines.push(line.to_string());

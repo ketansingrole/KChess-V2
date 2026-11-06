@@ -149,6 +149,57 @@ mod tests {
         assert_eq!(plies, 200);
     }
 
+    #[test]
+    fn whole_reads_integers_and_floats_alike() {
+        assert_eq!(whole(&json!(2)), 2);
+        assert_eq!(whole(&json!(2.0)), 2);
+        assert_eq!(whole(&json!(-1)), 0);
+        assert_eq!(whole(&json!("2")), 0);
+        assert_eq!(whole(&Value::Null), 0);
+    }
+
+    #[test]
+    fn random_unit_stays_in_range() {
+        for _ in 0..1_000 {
+            let n = random_unit();
+            assert!((0. ..1.).contains(&n), "{n}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_rules_method_is_an_error() {
+        assert!(rules("noSuchMethod", &[]).is_err());
+    }
+
+    #[test]
+    fn a_host_read_that_fails_fails_the_transition() {
+        let error = transition("localInit", &[], |kind| Err(format!("no {kind}"))).unwrap_err();
+        assert_eq!(error, "no now");
+    }
+
+    #[test]
+    fn each_read_is_answered_in_order() {
+        let mut asked = Vec::new();
+        let done = transition("localInit", &[], |kind| {
+            asked.push(kind.to_string());
+            Ok(json!(5))
+        })
+        .unwrap();
+        assert_eq!(asked, ["now"]);
+        assert!(done.get("runtime").is_some());
+    }
+
+    #[test]
+    fn written_fields_missing_from_the_next_state_are_removed() {
+        let mut state = json!({ "a": 1, "b": 2 });
+        assign_written(&mut state, &json!({}), &json!(["a"]));
+        assert_eq!(state, json!({ "b": 2 }));
+        // A target that is not an object is left alone.
+        let mut scalar = json!(3);
+        assign_written(&mut scalar, &json!({ "a": 1 }), &json!(["a"]));
+        assert_eq!(scalar, json!(3));
+    }
+
     /// A deepest legal tree (1024 plies) read on a 1 MiB thread, as on Windows' main thread:
     /// reading the answer back there overflowed the stack and aborted the app on a dropped PGN.
     #[derive(serde::Deserialize)]

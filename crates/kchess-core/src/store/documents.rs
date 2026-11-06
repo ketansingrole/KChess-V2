@@ -101,6 +101,38 @@ pub(crate) fn decode_archived_game_text(text: &str) -> Option<Value> {
     parse_text(text).and_then(|raw| kchess_domain::library::decode_archived_game(&raw))
 }
 
+/// A document this release cannot read in full is never replaced: a mutation would write what
+/// it could read (often nothing) over it.
+pub(crate) const DAMAGED_DOCUMENT: &str = "This saved data is damaged or from a newer KChess. It has been preserved; restore a backup or update KChess before changing it.";
+
+/// The stored document's `version` when it is newer than `known`.
+fn newer_version(raw: &Value, known: u64) -> bool {
+    raw.get("version")
+        .and_then(Value::as_f64)
+        .is_some_and(|version| version > known as f64)
+}
+
+/// Refuses a mutation of `key` when its stored text is not JSON, is of a newer version than this
+/// release writes, or does not have the shape `readable` expects. A missing document is writable.
+pub(crate) fn assert_replaceable(
+    db: &Connection,
+    key: &str,
+    known_version: Option<u64>,
+    readable: fn(&Value) -> bool,
+) -> Result<()> {
+    let Some(text) = read_document_text(db, key)? else {
+        return Ok(());
+    };
+    let replaceable = parse_text(&text).is_some_and(|raw| {
+        !known_version.is_some_and(|known| newer_version(&raw, known)) && readable(&raw)
+    });
+    if replaceable {
+        Ok(())
+    } else {
+        Err(CoreError::new(DAMAGED_DOCUMENT))
+    }
+}
+
 pub(crate) const DAMAGED_STUDIES: &str = "The saved study library is damaged. Its data has been preserved; restore a backup before editing studies.";
 
 /// Stored documents must not silently discard invalid or excess studies on the next mutation.

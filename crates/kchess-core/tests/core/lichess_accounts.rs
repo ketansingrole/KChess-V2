@@ -357,6 +357,32 @@ async fn a_refused_permission_asks_the_user_to_reconnect() {
     assert_eq!(fixture.to("/inbox/bob").len(), 1);
 }
 
+/// A 403 for a reason Lichess gave, not about the login, said "reconnect your account"; the
+/// person reconnected and got the same answer.
+#[tokio::test]
+async fn a_refusal_that_is_not_about_the_login_does_not_ask_to_reconnect() {
+    let fixture = serve(|_| {
+        Reply::Json(
+            403,
+            r#"{"error":"This user does not accept messages"}"#.into(),
+        )
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let store = MemoryStore::with_accounts(&[("Alice", true)]);
+    let lichess = service(
+        &fixture.base,
+        &host,
+        store,
+        MemoryTokens::with(&[("Alice", "lip_old")]),
+    );
+    let outcome = lichess.send_message("Alice", "bob", "hello").await;
+    assert!(
+        !matches!(outcome, Ok(Outcome::NeedsReconnect)),
+        "{outcome:?}"
+    );
+}
+
 #[tokio::test]
 async fn an_account_without_a_login_asks_to_reconnect_without_a_request() {
     let fixture = serve(|_| Reply::Json(200, "{}".into())).await;
