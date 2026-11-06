@@ -720,6 +720,7 @@ impl PositionExplorer {
                 .unwrap_or_else(|| moves.iter().map(games).sum());
             let width = self.area.size().width;
             let (columns, tile) = widgets::columns(width.max(TILE_MIN), TILE_MIN, TILE_GAP);
+            let mut shown = std::collections::HashSet::new();
             let tiles: Vec<AnyElement> = moves
                 .iter()
                 .enumerate()
@@ -751,6 +752,7 @@ impl PositionExplorer {
                             .map(str::to_string)
                     });
                     let board = self.preview(&next, &uci, cx);
+                    shown.insert(format!("{next} {uci}"));
                     let label = match &opening {
                         Some(name) => format!("{san}, {name}"),
                         None => san.clone(),
@@ -801,6 +803,9 @@ impl PositionExplorer {
                         .into_any_element()
                 })
                 .collect();
+            // Boards of positions no longer shown are let go: each position stepped through
+            // added a board per move, for as long as the page was open.
+            self.previews.retain(|key, _| shown.contains(key));
             let mut rows = Vec::new();
             let mut tiles = tiles.into_iter().peekable();
             while tiles.peek().is_some() {

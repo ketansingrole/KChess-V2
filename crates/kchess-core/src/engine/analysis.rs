@@ -343,6 +343,11 @@ impl Drop for Finish {
         let mut state = lock(&self.shared.state);
         if state.current.as_ref().is_some_and(|(id, _)| *id == self.id) {
             state.current = None;
+            // The countdown only closes the engine: with none open (a client that left had its
+            // engine killed) it would just keep this analysis's state alive for two minutes.
+            if state.engine.is_none() {
+                return;
+            }
             let weak = Arc::downgrade(&self.shared);
             let idle = after(IDLE_MS, move || {
                 if let Some(shared) = weak.upgrade() {

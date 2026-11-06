@@ -449,6 +449,12 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
             Frame::Call { id, method, args } => {
                 let (core, sender, running) =
                     (Arc::clone(&state.core), sender.clone(), Arc::clone(&calls));
+                // Held until the call is registered: another worker may finish a quick call
+                // before `spawn` returns, and its `remove` must find the entry, or the entry
+                // (and the finished task it keeps allocated) would stay until the window closes.
+                let Ok(mut registered) = calls.lock() else {
+                    break;
+                };
                 let task = tokio::spawn(async move {
                     let answer = core.call_client(connection, &method, args).await;
                     if let Ok(mut running) = running.lock() {
@@ -470,9 +476,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                     };
                     let _ = sender.send(frame).await;
                 });
-                if let Ok(mut running) = calls.lock() {
-                    running.insert(id, task.abort_handle());
-                }
+                registered.insert(id, task.abort_handle());
             }
             Frame::Cancel { id } => {
                 let task = calls

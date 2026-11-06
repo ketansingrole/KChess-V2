@@ -765,6 +765,12 @@ impl Core {
             .lock()
             .map_err(|_| CoreError::new("The engine is unavailable."))?
             .insert(id, cancel_tx);
+        // Forgotten however the request ends, a cancelled call included.
+        let _forget = crate::tasks::on_drop(|| {
+            if let Ok(mut installs) = self.installs.lock() {
+                installs.remove(&id);
+            }
+        });
         let mut location = ManagedLocation::new(self.managed_dir(overridden));
         if let Some(url) = &overridden.release_url {
             location.release_url = url.clone();
@@ -784,9 +790,6 @@ impl Core {
                 .await
                 .map(|()| Value::Null),
         };
-        if let Ok(mut installs) = self.installs.lock() {
-            installs.remove(&id);
-        }
         result
     }
 

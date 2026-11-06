@@ -246,6 +246,61 @@ async fn removing_a_player_during_their_sync_leaves_nothing_behind() {
     assert_eq!(accounts, json!([]));
 }
 
+/// Regression: a sync whose call was cancelled (a socket client cancelling it or leaving aborts
+/// the call's task) left its entry behind, and every later sync of the player joined that dead
+/// entry and failed at once with "Sync was cancelled." until the player was removed.
+#[tokio::test]
+async fn a_cancelled_sync_does_not_fail_the_next_one() {
+    let (open, gate) = watch::channel(false);
+    let gate = Arc::new(Mutex::new(Some(gate)));
+    let fixture = serve(move |seen: &Seen| match seen.path() {
+        "/pub/player/alice" => Reply::Json(200, profile_body()),
+        "/pub/player/alice/games/archives" => Reply::Json(
+            200,
+            json!({ "archives": [format!("https://api.chess.com/pub/player/alice/games/{PAST}")] })
+                .to_string(),
+        ),
+        path if path.ends_with(PAST) => {
+            let body = Reply::Json(
+                200,
+                month_body(&[game(9, "Alice", "bob", "win", "resigned")]),
+            );
+            match gate.lock().unwrap().take() {
+                Some(gate) => Reply::Gated(gate, Box::new(body)),
+                None => body,
+            }
+        }
+        _ => Reply::Json(404, "{}".into()),
+    })
+    .await;
+    let profile = Arc::new(profile(&fixture));
+    let adding = {
+        let profile = Arc::clone(&profile);
+        tokio::spawn(async move { profile.chesscom.add("alice").await })
+    };
+    for _ in 0..200 {
+        if !fixture
+            .to(&format!("/pub/player/alice/games/{PAST}"))
+            .is_empty()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    adding.abort();
+    assert!(adding.await.unwrap_err().is_cancelled());
+    drop(open);
+
+    let synced = tokio::time::timeout(
+        Duration::from_secs(10),
+        profile.chesscom.sync(Some("alice")),
+    )
+    .await
+    .expect("the next sync ends");
+    assert!(synced.is_ok(), "the next sync runs afresh: {synced:?}");
+    assert_eq!(profile.games("Alice@chess.com").await.len(), 1);
+}
+
 #[tokio::test]
 async fn an_unknown_player_is_not_added() {
     let fixture = serve(|_: &Seen| Reply::Json(404, "{\"code\":0}".into())).await;

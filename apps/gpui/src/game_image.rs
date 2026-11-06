@@ -334,13 +334,48 @@ pub struct TextLine {
 }
 
 /// Lines of text, centred and turned `rotation` degrees (a multiple of 90), as a PNG `scale` times
-/// its size: GPUI cannot rotate text, so a turned clock face is shown as a picture of it.
+/// its size.
+#[cfg(test)]
 pub fn rotated_text_png(
     lines: &[TextLine],
     color: &str,
     rotation: u16,
     scale: f32,
 ) -> Result<Vec<u8>, String> {
+    let pixmap = rotated_text(lines, color, rotation, scale)?;
+    pixmap.encode_png().map_err(|cause| cause.to_string())
+}
+
+/// The same, ready to draw: GPUI cannot rotate text, so a turned clock face is shown as a picture
+/// of it. A picture to draw rather than a PNG: GPUI keeps every PNG it decodes for the rest of the
+/// session, and a running clock makes a new face every second. Whoever replaces one releases its
+/// texture (`App::drop_image`).
+pub fn rotated_text_image(
+    lines: &[TextLine],
+    color: &str,
+    rotation: u16,
+    scale: f32,
+) -> Result<Arc<gpui_kit::RenderImage>, String> {
+    let pixmap = rotated_text(lines, color, rotation, scale)?;
+    let (width, height) = (pixmap.width(), pixmap.height());
+    let mut pixels = pixmap.take();
+    // GPUI draws straight-alpha BGRA; the pixmap is premultiplied RGBA.
+    for pixel in pixels.chunks_exact_mut(4) {
+        gpui_kit::swap_rgba_pa_to_bgra(pixel);
+    }
+    let buffer =
+        image::RgbaImage::from_raw(width, height, pixels).ok_or("The image could not be made")?;
+    Ok(Arc::new(gpui_kit::RenderImage::new(vec![Frame::new(
+        buffer,
+    )])))
+}
+
+fn rotated_text(
+    lines: &[TextLine],
+    color: &str,
+    rotation: u16,
+    scale: f32,
+) -> Result<Pixmap, String> {
     const GAP: f32 = 12.;
     const WIDTH: f32 = 560.;
     let height: f32 = lines.iter().map(|line| line.size).sum::<f32>()
@@ -376,12 +411,11 @@ pub fn rotated_text_png(
         bx = -WIDTH / 2.,
         by = -height / 2.,
     );
-    let pixmap = rasterize(
+    rasterize(
         svg.as_bytes(),
         (outer_w * scale).round() as u32,
         (outer_h * scale).round() as u32,
-    )?;
-    pixmap.encode_png().map_err(|cause| cause.to_string())
+    )
 }
 
 /// A PNG of the position after `ply` moves.

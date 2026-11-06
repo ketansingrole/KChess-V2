@@ -129,16 +129,49 @@ struct PieceImages {
 impl Global for PieceImages {}
 
 impl PieceImages {
-    fn keep(&mut self, key: (String, u32), image: Arc<RenderImage>) {
-        if self.images.insert(key.clone(), image).is_none() {
+    /// Keeps `image`; returns the images it pushed out, whose textures the caller releases.
+    #[must_use]
+    fn keep(&mut self, key: (String, u32), image: Arc<RenderImage>) -> Vec<Arc<RenderImage>> {
+        let mut dropped = Vec::new();
+        if let Some(replaced) = self.images.insert(key.clone(), image) {
+            dropped.push(replaced);
+        } else {
             self.order.push_back(key);
         }
         while self.order.len() > MAX_IMAGES {
-            if let Some(old) = self.order.pop_front() {
-                self.images.remove(&old);
+            if let Some(old) = self.order.pop_front()
+                && let Some(image) = self.images.remove(&old)
+            {
+                dropped.push(image);
             }
         }
+        dropped
     }
+}
+
+/// Releases the textures of pieces no longer kept: GPUI keeps a drawn image's texture until it
+/// is dropped, so every size a resize passed through stayed in the GPU atlas. Deferred, since
+/// the window being drawn is not among the app's windows until it has been drawn.
+fn release(dropped: Vec<Arc<RenderImage>>, cx: &mut App) {
+    if dropped.is_empty() {
+        return;
+    }
+    cx.defer(move |cx| {
+        for image in dropped {
+            cx.drop_image(image, None);
+        }
+    });
+}
+
+/// The piece images kept now, of `pixels` device pixels.
+#[cfg(test)]
+pub(crate) fn kept_images(pixels: u32, cx: &mut App) -> Vec<Arc<RenderImage>> {
+    cx.default_global::<PieceImages>()
+        .images
+        .iter()
+        .filter(|((_, size), _)| *size == pixels)
+        .map(|(_, image)| Arc::clone(image))
+        .collect()
 }
 
 /// The most images kept: two piece sets at four sizes.
@@ -174,8 +207,10 @@ pub fn piece_image(
         .map(|(_, image)| Arc::clone(image));
     let Some(nearest) = nearest else {
         let image = rasterize(&path, pixels, &cx.svg_renderer())?;
-        cx.default_global::<PieceImages>()
+        let dropped = cx
+            .default_global::<PieceImages>()
             .keep((path, pixels), Arc::clone(&image));
+        release(dropped, cx);
         return Some(image);
     };
     rasterize_later(piece_set(set), pixels, viewer, cx);
@@ -223,11 +258,13 @@ fn rasterize_later(set: &str, pixels: u32, viewer: EntityId, cx: &mut App) {
         let rasterized = rasterized.await;
         cx.update(|cx| {
             let images = cx.default_global::<PieceImages>();
+            let mut dropped = Vec::new();
             for (path, image) in rasterized {
-                images.keep((path, pixels), image);
+                dropped.extend(images.keep((path, pixels), image));
             }
             let mut waiting = images.pending.remove(&key).unwrap_or_default();
             waiting.append(&mut images.deferred);
+            release(dropped, cx);
             for view in waiting {
                 cx.notify(view);
             }
