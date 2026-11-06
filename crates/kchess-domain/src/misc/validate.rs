@@ -2255,6 +2255,15 @@ fn assert_repertoire_key(value: J) -> Checked<String> {
     Ok(key)
 }
 
+/// A repertoire line: its UCI moves, as the spaced-repetition schedule names lines.
+fn assert_repertoire_line(value: J) -> Checked<String> {
+    let line: String = decode(value, plain)?;
+    if !crate::training::repetition::valid_line(&line) {
+        return Err("A repertoire line must be its UCI moves.".into());
+    }
+    Ok(line)
+}
+
 /// A view preference's name: `kchess:` and lowercase letters, digits, `-` and `:`, as the Electron
 /// the Electron app named its `localStorage` keys; at most 100 characters.
 fn assert_view_preference_key(value: J) -> Checked<String> {
@@ -2449,6 +2458,7 @@ validators! {
     "assertStudyCommandShape" => assert_study_command_shape,
     "assertLibraryId" => assert_library_id,
     "assertRepertoireKey" => assert_repertoire_key,
+    "assertRepertoireLine" => assert_repertoire_line,
     "assertViewPreferenceKey" => assert_view_preference_key,
     "assertSessionKind" => assert_session_kind,
     "assertSide" => assert_side,
