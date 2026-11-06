@@ -874,6 +874,16 @@ mod tests {
     use super::*;
     use regex::Regex;
 
+    /// Lichess adds a Site and names each chapter: a study still matches its download.
+    #[test]
+    fn a_study_matches_its_download_without_the_headers_lichess_adds() {
+        let chapters = [("Main line", "[Event \"Study\"]\n\n1. e4 e5 *")];
+        let downloaded = "[Event \"Study\"]\n[Site \"https://lichess.org/study/x/y\"]\n[ChapterName \"Renamed\"]\n\n1. e4 e5 *";
+        assert_eq!(study_matches(&chapters, downloaded), Some(true));
+        let changed = "[Event \"Study\"]\n[Site \"https://lichess.org/study/x/y\"]\n\n1. e4 c5 *";
+        assert_eq!(study_matches(&chapters, changed), Some(false));
+    }
+
     /// A move reads as its text, kept inline or on the heap.
     #[test]
     fn a_san_shows_as_its_text() {
