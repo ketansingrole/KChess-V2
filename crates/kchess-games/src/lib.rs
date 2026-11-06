@@ -113,6 +113,22 @@ mod tests {
         assert_eq!(state, json!({ "a": 10, "b": 2 }));
     }
 
+    #[test]
+    fn random_units_fall_in_zero_to_one_and_vary() {
+        let draws: Vec<f64> = (0..64).map(|_| random_unit()).collect();
+        assert!(draws.iter().all(|n| (0.0..1.0).contains(n)), "{draws:?}");
+        assert!(draws.iter().any(|n| *n > 0.5) && draws.iter().any(|n| *n < 0.5));
+    }
+
+    #[test]
+    fn whole_reads_integers_and_whole_floats() {
+        assert_eq!(whole(&json!(2)), 2);
+        assert_eq!(whole(&json!(2.0)), 2);
+        assert_eq!(whole(&json!(0.0)), 0);
+        assert_eq!(whole(&json!(-3.0)), 0);
+        assert_eq!(whole(&json!("2")), 0);
+    }
+
     /// A 100-move game could not be opened from Game history: its tree was refused at depth 128.
     #[test]
     fn a_long_game_tree_reads_back() {

@@ -465,3 +465,74 @@ fn use_runtime_dir(dir: &Path) {
     // SAFETY: no other thread of this test reads the environment while it is set.
     unsafe { std::env::set_var("KCHESS_RUNTIME_DIR", dir) };
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_refusal_reaches_the_client_with_its_reason() {
+    let profile = tempfile::tempdir().expect("profile");
+    let _core = fake_core(profile.path(), |mut stream| async move {
+        read_frame(&mut stream).await.expect("hello");
+        let refuse = Frame::Refuse {
+            reason: RefuseReason::Version,
+            message: "Another KChess release is open.".into(),
+            sole: false,
+            clients: vec![protocol::ClientSummary {
+                kind: "electron".into(),
+                release: "2026.1.1".into(),
+            }],
+        };
+        write_frame(&mut stream, &refuse).await.expect("refuse");
+    })
+    .await;
+    let refused = Client::connect(profile.path(), &window("gpui"))
+        .await
+        .err()
+        .expect("refused");
+    assert_eq!(refused.to_string(), "Another KChess release is open.");
+    let ConnectError::Refused {
+        reason,
+        sole,
+        clients,
+        ..
+    } = refused
+    else {
+        panic!("refused: {refused:?}");
+    };
+    assert_eq!(reason, RefuseReason::Version);
+    assert!(!sole);
+    assert_eq!(clients[0].kind, "electron");
+}
+
+#[tokio::test]
+async fn connect_errors_read_as_their_message() {
+    let profile = tempfile::tempdir().expect("profile");
+    let missing = Client::connect(profile.path(), &window("gpui"))
+        .await
+        .err()
+        .expect("no core");
+    assert_eq!(missing, ConnectError::NotRunning);
+    assert_eq!(missing.to_string(), "No KChess core runs for this profile.");
+    assert_eq!(
+        ConnectError::Failed("Broken.".into()).to_string(),
+        "Broken."
+    );
+}
+
+/// `kchess-service version` prints what a client of this build says in `hello`.
+#[test]
+fn the_binary_prints_its_release_and_protocol() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_kchess-service"))
+        .arg("version")
+        .output()
+        .expect("ran");
+    assert!(output.status.success());
+    let printed: Value = serde_json::from_slice(&output.stdout).expect("json");
+    assert_eq!(
+        printed,
+        json!({ "release": protocol::release(), "protocol": protocol::protocol() })
+    );
+    let usage = std::process::Command::new(env!("CARGO_BIN_EXE_kchess-service"))
+        .output()
+        .expect("ran");
+    assert_eq!(usage.status.code(), Some(2));
+}

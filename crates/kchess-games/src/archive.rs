@@ -179,6 +179,22 @@ mod tests {
         assert_ne!(archive.identity()["id"], first["id"]);
     }
 
+    /// Ids are random version-4 UUIDs, as `crypto.randomUUID()` writes them.
+    #[test]
+    fn ids_are_version_4_uuids() {
+        let ids: Vec<String> = (0..64).map(|_| new_id()).collect();
+        for id in &ids {
+            let chars: Vec<char> = id.chars().collect();
+            assert_eq!(chars.len(), 36, "{id}");
+            assert_eq!(chars[14], '4', "{id}");
+            assert!("89ab".contains(chars[19]), "{id}");
+        }
+        assert!(
+            ids.iter()
+                .any(|id| id.as_bytes()[15] != ids[0].as_bytes()[15])
+        );
+    }
+
     /// Restored after a restart, a game whose only move is taken back leaves no entry behind.
     #[test]
     fn a_resumed_game_taken_back_to_its_start_leaves_no_entry() {

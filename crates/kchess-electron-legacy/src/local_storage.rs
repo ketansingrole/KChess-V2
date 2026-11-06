@@ -87,4 +87,37 @@ mod tests {
         assert_eq!(text(&[2, b'a']), None, "an unknown format");
         assert_eq!(text(&[]), None);
     }
+
+    fn key(origin: &str, name: &str) -> Vec<u8> {
+        [format!("_{origin}\0").as_bytes(), &[1], name.as_bytes()].concat()
+    }
+
+    /// The app's entries are read from a copy of a database another process still holds open,
+    /// skipping other origins and anything in the folder that is not a file.
+    #[test]
+    fn reads_the_apps_entries_from_a_held_database() {
+        let profile = tempfile::tempdir().unwrap();
+        let folder = profile.path().join("Local Storage").join("leveldb");
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut db = rusty_leveldb::DB::open(&folder, rusty_leveldb::Options::default()).unwrap();
+        db.put(&key(ORIGIN, "settings"), b"\x01{\"a\":1}").unwrap();
+        db.put(&key("https://example.com", "other"), b"\x01no")
+            .unwrap();
+        db.put(b"VERSION", b"1").unwrap();
+        db.flush().unwrap();
+        std::fs::create_dir(folder.join("not-a-file")).unwrap();
+
+        let found = read(profile.path()).unwrap();
+        assert_eq!(
+            found.into_iter().collect::<Vec<_>>(),
+            [("settings".to_string(), "{\"a\":1}".to_string())]
+        );
+        drop(db);
+    }
+
+    #[test]
+    fn a_profile_without_local_storage_has_none() {
+        let profile = tempfile::tempdir().unwrap();
+        assert!(read(profile.path()).unwrap().is_empty());
+    }
 }
