@@ -65,7 +65,7 @@ pub const WEBSITE: &str = "https://ketansingrole.github.io/KChess-V2/";
 pub const SOURCE: &str = "https://github.com/ketansingrole/KChess-V2";
 pub const ISSUES: &str = "https://github.com/ketansingrole/KChess-V2/issues";
 
-/// A small muted link that opens `url` in the browser.
+/// A small muted link that opens `url` in the browser, tall enough to be an easy target.
 fn link(id: &'static str, label: &'static str, url: String, palette: &Palette) -> impl IntoElement {
     div()
         .id(id)
@@ -75,6 +75,7 @@ fn link(id: &'static str, label: &'static str, url: String, palette: &Palette) -
         .aria_label(label)
         .flex()
         .items_center()
+        .min_h(px(24.))
         .gap(px(2.))
         .text_size(px(12.))
         .text_color(palette.text_muted)
