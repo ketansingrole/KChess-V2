@@ -12,7 +12,9 @@
 
 mod analysis;
 mod audit;
+mod chesscom;
 mod computer;
+mod fake_chesscom;
 mod fake_lichess;
 mod history;
 mod live_game;
@@ -101,19 +103,26 @@ impl Harness {
     pub fn signed_in_showcase(cx: &mut TestAppContext) -> (Harness, fake_lichess::Handle) {
         let mut app = Self::start(cx);
         app.online();
-        let session = app.connect_as("Showcase", false, true);
+        let session = app.connect_with("Showcase", false, |session| session.showcase = true);
         (app, session)
     }
 
     /// Connect an account as a person would: the core opens the login page (`opened-urls.txt`,
     /// its test switch) and the "browser" returns with a code.
     pub fn connect(&mut self, username: &str, game: bool) -> fake_lichess::Handle {
-        self.connect_as(username, game, false)
+        self.connect_with(username, game, |_| {})
     }
 
-    fn connect_as(&mut self, username: &str, game: bool, showcase: bool) -> fake_lichess::Handle {
+    /// `connect`, with `prepare` setting up what Lichess holds before the app first asks for it
+    /// (set after signing in, it could miss the sign-in's own requests).
+    pub fn connect_with(
+        &mut self,
+        username: &str,
+        game: bool,
+        prepare: impl FnOnce(&mut fake_lichess::Session),
+    ) -> fake_lichess::Handle {
         let (code, session) = fake_lichess::session(username, game);
-        session.lock().showcase = showcase;
+        prepare(&mut session.lock());
         let opened = self
             .profile
             .as_ref()
@@ -238,6 +247,19 @@ impl Harness {
                 f(window, cx)
             })
             .expect("the main window is open")
+    }
+
+    /// Drop a file named `name` holding `text` on the window, as Finder or Explorer would; the
+    /// folder holding it lasts as long as what this returns.
+    pub fn drop_file(&mut self, name: &str, text: &[u8]) -> tempfile::TempDir {
+        let folder = tempfile::tempdir().expect("a folder");
+        let path = folder.path().join(name);
+        std::fs::write(&path, text).expect("the file");
+        self.with_window(|window, cx| {
+            let paths = gpui_kit::ExternalPaths(std::iter::once(path).collect());
+            crate::shell::open_dropped(&paths, window, cx);
+        });
+        folder
     }
 
     /// Wait, in real time, until `ready` holds for a fresh frame; `what` names it on failure.
@@ -537,6 +559,8 @@ fn environment() {
             std::env::set_var("KCHESS_STORE_DEBUG", "1");
             // Online features fail fast and offline, unless the test signed in.
             std::env::set_var("KCHESS_TEST_LICHESS_BASE", lichess);
+            // Chess.com is a stand-in too: `e2e…` players exist, nobody else does.
+            std::env::set_var("KCHESS_TEST_CHESSCOM_BASE", fake_chesscom::base());
             // A voice model that cannot be had: never the real download, and voice fails at once.
             std::env::set_var("KCHESS_TEST_VOICE_ARCHIVE", "/nonexistent/voice-model.zip");
             std::env::set_var("KCHESS_TEST_VOICE_NAME", "no-model");

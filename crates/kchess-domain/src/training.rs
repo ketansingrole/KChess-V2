@@ -12,6 +12,7 @@ pub mod guess;
 mod lessons;
 pub mod openings;
 mod puzzle;
+pub mod repetition;
 mod rush;
 mod uci_info;
 

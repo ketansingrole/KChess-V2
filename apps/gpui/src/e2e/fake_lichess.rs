@@ -16,6 +16,8 @@ use serde_json::{Value, json};
 
 const OPPONENT: &str = "Opponent";
 const GAME: &str = "E2eGame1";
+/// The correspondence game `Session::correspondence_turn` lists.
+const CORRESPONDENCE_GAME: &str = "E2eCorr1";
 const START_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 /// Black answers White's moves from this line while the game follows it.
 const REPLIES: [(&str, &str); 3] = [("e2e4", "e7e5"), ("g1f3", "b8c6"), ("f1c4", "g8f6")];
@@ -34,6 +36,10 @@ pub struct Session {
     pub revoked: bool,
     /// A game is under way: reported on the event stream and in `account/playing`.
     pub game: bool,
+    /// A correspondence game on the account's move is listed in `account/playing` too. The app
+    /// leaves it there (a correspondence game opens only when picked), among the games in
+    /// progress.
+    pub correspondence_turn: bool,
     /// The game was started where the Board API cannot play it (`compat.board` false): its
     /// board stream answers 400, as Lichess does.
     pub elsewhere: bool,
@@ -511,12 +517,21 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         }
         ("GET", "/api/account/playing") => {
             let session = session.lock();
-            let playing: Vec<Value> = session
+            let mut playing: Vec<Value> = session
                 .game
                 .then(|| summary(session.elsewhere, session.variant))
                 .filter(|_| session.finished.is_none())
                 .into_iter()
                 .collect();
+            if session.correspondence_turn {
+                let mut game = summary(false, None);
+                game["gameId"] = json!(CORRESPONDENCE_GAME);
+                game["fullId"] = json!(format!("{CORRESPONDENCE_GAME}abcd"));
+                game["speed"] = json!("correspondence");
+                game["perf"] = json!("correspondence");
+                game["secondsLeft"] = json!(259_200);
+                playing.push(game);
+            }
             reply(&mut out, &json!({ "nowPlaying": playing }))
         }
         ("GET", "/api/stream/event") => {

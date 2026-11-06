@@ -212,7 +212,7 @@ fn places(cx: &App) -> Vec<Command> {
         (Page::Watch, "Watch", icon("tv"), "tv broadcast"),
         (
             Page::Insights,
-            "Lichess insights",
+            "Insights",
             icon("chart-pie"),
             "stats openings performance",
         ),
@@ -900,6 +900,12 @@ fn practice_commands(cx: &App) -> Vec<Command> {
                 "Restart line",
                 "rotate-ccw",
                 "new line again",
+            ),
+            Action::Repertoire(RepertoireAction::Review) => (
+                "review-due",
+                "Review due lines",
+                "calendar-days",
+                "spaced repetition schedule",
             ),
             Action::Repertoire(RepertoireAction::Forget) => {
                 ("forget", "Forget mistakes", "eraser", "clear misses")

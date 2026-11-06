@@ -18,6 +18,7 @@ use crate::host::{Host, Level};
 use kchess_domain::js;
 use kchess_domain::library::{MAX_ARCHIVED_GAMES, MAX_MISTAKES};
 use kchess_domain::misc::MAX_DOCUMENT;
+use kchess_domain::training::repetition;
 
 pub(crate) const STUDY_LIBRARY_MAX_TEXT: usize = 1_800_000;
 
@@ -26,6 +27,8 @@ pub(crate) const GAMES: &str = "games";
 pub(crate) const MISTAKES: &str = "mistakes";
 pub(crate) const JOINED: &str = "tournaments:joined";
 pub(crate) const MISSES: &str = "repertoire:misses";
+/// The repertoire lines' spaced-repetition schedule (`kchess_domain::training::repetition`).
+pub(crate) const SCHEDULE: &str = "repertoire:schedule";
 pub(crate) const IMPORTED: &str = "library:imported";
 
 pub(crate) const SESSION_KINDS: [&str; 6] = [
@@ -128,6 +131,12 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         }
         "store.library.restoreRepertoireMisses" => str_arg(args, 0, "key").and_then(|key| {
             restore_repertoire_misses(host, db, key, args.get(1).unwrap_or(&Value::Null))
+        }),
+        "store.library.reviewRepertoireLine" => str_arg(args, 0, "key").and_then(|key| {
+            let line = str_arg(args, 1, "line")?;
+            let correct = truthy(args.get(2));
+            now_arg(args, 3)
+                .and_then(|now| review_repertoire_line(host, db, key, line, correct, now))
         }),
         _ => return None,
     };
@@ -257,7 +266,8 @@ pub(crate) use super::documents::write_document;
 pub use super::json_codec::{clean_name, js_json, js_slice, utf16_len};
 pub use super::library_import::library;
 pub(crate) use super::library_import::{
-    import_library, read_joined, read_misses, read_mistakes, read_session, until_after,
+    import_library, read_joined, read_misses, read_mistakes, read_schedule_lines, read_session,
+    until_after,
 };
 pub(crate) use super::studies::{check_based_on, id_of, spread, study_command};
 
@@ -732,6 +742,26 @@ fn restore_repertoire_misses(
     let misses = Value::Object(misses);
     write_document(db, MISSES, &misses, "Too many repertoire notes are saved.")?;
     Ok(misses)
+}
+
+/// Answer one line of a repertoire: its schedule moves on, and the whole schedule is returned.
+fn review_repertoire_line(
+    host: &dyn Host,
+    db: &Connection,
+    key: &str,
+    line: &str,
+    correct: bool,
+    now: f64,
+) -> Result<Value> {
+    let mut lines = read_schedule_lines(host, db)?;
+    repetition::record(&mut lines, key, line, correct, now).map_err(CoreError::new)?;
+    write_document(
+        db,
+        SCHEDULE,
+        &repetition::encode_schedule(lines.clone()),
+        "Too many repertoire lines are scheduled.",
+    )?;
+    Ok(Value::Object(lines))
 }
 
 #[cfg(test)]
@@ -1440,5 +1470,65 @@ mod tests {
             .is_err()
         );
         assert!(run(&db, "store.library.recordRepertoireMiss", &[json!("white")]).is_err());
+    }
+
+    #[test]
+    fn a_profile_from_before_the_schedule_has_every_line_new() {
+        let db = drills_db();
+        // What an earlier release left: repertoire misses, and no schedule.
+        db.execute(
+            "INSERT INTO documents (key, body, updatedAt) VALUES (?1, ?2, 0)",
+            params![MISSES, r#"{"study:white":{"fen1":2}}"#],
+        )
+        .expect("seed");
+        let now = 1_800_000_000_000.0;
+        let library = run(&db, "store.library.library", &[json!(now)]).expect("library");
+        assert_eq!(library["repertoireSchedule"], json!({}));
+        assert_eq!(
+            library["repertoireMisses"],
+            json!({ "study:white": { "fen1": 2 } })
+        );
+
+        // A schedule document of another shape (unversioned) is no schedule either.
+        db.execute(
+            "INSERT INTO documents (key, body, updatedAt) VALUES (?1, ?2, 0)",
+            params![SCHEDULE, r#"{"study:white":{"e2e4":{"due":0}}}"#],
+        )
+        .expect("seed");
+        let library = run(&db, "store.library.library", &[json!(now)]).expect("library");
+        assert_eq!(library["repertoireSchedule"], json!({}));
+
+        // Answering a line schedules it; the misses stay as they were.
+        let review = |line: &str, correct: bool, at: f64| {
+            run(
+                &db,
+                "store.library.reviewRepertoireLine",
+                &[json!("study:white"), json!(line), json!(correct), json!(at)],
+            )
+        };
+        let schedule = review("e2e4 e7e5", true, now).expect("review");
+        assert_eq!(schedule["study:white"]["e2e4 e7e5"]["interval"], json!(1.0));
+        assert_eq!(
+            schedule["study:white"]["e2e4 e7e5"]["due"],
+            json!(now + repetition::DAY_MS)
+        );
+        let schedule = review("d2d4", false, now).expect("review");
+        assert_eq!(schedule["study:white"]["d2d4"]["due"], json!(now));
+        let library = run(&db, "store.library.library", &[json!(now)]).expect("library");
+        assert_eq!(library["repertoireSchedule"], schedule);
+        assert_eq!(
+            library["repertoireMisses"],
+            json!({ "study:white": { "fen1": 2 } })
+        );
+        let stored = read_document_text(&db, SCHEDULE)
+            .expect("read")
+            .expect("stored");
+        assert!(stored.starts_with(r#"{"version":1,"lines":"#), "{stored}");
+
+        // A line that is not moves, or a missing key, is refused and changes nothing.
+        assert!(review("not moves", true, now).is_err());
+        assert!(run(&db, "store.library.reviewRepertoireLine", &[]).is_err());
+        let after = run(&db, "store.library.library", &[json!(now)]).expect("library");
+        assert_eq!(after["repertoireSchedule"], schedule);
     }
 }

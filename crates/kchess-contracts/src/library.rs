@@ -236,8 +236,24 @@ pub struct LibrarySnapshot {
     pub sessions: SessionDocuments,
     pub joined_tournaments: Vec<JoinedTournament>,
     pub repertoire_misses: BTreeMap<String, BTreeMap<String, f64>>,
+    /// Each repertoire's lines' spaced-repetition cards; none in a profile from before them.
+    #[serde(default)]
+    pub repertoire_schedule: BTreeMap<String, BTreeMap<String, RepertoireCard>>,
     /// False until documents saved by an earlier release have been offered for import.
     pub imported: bool,
+}
+
+/// One repertoire line's place in its spaced-repetition schedule.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepertoireCard {
+    /// Days to the next review after a right answer; 0 after a lapse.
+    pub interval: f64,
+    pub ease: f64,
+    /// When the line is next due, in milliseconds since the epoch.
+    pub due: f64,
+    pub reps: u32,
+    pub lapses: u32,
 }
 
 /* ── Study commands a frontend sends to the core ── */

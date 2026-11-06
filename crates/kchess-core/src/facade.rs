@@ -23,6 +23,7 @@ use crate::host::{Host, Level};
 mod accounts;
 mod ai;
 mod args;
+mod chesscom;
 mod engine;
 mod games;
 mod library;
@@ -57,6 +58,10 @@ pub const FACADE_METHODS: &[&str] = &[
     "logoutAll",
     "removeAccount",
     "syncGames",
+    "chesscomAccounts",
+    "addChesscomAccount",
+    "removeChesscomAccount",
+    "syncChesscomGames",
     "gamePage",
     "gameLibraryOverview",
     "insights",
@@ -168,6 +173,7 @@ pub const FACADE_METHODS: &[&str] = &[
     "recordRepertoireMiss",
     "clearRepertoireMisses",
     "restoreRepertoireMisses",
+    "reviewRepertoireLine",
     "viewPreferences",
     "setViewPreference",
     "customThemes",
@@ -340,10 +346,13 @@ pub fn changed_areas(method: &str) -> &'static [&'static str] {
         "addMistakes" | "answerMistake" => &["drills"],
         "saveSession" => &["sessions"],
         "joinTournament" | "leaveTournament" | "createTournament" => &["tournaments"],
-        "recordRepertoireMiss" | "clearRepertoireMisses" | "restoreRepertoireMisses" => {
-            &["repertoire"]
+        "recordRepertoireMiss"
+        | "clearRepertoireMisses"
+        | "restoreRepertoireMisses"
+        | "reviewRepertoireLine" => &["repertoire"],
+        "syncGames" | "addChesscomAccount" | "removeChesscomAccount" | "syncChesscomGames" => {
+            &["lichessGames", "accounts"]
         }
-        "syncGames" => &["lichessGames", "accounts"],
         "clearAccountData" => &["lichessGames", "accounts", "usage"],
         "addAccount" | "logout" | "logoutAll" | "removeAccount" | "connectLichess"
         | "addFriends" => &["accounts"],
@@ -636,6 +645,10 @@ impl Core {
             "addAccount" | "logout" | "logoutAll" | "removeAccount" => {
                 self.run_accounts(method, args).await
             }
+            "chesscomAccounts"
+            | "addChesscomAccount"
+            | "removeChesscomAccount"
+            | "syncChesscomGames" => self.run_chesscom(method, args).await,
             "syncGames"
             | "gamePage"
             | "gameLibraryOverview"
@@ -703,6 +716,7 @@ impl Core {
             | "recordRepertoireMiss"
             | "clearRepertoireMisses"
             | "restoreRepertoireMisses"
+            | "reviewRepertoireLine"
             | "viewPreferences"
             | "setViewPreference" => self.run_library(method, args).await,
             "usage"
@@ -769,6 +783,7 @@ impl Core {
         self.cancel_installs();
         self.puzzles.cancel();
         self.services.abort();
+        self.chesscom.abort();
         self.tracker.close();
         if let Err(cause) = self.ctx.hub.close_engines().await {
             self.host.log(

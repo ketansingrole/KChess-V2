@@ -291,7 +291,7 @@ struct GamePageQuery {
 }
 
 /// Lets the `?` operator carry SQLite failures as the core's errors.
-trait StorageResult<T> {
+pub(super) trait StorageResult<T> {
     fn sql(self) -> Result<T>;
 }
 
@@ -437,17 +437,17 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
     })
 }
 
-fn as_json<T: Serialize>(value: T) -> Result<Value> {
+pub(super) fn as_json<T: Serialize>(value: T) -> Result<Value> {
     serde_json::to_value(value).map_err(|cause| CoreError::new(cause.to_string()))
 }
 
-fn arg<T: DeserializeOwned>(args: &[Value], index: usize, name: &str) -> Result<T> {
+pub(super) fn arg<T: DeserializeOwned>(args: &[Value], index: usize, name: &str) -> Result<T> {
     serde_json::from_value(args.get(index).cloned().unwrap_or(Value::Null))
         .map_err(|cause| CoreError::new(format!("Invalid {name}: {cause}")))
 }
 
 /// An argument that may be absent or `null`.
-fn optional_arg<T: DeserializeOwned>(
+pub(super) fn optional_arg<T: DeserializeOwned>(
     args: &[Value],
     index: usize,
     name: &str,
@@ -461,11 +461,11 @@ fn optional_arg<T: DeserializeOwned>(
 }
 
 /// `stillCurrent`, as the boolean the caller evaluated: absent means still current.
-fn current(args: &[Value], index: usize) -> bool {
+pub(super) fn current(args: &[Value], index: usize) -> bool {
     !matches!(args.get(index), Some(Value::Bool(false)))
 }
 
-fn now_ms() -> i64 {
+pub(super) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| {
@@ -486,7 +486,11 @@ fn validate(method: &str, value: &Value) -> Result<Value> {
 }
 
 /// Runs `work` inside `BEGIN IMMEDIATE`, committing on success and rolling back on any failure.
-fn transaction<T>(host: &dyn Host, db: &Connection, work: impl FnOnce() -> Result<T>) -> Result<T> {
+pub(super) fn transaction<T>(
+    host: &dyn Host,
+    db: &Connection,
+    work: impl FnOnce() -> Result<T>,
+) -> Result<T> {
     db.execute_batch("BEGIN IMMEDIATE").sql()?;
     match work().and_then(|value| db.execute_batch("COMMIT").sql().map(|()| value)) {
         Ok(value) => Ok(value),
@@ -964,22 +968,24 @@ fn game_library_overview(ctx: &StoreContext) -> Result<Value> {
     Ok(value)
 }
 
-/// `gameRatingHistory`: the last rated rating each day, per variant.
+/// `gameRatingHistory`: the last rated rating each day, per variant. A Chess.com game records the
+/// player's rating after it and no change, so its rating stands as it is.
 fn rating_history(db: &Connection, account: &str) -> Result<Vec<RatingSeries>> {
+    let after_game = kchess_domain::chesscom::username_of(account).is_some();
     let mut statement = db
         .prepare(
             "SELECT perf, day, rating FROM (
     SELECT perf, CAST(createdAt / 86400000 AS INTEGER) * 86400000 AS day,
-      playerRating + ratingDiff AS rating,
+      playerRating + COALESCE(ratingDiff, 0) AS rating,
       ROW_NUMBER() OVER (PARTITION BY perf, CAST(createdAt / 86400000 AS INTEGER)
         ORDER BY createdAt DESC, id DESC) AS rank
-    FROM games WHERE account = ? COLLATE NOCASE AND rated = 1
-      AND playerRating IS NOT NULL AND ratingDiff IS NOT NULL
+    FROM games WHERE account = ?1 COLLATE NOCASE AND rated = 1
+      AND playerRating IS NOT NULL AND (ratingDiff IS NOT NULL OR ?2)
   ) WHERE rank = 1 ORDER BY day, perf",
         )
         .sql()?;
     let rows = statement
-        .query_map([account], |row| {
+        .query_map(params![account, after_game], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, i64>(1)?,
@@ -1169,7 +1175,11 @@ fn dismissed_friends(db: &Connection) -> Result<Vec<String>> {
 /// Everything stored for one account's games, inside the caller's transaction: games, pending
 /// syncs, cached profile data, its own explorer lookups, and any review or check left without a
 /// game. A game another tracked account also played keeps its reviews.
-fn purge_account_data(db: &Connection, account: &str, usage: bool) -> rusqlite::Result<()> {
+pub(super) fn purge_account_data(
+    db: &Connection,
+    account: &str,
+    usage: bool,
+) -> rusqlite::Result<()> {
     db.execute(
         "DELETE FROM games WHERE account = ? COLLATE NOCASE",
         [account],
@@ -1317,7 +1327,7 @@ pub(super) fn in_progress(game: &Value) -> Result<bool> {
     .ok_or_else(|| CoreError::new("isGameInProgress did not return a boolean."))
 }
 
-fn upsert_sql() -> String {
+pub(super) fn upsert_sql() -> String {
     let updates = GAME_KEYS
         .iter()
         .filter(|key| **key != "account" && **key != "id")

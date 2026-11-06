@@ -257,6 +257,77 @@ fn forgotten_mistakes_come_back_with_undo(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
+/// White's moves of the King's Gambit, 1. e4 e5 2. f4, with Black's reply between them.
+fn play_kings_gambit(app: &mut Harness) {
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    wait_for_status(app, "e4");
+    app.wait_for("Black's reply", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find("show-move")
+            .is_some_and(|show| show.disabled() != Some(true))
+    });
+    app.click_square("f2", true);
+    app.click_square("f4", true);
+    wait_for_status(app, "End of this line");
+}
+
+/// The panel's line on the schedule, once it reads `text`.
+fn wait_for_schedule(app: &mut Harness, text: &str) {
+    use gpui_kit::test::TestWindowExt as _;
+    app.wait_for(&format!("the schedule to read {text:?}"), |window, _| {
+        window
+            .try_find("repertoire-due")
+            .is_some_and(|due| due.label() == Some(text))
+    });
+}
+
+/// A missed line is due again at once and Review due lines drills it; a line finished without a
+/// mistake is scheduled a day out, in the core's schedule.
+#[gpui_kit::test]
+fn missed_lines_are_due_for_review_and_right_ones_wait(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = openings(cx);
+    open_kieseritzky(&mut app);
+    app.click(("opening-move", 2usize));
+    app.click("train-line");
+    // Nothing is scheduled in a new profile.
+    assert_eq!(app.find("review-due").disabled(), Some(true));
+    assert!(!app.shows("repertoire-due"));
+
+    // 1. d4 is not the line: it is missed, so it is due at once.
+    app.click_square("d2", true);
+    app.click_square("d4", true);
+    wait_for_status(&mut app, "Not in your repertoire");
+    play_kings_gambit(&mut app);
+    wait_for_schedule(&mut app, "1 line due");
+    let core = app
+        .cx
+        .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
+    let card = move || {
+        core.call_now("library", Vec::new())
+            .map(|library| {
+                library["repertoireSchedule"]["opening:King's Gambit:white"]["e2e4 e7e5 f2f4"]
+                    .clone()
+            })
+            .unwrap_or_default()
+    };
+    app.wait_for("the lapse to be kept", |_, _| {
+        card()["lapses"].as_f64() == Some(1.)
+    });
+
+    // Reviewed right, it waits a day; with nothing else due, the review is done.
+    app.click("review-due");
+    wait_for_status(&mut app, "Line due for review");
+    play_kings_gambit(&mut app);
+    wait_for_schedule(&mut app, "Next line due in 1 day");
+    app.wait_for("the review to be kept", |_, _| {
+        card()["interval"].as_f64() == Some(1.)
+    });
+    wait_for_status(&mut app, "Due lines reviewed");
+    assert_eq!(app.find("review-due").disabled(), Some(true));
+}
+
 /// F turns an opening's board, as its button does.
 #[gpui_kit::test]
 fn f_flips_an_openings_board(cx: &mut gpui_kit::TestAppContext) {

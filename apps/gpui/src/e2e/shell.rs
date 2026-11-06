@@ -125,23 +125,17 @@ fn a_question_mark_lists_the_shortcuts_outside_a_text_field(cx: &mut gpui_kit::T
 /// for the mark and dropped it, so a correspondence move went unseen there.
 #[gpui_kit::test]
 fn the_rail_still_marks_your_move(cx: &mut gpui_kit::TestAppContext) {
+    // The game comes from Lichess, as a person's would. Seeded into `ongoing` by hand, it lasted
+    // only until the next reload of the games in progress, which with no account connected clears
+    // them: the startup check's reload, when it ended after the seed, left no mark to find. Waiting
+    // for the check first still failed once in eight full runs (2026-11-06). Signed in, every
+    // reload lists the game again.
     let mut app = Harness::start(cx);
-    // The startup check ends by reloading the games in progress, which clears them with no account
-    // connected: seeded before it, the game was gone again whenever the check finished later.
-    app.wait_for("the startup check to finish", |_, cx| {
-        crate::online::handle(cx).read(cx).phase != crate::online::Phase::Checking
+    app.online();
+    app.connect_with("Tester", false, |lichess| {
+        lichess.correspondence_turn = true
     });
-    app.with_window(|window, cx| {
-        crate::online::handle(cx).update(cx, |online, cx| {
-            online.ongoing = vec![serde_json::json!({
-                "gameId": "corr1",
-                "speed": "correspondence",
-                "isMyTurn": true,
-            })];
-            cx.notify();
-        });
-        crate::shell::toggle_sidebar(window, cx);
-    });
+    app.with_window(crate::shell::toggle_sidebar);
     let mark = app.find("sidebar-game-mark").bounds();
     let play = app.find("4-0").bounds();
     assert!(

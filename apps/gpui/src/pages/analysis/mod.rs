@@ -1703,11 +1703,13 @@ impl AnalysisPage {
             white: self.player_name(Color::White),
             black: self.player_name(Color::Black),
             result: Some(self.header("Result")).filter(|result| !result.is_empty()),
+            // A Chess.com game has no page on Lichess: it is uploaded like any other game.
             lichess_id: self
                 .review
                 .origin
                 .as_ref()
                 .and_then(|origin| origin["gameId"].as_str())
+                .filter(|id| !kchess_domain::chesscom::is_game_id(id))
                 .map(str::to_string),
             pgn: Some(self.root.to_pgn()),
             shown: Some(moves_of(&self.path)),

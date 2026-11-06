@@ -1,6 +1,6 @@
 //! The Lichess accounts: who is connected,
 //! which account plays online, connecting, syncing, logging out and removing, and what each
-//! account downloaded and keeps. Pages read it; the sidebar's account menu and Settings → My
+//! account downloaded and keeps; and the Chess.com players whose games are synced. Pages read it; the sidebar's account menu and Settings → My
 //! accounts act on it.
 
 use gpui_kit::component::WindowExt as _;
@@ -18,6 +18,8 @@ pub struct Accounts {
     pub data: Value,
     /// `usage`: bytes downloaded per account, and what each keeps (`UsageReport`).
     pub usage: Value,
+    /// `chesscomAccounts`: the Chess.com players synced, with when each last synced.
+    pub chesscom: Value,
     /// An account action runs: connecting, following, importing, signing out or removing.
     pub busy: bool,
     /// Game syncs running. They take minutes on a big account and run beside the actions: the
@@ -36,6 +38,7 @@ pub fn init(cx: &mut App) {
     let accounts = cx.new(|_| Accounts {
         data: Value::Null,
         usage: Value::Null,
+        chesscom: Value::Null,
         busy: false,
         syncs: 0,
         reads: Reads::default(),
@@ -78,6 +81,11 @@ impl Accounts {
             .as_array()
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// The Chess.com players whose games are synced.
+    pub fn chesscom(&self) -> Vec<Value> {
+        self.chesscom.as_array().cloned().unwrap_or_default()
     }
 
     /// The usernames signed in through OAuth (`connectedAccounts`).
@@ -129,12 +137,13 @@ impl Accounts {
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let read = self.reads.start();
         let core = cx.global::<AppCore>().clone();
-        let (data, usage) = (
+        let (data, usage, chesscom) = (
             core.call("loadData", Vec::new()),
             core.call("usage", Vec::new()),
+            core.call("chesscomAccounts", Vec::new()),
         );
         cx.spawn(async move |this, cx| {
-            let (data, usage) = (data.await, usage.await);
+            let (data, usage, chesscom) = (data.await, usage.await, chesscom.await);
             let _ = this.update(cx, |this, cx| {
                 // Only the newest read shows: an older answer may predate a sign-in or sync, so one
                 // that started before this window's own change reads again.
@@ -148,6 +157,9 @@ impl Accounts {
                 }
                 if let Ok(usage) = usage {
                     this.usage = usage;
+                }
+                if let Ok(chesscom) = chesscom {
+                    this.chesscom = chesscom;
                 }
                 cx.notify();
             });
@@ -215,6 +227,10 @@ impl Accounts {
         if username.is_none() && self.syncing() {
             return;
         }
+        // Everyone's games: the Chess.com players' too.
+        if username.is_none() && !self.chesscom().is_empty() {
+            self.sync_chesscom(None, window, cx);
+        }
         self.syncs += 1;
         cx.notify();
         let core = cx.global::<AppCore>().clone();
@@ -242,6 +258,106 @@ impl Accounts {
                             "Lichess games synced".into()
                         };
                         say(window, cx, message);
+                    }
+                    Err(cause) => say(window, cx, cause.message),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// `addChesscomAccount`: sync a Chess.com player's games; `done` hears whether the player was
+    /// added (they stay added when only their games could not be read yet).
+    pub fn add_chesscom(
+        &mut self,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        done: impl FnOnce(bool, &mut Window, &mut App) + 'static,
+    ) {
+        self.syncs += 1;
+        cx.notify();
+        let core = cx.global::<AppCore>().clone();
+        let added = core.call("addChesscomAccount", vec![json!(name.trim())]);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = added.await;
+            let players = core.call("chesscomAccounts", Vec::new()).await;
+            let usage = core.call("usage", Vec::new()).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.syncs -= 1;
+                if let Ok(usage) = usage {
+                    this.usage = usage;
+                }
+                let before = this.chesscom().len();
+                if let Ok(players) = players {
+                    this.chesscom = players;
+                }
+                let added = this.chesscom().len() > before;
+                if let Err(cause) = result {
+                    say(window, cx, cause.message);
+                }
+                // The game count (`loadData`) changed with the games synced.
+                this.refresh(cx);
+                window.defer(cx, move |window, cx| done(added, window, cx));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// `syncChesscomGames`: download one Chess.com player's new games (every player's when `None`).
+    pub fn sync_chesscom(
+        &mut self,
+        username: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.syncs += 1;
+        cx.notify();
+        let core = cx.global::<AppCore>().clone();
+        let args = username.map(|name| vec![json!(name)]).unwrap_or_default();
+        let synced = core.call("syncChesscomGames", args);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = synced.await;
+            let usage = core.call("usage", Vec::new()).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.syncs -= 1;
+                if let Ok(usage) = usage {
+                    this.usage = usage;
+                }
+                match result {
+                    Ok(players) => {
+                        this.chesscom = players;
+                        say(window, cx, "Chess.com games synced");
+                    }
+                    Err(cause) => say(window, cx, cause.message),
+                }
+                this.refresh(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// `removeChesscomAccount`: stop syncing a Chess.com player and delete their games here.
+    pub fn remove_chesscom(
+        &mut self,
+        username: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let removed = cx
+            .global::<AppCore>()
+            .call("removeChesscomAccount", vec![json!(username)]);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = removed.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(players) => {
+                        this.chesscom = players;
+                        this.refresh(cx);
+                        say(window, cx, format!("{username} removed. Their Chess.com games were deleted from this device."));
                     }
                     Err(cause) => say(window, cx, cause.message),
                 }
@@ -525,6 +641,7 @@ mod tests {
         let mut accounts = Accounts {
             data: json!({ "accounts": [] }),
             usage: json!({}),
+            chesscom: json!([]),
             busy: false,
             syncs: 0,
             reads: Reads::default(),
