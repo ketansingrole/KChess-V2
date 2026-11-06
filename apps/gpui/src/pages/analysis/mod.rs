@@ -180,6 +180,10 @@ pub struct AnalysisPage {
     /// Why the study could not be saved (or a recovered session that differs from it).
     study_error: Option<String>,
     study_save: Option<Task<()>>,
+    /// The chapter write not yet answered, and its number: the text counts as saved meanwhile,
+    /// so a flush waits for it rather than for nothing.
+    study_writing: Option<(u64, StudySave)>,
+    study_writes: u64,
     /// Bumped whenever another document takes the board, so a late save-as does not link it.
     navigation: u64,
     study_bar: Entity<StudyBar>,
@@ -451,6 +455,8 @@ impl AnalysisPage {
             study_pgn,
             study_error,
             study_save: None,
+            study_writing: None,
+            study_writes: 0,
             navigation: 0,
             study_bar,
             review: review::ReviewState::new(mistakes),
@@ -616,6 +622,12 @@ impl AnalysisPage {
 
     /// Play a move from the position shown; false when it is not kept (not legal there, or a
     /// wrong answer while practising).
+    /// The delayed save of the open study's chapter, run now.
+    #[cfg(test)]
+    pub(crate) fn autosave_for_test(&mut self, cx: &mut Context<Self>) {
+        self.persist_study(cx);
+    }
+
     /// A move on the board, as a click would make it.
     #[cfg(test)]
     pub(crate) fn play_for_test(&mut self, uci: &str, cx: &mut Context<Self>) -> bool {
@@ -860,9 +872,19 @@ impl AnalysisPage {
         }));
         let answer = (Box::pin(command) as std::pin::Pin<Box<dyn Future<Output = _>>>).shared();
         let outcome = answer.clone();
+        self.study_writes += 1;
+        let write = self.study_writes;
+        self.study_writing = Some((write, answer.clone()));
         cx.spawn(async move |this, cx| {
             let result: Result<Value, String> = outcome.await;
             let _ = this.update(cx, |this, cx| {
+                if this
+                    .study_writing
+                    .as_ref()
+                    .is_some_and(|(known, _)| *known == write)
+                {
+                    this.study_writing = None;
+                }
                 match result {
                     Ok(_) => this.study_error = None,
                     // Another window changed the chapter: the board keeps its moves as an unsaved
@@ -896,7 +918,10 @@ impl AnalysisPage {
         &mut self,
         cx: &mut Context<Self>,
     ) -> impl Future<Output = Result<(), String>> + 'static + use<> {
-        let save = self.persist_study(cx);
+        // Nothing new to write: the write still on its way (an autosave) is what to wait for.
+        let save = self
+            .persist_study(cx)
+            .or_else(|| self.study_writing.as_ref().map(|(_, save)| save.clone()));
         async move {
             match save {
                 Some(save) => save.await.map(|_| ()),

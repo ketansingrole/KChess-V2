@@ -344,6 +344,25 @@ impl PuzzlesPage {
                 cx.notify();
             }),
         ];
+        // A puzzle left unfinished at quit (after a wrong move, say) is logged as another puzzle
+        // replacing it would log it.
+        let weak = cx.entity().downgrade();
+        crate::core::on_quit(cx, move |cx| {
+            let page = weak.upgrade()?;
+            page.update(cx, |page, cx| {
+                let record = page
+                    .session
+                    .apply("puzzleSessionInvalidate", json!({}))
+                    .record?;
+                let save = cx
+                    .global::<AppCore>()
+                    .call("recordPuzzleAttempt", vec![record]);
+                Some(
+                    Box::pin(async move { save.await.map(|_| ()).map_err(|cause| cause.message) })
+                        as crate::core::BoxedSave,
+                )
+            })
+        });
         PuzzlesPage {
             session: PuzzleSession::new(),
             shown_key: 0,

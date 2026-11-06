@@ -315,6 +315,18 @@ fn chapters_are_added_renamed_duplicated_and_deleted(cx: &mut gpui_kit::TestAppC
 fn a_refused_save_keeps_its_edits_when_another_chapter_is_chosen(
     cx: &mut gpui_kit::TestAppContext,
 ) {
+    refused_save_then_another_chapter(cx, false);
+}
+
+/// The same, with the edit's delayed save already on its way when the chapter is chosen.
+#[gpui_kit::test]
+fn a_refused_autosave_keeps_its_edits_when_another_chapter_is_chosen(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    refused_save_then_another_chapter(cx, true);
+}
+
+fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosaving: bool) {
     let mut app = Harness::start(cx);
     import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
     app.click("open-imported");
@@ -362,6 +374,9 @@ fn a_refused_save_keeps_its_edits_when_another_chapter_is_chosen(
             .and_then(|found| found["chapters"][1]["id"].as_str().map(str::to_string))
             .expect("the second chapter");
         assert!(page.update(cx, |page, cx| page.play_for_test("g1f3", cx)));
+        if autosaving {
+            page.update(cx, |page, cx| page.autosave_for_test(cx));
+        }
         let bar = page.read(cx).study_bar();
         bar.update(cx, |bar, cx| bar.select_chapter(next, cx));
     });

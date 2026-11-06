@@ -298,7 +298,13 @@ async fn idle_watch(state: Arc<State>, idle: Duration) {
         if state.active.load(Ordering::SeqCst) == 0 {
             tokio::select! {
                 () = tokio::time::sleep(idle) => {
+                    // Decided with admission held off, as a version handoff is: a client
+                    // welcomed at the deadline keeps the core open.
+                    let mut closing =
+                        state.closing.lock().unwrap_or_else(|poison| poison.into_inner());
                     if state.active.load(Ordering::SeqCst) == 0 {
+                        *closing = true;
+                        drop(closing);
                         state.shutdown.notify_one();
                         return;
                     }
@@ -392,11 +398,14 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
             // The core closes for another release; this client starts or finds the next one.
             return;
         }
-        state.core.connect(ClientInfo {
+        let connection = state.core.connect(ClientInfo {
             kind,
             release,
             capabilities: capabilities.into_iter().map(Into::into).collect(),
-        })
+        });
+        // Counted before the lock is let go, so an idle check that follows sees this client.
+        state.active.fetch_add(1, Ordering::SeqCst);
+        connection
     };
     let (sender, mut queue) = mpsc::channel::<Frame>(QUEUE);
     let cut = Arc::new(Notify::new());
@@ -414,7 +423,6 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         });
         state.host.add(connection, sender.clone(), Arc::clone(&cut));
     });
-    state.active.fetch_add(1, Ordering::SeqCst);
     state.changed.notify_one();
     let mut writing = tokio::spawn(async move {
         while let Some(frame) = queue.recv().await {
