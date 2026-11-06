@@ -20,8 +20,10 @@ creating/pushing a tag or publishing a release.
 - Changes may land on `main` directly or through a pull request; a PR is optional. Before
   pushing to `main`, run `cargo xtask check` locally (the `.githooks/pre-push` hook, installed by
   `cargo xtask install-hooks`, runs it and refuses a dirty tree; skip it only on purpose with
-  `KCHESS_SKIP_PRE_PUSH=1`), and after pushing, confirm CI is green and
-  fix any failure with a follow-up commit (never force-push `main`).
+  `KCHESS_SKIP_PRE_PUSH=1`). After pushing, watch the run in the background
+  (`gh run watch <id> --exit-status` with the tool's background mode) and carry on; fix any failure
+  with a follow-up commit (never force-push `main`). Do not sit idle on CI unless the next step
+  needs its result, as a release does.
 - Release only a commit on `origin/main` whose CI is green. Include every intended file,
   including new/untracked files; explicitly stage the files instead of relying on
   `git commit -am`. Keep the working tree clean before tagging and verify CI is green
@@ -62,7 +64,7 @@ git push origin "refs/tags/$release_tag"
 
 ## Running the app
 
-- Check UI behaviour headless first: the end-to-end tests (`cargo test -p kchess-gpui e2e::<area>`)
+- Check UI behaviour headless first: the end-to-end tests (`cargo nextest run -p kchess-gpui e2e::<area>`)
   drive every page without a window. Start the real app only for what they cannot show.
 - `cargo xtask app` builds and starts the app in the background on the scratch profile
   `.data/gpui-profile` with a native Stockfish (fetched into `.data/stockfish` once), prints its
@@ -163,12 +165,15 @@ git push origin "refs/tags/$release_tag"
 
 - Read GUARDRAILS.md for the verification ladder.
 - Test in tiers. While editing, run `cargo xtask check-fast` (format, lints and the tests of the
-  packages changed since main). Before pushing to `main`, run the full `cargo xtask check` (the
+  packages changed since main and of every package depending on them). Run tests with
+  `cargo nextest run` (`cargo install cargo-nextest`; `.config/nextest.toml`): it runs test
+  binaries in parallel where `cargo test` runs them one at a time. Before pushing to `main`, run the full `cargo xtask check` (the
   pre-push hook enforces it). Packaging changes also need `cargo xtask package` on the platform
   they touch; CI then packages, builds the Snap and runs the Windows upgrade (`ci.yml` `changes`).
-- Run anything that may take over a minute (`cargo xtask check`, `cargo test -p kchess-gpui`,
-  packaging) in the background with its output in a file, and read the result when it finishes;
-  never poll CI with `sleep` loops (`gh run watch` in the background reports when a run ends).
+- Run anything that may take over a minute (`cargo xtask check`, the app's tests, packaging) in
+  the background with its output in a file, and read the result when it finishes. Never wait in
+  a loop (`sleep`, `until grep …; do sleep`, `while pgrep`): the tool reports when a background
+  command ends, and `gh run watch` in the background reports when a CI run ends.
 - The development shell is zsh on macOS. Quote globs and `grep --include` patterns (an unmatched
   glob is an error in zsh), and do not call `timeout`, which macOS lacks: use the tool's own
   timeout or run the command in the background.

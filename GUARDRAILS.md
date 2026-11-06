@@ -1,12 +1,15 @@
 # Guardrails and verification
 
 Run `cargo xtask check-fast` while editing. It checks format and lints for the workspace and runs
-the tests of every package with changes since `main` (committed, staged, unstaged or new); a
-change to `Cargo.toml` or `Cargo.lock` runs every test. This is an editing aid; related tests do
+the tests of every package with changes since `main` (committed, staged, unstaged or new) and of
+every workspace package that depends on one of them; a change to `Cargo.toml` or `Cargo.lock` runs
+every test. Tests run under cargo-nextest when it is installed (`.config/nextest.toml`), as in
+CI: all test binaries at once, each test in its own process, a hung test killed and named after
+five minutes. This is an editing aid; related tests do
 not establish complete regression coverage.
 
 The app's end-to-end tests (`apps/gpui/src/e2e`) run the whole app headless over a fresh profile
-with the scripted engine: `cargo test -p kchess-gpui e2e::`, or one area with `e2e::computer`.
+with the scripted engine: `cargo nextest run -p kchess-gpui e2e::`, or one area with `e2e::computer`.
 They run with the app's unit tests in `cargo xtask check`, which CI runs on Linux, and in CI's
 `gpui` job on macOS and Windows.
 
@@ -66,8 +69,9 @@ For each escaped regression, preserve the reproducer and test its sequence: late
 overlapping requests, cancellation, lost credentials, interrupted writes and recovery. When a
 generated or fuzzed case finds a defect, keep its seed and a focused reproducer.
 
-Timing races in the app's tests show up under load: `cargo test -p kchess-gpui -- --test-threads=40`
-runs the suite oversubscribed and should pass as reliably as a plain run. The harness runs with
+Timing races in the app's tests show up under load: `cargo nextest run -p kchess-gpui
+--test-threads=40` runs the suite oversubscribed and should pass as reliably as a plain run (add
+`--stress-count 3` to repeat it). The nightly Stress workflow runs it on Windows, macOS and Linux. The harness runs with
 reduced motion, so dialogs and popovers are at rest when a test clicks them.
 
 ## Coverage and corpora
