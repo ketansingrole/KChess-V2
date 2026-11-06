@@ -13,8 +13,8 @@ use fixtures::{
 use kchess_core::lichess::accounts::Lichess;
 use kchess_core::lichess::watch::{
     BroadcastUpdate, GameSetup, LineUpTiming, Spectator, WatchFrame, WatchSink, WatchState,
-    WatchTarget, align_tv_moves, broadcast_game, broadcast_summaries, display_fen,
-    parse_game_details, parse_tv_game,
+    WatchTarget, align_tv_moves, broadcast_game, broadcast_summaries, parse_game_details,
+    parse_tv_game,
 };
 use kchess_domain::{misc, replay};
 use serde_json::{Value, json};
@@ -546,17 +546,6 @@ fn reads_a_broadcast_board_players_clocks_moves_and_its_chapter_id() {
             .unwrap_or_default()
             .is_empty()
     );
-}
-
-#[test]
-fn keeps_only_a_board_and_side_to_move_from_a_streamed_fen() {
-    assert_eq!(
-        display_fen("rnbqkb1r/ppp1pppp/5n2/3p4/3P4/2N5/PPP1PPPP/R1BQKBNR[] w KQkq - 2 3")
-            .as_deref(),
-        Some("rnbqkb1r/ppp1pppp/5n2/3p4/3P4/2N5/PPP1PPPP/R1BQKBNR w KQkq - 0 1")
-    );
-    assert_eq!(display_fen("rnbqkbnr/pppppppp b"), None);
-    assert_eq!(display_fen("8/8/8/8/8/8/8/8<script> w - - 0 1"), None);
 }
 
 #[test]

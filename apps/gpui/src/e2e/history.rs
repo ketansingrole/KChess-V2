@@ -371,6 +371,60 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
     }
 }
 
+/// Insights show time use only for games with clocks: the results short of time, the clock
+/// against the opponent's, blunders short of time and time by phase.
+#[gpui_kit::test]
+fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::{Page, insights::InsightsPage};
+    use gpui_kit::test::TestWindowExt as _;
+    let (mut app, _lichess) = Harness::signed_in_showcase(cx);
+    app.open("Insights");
+    app.wait_for("the first report", |_, cx| {
+        crate::shell::view_of::<InsightsPage>(Page::Insights, cx)
+            .is_some_and(|page| page.read(cx).report_total().is_some_and(|total| total > 0.))
+    });
+    let shown = |app: &mut Harness| {
+        app.with_window(|window, _| {
+            window
+                .try_find(gpui_kit::ElementId::from("insights-time-use"))
+                .is_some()
+        })
+    };
+    assert!(!shown(&mut app), "the showcase games have no clocks");
+
+    let insights = app
+        .cx
+        .update(|cx| crate::shell::view_of::<InsightsPage>(Page::Insights, cx))
+        .expect("the Insights page");
+    app.cx.update(|cx| {
+        insights.update(cx, |page, cx| {
+            page.show_time_use(
+                serde_json::json!({
+                    "games": 12,
+                    "trouble": { "win": 2, "draw": 0, "loss": 3, "total": 5 },
+                    "spare": { "win": 5, "draw": 1, "loss": 1, "total": 7 },
+                    "phases": [
+                        { "phase": "opening", "moves": 120, "seconds": 2.5, "share": 20 },
+                        { "phase": "middlegame", "moves": 200, "seconds": 6.1, "share": 80 },
+                    ],
+                    "clockAt": [{ "move": 20, "games": 10, "player": 41.6, "opponent": 55 }],
+                    "blunders": {
+                        "games": 6,
+                        "short": { "moves": 40, "blunders": 3 },
+                        "spare": { "moves": 200, "blunders": 2 },
+                    },
+                }),
+                cx,
+            )
+        })
+    });
+    app.wait_for("the time use", |window, _| {
+        window
+            .try_find(gpui_kit::ElementId::from("insights-time-use"))
+            .is_some()
+    });
+}
+
 /// The Lichess tab's games, once listed: the total and each game's opening.
 fn lichess_listed(app: &mut Harness, what: &str, ready: impl Fn(usize, &[String]) -> bool) {
     app.wait_for(what, |_, cx| {

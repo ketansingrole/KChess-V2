@@ -231,7 +231,7 @@ impl SettingsPage {
 
     fn ask_delete_engine(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let page = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let page = page.clone();
             dialog
                 .title("Delete downloaded Stockfish?")

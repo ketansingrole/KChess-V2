@@ -19,6 +19,7 @@ mod fake_lichess;
 mod history;
 mod live_game;
 mod local;
+mod memory;
 mod online;
 mod openings;
 mod palette;
@@ -275,6 +276,22 @@ impl Harness {
             }
             self.tick();
         }
+    }
+
+    /// Type `text` into the dialog's field labelled `label`, in place of what it holds, once the
+    /// dialog has stopped moving.
+    pub fn fill_in_dialog(&mut self, label: &str, text: &str) {
+        use gpui_kit::test::TestQueryExt as _;
+        let mut last = None;
+        self.wait_for(&format!("{label:?} to stop moving"), |window, _| {
+            let bounds = window.try_find_by_label(label).map(|input| input.bounds());
+            let still = bounds.is_some() && bounds == last;
+            last = bounds;
+            still
+        });
+        self.click_label(label);
+        self.press("secondary-a");
+        self.type_text(text);
     }
 
     /// Wait until the element is shown, then return it.

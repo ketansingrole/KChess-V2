@@ -133,13 +133,17 @@ can add them as a friend, challenge them or watch their current game.
 ### Training and statistics
 
 - **Opening trainer** (Practice → Openings): drill any saved study as White or Black. KChess
-  plays the other side's moves from the study and favours the lines you get wrong. Your
-  mistakes are remembered on this computer.
+  plays the other side's moves from the study: lines due for review first (each line is
+  scheduled by spaced repetition), then the lines you get wrong. The schedule and your mistakes
+  stay on this computer.
 - **Insights**: results by colour, speed, opening family, day of week, time of day, opponent
   rating gap, game length and how games ended. It also shows streaks and average accuracy,
   inaccuracies, mistakes and blunders from reviewed games. Variant games are counted apart from
-  standard chess, with a Variant choice once you have played one. Everything is worked out
-  locally from synced games.
+  standard chess, with a Variant choice once you have played one. **Time use** reads the clocks
+  that synced Lichess and Chess.com games carry: results when your clock fell under a tenth of
+  its start, your clock against your opponent's at moves 20 and 40, blunders per 100 moves short
+  of time and with time to spare (in reviewed games), and time per move in the opening,
+  middlegame and endgame. Everything is worked out locally from synced games.
 - **Chess.com games**: a Chess.com username added in Settings → Accounts syncs its public games
   from Chess.com's public API (it needs no login) into History, the background reviews, Insights
   and mistake drills. Their speeds, variants and endings are named as Lichess names them, so both

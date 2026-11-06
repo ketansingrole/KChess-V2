@@ -21,6 +21,10 @@ use kchess_domain::puzzle::{Random, Sampler};
 use queries::{LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleDbStatus};
 
 pub const PUZZLE_DB_URL: &str = "https://database.lichess.org/lichess_db_puzzle.csv.zst";
+/// How long the puzzle database download may go without a byte before it fails.
+const DOWNLOAD_SILENCE: std::time::Duration = std::time::Duration::from_secs(60);
+/// The most the download may bring: the compressed database is some 300 MB (2026).
+const MAX_DOWNLOAD: u64 = 2 * 1024 * 1024 * 1024;
 
 /// One running download: cancelled through the token.
 struct Download {
@@ -419,7 +423,15 @@ impl PuzzleService {
     ) -> Result<()> {
         let cancelled = || CoreError::aborted("Cancelled");
         let cancel = download.cancel.clone();
-        let client = download_client();
+        // A server that stops sending ends the download instead of holding the puzzle database's
+        // "downloading" state until the user cancels. The file is already Zstandard: it is fetched
+        // as published (no gzip on top), so its length is the progress total and a dropped
+        // connection can resume from the byte it reached.
+        let client = crate::lichess::client::http_client_builder()
+            .read_timeout(DOWNLOAD_SILENCE)
+            .no_gzip()
+            .build()
+            .map_err(|e| CoreError::new(fetch_failed(&e)))?;
         let response = tokio::select! {
             response = client.get(url).send() => response.map_err(|e| CoreError::new(fetch_failed(&e))),
             _ = cancel.cancelled() => Err(cancelled()),
@@ -480,6 +492,11 @@ impl PuzzleService {
                     return Err(cancelled());
                 }
                 progress.received += chunk.len() as u64;
+                if progress.received > MAX_DOWNLOAD {
+                    return Err(CoreError::new(
+                        "The puzzle database download is unexpectedly large.",
+                    ));
+                }
                 progress.report(Phase::Downloading, counted.load(Ordering::Relaxed), false);
                 if send.send(chunk.to_vec()).await.is_err() {
                     // The sampler stopped; its error is reported below.
@@ -508,19 +525,6 @@ impl PuzzleService {
         progress.report(Phase::Done, kept, true);
         Ok(())
     }
-}
-
-/// The puzzle download's client: the file is already Zstandard, so it is fetched as published
-/// (no gzip on top), and the progress total is its own length. A server that stops sending ends
-/// the read (and the download resumes) instead of holding it forever.
-fn download_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .user_agent(crate::USER_AGENT)
-        .connect_timeout(Duration::from_secs(20))
-        .read_timeout(Duration::from_secs(60))
-        .no_gzip()
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
 }
 
 /// `fetch` failures as Node words them are not reproducible; keep reqwest's text short.

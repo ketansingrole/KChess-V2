@@ -1,6 +1,7 @@
 //! Patterns in the games synced to this computer: results by
-//! colour, speed, opening, time of day, opponent strength and game length, and accuracy where
-//! games were reviewed. Everything is read locally; nothing is sent to Lichess.
+//! colour, speed, opening, time of day, opponent strength and game length, accuracy where
+//! games were reviewed, and time use where they have clocks. Everything is read locally; nothing
+//! is sent to Lichess.
 
 use rusqlite::{Connection, params_from_iter, types::Value as Sql};
 use serde_json::{Map, Value, json};
@@ -11,6 +12,7 @@ use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::js;
 use kchess_domain::misc::constants::VARIANTS;
+use kchess_domain::time_use::{PHASES, TimeUse, time_use};
 
 const NEG_INF: f64 = f64::NEG_INFINITY;
 const INF: f64 = f64::INFINITY;
@@ -35,6 +37,10 @@ const LENGTH_BANDS: [(&str, f64, f64); 4] = [
 const DAY_MS: f64 = 86_400_000.0;
 const ROW_LIMIT: i64 = 20_000;
 const REVIEW_LIMIT: i64 = 2_000;
+/// The newest clocked games read for time use: each one's PGN is parsed and replayed.
+const CLOCK_LIMIT: i64 = 2_000;
+/// The moves whose clocks are compared with the opponent's.
+const CLOCK_MOVES: [usize; 2] = [20, 40];
 
 /// This module's storage methods; None when the method is not one of them.
 pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<Value>> {
@@ -384,6 +390,9 @@ fn insights(host: &dyn Host, db: &Connection, query: &Value, now: f64) -> Result
     if let Some(accuracy) = accuracy_report(host, db, query, now)? {
         report.insert("accuracy".into(), accuracy);
     }
+    if let Some(time_use) = time_use_report(host, db, query, now)? {
+        report.insert("timeUse".into(), time_use);
+    }
     report.insert("variants".into(), json!(played_variants(db, query)?));
     Ok(Value::Object(report))
 }
@@ -491,6 +500,205 @@ fn accuracy_report(
         }),
     );
     Ok(Some(Value::Object(accuracy)))
+}
+
+/// Moves played and how many of them were blunders.
+#[derive(Default)]
+struct Blunders {
+    moves: i64,
+    blunders: i64,
+}
+
+impl Blunders {
+    fn json(&self) -> Value {
+        json!({ "moves": self.moves, "blunders": self.blunders })
+    }
+}
+
+/// Time use across the clocked games.
+#[derive(Default)]
+struct Clocks {
+    games: i64,
+    /// Results of games where the player's clock fell under a tenth of its start, and of the rest.
+    trouble: Record,
+    spare: Record,
+    /// The player's moves and seconds in each phase.
+    phase_moves: [i64; 3],
+    phase_seconds: [f64; 3],
+    /// At each of `CLOCK_MOVES`: the games that reached it, and the player's and the opponent's
+    /// clocks summed as percentages of the start.
+    clock_at: [(i64, f64, f64); 2],
+    /// Reviewed games, and their moves played short of time and with time to spare.
+    reviewed: i64,
+    blunders_short: Blunders,
+    blunders_spare: Blunders,
+}
+
+impl Clocks {
+    /// One game: the player's side, its result, its clock and its review's move labels.
+    fn add(&mut self, white: bool, result: &str, time: &TimeUse, judgments: Option<&[Value]>) {
+        self.games += 1;
+        let mine = |ply: usize| time.white(ply) == white;
+        let plies = time.clocks.len();
+        let short = (0..plies)
+            .filter(|&ply| mine(ply))
+            .any(|ply| time.clocks[ply].is_some_and(|clock| clock < time.initial / 10.0));
+        if short {
+            self.trouble.add(result);
+        } else {
+            self.spare.add(result);
+        }
+        for ply in (0..plies).filter(|&ply| mine(ply)) {
+            if let Some(spent) = time.spent(ply) {
+                let phase = time.phase(ply);
+                self.phase_moves[phase] += 1;
+                self.phase_seconds[phase] += spent;
+            }
+        }
+        // A side's nth move is its nth ply: the first side's at 2(n-1), the other's one later.
+        let first_white = time.white(0);
+        let nth = |side_white: bool, n: usize| 2 * (n - 1) + usize::from(side_white != first_white);
+        for (slot, &n) in self.clock_at.iter_mut().zip(CLOCK_MOVES.iter()) {
+            let at = |side_white: bool| time.clocks.get(nth(side_white, n)).copied().flatten();
+            if let (Some(own), Some(other)) = (at(white), at(!white)) {
+                slot.0 += 1;
+                slot.1 += 100.0 * own / time.initial;
+                slot.2 += 100.0 * other / time.initial;
+            }
+        }
+        if let Some(judgments) = judgments {
+            self.reviewed += 1;
+            for ply in (0..plies.min(judgments.len())).filter(|&ply| mine(ply)) {
+                let Some(short) = time.short_before(ply) else {
+                    continue;
+                };
+                let bucket = if short {
+                    &mut self.blunders_short
+                } else {
+                    &mut self.blunders_spare
+                };
+                bucket.moves += 1;
+                if judgments[ply].get("judgment").and_then(Value::as_str) == Some("blunder") {
+                    bucket.blunders += 1;
+                }
+            }
+        }
+    }
+
+    fn json(&self) -> Value {
+        let total: f64 = self.phase_seconds.iter().sum();
+        let phases: Vec<Value> = PHASES
+            .iter()
+            .enumerate()
+            .filter(|&(phase, _)| self.phase_moves[phase] > 0)
+            .map(|(phase, name)| {
+                let mut entry = Map::new();
+                entry.insert("phase".into(), json!(name));
+                entry.insert("moves".into(), json!(self.phase_moves[phase]));
+                entry.insert(
+                    "seconds".into(),
+                    num(self.phase_seconds[phase] / self.phase_moves[phase] as f64),
+                );
+                if total > 0.0 {
+                    entry.insert(
+                        "share".into(),
+                        num(100.0 * self.phase_seconds[phase] / total),
+                    );
+                }
+                Value::Object(entry)
+            })
+            .collect();
+        let clock_at: Vec<Value> = CLOCK_MOVES
+            .iter()
+            .zip(self.clock_at.iter())
+            .filter(|(_, (games, _, _))| *games > 0)
+            .map(|(n, (games, own, other))| {
+                json!({
+                    "move": n,
+                    "games": games,
+                    "player": num(own / *games as f64),
+                    "opponent": num(other / *games as f64),
+                })
+            })
+            .collect();
+        let mut out = Map::new();
+        out.insert("games".into(), json!(self.games));
+        out.insert("trouble".into(), self.trouble.json());
+        out.insert("spare".into(), self.spare.json());
+        out.insert("phases".into(), Value::Array(phases));
+        out.insert("clockAt".into(), Value::Array(clock_at));
+        if self.reviewed > 0 {
+            out.insert(
+                "blunders".into(),
+                json!({
+                    "games": self.reviewed,
+                    "short": self.blunders_short.json(),
+                    "spare": self.blunders_spare.json(),
+                }),
+            );
+        }
+        Value::Object(out)
+    }
+}
+
+/// How the clock was used in the newest real-time games whose PGN has clocks: results when
+/// short of time, time per move by phase, the clock against the opponent's, and blunders short
+/// of time and with time to spare where a game was reviewed. None without a clocked game.
+fn time_use_report(
+    host: &dyn Host,
+    db: &Connection,
+    query: &Value,
+    now: f64,
+) -> Result<Option<Value>> {
+    let (clauses, params) = clauses(query, "g.", now)?;
+    let where_sql = clauses.join(" AND ");
+    let sql = format!(
+        "SELECT g.color, g.pgn,
+           (CASE WHEN g.winner IS NULL THEN 'draw' WHEN g.winner = g.color THEN 'win' ELSE 'loss' END),
+           (SELECT r.data FROM game_reviews gr JOIN reviews r ON r.key = gr.reviewKey
+            WHERE gr.gameId = g.id AND r.complete = 1 ORDER BY r.updatedAt DESC LIMIT 1)
+         FROM games g
+         WHERE {where_sql} AND g.pgn LIKE '%[%clk %' AND g.speed != 'correspondence'
+         ORDER BY g.createdAt DESC LIMIT {CLOCK_LIMIT}"
+    );
+    let mut statement = db.prepare(&sql).map_err(db_err)?;
+    let rows = statement
+        .query_map(params_from_iter(params.iter()), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .map_err(db_err)?;
+    let mut clocks = Clocks::default();
+    for row in rows {
+        let (color, pgn, result, review) = row.map_err(db_err)?;
+        let Some(time) = time_use(&pgn) else {
+            continue;
+        };
+        // A review that cannot be read or analysed leaves the game's moves unlabelled.
+        let analysed = review
+            .and_then(|data| serde_json::from_str::<Value>(&data).ok())
+            .and_then(|data| match super::reviews::analyse_stored(&data) {
+                Ok(analysis) => Some(analysis),
+                Err(cause) => {
+                    host.log(
+                        Level::Debug,
+                        "insights",
+                        &format!("Review left out of time use: {cause}"),
+                    );
+                    None
+                }
+            });
+        let judgments = analysed
+            .as_ref()
+            .and_then(|analysis| analysis["moves"].as_array())
+            .map(Vec::as_slice);
+        clocks.add(color == "white", &result, &time, judgments);
+    }
+    Ok((clocks.games > 0).then(|| clocks.json()))
 }
 
 /// `side.x ?? 0` as a count.

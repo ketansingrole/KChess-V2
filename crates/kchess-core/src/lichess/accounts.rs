@@ -301,6 +301,12 @@ pub fn now_ms() -> i64 {
 
 /// Percent-encodes one path segment (a username), as openapi-fetch does for `{username}`.
 pub fn path_segment(text: &str) -> String {
+    // `.` and `..` (also when percent-encoded, `%2e`) are dot segments that URL parsing resolves,
+    // so an id from a response could otherwise send an authorized request to another path. As
+    // the literal text `%2E` they name nothing.
+    if text == "." || text == ".." {
+        return "%252E".repeat(text.len());
+    }
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
@@ -1257,8 +1263,9 @@ impl Lichess {
         let generation = self.next_sync.fetch_add(1, Ordering::SeqCst) + 1;
         let (send, receive) = watch::channel(None);
         lock(&self.syncs).insert(key.clone(), (generation, receive));
-        let result = self.run_sync(row, play_time).await;
-        {
+        // Forgotten however the run ends: a cancelled call left its entry behind, and every
+        // later sync of this player joined it and failed at once ("Sync was cancelled.").
+        let forget = crate::tasks::on_drop(|| {
             let mut syncs = lock(&self.syncs);
             if syncs
                 .get(&key)
@@ -1266,7 +1273,9 @@ impl Lichess {
             {
                 syncs.remove(&key);
             }
-        }
+        });
+        let result = self.run_sync(row, play_time).await;
+        drop(forget);
         let shared = result.clone();
         let _ = send.send(Some(shared));
         if let Ok(fetched) = &result {
@@ -1842,6 +1851,14 @@ mod tests {
     fn path_segments_are_encoded() {
         assert_eq!(path_segment("Magnus_C-1"), "Magnus_C-1");
         assert_eq!(path_segment("a/b c"), "a%2Fb%20c");
+        for dots in [".", ".."] {
+            let url = reqwest::Url::parse(&format!(
+                "https://lichess.org/api/broadcast/{}/x",
+                path_segment(dots)
+            ))
+            .unwrap();
+            assert!(url.path().starts_with("/api/broadcast/%252E"), "{url}");
+        }
     }
 
     #[test]

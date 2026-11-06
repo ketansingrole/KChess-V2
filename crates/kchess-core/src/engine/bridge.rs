@@ -15,6 +15,7 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tokio_util::sync::CancellationToken;
 
 use super::analysis::Analysis;
 use super::managed::{EngineGuard, EngineHandoff};
@@ -45,6 +46,9 @@ pub struct Battery {
     value: AtomicBool,
     refreshing: AtomicBool,
     closed: AtomicBool,
+    /// Ends the refresh loop the moment the core closes, so it lets go of the capabilities (and
+    /// the connections they reach) then rather than at its next tick.
+    stopped: CancellationToken,
     host: Arc<dyn Host>,
 }
 
@@ -54,6 +58,7 @@ impl Battery {
             value: AtomicBool::new(false),
             refreshing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
+            stopped: CancellationToken::new(),
             host,
         })
     }
@@ -94,9 +99,13 @@ impl Battery {
             return;
         };
         let weak: Weak<Battery> = Arc::downgrade(self);
+        let stopped = self.stopped.clone();
         runtime.spawn(async move {
             loop {
-                tokio::time::sleep(REFRESH_EVERY).await;
+                tokio::select! {
+                    () = stopped.cancelled() => return,
+                    () = tokio::time::sleep(REFRESH_EVERY) => {}
+                }
                 let Some(battery) = weak.upgrade() else {
                     return;
                 };
@@ -111,6 +120,13 @@ impl Battery {
     /// Stops refreshing; the last reading stays.
     pub fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
+        self.stopped.cancel();
+    }
+}
+
+impl Drop for Battery {
+    fn drop(&mut self) {
+        self.stopped.cancel();
     }
 }
 

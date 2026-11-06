@@ -81,8 +81,9 @@ pub(crate) enum Action {
 pub struct LocalPage {
     /// Either player's spoken moves.
     voice: crate::voice::moves::VoiceMoves,
-    /// Turned clock faces as pictures, by side, with what they show.
-    turned: std::collections::HashMap<usize, (String, std::sync::Arc<Image>)>,
+    /// Turned clock faces as pictures, by side, with what they show. A face replaced or no
+    /// longer turned releases its texture (`App::drop_image`).
+    turned: std::collections::HashMap<usize, (String, std::sync::Arc<RenderImage>)>,
     game: LocalGame,
     board: Entity<ChessBoard>,
     exporter: Entity<Exporter>,
@@ -287,6 +288,17 @@ impl LocalPage {
             Some(crate::core::all_saved(pending))
         });
         page
+    }
+
+    /// The turned faces' pictures as drawn now, by player.
+    #[cfg(test)]
+    pub(crate) fn turned_faces(&self) -> Vec<std::sync::Arc<RenderImage>> {
+        let mut faces: Vec<_> = self.turned.iter().collect();
+        faces.sort_by_key(|(index, _)| **index);
+        faces
+            .into_iter()
+            .map(|(_, (_, image))| image.clone())
+            .collect()
     }
 
     fn now(&self) -> f64 {
@@ -633,7 +645,7 @@ impl LocalPage {
             "Black"
         };
         let page = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let page = page.clone();
             dialog
                 .title(format!("Resign for {name}?"))
@@ -662,7 +674,7 @@ impl LocalPage {
                 cx,
             )
         });
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::widgets::open_dialog(window, cx, move |dialog, _, _| {
             dialog
                 .title("New game over the board")
                 .w(px(512.))
@@ -689,7 +701,7 @@ impl LocalPage {
         }
         let page = cx.entity().downgrade();
         let chosen = std::rc::Rc::new((setup, clock));
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let (page, chosen) = (page.clone(), chosen.clone());
             dialog
                 .title("Start a new game?")
@@ -999,6 +1011,11 @@ impl LocalPage {
             };
             let moves = self.clock.moves.get(side);
             let rotation = Self::rotation(side, cx);
+            if rotation == 0
+                && let Some((_, old)) = self.turned.remove(&index)
+            {
+                cx.drop_image(old, Some(window));
+            }
             let turned = (rotation != 0).then(|| {
                 let lines = [
                     (format!("Player {index}"), 14., true, 0.75),
@@ -1021,7 +1038,7 @@ impl LocalPage {
                 let key = format!("{lines:?}{color}{rotation}");
                 let image = match self.turned.get(&index) {
                     Some((shown, image)) if *shown == key => Some(image.clone()),
-                    _ => crate::game_image::rotated_text_png(
+                    _ => crate::game_image::rotated_text_image(
                         &lines.map(|(text, size, bold, opacity)| crate::game_image::TextLine {
                             text,
                             size,
@@ -1033,10 +1050,10 @@ impl LocalPage {
                         window.scale_factor(),
                     )
                     .ok()
-                    .map(|png| {
-                        let image = std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, png));
-                        self.turned.insert(index, (key, image.clone()));
-                        image
+                    .inspect(|image| {
+                        if let Some((_, old)) = self.turned.insert(index, (key, image.clone())) {
+                            cx.drop_image(old, Some(window));
+                        }
                     }),
                 };
                 image.map(|image| {
@@ -1056,13 +1073,7 @@ impl LocalPage {
                         .opacity(0.75)
                         .child(format!("Player {index}")),
                 )
-                .child(
-                    div()
-                        .text_size(px(120.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .line_height(px(120.))
-                        .child(time.clone()),
-                )
+                .child(crate::widgets::timer(time.clone(), px(120.)))
                 .child(div().text_size(px(14.)).opacity(0.75).child(
                     crate::widgets::format_counted(moves as f64, "move", "moves"),
                 ))

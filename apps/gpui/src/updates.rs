@@ -1,7 +1,8 @@
 //! App updates: the GPUI app checks the release feed
 //! the Electron app reads (GitHub releases of KChess), downloads the package it was installed from
 //! (packaged in Electron's formats), checks it against the release's
-//! `SHA256SUMS.txt` and against the running app's signature, and installs it on restart or when
+//! `SHA256SUMS.txt` (itself signed with the release key, `update-key.pub`) and against the
+//! running app's signature, and installs it on restart or when
 //! KChess quits: a new bundle on macOS, the installer run silently on Windows (as Electron's
 //! updater does), a new AppImage, or the .deb through the package manager.
 //!
@@ -172,6 +173,35 @@ pub fn asset_name(version: &str, package: Package) -> Option<String> {
         Package::Deb => ("linux", if arm { "arm64" } else { "amd64" }, "deb"),
     };
     Some(format!("{PREFIX}-{version}-{platform}-{arch}.{extension}"))
+}
+
+/// The release key's public half (`update-key.pub`): its one line that is not a comment, the
+/// base64 of a 32-byte Ed25519 key. `None` until a key is made (`cargo xtask update-key`).
+pub fn update_key() -> Option<Vec<u8>> {
+    parse_update_key(include_str!("../update-key.pub"))
+}
+
+pub fn parse_update_key(file: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    let line = file
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))?;
+    base64::engine::general_purpose::STANDARD
+        .decode(line)
+        .ok()
+        .filter(|key| key.len() == 32)
+}
+
+/// Whether `signature` (base64, `SHA256SUMS.txt.sig`) is `key`'s Ed25519 signature of `sums`.
+pub fn sums_signed_by(key: &[u8], sums: &[u8], signature: &str) -> Result<(), String> {
+    use base64::Engine as _;
+    let signature = base64::engine::general_purpose::STANDARD
+        .decode(signature.trim())
+        .map_err(|_| "The release's checksum signature could not be read")?;
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
+        .verify(sums, &signature)
+        .map_err(|_| "The release's checksums are not signed by KChess".to_string())
 }
 
 /// The SHA-256 a `SHA256SUMS.txt` lists for `name`.
@@ -371,22 +401,101 @@ const RESUME_AFTER: Duration = if cfg!(test) {
     Duration::from_secs(2)
 };
 
-/// A download so far: the file, the digest of what it holds, and how much of how much.
+/// How often a download reports its progress: every this many bytes, and at its end. One report
+/// for every chunk the server sent was thousands of redraws of the window for one update.
+const PROGRESS_STEP: u64 = 1 << 20;
+
+/// A download so far, in its `.part` file: the digest of what it holds, and how much of how much.
+/// Written through a buffer on the download's own thread (`on_runtime`), not a thread hop for
+/// each chunk.
 struct Part {
-    file: tokio::fs::File,
+    file: std::io::BufWriter<std::fs::File>,
     hasher: Sha256,
     received: u64,
     total: u64,
+    reported: u64,
 }
 
 impl Part {
+    /// The part at `path`, carrying on from what an earlier download left in it.
+    fn open(path: &Path, total: u64) -> std::io::Result<Part> {
+        use std::io::{Read as _, Seek as _};
+        let mut file = std::fs::File::options()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path)?;
+        let mut hasher = Sha256::new();
+        let mut received = 0u64;
+        let mut buffer = vec![0u8; 1 << 20];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            received += read as u64;
+        }
+        file.seek(std::io::SeekFrom::End(0))?;
+        Ok(Part {
+            file: std::io::BufWriter::with_capacity(1 << 20, file),
+            hasher,
+            received,
+            total,
+            reported: 0,
+        })
+    }
+
     /// Start the file again from nothing: the server sent the whole package, not the rest.
-    async fn restart(&mut self) -> std::io::Result<()> {
-        self.file.set_len(0).await?;
-        tokio::io::AsyncSeekExt::seek(&mut self.file, std::io::SeekFrom::Start(0)).await?;
+    fn restart(&mut self) -> std::io::Result<()> {
+        use std::io::{Seek as _, Write as _};
+        self.file.flush()?;
+        self.file.get_mut().set_len(0)?;
+        self.file.get_mut().seek(std::io::SeekFrom::Start(0))?;
         self.hasher = Sha256::new();
         self.received = 0;
+        self.reported = 0;
         Ok(())
+    }
+
+    fn write(&mut self, chunk: &[u8]) -> std::io::Result<()> {
+        std::io::Write::write_all(&mut self.file, chunk)?;
+        self.hasher.update(chunk);
+        self.received += chunk.len() as u64;
+        Ok(())
+    }
+
+    /// Tell `progress` how far it is, once a step further on or at the end.
+    fn report(&mut self, progress: &futures::channel::mpsc::UnboundedSender<(u64, u64)>) {
+        if self.received - self.reported >= PROGRESS_STEP || self.received >= self.total {
+            self.reported = self.received;
+            let _ = progress.unbounded_send((self.received, self.total));
+        }
+    }
+
+    /// The SHA-256 of everything written, once it is on disk.
+    fn finish(&mut self) -> std::io::Result<String> {
+        std::io::Write::flush(&mut self.file)?;
+        Ok(hex(&self.hasher.clone().finalize()))
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The SHA-256 of the file at `path`, if it can be read.
+fn file_digest(path: &Path) -> Option<String> {
+    use std::io::Read as _;
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 1 << 20];
+    loop {
+        match file.read(&mut buffer).ok()? {
+            0 => return Some(hex(&hasher.finalize())),
+            read => hasher.update(&buffer[..read]),
+        }
     }
 }
 
@@ -423,7 +532,7 @@ async fn receive(
     let status = response.status();
     if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
         // What is here is not a beginning of this package: start it again.
-        part.restart().await.map_err(io)?;
+        part.restart().map_err(io)?;
         return Err(Stop::Dropped("The download stopped".into()));
     }
     if status.is_server_error() {
@@ -448,7 +557,7 @@ async fn receive(
             });
     if !resumed {
         if part.received > 0 {
-            part.restart().await.map_err(io)?;
+            part.restart().map_err(io)?;
         }
         part.total = response.content_length().unwrap_or(part.total);
     }
@@ -457,12 +566,8 @@ async fn receive(
         let chunk = chunk
             .map_err(failed("The download stopped"))
             .map_err(Stop::Dropped)?;
-        part.hasher.update(&chunk);
-        tokio::io::AsyncWriteExt::write_all(&mut part.file, &chunk)
-            .await
-            .map_err(io)?;
-        part.received += chunk.len() as u64;
-        let _ = progress.unbounded_send((part.received, part.total));
+        part.write(&chunk).map_err(io)?;
+        part.report(progress);
     }
     if part.total > 0 && part.received < part.total {
         return Err(Stop::Dropped("The download stopped".into()));
@@ -470,48 +575,18 @@ async fn receive(
     Ok(())
 }
 
-/// Download `asset` into `folder` and check it against the release's digest; the downloaded
-/// file. `progress` hears the bytes received so far.
-async fn download(
-    release: Release,
-    asset: Asset,
-    folder: PathBuf,
-    progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
-) -> Result<PathBuf, String> {
-    let client = http()?;
-    let sums = release
-        .assets
-        .iter()
-        .find(|entry| entry.name == "SHA256SUMS.txt")
-        .ok_or("The release lists no checksums")?;
-    let sums = client
-        .get(&sums.browser_download_url)
-        .timeout(Duration::from_secs(60))
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(failed("Could not download the checksums"))?
-        .text()
-        .await
-        .map_err(failed("Could not download the checksums"))?;
-    let expected =
-        digest_for(&sums, &asset.name).ok_or("The release lists no checksum for this package")?;
-    let _ = std::fs::remove_dir_all(&folder);
-    std::fs::create_dir_all(&folder).map_err(|cause| cause.to_string())?;
-    let file_path = folder.join(&asset.name);
-    let mut part = Part {
-        file: tokio::fs::File::create(&file_path)
-            .await
-            .map_err(|cause| cause.to_string())?,
-        hasher: Sha256::new(),
-        received: 0,
-        total: asset.size,
-    };
+/// Fetch the rest of `part` from `url`, resuming a dropped connection; the digest of the whole.
+async fn receive_all(
+    client: &reqwest::Client,
+    url: &str,
+    part: &mut Part,
+    progress: &futures::channel::mpsc::UnboundedSender<(u64, u64)>,
+) -> Result<String, String> {
     // A connection that drops part way carries on from the bytes already here, as long as the
     // server can send the rest (`Range`); the update is never started over for one dropped link.
     let mut resumes = 0;
     loop {
-        match receive(&client, &asset.browser_download_url, &mut part, &progress).await {
+        match receive(client, url, part, progress).await {
             Ok(()) => break,
             Err(Stop::Fail(cause)) => return Err(cause),
             Err(Stop::Dropped(cause)) if resumes < RESUMES => {
@@ -525,27 +600,160 @@ async fn download(
             Err(Stop::Dropped(cause)) => return Err(cause),
         }
     }
-    let Part {
-        mut file, hasher, ..
-    } = part;
-    tokio::io::AsyncWriteExt::flush(&mut file)
-        .await
-        .map_err(|cause| cause.to_string())?;
-    let digest: String = hasher
-        .finalize()
+    part.finish().map_err(|cause| cause.to_string())
+}
+
+/// Downloads kept from one start to the next, a folder for each version in the downloads root:
+/// a package already downloaded and checked is used again, and one cut short (KChess quit, the
+/// computer slept) carries on from its `.part`. Before, each start cleared the last one's
+/// download, so quitting before installing meant fetching the whole package again.
+const KEPT: &str = ".kept";
+
+/// Where `version`'s download is kept.
+fn kept_folder(root: &Path, version: &str) -> PathBuf {
+    root.join(KEPT).join(version)
+}
+
+/// Remove the kept downloads `stale` names (by version), except one another KChess is still
+/// downloading into (its folder's lock is held).
+fn prune_kept(root: &Path, stale: impl Fn(Option<[u64; 3]>) -> bool) {
+    let Ok(entries) = std::fs::read_dir(root.join(KEPT)) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !stale(parse_version(&name)) {
+            continue;
+        }
+        let path = entry.path();
+        let busy = std::fs::File::options()
+            .write(true)
+            .open(path.join(".lock"))
+            .is_ok_and(|lock| lock.try_lock().is_err());
+        if !busy {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+/// Download `asset` into `folder` (its version's kept folder) and check it against the
+/// release's digest; the downloaded file. `progress` hears the bytes received so far.
+async fn download(
+    release: Release,
+    asset: Asset,
+    folder: PathBuf,
+    progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
+) -> Result<PathBuf, String> {
+    download_signed(release, asset, folder, progress, update_key()).await
+}
+
+/// A small release file's text (the checksums or their signature).
+async fn small_file(
+    client: &reqwest::Client,
+    release: &Release,
+    name: &str,
+    missing: &'static str,
+    failure: &'static str,
+) -> Result<String, String> {
+    let entry = release
+        .assets
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+        .find(|entry| entry.name == name)
+        .ok_or(missing)?;
+    client
+        .get(&entry.browser_download_url)
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(failed(failure))?
+        .text()
+        .await
+        .map_err(failed(failure))
+}
+
+/// `download`, with the checksums required to be signed by `key` when there is one. The
+/// checksums sit in the same release as the packages, so on their own they only catch a broken
+/// download: the signature is what stops a replaced package.
+async fn download_signed(
+    release: Release,
+    asset: Asset,
+    folder: PathBuf,
+    progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
+    key: Option<Vec<u8>>,
+) -> Result<PathBuf, String> {
+    let client = http()?;
+    let sums = small_file(
+        &client,
+        &release,
+        "SHA256SUMS.txt",
+        "The release lists no checksums",
+        "Could not download the checksums",
+    )
+    .await?;
+    if let Some(key) = key {
+        let signature = small_file(
+            &client,
+            &release,
+            "SHA256SUMS.txt.sig",
+            "The release's checksums are not signed",
+            "Could not download the checksum signature",
+        )
+        .await?;
+        sums_signed_by(&key, sums.as_bytes(), &signature)?;
+    }
+    let expected =
+        digest_for(&sums, &asset.name).ok_or("The release lists no checksum for this package")?;
+    let fail = |cause: std::io::Error| cause.to_string();
+    std::fs::create_dir_all(&folder).map_err(fail)?;
+    // One download of a version at a time: another KChess downloading it is waited for, and its
+    // finished package is then used here too.
+    let lock = std::fs::File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(folder.join(".lock"))
+        .map_err(fail)?;
+    lock.lock().map_err(fail)?;
+    let file_path = folder.join(&asset.name);
+    if file_digest(&file_path).is_some_and(|digest| digest == expected) {
+        log(&format!("{} was already downloaded", asset.name));
+        let size = std::fs::metadata(&file_path).map_or(asset.size, |meta| meta.len());
+        let _ = progress.unbounded_send((size, size));
+        return Ok(file_path);
+    }
+    let _ = std::fs::remove_file(&file_path);
+    let part_path = folder.join(format!("{}.part", asset.name));
+    let mut part = Part::open(&part_path, asset.size).map_err(fail)?;
+    let carried = part.received;
+    if carried > 0 {
+        log(&format!(
+            "carrying on from {carried} bytes of {}",
+            asset.name
+        ));
+    }
+    let url = &asset.browser_download_url;
+    let mut digest = receive_all(&client, url, &mut part, &progress).await;
+    if carried > 0 && digest.as_ref().is_ok_and(|digest| *digest != expected) {
+        // What an earlier start left was not this package's beginning: fetch it all again.
+        log("the kept part did not match; downloading it again");
+        part.restart().map_err(fail)?;
+        digest = receive_all(&client, url, &mut part, &progress).await;
+    }
+    let digest = digest?;
+    drop(part);
     if digest != expected {
-        let _ = std::fs::remove_dir_all(&folder);
+        let _ = std::fs::remove_file(&part_path);
         return Err("The downloaded update did not match its checksum".into());
     }
+    std::fs::rename(&part_path, &file_path).map_err(fail)?;
     Ok(file_path)
 }
 
-/// Unpack a macOS update's zip beside it; the `.app` it holds.
-fn unpack(archive: &Path) -> Result<PathBuf, String> {
-    let unpacked = archive.with_file_name("app");
+/// Unpack a macOS update's zip into `folder`; the `.app` it holds. The zip stays where it was
+/// kept, so a later start can unpack it again.
+fn unpack(archive: &Path, folder: &Path) -> Result<PathBuf, String> {
+    let unpacked = folder.join("app");
     let _ = std::fs::remove_dir_all(&unpacked);
     std::fs::create_dir_all(&unpacked).map_err(|cause| cause.to_string())?;
     let status = Command::new("ditto")
@@ -556,7 +764,6 @@ fn unpack(archive: &Path) -> Result<PathBuf, String> {
     if !status.is_ok_and(|status| status.success()) {
         return Err("The update could not be unpacked".into());
     }
-    let _ = std::fs::remove_file(archive);
     std::fs::read_dir(&unpacked)
         .map_err(|cause| cause.to_string())?
         .filter_map(Result::ok)
@@ -666,25 +873,53 @@ fn running_signer(install: &Install) -> Signer {
     }
 }
 
-/// Download, check and stage `asset` (of `package`) in `folder`: the new bundle on macOS, else
-/// the package itself. With `install` known, the update must be signed as the running app is.
+/// Download and check `asset` (of `package`) into its kept `folder`, and stage it: the new
+/// bundle on macOS (unpacked into this app's `work` folder), else the package itself. With
+/// `install` known, the update must be signed as the running app is.
 async fn fetch(
     release: Release,
     asset: Asset,
     package: Package,
     install: Option<Install>,
     folder: PathBuf,
+    work: PathBuf,
     progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
 ) -> Result<PathBuf, String> {
     let file = download(release, asset, folder, progress).await?;
     let staged = match package {
-        Package::MacZip => unpack(&file)?,
+        Package::MacZip => unpack(&file, &work)?,
         _ => file,
     };
     if let Some(install) = install {
-        signed_alike(&running_signer(&install), &signer(package, &staged))?;
+        let running = running_signer(&install);
+        signed_alike(&running, &signer(package, &staged))?;
+        if package == Package::MacZip
+            && let (Some(team), Some(app)) = (&running.identity, &running.app)
+            && !meets_requirement(&staged, &developer_requirement(app, team))
+        {
+            return Err("The update is not signed by KChess's developer".into());
+        }
     }
     Ok(staged)
+}
+
+/// What a Developer ID build's update must satisfy: signed through Apple's own certificate
+/// chain, as `app`, by `team`. The team and identifier `codesign --display` prints are the
+/// bundle's own claims, which a self-signed certificate can make; this requirement is not.
+fn developer_requirement(app: &str, team: &str) -> String {
+    format!(
+        "=anchor apple generic and identifier \"{app}\" and certificate leaf[subject.OU] = \"{team}\""
+    )
+}
+
+/// Whether the bundle at `path` passes `codesign --verify` against `requirement`.
+fn meets_requirement(path: &Path, requirement: &str) -> bool {
+    Command::new("codesign")
+        .args(["--verify", "--deep", "--strict", "-R", requirement])
+        .arg(path)
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 /// Put the staged update in place of `install`, which `lock` holds; with `reopen`, open the new
@@ -1010,7 +1245,7 @@ fn clear_stopped(root: &Path) {
     for entry in entries.filter_map(Result::ok) {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == ".lock" || name.starts_with(INSTALLING) {
+        if name == ".lock" || name == KEPT || name.starts_with(INSTALLING) {
             continue;
         }
         if let Some(folder) = name.strip_suffix(".lock") {
@@ -1187,10 +1422,17 @@ pub fn init(cx: &mut App) {
         .flatten();
     let root = install.as_ref().and_then(|_| downloads_root().ok());
     tidy(install.as_ref(), root.as_deref());
+    if let (Some(install), Some(root)) = (&install, &root) {
+        // Downloads of this version or older are done with, unless an installer is still running
+        // from one.
+        if let Ok(_installing) = InstallLock::take(root, &install.path) {
+            let current = parse_version(&current_version());
+            prune_kept(root, |kept| kept.is_none() || kept <= current);
+        }
+    }
     let failed = last_install_error(install.as_ref(), root.as_deref());
-    let feed = std::env::var("KCHESS_UPDATE_FEED")
-        .ok()
-        .filter(|feed| !feed.is_empty())
+    let feed = kchess_core::dev_override("KCHESS_UPDATE_FEED")
+        .map(|feed| feed.to_string_lossy().into_owned())
         .filter(|_| !store)
         .or_else(|| install.is_some().then(|| FEED.to_string()));
     let workspace = feed.as_ref().and_then(|_| {
@@ -1386,7 +1628,18 @@ impl Updates {
             cx.notify();
             return;
         };
-        let folder = workspace.path.join(&version);
+        let work = workspace.path.join(&version);
+        let folder = match downloads_root() {
+            Ok(root) => {
+                // Only this version's download is worth keeping now.
+                prune_kept(&root, |kept| kept != parse_version(&version));
+                kept_folder(&root, &version)
+            }
+            Err(cause) => {
+                log(&format!("no folder to keep downloads in: {cause}"));
+                work.clone()
+            }
+        };
         let (sender, mut heard) = futures::channel::mpsc::unbounded();
         let done = on_runtime(fetch(
             release,
@@ -1394,6 +1647,7 @@ impl Updates {
             package,
             self.install.clone(),
             folder,
+            work,
             sender,
         ));
         self.work = Some(cx.spawn(async move |this, cx| {
@@ -1504,6 +1758,8 @@ impl Updates {
         self.release
             .as_ref()
             .and_then(|release| release.html_url.clone())
+            // Only the repository's own pages open from here, whatever the feed answered.
+            .filter(|url| url.starts_with(&format!("https://github.com/{REPOSITORY}/")))
             .unwrap_or_else(|| format!("https://github.com/{REPOSITORY}/releases"))
     }
 }
@@ -2152,23 +2408,43 @@ mod tests {
     /// A feed whose latest release is `version`, with `package` and `sums` (given the package's
     /// real digest); the feed's URL.
     fn feed(version: &str, package: &[u8], sums: impl Fn(&str, &str) -> String) -> String {
+        feed_signed(version, package, sums, |_| None)
+    }
+
+    /// `feed`, with `sign` giving the checksums' `SHA256SUMS.txt.sig` (none when `None`).
+    fn feed_signed(
+        version: &str,
+        package: &[u8],
+        sums: impl Fn(&str, &str) -> String,
+        sign: impl Fn(&[u8]) -> Option<String>,
+    ) -> String {
         let name = asset_name(version, Package::AppImage).unwrap();
         let digest: String = Sha256::digest(package)
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
+        let sums = sums(&digest, &name).into_bytes();
+        let signature = sign(&sums);
         // The release names its assets' URLs, so they are served first.
-        let assets = serve(vec![
+        let mut files = vec![
             (format!("/{name}"), package.to_vec()),
-            ("/SHA256SUMS.txt".into(), sums(&digest, &name).into_bytes()),
-        ]);
+            ("/SHA256SUMS.txt".into(), sums),
+        ];
+        if let Some(signature) = &signature {
+            files.push(("/SHA256SUMS.txt.sig".into(), signature.clone().into_bytes()));
+        }
+        let assets = serve(files);
+        let mut listed = vec![
+            serde_json::json!({ "name": name, "browser_download_url": format!("{assets}/{name}"), "size": package.len() }),
+            serde_json::json!({ "name": "SHA256SUMS.txt", "browser_download_url": format!("{assets}/SHA256SUMS.txt") }),
+        ];
+        if signature.is_some() {
+            listed.push(serde_json::json!({ "name": "SHA256SUMS.txt.sig", "browser_download_url": format!("{assets}/SHA256SUMS.txt.sig") }));
+        }
         let release = serde_json::json!({
             "tag_name": format!("v{version}"),
             "html_url": "https://example.invalid/release",
-            "assets": [
-                { "name": name, "browser_download_url": format!("{assets}/{name}"), "size": package.len() },
-                { "name": "SHA256SUMS.txt", "browser_download_url": format!("{assets}/SHA256SUMS.txt") },
-            ],
+            "assets": listed,
         });
         serve(vec![(
             "/repos/ketansingrole/KChess-V2/releases/latest".into(),
@@ -2356,6 +2632,113 @@ mod tests {
         let _ = std::fs::remove_dir_all(&folder);
     }
 
+    /// Each start cleared the last one's download, so quitting before installing meant fetching
+    /// the whole package again; a checked download is now used again, and a part carries on.
+    #[test]
+    fn a_download_is_kept_from_one_start_to_the_next() {
+        let folder = scratch("kept");
+        let package: Vec<u8> = (0..300_000u32).map(|n| (n % 241) as u8).collect();
+        let name = asset_name("2026.11.0", Package::AppImage).unwrap();
+        let digest: String = Sha256::digest(&package)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let sums = serve(vec![(
+            "/SHA256SUMS.txt".into(),
+            format!("{digest}  {name}\n").into_bytes(),
+        )]);
+        let attempt = |server: &str| {
+            let release: Release = serde_json::from_value(serde_json::json!({
+                "tag_name": "v2026.11.0",
+                "assets": [
+                    { "name": name, "browser_download_url": format!("{server}/pkg"), "size": package.len() },
+                    { "name": "SHA256SUMS.txt", "browser_download_url": format!("{sums}/SHA256SUMS.txt") },
+                ],
+            }))
+            .unwrap();
+            let asset = release.assets[0].clone();
+            let (progress, heard) = futures::channel::mpsc::unbounded();
+            let result = block_on(download(release, asset, folder.clone(), progress));
+            (
+                result,
+                futures::executor::block_on_stream(heard).collect::<Vec<_>>(),
+            )
+        };
+        let part = folder.join(format!("{name}.part"));
+
+        // What an earlier start received, its first third, is asked for no more.
+        std::fs::write(&part, &package[..100_000]).unwrap();
+        let (server, asked) = flaky(package.clone(), 0, true);
+        let (file, heard) = attempt(&server);
+        assert_eq!(std::fs::read(file.unwrap()).unwrap(), package);
+        assert_eq!(*asked.lock().unwrap(), vec![Some(100_000)]);
+        assert!(!part.exists());
+        assert_eq!(heard.last(), Some(&(300_000, 300_000)));
+
+        // The checked package is used again without fetching it.
+        let (server, asked) = flaky(package.clone(), 0, true);
+        let (file, heard) = attempt(&server);
+        assert_eq!(std::fs::read(file.unwrap()).unwrap(), package);
+        assert!(asked.lock().unwrap().is_empty());
+        assert_eq!(heard, vec![(300_000, 300_000)]);
+
+        // A kept package or part that is not this one's is fetched again, whole.
+        std::fs::write(folder.join(&name), b"something else").unwrap();
+        std::fs::write(&part, vec![7u8; 50_000]).unwrap();
+        let (server, asked) = flaky(package.clone(), 0, true);
+        let (file, _) = attempt(&server);
+        assert_eq!(std::fs::read(file.unwrap()).unwrap(), package);
+        assert_eq!(*asked.lock().unwrap(), vec![Some(50_000), None]);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// A download reports a step at a time, not once for every chunk the server sends.
+    #[test]
+    fn progress_is_reported_a_step_at_a_time() {
+        let folder = scratch("progress");
+        let package = vec![1u8; 5 * super::PROGRESS_STEP as usize + 123];
+        let url = feed("2026.11.0", &package, |digest, name| {
+            format!("{digest}  {name}\n")
+        });
+        let heard = block_on(async move {
+            let release: Release = latest(url).await.unwrap();
+            let asset = release.assets[0].clone();
+            let (progress, heard) = futures::channel::mpsc::unbounded();
+            download(release, asset, folder.join("pkg"), progress)
+                .await
+                .unwrap();
+            let _ = std::fs::remove_dir_all(&folder);
+            futures::executor::block_on_stream(heard).collect::<Vec<_>>()
+        });
+        let total = package.len() as u64;
+        assert!(heard.len() <= 6, "{} reports", heard.len());
+        assert_eq!(heard.last(), Some(&(total, total)));
+    }
+
+    /// Only the version being downloaded is kept, never one another KChess is downloading.
+    #[test]
+    fn old_kept_downloads_are_removed() {
+        let _processes = processes();
+        let root = scratch("prune");
+        let kept = |version: &str| super::kept_folder(&root, version);
+        for version in ["2026.10.1", "2026.11.0", "2026.12.0", "junk"] {
+            std::fs::create_dir_all(kept(version)).unwrap();
+        }
+        let busy = std::fs::File::create(kept("2026.10.1").join(".lock")).unwrap();
+        busy.lock().unwrap();
+        let current = parse_version("2026.11.0");
+        super::prune_kept(&root, |version| version.is_none() || version <= current);
+        assert!(kept("2026.10.1").exists(), "still being downloaded");
+        assert!(!kept("2026.11.0").exists() && !kept("junk").exists());
+        assert!(kept("2026.12.0").exists());
+        drop(busy);
+
+        // A running app's start never clears the kept downloads.
+        super::clear_stopped(&root);
+        assert!(kept("2026.12.0").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_partial_answer_says_where_it_starts() {
         use super::content_range;
@@ -2371,6 +2754,14 @@ mod tests {
     }
 
     async fn check_and_download(feed: String, folder: PathBuf) -> Result<PathBuf, String> {
+        check_and_download_signed(feed, folder, None).await
+    }
+
+    async fn check_and_download_signed(
+        feed: String,
+        folder: PathBuf,
+        key: Option<Vec<u8>>,
+    ) -> Result<PathBuf, String> {
         let release: Release = latest(feed).await?;
         let version =
             offer(&release, "2026.10.12", Some(Package::AppImage)).ok_or("no update offered")?;
@@ -2382,7 +2773,104 @@ mod tests {
             .cloned()
             .unwrap();
         let (progress, _heard) = futures::channel::mpsc::unbounded();
-        download(release, asset, folder, progress).await
+        super::download_signed(release, asset, folder, progress, key).await
+    }
+
+    fn key_pair() -> ring::signature::Ed25519KeyPair {
+        let random = ring::rand::SystemRandom::new();
+        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&random).unwrap();
+        ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap()
+    }
+
+    fn base64(bytes: &[u8]) -> String {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    /// A release whose packages and checksums were both replaced (anyone who can change release
+    /// assets can rewrite SHA256SUMS.txt) is refused: the checksums must carry the release
+    /// key's signature.
+    #[test]
+    fn an_update_needs_checksums_signed_by_the_release_key() {
+        use ring::signature::KeyPair as _;
+        let folder = scratch("signed");
+        let package = b"the new KChess".to_vec();
+        let release_key = key_pair();
+        let public = release_key.public_key().as_ref().to_vec();
+        let sums = |digest: &str, name: &str| format!("{digest}  {name}\n");
+
+        let url = feed_signed("2026.11.0", &package, sums, |sums| {
+            Some(base64(release_key.sign(sums).as_ref()))
+        });
+        let file = block_on(check_and_download_signed(
+            url,
+            folder.join("ok"),
+            Some(public.clone()),
+        ))
+        .unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), package);
+
+        let url = feed("2026.11.0", &package, sums);
+        assert_eq!(
+            block_on(check_and_download_signed(
+                url,
+                folder.join("unsigned"),
+                Some(public.clone())
+            )),
+            Err("The release's checksums are not signed".into())
+        );
+
+        let other_key = key_pair();
+        let url = feed_signed("2026.11.0", &package, sums, |sums| {
+            Some(base64(other_key.sign(sums).as_ref()))
+        });
+        assert_eq!(
+            block_on(check_and_download_signed(
+                url,
+                folder.join("forged"),
+                Some(public.clone())
+            )),
+            Err("The release's checksums are not signed by KChess".into())
+        );
+        assert!(!folder.join("forged").exists(), "nothing downloaded");
+
+        let url = feed_signed("2026.11.0", &package, sums, |_| Some("not base64!".into()));
+        assert_eq!(
+            block_on(check_and_download_signed(
+                url,
+                folder.join("garbled"),
+                Some(public)
+            )),
+            Err("The release's checksum signature could not be read".into())
+        );
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn the_release_key_file_holds_one_key_or_none() {
+        use super::parse_update_key;
+        assert_eq!(parse_update_key("# only comments\n\n"), None);
+        let key = base64(&[7u8; 32]);
+        assert_eq!(
+            parse_update_key(&format!("# comment\n{key}\n")),
+            Some(vec![7u8; 32])
+        );
+        assert_eq!(parse_update_key(&base64(&[7u8; 31])), None, "wrong length");
+        // The committed file is either empty of keys or holds a valid one.
+        let committed = include_str!("../update-key.pub");
+        let has_key_line = committed
+            .lines()
+            .any(|line| !line.trim().is_empty() && !line.trim().starts_with('#'));
+        assert_eq!(super::update_key().is_some(), has_key_line);
+    }
+
+    #[test]
+    fn a_developer_id_update_must_be_signed_through_apple() {
+        assert_eq!(
+            super::developer_requirement("com.kchess.app", "TEAM123"),
+            "=anchor apple generic and identifier \"com.kchess.app\" \
+             and certificate leaf[subject.OU] = \"TEAM123\""
+        );
     }
 
     #[test]
@@ -2404,7 +2892,13 @@ mod tests {
             refused,
             Err("The downloaded update did not match its checksum".into())
         );
-        assert!(!folder.join("bad").exists());
+        let left: Vec<_> = std::fs::read_dir(folder.join("bad"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name != ".lock")
+            .collect();
+        assert!(left.is_empty(), "nothing of it is kept: {left:?}");
 
         let url = feed("2026.11.0", &package, |_, _| "abc  other.zip\n".into());
         assert_eq!(

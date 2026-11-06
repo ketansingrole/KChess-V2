@@ -10,6 +10,9 @@ publish.workspace = true
 kchess-domain = { path = "../kchess-domain" }
 serde.workspace = true
 serde_json.workspace = true
+# Diagnostics redaction (`redact.rs`); both already in Cargo.lock through the app.
+regex = "1"
+dirs = "7"
 rusqlite = { version = "0.41", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "process", "net"] }
 # `gzip`: API answers (JSON, NDJSON, PGN) arrive compressed; byte-exact downloads and live
@@ -55,6 +58,11 @@ tokio-util = { version = "0.7", features = ["rt"] }
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs", "process"] }
 libc = "0.2"
+
+[features]
+# Set by `cargo xtask package` for every shipped build: the development overrides (test switch,
+# engine and helper paths, update feed) are ignored (`dev_overrides` in lib.rs).
+packaged = []
 
 [dev-dependencies]
 # Random legal games for the compression benchmark (`examples/http_compression.rs`).

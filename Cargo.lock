@@ -4293,6 +4293,7 @@ dependencies = [
  "aes-gcm",
  "base64 0.23.1",
  "bytes",
+ "dirs 7.0.0",
  "flate2",
  "futures-util",
  "getrandom 0.4.3",
@@ -4301,6 +4302,7 @@ dependencies = [
  "kchess-electron-legacy",
  "keyring",
  "libc",
+ "regex",
  "reqwest",
  "rusqlite",
  "rustix",
@@ -4393,9 +4395,9 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-av-foundation",
  "objc2-foundation 0.3.2",
- "regex",
  "reqwest",
  "resvg 0.49.0",
+ "ring",
  "rodio",
  "rust-embed",
  "serde",
@@ -4404,6 +4406,7 @@ dependencies = [
  "shakmaty",
  "tempfile",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4418,6 +4421,7 @@ dependencies = [
  "sha2 0.11.1",
  "tempfile",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9910,6 +9914,7 @@ dependencies = [
  "base64 0.23.1",
  "flate2",
  "image",
+ "ring",
  "serde_json",
  "sha2 0.11.1",
  "tar",

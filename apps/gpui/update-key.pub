@@ -1,0 +1,5 @@
+# The public half of the Ed25519 key that signs every release's SHA256SUMS.txt
+# (SHA256SUMS.txt.sig). The app refuses an update whose checksums it does not sign.
+# `cargo xtask update-key <secret file>` makes the pair and writes the public key below;
+# the secret goes to the `release` environment's KCHESS_UPDATE_SIGNING_KEY. A tag build
+# refuses to release until this file holds a key (`cargo xtask release-verify`).

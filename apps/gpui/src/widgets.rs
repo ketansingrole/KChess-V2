@@ -143,6 +143,18 @@ pub fn tabular() -> FontFeatures {
     FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]))
 }
 
+/// A large ticking time at `size` (the chess clock's faces, Puzzle Rush, a timed practice run):
+/// tabular figures, so the numbers hold still as they tick instead of shifting with each digit's
+/// width.
+pub fn timer(text: impl Into<SharedString>, size: Pixels) -> Div {
+    div()
+        .text_size(size)
+        .font_weight(FontWeight::MEDIUM)
+        .line_height(relative(1.))
+        .font_features(tabular())
+        .child(text.into())
+}
+
 /// Which side a player plays, shown as a dot on their avatar.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Side {
@@ -211,6 +223,55 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
                         }),
                 ),
         )
+}
+
+/// How a dialog appears: at once when a key opened it (a shortcut, Enter on a focused button, a
+/// command from the palette), as a command repeated many times a day should; after a click, a
+/// fade settling from just above its place (the theme's 180 ms ease-out). The kit's default
+/// slides the dialog down from the window's top edge, a long way for something opened this often.
+pub fn dialog_entrance(window: &Window) -> gpui_kit::component::dialog::DialogEntrance {
+    use gpui_kit::component::dialog::DialogEntrance;
+    if window.last_input_was_keyboard() {
+        DialogEntrance::None
+    } else {
+        DialogEntrance::FadeSlide
+    }
+}
+
+/// `open_dialog`, entering as `dialog_entrance` says for the input that opened it.
+pub fn open_dialog(
+    window: &mut Window,
+    cx: &mut App,
+    build: impl Fn(
+        gpui_kit::component::dialog::Dialog,
+        &mut Window,
+        &mut App,
+    ) -> gpui_kit::component::dialog::Dialog
+    + 'static,
+) {
+    use gpui_kit::component::WindowExt as _;
+    let entrance = dialog_entrance(window);
+    window.open_dialog(cx, move |dialog, window, cx| {
+        build(dialog.entrance(entrance), window, cx)
+    });
+}
+
+/// `open_alert_dialog`, entering as `dialog_entrance` says for the input that opened it.
+pub fn open_alert_dialog(
+    window: &mut Window,
+    cx: &mut App,
+    build: impl Fn(
+        gpui_kit::component::dialog::AlertDialog,
+        &mut Window,
+        &mut App,
+    ) -> gpui_kit::component::dialog::AlertDialog
+    + 'static,
+) {
+    use gpui_kit::component::WindowExt as _;
+    let entrance = dialog_entrance(window);
+    window.open_alert_dialog(cx, move |dialog, window, cx| {
+        build(dialog.entrance(entrance), window, cx)
+    });
 }
 
 /// Something under way: the loader turning, at `size`, in the text's color unless given one.
@@ -1646,6 +1707,40 @@ mod tests {
         assert_eq!(
             format_counted(2048., "request", "requests"),
             "2,048 requests"
+        );
+    }
+
+    /// The large ticking times (the chess clock's faces, Puzzle Rush, timed practice runs) used
+    /// proportional figures, so their digits shifted sideways on every tick; all draw through
+    /// `timer`.
+    #[test]
+    fn large_ticking_times_hold_still() {
+        use gpui_kit::Styled as _;
+        let mut timer = super::timer("0:09.4", gpui_kit::px(32.));
+        assert_eq!(
+            timer.style().text.font_features,
+            Some(super::tabular()),
+            "tabular figures"
+        );
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pages");
+        for page in ["puzzles/rush.rs", "practice/run.rs", "local.rs"] {
+            let text = std::fs::read_to_string(src.join(page)).expect("the page's source");
+            assert!(
+                text.contains("widgets::timer("),
+                "{page} draws its clock as a timer"
+            );
+        }
+        // The title bar's "Updating N%" is anchored on the right, so a proportional figure
+        // moved the button's left edge with every percent.
+        // A Windows checkout may end its lines in CRLF.
+        let shell = std::fs::read_to_string(src.join("../shell.rs"))
+            .expect("the shell's source")
+            .replace("\r\n", "\n");
+        let button = &shell[shell.find("fn update_button").expect("the update button")..];
+        assert!(
+            button[..button.find("\n}\n").expect("its end")]
+                .contains(".font_features(crate::widgets::tabular())"),
+            "the update button's percentage holds still"
         );
     }
 
