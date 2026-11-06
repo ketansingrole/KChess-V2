@@ -12,7 +12,9 @@ serde.workspace = true
 serde_json.workspace = true
 rusqlite = { version = "0.41", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "process", "net"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "http2"] }
+# `gzip`: API answers (JSON, NDJSON, PGN) arrive compressed; byte-exact downloads and live
+# streams opt out (`no_gzip`, `policy::is_live_stream`).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "http2", "gzip"] }
 futures-util = "0.3"
 # Pure-Rust zstd decoder for the puzzle database (no C library to build).
 ruzstd = "0.9"

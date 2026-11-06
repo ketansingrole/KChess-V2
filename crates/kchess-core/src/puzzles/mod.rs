@@ -421,7 +421,7 @@ impl PuzzleService {
         let cancelled = || CoreError::aborted("Cancelled");
         let cancel = download.cancel.clone();
         let response = tokio::select! {
-            response = reqwest::get(url) => response.map_err(|e| CoreError::new(fetch_failed(&e))),
+            response = download_client().get(url).send() => response.map_err(|e| CoreError::new(fetch_failed(&e))),
             _ = cancel.cancelled() => Err(cancelled()),
         }?;
         self.inner.usage(1, 0);
@@ -504,6 +504,16 @@ impl PuzzleService {
         progress.report(Phase::Done, kept, true);
         Ok(())
     }
+}
+
+/// The puzzle download's client: the file is already Zstandard, so it is fetched as published
+/// (no gzip on top), and the progress total is its own length.
+fn download_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent(crate::USER_AGENT)
+        .no_gzip()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
 }
 
 /// `fetch` failures as Node words them are not reproducible; keep reqwest's text short.

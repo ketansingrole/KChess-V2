@@ -232,6 +232,15 @@ pub fn is_stream(url: &str, content_type: Option<&str>) -> bool {
     false
 }
 
+/// Whether `url` is a live stream (events, games, seeks, TV feeds), whose lines must arrive the
+/// moment Lichess writes them: such requests ask for an uncompressed body, so no compressor on
+/// the way buffers a move. Bulk exports stream too but are read whole, and stay compressed.
+pub fn is_live_stream(url: &str) -> bool {
+    is_stream(url, None)
+        && !url.contains("/api/games/user")
+        && !url.contains("/api/puzzle/activity")
+}
+
 /// Whether `url` is an interactive game request (move, resign, abort, takeback, draw, claim,
 /// berserk) that goes before background reads.
 pub fn is_foreground(url: &str) -> bool {
@@ -454,7 +463,7 @@ impl Policy {
 
     async fn admitted(
         self: &Arc<Self>,
-        request: reqwest::Request,
+        mut request: reqwest::Request,
         url: &str,
         cancel: &CancellationToken,
     ) -> Result<reqwest::Response> {
@@ -469,6 +478,12 @@ impl Policy {
                     _ = cancel.cancelled() => return Err(aborted()),
                 }
             }
+        }
+        if is_live_stream(url) {
+            request.headers_mut().insert(
+                reqwest::header::ACCEPT_ENCODING,
+                reqwest::header::HeaderValue::from_static("identity"),
+            );
         }
         let fut = self.http.execute(request);
         // The deadline covers the headers; `read_body` extends it to the body of a non-stream.
@@ -643,6 +658,16 @@ mod tests {
         assert!(is_stream("https://lichess.org/api/stream/event", None));
         assert!(is_stream("https://lichess.org/api/tv/rapid/feed", None));
         assert!(!is_stream("https://lichess.org/api/tv/feed", None));
+        assert!(is_live_stream("https://lichess.org/api/stream/event"));
+        assert!(is_live_stream(
+            "https://lichess.org/api/board/game/stream/abcd1234"
+        ));
+        assert!(is_live_stream("https://lichess.org/api/tv/rapid/feed"));
+        assert!(!is_live_stream(
+            "https://lichess.org/api/games/user/someone?max=50"
+        ));
+        assert!(!is_live_stream("https://lichess.org/api/puzzle/activity"));
+        assert!(!is_live_stream("https://lichess.org/api/account"));
         assert!(is_stream(
             "https://lichess.org/api/account",
             Some("application/x-ndjson")

@@ -210,6 +210,8 @@ impl VoiceModelCache {
     ) -> VoiceModelCache {
         let client = reqwest::Client::builder()
             .user_agent(crate::USER_AGENT)
+            // Byte-exact: the archive check and the progress total are of the file as published.
+            .no_gzip()
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         VoiceModelCache {

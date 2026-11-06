@@ -320,6 +320,8 @@ async fn install(host: &dyn Host, location: &ManagedLocation) -> Result<InstallR
     let mut cancel = location.cancel.clone();
     let client = reqwest::Client::builder()
         .user_agent(crate::USER_AGENT)
+        // Byte-exact: the digest and the progress total are of the file as published.
+        .no_gzip()
         .build()
         .map_err(|_| CoreError::new("Could not start the Stockfish download."))?;
 
