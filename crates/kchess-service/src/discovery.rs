@@ -190,7 +190,7 @@ pub fn same_token(given: &str, expected: &str) -> bool {
 /// any app and any profile (`docs/shared-core.md`, "Where the service runs from").
 pub fn runtime_dir() -> Option<PathBuf> {
     // Tests and development builds keep their copies elsewhere.
-    if let Some(dir) = std::env::var_os("KCHESS_RUNTIME_DIR") {
+    if let Some(dir) = kchess_core::env::var_os("KCHESS_RUNTIME_DIR") {
         return Some(PathBuf::from(dir).join("core"));
     }
     #[cfg(target_os = "macos")]

@@ -641,37 +641,35 @@ impl Drop for Harness {
     }
 }
 
-/// The process-wide switches every test shares: the same values for all, set once.
-#[allow(unsafe_code)]
+/// The process-wide switches every test shares: the same values for all, set once
+/// (`kchess_core::env`, which the app and its embedded core read in place of the environment).
 fn environment() {
+    use kchess_core::env::set;
     static SET: OnceLock<()> = OnceLock::new();
     SET.get_or_init(|| {
         let engine = engine();
         let lichess = std::env::var("KCHESS_E2E_LICHESS").unwrap_or_else(|_| fake_lichess::base());
-        // SAFETY: set once, before any test's core starts reading the environment.
-        unsafe {
-            std::env::set_var("KCHESS_CORE_MODE", "embedded");
-            std::env::set_var("KCHESS_ENGINE_PATH", &engine);
-            // Never a Fairy-Stockfish this checkout built: the scripted engine stands in for it.
-            std::env::set_var("KCHESS_VARIANT_ENGINE_PATH", &engine);
-            std::env::set_var("KCHESS_FAKE_UCI_MODE", "search");
-            // The core's test switch: credentials in a key file in the profile, never the OS
-            // credential store, and the test Lichess origin below honoured.
-            std::env::set_var("KCHESS_STORE_DEBUG", "1");
-            // Online features fail fast and offline, unless the test signed in.
-            std::env::set_var("KCHESS_TEST_LICHESS_BASE", lichess);
-            // Chess.com is a stand-in too: `e2e…` players exist, nobody else does.
-            std::env::set_var("KCHESS_TEST_CHESSCOM_BASE", fake_chesscom::base());
-            // A voice model that cannot be had: never the real download, and voice fails at once.
-            std::env::set_var("KCHESS_TEST_VOICE_ARCHIVE", "/nonexistent/voice-model.zip");
-            std::env::set_var("KCHESS_TEST_VOICE_NAME", "no-model");
-            std::env::set_var("KCHESS_TEST_VOICE_SHA256", "0");
-        }
+        set("KCHESS_CORE_MODE", "embedded");
+        // The scripted engine in its `search` mode, which a copy's name chooses.
+        set("KCHESS_ENGINE_PATH", &engine);
+        // Never a Fairy-Stockfish this checkout built: the scripted engine stands in for it.
+        set("KCHESS_VARIANT_ENGINE_PATH", &engine);
+        // The core's test switch: credentials in a key file in the profile, never the OS
+        // credential store, and the test Lichess origin below honoured.
+        set("KCHESS_STORE_DEBUG", "1");
+        // Online features fail fast and offline, unless the test signed in.
+        set("KCHESS_TEST_LICHESS_BASE", lichess);
+        // Chess.com is a stand-in too: `e2e…` players exist, nobody else does.
+        set("KCHESS_TEST_CHESSCOM_BASE", fake_chesscom::base());
+        // A voice model that cannot be had: never the real download, and voice fails at once.
+        set("KCHESS_TEST_VOICE_ARCHIVE", "/nonexistent/voice-model.zip");
+        set("KCHESS_TEST_VOICE_NAME", "no-model");
+        set("KCHESS_TEST_VOICE_SHA256", "0");
     });
 }
 
-/// `kchess-fake-uci`, built if this checkout has not built it yet; `environment` starts it in
-/// its `search` mode.
+/// The scripted engine (`kchess-fake-uci`, built when missing), as the copy `engine-search`
+/// beside it, which the engine reads its mode from.
 fn engine() -> PathBuf {
     let target = std::env::current_exe()
         .ok()
@@ -696,5 +694,22 @@ fn engine() -> PathBuf {
         let status = build.status().expect("cargo runs");
         assert!(status.success(), "the scripted engine builds");
     }
-    fake
+    let copy = target.join(format!("engine-search{}", std::env::consts::EXE_SUFFIX));
+    let same = |a: &Path, b: &Path| {
+        std::fs::read(a)
+            .ok()
+            .zip(std::fs::read(b).ok())
+            .is_some_and(|(a, b)| a == b)
+    };
+    if !same(&fake, &copy) {
+        // Under another name first, so a test binary starting at the same time never runs half a copy.
+        let partial = target.join(format!(
+            "engine-search-{}{}",
+            std::process::id(),
+            std::env::consts::EXE_SUFFIX
+        ));
+        std::fs::copy(&fake, &partial).expect("copy the scripted engine");
+        std::fs::rename(&partial, &copy).expect("name the scripted engine's copy");
+    }
+    copy
 }

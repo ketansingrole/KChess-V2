@@ -2,8 +2,6 @@
 //! `Core::call` and `Core::call_sync` with a recording host and scripted engines. Covers the
 //! battery reading (never waiting on the host), the managed engine handoff, the exact event
 //! payloads, the busy state of automatic reviews, and closing the core.
-// Tests set process environment (`std::env::set_var`), which is unsafe in edition 2024.
-#![allow(unsafe_code)]
 
 mod support;
 
@@ -73,10 +71,7 @@ async fn until<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> T {
 /// `managedEngine.*` directories, need it). Every test starts here, so all of them see the same
 /// switch whatever order they run in, and it is set once, before any test opens a core.
 fn profile() -> tempfile::TempDir {
-    static SWITCH: std::sync::Once = std::sync::Once::new();
-    // SAFETY: the first test to get here sets it while the others wait on `SWITCH`, and every
-    // test calls this before it opens a core or starts a thread that reads the environment.
-    SWITCH.call_once(|| unsafe { std::env::set_var("KCHESS_STORE_DEBUG", "1") });
+    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
     tempfile::tempdir().expect("temporary profile")
 }
 

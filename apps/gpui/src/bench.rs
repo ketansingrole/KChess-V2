@@ -506,22 +506,11 @@ impl Totals {
 
 /// This process's CPU time so far, user and system, across its threads.
 #[cfg(target_os = "macos")]
-#[expect(
-    unsafe_code,
-    reason = "getrusage has no safe wrapper in std; benchmark builds only"
-)]
 fn cpu_time() -> Option<Duration> {
-    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-    // SAFETY: `getrusage` fills the struct it is given.
-    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
-        return None;
-    }
-    // SAFETY: filled above.
-    let usage = unsafe { usage.assume_init() };
-    let time = |value: libc::timeval| {
-        Duration::from_secs(value.tv_sec as u64) + Duration::from_micros(value.tv_usec as u64)
-    };
-    Some(time(usage.ru_utime) + time(usage.ru_stime))
+    use nix::sys::time::TimeValLike as _;
+    let usage = nix::sys::resource::getrusage(nix::sys::resource::UsageWho::RUSAGE_SELF).ok()?;
+    let micros = usage.user_time().num_microseconds() + usage.system_time().num_microseconds();
+    Some(Duration::from_micros(u64::try_from(micros).ok()?))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -531,18 +520,9 @@ fn cpu_time() -> Option<Duration> {
 
 /// The process's peak resident memory (macOS reports bytes).
 #[cfg(target_os = "macos")]
-#[expect(
-    unsafe_code,
-    reason = "getrusage has no safe wrapper in std; benchmark builds only"
-)]
 fn max_rss_mib() -> Option<f64> {
-    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-    // SAFETY: `getrusage` fills the struct it is given.
-    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
-        return None;
-    }
-    // SAFETY: filled above.
-    Some(unsafe { usage.assume_init() }.ru_maxrss as f64 / (1024. * 1024.))
+    let usage = nix::sys::resource::getrusage(nix::sys::resource::UsageWho::RUSAGE_SELF).ok()?;
+    Some(usage.max_rss() as f64 / (1024. * 1024.))
 }
 
 #[cfg(not(target_os = "macos"))]

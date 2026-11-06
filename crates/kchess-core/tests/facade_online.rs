@@ -1,8 +1,6 @@
 //! The facade's online methods: arguments are checked before anything is sent, account-bound
 //! calls without a login ask to reconnect instead of reaching Lichess, and the player lookups
 //! reach Lichess as the facade normalised them.
-// Tests set process environment (`std::env::set_var`), which is unsafe in edition 2024.
-#![allow(unsafe_code)]
 #[path = "support/lichess_http.rs"]
 mod fixtures;
 
@@ -18,11 +16,8 @@ async fn online_methods_check_their_arguments_and_reach_lichess() {
         _ => Reply::Json(200, "{}".into()),
     })
     .await;
-    // SAFETY: this test binary has one test; the fixture origin is set before opening the core.
-    unsafe {
-        std::env::set_var("KCHESS_STORE_DEBUG", "1");
-        std::env::set_var("KCHESS_TEST_LICHESS_BASE", &fixture.base);
-    }
+    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
+    kchess_core::env::set("KCHESS_TEST_LICHESS_BASE", &fixture.base);
     let dir = tempfile::tempdir().unwrap();
     let core = Core::open(
         Config::new(dir.path().to_path_buf()),

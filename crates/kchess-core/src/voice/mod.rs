@@ -73,7 +73,7 @@ pub const TEST_SHA256_VAR: &str = "KCHESS_TEST_VOICE_SHA256";
 /// is in force. Without the test switch the override variables are ignored entirely.
 pub fn active_model() -> (Archive, VoiceModel) {
     active_model_with(crate::store::debug::enabled(), |name| {
-        std::env::var(name).ok().filter(|value| !value.is_empty())
+        crate::env::var(name).filter(|value| !value.is_empty())
     })
 }
 

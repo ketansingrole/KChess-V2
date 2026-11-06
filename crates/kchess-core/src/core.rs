@@ -160,8 +160,7 @@ fn test_lichess_origin() -> Option<String> {
     if !debug::enabled() {
         return None;
     }
-    std::env::var("KCHESS_TEST_LICHESS_BASE")
-        .ok()
+    crate::env::var("KCHESS_TEST_LICHESS_BASE")
         .map(|origin| origin.trim_end_matches('/').to_string())
         .filter(|origin| !origin.is_empty())
 }
@@ -171,8 +170,7 @@ fn test_chesscom_origin() -> Option<String> {
     if !debug::enabled() {
         return None;
     }
-    std::env::var("KCHESS_TEST_CHESSCOM_BASE")
-        .ok()
+    crate::env::var("KCHESS_TEST_CHESSCOM_BASE")
         .map(|origin| origin.trim_end_matches('/').to_string())
         .filter(|origin| !origin.is_empty())
 }
@@ -182,8 +180,7 @@ fn test_openai_origin() -> Option<String> {
     if !debug::enabled() {
         return None;
     }
-    std::env::var("KCHESS_TEST_OPENAI_BASE")
-        .ok()
+    crate::env::var("KCHESS_TEST_OPENAI_BASE")
         .map(|origin| origin.trim_end_matches('/').to_string())
         .filter(|origin| !origin.is_empty())
 }

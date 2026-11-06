@@ -67,9 +67,9 @@ pub const RECONNECTED: &str = "core:reconnected";
 /// How the app reaches its core: `KCHESS_CORE_MODE=service` or `embedded`; otherwise the shared
 /// service when its binary ships beside the app.
 fn use_service() -> bool {
-    match std::env::var("KCHESS_CORE_MODE").as_deref() {
-        Ok("service") => true,
-        Ok("embedded") => false,
+    match kchess_core::env::var("KCHESS_CORE_MODE").as_deref() {
+        Some("service") => true,
+        Some("embedded") => false,
         _ => service_binary().is_some_and(|binary| binary.exists()),
     }
 }
@@ -712,7 +712,7 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
 /// switch, as the Electron end-to-end suite runs it).
 fn test_lichess() -> bool {
     kchess_core::store::debug::enabled()
-        && std::env::var("KCHESS_TEST_LICHESS_BASE").is_ok_and(|base| !base.is_empty())
+        && kchess_core::env::var("KCHESS_TEST_LICHESS_BASE").is_some_and(|base| !base.is_empty())
 }
 
 /// Answer a `host:request` (`crates/kchess-core/src/capabilities.rs`). Tokens are sealed by the

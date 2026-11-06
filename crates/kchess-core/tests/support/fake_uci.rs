@@ -6,7 +6,9 @@
 //! - `no-readyok`: answers `uci` but never `isready`.
 //! - `stop-ack`: a handshake engine that acknowledges `stop` with `bestmove e2e4`.
 //! - `stop-ignore`: a handshake engine that ignores `stop`.
-//! - `ignore-term`: a handshake engine that ignores SIGTERM, so only SIGKILL stops it.
+//! - `ignore-term`: a handshake engine that ignores SIGTERM, so only SIGKILL stops it. It runs
+//!   itself again through `sh` after `trap '' TERM`: an ignored signal stays ignored across
+//!   `exec`, and the process (its PID and pipes) stays the same.
 //!
 //! Search modes script a search for the engine services:
 //! - `search`: `go infinite` streams scored `info` lines (up to `MultiPV` of them) until `stop`;
@@ -19,12 +21,10 @@
 //! - `stall`: a deep search (depth 18 and up) reports one scored line and then waits for `stop`;
 //!   shallower searches answer at once.
 //!
-//! With no arguments, `KCHESS_FAKE_UCI_MODE` names the mode (default `handshake`).
+//! With no arguments, the name of a copy names the mode (`engine-search`), else `handshake`.
 //!
 //! When a log path is given, every received line is appended to it before any reply, so a test
 //! that has read a reply knows the command was received.
-// Test scaffolding: the only unsafe left in this crate (`libc::signal` for `ignore-term`).
-#![allow(unsafe_code)]
 
 use std::fs::OpenOptions;
 use std::io::{BufRead, Write};
@@ -32,6 +32,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+/// Set in the `ignore-term` engine once it runs with SIGTERM ignored.
+#[cfg(unix)]
+const TERM_IGNORED: &str = "KCHESS_FAKE_UCI_TERM_IGNORED";
 
 /// How a `go` command runs.
 enum Kind {
@@ -188,8 +192,7 @@ fn lock(state: &Mutex<Search>) -> std::sync::MutexGuard<'_, Search> {
 fn main() {
     let mut args = std::env::args().skip(1);
     // Started as an app starts its engine, with no arguments, the mode comes from a copy's name
-    // (`engine-search`, `support::engine_copy`), or else `KCHESS_FAKE_UCI_MODE` (the GPUI app's
-    // end-to-end tests, `apps/gpui/src/e2e`).
+    // (`engine-search`, `support::engine_copy` and the GPUI app's end-to-end tests).
     let mode = args
         .next()
         .or_else(|| {
@@ -197,7 +200,6 @@ fn main() {
             let stem = exe.file_stem()?.to_str()?;
             Some(stem.strip_prefix("engine-")?.to_string())
         })
-        .or_else(|| std::env::var("KCHESS_FAKE_UCI_MODE").ok())
         .unwrap_or_else(|| "handshake".to_string());
     // `slow-review`: the review script, taking 20 ms per search so reviews overlap in tests.
     let slow = mode == "slow-review";
@@ -210,11 +212,18 @@ fn main() {
     });
 
     #[cfg(unix)]
-    if mode == "ignore-term" {
-        // SAFETY: installing SIG_IGN has no preconditions; the disposition is this process's own.
-        unsafe {
-            libc::signal(libc::SIGTERM, libc::SIG_IGN);
-        }
+    if mode == "ignore-term" && std::env::var_os(TERM_IGNORED).is_none() {
+        use std::os::unix::process::CommandExt as _;
+        let exe = std::env::current_exe().expect("the fake engine's path");
+        let mut again = std::process::Command::new("/bin/sh");
+        again
+            .args(["-c", "trap '' TERM; exec \"$0\" \"$@\""])
+            .arg(exe)
+            .arg(&mode)
+            .args(&log)
+            .env(TERM_IGNORED, "1");
+        // Only returns when it failed.
+        panic!("the fake engine could not run again: {}", again.exec());
     }
 
     let stdin = std::io::stdin();

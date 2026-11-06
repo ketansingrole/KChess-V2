@@ -396,6 +396,7 @@ fn launch(profile: &Path, start: &Start) -> Result<(), ConnectError> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    kchess_core::env::forward(&mut command);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

@@ -1,10 +1,8 @@
 //! Closing the core while a Lichess request waits on an origin that never answers: the request
 //! ends, `close` returns, and later calls fail with `The KChess core is closed.`.
 //!
-//! It sets the test Lichess origin in the process environment, so it is the only test in this
-//! binary: no other test can read the environment while it changes, or inherit the origin.
-// Tests set process environment (`std::env::set_var`), which is unsafe in edition 2024.
-#![allow(unsafe_code)]
+//! It sets the test Lichess origin for the whole process (`kchess_core::env`), so it is the only
+//! test in this binary: no other test can inherit the origin.
 
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -34,12 +32,8 @@ async fn closing_ends_a_lichess_request_in_flight() {
         "http://127.0.0.1:{}",
         silent.local_addr().expect("address").port()
     );
-    // SAFETY: the only test in this binary sets these before it opens a core or starts any
-    // other thread that reads the environment.
-    unsafe {
-        std::env::set_var("KCHESS_STORE_DEBUG", "1");
-        std::env::set_var("KCHESS_TEST_LICHESS_BASE", &origin);
-    }
+    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
+    kchess_core::env::set("KCHESS_TEST_LICHESS_BASE", &origin);
     let dir = tempfile::tempdir().expect("profile");
     let host: Arc<dyn Host> = Arc::new(Quiet);
     let core = Arc::new(

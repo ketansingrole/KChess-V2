@@ -1,8 +1,6 @@
 //! A ChatGPT plan from sign-in to an explanation, over a local fixture of OpenAI: the browser's
 //! trip back, sealed tokens, the model and effort sent, a reply outside the facts thrown away,
 //! the saved answer, a spent allowance, a live game, and disconnecting.
-// Tests set process environment (`std::env::set_var`), which is unsafe in edition 2024.
-#![allow(unsafe_code)]
 #[path = "support/lichess_http.rs"]
 mod fixtures;
 
@@ -106,11 +104,8 @@ async fn a_plan_connects_explains_and_disconnects() {
         .await
     };
     *origin.lock().unwrap() = fixture.base.clone();
-    // SAFETY: this test binary has one test; the fixture origin is set before opening the core.
-    unsafe {
-        std::env::set_var("KCHESS_STORE_DEBUG", "1");
-        std::env::set_var("KCHESS_TEST_OPENAI_BASE", &fixture.base);
-    }
+    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
+    kchess_core::env::set("KCHESS_TEST_OPENAI_BASE", &fixture.base);
     let dir = tempfile::tempdir().unwrap();
     // When set, the browser's trip back waits for this.
     let hold = Arc::new(Mutex::new(None::<tokio::sync::oneshot::Receiver<()>>));

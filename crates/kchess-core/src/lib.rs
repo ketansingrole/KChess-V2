@@ -28,7 +28,7 @@ pub fn dev_override(name: &str) -> Option<std::ffi::OsString> {
     if !dev_overrides() {
         return None;
     }
-    std::env::var_os(name).filter(|value| !value.is_empty())
+    env::var_os(name).filter(|value| !value.is_empty())
 }
 
 pub mod ai;
@@ -39,6 +39,7 @@ pub mod connection;
 pub mod core;
 pub mod download;
 pub mod engine;
+pub mod env;
 pub mod error;
 pub mod facade;
 pub mod host;

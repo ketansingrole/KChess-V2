@@ -1,8 +1,6 @@
 //! A plan that refuses the chosen effort, after the explanation's access renewed the tokens: the
 //! refusal is recorded without bringing back the refresh token the renewal used up, and only for
 //! the effort it refused.
-// Tests set process environment (`std::env::set_var`), which is unsafe in edition 2024.
-#![allow(unsafe_code)]
 #[path = "support/lichess_http.rs"]
 mod fixtures;
 
@@ -119,11 +117,8 @@ async fn a_refused_effort_keeps_the_renewed_tokens() {
         .await
     };
     *origin.lock().unwrap() = fixture.base.clone();
-    // SAFETY: this test binary has one test; the fixture origin is set before opening the core.
-    unsafe {
-        std::env::set_var("KCHESS_STORE_DEBUG", "1");
-        std::env::set_var("KCHESS_TEST_OPENAI_BASE", &fixture.base);
-    }
+    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
+    kchess_core::env::set("KCHESS_TEST_OPENAI_BASE", &fixture.base);
     let dir = tempfile::tempdir().unwrap();
     let host = Arc::new(Recording::default());
     *host.answers.lock().unwrap() = default_answers();

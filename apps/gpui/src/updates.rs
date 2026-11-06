@@ -1027,22 +1027,9 @@ fn replace_by(
 
 /// Swap the entries at `a` and `b` in one step (`renamex_np` with `RENAME_SWAP`).
 #[cfg(target_os = "macos")]
-#[expect(
-    unsafe_code,
-    reason = "renamex_np is the only atomic exchange of two paths on macOS"
-)]
 fn exchange(a: &Path, b: &Path) -> std::io::Result<()> {
-    use std::os::unix::ffi::OsStrExt as _;
-    let path = |path: &Path| {
-        std::ffi::CString::new(path.as_os_str().as_bytes())
-            .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))
-    };
-    let (a, b) = (path(a)?, path(b)?);
-    // SAFETY: both are valid NUL-terminated paths that outlive the call.
-    match unsafe { libc::renamex_np(a.as_ptr(), b.as_ptr(), libc::RENAME_SWAP) } {
-        0 => Ok(()),
-        _ => Err(std::io::Error::last_os_error()),
-    }
+    use rustix::fs::{CWD, RenameFlags, renameat_with};
+    renameat_with(CWD, a, CWD, b, RenameFlags::EXCHANGE).map_err(std::io::Error::from)
 }
 
 #[cfg(not(target_os = "macos"))]
