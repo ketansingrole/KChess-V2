@@ -1114,6 +1114,16 @@ mod fen_tests {
         }
     }
 
+    /// Only a piece that can have been promoted keeps its Crazyhouse `~` marker.
+    #[test]
+    fn only_promotable_pieces_keep_their_promoted_marker() {
+        let fen = "k~7/8/8/8/8/8/P~7/Q~6K~[] w - - 0 1";
+        let pos = setup_position(Variant::Crazyhouse, parse_fen(fen).unwrap()).unwrap();
+        assert_eq!(make_fen(&pos), "k7/8/8/8/8/8/P7/Q~6K[] w - - 0 1");
+        let pos = setup_position(Variant::Chess, parse_fen(fen).unwrap()).unwrap();
+        assert_eq!(make_fen(&pos), "k7/8/8/8/8/8/P7/Q6K w - - 0 1");
+    }
+
     /// A Crazyhouse pocket holds at most 64 pieces.
     #[test]
     fn a_pocket_holds_at_most_64_pieces() {
