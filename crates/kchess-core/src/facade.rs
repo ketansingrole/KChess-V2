@@ -168,6 +168,7 @@ pub const FACADE_METHODS: &[&str] = &[
     "recordRepertoireMiss",
     "clearRepertoireMisses",
     "restoreRepertoireMisses",
+    "reviewRepertoireLine",
     "viewPreferences",
     "setViewPreference",
     "customThemes",
@@ -340,9 +341,10 @@ pub fn changed_areas(method: &str) -> &'static [&'static str] {
         "addMistakes" | "answerMistake" => &["drills"],
         "saveSession" => &["sessions"],
         "joinTournament" | "leaveTournament" | "createTournament" => &["tournaments"],
-        "recordRepertoireMiss" | "clearRepertoireMisses" | "restoreRepertoireMisses" => {
-            &["repertoire"]
-        }
+        "recordRepertoireMiss"
+        | "clearRepertoireMisses"
+        | "restoreRepertoireMisses"
+        | "reviewRepertoireLine" => &["repertoire"],
         "syncGames" => &["lichessGames", "accounts"],
         "clearAccountData" => &["lichessGames", "accounts", "usage"],
         "addAccount" | "logout" | "logoutAll" | "removeAccount" | "connectLichess"
@@ -703,6 +705,7 @@ impl Core {
             | "recordRepertoireMiss"
             | "clearRepertoireMisses"
             | "restoreRepertoireMisses"
+            | "reviewRepertoireLine"
             | "viewPreferences"
             | "setViewPreference" => self.run_library(method, args).await,
             "usage"

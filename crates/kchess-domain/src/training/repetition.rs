@@ -85,7 +85,11 @@ impl Card {
     }
 
     fn decode(raw: &Value) -> Option<Card> {
-        let field = |name: &str| raw.get(name).and_then(Value::as_f64).filter(|n| n.is_finite());
+        let field = |name: &str| {
+            raw.get(name)
+                .and_then(Value::as_f64)
+                .filter(|n| n.is_finite())
+        };
         let whole = |name: &str| {
             field(name)
                 .filter(|n| *n >= 0.0 && n.fract() == 0.0)
@@ -202,9 +206,7 @@ pub fn record(
     if !schedule.contains_key(key) && schedule.len() >= MAX_KEYS {
         return Err("Too many repertoires are scheduled.".into());
     }
-    let table = schedule
-        .entry(key.to_string())
-        .or_insert_with(|| json!({}));
+    let table = schedule.entry(key.to_string()).or_insert_with(|| json!({}));
     if !table.is_object() {
         *table = json!({});
     }
@@ -274,7 +276,10 @@ mod tests {
     #[test]
     fn right_answers_space_a_line_out_and_a_wrong_one_brings_it_back() {
         let first = Card::review(None, true, NOW);
-        assert_eq!((first.reps, first.interval, first.ease), (1, 1.0, START_EASE));
+        assert_eq!(
+            (first.reps, first.interval, first.ease),
+            (1, 1.0, START_EASE)
+        );
         assert_eq!(first.due, NOW + DAY_MS);
         let second = Card::review(Some(&first), true, first.due);
         assert_eq!((second.reps, second.interval), (2, 6.0));
@@ -320,7 +325,10 @@ mod tests {
     fn lines_are_their_uci_moves() {
         assert!(valid_line("e2e4 e7e5 g1f3"));
         assert!(valid_line("e7e8q"));
-        assert!(valid_line(&format!("{}:e2e4", root_tag("8/8/8/8/8/8/8/K6k w - - 0 1"))));
+        assert!(valid_line(&format!(
+            "{}:e2e4",
+            root_tag("8/8/8/8/8/8/8/K6k w - - 0 1")
+        )));
         assert!(!valid_line(""));
         assert!(!valid_line("e2e4  e7e5"));
         assert!(!valid_line("e2e9"));
@@ -365,7 +373,10 @@ mod tests {
                 due: NOW + i as f64,
                 ..Card::review(None, true, NOW)
             };
-            table.insert(format!("{}{}", square(i % 64), square(i / 64)), card.to_value());
+            table.insert(
+                format!("{}{}", square(i % 64), square(i / 64)),
+                card.to_value(),
+            );
         }
         assert_eq!(table.len(), MAX_LINES);
         full.insert("k".into(), Value::Object(table));
@@ -397,7 +408,11 @@ mod tests {
         let lines = ["e2e4", "d2d4", "c2c4", "g1f3"];
         assert_eq!(
             summary(lines, table, NOW),
-            Summary { due: 2, new: 1, next_due: Some(NOW + DAY_MS) }
+            Summary {
+                due: 2,
+                new: 1,
+                next_due: Some(NOW + DAY_MS)
+            }
         );
         assert_eq!(most_overdue(&lines, table, NOW), Some(1));
         assert_eq!(most_overdue(&["c2c4", "g1f3"], table, NOW), None);

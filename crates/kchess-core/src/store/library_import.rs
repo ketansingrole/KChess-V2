@@ -13,8 +13,8 @@ use super::documents::{
 };
 use super::json_codec::{js_json, utf16_len};
 use super::library::{
-    GAMES, IMPORTED, JOINED, LEGACY_TARGETS, MISSES, MISTAKES, SESSION_KINDS, STUDIES, db_err,
-    misc, now_ms, transaction, truthy, write_game,
+    GAMES, IMPORTED, JOINED, LEGACY_TARGETS, MISSES, MISTAKES, SCHEDULE, SESSION_KINDS, STUDIES,
+    db_err, misc, now_ms, transaction, truthy, write_game,
 };
 use super::studies::id_of;
 use crate::error::{CoreError, Result};
@@ -105,6 +105,12 @@ pub(crate) fn read_misses(host: &dyn Host, db: &Connection) -> Result<Value> {
     misc("decodeRepertoireMisses", vec![raw])
 }
 
+/// The repertoire schedule's lines, `key` → line → card; none in a profile from before it.
+pub(crate) fn read_schedule_lines(host: &dyn Host, db: &Connection) -> Result<Map<String, Value>> {
+    let raw = read_document(host, db, SCHEDULE)?.unwrap_or(Value::Null);
+    Ok(kchess_domain::training::repetition::decode_schedule(&raw))
+}
+
 pub(crate) fn read_joined(host: &dyn Host, db: &Connection) -> Result<Vec<Value>> {
     let raw = read_document(host, db, JOINED)?.unwrap_or(Value::Null);
     match misc("decodeJoinedTournaments", vec![raw])? {
@@ -172,6 +178,7 @@ pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
         "sessions": Value::Object(sessions),
         "joinedTournaments": joined,
         "repertoireMisses": read_misses(host, db)?,
+        "repertoireSchedule": Value::Object(read_schedule_lines(host, db)?),
         "imported": read_document(host, db, IMPORTED)? == Some(Value::Bool(true)),
     });
     if let Some(error) = study_error {

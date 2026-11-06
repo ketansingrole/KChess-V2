@@ -901,6 +901,12 @@ fn practice_commands(cx: &App) -> Vec<Command> {
                 "rotate-ccw",
                 "new line again",
             ),
+            Action::Repertoire(RepertoireAction::Review) => (
+                "review-due",
+                "Review due lines",
+                "calendar-days",
+                "spaced repetition schedule",
+            ),
             Action::Repertoire(RepertoireAction::Forget) => {
                 ("forget", "Forget mistakes", "eraser", "clear misses")
             }

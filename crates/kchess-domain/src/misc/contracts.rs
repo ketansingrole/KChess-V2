@@ -388,6 +388,15 @@ const CORE: &[Row] = &[
         2,
         &[Valid("assertRepertoireKey"), Valid("assertSessionObject")],
     ),
+    (
+        "reviewRepertoireLine",
+        3,
+        &[
+            Valid("assertRepertoireKey"),
+            Valid("assertRepertoireLine"),
+            Valid("assertBoolean"),
+        ],
+    ),
     ("viewPreferences", 0, &[]),
     ("customThemes", 0, &[]),
     (
