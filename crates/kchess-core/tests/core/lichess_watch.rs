@@ -484,6 +484,11 @@ fn validates_watch_targets_and_broadcast_queries() {
     assert!(query(None).is_ok());
     assert_eq!(query(Some(json!(" Open "))).unwrap(), json!("Open"));
     assert!(query(Some(json!("x".repeat(101)))).is_err());
+    let session =
+        |value: Value| misc::call("assertWatchSession", &[sidecar.clone(), value]).unwrap();
+    assert_eq!(session(json!(3)).unwrap(), json!(3));
+    assert!(session(json!(0)).is_err());
+    assert!(session(json!("3")).is_err());
 }
 
 #[test]
@@ -718,6 +723,54 @@ async fn a_round_feed_is_sent_per_chunk_with_the_games_that_have_arrived() {
     assert_eq!(updates[1].games[0].white.name, "Gamma");
     assert_eq!(updates[1].games[0].black.name, "Delta");
     spectator.stop();
+}
+
+/// A page stops the round it was showing and opens another; the core handles the stop only after
+/// the new round began (CI, 2026-11-07: an empty broadcast grid). The stop names its session, so
+/// the new round keeps sending its games; stopping that one by its own session ends it.
+#[tokio::test]
+async fn a_stop_for_an_earlier_watch_leaves_the_newer_one_running() {
+    let (chunks_tx, chunks_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let mut chunks = Some(chunks_rx);
+    let fixture = serve(move |request| {
+        if request.path().contains("Round002")
+            && let Some(open) = chunks.take()
+        {
+            return Reply::Stream(open);
+        }
+        Reply::Hang
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let sink = Arc::new(Sink::default());
+    let spectator = Spectator::new(
+        service(&fixture.base, &host),
+        Arc::clone(&sink) as Arc<dyn WatchSink>,
+    );
+    let first = spectator.watch_round("Round001");
+    wait_until("the first round's connection", || {
+        !fixture.requests().is_empty()
+    })
+    .await;
+    let second = spectator.watch_round("Round002");
+    wait_until("both rounds' connections", || fixture.requests().len() >= 2).await;
+    spectator.stop_session(first);
+    chunks_tx
+        .send(format!("{PGN}\n\n\n"))
+        .expect("the feed is open");
+    wait_until("the newer round's game", || {
+        sink.broadcasts
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|update| update.session == second && update.games.len() == 1)
+    })
+    .await;
+    spectator.stop_session(second);
+    let sent = sink.broadcasts.lock().unwrap().len();
+    let _ = chunks_tx.send(format!("{PGN}\n\n\n"));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(sink.broadcasts.lock().unwrap().len(), sent);
 }
 
 #[test]

@@ -737,7 +737,8 @@ impl Services {
                 Ok(Value::Null)
             }
             "spectate.stop" => {
-                self.spectator.stop_mine();
+                self.spectator
+                    .stop_mine(args.first().and_then(Value::as_u64));
                 Ok(Value::Null)
             }
             "spectate.broadcastGame" => match text(args, 0) {

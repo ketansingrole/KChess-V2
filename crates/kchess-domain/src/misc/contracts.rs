@@ -271,7 +271,7 @@ const CORE: &[Row] = &[
     ),
     ("bookmarkedGames", 1, &[Valid("assertUsername")]),
     ("tvChannels", 0, &[]),
-    ("stopWatching", 0, &[]),
+    ("stopWatching", 0, &[Optional("assertWatchSession")]),
     ("watch", 1, &[WatchTarget]),
     ("watchBroadcast", 1, &[Valid("assertLichessId")]),
     ("broadcasts", 0, &[Valid("assertBroadcastQuery")]),

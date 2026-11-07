@@ -28,7 +28,11 @@ impl Core {
                 self.inner("spectate.watchRound", vec![round]).await
             }
             "stopWatching" => {
-                self.services.spectator().stop_mine();
+                let session = match args.first() {
+                    None | Some(Value::Null) => None,
+                    Some(value) => normal("assertWatchSession", value)?.as_u64(),
+                };
+                self.services.spectator().stop_mine(session);
                 Ok(Value::Null)
             }
             "broadcasts" => {
