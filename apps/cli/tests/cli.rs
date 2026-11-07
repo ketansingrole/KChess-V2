@@ -450,3 +450,141 @@ fn a_computer_game_names_its_players() {
     assert!(white.contains("[Black \"Stockfish\"]"), "{white}");
     let _ = std::fs::remove_dir_all(engine.parent().expect("engine folder"));
 }
+
+/// `play` against the scripted engine: it moves first for Black, a takeback and a resignation
+/// are carried out, `new` starts again, and the game in progress is resumed next time, where it
+/// keeps its colour.
+#[cfg(unix)]
+#[test]
+fn a_computer_game_is_played_saved_and_resumed() {
+    let engine = scripted_engine();
+    let profile = tempfile::tempdir().expect("profile");
+    let play = |args: &[&str], input: &str| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+            .args(["--embedded", "--no-credentials", "--data-dir"])
+            .arg(profile.path())
+            .arg("--engine")
+            .arg(&engine)
+            .args(args)
+            .env("KCHESS_USER_DATA_DIR", profile.path())
+            .env_remove("KCHESS_SERVICE_BINARY")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("kchess-cli starts");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(input.as_bytes())
+            .expect("input");
+        let output = child.wait_with_output().expect("kchess-cli finishes");
+        let states: Vec<Value> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+        (output, states)
+    };
+    let (played, states) = play(
+        &["play", "black"],
+        "e7e5\nundo\nresign\nstatus\nnew\nquit\n",
+    );
+    assert!(played.status.success(), "{played:?}");
+    let moves: Vec<Value> = states.iter().map(|state| state["moves"].clone()).collect();
+    assert_eq!(
+        moves,
+        [
+            json!([]),
+            json!(["e2e4", "e7e5"]),
+            // Undo takes back the player's move.
+            json!(["e2e4"]),
+            json!(["e2e4"]),
+            json!(["e2e4"]),
+            // A new game, where the engine opens again.
+            json!(["e2e4"]),
+        ]
+    );
+    assert_eq!(states[3]["result"]["detail"], "You resigned");
+    assert_eq!(states[4]["result"], states[3]["result"]);
+    assert!(states[5]["result"].is_null());
+    let stdout = String::from_utf8_lossy(&played.stdout);
+    assert_eq!(stdout.matches("Stockfish: e4").count(), 2, "{stdout}");
+
+    // Resumed with its move; Black's reply is the only new move.
+    let (resumed, states) = play(&["play"], "e7e5\nquit\n");
+    assert!(resumed.status.success(), "{resumed:?}");
+    assert_eq!(states[0]["moves"], json!(["e2e4"]));
+    assert_eq!(states[1]["moves"], json!(["e2e4", "e7e5"]));
+
+    // The game in progress keeps its colour, and an unknown level is refused.
+    for (args, message) in [
+        (
+            vec!["play", "white"],
+            "A game is in progress: finish it, or type new, before choosing a colour.",
+        ),
+        (vec!["play", "99"], "Unknown level 99."),
+    ] {
+        let (refused, _) = play(&args, "quit\n");
+        assert!(!refused.status.success(), "{args:?}");
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(stderr.contains(message), "{args:?}: {stderr}");
+    }
+    // The same colour carries on with the game.
+    let (kept, states) = play(&["play", "black"], "quit\n");
+    assert!(kept.status.success(), "{kept:?}");
+    assert_eq!(states[0]["moves"], json!(["e2e4", "e7e5"]));
+    let _ = std::fs::remove_dir_all(engine.parent().expect("engine folder"));
+}
+
+/// A board game's variant and start position are chosen only between games, and a resignation
+/// on White's move is Black's win.
+#[test]
+fn a_board_game_chooses_its_variant_and_position_between_games() {
+    let profile = tempfile::tempdir().expect("profile");
+    let local = |args: &[&str], input: &str| {
+        let mut command = vec!["local"];
+        command.extend_from_slice(args);
+        let output = cli(profile.path(), &command, input);
+        let states = lines(&output);
+        (output, states)
+    };
+    let (resigned, states) = local(&[], "resign\npgn\nquit\n");
+    assert!(resigned.status.success(), "{resigned:?}");
+    assert_eq!(states[1]["result"]["winner"], "black");
+    let pgn = states[2]["pgn"].as_str().expect("the PGN");
+    assert!(pgn.contains("[Result \"0-1\"]"), "{pgn}");
+
+    // Over: a new game in the variant asked for.
+    let (crazyhouse, states) = local(&["crazyhouse"], "e2e4\nquit\n");
+    assert!(crazyhouse.status.success(), "{crazyhouse:?}");
+    assert!(
+        states[0]["fen"].as_str().expect("fen").contains("[]"),
+        "{states:?}"
+    );
+    assert_eq!(states[1]["moves"], json!(["e2e4"]));
+
+    // In progress: the same variant carries on; another, or a position, is refused.
+    let (kept, states) = local(&["crazyhouse"], "quit\n");
+    assert!(kept.status.success(), "{kept:?}");
+    assert_eq!(states[0]["moves"], json!(["e2e4"]));
+    let rook = "4k3/8/8/8/8/8/8/4K2R w K - 0 1";
+    for args in [vec!["atomic"], vec!["--fen", rook]] {
+        let (refused, _) = local(&args, "quit\n");
+        assert!(!refused.status.success(), "{args:?}");
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            stderr.contains("A game is in progress"),
+            "{args:?}: {stderr}"
+        );
+    }
+
+    // Finished, it starts from the position given, if it is one a game can start from.
+    let (_, states) = local(&[], "resign\nquit\n");
+    assert!(states[1]["result"].is_object());
+    let (bad, _) = local(&["--fen", "8/8/8/8/8/8/k7/K7 w - - 0 1"], "quit\n");
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("Not a playable position"));
+    let (from_fen, states) = local(&["--fen", rook], "quit\n");
+    assert!(from_fen.status.success(), "{from_fen:?}");
+    assert_eq!(states[0]["fen"], rook);
+}

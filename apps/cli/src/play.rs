@@ -827,6 +827,16 @@ mod tests {
         );
         assert_eq!(take_fen(&words(&["club"])), Ok((None, words(&["club"]))));
         assert!(take_fen(&words(&["--fen"])).is_err());
+        // An en passant square is a file and a rank; six fields are the most a FEN has.
+        let board = "4k3/8/8/3pP3/8/8/8/4K3";
+        assert_eq!(
+            take_fen(&words(&["--fen", board, "w", "-", "d6", "0", "2", "3"])),
+            Ok((Some(format!("{board} w - d6 0 2")), words(&["3"])))
+        );
+        assert_eq!(
+            take_fen(&words(&["--fen", board, "w", "-", "d66"])),
+            Ok((Some(format!("{board} w -")), words(&["d66"])))
+        );
         assert_eq!(playable_fen("standard", fen), Ok(serde_json::json!(fen)));
         assert!(playable_fen("standard", "8/8/8/8/8/8/8/8 w - - 0 1").is_err());
         let zh = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
@@ -850,6 +860,11 @@ mod tests {
             Ok((some("club"), some("black"), some("crazyhouse")))
         );
         assert!(choices(&words(&["club", "black", "extra"])).is_err());
+        // A second colour is no colour: it is read as the level, which `play` then refuses.
+        assert_eq!(
+            choices(&words(&["white", "black"])),
+            Ok((some("black"), some("white"), None))
+        );
         assert!(choices(&words(&["atomic", "horde"])).is_err());
     }
 
