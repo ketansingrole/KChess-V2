@@ -520,11 +520,19 @@ fn a_computer_game_is_played_saved_and_resumed() {
     let stdout = String::from_utf8_lossy(&played.stdout);
     assert_eq!(stdout.matches("Stockfish: e4").count(), 2, "{stdout}");
 
-    // Resumed with its move; Black's reply is the only new move.
-    let (resumed, states) = play(&["play"], "e7e5\nquit\n");
+    assert!(
+        !String::from_utf8_lossy(&played.stderr).contains("Illegal move"),
+        "{played:?}"
+    );
+
+    // Resumed with its move, at another level; Black's reply is the only new move, and a
+    // move that is not legal is said to be.
+    let (resumed, states) = play(&["play", "club"], "e7e5\ne1e8\nquit\n");
     assert!(resumed.status.success(), "{resumed:?}");
     assert_eq!(states[0]["moves"], json!(["e2e4"]));
     assert_eq!(states[1]["moves"], json!(["e2e4", "e7e5"]));
+    let stderr = String::from_utf8_lossy(&resumed.stderr);
+    assert_eq!(stderr.matches("Illegal move").count(), 1, "{stderr}");
 
     // The game in progress keeps its colour, and an unknown level is refused.
     for (args, message) in [
@@ -880,6 +888,15 @@ fn game_history_keeps_played_games_only() {
     let kept = games();
     assert_eq!(kept.as_array().map(Vec::len), Some(1), "{kept}");
     assert_eq!(kept[0]["moves"], json!(["e2e4"]));
+    // Dated by the wall clock, in milliseconds.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time")
+        .as_millis() as f64;
+    for field in ["startedAt", "updatedAt"] {
+        let at = kept[0][field].as_f64().expect(field);
+        assert!((now - at).abs() < 600_000.0, "{field}: {at} against {now}");
+    }
 
     assert!(
         cli(profile.path(), &["local"], "resign\nquit\n")
@@ -976,5 +993,29 @@ fn a_resumed_clock_runs_out() {
     assert_eq!(
         states.last().expect("a state")["result"],
         json!({ "winner": "white", "reason": "Time out" })
+    );
+}
+
+/// `play` needs Stockfish for a standard game, and says so when it cannot start.
+#[test]
+fn play_needs_an_engine() {
+    let profile = tempfile::tempdir().expect("profile");
+    // No engine the person installed either: their home is the scratch profile.
+    let refused = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+        .args(["--embedded", "--no-credentials", "--data-dir"])
+        .arg(profile.path())
+        .args(["--engine", "/nonexistent/stockfish", "play"])
+        .env("KCHESS_USER_DATA_DIR", profile.path())
+        .env("HOME", profile.path())
+        .env("USERPROFILE", profile.path())
+        .env_remove("KCHESS_SERVICE_BINARY")
+        .stdin(Stdio::null())
+        .output()
+        .expect("kchess-cli runs");
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("Stockfish is unavailable. Install an engine or pass --engine."),
+        "{stderr}"
     );
 }
