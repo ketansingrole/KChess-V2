@@ -1,7 +1,7 @@
 use super::{
     BRIDGE_FOLDER, INSTALLING, Install, InstallLock, Package, Release, Signer, Workspace, aside,
-    asset_name, detect, digest_for, download, downloads_in, incoming, last_install_error, latest,
-    offer, parse_version, rename_bridge_folder, replace_by, signed_alike, swap_file, tidy,
+    asset_name, detect, digest_for, download_signed, downloads_in, incoming, last_install_error,
+    latest, offer, parse_version, rename_bridge_folder, replace_by, signed_alike, swap_file, tidy,
 };
 use sha2::{Digest, Sha256};
 use std::io::{Read as _, Write as _};
@@ -727,7 +727,7 @@ fn a_stalled_server_ends_the_download() {
         let (progress, _heard) = futures::channel::mpsc::unbounded();
         let target = folder.join("download");
         let started = std::time::Instant::now();
-        let result = block_on(download(release, asset, target, progress));
+        let result = block_on(unsigned_download(release, asset, target, progress));
         assert!(started.elapsed() < std::time::Duration::from_secs(10));
         result
     };
@@ -844,7 +844,12 @@ fn a_dropped_download_resumes_where_it_stopped() {
         .unwrap();
         let asset = release.assets[0].clone();
         let (progress, _heard) = futures::channel::mpsc::unbounded();
-        block_on(download(release, asset, folder.join(target), progress))
+        block_on(unsigned_download(
+            release,
+            asset,
+            folder.join(target),
+            progress,
+        ))
     };
 
     // Two drops: each request asks only for what is missing, and the file is whole.
@@ -895,7 +900,7 @@ fn a_download_is_kept_from_one_start_to_the_next() {
         .unwrap();
         let asset = release.assets[0].clone();
         let (progress, heard) = futures::channel::mpsc::unbounded();
-        let result = block_on(download(release, asset, folder.clone(), progress));
+        let result = block_on(unsigned_download(release, asset, folder.clone(), progress));
         (
             result,
             futures::executor::block_on_stream(heard).collect::<Vec<_>>(),
@@ -941,7 +946,7 @@ fn progress_is_reported_a_step_at_a_time() {
         let release: Release = latest(url).await.unwrap();
         let asset = release.assets[0].clone();
         let (progress, heard) = futures::channel::mpsc::unbounded();
-        download(release, asset, folder.join("pkg"), progress)
+        unsigned_download(release, asset, folder.join("pkg"), progress)
             .await
             .unwrap();
         let _ = std::fs::remove_dir_all(&folder);
@@ -986,6 +991,17 @@ fn a_partial_answer_says_where_it_starts() {
 
 fn block_on<T: Send + 'static>(work: impl std::future::Future<Output = T> + Send + 'static) -> T {
     futures::executor::block_on(super::on_runtime(work)).unwrap()
+}
+
+/// A download over a feed whose checksums carry no signature, as these tests serve: what the
+/// download does is under test here, not the release key (`an_update_needs_checksums_signed_by_the_release_key`).
+async fn unsigned_download(
+    release: Release,
+    asset: super::Asset,
+    folder: PathBuf,
+    progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
+) -> Result<PathBuf, String> {
+    download_signed(release, asset, folder, progress, None).await
 }
 
 async fn check_and_download(feed: String, folder: PathBuf) -> Result<PathBuf, String> {
