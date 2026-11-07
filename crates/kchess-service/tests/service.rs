@@ -185,6 +185,26 @@ async fn a_client_reaches_only_the_core_api() {
     service.abort();
 }
 
+/// A `hello` is read up to 64 KiB before its token is checked; a larger one is dropped unread.
+#[tokio::test(flavor = "multi_thread")]
+async fn hello_is_read_up_to_its_limit() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (_gpui, _events) = connect(profile.path(), "gpui").await;
+    let near = "w".repeat(60_000);
+    let (near, _) = Client::connect(profile.path(), &window(&near))
+        .await
+        .expect("welcomed");
+    drop(near);
+    let over = "w".repeat(70_000);
+    assert!(
+        Client::connect(profile.path(), &window(&over))
+            .await
+            .is_err()
+    );
+    service.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn hello_is_refused_without_the_token_or_with_another_release() {
     let profile = tempfile::tempdir().expect("profile");
@@ -276,6 +296,46 @@ async fn one_core_per_profile_and_it_stops_when_idle() {
     })
     .await;
     assert!(closed.is_ok());
+}
+
+/// A host request goes to the window that can answer it (the caller here), not to every window.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_request_reaches_only_the_window_that_answers_it() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (gpui, mut gpui_events) = connect(profile.path(), "gpui").await;
+    let (_second, mut second_events) = connect(profile.path(), "second").await;
+    // Signing in opens the browser through the window that asked.
+    let signing_in = tokio::spawn(async move { gpui.call("connectLichess", vec![]).await });
+    // The core also asks a window whether it runs on battery; that one may go anywhere.
+    let request = loop {
+        let request = event(&mut gpui_events, "host:request").await;
+        if request["kind"] == "openExternal" {
+            break request;
+        }
+    };
+    assert!(
+        request["payload"]
+            .as_str()
+            .is_some_and(|url| url.contains("/oauth"))
+    );
+    let elsewhere = tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            match second_events.recv().await {
+                Some(ClientEvent::Event { name, payload })
+                    if name == "host:request" && payload["kind"] == "openExternal" =>
+                {
+                    return;
+                }
+                Some(_) => {}
+                None => std::future::pending::<()>().await,
+            }
+        }
+    })
+    .await;
+    assert!(elsewhere.is_err(), "the other window is not asked");
+    signing_in.abort();
+    service.abort();
 }
 
 #[tokio::test(flavor = "multi_thread")]

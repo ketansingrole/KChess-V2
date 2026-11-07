@@ -272,6 +272,30 @@ mod tests {
         );
     }
 
+    /// A folder that cannot be made is refused with the reason it could not be made.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_private_folder_that_cannot_be_made_names_why() {
+        // Not even root may make a folder in sysfs.
+        let error = private_dir(Path::new("/sys/kchess-test")).expect_err("refused");
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    }
+
+    /// A leftover temporary that cannot be removed is the error, not the failed create after it.
+    #[test]
+    fn a_leftover_that_cannot_be_removed_names_why() {
+        let folder = tempfile::tempdir().expect("folder");
+        let path = folder.path().join(TOKEN_FILE);
+        let leftover = folder.path().join(format!("{TOKEN_FILE}.tmp"));
+        std::fs::create_dir(&leftover).expect("a folder in its place");
+        let expected = std::fs::remove_file(&leftover)
+            .expect_err("not a file")
+            .kind();
+        let error = write_private(&path, b"secret").expect_err("refused");
+        assert_eq!(error.kind(), expected);
+        assert_ne!(error.kind(), std::io::ErrorKind::AlreadyExists);
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_profile_has_one_short_socket_in_a_private_folder() {
