@@ -1,6 +1,8 @@
-//! Guess the move: a game (a master game from the explorer, or a PGN) is played through and one
-//! side's moves are guessed. Each guess scores against the move played, and otherwise against the
-//! local engine (`kchess_domain::training::guess`); the other side's moves are played for you.
+//! Guess the move: a game (a player's or a famous one found here, a master game from the explorer,
+//! or a PGN) is played through and one side's moves are guessed. The local engine looks at each
+//! position while you think, the move played included, so a guess scores against the move played
+//! where it holds up and against the engine's best where it went wrong
+//! (`kchess_domain::training::guess`); the other side's moves are played for you.
 
 use std::time::Duration;
 
@@ -9,10 +11,11 @@ use gpui_kit::component::input::{InputEvent, InputState, Textarea, TextareaState
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_domain::training::guess::{self, Eval, Grade, Judged};
+use kchess_domain::training::guess::{self, Eval, Evals, Flaw, Grade, Judged};
 use serde_json::{Value, json};
 use shakmaty::{Color, Position as _};
 
+use super::guess_find::{Found, GameFinder};
 use super::run;
 use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, ChessBoard};
@@ -43,6 +46,8 @@ struct Game {
     sans: Vec<String>,
     white: String,
     black: String,
+    /// The year it was played, when its PGN says.
+    year: Option<String>,
 }
 
 impl Game {
@@ -75,12 +80,17 @@ impl Game {
                 .unwrap_or("?")
                 .to_string()
         };
+        let year = header("Date")
+            .get(..4)
+            .filter(|year| year.chars().all(|digit| digit.is_ascii_digit()))
+            .map(str::to_string);
         Ok(Game {
             setup,
             moves,
             sans,
             white: header("White"),
             black: header("Black"),
+            year,
         })
     }
 
@@ -91,8 +101,12 @@ impl Game {
 
 /// A scored guess at a move of the game.
 struct Guessed {
+    /// The move of the game it was a guess at.
+    ply: usize,
     san: String,
     played: String,
+    /// The engine's best move there, as it was written.
+    best: Option<String>,
     judged: Judged,
 }
 
@@ -101,6 +115,8 @@ struct Guessed {
 enum Probe {
     /// The position before the guess, at this ply: its best lines.
     Best(usize),
+    /// The position after the move played at this ply, when its best lines leave it out.
+    Played(usize),
     /// The position after the guess being judged.
     Guess,
 }
@@ -117,7 +133,8 @@ fn eval_of(line: &Value, side: Color) -> Option<Eval> {
 
 fn grade_text(grade: Grade) -> &'static str {
     match grade {
-        Grade::Master => "The move played",
+        Grade::Master | Grade::Played => "The move played",
+        Grade::Better => "Better than the move played",
         Grade::Best => "As good as the best move",
         Grade::Good => "A good move",
         Grade::Fair => "Playable",
@@ -142,6 +159,8 @@ pub struct GuessMoves {
     probe: Option<Probe>,
     /// The engine's best lines for the position at a ply.
     best: Option<(usize, Vec<Value>)>,
+    /// The engine's evaluation after the move played at a ply (none when it found none).
+    played_eval: Option<(usize, Option<Eval>)>,
     engine: PositionEngine,
     engine_ready: bool,
     error: Option<String>,
@@ -149,6 +168,7 @@ pub struct GuessMoves {
     layout: PlayLayout,
     move_input: Entity<InputState>,
     pgn: Entity<TextareaState>,
+    finder: Entity<GameFinder>,
     deadline: Option<Task<()>>,
     reply: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -175,8 +195,14 @@ impl GuessMoves {
                 .rows(6)
                 .placeholder("1. e4 e5 2. Nf3 Nc6 …")
         });
+        let finder = cx.new(|cx| GameFinder::new(window, cx));
         let events = cx.global::<AppCore>().events.clone();
         let subscriptions = vec![
+            cx.subscribe(&finder, |this, _, found: &Found, cx| match found {
+                Found::Game { pgn, side } => {
+                    this.load(pgn, Some(*side), cx);
+                }
+            }),
             cx.subscribe(&board, |this, _, event: &BoardEvent, cx| {
                 if let BoardEvent::Move(uci) = event {
                     this.guess(uci.clone(), cx);
@@ -221,6 +247,7 @@ impl GuessMoves {
             pending: None,
             probe: None,
             best: None,
+            played_eval: None,
             engine: PositionEngine::default(),
             engine_ready: false,
             error: None,
@@ -228,6 +255,7 @@ impl GuessMoves {
             layout: PlayLayout::default(),
             move_input,
             pgn,
+            finder,
             deadline: None,
             reply: None,
             _subscriptions: subscriptions,
@@ -274,6 +302,8 @@ impl GuessMoves {
         self.viewing = None;
         self.guesses.clear();
         self.pending = None;
+        self.best = None;
+        self.played_eval = None;
         self.reply = None;
         self.advance(cx);
     }
@@ -352,75 +382,139 @@ impl GuessMoves {
 
     /// A guess at the move at `ply`: the move played scores at once; another waits for the engine.
     fn guess(&mut self, uci: String, cx: &mut Context<Self>) {
-        let Some(played) = self
-            .game
-            .as_ref()
-            .and_then(|game| game.moves.get(self.ply))
-            .cloned()
-        else {
-            return self.redraw(cx);
-        };
         if !self.your_turn() {
             return self.redraw(cx);
         }
-        if guess::same_move(&uci, &played) || !self.engine_usable(cx) {
+        if !self.engine_usable(cx) {
             self.stop_engine(cx);
-            return self.judged(&uci, None, None, cx);
+            return self.judged(&uci, Evals::default(), cx);
         }
         self.pending = Some(uci);
-        if self.best.as_ref().is_some_and(|(ply, _)| *ply == self.ply) {
-            self.judge_pending(cx);
-        } else if self.probe.is_none() {
-            self.start_probe(Probe::Best(self.ply), None, cx);
-        }
+        self.judge_pending(cx);
         self.redraw(cx);
     }
 
-    /// The best lines are known: score the guess from them, or search the position after it.
+    /// The evaluation, for the guessing side, of a position the game ends in, without a search.
+    fn ended(game: &Game, history: &[String]) -> Option<Eval> {
+        let after = view::position_at(&game.setup, history, history.len())?;
+        if after.is_checkmate() {
+            Some(Eval::Mate(1))
+        } else if after.is_stalemate() || after.is_insufficient_material() {
+            Some(Eval::Cp(0))
+        } else {
+            None
+        }
+    }
+
+    /// The evaluation, for the guessing side, of `uci` at the current ply from the best lines,
+    /// or of the position it ends the game in.
+    fn known_eval(&self, uci: &str) -> Option<Eval> {
+        let game = self.game.as_ref()?;
+        let listed = self.best.as_ref().and_then(|(ply, lines)| {
+            (*ply == self.ply).then(|| {
+                lines.iter().find(|line| {
+                    line["pv"][0]
+                        .as_str()
+                        .is_some_and(|first| guess::same_move(first, uci))
+                })
+            })?
+        });
+        if let Some(line) = listed {
+            return eval_of(line, self.side);
+        }
+        let mut history = game.moves[..self.ply].to_vec();
+        history.push(uci.to_string());
+        Self::ended(game, &history)
+    }
+
+    /// The best lines are in: the move played is judged from them, or searched while you think.
+    fn look_at_played(&mut self, ply: usize, cx: &mut Context<Self>) {
+        let Some(played) = self
+            .game
+            .as_ref()
+            .and_then(|game| game.moves.get(ply))
+            .cloned()
+        else {
+            return;
+        };
+        if let Some(eval) = self.known_eval(&played) {
+            self.played_eval = Some((ply, Some(eval)));
+            return;
+        }
+        let Some(game) = &self.game else {
+            return;
+        };
+        let mut history = game.moves[..ply].to_vec();
+        history.push(played);
+        self.start_probe(Probe::Played(ply), Some(history), cx);
+    }
+
+    /// Score the guess waiting once the engine has looked at the position and the move played,
+    /// searching the position after the guess when neither tells how good it is.
     fn judge_pending(&mut self, cx: &mut Context<Self>) {
         let (Some(uci), Some(game)) = (self.pending.clone(), self.game.clone()) else {
             return;
         };
-        let lines = self.best.as_ref().map(|(_, lines)| lines.clone());
-        let best = lines
+        let have_best = self.best.as_ref().is_some_and(|(ply, _)| *ply == self.ply);
+        let played_eval = self
+            .played_eval
+            .filter(|(ply, _)| *ply == self.ply)
+            .map(|(_, eval)| eval);
+        if !have_best || played_eval.is_none() {
+            // Still looking: the probe under way picks the guess up when it is done.
+            if self.probe.is_none() {
+                if have_best {
+                    self.look_at_played(self.ply, cx);
+                    if self.probe.is_none() {
+                        return self.judge_pending(cx);
+                    }
+                } else {
+                    self.start_probe(Probe::Best(self.ply), None, cx);
+                }
+            }
+            return;
+        }
+        let best = self
+            .best
             .as_ref()
-            .and_then(|lines| lines.first())
+            .and_then(|(_, lines)| lines.first())
             .and_then(|line| eval_of(line, self.side));
+        let played = played_eval.flatten();
         let Some(best) = best else {
-            return self.judged(&uci, None, None, cx);
+            return self.judged(&uci, Evals::default(), cx);
         };
-        let listed = lines.iter().flatten().find(|line| {
-            line["pv"][0]
-                .as_str()
-                .is_some_and(|first| guess::same_move(first, &uci))
-        });
-        if let Some(line) = listed {
-            let guessed = eval_of(line, self.side);
-            return self.judged(&uci, Some(best), guessed, cx);
+        let evals = Evals {
+            best: Some(best),
+            guessed: None,
+            played,
+        };
+        if guess::same_move(&uci, &game.moves[self.ply]) {
+            return self.judged(
+                &uci,
+                Evals {
+                    guessed: played,
+                    ..evals
+                },
+                cx,
+            );
+        }
+        if let Some(guessed) = self.known_eval(&uci) {
+            return self.judged(
+                &uci,
+                Evals {
+                    guessed: Some(guessed),
+                    ..evals
+                },
+                cx,
+            );
         }
         let mut history = game.moves[..self.ply].to_vec();
-        history.push(uci.clone());
-        let Some(after) = view::position_at(&game.setup, &history, history.len()) else {
-            return self.judged(&uci, None, None, cx);
-        };
-        // A game the guess ends needs no search.
-        if after.is_checkmate() {
-            return self.judged(&uci, Some(best), Some(Eval::Mate(1)), cx);
-        }
-        if after.is_stalemate() || after.is_insufficient_material() {
-            return self.judged(&uci, Some(best), Some(Eval::Cp(0)), cx);
-        }
+        history.push(uci);
         self.start_probe(Probe::Guess, Some(history), cx);
     }
 
     /// Score a guess, show the move played, and go on.
-    fn judged(
-        &mut self,
-        uci: &str,
-        best: Option<Eval>,
-        guessed: Option<Eval>,
-        cx: &mut Context<Self>,
-    ) {
+    fn judged(&mut self, uci: &str, evals: Evals, cx: &mut Context<Self>) {
         let Some(game) = &self.game else {
             return;
         };
@@ -433,15 +527,30 @@ impl GuessMoves {
             .pop()
             .unwrap_or_else(|| uci.to_string());
         let played_san = game.sans.get(self.ply).cloned().unwrap_or_default();
-        let judged = guess::judge(uci, &played, best, guessed);
+        let judged = guess::judge(uci, &played, evals);
+        let best = self
+            .best
+            .as_ref()
+            .and_then(|(_, lines)| lines.first())
+            .and_then(|line| line["pv"][0].as_str())
+            .and_then(|best| {
+                let mut line = game.moves[..self.ply].to_vec();
+                line.push(best.to_string());
+                // Named only when it is a legal move there.
+                let mut sans = view::sans(&game.setup, &line);
+                (sans.len() == line.len()).then(|| sans.pop()).flatten()
+            });
         crate::sound::move_sound(&played_san, cx);
         self.guesses.push(Guessed {
+            ply: self.ply,
             san,
             played: played_san,
+            best,
             judged,
         });
         self.pending = None;
         self.best = None;
+        self.played_eval = None;
         self.ply += 1;
         self.advance(cx);
     }
@@ -459,7 +568,7 @@ impl GuessMoves {
             "fen": kchess_domain::rules::make_fen(&position),
             "rootFen": game.setup["fen"],
             "moves": history,
-            "lines": if probe == Probe::Guess { 1 } else { LINES },
+            "lines": if matches!(probe, Probe::Best(_)) { LINES } else { 1 },
             "infinite": true,
         });
         self.probe = Some(probe);
@@ -492,7 +601,18 @@ impl GuessMoves {
         match probe {
             Probe::Best(ply) => {
                 self.best = Some((ply, lines));
-                if self.pending.is_some() && ply == self.ply {
+                if ply == self.ply {
+                    // The move played is looked at while you think, then a guess waiting judged.
+                    self.look_at_played(ply, cx);
+                    if self.probe.is_none() && self.pending.is_some() {
+                        self.judge_pending(cx);
+                    }
+                }
+            }
+            Probe::Played(ply) => {
+                let eval = lines.first().and_then(|line| eval_of(line, self.side));
+                self.played_eval = Some((ply, eval));
+                if ply == self.ply && self.pending.is_some() {
                     self.judge_pending(cx);
                 }
             }
@@ -505,8 +625,17 @@ impl GuessMoves {
                     .as_ref()
                     .and_then(|(_, lines)| lines.first())
                     .and_then(|line| eval_of(line, self.side));
+                let played = self.played_eval.and_then(|(_, eval)| eval);
                 let guessed = lines.first().and_then(|line| eval_of(line, self.side));
-                self.judged(&uci, best, guessed, cx);
+                self.judged(
+                    &uci,
+                    Evals {
+                        best,
+                        guessed,
+                        played,
+                    },
+                    cx,
+                );
             }
         }
         cx.notify();
@@ -639,7 +768,7 @@ impl GuessMoves {
     ) -> AnyElement {
         let empty = self.pgn.read(cx).value().trim().is_empty();
         let card = widgets::card(palette)
-            .child(widgets::heading("Guess the move", palette))
+            .child(widgets::heading("Your own game", palette))
             .child(
                 v_flex()
                     .mt(px(12.))
@@ -698,6 +827,8 @@ impl GuessMoves {
                     .px(side_padding(window))
                     .pt(crate::play_layout::PAGE_TOP)
                     .pb(crate::play_layout::PAGE_BOTTOM)
+                    .gap(px(16.))
+                    .child(self.finder.clone())
                     .child(card),
             )
             .into_any_element()
@@ -726,12 +857,20 @@ impl GuessMoves {
                 )
                 .detail(
                     format!(
-                        "{} of {} ({}%) · {} of {} moves matched",
+                        "{} of {} ({}%) · {} of {} moves matched{}",
                         summary.points,
                         points_text(summary.most),
                         summary.percent,
                         summary.matched,
                         summary.guesses,
+                        if summary.flawed > 0 {
+                            format!(
+                                " · better than the game {} of {} times it went wrong",
+                                summary.better, summary.flawed
+                            )
+                        } else {
+                            String::new()
+                        },
                     )
                     .into(),
                 )
@@ -739,37 +878,68 @@ impl GuessMoves {
             );
         }
         let last = self.guesses.last()?;
-        let (tone, glyph, title, detail) = if last.judged.grade == Grade::Master {
-            (
+        let judged = last.judged;
+        let points = points_text(judged.points);
+        // What the engine makes of the move played, when it went wrong: told after the guess.
+        let verdict = judged.flaw.filter(|flaw| flaw.went_wrong()).map(|flaw| {
+            format!(
+                "{} by today's engines{}",
+                flaw.label(),
+                last.best
+                    .as_ref()
+                    .map(|best| format!(", {best} was best"))
+                    .unwrap_or_default()
+            )
+        });
+        let played = format!(
+            "{}{}",
+            last.played,
+            judged.flaw.map(Flaw::glyph).unwrap_or_default()
+        );
+        let (tone, glyph, title, detail) = match judged.grade {
+            Grade::Master => (
                 Tone::Win,
                 icon("check"),
-                format!("{} ✓", last.played),
+                format!("{played} ✓"),
+                format!("{} · {points}", grade_text(judged.grade)),
+            ),
+            Grade::Played => (
+                Tone::Plain,
+                icon("info"),
+                format!("{played} ✓"),
+                format!("{} · {points}", verdict.unwrap_or_default()),
+            ),
+            Grade::Better => (
+                Tone::Win,
+                icon("check"),
+                format!("Played {played}"),
                 format!(
-                    "{} · {}",
-                    grade_text(last.judged.grade),
-                    points_text(last.judged.points)
+                    "Your {} is better: {} · {points}",
+                    last.san,
+                    verdict.unwrap_or_default()
                 ),
-            )
-        } else {
-            (
-                if last.judged.points > 0 {
+            ),
+            grade => (
+                if judged.points > 0 {
                     Tone::Plain
                 } else {
                     Tone::Loss
                 },
-                icon(if last.judged.points > 0 { "info" } else { "x" }),
-                format!("Played {}", last.played),
+                icon(if judged.points > 0 { "info" } else { "x" }),
+                format!("Played {played}"),
                 format!(
-                    "Your {}: {} · {}",
+                    "{}Your {}: {} · {points}",
+                    verdict
+                        .map(|verdict| format!("{verdict}. "))
+                        .unwrap_or_default(),
                     last.san,
-                    if last.judged.loss.is_some() {
-                        grade_text(last.judged.grade)
+                    if judged.loss.is_some() {
+                        grade_text(grade)
                     } else {
                         "Not the move played"
                     },
-                    points_text(last.judged.points)
                 ),
-            )
+            ),
         };
         Some(
             widgets::StatusBanner::new(tone, glyph, title.into())
@@ -804,10 +974,17 @@ impl GuessMoves {
             )));
         let page = cx.entity().downgrade();
         let shown = self.viewing.unwrap_or(self.ply);
+        // The moves so far, a guessed one marked as the engine found it.
+        let mut sans = game.sans[..self.ply.min(game.sans.len())].to_vec();
+        for guessed in &self.guesses {
+            if let (Some(san), Some(flaw)) = (sans.get_mut(guessed.ply), guessed.judged.flaw) {
+                san.push_str(flaw.glyph());
+            }
+        }
         let moves = widgets::moves_list(
             "guess-moves",
             widgets::MoveSheet {
-                sans: &game.sans[..self.ply.min(game.sans.len())],
+                sans: &sans,
                 shown,
                 first: view::first_move(&game.setup),
             },
@@ -833,7 +1010,10 @@ impl GuessMoves {
             .child(
                 v_flex()
                     .child(widgets::heading(
-                        format!("{} – {}", game.white, game.black),
+                        match &game.year {
+                            Some(year) => format!("{} – {} · {year}", game.white, game.black),
+                            None => format!("{} – {}", game.white, game.black),
+                        },
                         palette,
                     ))
                     .child(
@@ -894,6 +1074,12 @@ impl Render for GuessMoves {
             self.render_home(window, cx, &palette)
         }
     }
+}
+
+/// A PGN's moves and start as guessing would play them through, or why it cannot be guessed.
+#[cfg(test)]
+pub(super) fn loaded(pgn: &str) -> Result<(Vec<String>, Value), &'static str> {
+    Game::from_pgn(pgn).map(|game| (game.moves, game.setup))
 }
 
 #[cfg(test)]
