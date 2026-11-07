@@ -4,6 +4,12 @@
 //! The installer's shortcuts (NSIS has no way to set the ID) and a pin made from one are stamped
 //! here, once each, on a background thread at startup.
 
+// The shortcut's property store is reached through COM calls, each with its SAFETY comment.
+#![allow(
+    unsafe_code,
+    reason = "COM's property store calls are unsafe; this module stamps KChess's shortcuts"
+)]
+
 use std::path::PathBuf;
 
 use windows::Win32::Storage::EnhancedStorage::PKEY_AppUserModel_ID;
