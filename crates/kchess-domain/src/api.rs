@@ -262,9 +262,9 @@ fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
         }
         "dests" => {
             let pos = setup_position(args)?;
+            // "board960" lists castling as the rules do.
             let mode = match arg(args, 1).and_then(Value::as_str) {
                 Some("board") => DestMode::Board,
-                Some("board960") => DestMode::Board960,
                 _ => DestMode::Rules,
             };
             Value::Array(
@@ -747,6 +747,36 @@ mod tests {
         // Brackets inside strings are text, not nesting.
         let text = format!("[[\"{}\\\"\"]]", "[".repeat(MAX_JSON_DEPTH * 2));
         assert!(call("pathOf", &text).is_ok());
+    }
+
+    /// A board's destinations castle onto the king's square too, a Chess960 board's onto the
+    /// rook only, as the rules do.
+    #[test]
+    fn dests_castle_as_the_board_asks() {
+        let setup = json!({ "variant": "standard", "fen": "4k3/8/8/8/8/8/8/4K2R w K - 0 1" });
+        let king = |mode: Value| {
+            let dests: Value =
+                serde_json::from_str(&call("dests", &json!([setup, mode]).to_string()).unwrap())
+                    .unwrap();
+            dests
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry[0] == "e1")
+                .unwrap()[1]
+                .clone()
+        };
+        assert!(
+            king(json!("board"))
+                .as_array()
+                .unwrap()
+                .contains(&json!("g1"))
+        );
+        for mode in [json!("board960"), Value::Null] {
+            let squares = king(mode);
+            assert!(squares.as_array().unwrap().contains(&json!("h1")));
+            assert!(!squares.as_array().unwrap().contains(&json!("g1")));
+        }
     }
 
     /// Closing brackets end a level; an escaped quote does not end a string.

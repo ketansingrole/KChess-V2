@@ -136,12 +136,11 @@ pub fn drop_dests(pos: &VariantPosition) -> Vec<(Role, Vec<Square>)> {
 /// How destinations are listed.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DestMode {
-    /// `allDests()`: castling onto the rook only.
+    /// `allDests()`, and `chessgroundDests(pos, { chess960: true })`: castling onto the rook
+    /// only.
     Rules,
     /// `chessgroundDests(pos)`: standard castling also onto the king's square.
     Board,
-    /// `chessgroundDests(pos, { chess960: true })`.
-    Board960,
 }
 
 /// Each piece's destinations, pieces and squares in ascending order (a1, b1, … h8).
@@ -600,7 +599,6 @@ mod tests {
         assert!(king(DestMode::Rules).contains(&"h1".to_string()));
         assert!(!king(DestMode::Rules).contains(&"g1".to_string()));
         assert!(king(DestMode::Board).ends_with(&["c1".to_string(), "g1".to_string()]));
-        assert!(!king(DestMode::Board960).contains(&"g1".to_string()));
     }
 
     #[test]
