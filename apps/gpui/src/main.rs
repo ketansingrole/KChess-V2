@@ -64,6 +64,8 @@ mod voice;
 mod whats_new;
 mod widgets;
 mod window_state;
+#[cfg(windows)]
+mod windows_shortcuts;
 
 use gpui_kit::*;
 use kchess_core::Level;

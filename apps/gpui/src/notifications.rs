@@ -13,6 +13,64 @@ pub fn init(cx: &mut App) {
     gpui_kit::component::Theme::global_mut(cx)
         .notification
         .placement = gpui_kit::Anchor::BottomRight;
+    if THROUGH_GPUI {
+        identify(cx);
+        // Not from a test run, which would change the shortcuts of whoever runs it.
+        #[cfg(all(windows, not(test)))]
+        crate::windows_shortcuts::stamp(APP_ID);
+    }
+}
+
+/// Whether system notifications go through GPUI, which names KChess as their sender and tells
+/// it when one is clicked: on Windows (where the notification library sent them as PowerShell,
+/// whose clicks went nowhere) and Linux. macOS keeps the library: GPUI has no notifications there,
+/// and the library already sends as KChess's bundle, whose clicks open KChess.
+const THROUGH_GPUI: bool = cfg!(any(windows, target_os = "linux", target_os = "freebsd"));
+
+/// KChess's identity: on Windows its AppUserModelID, so its notifications are its own and a click
+/// on one comes back to it. The installer's shortcuts carry it too (`windows_shortcuts`), so the
+/// taskbar keeps one KChess button. On Linux GPUI names the sender from it.
+pub const APP_ID: &str = "com.kchess.app";
+
+/// Send notifications as KChess, and bring KChess forward on the game a clicked one is about.
+pub(crate) fn identify(cx: &mut App) {
+    cx.set_app_identity(APP_ID, "KChess");
+    cx.on_system_notification_response(|response, cx| open_from(&response.tag, cx));
+}
+
+/// A notification about `kind` was clicked: KChess comes forward, on the page of its game.
+fn open_from(kind: &str, cx: &mut App) {
+    cx.activate(true);
+    let page = game_page(kind);
+    if let Some(window) = cx.windows().into_iter().next() {
+        let _ = window.update(cx, |_, window, cx| {
+            window.activate_window();
+            if let Some(page) = page {
+                crate::shell::open(page, window, cx);
+            }
+        });
+    }
+}
+
+/// A system notification through GPUI, tagged with its kind; a game's offers Go to board.
+pub(crate) fn post(kind: &str, title: &str, body: &str, sound: bool, cx: &mut App) {
+    let actions = game_page(kind)
+        .map(|_| gpui_kit::SystemNotificationAction {
+            id: "open".into(),
+            label: "Go to board".into(),
+        })
+        .into_iter()
+        .collect();
+    cx.show_system_notification(gpui_kit::SystemNotification {
+        tag: kind.to_string().into(),
+        title: title.to_string().into(),
+        body: body.to_string().into(),
+        actions,
+    });
+    // Windows shows it silently; the setting's sound is KChess's own.
+    if sound {
+        crate::sound::play(crate::sound::Sound::GenericNotify, cx);
+    }
 }
 
 /// Why an alert was not shown, or how it was.
@@ -116,6 +174,9 @@ pub fn desktop(kind: &str, title: &str, body: &str, cx: &mut App) -> Outcome {
     let outcome = decide(&settings, kind, away, page);
     match outcome {
         Outcome::InApp => crate::online::notice(cx, format!("{title}\n{body}")),
+        Outcome::System if THROUGH_GPUI => {
+            post(kind, title, body, settings.frontend.notify_sound, cx);
+        }
         Outcome::System => {
             let (title, body, sound) = (
                 title.to_string(),

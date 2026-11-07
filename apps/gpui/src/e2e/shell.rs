@@ -463,3 +463,53 @@ fn only_a_click_eases_the_sidebar(cx: &mut gpui_kit::TestAppContext) {
         .advance_clock(std::time::Duration::from_secs(1));
     assert_eq!(width(&mut app), rail);
 }
+
+/// On Windows and Linux a system notification is KChess's own: sent under its name, a game's with
+/// Go to board, and a click on it brings KChess forward on that game's page. On Windows the
+/// notification library sent them as PowerShell, and a click went nowhere.
+#[cfg(any(windows, target_os = "linux"))]
+#[gpui_kit::test]
+fn a_clicked_notification_opens_its_game(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    assert_eq!(
+        app.cx.app_identity(),
+        Some((
+            crate::notifications::APP_ID.into(),
+            gpui_kit::SharedString::from("KChess")
+        ))
+    );
+    app.with_window(|_, cx| {
+        crate::notifications::post(
+            "computerMove",
+            "Stockfish moved",
+            "e5. Your move.",
+            false,
+            cx,
+        )
+    });
+    let shown = app.cx.shown_system_notifications();
+    let last = shown.last().expect("a notification");
+    assert_eq!(
+        (last.title.as_ref(), last.body.as_ref()),
+        ("Stockfish moved", "e5. Your move.")
+    );
+    assert_eq!(
+        last.actions
+            .iter()
+            .map(|action| action.label.as_ref())
+            .collect::<Vec<_>>(),
+        ["Go to board"]
+    );
+    app.cx
+        .simulate_system_notification_response(gpui_kit::SystemNotificationResponse {
+            tag: last.tag.clone(),
+            action_id: None,
+        });
+    app.cx.run_until_parked();
+    let shown = app.cx.update(|cx| crate::shell::current_page(cx));
+    assert_eq!(shown, Some(crate::pages::Page::Computer));
+    // A notification about no game has nothing to go to.
+    app.with_window(|_, cx| crate::notifications::post("test", "KChess", "Hello", false, cx));
+    let shown = app.cx.shown_system_notifications();
+    assert!(shown.last().expect("a notification").actions.is_empty());
+}

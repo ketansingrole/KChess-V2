@@ -83,6 +83,15 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 # The system's reduced-motion setting (`SystemParametersInfoW`; already in Cargo.lock).
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
+# KChess's AppUserModelID on its shortcuts (`windows_shortcuts.rs`); already in Cargo.lock.
+windows = { version = "0.62", features = [
+    "Win32_Storage_EnhancedStorage",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
 
 # The release version, and on Windows the executable's icon and version (`build.rs`); both
 # already in Cargo.lock.
