@@ -6,8 +6,8 @@
 //! `apps/gpui/dist/`.
 //!
 //! Every package carries the identity every KChess installation runs (`com.kchess.app`, "KChess",
-//! the Electron app's NSIS GUID and .deb name), with the update manifests (`latest*.yml`) the
-//! Electron app's updater reads, so it installs this over itself.
+//! the Electron app's NSIS GUID and .deb name). Electron installations update to the frozen
+//! stepping-stone release instead (`electron_step`, whose manifests the release adds).
 //!
 //! macOS signing: without `KCHESS_SIGN_IDENTITY` the bundle is signed ad hoc. With a Developer ID
 //! identity it is signed with the hardened runtime, then notarized and stapled (`APPLE_ID`,
@@ -18,7 +18,6 @@
 mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
-mod manifest;
 #[cfg(target_os = "macos")]
 mod mas;
 mod windows;
@@ -85,9 +84,6 @@ pub struct Built {
     pub fairy: PathBuf,
     pub voice: PathBuf,
     pub licenses: PathBuf,
-    /// The Electron bridge (macOS only).
-    #[allow(dead_code)]
-    pub bridge: PathBuf,
 }
 
 fn exe(name: &str) -> String {
@@ -173,10 +169,6 @@ fn build(skip: bool) -> Result<Built> {
             "--features",
             "kchess-core/packaged",
         ]);
-        // What a Mac Electron app from before 2026.10.12 updates to (`mac::bridge`).
-        if cfg!(target_os = "macos") {
-            cargo.args(["-p", "kchess-electron-bridge"]);
-        }
         run_with(&mut cargo)?;
     }
     let voice = crate::voice::stage("release")?;
@@ -216,7 +208,6 @@ fn build(skip: bool) -> Result<Built> {
         fairy,
         voice,
         licenses,
-        bridge: target.join("kchess-electron-bridge"),
     };
     // Debug builds draw a development badge in the sidebar; a release binary must not contain it.
     verify_no_dev_build(&built.app)?;
@@ -277,9 +268,9 @@ pub fn run(args: &[String]) -> Result {
     if snap {
         return Err("The Snap is built on Linux.".into());
     }
-    // The Snap Store updates the Snap; the manifests are for the other packages.
-    if !snap {
-        manifest::write(&identity, &packages, &out)?;
+    // The release adds the Electron manifests, which name the frozen step (`electron_step`).
+    for package in &packages {
+        say(&format!("Packaged {}", package.display()));
     }
     let mut files: Vec<PathBuf> = std::fs::read_dir(&out)
         .map_err(|cause| cause.to_string())?

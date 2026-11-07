@@ -4,6 +4,7 @@ mod app;
 mod app_icon;
 mod bench;
 mod check;
+mod electron_step;
 mod fairy;
 mod fake_lichess;
 mod icons;
@@ -44,6 +45,8 @@ const HELP: &str = "cargo xtask <command>
   sign-sums <file>      Sign a release's SHA256SUMS.txt into <file>.sig with
                         KCHESS_UPDATE_SIGNING_KEY (CI)
   download-release-snap Fetch and verify the published release's Snap (CI)
+  electron-step [dir]   Check the frozen stepping-stone release's installers and write the
+                        latest*.yml that send Electron installs to them (release CI)
   notices               Check THIRD_PARTY_NOTICES.md names every shipped dependency
   app-icon              Draw the app icon in every size and format the app needs
   icons [--check]       Write the icons the app names (or check they match)
@@ -81,6 +84,9 @@ fn main() -> ExitCode {
             None => Err("sign-sums needs the checksums file.".into()),
         },
         Some("download-release-snap") => release::download_snap(),
+        Some("electron-step") => electron_step::write(std::path::Path::new(
+            rest.first().map_or("packages", String::as_str),
+        )),
         Some("notices") => licenses::check_notices(),
         Some("app-icon") => app_icon::write(),
         Some("icons") if rest.iter().any(|arg| arg == "--check") => icons::check(),
