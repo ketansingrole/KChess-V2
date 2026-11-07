@@ -27,12 +27,9 @@ pub fn whole(value: &Value) -> u64 {
 
 /// A rules method by name (`kchess_domain::api::call`), with its JSON answer.
 pub fn rules(method: &str, args: &[Value]) -> Result<Value, String> {
-    // Trees and deep arguments go through JSON text. Everything else skips writing the arguments
-    // out and reading the answer back (`call_value` answers as `call` does).
-    if !kchess_domain::api::needs_large_stack(method, args) {
-        return kchess_domain::api::call_value(method, args);
-    }
-    rules_as(method, args)
+    // `call_value` answers as `call` does without writing the arguments out and reading the answer
+    // back, and takes trees and deep arguments to the large stack itself.
+    kchess_domain::api::call_value(method, args)
 }
 
 /// A rules method's answer read straight into `T`. A deep answer (a game tree nests once a ply,

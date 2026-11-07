@@ -746,6 +746,18 @@ mod tests {
         assert!(call("pathOf", &text).is_ok());
     }
 
+    /// Closing brackets end a level; an escaped quote does not end a string.
+    #[test]
+    fn nesting_counts_open_levels_outside_strings() {
+        assert_eq!(nesting("[]"), 1);
+        assert_eq!(nesting("[[], [], {}]"), 2);
+        assert_eq!(nesting("[[[]], [[]]]"), 3);
+        assert_eq!(nesting(r#"["]"]"#), 1);
+        assert_eq!(nesting(r#"["\"", [[]]]"#), 3);
+        assert_eq!(nesting(r#"["\" [[[", 1]"#), 1);
+        assert_eq!(nesting(r#"["\\", [[]]]"#), 3);
+    }
+
     /// Runs `f` on a 256 KiB thread, far smaller than any host's, so a deep call that stayed on
     /// the caller's stack would overflow.
     fn on_small_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {

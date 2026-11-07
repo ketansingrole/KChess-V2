@@ -1,0 +1,10 @@
+# cargo-mutants (`cargo install cargo-mutants`): `cargo mutants -p <package>` changes the code one
+# small edit at a time and reports each edit no test notices. See docs/mutation-testing.md.
+
+# Mutants no test can tell apart from the original, because the program behaves the same. Each
+# entry names why; never add one only because a test is missing.
+exclude_re = [
+    # The version bits are cleared by the mask first, so `| 0x40` and `^ 0x40` (and `| 0x80` and
+    # `^ 0x80`) set the same byte.
+    'kchess-games/src/archive\.rs:.*: replace \| with \^ in new_id',
+]
