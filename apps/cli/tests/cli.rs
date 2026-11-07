@@ -844,3 +844,22 @@ fn linked_games_and_studies_are_read_from_lichess() {
     assert_eq!(lichess.paths(), [export, chapter, export, chapter]);
     let _ = std::fs::remove_dir_all(engine.parent().expect("engine folder"));
 }
+
+/// The core's warnings reach stderr with their scope, beside the command's own error.
+#[test]
+fn the_cores_warnings_go_to_stderr() {
+    let profile = tempfile::tempdir().expect("profile");
+    let failed = cli(
+        profile.path(),
+        &["--engine", "/nonexistent/stockfish", "review", "1. e4 e5"],
+        "",
+    );
+    assert!(!failed.status.success());
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(stderr.contains("[review] Review failed:"), "{stderr}");
+    assert!(
+        stderr.contains("[cli] Command failed: The review failed"),
+        "{stderr}"
+    );
+    assert!(failed.stdout.is_empty());
+}
