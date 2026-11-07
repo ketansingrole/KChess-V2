@@ -978,9 +978,11 @@ impl OnlinePage {
             .unwrap_or_default()
             .to_string();
         let last_game = model["lastGame"].is_object();
+        // Centred under the move navigation, as it is.
         let actions = if playing {
             h_flex()
                 .flex_wrap()
+                .justify_center()
                 .gap(px(8.))
                 .when(live.contains(&LiveAction::Berserk), |row| {
                     row.child(
@@ -1039,6 +1041,7 @@ impl OnlinePage {
             let export = finished.then(|| self.game_export(online, model));
             h_flex()
                 .flex_wrap()
+                .justify_center()
                 .gap(px(8.))
                 .when(live.contains(&LiveAction::Rematch), |row| {
                     row.child(
