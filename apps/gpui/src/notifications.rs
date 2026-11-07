@@ -27,6 +27,11 @@ pub fn init(cx: &mut App) {
 /// bundle (`UNUserNotificationCenter` aborts a bare binary), so a bare `cargo run` binary keeps
 /// the library, sending as the development app (`sender`).
 fn through_gpui() -> bool {
+    // Tests post to GPUI's test platform, which keeps them: never to the desktop, where a test
+    // run left "Game started" banners from a Terminal icon.
+    if cfg!(test) {
+        return true;
+    }
     #[cfg(target_os = "macos")]
     {
         bundled()
