@@ -999,23 +999,26 @@ fn a_resumed_clock_runs_out() {
 /// `play` needs Stockfish for a standard game, and says so when it cannot start.
 #[test]
 fn play_needs_an_engine() {
-    let profile = tempfile::tempdir().expect("profile");
     // No engine the person installed either: their home is the scratch profile.
-    let refused = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
-        .args(["--embedded", "--no-credentials", "--data-dir"])
-        .arg(profile.path())
-        .args(["--engine", "/nonexistent/stockfish", "play"])
-        .env("KCHESS_USER_DATA_DIR", profile.path())
-        .env("HOME", profile.path())
-        .env("USERPROFILE", profile.path())
-        .env_remove("KCHESS_SERVICE_BINARY")
-        .stdin(Stdio::null())
-        .output()
-        .expect("kchess-cli runs");
-    assert!(!refused.status.success());
-    let stderr = String::from_utf8_lossy(&refused.stderr);
-    assert!(
-        stderr.contains("Stockfish is unavailable. Install an engine or pass --engine."),
-        "{stderr}"
-    );
+    for args in [&["play"][..], &["play", "standard"]] {
+        let profile = tempfile::tempdir().expect("profile");
+        let refused = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+            .args(["--embedded", "--no-credentials", "--data-dir"])
+            .arg(profile.path())
+            .args(["--engine", "/nonexistent/stockfish"])
+            .args(args)
+            .env("KCHESS_USER_DATA_DIR", profile.path())
+            .env("HOME", profile.path())
+            .env("USERPROFILE", profile.path())
+            .env_remove("KCHESS_SERVICE_BINARY")
+            .stdin(Stdio::null())
+            .output()
+            .expect("kchess-cli runs");
+        assert!(!refused.status.success(), "{args:?}");
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            stderr.contains("Stockfish is unavailable. Install an engine or pass --engine."),
+            "{args:?}: {stderr}"
+        );
+    }
 }
