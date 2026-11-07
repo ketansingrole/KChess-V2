@@ -245,26 +245,45 @@ pub fn package(
     std::os::unix::fs::symlink("/Applications", image.join("Applications"))
         .map_err(|cause| cause.to_string())?;
     let dmg = out.join(format!("{base}.dmg"));
-    run(
-        "hdiutil",
-        &[
-            "create",
-            "-volname",
-            identity.name,
-            "-srcfolder",
-            &text(&image),
-            "-fs",
-            "HFS+",
-            "-format",
-            "UDZO",
-            "-imagekey",
-            "zlib-level=9",
-            "-ov",
-            &text(&dmg),
-        ],
-    )?;
+    // hdiutil sometimes finds the disk-image driver busy ("Resource busy") on a runner that just
+    // made the zip; it succeeds when tried again.
+    retrying(3, std::time::Duration::from_secs(10), || {
+        run(
+            "hdiutil",
+            &[
+                "create",
+                "-volname",
+                identity.name,
+                "-srcfolder",
+                &text(&image),
+                "-fs",
+                "HFS+",
+                "-format",
+                "UDZO",
+                "-imagekey",
+                "zlib-level=9",
+                "-ov",
+                &text(&dmg),
+            ],
+        )
+    })?;
     verify_zip(identity, &zip)?;
     Ok(vec![zip, dmg])
+}
+
+/// `work`, tried up to `attempts` times with `pause` between: the last failure is the error.
+fn retrying(attempts: u32, pause: std::time::Duration, mut work: impl FnMut() -> Result) -> Result {
+    let mut tried = 1;
+    loop {
+        match work() {
+            Err(cause) if tried < attempts => {
+                say(&format!("{cause}; trying again ({tried} of {attempts})…"));
+                std::thread::sleep(pause);
+                tried += 1;
+            }
+            done => return done,
+        }
+    }
 }
 
 /// The value of `key` in a plist written by `plist`.
@@ -324,6 +343,29 @@ fn verify_zip(identity: &Identity, zip: &Path) -> Result {
 
 #[cfg(test)]
 mod tests {
+    /// 2026-11-07: `hdiutil create` failed with "Resource busy" on a CI runner, once, and
+    /// failed the package job; a second try makes the image.
+    #[test]
+    fn a_busy_tool_is_tried_again() {
+        let mut calls = 0;
+        let made = super::retrying(3, std::time::Duration::ZERO, || {
+            calls += 1;
+            if calls < 2 {
+                Err("hdiutil: create failed - Resource busy".into())
+            } else {
+                Ok(())
+            }
+        });
+        assert!(made.is_ok());
+        assert_eq!(calls, 2);
+        let mut calls = 0;
+        let failed = super::retrying(3, std::time::Duration::ZERO, || {
+            calls += 1;
+            Err(format!("busy {calls}"))
+        });
+        assert_eq!(failed.unwrap_err(), "busy 3");
+    }
+
     use super::*;
 
     fn zip_of(identity: &Identity) -> std::collections::HashMap<String, Vec<u8>> {
