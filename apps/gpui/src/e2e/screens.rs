@@ -170,6 +170,37 @@ fn settings_sidebar() {
     }
 }
 
+/// Every Settings category, dark, wide and narrow: `KCHESS_SCREENSHOTS=<dir> cargo test -p
+/// kchess-gpui e2e::screens::settings_sections -- --ignored` writes
+/// `<dir>/settings/<width>-<category>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn settings_sections() {
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("settings");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for width in [1320., 900.] {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), width, 880.);
+        cx.update(|cx| crate::settings::change(cx, |s| s.frontend.appearance = Appearance::Dark));
+        for (section, label, _) in crate::pages::settings::sections() {
+            cx.update_window(window, |_, window, cx| {
+                crate::shell::open_settings(section, window, cx)
+            })
+            .expect("the window");
+            settle(&mut cx, window);
+            cx.capture_screenshot(window)
+                .expect("a screenshot")
+                .save(out.join(format!("{width}-{}.png", label.to_lowercase())))
+                .expect("the screenshot saves");
+        }
+        let quit = cx.update(crate::core::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
 /// A Crazyhouse game over the board, with pieces in both pockets and one picked to drop, in
 /// both appearances: `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::crazyhouse
 /// -- --ignored` writes `<dir>/crazyhouse/<appearance>.png`.

@@ -505,23 +505,7 @@ fn info(title: impl Into<SharedString>, hint: Option<SharedString>, palette: &Pa
     let title = title.into();
     #[cfg(test)]
     DRAWN_TITLES.with(|titles| titles.borrow_mut().push(title.to_string()));
-    v_flex()
-        .gap(px(4.))
-        .min_w_0()
-        .child(
-            div()
-                .text_size(px(14.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(palette.highlighted)
-                .child(title),
-        )
-        .children(hint.map(|hint| {
-            div()
-                .text_size(px(12.))
-                .line_height(relative(1.45))
-                .text_color(palette.text_muted)
-                .child(hint)
-        }))
+    widgets::setting_info(title, hint, palette)
 }
 
 /// The category's rows (`.settings-list`), with dividers between them.
@@ -538,7 +522,7 @@ impl Rows {
         }
     }
 
-    /// `.setting-row`: the title on the left (up to 420px), the control beside it (up to 520px).
+    /// A setting row: the title and its hint on the left, the control at the right edge.
     fn row(
         self,
         title: impl Into<SharedString>,
@@ -551,20 +535,14 @@ impl Rows {
 
     /// A row whose title column says more than a title and a hint (a level meter).
     fn row_with(mut self, info: Div, control: impl IntoElement) -> Rows {
-        let control = div().w_full().max_w(px(520.)).child(control);
         let row = if self.narrow {
             v_flex()
                 .gap(px(8.))
                 .child(info)
-                .child(control)
+                .child(div().max_w_full().child(control))
                 .into_any_element()
         } else {
-            h_flex()
-                .gap(px(40.))
-                .child(info.w(px(420.)).min_w(px(200.)).flex_shrink(1.))
-                // Wide enough for a row of choices on one line; the title column gives way first.
-                .child(div().flex_1().min_w(px(320.)).child(control))
-                .into_any_element()
+            widgets::setting_row(info.min_w(px(200.)), control).into_any_element()
         };
         self.rows.push(row);
         self
@@ -597,7 +575,16 @@ impl Rows {
                     crate::settings::change(cx, move |settings| change(settings, checked));
                 }),
         );
-        self.row(title, hint.map(SharedString::from), control, palette)
+        // A switch is small enough to stay beside its title in the narrowest window.
+        let mut rows = self;
+        rows.rows.push(
+            widgets::setting_row(
+                info(title, hint.map(SharedString::from), palette).min_w_0(),
+                control,
+            )
+            .into_any_element(),
+        );
+        rows
     }
 
     /// `.setting-row.stacked`: a control that needs the full width goes under its title.
@@ -653,7 +640,7 @@ fn choice<T: Copy + PartialEq + 'static>(
         .iter()
         .position(|value| *value == current)
         .unwrap_or(0);
-    widgets::pill_tabs(
+    widgets::setting_pills(
         id,
         items
             .iter()
@@ -946,7 +933,9 @@ impl SettingsPage {
                     }
                     .into(),
                 ),
-                Select::new(&self.zoom).accessibility_label("Interface size"),
+                widgets::setting_field(
+                    Select::new(&self.zoom).accessibility_label("Interface size"),
+                ),
                 palette,
             )
             .row(
@@ -1297,7 +1286,9 @@ impl SettingsPage {
             .row(
                 "Check correspondence games",
                 Some("Only while KChess is open".into()),
-                Select::new(&self.poll).accessibility_label("Check correspondence games"),
+                widgets::setting_field(
+                    Select::new(&self.poll).accessibility_label("Check correspondence games"),
+                ),
                 palette,
             )
             .card(palette)
@@ -1332,9 +1323,11 @@ impl SettingsPage {
             .row(
                 "Volume",
                 Some(format!("{}%", (frontend.sound_volume * 100.).round()).into()),
-                Slider::new(&self.volume)
-                    .disabled(!frontend.sound_enabled)
-                    .accessibility_label("Volume"),
+                widgets::setting_field(
+                    Slider::new(&self.volume)
+                        .disabled(!frontend.sound_enabled)
+                        .accessibility_label("Volume"),
+                ),
                 palette,
             )
             .card(palette)

@@ -1054,6 +1054,43 @@ pub fn setting_row(info: Div, control: impl IntoElement) -> Div {
         .child(h_flex().flex_none().justify_end().child(control))
 }
 
+/// The width of a setting's field (a list, a slider), so the fields of a list line up.
+pub const SETTING_FIELD: Pixels = px(240.);
+
+/// A setting's field at `SETTING_FIELD`.
+pub fn setting_field(control: impl IntoElement) -> Div {
+    div().w(SETTING_FIELD).child(control)
+}
+
+/// A setting's choices: pills as wide as their labels, at the row's right edge.
+pub fn setting_pills(
+    id: &'static str,
+    tabs: Vec<(Option<Icon>, SharedString)>,
+    selected: usize,
+    choose: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
+    palette: &Palette,
+) -> impl IntoElement {
+    pill_row(
+        id,
+        tabs.into_iter()
+            .map(|(glyph, label)| Pill {
+                icon: glyph,
+                label,
+                badge: None,
+                disabled: false,
+            })
+            .collect(),
+        selected,
+        choose,
+        PillRow {
+            compact: false,
+            wrap: false,
+            fill: false,
+        },
+        palette,
+    )
+}
+
 /// Setting rows one under another, with dividers between them.
 pub fn setting_list(rows: impl IntoIterator<Item = Div>, palette: &Palette) -> Div {
     v_flex().children(rows.into_iter().enumerate().map(|(index, row)| {
