@@ -13,7 +13,7 @@ pub fn init(cx: &mut App) {
     gpui_kit::component::Theme::global_mut(cx)
         .notification
         .placement = gpui_kit::Anchor::BottomRight;
-    if THROUGH_GPUI {
+    if through_gpui() {
         identify(cx);
         // Not from a test run, which would change the shortcuts of whoever runs it.
         #[cfg(all(windows, not(test)))]
@@ -21,15 +21,38 @@ pub fn init(cx: &mut App) {
     }
 }
 
-/// Whether system notifications go through GPUI, which names KChess as their sender and tells
-/// it when one is clicked: on Windows (where the notification library sent them as PowerShell,
-/// whose clicks went nowhere) and Linux. macOS keeps the library: GPUI has no notifications there,
-/// and the library already sends as KChess's bundle, whose clicks open KChess.
-const THROUGH_GPUI: bool = cfg!(any(windows, target_os = "linux", target_os = "freebsd"));
+/// Whether system notifications go through GPUI, which names KChess as their sender and tells it
+/// when one is clicked: on Windows (where the notification library sent them as PowerShell, whose
+/// clicks went nowhere), Linux, and macOS from an app bundle. GPUI's macOS notifications need the
+/// bundle (`UNUserNotificationCenter` aborts a bare binary), so a bare `cargo run` binary keeps
+/// the library, sending as the development app (`sender`).
+fn through_gpui() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        bundled()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        cfg!(any(windows, target_os = "linux", target_os = "freebsd"))
+    }
+}
+
+/// Whether KChess runs from an app bundle, read once before the notification library can
+/// replace what `bundleIdentifier` answers.
+#[cfg(target_os = "macos")]
+fn bundled() -> bool {
+    static BUNDLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *BUNDLED.get_or_init(|| {
+        objc2_foundation::NSBundle::mainBundle()
+            .bundleIdentifier()
+            .is_some()
+    })
+}
 
 /// KChess's identity: on Windows its AppUserModelID, so its notifications are its own and a click
 /// on one comes back to it. The installer's shortcuts carry it too (`windows_shortcuts`), so the
-/// taskbar keeps one KChess button. On Linux GPUI names the sender from it.
+/// taskbar keeps one KChess button. On Linux GPUI names the sender from it; macOS names it from
+/// the bundle.
 pub const APP_ID: &str = "com.kchess.app";
 
 /// Send notifications as KChess, and bring KChess forward on the game a clicked one is about.
@@ -245,7 +268,7 @@ fn alert(
     let outcome = decide(&settings, kind, away, page);
     match outcome {
         Outcome::InApp => crate::online::notice(cx, format!("{title}\n{body}")),
-        Outcome::System if THROUGH_GPUI => {
+        Outcome::System if through_gpui() => {
             let sound = settings.frontend.notify_sound;
             match tagged {
                 Some((tag, actions)) => post_tagged(tag, title, body, actions, sound, cx),
