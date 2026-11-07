@@ -344,6 +344,13 @@ pub(super) fn assert_optional_page(value: J) -> Checked<Option<u64>> {
     Ok(page)
 }
 
+/// `stopWatching`'s session: the number a watch's `watch` or `watchBroadcast` answered.
+pub(super) fn assert_watch_session(value: J) -> Checked<u64> {
+    let session: u64 = decode(value, plain)?;
+    within(session, 1, u64::from(u32::MAX), None, "")?;
+    Ok(session)
+}
+
 /// `CORE_CONTRACTS` `boolean` (`answerMistake`): a boolean.
 pub(super) fn assert_boolean(value: J) -> Checked<bool> {
     decode(value, plain)

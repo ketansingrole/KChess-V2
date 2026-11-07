@@ -329,6 +329,7 @@ validators! {
     "assertLookupKind" => assert_lookup_kind,
     "assertOptionalPage" => assert_optional_page,
     "assertBoolean" => assert_boolean,
+    "assertWatchSession" => assert_watch_session,
     "assertChapterName" => assert_chapter_name,
     "assertPgnText" => assert_pgn_text,
     "assertSessionObject" => assert_session_object,

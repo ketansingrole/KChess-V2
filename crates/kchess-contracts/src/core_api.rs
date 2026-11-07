@@ -317,7 +317,11 @@ pub fn methods() -> Vec<Method> {
             "Follow a broadcast round's live PGN; updates on `onBroadcast`.",
             vec![req("roundId")],
         ),
-        method("stopWatching", "", vec![]),
+        method(
+            "stopWatching",
+            "Stop watching; with `session`, only that watch, never one begun after it.",
+            vec![opt("session")],
+        ),
         method("broadcasts", "", vec![opt("query")]),
         method("broadcastTour", "", vec![req("id")]),
         method(

@@ -466,6 +466,10 @@ impl WatchPage {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
                 if this.epoch != epoch {
+                    // The page moved on while the core started it: that watch ends now.
+                    if let Ok(session) = &answer {
+                        stop_watching(session.as_f64(), cx);
+                    }
                     return;
                 }
                 match answer {
@@ -491,23 +495,14 @@ impl WatchPage {
         self.epoch += 1;
         self.early.clear();
         self.pending = None;
-        self.session = None;
-        self.round_session = None;
+        // Only the watches this page knows: a bare stop handled after a newer watch began would
+        // end that one instead. One still starting is stopped when its answer comes.
+        stop_watching(self.session.take(), cx);
+        stop_watching(self.round_session.take(), cx);
         self.phase = None;
         self.target = None;
         self.live.clear();
         self.broadcasts.pause_clocks();
-        let stopping = cx.global::<AppCore>().call("stopWatching", Vec::new());
-        cx.background_spawn(async move {
-            if let Err(cause) = stopping.await {
-                crate::log::write(
-                    kchess_core::Level::Warn,
-                    "watch",
-                    &format!("stopping watch failed: {}", cause.message),
-                );
-            }
-        })
-        .detach();
         cx.notify();
     }
 
@@ -1077,4 +1072,24 @@ fn live_badge(palette: &Palette) -> Div {
     widgets::badge("Live", Look::Error, palette)
         .gap(px(4.))
         .child(icon("radio").size(px(12.)))
+}
+
+/// `stopWatching` for `session` alone, if there is one.
+pub(super) fn stop_watching(session: Option<f64>, cx: &mut App) {
+    let Some(session) = session else {
+        return;
+    };
+    let stopping = cx
+        .global::<AppCore>()
+        .call("stopWatching", vec![json!(session as u64)]);
+    cx.background_spawn(async move {
+        if let Err(cause) = stopping.await {
+            crate::log::write(
+                kchess_core::Level::Warn,
+                "watch",
+                &format!("stopping watch failed: {}", cause.message),
+            );
+        }
+    })
+    .detach();
 }
