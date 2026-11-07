@@ -234,6 +234,16 @@ fn package_of(file: &str) -> Option<String> {
     None
 }
 
+/// Whether a change to `file` can change what a package builds or tests: Rust, Cargo files, and
+/// anything inside a package, which `include_str!`, `build.rs` or a test may read (a release key
+/// once skipped every test this way). Documents outside the packages do not.
+fn builds_into_a_package(file: &str) -> bool {
+    file.ends_with(".rs")
+        || file.ends_with("Cargo.toml")
+        || file == "Cargo.lock"
+        || package_of(file).is_some()
+}
+
 /// `check-fast`: format, lints and the tests of the packages changed since main (committed or
 /// not). Never a substitute for `check` before a push to main.
 pub fn fast() -> Result {
@@ -249,10 +259,7 @@ pub fn fast() -> Result {
             .lines()
             .map(str::to_string),
     );
-    let rust = files
-        .iter()
-        .any(|file| file.ends_with(".rs") || file.ends_with("Cargo.toml") || file == "Cargo.lock");
-    if !rust {
+    if !files.iter().any(|file| builds_into_a_package(file)) {
         say("No Rust changes since main.");
         return Ok(());
     }
@@ -539,5 +546,19 @@ mod tests {
             Some("xtask")
         );
         assert_eq!(package_of("README.md"), None);
+    }
+
+    /// 2026-11-07: committing the release key (`apps/gpui/update-key.pub`, read by
+    /// `include_str!`) ran no tests, and CI found four the key broke.
+    #[test]
+    fn a_file_a_package_reads_is_a_change_to_test() {
+        assert!(builds_into_a_package("apps/gpui/update-key.pub"));
+        assert!(builds_into_a_package(
+            "crates/kchess-electron-legacy/tests/fixtures/local-storage/CURRENT"
+        ));
+        assert!(builds_into_a_package("Cargo.lock"));
+        assert!(!builds_into_a_package("docs/releasing.md"));
+        assert!(!builds_into_a_package(".github/workflows/ci.yml"));
+        assert!(!builds_into_a_package("AGENTS.md"));
     }
 }
