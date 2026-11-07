@@ -8,6 +8,9 @@ with nothing there.
 
 ## Unreleased
 
+- **What's new**: open these notes any time from What's new in the sidebar, just above Settings.
+- **Fixes**: while you wait for an opponent on Lichess, the waiting card sits in the middle of the page.
+
 ## 2026.11.4 (2026-11-07)
 
 - **What's new**: after each update, KChess shows you what changed. You can read it again any time in Settings → Updates.

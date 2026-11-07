@@ -1671,6 +1671,17 @@ impl Workspace {
                             .children(dev_build_badge(open, cx))
                             .child(
                                 footer_button(
+                                    "sidebar-whats-new",
+                                    icon("rocket"),
+                                    "What's new".into(),
+                                    open,
+                                    cx,
+                                )
+                                .accessibility_label("What's new")
+                                .on_click(|_, window, cx| crate::whats_new::open(window, cx)),
+                            )
+                            .child(
+                                footer_button(
                                     "settings",
                                     icon("settings-2"),
                                     "Settings".into(),
