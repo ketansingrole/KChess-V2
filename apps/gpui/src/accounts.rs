@@ -579,7 +579,7 @@ impl Accounts {
     }
 
     /// `signedOut`: take the answer in, forget the account's choices, and start the pages afresh
-    /// so nothing kept for the account outlives it (Electron reloads its window).
+    /// so nothing kept for the account outlives it.
     fn after_sign_out(
         &mut self,
         call: impl std::future::Future<Output = Result<Value, kchess_core::CoreError>> + 'static,

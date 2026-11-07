@@ -1,4 +1,4 @@
-//! The chessboard, as Chessground draws it in the Electron app: the chosen board
+//! The chessboard: the chosen board
 //! and pieces, the last move, check, the selected piece and where it can go, coordinates,
 //! click-to-move and drag-and-drop, and the promotion picker. Squares, highlights and pieces are
 //! painted in one pass; the page gives the board its position and hears its moves.
@@ -2289,7 +2289,7 @@ mod description_tests {
     use super::{BoardState, describe};
     use shakmaty::Color;
 
-    /// A screen reader hears the last move and whose turn it is, as Electron's status line says.
+    /// A screen reader hears the last move and whose turn it is.
     #[test]
     fn the_board_says_the_last_move_and_whose_turn_it_is() {
         let start = BoardState::shown(

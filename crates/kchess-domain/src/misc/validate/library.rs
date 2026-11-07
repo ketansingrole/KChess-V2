@@ -1,5 +1,5 @@
 //! Validators of library documents: studies and their chapters, repertoire notes, view
-//! preferences, sessions and the documents the Electron app left.
+//! preferences and sessions.
 
 use super::*;
 
@@ -293,8 +293,7 @@ pub(super) fn assert_repertoire_line(value: J) -> Checked<String> {
     Ok(line)
 }
 
-/// A view preference's name: `kchess:` and lowercase letters, digits, `-` and `:`, as the Electron
-/// the Electron app named its `localStorage` keys; at most 100 characters.
+/// A view preference's name: `kchess:` and lowercase letters, digits, `-` and `:`; at most 100 characters.
 pub(super) fn assert_view_preference_key(value: J) -> Checked<String> {
     let key: String = decode(value, plain)?;
     let valid = key.len() <= 100

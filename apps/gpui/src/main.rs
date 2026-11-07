@@ -1,5 +1,5 @@
-//! KChess as a GPUI Kit application over the Rust core: the same profile, games, settings and
-//! accounts as the Electron app, drawn natively.
+//! KChess as a GPUI Kit application over the Rust core: the profile's games, settings and
+//! accounts, drawn natively.
 
 // A Windows GUI program: release builds open no console window beside the app (logs go to the
 // profile's log file). Debug builds keep the console for `cargo run` output.
@@ -188,7 +188,7 @@ fn main_window_options(cx: &mut App) -> WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: Some(profile::APP_NAME.into()),
             appears_transparent: true,
-            // As Electron's, beside the sidebar toggle; `interface_zoom::apply` keeps them on the
+            // Beside the sidebar toggle; `interface_zoom::apply` keeps them on the
             // top bar's middle at every interface size.
             traffic_light_position: Some(point(px(12.), px(21.))),
         }),

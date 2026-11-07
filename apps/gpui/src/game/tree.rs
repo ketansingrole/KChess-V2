@@ -414,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn moves_branch_and_promote_like_the_electron_tree() {
+    fn moves_branch_and_promote() {
         let mut tree = TreeNode::new(None);
         let e4 = tree.add_move("", "e2e4").unwrap();
         let e5 = tree.add_move(&e4, "e7e5").unwrap();

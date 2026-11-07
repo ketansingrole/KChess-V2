@@ -1,5 +1,4 @@
-//! The app's pages, one per sidebar entry, created when first shown and kept while the app runs,
-//! as the Electron app keeps its page stores.
+//! The app's pages, one per sidebar entry, created when first shown and kept while the app runs.
 
 pub mod analysis;
 pub mod computer;

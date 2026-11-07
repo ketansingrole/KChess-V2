@@ -1,5 +1,5 @@
 //! Practice: the board-vision drills and the trainers, one tab at a time,
-//! each made the first time it is shown and kept, as the Electron page keeps its stores.
+//! each made the first time it is shown and kept.
 
 mod coordinates;
 pub(crate) mod endgame_drills;
@@ -23,7 +23,7 @@ use crate::widgets::{self, Pill};
 
 const TAB: &str = "kchess:practice-tab";
 
-/// The tabs, in the Electron app's order: their stored names and labels.
+/// The tabs, in order: their stored names and labels.
 const TABS: [(&str, &str); 7] = [
     ("coordinates", "Coordinates"),
     ("colors", "Square colours"),
@@ -194,7 +194,7 @@ impl PracticePage {
             .map_or("coordinates", |(key, _)| key)
     }
 
-    /// The page was opened from the sidebar: its tab starts afresh where Electron remounts it.
+    /// The page was opened from the sidebar: its tab starts afresh.
     pub fn shown(&mut self) {
         self.shown_tab = None;
     }

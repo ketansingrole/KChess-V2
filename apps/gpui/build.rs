@@ -1,10 +1,10 @@
 //! The release version every part of the app reports (`KCHESS_VERSION`), and on Windows the
 //! executable's own resources: the icon Start menu and desktop shortcuts show, and the version
-//! Windows reads from the file, as electron-builder wrote them into the Electron app's.
+//! Windows reads from the file.
 
 use std::path::Path;
 
-/// The name Windows shows for the executable, the Electron app's `productName`.
+/// The name Windows shows for the executable.
 const PRODUCT: &str = "KChess";
 const AUTHOR: &str = "Ketan Singrole";
 const COPYRIGHT: &str = "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.";

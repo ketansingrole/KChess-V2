@@ -951,7 +951,7 @@ mod tests {
     use super::{balance, best_and_weakest, blunder_rate, by_clock, by_time, seconds, speed_name};
     use serde_json::json;
 
-    /// Electron's columns put colour, speed and opponent rating first; length and day next;
+    /// The columns put colour, speed and opponent rating first; length and day next;
     /// time of day and endings last.
     #[test]
     fn sections_balance_into_columns_as_css_does() {

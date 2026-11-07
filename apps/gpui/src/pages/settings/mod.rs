@@ -79,7 +79,7 @@ pub fn sections() -> [(Section, &'static str, Icon); 15] {
 }
 
 /// What finds a category in ⌘K besides its name: every row title it shows (checked by a test, so
-/// a new row is found too), what the custom rows hold, and the names the Electron app used.
+/// a new row is found too), what the custom rows hold, and other names for it.
 pub fn section_keywords(section: Section) -> &'static str {
     match section {
         Section::Appearance => {
@@ -315,7 +315,7 @@ impl SettingsPage {
             }),
             cx.subscribe(&volume, |_, _, event: &SliderEvent, cx| {
                 let (SliderEvent::Change(value) | SliderEvent::Release(value)) = event;
-                // The slider's steps are f32: keep the hundredths the Electron slider stores.
+                // The slider's steps are f32: keep the hundredths the setting stores.
                 let volume = (f64::from(value.start()) * 100.).round() / 100.;
                 crate::settings::change(cx, move |s| s.frontend.sound_volume = volume);
             }),
