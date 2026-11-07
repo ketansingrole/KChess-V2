@@ -346,7 +346,9 @@ impl Spectators {
     }
 
     /// `stopWatching`: the calling connection's watch only.
-    pub fn stop_mine(&self) {
+    /// With `session`, only that watch: a stop sent before a newer watch began, but handled
+    /// after it, must not end the newer one.
+    pub fn stop_mine(&self, session: Option<u64>) {
         let connection = crate::connection::current_or_app();
         let spectator = self
             .watches
@@ -354,7 +356,10 @@ impl Spectators {
             .ok()
             .and_then(|watches| watches.get(&connection).cloned());
         if let Some(spectator) = spectator {
-            spectator.stop();
+            match session {
+                Some(session) => spectator.stop_session(session),
+                None => spectator.stop(),
+            }
         }
     }
 

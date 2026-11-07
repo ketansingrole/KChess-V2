@@ -169,6 +169,18 @@ impl Spectator {
         self.inner.stop();
     }
 
+    /// Ends `session` if it is still the running one; a newer watch carries on.
+    pub fn stop_session(&self, session: u64) {
+        let mut control = lock(&self.inner.control);
+        if control.session != session {
+            return;
+        }
+        control.session += 1;
+        if let Some(running) = control.cancel.take() {
+            running.cancel();
+        }
+    }
+
     /// Watches a TV channel or a game; returns the session number its frames carry.
     pub fn watch(&self, target: WatchTarget) -> u64 {
         let (session, token) = self.inner.begin();

@@ -532,6 +532,10 @@ impl WatchPage {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
                 if this.epoch != epoch {
+                    // The page moved on while the core started it: that feed ends now.
+                    if let Ok(session) = &answer {
+                        super::stop_watching(session.as_f64(), cx);
+                    }
                     return;
                 }
                 match answer {
