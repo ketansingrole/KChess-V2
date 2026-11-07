@@ -395,3 +395,58 @@ fn the_cli_shares_the_profiles_core_unless_embedded() {
             .success()
     );
 }
+
+/// A computer game against the scripted engine, which always answers 1. e4: its PGN names who
+/// played which side.
+#[cfg(unix)]
+#[test]
+fn a_computer_game_names_its_players() {
+    let engine = scripted_engine();
+    let pgn = |color: &str| {
+        let profile = tempfile::tempdir().expect("profile");
+        let mut child = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+            .args(["--embedded", "--no-credentials", "--data-dir"])
+            .arg(profile.path())
+            .arg("--engine")
+            .arg(&engine)
+            .args(["play", color])
+            .env("KCHESS_USER_DATA_DIR", profile.path())
+            .env_remove("KCHESS_SERVICE_BINARY")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("kchess-cli starts");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(b"pgn\nquit\n")
+            .expect("input");
+        let played = child.wait_with_output().expect("kchess-cli finishes");
+        assert!(played.status.success(), "{played:?}");
+        let stdout = String::from_utf8_lossy(&played.stdout).to_string();
+        // The engine's moves are announced as text between the JSON lines.
+        assert_eq!(
+            stdout.contains("Stockfish: e4"),
+            color == "black",
+            "{stdout}"
+        );
+        let last = stdout.lines().last().expect("the PGN");
+        let pgn: Value = serde_json::from_str(last).expect("a JSON line");
+        pgn["pgn"].as_str().expect("text").to_string()
+    };
+    let black = pgn("black");
+    for header in [
+        "[Event \"Computer game (KChess)\"]",
+        "[White \"Stockfish\"]",
+        "[Black \"You\"]",
+    ] {
+        assert!(black.contains(header), "{header}: {black}");
+    }
+    assert!(black.contains("1. e4 *"), "{black}");
+    let white = pgn("white");
+    assert!(white.contains("[White \"You\"]"), "{white}");
+    assert!(white.contains("[Black \"Stockfish\"]"), "{white}");
+    let _ = std::fs::remove_dir_all(engine.parent().expect("engine folder"));
+}
