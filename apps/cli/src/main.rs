@@ -918,6 +918,16 @@ mod tests {
         );
     }
 
+    /// Without --data-dir, the CLI uses the app's own profile.
+    #[test]
+    fn the_profile_defaults_to_the_apps() {
+        let options = parse(&[]).unwrap().options;
+        assert_eq!(options.data_dir, crate::core::default_data_dir());
+        assert!(!options.data_dir.as_os_str().is_empty());
+        assert_eq!(options.browser, Browser::Open);
+        assert!(options.credentials && !options.embedded);
+    }
+
     #[test]
     fn the_last_browser_mode_wins() {
         let mode = |args: &[&str]| parse(&strings(args)).unwrap().options.browser;

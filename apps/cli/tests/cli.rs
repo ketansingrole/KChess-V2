@@ -863,3 +863,118 @@ fn the_cores_warnings_go_to_stderr() {
     );
     assert!(failed.stdout.is_empty());
 }
+
+/// A board game enters Game history once it has a move, not before; a Chess960 game starts from
+/// one of its own positions.
+#[test]
+fn game_history_keeps_played_games_only() {
+    let profile = tempfile::tempdir().expect("profile");
+    let games = || lines(&cli(profile.path(), &["library"], ""))[0]["games"].clone();
+    assert!(cli(profile.path(), &["local"], "quit\n").status.success());
+    assert_eq!(games(), json!([]));
+    assert!(
+        cli(profile.path(), &["local"], "e2e4\nquit\n")
+            .status
+            .success()
+    );
+    let kept = games();
+    assert_eq!(kept.as_array().map(Vec::len), Some(1), "{kept}");
+    assert_eq!(kept[0]["moves"], json!(["e2e4"]));
+
+    assert!(
+        cli(profile.path(), &["local"], "resign\nquit\n")
+            .status
+            .success()
+    );
+    let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    // One position in 960 is the usual one: two draws in a row are not.
+    let fens: Vec<Value> = (0..2)
+        .map(|_| {
+            let started = cli(profile.path(), &["local", "chess960"], "resign\nquit\n");
+            lines(&started)[0]["fen"].clone()
+        })
+        .collect();
+    assert!(fens.iter().any(|fen| fen != start), "{fens:?}");
+}
+
+/// `play random` picks either colour.
+#[cfg(unix)]
+#[test]
+fn a_random_colour_is_either() {
+    let engine = scripted_engine();
+    let mut seen = std::collections::HashSet::new();
+    // Both colours within 40 draws, unless the draw is broken (one in 2^39 otherwise).
+    for _ in 0..40 {
+        let profile = tempfile::tempdir().expect("profile");
+        let output = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+            .args(["--embedded", "--no-credentials", "--data-dir"])
+            .arg(profile.path())
+            .arg("--engine")
+            .arg(&engine)
+            .args(["play", "random"])
+            .env("KCHESS_USER_DATA_DIR", profile.path())
+            .env_remove("KCHESS_SERVICE_BINARY")
+            .stdin(Stdio::null())
+            .output()
+            .expect("kchess-cli runs");
+        assert!(output.status.success(), "{output:?}");
+        // The engine opens when the player is Black.
+        seen.insert(String::from_utf8_lossy(&output.stdout).contains("Stockfish: e4"));
+        if seen.len() == 2 {
+            break;
+        }
+    }
+    assert_eq!(seen.len(), 2, "only one colour was drawn");
+    let _ = std::fs::remove_dir_all(engine.parent().expect("engine folder"));
+}
+
+/// A timed board game the app saved resumes paused; once resumed, the side to move loses on
+/// time when its clock runs out.
+#[test]
+fn a_resumed_clock_runs_out() {
+    let profile = tempfile::tempdir().expect("profile");
+    let session = json!(["local", {
+        "setup": {
+            "variant": "standard",
+            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        },
+        "moves": ["e2e4"],
+        "clock": {
+            "white": { "minutes": 1, "increment": 0 },
+            "black": { "minutes": 1, "increment": 0 }
+        },
+        "times": { "white": 60000, "black": 300 }
+    }]);
+    let saved = cli(
+        profile.path(),
+        &["call", "saveSession", &session.to_string()],
+        "",
+    );
+    assert!(saved.status.success(), "{saved:?}");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+        .args(["--embedded", "--no-credentials", "--data-dir"])
+        .arg(profile.path())
+        .arg("local")
+        .env("KCHESS_USER_DATA_DIR", profile.path())
+        .env_remove("KCHESS_SERVICE_BINARY")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("kchess-cli starts");
+    let mut stdin = child.stdin.take().expect("stdin");
+    stdin.write_all(b"pause\n").expect("resume");
+    stdin.flush().expect("flush");
+    // Black's 0.3 s run out well within this.
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    stdin.write_all(b"quit\n").expect("quit");
+    drop(stdin);
+    let played = child.wait_with_output().expect("kchess-cli finishes");
+    assert!(played.status.success(), "{played:?}");
+    let states = lines(&played);
+    assert!(states[1]["result"].is_null(), "{states:?}");
+    assert_eq!(
+        states.last().expect("a state")["result"],
+        json!({ "winner": "white", "reason": "Time out" })
+    );
+}
