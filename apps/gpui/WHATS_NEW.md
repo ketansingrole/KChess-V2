@@ -9,7 +9,7 @@ with nothing there.
 ## Unreleased
 
 - **A tidier sidebar**: your account sits at the bottom of the sidebar with Settings beside it. Its menu also opens What's new and lets you report a problem.
-- **Fixes**: while you wait for an opponent on Lichess, the waiting card sits in the middle of the page, and the time on each clock is centred.
+- **Fixes**: while you wait for an opponent on Lichess, the waiting card sits in the middle of the page, the time on each clock is centred, and the computer's difficulty list shows each level's full name and rating.
 
 ## 2026.11.4 (2026-11-07)
 
