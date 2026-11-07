@@ -428,6 +428,13 @@ fn a_seek_is_cancelled_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
             .any(|write| write.starts_with("POST /api/board/seek"))
             && crate::online::handle(cx).read(cx).phase == Phase::Seeking
     });
+    // The waiting card sits in the middle of the page, not pinned under its top edge.
+    let page = app.find("online-page").bounds();
+    let cancel = app.find("online-cancel").bounds();
+    assert!(
+        (cancel.center().y - page.center().y).abs() < gpui_kit::px(120.),
+        "{cancel:?} {page:?}"
+    );
     app.press("secondary-k");
     app.type_text(">Cancel seek");
     super::palette::wait_for_first(&mut app, "Cancel seek");
