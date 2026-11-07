@@ -180,6 +180,11 @@ and in the App Store. Its readers play chess; they are not developers.
   use `git stash` (one stash list serves every worktree, so a pop can take another session's
   work); keep work in progress as commits on your own branch, and never commit in a checkout or
   on a branch another session is using.
+- Fix why something breaks, not only its symptom. Before closing, reverting, skipping or ignoring
+  a failing check, broken pull request (Dependabot included) or bad config, find what made it fail
+  and whether a small change stops it for good; do that change, and offer the stopgap only as a
+  fallback. Dependabot once moved every `taiki-e/install-action` pin to one tool's tag commit, so
+  every step installed that tool; the fix was one pinned release with a `tool:` input.
 - Bug fixes must retain a regression for the concrete failure sequence. When generated
   tests expose a failure, preserve its replay seed/path and a focused reproducer.
 - Do not lower the coverage floors (`tooling/xtask/src/check.rs`) without a measurement that
