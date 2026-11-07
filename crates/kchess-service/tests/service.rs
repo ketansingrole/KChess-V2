@@ -338,6 +338,60 @@ async fn a_host_request_reaches_only_the_window_that_answers_it() {
     service.abort();
 }
 
+/// A client may cancel a call it made: the call stops and is answered as cancelled.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_call_is_answered_as_cancelled() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (_gpui, _events) = connect(profile.path(), "gpui").await;
+    let info = discovery::read_info(profile.path()).expect("core.json");
+    let stream = transport::connect(Path::new(&info.socket))
+        .await
+        .expect("socket");
+    let (mut reader, mut writer) = tokio::io::split(stream);
+    let hello = Frame::Hello {
+        token: discovery::read_token(profile.path()).expect("token"),
+        kind: "raw".into(),
+        release: protocol::release(),
+        protocol: protocol::protocol(),
+        capabilities: vec![Capability::Browser],
+    };
+    write_frame(&mut writer, &hello).await.expect("hello");
+    let next = async |reader: &mut tokio::io::ReadHalf<transport::Stream>| {
+        tokio::time::timeout(WAIT, read_frame(reader))
+            .await
+            .expect("a frame in time")
+            .expect("read")
+            .expect("a frame")
+    };
+    assert!(matches!(next(&mut reader).await, Frame::Welcome { .. }));
+    // Signing in waits for the browser this client never opens.
+    let call = Frame::Call {
+        id: 1,
+        method: "connectLichess".into(),
+        args: Vec::new(),
+    };
+    write_frame(&mut writer, &call).await.expect("call");
+    loop {
+        if let Frame::Event { name, payload } = next(&mut reader).await
+            && name == "host:request"
+            && payload["kind"] == "openExternal"
+        {
+            break;
+        }
+    }
+    write_frame(&mut writer, &Frame::Cancel { id: 1 })
+        .await
+        .expect("cancel");
+    let answer = loop {
+        if let Frame::Result { id: 1, error, .. } = next(&mut reader).await {
+            break error;
+        }
+    };
+    assert_eq!(answer.as_deref(), Some("The call was cancelled."));
+    service.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_window_that_joins_learns_which_window_alerts() {
     let profile = tempfile::tempdir().expect("profile");

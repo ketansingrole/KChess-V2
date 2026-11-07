@@ -309,3 +309,21 @@ mod imp {
 }
 
 pub use imp::{Listener, connect, remove};
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// Something in the socket's place that cannot be removed is the error, not the failed bind
+    /// after it.
+    #[tokio::test]
+    async fn a_socket_path_that_cannot_be_cleared_names_why() {
+        let folder = tempfile::tempdir().expect("folder");
+        let path = folder.path().join("core.sock");
+        std::fs::create_dir(&path).expect("a folder in its place");
+        let expected = std::fs::remove_file(&path).expect_err("not a file").kind();
+        let error = Listener::bind(&path).err().expect("refused");
+        assert_eq!(error.kind(), expected);
+        assert_ne!(error.kind(), std::io::ErrorKind::AddrInUse);
+    }
+}
