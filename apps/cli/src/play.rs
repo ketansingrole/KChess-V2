@@ -132,13 +132,9 @@ impl Session<'_> {
 
     /// The game as PGN, with its result, as the app's Copy PGN writes it.
     fn pgn(&self) -> Result<String, String> {
-        let result = match self.result() {
-            None => "*",
-            Some(result) => match result["winner"].as_str() {
-                Some("white") => "1-0",
-                Some("black") => "0-1",
-                _ => "1/2-1/2",
-            },
+        let result = match &self.game {
+            Game::Computer(game) => computer_result_tag(game, &self.host()),
+            Game::Local(game) => local_result_tag(game, self.now()),
         };
         let (white, black) = match &self.game {
             Game::Local(_) => ("White".to_string(), "Black".to_string()),
@@ -758,6 +754,28 @@ pub async fn interactive(
     Ok(())
 }
 
+/// A computer game's PGN result, as its Game history entry records it: its result view is from
+/// the player's side and names no winner.
+fn computer_result_tag(game: &ComputerGame, host: &computer::Host) -> String {
+    game.archive_snapshot(host)["result"]
+        .as_str()
+        .unwrap_or("*")
+        .to_string()
+}
+
+/// A board game's PGN result, from the winner its result names.
+fn local_result_tag(game: &LocalGame, now: f64) -> String {
+    match game.result(now) {
+        None => "*",
+        Some(result) => match result["winner"].as_str() {
+            Some("white") => "1-0",
+            Some("black") => "0-1",
+            _ => "1/2-1/2",
+        },
+    }
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::choices;
@@ -833,5 +851,30 @@ mod tests {
         );
         assert!(choices(&words(&["club", "black", "extra"])).is_err());
         assert!(choices(&words(&["atomic", "horde"])).is_err());
+    }
+
+    /// A finished computer game is written with its winner, not as a draw: its result view has
+    /// no `winner`, so the PGN takes the result its history entry records.
+    #[test]
+    fn a_resigned_computer_game_exports_as_a_loss() {
+        use super::{computer_result_tag, local_result_tag};
+        use kchess_games::computer::{ComputerGame, Host};
+        use kchess_games::local::LocalGame;
+        let host = Host {
+            now: 0.,
+            allowed: true,
+            ready: true,
+        };
+        let mut game = ComputerGame::new(None, &host).unwrap();
+        assert_eq!(computer_result_tag(&game, &host), "*");
+        assert!(game.play("e2e4", &host).unwrap().0);
+        game.resign(&host).unwrap();
+        assert!(game.over(&host));
+        assert_eq!(computer_result_tag(&game, &host), "0-1");
+
+        let mut board = LocalGame::new(None, 0.).unwrap();
+        assert_eq!(local_result_tag(&board, 0.), "*");
+        board.resign("black", 0.).unwrap();
+        assert_eq!(local_result_tag(&board, 0.), "1-0");
     }
 }
