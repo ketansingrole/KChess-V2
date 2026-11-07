@@ -9,6 +9,7 @@ mod fairy;
 mod fake_lichess;
 mod icons;
 mod licenses;
+mod mutants;
 mod package;
 mod release;
 mod update_key;
@@ -32,6 +33,9 @@ const HELP: &str = "cargo xtask <command>
                         metadata and the Rust tests (under the coverage gate when cargo-llvm-cov
                         is installed)
   check-fast            Format, lints and the tests of the packages changed since main
+  mutants [--base <ref>] [-- <cargo-mutants arguments>]
+                        Mutation testing of the lines changed since main (or <ref>); fails
+                        when a mutant survives (docs/mutation-testing.md)
   pre-push              The Git pre-push hook (.githooks/pre-push)
   install-hooks         Point Git at .githooks
   release-version       Set the next YEAR.MONTH.COUNTER release in Cargo.toml (fetches tags)
@@ -68,6 +72,7 @@ fn main() -> ExitCode {
         Some("bench") => bench::run(rest),
         Some("check") => check::full(),
         Some("check-fast") => check::fast(),
+        Some("mutants") => mutants::run(rest),
         Some("pre-push") => check::pre_push(),
         Some("install-hooks") => check::install_hooks(),
         Some("release-version") => release::next(),
