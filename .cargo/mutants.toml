@@ -20,7 +20,7 @@ exclude_re = [
     'kchess-domain/src/api\.rs:.*: replace (goes_deep|needs_large_stack) -> bool with true',
     # A uniform draw picks White half the time whether below or above 0.5 counts, and exactly
     # 0.5 has no weight.
-    'apps/cli/src/play\.rs:.*: replace < with (>|<=) in Session<\'_>::choose_color',
+    'apps/cli/src/play\.rs:.*: replace < with (>|<=) in Session<.*>::choose_color',
 ]
 
 # Compiled only for WebAssembly, where no test runs.
