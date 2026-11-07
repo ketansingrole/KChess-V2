@@ -467,6 +467,38 @@ fn only_a_click_eases_the_sidebar(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(width(&mut app), rail);
 }
 
+/// A test's alerts stay in the test: with KChess in the background, "Game started" is kept by the
+/// test platform, not posted to the desktop (a test run once showed it from a Terminal icon on
+/// macOS, through the notification library).
+#[gpui_kit::test]
+fn a_tests_alerts_never_reach_the_desktop(cx: &mut gpui_kit::TestAppContext) {
+    let app = Harness::start(cx);
+    app.cx.update(|cx| {
+        crate::settings::change(cx, |s| {
+            s.frontend.notifications_enabled = true;
+            s.frontend.notify_background = true;
+            s.frontend.notify_active = true;
+        })
+    });
+    gpui_kit::VisualTestContext::from_window(app.window, &app.cx).deactivate_window();
+    let outcome = app.cx.update(|cx| {
+        crate::notifications::desktop(
+            "gameEvents",
+            "Game started",
+            "You are playing Opponent as white.",
+            cx,
+        )
+    });
+    assert_eq!(outcome, crate::notifications::Outcome::System);
+    let shown = app.cx.shown_system_notifications();
+    assert!(
+        shown
+            .iter()
+            .any(|shown| shown.title.as_ref() == "Game started"),
+        "{shown:?}"
+    );
+}
+
 /// On Windows and Linux a system notification is KChess's own: sent under its name, a game's with
 /// Go to board, and a click on it brings KChess forward on that game's page. On Windows the
 /// notification library sent them as PowerShell, and a click went nowhere.
