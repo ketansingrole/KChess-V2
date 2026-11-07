@@ -669,13 +669,17 @@ impl Render for HomePage {
                             .cursor_pointer()
                             .pressable(&palette)
                             .on_click(move |_, window, cx| crate::shell::open_game(&id, window, cx))
-                            .child(div().w(px(52.)).flex_none().child(
-                                crate::pages::history::badge(
-                                    &crate::pages::history::outcome(&game),
-                                    Some(px(52.)),
-                                    &palette,
-                                ),
-                            ))
+                            .child(
+                                div()
+                                    .id(("home-game-outcome", index))
+                                    .test_support()
+                                    .flex_none()
+                                    .child(crate::pages::history::badge(
+                                        &crate::pages::history::outcome(&game),
+                                        Some(crate::pages::history::BADGE_WIDTH),
+                                        &palette,
+                                    )),
+                            )
                             .child(
                                 div()
                                     .flex_1()

@@ -612,3 +612,27 @@ fn a_puzzle_failed_before_quitting_is_kept(cx: &mut gpui_kit::TestAppContext) {
     tab(&mut app, 4);
     app.find(("puzzle-retry", 0usize));
 }
+
+/// The stat cards in a row are one height, a card without a line under its number too.
+#[gpui_kit::test]
+fn lichess_stat_cards_are_one_height(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let (mut app, _session) = Harness::signed_in(cx, false);
+    app.open("Puzzles");
+    tab(&mut app, 3);
+    app.wait_for("the stat cards", |window, _| {
+        window.try_find(("puzzle-stat", 3usize)).is_some()
+    });
+    let heights: Vec<_> = (0..4usize)
+        .map(|index| app.find(("puzzle-stat", index)).bounds())
+        .collect();
+    // "Puzzles played" (1) has no line under its number; its neighbours do. All four share the
+    // test window's one row.
+    for (index, bounds) in heights.iter().enumerate() {
+        assert_eq!(
+            (bounds.top(), bounds.size.height),
+            (heights[0].top(), heights[0].size.height),
+            "card {index} is not the height of its row: {heights:?}"
+        );
+    }
+}

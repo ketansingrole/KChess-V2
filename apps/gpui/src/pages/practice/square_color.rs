@@ -13,7 +13,7 @@ use super::coordinates::random_square;
 use super::run::{self, RunClock};
 use crate::assets::icon;
 use crate::game::rules;
-use crate::play_layout::{PAGE_BOTTOM, side_padding};
+use crate::play_layout::{PAGE_BOTTOM, PANEL_MAX, side_padding};
 use crate::theme::{Palette, radii, tint};
 use crate::voice::control::{BarSpec, Control, DrillLog};
 use crate::voice::{Attempt, VoiceEvent};
@@ -373,7 +373,10 @@ impl Render for SquareColors {
             )
         };
         let card = widgets::card(&palette)
+            .id("square-colors-card")
+            .test_support()
             .w_full()
+            .max_w(PANEL_MAX)
             .child(
                 div()
                     .text_size(px(12.))

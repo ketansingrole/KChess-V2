@@ -354,8 +354,16 @@ fn point_of(raw: &Value) -> Option<(f64, f64)> {
 }
 
 /// `.stat-card`.
-fn stat(label: &str, value: String, sub: Option<AnyElement>, palette: &Palette) -> Div {
+fn stat(
+    index: usize,
+    label: &str,
+    value: String,
+    sub: Option<AnyElement>,
+    palette: &Palette,
+) -> impl IntoElement {
     widgets::card(palette)
+        .id(("puzzle-stat", index))
+        .test_support()
         .flex_1()
         .min_w(px(150.))
         .gap(px(4.))
@@ -573,10 +581,13 @@ impl Render for PuzzleStats {
                     .loading(self.loading)
                     .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
             );
+        // A card without a line under its number is as tall as its neighbours.
         let stats = h_flex()
             .flex_wrap()
+            .items_stretch()
             .gap(px(12.))
             .child(stat(
+                0,
                 "Puzzle rating",
                 perf["rating"].as_f64().map_or_else(
                     || "—".into(),
@@ -601,6 +612,7 @@ impl Render for PuzzleStats {
                 &palette,
             ))
             .child(stat(
+                1,
                 "Puzzles played",
                 perf["games"]
                     .as_f64()
@@ -609,12 +621,14 @@ impl Render for PuzzleStats {
                 &palette,
             ))
             .child(stat(
+                2,
                 "Solved first try",
                 first_try.map_or_else(|| "—".into(), |share| format!("{share}%")),
                 Some(div().child(format!("Last {days} days")).into_any_element()),
                 &palette,
             ))
             .child(stat(
+                3,
                 "Performance",
                 global["performance"]
                     .as_f64()

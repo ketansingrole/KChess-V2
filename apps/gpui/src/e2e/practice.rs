@@ -562,3 +562,21 @@ fn a_game_opened_for_guessing_starts_as_its_side(cx: &mut gpui_kit::TestAppConte
     app.click("guess-start");
     wait_for_label(&mut app, "guess-error", "That game has no moves");
 }
+
+/// The square colors trainer is a panel's width, not the page's.
+#[gpui_kit::test]
+fn the_square_colors_card_is_a_panels_width(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    let (width, height) = super::SIZES[2];
+    app.cx.simulate_window_resize(
+        app.window,
+        gpui_kit::size(gpui_kit::px(width), gpui_kit::px(height)),
+    );
+    tab(&mut app, 1);
+    let card = app.find("square-colors-card").bounds();
+    assert!(
+        card.size.width <= crate::play_layout::PANEL_MAX,
+        "{:?} wide",
+        card.size.width
+    );
+}
