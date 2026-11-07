@@ -78,6 +78,9 @@ pub struct BoardState {
     pub drops: HashMap<Role, Vec<Square>>,
 }
 
+/// The checkmated king's "#" badge, Lichess's red.
+const MATE_BADGE: u32 = 0xdf5353;
+
 /// A move's label as a badge over its square's top-right corner.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Badge {
@@ -212,6 +215,14 @@ impl BoardState {
             .is_check()
             .then(|| position.board().king_of(position.turn()))
             .flatten();
+        // Checkmate marks the king as Lichess does: a red "#" over its square's corner.
+        let badge = check
+            .filter(|_| position.is_checkmate())
+            .map(|square| Badge {
+                square,
+                glyph: "#",
+                color: rgb(MATE_BADGE).into(),
+            });
         let drops = if can_move {
             kchess_domain::position::drop_dests(position)
                 .into_iter()
@@ -234,7 +245,7 @@ impl BoardState {
             coordinates: None,
             square_names: false,
             edit: None,
-            badge: None,
+            badge,
             premove: None,
             pockets: position.pockets().copied(),
             drops,
@@ -2206,15 +2217,30 @@ fn check_rings(side: Pixels) -> Vec<(Pixels, Hsla)> {
         // Over what the discs outside it already cover, this one brings the rest.
         let alpha = 1. - (1. - wanted) / (1. - below);
         below = wanted;
-        let mut color: Hsla = rgb(0xe70000).into();
+        // Darkening toward #a90000 as it fades out, as the gradient's stops do.
+        let mut color = red_between(0xa90000, 0xe70000, wanted);
         color.a = alpha.clamp(0., 1.);
         rings.push((outer, color));
     }
-    // Chessground's centre is a shade brighter (#ff0000); one flat disc of it reads as a spot.
-    let mut core: Hsla = rgb(0xe70000).into();
-    core.a = 1.;
-    rings.push((solid, core));
+    // Solid inside a quarter of the way out, brightening to #ff0000 in the middle.
+    const CORE: usize = 6;
+    for step in 0..CORE {
+        let share = step as f32 / CORE as f32;
+        rings.push((solid * (1. - share), red_between(0xe70000, 0xff0000, share)));
+    }
     rings
+}
+
+/// The red `share` of the way from `from` to `to`, opaque.
+fn red_between(from: u32, to: u32, share: f32) -> Hsla {
+    let (from, to) = (rgb(from), rgb(to));
+    Rgba {
+        r: from.r + (to.r - from.r) * share,
+        g: from.g + (to.g - from.g) * share,
+        b: from.b + (to.b - from.b) * share,
+        a: 1.,
+    }
+    .into()
 }
 
 #[cfg(test)]
@@ -2474,8 +2500,27 @@ mod keyboard_tests {
 
 #[cfg(test)]
 mod check_tests {
-    use super::check_rings;
+    use super::{BoardState, check_rings};
     use gpui_kit::px;
+    use shakmaty::{Color, Square};
+
+    fn state(fen: &str) -> BoardState {
+        let position = kchess_domain::rules::setup_start("standard", fen).expect("a position");
+        BoardState::of(&position, Color::White, None, None)
+    }
+
+    /// A checkmated king wears Lichess's red "#"; a king only in check is lit but unmarked.
+    #[test]
+    fn checkmate_marks_the_king() {
+        // Fool's mate: White's king on e1 is mated.
+        let mate = state("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3");
+        assert_eq!(mate.check, Some(Square::E1));
+        let badge = mate.badge.expect("the mate badge");
+        assert_eq!((badge.square, badge.glyph), (Square::E1, "#"));
+        let check = state("rnbqkbnr/ppp2ppp/3p4/1B2p3/4P3/8/PPPP1PPP/RNBQK1NR b KQkq - 1 3");
+        assert_eq!(check.check, Some(Square::E8));
+        assert!(check.badge.is_none());
+    }
 
     /// Stacked, the discs fade as Chessground's gradient does: solid red in the middle, half
     /// way out half as strong, nothing past 89% of the half-diagonal, and all of it inside the
