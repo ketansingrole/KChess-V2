@@ -845,6 +845,7 @@ impl Render for OnlinePage {
         };
         div()
             .id("online-page")
+            .test_support()
             .track_focus(&self.focus)
             .size_full()
             .overflow_y_scroll()
