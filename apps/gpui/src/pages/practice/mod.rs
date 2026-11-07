@@ -1,12 +1,14 @@
 //! Practice: the board-vision drills and the trainers, one tab at a time,
 //! each made the first time it is shown and kept.
 
+mod classics;
 mod coordinates;
 pub(crate) mod endgame_drills;
 pub(crate) mod endgame_lesson;
 mod endgames;
 mod engine_move;
 pub(crate) mod guess;
+mod guess_find;
 mod knight;
 pub(crate) mod mistakes;
 pub(crate) mod repertoire;
