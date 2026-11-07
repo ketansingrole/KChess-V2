@@ -88,6 +88,8 @@ pub struct Core {
     pub(crate) tracker: TaskTracker,
     /// The one-time import of an earlier release (`ensureMigrated`).
     pub(crate) migrated: OnceCell<()>,
+    /// What the Electron app left in the profile, taken over in the background once started.
+    pub(crate) electron: crate::electron_migration::Migration,
     /// The close in progress, shared by every `close` call.
     pub(crate) closing: OnceCell<()>,
     /// Ids for the managed engine requests the facade starts.
@@ -271,6 +273,13 @@ impl Core {
             CancellationToken::new(),
         );
         let data_dir = config.data_dir.clone();
+        let electron = crate::electron_migration::Migration::new(
+            Arc::clone(&database),
+            Arc::clone(&capabilities),
+            Arc::clone(&host),
+            data_dir.clone(),
+            Arc::clone(&closed),
+        );
         Ok(Core {
             data_dir,
             connections,
@@ -298,10 +307,18 @@ impl Core {
             closed,
             tracker: TaskTracker::new(),
             migrated: OnceCell::new(),
+            electron,
             closing: OnceCell::new(),
             requests: AtomicU64::new(0),
             claim,
         })
+    }
+
+    /// Take over what the Electron app left in the profile now, as the first start does in the
+    /// background; waits for a run already going.
+    pub async fn migrate_electron(&self) -> Result<crate::electron_migration::Outcome> {
+        self.refuse_closed()?;
+        self.electron.run().await
     }
 
     /// The profile directory this core owns.
@@ -556,6 +573,7 @@ impl Core {
             }
             "reviews.setup" => {
                 self.reviews.setup_reviews(Arc::new(self.review_bridge()));
+                tokio::spawn(self.electron.clone().run_logged());
                 Ok(Value::Null)
             }
             "reviews.request" => json(

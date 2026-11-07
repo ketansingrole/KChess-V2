@@ -68,7 +68,10 @@ reaches every Electron installation as an ordinary update, from any earlier vers
 - **The profile**: the app opens the same folder. The core takes over what the Electron renderer
   kept in `localStorage` (studies, games and sessions from before the core kept them, and page
   settings) and opens Lichess logins sealed with Electron's `safeStorage`, sealing them again with
-  the profile's own key (`crates/kchess-electron-legacy`).
+  the profile's own key (`crates/kchess-electron-legacy`). It does all of it in the background at
+  the first start, every stored login included, and records `electron:migrated` (the release) in
+  the profile only once everything worked; until then each start tries again
+  (`crates/kchess-core/src/electron_migration.rs`).
 
 Without signing credentials, Windows releases are unsigned and macOS builds are ad hoc signed, so on
 first launch macOS says it can't verify the developer: open **System Settings → Privacy &

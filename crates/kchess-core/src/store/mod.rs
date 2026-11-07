@@ -5,6 +5,7 @@ pub mod ai;
 pub mod chesscom;
 pub mod debug;
 pub mod documents;
+pub mod electron;
 pub mod games;
 pub mod import;
 pub mod insights;
@@ -107,6 +108,7 @@ fn invalidates_counts(method: &str) -> bool {
                 | "dismissedFriends"
                 | "legacyImportPending"
                 | "tokenCiphertext"
+                | "hostSealedTokens"
                 | "resealTokenCiphertext"
         );
     }
@@ -366,7 +368,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Result<Value> {
         "store.debug.query" if debug::enabled() => return debug::query(ctx.db, args),
         _ => {}
     }
-    let modules: [Dispatch; 12] = [
+    let modules: [Dispatch; 13] = [
         migrations::call,
         games::call,
         chesscom::call,
@@ -379,6 +381,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Result<Value> {
         lookups::call,
         view_preferences::call,
         ai::call,
+        electron::call,
     ];
     modules
         .iter()

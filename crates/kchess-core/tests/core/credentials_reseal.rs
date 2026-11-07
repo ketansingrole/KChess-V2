@@ -1,5 +1,6 @@
 //! Tokens an earlier release's host sealed (Electron's `safeStorage`) are resealed with the
-//! profile's own credentials the first time they are needed, so the GPUI app opens them too.
+//! profile's own credentials the first time they are needed (if the startup migration,
+//! `electron_migration.rs`, has not done it yet), so the GPUI app opens them too.
 
 use std::sync::{Arc, Mutex};
 

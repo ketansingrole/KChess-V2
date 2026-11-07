@@ -414,6 +414,8 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
             arg(args, 1, "encrypted")
                 .and_then(|encrypted: String| save_login(ctx.host, db, &username, &encrypted))
         }),
+        // Every stored login an earlier host sealed (Electron's `safeStorage`), in use or not.
+        "hostSealedTokens" => host_sealed_tokens(db),
         "tokenCiphertext" => {
             arg(args, 0, "username").and_then(|username: String| token_ciphertext(db, &username))
         }
@@ -775,6 +777,27 @@ fn save_login(host: &dyn Host, db: &Connection, username: &str, encrypted: &str)
 }
 
 /// `getToken`'s read: the stored ciphertext for an account, or null.
+fn host_sealed_tokens(db: &Connection) -> Result<Value> {
+    let mut statement = db
+        .prepare(
+            "SELECT username, encrypted FROM tokens WHERE username IS NOT NULL ORDER BY username",
+        )
+        .sql()?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .sql()?;
+    let mut found = Vec::new();
+    for row in rows {
+        let (account, encrypted) = row.sql()?;
+        if !crate::secrets::is_sealed(&encrypted) {
+            found.push(serde_json::json!({ "account": account, "encrypted": encrypted }));
+        }
+    }
+    Ok(Value::Array(found))
+}
+
 fn token_ciphertext(db: &Connection, username: &str) -> Result<Value> {
     let encrypted: Option<String> = db
         .query_row(
