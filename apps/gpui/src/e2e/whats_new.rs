@@ -23,12 +23,13 @@ fn an_update_shows_its_notes_once(cx: &mut gpui_kit::TestAppContext) {
     assert!(!app.shows("whats-new"), "the notes show once");
 }
 
-/// Every release's notes open from the sidebar, Settings → Updates and Quick Pick, and Escape
+/// Every release's notes open from the account menu, Settings → Updates and Quick Pick, and Escape
 /// closes them.
 #[gpui_kit::test]
 fn the_notes_open_from_settings_and_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.click("sidebar-whats-new");
+    app.click("account-menu");
+    app.click_label("What's new");
     app.find("whats-new");
     app.press("escape");
     app.wait_gone("whats-new");

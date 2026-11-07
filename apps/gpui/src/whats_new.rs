@@ -1,6 +1,6 @@
 //! What's new: each release's notes (`WHATS_NEW.md`, built into the app), shown once on the first
-//! start after an update and whenever asked for from the sidebar,
-//! Settings → Updates, Quick Pick or the menu.
+//! start after an update and whenever asked for from the sidebar's
+//! account menu, Settings → Updates, Quick Pick or the menu.
 //!
 //! The version last shown is a view preference (`kchess:whats-new-seen`), so a profile shared by
 //! several installs shows a release's notes once. A fresh profile starts with nothing to catch up
@@ -167,7 +167,7 @@ pub fn on_start(window: &mut Window, cx: &mut App) {
     crate::prefs::set(cx, SEEN_KEY, current);
 }
 
-/// Every release's notes, from the sidebar, Settings → Updates, Quick Pick and the menu.
+/// Every release's notes, from the account menu, Settings → Updates, Quick Pick and the menu.
 pub fn open(window: &mut Window, cx: &mut App) {
     open_releases(releases(), window, cx);
 }

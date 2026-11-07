@@ -374,7 +374,9 @@ pub fn clock(text: SharedString, active: bool, palette: &Palette) -> Div {
         .px(px(8.))
         .py(px(4.))
         .rounded(radii::MD)
-        .text_right()
+        // Centred in its 72px: a short time ("5:00") right-aligned left a gap on its left. Its
+        // tabular digits keep it still as it counts down.
+        .text_center()
         .text_size(px(16.))
         .font_weight(FontWeight::MEDIUM)
         .font_features(tabular())

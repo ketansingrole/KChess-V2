@@ -1,6 +1,7 @@
 //! The window and its sidebar.
 
 use super::Harness;
+use gpui_kit::test::TestQueryExt as _;
 
 #[gpui_kit::test]
 fn the_app_starts_on_home(cx: &mut gpui_kit::TestAppContext) {
@@ -15,7 +16,12 @@ fn the_app_starts_on_home(cx: &mut gpui_kit::TestAppContext) {
     ] {
         app.find(action);
     }
-    assert!(app.enabled("connect-lichess"));
+    app.click("account-menu");
+    app.wait_for("the menu to offer connecting", |window, _| {
+        window
+            .try_find_by_label("Connect Lichess account")
+            .is_some()
+    });
 }
 
 /// The board on a first Home looks playable, so clicking it has to lead to a game.
@@ -148,7 +154,6 @@ fn the_rail_still_marks_your_move(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn controls_over_the_title_bar_take_their_own_clicks(cx: &mut gpui_kit::TestAppContext) {
     use crate::updates::{Phase, UpdatesHandle};
-    use gpui_kit::test::TestQueryExt as _;
     let mut app = Harness::start(cx);
     app.with_window(|_, cx| {
         let updates = cx.global::<UpdatesHandle>().0.clone();
@@ -184,7 +189,6 @@ fn controls_over_the_title_bar_take_their_own_clicks(cx: &mut gpui_kit::TestAppC
 #[gpui_kit::test]
 fn the_title_bar_works_after_a_frame_that_reuses_the_top_bar(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::WindowControlArea::{Close, Drag, Max, Min};
-    use gpui_kit::test::TestQueryExt as _;
     let mut app = Harness::start(cx);
     let bar = app.with_window(|window, cx| {
         let search = window.try_find_by_label("Search pages and commands");
