@@ -24,9 +24,9 @@ use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Look};
 
 /// Recent lookups kept (`kchess:players-recent`), and names offered under the search.
-const RECENT_KEY: &str = "kchess:players-recent";
+pub(crate) const RECENT_KEY: &str = "kchess:players-recent";
 const RECENT_KEPT: usize = 8;
-const SUGGESTED: usize = 12;
+pub(crate) const SUGGESTED: usize = 12;
 const BOARD_PERF_KEY: &str = "kchess:leaderboard-perf";
 /// Which players the leaderboard shows: `all`, `titled` or one title.
 const BOARD_TITLE_KEY: &str = "kchess:leaderboard-title";
@@ -35,7 +35,7 @@ const TITLES: [&str; 11] = [
     "GM", "IM", "FM", "CM", "NM", "WGM", "WIM", "WFM", "WCM", "LM", "BOT",
 ];
 /// How long typing settles before names are searched.
-const SEARCH_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
+pub(crate) const SEARCH_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
 /// Rating categories with a Lichess leaderboard, in the order offered.
 const BOARD_PERFS: [&str; 13] = [
     "bullet",
@@ -125,7 +125,7 @@ fn local_date(millis: f64) -> String {
 /// The small muted word before a group of names under the search.
 /// A group of name chips under the search: its label in a fixed column on the left, so it reads
 /// as a heading and not as one more name, then its chips, wrapping, and an action at the end.
-fn chip_row(
+pub(crate) fn chip_row(
     label: &'static str,
     chips: Vec<AnyElement>,
     action: Option<AnyElement>,
@@ -159,7 +159,7 @@ fn chip_row(
 
 /// A player's name as a filled chip under the search: their title in the leaderboard's colour,
 /// and a dot while they are online.
-fn name_chip(
+pub(crate) fn name_chip(
     id: impl Into<ElementId>,
     name: &str,
     title: Option<&str>,
@@ -201,6 +201,15 @@ fn name_chip(
                 .child(title.to_string())
         }))
         .child(name.to_string())
+}
+
+/// Put a player looked up first among the recent ones, here and wherever players are searched.
+pub(crate) fn remember(username: &str, cx: &mut App) {
+    let mut recent: Vec<String> = crate::prefs::get(cx, RECENT_KEY, Vec::new());
+    recent.retain(|name| !name.eq_ignore_ascii_case(username));
+    recent.insert(0, username.to_string());
+    recent.truncate(RECENT_KEPT);
+    crate::prefs::set(cx, RECENT_KEY, recent);
 }
 
 fn message_of(cause: &kchess_core::CoreError) -> SharedString {
@@ -576,11 +585,7 @@ impl PlayersPage {
         self.input.update(cx, |input, cx| {
             input.set_value(username.clone(), window, cx)
         });
-        let mut recent: Vec<String> = crate::prefs::get(cx, RECENT_KEY, Vec::new());
-        recent.retain(|name| !name.eq_ignore_ascii_case(&username));
-        recent.insert(0, username.clone());
-        recent.truncate(RECENT_KEPT);
-        crate::prefs::set(cx, RECENT_KEY, recent);
+        remember(&username, cx);
         let current = found["perfs"].clone();
         self.history
             .update(cx, |history, cx| history.set_current(current, cx));

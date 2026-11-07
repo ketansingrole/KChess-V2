@@ -8,12 +8,14 @@ with nothing there.
 
 ## Unreleased
 
+- **Smarter Guess the move**: look up any Lichess player and guess one of their games as them, or pick a famous game like the Opera Game or the Game of the Century. The engine now checks the moves that were played too: when a player went wrong, finding the better move earns full points, and you're told what today's engines prefer.
 - **Reply from the notification**: when it's your move in a correspondence game, type your move right into the notification on Windows or Mac. KChess asks you to confirm it before it's played.
 - **A tidier sidebar**: your account sits at the bottom of the sidebar with Settings beside it. Its menu also opens What's new and lets you report a problem.
 - **Notifications you can click**: notifications come from KChess and Go to board takes you straight to the game, and a Lichess challenge can be accepted or declined right from its notification. On Windows they no longer show as Windows PowerShell.
 - **Settings in a window of its own**: Settings opens over the page you were on, with its sections down the left. Close it with ✕, Escape or a click outside to carry on where you were.
+- **A calmer Over the board page**: Shared board and Chess clock sit in a tab row at the top, so switching between them no longer shuffles the page. The chess clock fills the space the board takes, with bigger times and its settings in a neat list beside it.
 - **Clearer dialogs**: dialogs open in the middle of the window and dim the page behind them, so they stand out from the board.
-- **Fixes**: while you wait for an opponent on Lichess, the waiting card sits in the middle of the page, the time on each clock is centred, the computer's difficulty list shows each level's full name and rating, clicking a selected piece again puts it down, and a king in check glows red within its own square, as on Lichess, with a red # when it is checkmated. On Home, "In progress" and other results fit inside their labels in Recent games, the puzzle stat cards line up at one height, and the square colors trainer is no longer stretched across the whole page.
+- **Fixes**: the Voice button under the board is no longer cut off in a narrow window. While you wait for an opponent on Lichess, the waiting card sits in the middle of the page, the time on each clock is centred, the computer's difficulty list shows each level's full name and rating, clicking a selected piece again puts it down, and a king in check glows red within its own square, as on Lichess, with a red # when it is checkmated. On Home, "In progress" and other results fit inside their labels in Recent games, the puzzle stat cards line up at one height, and the square colors trainer is no longer stretched across the whole page.
 
 ## 2026.11.5 (2026-11-07)
 
