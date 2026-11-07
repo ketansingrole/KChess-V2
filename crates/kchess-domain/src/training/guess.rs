@@ -199,9 +199,15 @@ fn banded(loss: u32) -> (Grade, u32) {
 /// Score `guess` against the move `played` and what the engine made of both. Without the
 /// engine only the move played scores, in full.
 pub fn judge(guess: &str, played: &str, evals: Evals) -> Judged {
-    let flaw = evals.best.zip(evals.played).and_then(|(best, after)| flaw(best, after));
+    let flaw = evals
+        .best
+        .zip(evals.played)
+        .and_then(|(best, after)| flaw(best, after));
     if same_move(guess, played) {
-        let lost = evals.best.zip(evals.played).map(|(best, after)| loss(best, after));
+        let lost = evals
+            .best
+            .zip(evals.played)
+            .map(|(best, after)| loss(best, after));
         return match flaw.filter(|flaw| flaw.went_wrong()) {
             None => Judged {
                 grade: Grade::Master,

@@ -573,7 +573,6 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         if path.to_lowercase() == format!("/api/games/user/{name}") {
             return ndjson_lines(&mut out, &showcase_games(&username));
         }
-
     }
     match (request.method.as_str(), path) {
         ("GET", "/api/account") => {
