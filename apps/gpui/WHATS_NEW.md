@@ -8,6 +8,7 @@ with nothing there.
 
 ## Unreleased
 
+- **Coming from an older KChess**: your studies, page settings and every saved Lichess login move over the first time you open KChess, even accounts you were not signed in to.
 - **What's new**: after each update, KChess shows you what changed. You can read it again any time in Settings → Updates.
 - **Crazyhouse**: a new way to play, where captured pieces join your side and can be dropped back on the board. Play it against the computer, with a friend, or on Lichess.
 - **Guess the move**: play through a famous game and try to guess each move the player made. Find it in Practice.
