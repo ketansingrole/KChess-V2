@@ -239,7 +239,17 @@ fn builds_into_a_package(file: &str) -> bool {
         || package_of(file).is_some()
 }
 
-/// `check-fast`: format, lints and the tests of the packages changed since main (committed or
+/// Whether a change can add or drop a shipped dependency, which THIRD_PARTY_NOTICES.md must name.
+fn touches_dependencies(files: &[String]) -> bool {
+    files.iter().any(|file| {
+        file == "THIRD_PARTY_NOTICES.md"
+            || file == "Cargo.lock"
+            || file == "Cargo.toml"
+            || file.ends_with("/Cargo.toml")
+    })
+}
+
+/// `check-fast`: format, lints, the notices when dependencies changed, and the tests of the packages changed since main (committed or
 /// not). Never a substitute for `check` before a push to main.
 pub fn fast() -> Result {
     let base = output("git", &["merge-base", "HEAD", "origin/main"])
@@ -254,6 +264,9 @@ pub fn fast() -> Result {
             .lines()
             .map(str::to_string),
     );
+    if touches_dependencies(&files) {
+        step("notices", crate::licenses::check_notices)?;
+    }
     if !files.iter().any(|file| builds_into_a_package(file)) {
         say("No Rust changes since main.");
         return Ok(());
@@ -545,6 +558,27 @@ mod tests {
 
     /// 2026-11-07: committing the release key (`apps/gpui/update-key.pub`, read by
     /// `include_str!`) ran no tests, and CI found four the key broke.
+    /// 2026-11-07: dropping kchess-electron-legacy took the notices' only `windows-sys` row with
+    /// it while the app still ships it; `check-fast` passed and CI's notices check failed.
+    #[test]
+    fn a_dependency_change_checks_the_notices() {
+        let changed = |files: &[&str]| {
+            touches_dependencies(
+                &files
+                    .iter()
+                    .map(|file| file.to_string())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert!(changed(&["crates/kchess-core/Cargo.toml"]));
+        assert!(changed(&["Cargo.lock"]));
+        assert!(changed(&["THIRD_PARTY_NOTICES.md"]));
+        assert!(!changed(&[
+            "crates/kchess-core/src/core.rs",
+            "docs/releasing.md"
+        ]));
+    }
+
     #[test]
     fn a_file_a_package_reads_is_a_change_to_test() {
         assert!(builds_into_a_package("apps/gpui/update-key.pub"));
