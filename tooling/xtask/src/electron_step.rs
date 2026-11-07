@@ -49,8 +49,44 @@ pub struct Step {
 
 /// The release every Electron installation steps through. Frozen: see the module documentation.
 pub const STEP: Step = Step {
-    tag: "v0.0.0",
-    files: &[],
+    tag: "v2026.11.4",
+    files: &[
+        Pinned {
+            manifest: "latest-mac.yml",
+            name: "KChess-2026.11.4-mac-arm64.zip",
+            size: 120421156,
+            sha256: "7aaec152573d3d853ea48b87d78fbdc1dc58af93606ff4162585f0bc1e704f9c",
+            sha512: "7pN5eUJF2PSVNivhRMdRMRqx5Bgf0jSlYE2VwkQYH7BCrtMWS7MXzOMph/vE4joOCR3qVlBc91cSnMPakjULpw==",
+        },
+        Pinned {
+            manifest: "latest-mac.yml",
+            name: "KChess-2026.11.4-mac-arm64.dmg",
+            size: 120946147,
+            sha256: "a5422e4a8849e0f00c7218b23eb2501e7917a3fed1fb2a2fe1ee90cc748f14f5",
+            sha512: "oMmbLh6kmwYFNWCvLopNTJRO2CiHtoANLwJYuDm9aaT9JM37Xb2BkW10DtvbEEwbNCX+3idLBiCfqpQYKkA+7w==",
+        },
+        Pinned {
+            manifest: "latest.yml",
+            name: "KChess-2026.11.4-win-x64.exe",
+            size: 112831401,
+            sha256: "103e75ccf1cb4d68ff15a92e6bb60163378143e3213768da2fdd68c4ef86425c",
+            sha512: "cRbGt7YYkgG01oPyftWqfwYvIYeD6oXov5m9+9TP/Td1QflYRo4+svTjG7qm55g58b3exdOkQvsD2YGPnKachg==",
+        },
+        Pinned {
+            manifest: "latest-linux.yml",
+            name: "KChess-2026.11.4-linux-x86_64.AppImage",
+            size: 131537400,
+            sha256: "9ac4e968663829cbf4d280ba8894fa917aa256b157e583c4b9d02b151ba36d4b",
+            sha512: "O9UqcRMfH8oc1OaOIVO48E82kcjQPf7eQkJumBUAKg3QJiaA/9/PuWCeD+NE/4HvlZgUNPlAdR7rTHwW9YISNA==",
+        },
+        Pinned {
+            manifest: "latest-linux.yml",
+            name: "KChess-2026.11.4-linux-amd64.deb",
+            size: 136720666,
+            sha256: "1a285e5fa8d189b980d8db8a7a1b563c9aed84607070b9b6bf3dc2aee56980da",
+            sha512: "8kzptm+sFzx1UhOsefMN/yLWUHQE2zMHchpgZEfafXN07BUzaRenv2taoxCstciuqIkTyaEHwRW97Qp4nxjNuQ==",
+        },
+    ],
 };
 
 const MANIFESTS: [&str; 3] = ["latest-mac.yml", "latest.yml", "latest-linux.yml"];
