@@ -1136,11 +1136,21 @@ impl LocalPage {
         };
         // The same panel as the shared board's, at its right with the tabs on top, so switching
         // modes moves nothing; the clocks take the board's place.
+        // Beside the clocks while both fit (the clocks at least 240px), under them otherwise, as
+        // the shared board's panel goes under the board.
+        let padding = crate::play_layout::side_padding(window);
+        let stacked = self.layout.width(window)
+            < px(240.) + crate::play_layout::LAYOUT_GAP + PANEL_ZEN + padding * 2.;
         let panel = widgets::side_panel(palette)
             .id("local-clock-panel")
-            .w(PANEL_ZEN)
+            .map(|panel| {
+                if stacked {
+                    panel.w_full()
+                } else {
+                    panel.w(PANEL_ZEN).overflow_y_scroll()
+                }
+            })
             .flex_none()
-            .overflow_y_scroll()
             .gap(px(16.))
             .child(mode_tabs(Mode::Clock, palette, cx))
             .child(
@@ -1221,15 +1231,25 @@ impl LocalPage {
                     .text_color(palette.text_muted)
                     .child("Space switches turns · P pauses"),
             );
-        h_flex()
-            .id("local-clock")
+        let page = if stacked {
+            v_flex()
+        } else {
+            h_flex().items_stretch()
+        };
+        page.id("local-clock")
+            .relative()
             .size_full()
-            .items_stretch()
+            .when(stacked, |page| page.overflow_y_scroll())
             .gap(crate::play_layout::LAYOUT_GAP)
             .pt(crate::play_layout::PAGE_TOP)
             .pb(crate::play_layout::PAGE_BOTTOM)
-            .px(crate::play_layout::side_padding(window))
-            .child(faces.min_w(px(240.)))
+            .px(padding)
+            .child(self.layout.probe(cx))
+            .child(
+                faces
+                    .min_w(px(240.))
+                    .when(stacked, |faces| faces.flex_none()),
+            )
             .child(panel)
             .into_any_element()
     }
