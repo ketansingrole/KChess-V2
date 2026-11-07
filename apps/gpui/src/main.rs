@@ -29,6 +29,7 @@ mod log;
 mod menu;
 mod microphone;
 mod motion;
+mod move_reply;
 mod name_dialog;
 mod network;
 mod notation;

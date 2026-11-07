@@ -182,6 +182,16 @@ const CORE: &[Row] = &[
         &[Valid("assertGameId"), Valid("assertUci")],
     ),
     (
+        "playCorrespondence",
+        4,
+        &[
+            Valid("assertUsername"),
+            Valid("assertGameId"),
+            Valid("assertFen"),
+            Valid("assertUci"),
+        ],
+    ),
+    (
         "onlineAction",
         2,
         &[Valid("assertGameId"), Valid("assertAction")],

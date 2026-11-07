@@ -20,6 +20,14 @@ impl Core {
                 let uci = normal("assertUci", &arg(args, 1))?;
                 self.inner("online.move", vec![id, uci]).await
             }
+            "playCorrespondence" => {
+                let account = normal("assertUsername", &arg(args, 0))?;
+                let id = normal("assertGameId", &arg(args, 1))?;
+                let fen = normal("assertFen", &arg(args, 2))?;
+                let uci = normal("assertUci", &arg(args, 3))?;
+                self.inner("online.moveCorrespondence", vec![account, id, fen, uci])
+                    .await
+            }
             "onlineAction" => {
                 let id = normal("assertGameId", &arg(args, 0))?;
                 let action = normal("assertAction", &arg(args, 1))?;

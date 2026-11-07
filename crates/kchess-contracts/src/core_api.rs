@@ -206,6 +206,11 @@ pub fn methods() -> Vec<Method> {
         ),
         method("cancelOnline", "", vec![]),
         method("playOnline", "", vec![req("id"), req("move")]),
+        method(
+            "playCorrespondence",
+            "Send a move to a correspondence game that is not on the board (a reply from its\n   * notification): only while it is still this account's move at `fen`, and only once.",
+            vec![req("account"), req("id"), req("fen"), req("move")],
+        ),
         method("onlineAction", "", vec![req("id"), req("action")]),
         method(
             "onlineChat",

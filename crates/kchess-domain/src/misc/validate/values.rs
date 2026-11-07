@@ -23,6 +23,18 @@ pub(super) fn assert_game_id(value: J) -> Checked<String> {
     Ok(text)
 }
 
+/// A position: a full FEN, at most 100 characters.
+pub(super) fn assert_fen(value: J) -> Checked<String> {
+    let text: String = decode(value, always!("Invalid position."))?;
+    fen(
+        &text,
+        Some("Invalid position."),
+        Some("Invalid position."),
+        "",
+    )?;
+    Ok(text)
+}
+
 pub(super) fn assert_game_ids(value: J) -> Checked<Vec<String>> {
     let ids: Vec<String> = decode(value, |keys| match keys {
         [] => Some("Invalid game list."),

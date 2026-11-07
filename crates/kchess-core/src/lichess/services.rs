@@ -432,6 +432,20 @@ impl Services {
                     .map_err(CoreError::from),
                 Err(cause) => Err(cause),
             },
+            "online.moveCorrespondence" => {
+                match (text(args, 0), text(args, 1), text(args, 2), text(args, 3)) {
+                    (Ok(account), Ok(id), Ok(fen), Ok(uci)) => self
+                        .online
+                        .move_correspondence(&account, &id, &fen, &uci)
+                        .await
+                        .map(|()| Value::Null)
+                        .map_err(CoreError::from),
+                    (Err(error), ..)
+                    | (_, Err(error), ..)
+                    | (.., Err(error), _)
+                    | (.., Err(error)) => Err(error),
+                }
+            }
             "online.move" => match (text(args, 0), text(args, 1)) {
                 (Ok(id), Ok(uci)) => self
                     .online

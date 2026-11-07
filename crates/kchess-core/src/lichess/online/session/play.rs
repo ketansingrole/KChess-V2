@@ -211,6 +211,77 @@ impl OnlineSession {
         Ok(())
     }
 
+    /// Send one move to a correspondence game that is not on the board: a reply typed into its
+    /// notification. Lichess's list of the account's games is read first, and the move goes only
+    /// while the game is still on this account's move at `fen` (its placement: the list gives no
+    /// more), so a reply to a position that has moved on is refused, not played. Like any move it
+    /// is sent once: an ambiguous answer is an error, never a retry.
+    pub async fn move_correspondence(
+        &self,
+        account: &str,
+        id: &str,
+        fen: &str,
+        uci: &str,
+    ) -> Res<()> {
+        let _sending = MoveInFlight::claim(self)?;
+        let token = self
+            .token(account)
+            .await?
+            .ok_or_else(|| core("Lichess login unavailable."))?;
+        let cancel = self.inner.lichess.lifetime().clone();
+        let playing: Value = self
+            .policy()
+            .with_usage(account, "play", async {
+                self.inner
+                    .lichess
+                    .client()
+                    .get_json::<Value>(
+                        "/api/account/playing",
+                        &[("nb", "50".to_string())],
+                        Some(&authorize(&token)),
+                        &cancel,
+                    )
+                    .await
+            })
+            .await?;
+        let game = playing
+            .get("nowPlaying")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|game| game.get("gameId").and_then(Value::as_str) == Some(id))
+            .ok_or_else(|| core("This game is no longer in progress."))?;
+        let placement = |fen: &str| {
+            fen.split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_string()
+        };
+        let current = game.get("fen").and_then(Value::as_str).unwrap_or_default();
+        if game.get("isMyTurn").and_then(Value::as_bool) != Some(true)
+            || placement(current) != placement(fen)
+        {
+            return Err(core(
+                "The game has moved on. Open it to see where it stands.",
+            ));
+        }
+        let path = format!(
+            "/api/board/game/{}/move/{}",
+            path_segment(id),
+            path_segment(uci)
+        );
+        self.policy()
+            .with_usage(account, "play", async {
+                self.inner
+                    .lichess
+                    .client()
+                    .post_form::<Value>(&path, &[], Some(&authorize(&token)), &cancel)
+                    .await
+            })
+            .await?;
+        Ok(())
+    }
+
     /// The private chat between the two players so far (the last 200 lines).
     pub async fn chat(&self, id: &str) -> Res<Vec<ChatLine>> {
         let (account, token) = self.live_token(id, "reading the chat").await?;

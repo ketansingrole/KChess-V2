@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/kchess-domain", "crates/kchess-core", "crates/kchess-games", "crates/kchess-contracts", "crates/kchess-voice", "crates/kchess-service", "apps/gpui", "apps/cli", "tooling/xtask"]
 # cargo-fuzz targets build on their own nightly (fuzz/rust-toolchain.toml); vendored crates keep
 # their own manifests and lints.
-exclude = ["fuzz", "vendor/gpui-pre", "vendor/gpui-pre-apple"]
+exclude = ["fuzz", "vendor/gpui-pre", "vendor/gpui-pre-apple", "vendor/gpui-pre-macos", "vendor/gpui-pre-windows"]
 
 [workspace.package]
 # The KChess release: `YEAR.MONTH.COUNTER` (`cargo xtask release-version`), the version every
@@ -83,7 +83,10 @@ strip = "none"
 
 # GPUI with a window zoom (Settings → Interface size, like a browser's page zoom): see
 # vendor/gpui-pre/KCHESS-PATCH.md for what differs from the published 0.3.11 (and the
-# KCHESS-PATCH.md beside gpui-pre-apple for its own).
+# KCHESS-PATCH.md beside gpui-pre-apple for its own). The macOS and Windows backends answer
+# notifications with typed text: their own KCHESS-PATCH.md.
 [patch.crates-io]
 gpui-pre = { path = "vendor/gpui-pre" }
 gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
+gpui-pre-windows = { path = "vendor/gpui-pre-windows" }

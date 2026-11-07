@@ -275,6 +275,7 @@ validators! {
     "assertChesscomUsername" => assert_chesscom_username,
     "assertGameIds" => assert_game_ids,
     "assertUci" => assert_uci,
+    "assertFen" => assert_fen,
     "assertMoves" => assert_moves,
     "assertLevel" => assert_level,
     "assertUsernames" => assert_usernames,
