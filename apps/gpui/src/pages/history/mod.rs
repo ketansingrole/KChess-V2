@@ -123,11 +123,14 @@ fn badge_of(outcome: &str) -> (&'static str, Look, Option<Color>) {
     }
 }
 
-/// A game's result as a badge.
+/// The width of a column of result badges: "In progress", the longest, fits.
+pub(crate) const BADGE_WIDTH: Pixels = px(96.);
+
+/// A game's result as a badge, at least `width` wide: never narrower than its label.
 pub(crate) fn badge(outcome: &str, width: Option<Pixels>, palette: &Palette) -> impl IntoElement {
     let (label, look, side) = badge_of(outcome);
     widgets::badge(label, look, palette)
-        .when_some(width, |badge, width| badge.w(width))
+        .when_some(width, |badge, width| badge.min_w(width))
         .justify_center()
         .children(side.map(widgets::side_dot))
 }
@@ -1119,7 +1122,7 @@ impl HistoryPage {
             let [result, players, game, date, actions] = cells;
             row.test_support()
                 .gap(px(12.))
-                .child(div().w(px(96.)).flex_none().child(result))
+                .child(div().w(BADGE_WIDTH).flex_none().child(result))
                 .child(div().flex_1().min_w_0().child(players))
                 .when(!narrow, |row| {
                     row.child(div().w(px(112.)).flex_none().child(game))
@@ -1278,7 +1281,7 @@ impl HistoryPage {
                                 }))
                         }),
                     [
-                        badge(outcome, Some(px(96.)), palette).into_any_element(),
+                        badge(outcome, Some(BADGE_WIDTH), palette).into_any_element(),
                         players.into_any_element(),
                         game_cell.into_any_element(),
                         div()

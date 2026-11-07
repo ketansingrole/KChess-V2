@@ -646,3 +646,46 @@ fn home_names_a_variant_games_variant(cx: &mut gpui_kit::TestAppContext) {
         Some("You vs Stockfish · Club Player, Atomic")
     );
 }
+
+/// Home's Recent games column holds the longest result, "In progress", inside its badge.
+#[gpui_kit::test]
+fn home_fits_every_result_badge_in_its_column(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.cx.update(|cx| {
+        let played = cx.global::<crate::played::PlayedHandle>().0.clone();
+        played.update(cx, |played, cx| {
+            for (index, (result, finished)) in [("*", false), ("1-0", true)].into_iter().enumerate()
+            {
+                played.save(
+                    serde_json::json!({
+                        "id": format!("game-{index}"),
+                        "source": "computer",
+                        "setup": {
+                            "variant": "standard",
+                            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                        },
+                        "moves": ["e2e4", "e7e5"],
+                        "white": "You",
+                        "black": "Stockfish",
+                        "result": result,
+                        "reason": if finished { "resign" } else { "" },
+                        "finished": finished,
+                        "timeControl": "-",
+                        "startedAt": 1_790_000_000_000u64 + index as u64,
+                        "updatedAt": 1_790_000_000_000u64 + index as u64,
+                    }),
+                    cx,
+                );
+            }
+        });
+    });
+    app.open("Home");
+    for index in 0..2usize {
+        let column = app.find(("home-game-outcome", index)).bounds();
+        assert_eq!(
+            column.size.width,
+            crate::pages::history::BADGE_WIDTH,
+            "the badge outgrew its column"
+        );
+    }
+}
