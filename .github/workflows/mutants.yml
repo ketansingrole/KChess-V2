@@ -1,0 +1,54 @@
+name: Mutants
+# Mutation testing (docs/mutation-testing.md): cargo-mutants changes the code one small edit at a
+# time and fails when the tests still pass. The rules and the core take hours, so each runs in
+# shards, weekly and on demand. A missed mutant is a test to write, or an equivalent mutant to
+# exclude in .cargo/mutants.toml with the reason; never a test to weaken.
+on:
+  schedule:
+    - cron: '17 3 * * 6'
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Package to mutate
+        default: kchess-domain
+        type: choice
+        options: [kchess-domain, kchess-core, kchess-service, kchess-cli, kchess-games, kchess-contracts, kchess-voice]
+
+permissions:
+  contents: read
+
+env:
+  NEXTEST_PROFILE: ci
+
+jobs:
+  mutants:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # CI's caches, read only: this workflow saves none of its own.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: check
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: false
+      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        with:
+          tool: cargo-nextest,cargo-mutants
+      - name: Mutants
+        env:
+          PACKAGE: ${{ inputs.package || 'kchess-domain' }}
+          SHARD: ${{ matrix.shard }}
+        run: cargo mutants -p "$PACKAGE" --test-tool nextest --shard "$SHARD/8" --no-shuffle
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: mutants-${{ inputs.package || 'kchess-domain' }}-${{ matrix.shard }}
+          path: mutants.out
+          retention-days: 14

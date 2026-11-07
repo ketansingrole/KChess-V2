@@ -17,6 +17,14 @@ type SetLogLevel = unsafe extern "C" fn(c_int);
 
 /// The loaded library and the functions taken from it.
 pub struct Vosk {
+    functions: Functions,
+    // Last: the function pointers stay valid only while the library is loaded. `None` for the
+    // tests' fakes, which live in this executable.
+    _library: Option<Library>,
+}
+
+/// The functions the helper calls.
+struct Functions {
     model_new: ModelNew,
     model_free: Free,
     recognizer_new_grm: RecognizerNewGrm,
@@ -26,9 +34,6 @@ pub struct Vosk {
     recognizer_partial_result: ResultText,
     recognizer_final_result: ResultText,
     recognizer_free: Free,
-    // Last: the function pointers above stay valid only while the library is loaded. `None`
-    // for the tests' fakes, which live in this executable.
-    _library: Option<Library>,
 }
 
 /// Where the functions come from: the loaded library, or fakes in the tests.
@@ -50,33 +55,19 @@ impl Symbols for Library {
     }
 }
 
-impl Vosk {
-    /// Loads libvosk from `path` and silences Kaldi's logging (stdout belongs to the protocol).
-    pub fn load(path: &Path) -> Result<Vosk, String> {
-        // SAFETY: loading runs the library's initializers; libvosk is the pinned upstream build
-        // shipped beside this executable, with no initializers beyond its C++ runtime's.
-        let library = unsafe { Library::new(path) }
-            .map_err(|cause| format!("Could not load {}: {cause}", path.display()))?;
-        // SAFETY: `library` is libvosk, whose functions `bind` types from vosk_api.h.
-        let vosk = unsafe { Vosk::bind(&library) }?;
-        Ok(Vosk {
-            _library: Some(library),
-            ..vosk
-        })
-    }
-
+impl Functions {
     /// Takes the functions from `symbols` and silences Kaldi's logging. The caller keeps the
     /// library that holds them loaded for as long as the answer lives.
     ///
     /// # Safety
     /// `symbols` must serve each name with the signature `vosk_api.h` declares for it.
-    unsafe fn bind(symbols: &impl Symbols) -> Result<Vosk, String> {
+    unsafe fn bind(symbols: &impl Symbols) -> Result<Functions, String> {
         // SAFETY: each type below is copied from the matching declaration in vosk_api.h, which
         // the caller guarantees `symbols` serves.
         unsafe {
             let set_log_level: SetLogLevel = symbols.symbol(b"vosk_set_log_level\0")?;
             set_log_level(-1);
-            Ok(Vosk {
+            Ok(Functions {
                 model_new: symbols.symbol(b"vosk_model_new\0")?,
                 model_free: symbols.symbol(b"vosk_model_free\0")?,
                 recognizer_new_grm: symbols.symbol(b"vosk_recognizer_new_grm\0")?,
@@ -87,9 +78,24 @@ impl Vosk {
                 recognizer_partial_result: symbols.symbol(b"vosk_recognizer_partial_result\0")?,
                 recognizer_final_result: symbols.symbol(b"vosk_recognizer_final_result\0")?,
                 recognizer_free: symbols.symbol(b"vosk_recognizer_free\0")?,
-                _library: None,
             })
         }
+    }
+}
+
+impl Vosk {
+    /// Loads libvosk from `path` and silences Kaldi's logging (stdout belongs to the protocol).
+    pub fn load(path: &Path) -> Result<Vosk, String> {
+        // SAFETY: loading runs the library's initializers; libvosk is the pinned upstream build
+        // shipped beside this executable, with no initializers beyond its C++ runtime's.
+        let library = unsafe { Library::new(path) }
+            .map_err(|cause| format!("Could not load {}: {cause}", path.display()))?;
+        // SAFETY: `library` is libvosk, whose functions `bind` types from vosk_api.h.
+        let functions = unsafe { Functions::bind(&library) }?;
+        Ok(Vosk {
+            functions,
+            _library: Some(library),
+        })
     }
 
     /// Loads the model folder at `path`.
@@ -99,7 +105,7 @@ impl Vosk {
             .and_then(|text| CString::new(text).ok())
             .ok_or("The voice model path is not valid text.")?;
         // SAFETY: `text` is a valid NUL-terminated string for the duration of the call.
-        let pointer = unsafe { (self.model_new)(text.as_ptr()) };
+        let pointer = unsafe { (self.functions.model_new)(text.as_ptr()) };
         NonNull::new(pointer)
             .map(|pointer| Model {
                 vosk: self,
@@ -118,7 +124,7 @@ impl Drop for Model<'_> {
     fn drop(&mut self) {
         // SAFETY: `pointer` came from `vosk_model_new` and is freed once; recognizers borrow
         // the model, so none is alive here.
-        unsafe { (self.vosk.model_free)(self.pointer.as_ptr()) }
+        unsafe { (self.vosk.functions.model_free)(self.pointer.as_ptr()) }
     }
 }
 
@@ -128,11 +134,15 @@ impl Model<'_> {
         let grammar = CString::new(grammar).map_err(|_| "The grammar holds a NUL character.")?;
         // SAFETY: the model pointer is live (borrowed) and `grammar` is NUL-terminated.
         let pointer = unsafe {
-            (self.vosk.recognizer_new_grm)(self.pointer.as_ptr(), sample_rate, grammar.as_ptr())
+            (self.vosk.functions.recognizer_new_grm)(
+                self.pointer.as_ptr(),
+                sample_rate,
+                grammar.as_ptr(),
+            )
         };
         let pointer = NonNull::new(pointer).ok_or("Speech recognition couldn’t start.")?;
         // SAFETY: `pointer` is the recognizer just created.
-        unsafe { (self.vosk.recognizer_set_words)(pointer.as_ptr(), 1) };
+        unsafe { (self.vosk.functions.recognizer_set_words)(pointer.as_ptr(), 1) };
         Ok(Recognizer {
             vosk: self.vosk,
             pointer,
@@ -150,7 +160,7 @@ pub struct Recognizer<'a> {
 impl Drop for Recognizer<'_> {
     fn drop(&mut self) {
         // SAFETY: `pointer` came from `vosk_recognizer_new_grm` and is freed once.
-        unsafe { (self.vosk.recognizer_free)(self.pointer.as_ptr()) }
+        unsafe { (self.vosk.functions.recognizer_free)(self.pointer.as_ptr()) }
     }
 }
 
@@ -174,7 +184,7 @@ impl Recognizer<'_> {
         let length = c_int::try_from(samples.len()).map_err(|_| "Audio chunk too large.")?;
         // SAFETY: `samples` is valid for `length` shorts; the recognizer is live.
         match unsafe {
-            (self.vosk.recognizer_accept_waveform_s)(
+            (self.vosk.functions.recognizer_accept_waveform_s)(
                 self.pointer.as_ptr(),
                 samples.as_ptr(),
                 length,
@@ -188,17 +198,29 @@ impl Recognizer<'_> {
 
     pub fn result(&mut self) -> String {
         // SAFETY: the recognizer is live; the string is copied before its next call.
-        unsafe { owned((self.vosk.recognizer_result)(self.pointer.as_ptr())) }
+        unsafe {
+            owned((self.vosk.functions.recognizer_result)(
+                self.pointer.as_ptr(),
+            ))
+        }
     }
 
     pub fn partial(&mut self) -> String {
         // SAFETY: as `result`.
-        unsafe { owned((self.vosk.recognizer_partial_result)(self.pointer.as_ptr())) }
+        unsafe {
+            owned((self.vosk.functions.recognizer_partial_result)(
+                self.pointer.as_ptr(),
+            ))
+        }
     }
 
     pub fn finish(&mut self) -> String {
         // SAFETY: as `result`.
-        unsafe { owned((self.vosk.recognizer_final_result)(self.pointer.as_ptr())) }
+        unsafe {
+            owned((self.vosk.functions.recognizer_final_result)(
+                self.pointer.as_ptr(),
+            ))
+        }
     }
 }
 
@@ -304,8 +326,11 @@ mod tests {
     }
 
     fn fake() -> Vosk {
-        // SAFETY: `Fakes` serves each name with its vosk_api.h signature.
-        unsafe { Vosk::bind(&Fakes { missing: b"" }) }.expect("bound")
+        Vosk {
+            // SAFETY: `Fakes` serves each name with its vosk_api.h signature.
+            functions: unsafe { Functions::bind(&Fakes { missing: b"" }) }.expect("bound"),
+            _library: None,
+        }
     }
 
     #[test]
@@ -318,7 +343,7 @@ mod tests {
     fn a_missing_function_fails_the_binding() {
         // SAFETY: as `fake`.
         let error = unsafe {
-            Vosk::bind(&Fakes {
+            Functions::bind(&Fakes {
                 missing: b"vosk_model_free\0",
             })
         }
