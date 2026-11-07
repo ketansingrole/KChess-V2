@@ -388,6 +388,9 @@ fn the_account_menu_opens_the_profile_and_the_accounts_settings(cx: &mut gpui_ki
             })
     });
 
+    // Settings opened over the page: closed, the account menu is in reach again.
+    app.press("escape");
+    app.wait_gone(super::SETTINGS_SHOWN);
     app.click("account-menu");
     app.click_label("Profile");
     app.wait_for("the account's own profile", |_, cx| {

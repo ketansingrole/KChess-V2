@@ -1017,9 +1017,14 @@ pub struct Workspace {
     /// while its width eases.
     sidebar_toggled: Option<std::time::Instant>,
     sidebar: Entity<Part<Workspace>>,
-    /// The sidebar's list, scrolled in a short window: back to its top when it changes between
-    /// the pages and Settings' categories, and to the category Settings shows.
+    /// The sidebar's list of pages, scrolled in a short window.
     sidebar_scroll: ScrollHandle,
+    /// Settings' categories beside them in its dialog: to the top as it opens, and to the
+    /// category it shows.
+    sections_scroll: ScrollHandle,
+    /// The group to scroll the categories to once the dialog's list is drawn: one asked for as it
+    /// opens comes before the list exists.
+    sections_pending: std::cell::Cell<Option<usize>>,
     topbar: Entity<Part<Workspace>>,
     /// The sidebar toggle over the top bar (`render_sidebar_toggle`).
     toggle: Entity<Part<Workspace>>,
@@ -1141,6 +1146,8 @@ impl Workspace {
                 cx,
             ),
             sidebar_scroll: ScrollHandle::new(),
+            sections_scroll: ScrollHandle::new(),
+            sections_pending: std::cell::Cell::new(None),
             topbar: Part::keyed(
                 |this, window, cx| this.render_topbar(window, cx).into_any_element(),
                 TopbarInputs::of,
@@ -1206,8 +1213,8 @@ impl Workspace {
         if page == Page::Settings && current != Page::Settings {
             self.back = current;
         }
-        if (page == Page::Settings) != (current == Page::Settings) {
-            self.sidebar_scroll.set_offset(point(px(0.), px(0.)));
+        if page == Page::Settings && current != Page::Settings {
+            self.sections_scroll.set_offset(point(px(0.), px(0.)));
         }
         if page == Page::Settings
             && let Some(settings) = self.pages.settings()
@@ -1467,8 +1474,8 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Scroll the sidebar to the group of the category Settings shows, which the palette may have
-    /// chosen, or Settings remembered, out of a short window's sight: its block, after Back's.
+    /// Scroll Settings' categories to the group of the one it shows, which the palette may have
+    /// chosen, or Settings remembered, out of a short window's sight.
     fn scroll_to_section(&self, section: Section) {
         let row = sections()
             .iter()
@@ -1483,90 +1490,211 @@ impl Workspace {
                 .take_while(|end| *end <= row)
                 .count()
         });
-        self.sidebar_scroll.scroll_to_item(1 + group);
+        self.sections_scroll.scroll_to_item(group);
+        self.sections_pending.set(Some(group));
     }
 
-    /// The pages, or while Settings is open its categories with a way back (`navItems`).
-    fn nav_blocks(&self, open: bool, cx: &mut Context<Self>) -> Vec<NavBlock> {
-        let current = self.pages.current();
-        if current != Page::Settings {
-            let mut pages = nav().into_iter();
-            return NAV_GROUPS
-                .into_iter()
-                .zip(NAV_HEADINGS)
-                .map(|(size, heading)| {
-                    let group: Vec<_> = pages.by_ref().take(size).collect();
-                    let mark = group
-                        .iter()
-                        .position(|(page, _, _)| *page == Page::Online)
-                        .and_then(|row| Some((row, game_mark(cx)?)));
-                    NavBlock::Menu(
-                        heading,
-                        Box::new(SidebarMenu::new().gap_0().children(group.into_iter().map(
-                            |(page, label, glyph)| {
-                                let marked =
-                                    (page == Page::Online).then(|| game_mark(cx)).flatten();
-                                let shown = if open { nav_label(page, label) } else { label };
-                                nav_item(shown, glyph)
-                                    .accessibility_label(label)
-                                    .active(current == page)
-                                    .when_some(marked, |item, mark| {
-                                        item.accessibility_label(match mark {
-                                            GameMark::Turn => format!("{label}, your move"),
-                                            GameMark::Live => format!("{label}, game in progress"),
-                                        })
-                                        .suffix(move |_, cx| game_dot(mark, cx))
-                                    })
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.choose(page, window, cx)
-                                    }))
-                            },
-                        ))),
-                        mark,
-                    )
-                })
-                .collect();
+    /// The page shown in the window: while Settings is open, the one under its dialog.
+    fn shown_page(&self) -> Page {
+        match self.pages.current() {
+            Page::Settings => self.back,
+            page => page,
         }
+    }
+
+    /// The pages (`navItems`), the one under Settings marked while its dialog is open.
+    fn nav_blocks(&self, open: bool, cx: &mut Context<Self>) -> Vec<NavBlock> {
+        let current = self.shown_page();
+        let mut pages = nav().into_iter();
+        NAV_GROUPS
+            .into_iter()
+            .zip(NAV_HEADINGS)
+            .map(|(size, heading)| {
+                let group: Vec<_> = pages.by_ref().take(size).collect();
+                let mark = group
+                    .iter()
+                    .position(|(page, _, _)| *page == Page::Online)
+                    .and_then(|row| Some((row, game_mark(cx)?)));
+                NavBlock::Menu(
+                    heading,
+                    Box::new(SidebarMenu::new().gap_0().children(group.into_iter().map(
+                        |(page, label, glyph)| {
+                            let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
+                            let shown = if open { nav_label(page, label) } else { label };
+                            nav_item(shown, glyph)
+                                .accessibility_label(label)
+                                .active(current == page)
+                                .when_some(marked, |item, mark| {
+                                    item.accessibility_label(match mark {
+                                        GameMark::Turn => format!("{label}, your move"),
+                                        GameMark::Live => format!("{label}, game in progress"),
+                                    })
+                                    .suffix(move |_, cx| game_dot(mark, cx))
+                                })
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.choose(page, window, cx)
+                                }))
+                        },
+                    ))),
+                    mark,
+                )
+            })
+            .collect()
+    }
+
+    /// Settings' categories in its dialog, in their groups.
+    fn section_blocks(&self, cx: &mut Context<Self>) -> Vec<NavBlock> {
         let shown = self
             .pages
             .settings()
             .map_or(Section::Appearance, |page| page.read(cx).section());
-        let back = self.back;
-        // The rail's tooltip, and a screen reader, name the page it returns to.
-        let to = nav()
-            .into_iter()
-            .find_map(|(page, label, _)| (page == back).then(|| format!("Back to {label}")))
-            .unwrap_or_else(|| "Back".into());
-        let label = if open { "Back".into() } else { to.clone() };
-        let back = std::iter::once(NavBlock::Menu(
-            None,
-            Box::new(
-                SidebarMenu::new().child(
-                    nav_item(label, icon("arrow-left"))
-                        .accessibility_label(to)
-                        .on_click(
-                            cx.listener(move |this, _, window, cx| this.choose(back, window, cx)),
-                        ),
-                ),
-            ),
-            None,
-        ));
         let mut rows = sections().into_iter();
-        back.chain(SECTION_GROUPS.into_iter().map(|(heading, size)| {
-            NavBlock::Group(
-                heading,
-                Box::new(
-                    SidebarMenu::new()
-                        .gap_0()
-                        .children(rows.by_ref().take(size).map(|(section, label, glyph)| {
-                            nav_item(label, glyph).active(shown == section).on_click(
-                                cx.listener(move |this, _, _, cx| this.choose_section(section, cx)),
-                            )
-                        })),
-                ),
+        SECTION_GROUPS
+            .into_iter()
+            .map(|(heading, size)| {
+                NavBlock::Group(
+                    heading,
+                    Box::new(
+                        SidebarMenu::new()
+                            .gap_0()
+                            .children(rows.by_ref().take(size).map(|(section, label, glyph)| {
+                                nav_item(label, glyph).active(shown == section).on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.choose_section(section, cx)
+                                    }),
+                                )
+                            })),
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    /// Settings as a dialog over the page it was opened from, below the top bar (whose search
+    /// finds settings, and whose window controls stay in reach): its categories on the left,
+    /// the one chosen on the right. The close button, Escape or a press outside it closes it.
+    fn settings_dialog(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let palette = *cx.global::<Palette>();
+        let overlay = cx.theme().overlay;
+        let viewport = window.viewport_size();
+        let margin = px(24.);
+        let width = (viewport.width - margin * 2.).min(px(1040.));
+        let height = viewport.height - TOPBAR_HEIGHT - margin * 2.;
+        let blocks: Vec<AnyElement> = self
+            .section_blocks(cx)
+            .into_iter()
+            .enumerate()
+            .map(|(ix, block)| {
+                block
+                    .collapsed(false)
+                    .render(SharedString::from(format!("s{}", ix + 1)), window, cx)
+                    .into_any_element()
+            })
+            .collect();
+        // GPUI drops a scroll asked for before the list's first layout, when it does not know yet
+        // that the list scrolls: ask again once it has been laid out.
+        if let Some(group) = self.sections_pending.get() {
+            if self.sections_scroll.bounds().size.height > px(0.) {
+                self.sections_pending.set(None);
+                self.sections_scroll.scroll_to_item(group);
+            } else {
+                window.request_animation_frame();
+            }
+        }
+        let close = cx.listener(|this, _, window, cx| this.choose(this.back, window, cx));
+        div()
+            .id("settings-backdrop")
+            .absolute()
+            .top(TOPBAR_HEIGHT)
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .occlude()
+            .bg(overlay)
+            .flex()
+            .items_center()
+            .justify_center()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.choose(this.back, window, cx)),
             )
-        }))
-        .collect()
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if crate::widgets::is_escape(event) {
+                    cx.stop_propagation();
+                    this.choose(this.back, window, cx);
+                }
+            }))
+            .child(
+                v_flex()
+                    .id("settings-dialog")
+                    .test_support()
+                    .role(Role::Dialog)
+                    .aria_label("Settings")
+                    .w(width)
+                    .h(height)
+                    .rounded(crate::theme::radii::XL)
+                    .border_1()
+                    .border_color(palette.border)
+                    .bg(cx.theme().background)
+                    .overflow_hidden()
+                    // A press inside is the dialog's own, not one outside it.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .h(px(52.))
+                            .px(px(20.))
+                            .border_b_1()
+                            .border_color(palette.border)
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_size(px(16.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(palette.highlighted)
+                                    .child("Settings"),
+                            )
+                            .child(
+                                Button::new("settings-close")
+                                    .ghost()
+                                    .small()
+                                    .icon(icon("x"))
+                                    .accessibility_label("Close settings")
+                                    .tooltip("Close (Esc)")
+                                    .on_click(close),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_h_0()
+                            .items_stretch()
+                            .child(
+                                v_flex()
+                                    .id("settings-sections")
+                                    .test_support()
+                                    .w(px(232.))
+                                    .flex_none()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.sections_scroll)
+                                    .px_3()
+                                    .py_2()
+                                    .gap_1()
+                                    .border_r_1()
+                                    .border_color(palette.border)
+                                    .bg(cx.theme().tokens.sidebar)
+                                    .children(blocks),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .child(self.pages.view().cached(page_style())),
+                            ),
+                    ),
+            )
+            .into_any_element()
     }
 
     /// Whether the sidebar is open as shown: in a narrow window, only while opened there.
@@ -2314,7 +2442,13 @@ impl Render for Workspace {
                                     .size_full()
                                     .relative()
                                     .left(px(self.swipe_shift))
-                                    .child(self.pages.view().cached(page_style())),
+                                    // Settings opens over the page it was opened from.
+                                    .child(
+                                        self.pages
+                                            .view_for(self.shown_page())
+                                            .unwrap_or_else(|| self.pages.view())
+                                            .cached(page_style()),
+                                    ),
                             )
                             .children(self.swipe_edge(cx))
                             .child(drop_zone(cx.global::<Palette>())),
@@ -2326,6 +2460,9 @@ impl Render for Workspace {
                         .clone()
                         .cached(toggle_style(self.shown(), window)),
                 )
+            })
+            .when(self.pages.current() == Page::Settings, |shell| {
+                shell.child(self.settings_dialog(window, cx))
             })
     }
 }

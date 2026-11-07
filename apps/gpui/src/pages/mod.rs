@@ -168,6 +168,11 @@ impl Pages {
             .ok()
     }
 
+    /// A page's view as it was last shown, if it has been.
+    pub fn view_for(&self, page: Page) -> Option<AnyView> {
+        self.views.get(&page).map(|shown| shown.view.clone())
+    }
+
     pub fn view(&self) -> AnyView {
         self.views
             .get(&self.current)
