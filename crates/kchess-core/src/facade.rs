@@ -93,6 +93,7 @@ pub const FACADE_METHODS: &[&str] = &[
     "resumeOnline",
     "cancelOnline",
     "playOnline",
+    "playCorrespondence",
     "onlineAction",
     "onlineChat",
     "sendChat",
@@ -672,12 +673,14 @@ impl Core {
             "engineStatus" | "installEngine" | "deleteEngine" | "stopEngine" | "bestMove"
             | "startAnalysis" | "stopAnalysis" | "reviewGet" | "reviewRequest" | "reviewCancel"
             | "reviewStatus" | "reviewSummaries" => self.run_engine(method, args).await,
-            "startOnline" | "resumeOnline" | "cancelOnline" | "playOnline" | "onlineAction"
-            | "presence" | "onlineChat" | "sendChat" | "challenges" | "acceptChallenge"
-            | "declineChallenge" | "cancelChallenge" | "ongoingGames" | "openGame"
-            | "playerPerf" | "crosstable" | "recentGames" | "sendMessage" | "relation"
-            | "setRelation" | "profiles" | "leaderboard" | "searchPlayers" | "activity"
-            | "timeline" | "importGame" | "bookmarkedGames" => self.run_online(method, args).await,
+            "startOnline" | "resumeOnline" | "cancelOnline" | "playOnline"
+            | "playCorrespondence" | "onlineAction" | "presence" | "onlineChat" | "sendChat"
+            | "challenges" | "acceptChallenge" | "declineChallenge" | "cancelChallenge"
+            | "ongoingGames" | "openGame" | "playerPerf" | "crosstable" | "recentGames"
+            | "sendMessage" | "relation" | "setRelation" | "profiles" | "leaderboard"
+            | "searchPlayers" | "activity" | "timeline" | "importGame" | "bookmarkedGames" => {
+                self.run_online(method, args).await
+            }
             "tvChannels" | "watch" | "watchBroadcast" | "stopWatching" | "broadcasts"
             | "broadcastTour" | "broadcastRound" => self.run_spectate(method, args).await,
             "tournaments" | "tournament" | "joinTournament" | "leaveTournament"

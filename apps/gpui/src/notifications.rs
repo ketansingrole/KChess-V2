@@ -68,6 +68,12 @@ fn open_from(tag: &str, action: Option<&str>, cx: &mut App) {
     if let Some(id) = tag.strip_prefix(CHALLENGE_TAG) {
         return answer_challenge(id, action, cx);
     }
+    if let Some(game) = tag.strip_prefix(MOVE_TAG) {
+        return answer_move(game, action, cx);
+    }
+    if let Some(game) = tag.strip_prefix(CONFIRM_TAG) {
+        return confirm_move(tag, game, action, cx);
+    }
     show_page(game_page(tag), cx);
 }
 
@@ -110,6 +116,157 @@ fn answer_challenge(id: &str, action: Option<&str>, cx: &mut App) {
     }
 }
 
+/// A correspondence game's "your move" notification's tag: this, then `account/id`.
+const MOVE_TAG: &str = "move:";
+/// The tag of the notification confirming a move typed into it, for the same game.
+const CONFIRM_TAG: &str = "confirm:";
+/// The text box of a "your move" notification: its button, a tab, its placeholder (the GPUI
+/// patch's `input:` actions, `vendor/gpui-pre-windows/KCHESS-PATCH.md`).
+const MOVE_INPUT: &str = "input:move";
+
+/// A "your move" notification's buttons: a box to type the move, and Go to board.
+fn move_actions() -> Vec<gpui_kit::SystemNotificationAction> {
+    vec![
+        button(MOVE_INPUT, "Play\tYour move, such as Nf3"),
+        button("open", "Go to board"),
+    ]
+}
+
+/// Alert the player that it is their move in correspondence `game`, which they can answer from
+/// the notification where the system takes typed text (Windows, macOS).
+pub fn your_move(game: &serde_json::Value, cx: &mut App) -> Outcome {
+    let account = game["account"].as_str().unwrap_or_default();
+    let id = game["gameId"].as_str().unwrap_or_default();
+    let opponent = game["opponent"]["name"].as_str().unwrap_or("your opponent");
+    alert(
+        "opponentMove",
+        Some((format!("{MOVE_TAG}{account}/{id}"), move_actions())),
+        &format!("Your move against {opponent}"),
+        &format!("Correspondence game · @{account}"),
+        cx,
+    )
+}
+
+/// Open correspondence game `account/id` on the board, KChess in front.
+fn open_game(game: &str, cx: &mut App) {
+    show_page(Some(Page::Online), cx);
+    if let Some((account, id)) = game.split_once('/') {
+        let (account, id) = (account.to_string(), id.to_string());
+        crate::online::handle(cx).update(cx, |online, cx| online.open(&account, &id, cx));
+    }
+}
+
+/// A "your move" notification answered: a typed move is offered back to confirm (or, not
+/// legal there, asked for again), all without bringing KChess forward; Go to board or the body
+/// open the game.
+fn answer_move(game: &str, action: Option<&str>, cx: &mut App) {
+    let typed = action
+        .and_then(|action| action.strip_prefix(MOVE_INPUT))
+        .and_then(|rest| rest.strip_prefix('\n'))
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+    let Some(text) = typed else {
+        return open_game(game, cx);
+    };
+    let id = game.split_once('/').map_or("", |(_, id)| id);
+    let listed = crate::online::handle(cx)
+        .read(cx)
+        .ongoing
+        .iter()
+        .find(|listed| listed["gameId"].as_str() == Some(id))
+        .cloned();
+    let Some(listed) = listed.filter(|listed| listed["isMyTurn"] == serde_json::json!(true)) else {
+        return post_tagged(
+            format!("{MOVE_TAG}{game}"),
+            "That game has moved on",
+            "Open it to see where it stands",
+            vec![button("open", "Go to board")],
+            false,
+            cx,
+        );
+    };
+    match crate::move_reply::read(&listed, text) {
+        Some(reply) => {
+            let tag = format!("{CONFIRM_TAG}{game}");
+            let (title, body) = (
+                format!("Play {} against {}?", reply.san, reply.opponent),
+                format!("Correspondence game · @{}", reply.account),
+            );
+            let play = button("play", &format!("Play {}", reply.san));
+            crate::move_reply::hold(&tag, reply, cx);
+            post_tagged(
+                tag,
+                &title,
+                &body,
+                vec![play, button("cancel", "Cancel")],
+                false,
+                cx,
+            );
+        }
+        None => post_tagged(
+            format!("{MOVE_TAG}{game}"),
+            &format!("{text} is not a legal move"),
+            &format!(
+                "Your move against {}",
+                listed["opponent"]["name"]
+                    .as_str()
+                    .unwrap_or("your opponent")
+            ),
+            move_actions(),
+            false,
+            cx,
+        ),
+    }
+}
+
+/// The confirmation of a typed move answered: Play sends it once, then says whether it was
+/// played; Cancel drops it; the body opens the game.
+fn confirm_move(tag: &str, game: &str, action: Option<&str>, cx: &mut App) {
+    match action {
+        Some("play") => {
+            let Some(reply) = crate::move_reply::take(tag, cx) else {
+                return;
+            };
+            let sending = crate::move_reply::send(&reply, cx);
+            let tag = tag.to_string();
+            cx.spawn(async move |cx| {
+                let answer = sending.await;
+                cx.update(|cx| {
+                    let body = format!("Correspondence game · @{}", reply.account);
+                    match answer {
+                        Ok(_) => {
+                            post_tagged(
+                                tag,
+                                &format!("Played {} against {}", reply.san, reply.opponent),
+                                &body,
+                                Vec::new(),
+                                false,
+                                cx,
+                            );
+                            crate::online::handle(cx)
+                                .update(cx, |online, cx| online.refresh_ongoing(cx));
+                        }
+                        Err(why) => post_tagged(
+                            tag,
+                            &format!("{} was not played", reply.san),
+                            &why,
+                            vec![button("open", "Go to board")],
+                            false,
+                            cx,
+                        ),
+                    }
+                });
+            })
+            .detach();
+        }
+        Some("cancel") => {
+            crate::move_reply::take(tag, cx);
+            cx.dismiss_system_notification(tag);
+        }
+        _ => open_game(game, cx),
+    }
+}
+
 /// A system notification through GPUI, tagged `tag` (its kind, or a challenge's), with `actions`
 /// as its buttons.
 fn post_tagged(
@@ -132,7 +289,7 @@ fn post_tagged(
     }
 }
 
-fn action(id: &str, label: &str) -> gpui_kit::SystemNotificationAction {
+fn button(id: &str, label: &str) -> gpui_kit::SystemNotificationAction {
     gpui_kit::SystemNotificationAction {
         id: id.to_string().into(),
         label: label.to_string().into(),
@@ -142,7 +299,7 @@ fn action(id: &str, label: &str) -> gpui_kit::SystemNotificationAction {
 /// A system notification about `kind`, tagged with it; a game's offers Go to board.
 pub(crate) fn post(kind: &str, title: &str, body: &str, sound: bool, cx: &mut App) {
     let actions = game_page(kind)
-        .map(|_| action("open", "Go to board"))
+        .map(|_| button("open", "Go to board"))
         .into_iter()
         .collect();
     post_tagged(kind.to_string(), title, body, actions, sound, cx);
@@ -152,7 +309,7 @@ pub(crate) fn post(kind: &str, title: &str, body: &str, sound: bool, cx: &mut Ap
 /// shows buttons.
 pub fn challenge(id: &str, title: &str, body: &str, cx: &mut App) -> Outcome {
     let tag = format!("{CHALLENGE_TAG}{id}");
-    let actions = vec![action("accept", "Accept"), action("decline", "Decline")];
+    let actions = vec![button("accept", "Accept"), button("decline", "Decline")];
     alert("challenge", Some((tag, actions)), title, body, cx)
 }
 

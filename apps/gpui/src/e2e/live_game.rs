@@ -609,3 +609,106 @@ fn a_challenge_is_answered_from_its_notification(cx: &mut gpui_kit::TestAppConte
             && writes(&lichess).contains(&"POST /api/challenge/Accept01/accept".to_string())
     });
 }
+
+/// A correspondence game's "your move" notification takes a typed move: one not legal there is
+/// asked for again, a legal one comes back to confirm, and only Play sends it, once. A game no
+/// longer on your move when Play is pressed is not played.
+#[cfg(any(windows, target_os = "linux"))]
+#[gpui_kit::test]
+fn a_correspondence_move_is_played_from_its_notification(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::SystemNotificationResponse;
+    let mut app = Harness::start(cx);
+    let lichess = app.connect_with("Tester", false, |lichess| {
+        lichess.correspondence_turn = true
+    });
+    app.wait_for("the correspondence game", |_, cx| {
+        crate::online::handle(cx)
+            .read(cx)
+            .ongoing
+            .iter()
+            .any(|game| game["gameId"] == serde_json::json!("E2eCorr1"))
+    });
+    gpui_kit::VisualTestContext::from_window(app.window, &app.cx).deactivate_window();
+    app.with_window(|_, cx| {
+        let game = crate::online::handle(cx)
+            .read(cx)
+            .ongoing
+            .iter()
+            .find(|game| game["gameId"] == serde_json::json!("E2eCorr1"))
+            .cloned()
+            .expect("the game");
+        crate::notifications::your_move(&game, cx);
+    });
+    let last = |app: &mut Harness| {
+        app.cx.run_until_parked();
+        app.cx
+            .shown_system_notifications()
+            .last()
+            .cloned()
+            .expect("a notification")
+    };
+    let answer = |app: &mut Harness, tag: &str, action: &str| {
+        app.cx
+            .simulate_system_notification_response(SystemNotificationResponse {
+                tag: tag.to_string().into(),
+                action_id: Some(action.to_string().into()),
+            });
+        app.cx.run_until_parked();
+    };
+    let asked = last(&mut app);
+    assert_eq!(asked.tag.as_ref(), "move:Tester/E2eCorr1");
+    assert_eq!(asked.title.as_ref(), "Your move against Opponent");
+    assert_eq!(
+        asked
+            .actions
+            .iter()
+            .map(|a| a.id.as_ref())
+            .collect::<Vec<_>>(),
+        ["input:move", "open"]
+    );
+    answer(&mut app, "move:Tester/E2eCorr1", "input:move\nKe2");
+    assert_eq!(last(&mut app).title.as_ref(), "Ke2 is not a legal move");
+    answer(&mut app, "move:Tester/E2eCorr1", "input:move\ne4");
+    let confirm = last(&mut app);
+    assert_eq!(confirm.tag.as_ref(), "confirm:Tester/E2eCorr1");
+    assert_eq!(confirm.title.as_ref(), "Play e4 against Opponent?");
+    assert!(writes(&lichess).is_empty(), "{:?}", writes(&lichess));
+    // The game moved on before Play: nothing is sent.
+    lichess.lock().correspondence_turn = false;
+    answer(&mut app, "confirm:Tester/E2eCorr1", "play");
+    let mut refused = None;
+    for _ in 0..400 {
+        let shown = last(&mut app);
+        if shown.title.as_ref() == "e4 was not played" {
+            refused = Some(shown);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    refused.expect("the move refused");
+    assert!(writes(&lichess).is_empty(), "{:?}", writes(&lichess));
+    // On your move again: typed, confirmed and played once.
+    lichess.lock().correspondence_turn = true;
+    answer(&mut app, "move:Tester/E2eCorr1", "input:move\ne2e4");
+    assert_eq!(last(&mut app).title.as_ref(), "Play e4 against Opponent?");
+    answer(&mut app, "confirm:Tester/E2eCorr1", "play");
+    app.wait_for("the move to reach Lichess", |_, _| {
+        writes(&lichess) == ["POST /api/board/game/E2eCorr1/move/e2e4"]
+    });
+    let mut played = None;
+    for _ in 0..400 {
+        let shown = last(&mut app);
+        if shown.title.as_ref() == "Played e4 against Opponent" {
+            played = Some(shown);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    played.expect("the move confirmed");
+    // Play again on the same confirmation sends nothing more.
+    answer(&mut app, "confirm:Tester/E2eCorr1", "play");
+    assert_eq!(
+        writes(&lichess),
+        ["POST /api/board/game/E2eCorr1/move/e2e4"]
+    );
+}

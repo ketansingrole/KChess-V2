@@ -35,6 +35,26 @@ async fn online_methods_check_their_arguments_and_reach_lichess() {
             "Invalid move.",
         ),
         (
+            "playCorrespondence",
+            vec![
+                json!("Alice"),
+                json!("abcdefgh"),
+                json!("not a position"),
+                json!("e2e4"),
+            ],
+            "Invalid position.",
+        ),
+        (
+            "playCorrespondence",
+            vec![
+                json!("Alice"),
+                json!("abcdefgh"),
+                json!("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
+                json!("zz"),
+            ],
+            "Invalid move.",
+        ),
+        (
             "importGame",
             vec![Value::Null, json!("1. e4 *")],
             "Invalid account.",

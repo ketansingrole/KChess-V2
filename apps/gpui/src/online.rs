@@ -729,20 +729,7 @@ impl OnlineState {
                                 && before == Some(false)
                                 && id != this.id()
                             {
-                                crate::notifications::desktop(
-                                    "opponentMove",
-                                    &format!(
-                                        "Your move against {}",
-                                        game["opponent"]["name"]
-                                            .as_str()
-                                            .unwrap_or("your opponent")
-                                    ),
-                                    &format!(
-                                        "Correspondence game · @{}",
-                                        game["account"].as_str().unwrap_or_default()
-                                    ),
-                                    cx,
-                                );
+                                crate::notifications::your_move(game, cx);
                             }
                             this.turns.insert(id, mine);
                         }

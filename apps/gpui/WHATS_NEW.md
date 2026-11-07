@@ -8,6 +8,7 @@ with nothing there.
 
 ## Unreleased
 
+- **Reply from the notification**: when it's your move in a correspondence game, type your move right into the notification on Windows or Mac. KChess asks you to confirm it before it's played.
 - **A tidier sidebar**: your account sits at the bottom of the sidebar with Settings beside it. Its menu also opens What's new and lets you report a problem.
 - **Notifications you can click**: notifications come from KChess and Go to board takes you straight to the game, and a Lichess challenge can be accepted or declined right from its notification. On Windows they no longer show as Windows PowerShell.
 - **Settings in a window of its own**: Settings opens over the page you were on, with its sections down the left. Close it with ✕, Escape or a click outside to carry on where you were.
