@@ -133,15 +133,17 @@ impl SettingsPage {
         rows.row(
             "Model",
             None,
-            Select::new(&self.ai_model).accessibility_label("Model"),
+            crate::widgets::setting_field(Select::new(&self.ai_model).accessibility_label("Model")),
             palette,
         )
         .row(
             "Effort",
             refused.then(|| "This model chooses its own effort".into()),
-            Select::new(&self.ai_effort)
-                .accessibility_label("Effort")
-                .disabled(refused),
+            crate::widgets::setting_field(
+                Select::new(&self.ai_effort)
+                    .accessibility_label("Effort")
+                    .disabled(refused),
+            ),
             palette,
         )
         .card(palette)

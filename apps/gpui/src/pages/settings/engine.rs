@@ -334,11 +334,7 @@ impl SettingsPage {
                 .child(controls)
                 .into_any_element()
         } else {
-            h_flex()
-                .gap(px(40.))
-                .child(head.w(px(420.)).min_w(px(200.)).flex_shrink(1.))
-                .child(div().flex_1().min_w_0().child(controls))
-                .into_any_element()
+            crate::widgets::setting_row(head.min_w(px(200.)), controls).into_any_element()
         }
     }
 
