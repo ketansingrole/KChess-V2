@@ -534,3 +534,78 @@ fn new_opponent_seeks_the_same_game_against_anyone(cx: &mut gpui_kit::TestAppCon
         "the seek was cancelled"
     );
 }
+
+/// A challenge received while KChess is in the background is a notification naming the
+/// challenger and the game, with Accept and Decline: Decline answers it from the notification,
+/// and Accept brings KChess forward on Play on Lichess.
+#[cfg(any(windows, target_os = "linux"))]
+#[gpui_kit::test]
+fn a_challenge_is_answered_from_its_notification(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, lichess) = Harness::signed_in(cx, false);
+    gpui_kit::VisualTestContext::from_window(app.window, &app.cx).deactivate_window();
+    let challenge = |id: &str| {
+        serde_json::json!({
+            "type": "challenge",
+            "challenge": {
+                "id": id,
+                "status": "created",
+                "challenger": { "id": "bob", "name": "Bob", "rating": 1700 },
+                "destUser": { "id": "tester", "name": "Tester", "rating": 1500 },
+                "variant": { "key": "standard", "name": "Standard" },
+                "rated": true,
+                "speed": "rapid",
+                "timeControl": { "type": "clock", "limit": 600, "increment": 5 },
+                "color": "white",
+            },
+            "compat": { "board": true },
+        })
+    };
+    let shown = |app: &mut Harness, id: &str| {
+        let tag = format!("challenge:{id}");
+        let mut found = None;
+        for _ in 0..400 {
+            found = app
+                .cx
+                .shown_system_notifications()
+                .into_iter()
+                .find(|shown| shown.tag.as_ref() == tag);
+            if found.is_some() {
+                break;
+            }
+            app.cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        found.expect("the challenge's notification")
+    };
+    lichess.lock().events.push(challenge("Decline01"));
+    let declined = shown(&mut app, "Decline01");
+    assert_eq!(declined.title.as_ref(), "Bob (1700) challenges you");
+    assert_eq!(declined.body.as_ref(), "10+5 · Standard · Rated");
+    assert_eq!(
+        declined
+            .actions
+            .iter()
+            .map(|action| action.label.as_ref())
+            .collect::<Vec<_>>(),
+        ["Accept", "Decline"]
+    );
+    app.cx
+        .simulate_system_notification_response(gpui_kit::SystemNotificationResponse {
+            tag: declined.tag.clone(),
+            action_id: Some("decline".into()),
+        });
+    app.wait_for("the decline to reach Lichess", |_, _| {
+        writes(&lichess).contains(&"POST /api/challenge/Decline01/decline".to_string())
+    });
+    lichess.lock().events.push(challenge("Accept01"));
+    let accepted = shown(&mut app, "Accept01");
+    app.cx
+        .simulate_system_notification_response(gpui_kit::SystemNotificationResponse {
+            tag: accepted.tag.clone(),
+            action_id: Some("accept".into()),
+        });
+    app.wait_for("the accept to reach Lichess", |_, cx| {
+        crate::shell::current_page(cx) == Some(crate::pages::Page::Online)
+            && writes(&lichess).contains(&"POST /api/challenge/Accept01/accept".to_string())
+    });
+}

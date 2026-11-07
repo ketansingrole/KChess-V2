@@ -23,7 +23,7 @@ use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
 
 mod chat;
 pub(crate) mod game;
-mod lists;
+pub(crate) mod lists;
 
 /// The time controls offered (`timeControls`).
 const TIME_CONTROLS: [(f64, &str); 6] = [
