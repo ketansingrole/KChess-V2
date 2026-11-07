@@ -1,5 +1,5 @@
-//! Pictures Lichess serves for the app to show, such as a broadcast's cover. Only Lichess's own image hosts are asked, as Electron's content policy allows
-//! (`img-src https://lichess.org https://image.lichess1.org`); each picture is bounded in size,
+//! Pictures Lichess serves for the app to show, such as a broadcast's cover. Only Lichess's own image hosts are asked
+//! (`lichess.org`, `image.lichess1.org`); each picture is bounded in size,
 //! read once and kept for the session. A picture that cannot be had leaves its placeholder.
 //! Every picture is read on one background runtime through one client, so the covers of a page
 //! share a connection (over HTTP/2, one for all of them) instead of a handshake each.

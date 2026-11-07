@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use crate::core::AppCore;
 use crate::game::tree::analysis_context;
 
-/// Client ids unique across every position engine in the app, as Electron's start from the clock.
+/// Client ids unique across every position engine in the app.
 static NEXT_CLIENT: AtomicU64 = AtomicU64::new(0);
 
 fn next_client() -> u64 {

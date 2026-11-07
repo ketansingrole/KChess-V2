@@ -93,9 +93,9 @@ async fn two_windows_share_one_core_and_see_each_others_writes() {
     let profile = tempfile::tempdir().expect("profile");
     let service = spawn_service(profile.path(), Duration::from_secs(30));
     let (gpui, _gpui_events) = connect(profile.path(), "gpui").await;
-    let (electron, mut electron_events) = connect(profile.path(), "electron").await;
-    assert_ne!(gpui.connection(), electron.connection());
-    assert_eq!(electron.release(), protocol::release());
+    let (second, mut second_events) = connect(profile.path(), "second").await;
+    assert_ne!(gpui.connection(), second.connection());
+    assert_eq!(second.release(), protocol::release());
 
     let saved = gpui
         .call(
@@ -105,11 +105,11 @@ async fn two_windows_share_one_core_and_see_each_others_writes() {
         .await
         .expect("saved");
     let id = saved["id"].as_str().expect("an id").to_string();
-    let change = event(&mut electron_events, "profile:changed").await;
+    let change = event(&mut second_events, "profile:changed").await;
     assert_eq!(change["areas"], json!(["studies"]));
     assert_eq!(change["origin"], json!(gpui.connection()));
 
-    let library = electron.call("library", vec![]).await.expect("library");
+    let library = second.call("library", vec![]).await.expect("library");
     let names: Vec<&str> = library["studies"]
         .as_array()
         .expect("studies")
@@ -136,7 +136,7 @@ async fn two_windows_share_one_core_and_see_each_others_writes() {
     )
     .await
     .expect("the first window saves again");
-    let stale = electron
+    let stale = second
         .call(
             "studyCommand",
             vec![
@@ -149,7 +149,7 @@ async fn two_windows_share_one_core_and_see_each_others_writes() {
         .expect_err("based on an older study");
     assert!(stale.message.contains("another KChess window"), "{stale:?}");
 
-    drop((gpui, electron));
+    drop((gpui, second));
     service.abort();
 }
 
@@ -288,7 +288,7 @@ async fn a_window_that_joins_learns_which_window_alerts() {
     gpui.call("library", vec![]).await.expect("library");
 
     // The owner does not change when the second window joins; it still learns it, first.
-    let (electron, mut events) = connect(profile.path(), "electron").await;
+    let (second, mut events) = connect(profile.path(), "second").await;
     let first = tokio::time::timeout(WAIT, events.recv())
         .await
         .expect("an event")
@@ -300,7 +300,7 @@ async fn a_window_that_joins_learns_which_window_alerts() {
             payload: json!({ "connection": gpui.connection() }),
         }
     );
-    drop((gpui, electron));
+    drop((gpui, second));
     service.abort();
 }
 
@@ -433,7 +433,7 @@ async fn a_refusal_reaches_the_client_with_its_reason() {
             message: "Another KChess release is open.".into(),
             sole: false,
             clients: vec![protocol::ClientSummary {
-                kind: "electron".into(),
+                kind: "second".into(),
                 release: "2026.1.1".into(),
             }],
         };
@@ -456,7 +456,7 @@ async fn a_refusal_reaches_the_client_with_its_reason() {
     };
     assert_eq!(reason, RefuseReason::Version);
     assert!(!sole);
-    assert_eq!(clients[0].kind, "electron");
+    assert_eq!(clients[0].kind, "second");
 }
 
 #[tokio::test]

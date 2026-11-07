@@ -1,5 +1,5 @@
 //! What the app draws and plays: the icons it names, GPUI Kit's component icons, and its
-//! boards, piece sets and sounds (`apps/gpui/assets`, the Electron app's own), embedded once.
+//! boards, piece sets and sounds (`apps/gpui/assets`), embedded once.
 
 use std::borrow::Cow;
 

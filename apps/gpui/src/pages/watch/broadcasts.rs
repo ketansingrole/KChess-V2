@@ -1130,7 +1130,7 @@ impl WatchPage {
                 clock.map(|text| widgets::clock(text.into(), running, palette).into_any_element()),
             )
         };
-        // The bar's room is kept beside the board whether or not it shows, as Electron's padding.
+        // The bar's room is kept beside the board whether or not it shows.
         let bar_room = crate::engine_view::EVAL_BAR + px(8.);
         let board_size = self.layout.board_size_in(bar_room, super::HEADER, window);
         let eval_bar = self.broadcast_eval_bar(cx);

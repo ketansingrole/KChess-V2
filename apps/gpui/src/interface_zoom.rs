@@ -1,7 +1,7 @@
 //! Interface size: the whole
 //! window scaled together, like a browser's page zoom, through the window zoom KChess adds to
 //! GPUI (vendor/gpui-pre/KCHESS-PATCH.md). `auto` follows the display; the setting is the
-//! profile's `interface-zoom.json`, which Electron keeps too. ⌘+ and ⌘− step it, ⌘0 returns to
+//! profile's `interface-zoom.json`. ⌘+ and ⌘− step it, ⌘0 returns to
 //! Auto.
 
 use std::path::{Path, PathBuf};
@@ -17,8 +17,7 @@ const DESIGN_SHORT_SIDE: f32 = 1360.;
 /// The top bar's height at 100%, which the macOS traffic lights centre on (`TOPBAR_HEIGHT`).
 #[cfg(target_os = "macos")]
 const TOPBAR: f32 = 52.;
-/// Where Electron's traffic lights sit (`trafficLightPosition: { x: 12, y: 20 }`, which
-/// hiddenInset draws a point lower): 12pt in, their frame 5pt above the top bar's middle.
+/// Where the traffic lights sit: 12pt in, their frame 5pt above the top bar's middle.
 #[cfg(target_os = "macos")]
 const TRAFFIC_LIGHT_X: f32 = 12.;
 #[cfg(target_os = "macos")]
@@ -199,10 +198,10 @@ mod tests {
         assert_eq!(auto_percent(2560., 1410.), 100);
     }
 
-    /// They sat 4pt right of and 3pt above Electron's (x12, y21 on screen at 100%).
+    /// They once sat 4pt right of and 3pt above where they belong (x12, y21 on screen at 100%).
     #[cfg(target_os = "macos")]
     #[test]
-    fn traffic_lights_sit_where_electrons_do() {
+    fn traffic_lights_sit_12pt_in_beside_the_toggle() {
         use gpui_kit::{point, px};
         assert_eq!(super::traffic_lights(1.), point(px(12.), px(21.)));
         assert_eq!(super::traffic_lights(2.), point(px(12.), px(47.)));

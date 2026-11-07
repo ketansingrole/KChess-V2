@@ -1,4 +1,4 @@
-//! Move and game sounds, as the Electron app plays them: the move, capture,
+//! Move and game sounds: the move, capture,
 //! low-time and notification clips. A sound thread owns the
 //! output device, opened at the first sound, and decodes each clip once.
 

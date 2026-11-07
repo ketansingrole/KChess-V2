@@ -1,6 +1,5 @@
-//! View preferences (tabs, layouts, toggles): kept by the core (`viewPreferences`), shared with the
-//! Electron app under the same `kchess:` names (`useViewPreference`), so a page opens as it was left
-//! in either app. Another app's change is taken when it is reported (`profile:changed`), unless
+//! View preferences (tabs, layouts, toggles): kept by the core (`viewPreferences`) under `kchess:`
+//! names, so a page opens as it was left in any app on the profile. Another app's change is taken when it is reported (`profile:changed`), unless
 //! this app changed that preference since.
 
 use std::collections::HashMap;

@@ -16,8 +16,8 @@ use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 
 /// The identity of the bundled engine, the official Stockfish shipped beside the app. It never
-/// changes within a build, and differs from the WebAssembly build's (`stockfish-19-lite`) that the
-/// Electron app bundled, so analyses cached in a profile it used never mix the two engines.
+/// changes within a build, and differs from the WebAssembly build's (`stockfish-19-lite`) that early
+/// releases bundled, so analyses cached in a profile it used never mix the two engines.
 pub const BUNDLED_ENGINE_IDENTITY: &str = "stockfish-native";
 
 /// What the host supplies to find and start engines.

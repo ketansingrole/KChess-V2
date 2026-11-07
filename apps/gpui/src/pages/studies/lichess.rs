@@ -141,7 +141,7 @@ impl StudiesPage {
         .detach();
     }
 
-    /// The account the tab shows follows the one playing online, as Electron's does.
+    /// The account the tab shows follows the one playing online.
     pub(super) fn sync_lichess_account(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let accounts = crate::accounts::handle(cx);
         let (connected, active) = {

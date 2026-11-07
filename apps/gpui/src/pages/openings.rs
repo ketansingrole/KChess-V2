@@ -251,7 +251,7 @@ pub struct OpeningsPage {
     search: Entity<InputState>,
     query: String,
     search_task: Option<Task<()>>,
-    /// The browser starts afresh once a line was opened from it, as Electron's page is remade.
+    /// The browser starts afresh once a line was opened from it.
     clear_search: bool,
     /// A line was just opened from the list: its page takes the keys from the search field.
     focus_line: bool,

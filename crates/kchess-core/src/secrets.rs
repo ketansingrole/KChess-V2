@@ -1,10 +1,9 @@
 //! The profile's credentials. Lichess tokens are sealed with AES-256-GCM under a key that the OS
 //! credential store keeps (Keychain on macOS, Credential Manager on Windows, Secret Service on
-//! Linux), so every KChess app that opens a profile, Electron or GPUI, opens the same tokens.
+//! Linux), so every KChess app that opens a profile opens the same tokens.
 //!
-//! Sealed text starts with `kcs1:`. Text without it was sealed by an earlier release's host
-//! (`CorePlatform.secrets`, Electron's `safeStorage`): that host still opens it, and the core
-//! reseals it once (`Core::reseal_tokens`).
+//! Sealed text starts with `kcs1:`. A login without it was sealed by a host (tests,
+//! `--no-credentials`), which opens it (`Capabilities::decrypt`).
 //!
 //! The key is named after the profile's `credentials.id`, a random id kept in the profile, so two
 //! profiles on one machine never share a key and a copied profile does not find one. Under the

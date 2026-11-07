@@ -1,4 +1,4 @@
-//! The app's menus and their shortcuts, as the Electron app sets them (`setupAppMenu`): on macOS
+//! The app's menus and their shortcuts: on macOS
 //! the KChess menu (Services, Hide, Quit), then File, Edit, View and Window.
 
 use gpui_kit::component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
@@ -140,7 +140,7 @@ fn bind(keystrokes: &str, action: impl Action, cx: &App) -> KeyBinding {
 
 pub fn init(cx: &mut App) {
     let bindings = [
-        // Cmd on macOS and Ctrl elsewhere, as Electron's `CmdOrCtrl`; the others are macOS's own.
+        // Cmd on macOS and Ctrl elsewhere; the others are macOS's own.
         bind("secondary-q", Quit, cx),
         bind("cmd-h", Hide, cx),
         bind("alt-cmd-h", HideOthers, cx),
@@ -152,7 +152,7 @@ pub fn init(cx: &mut App) {
         bind("secondary-n", New, cx),
         bind("shift-secondary-p", Commands, cx),
         bind("secondary-,", OpenSettings, cx),
-        // Interface size, as Electron takes them: with or without Shift, and the keypad's.
+        // Interface size: with or without Shift, and the keypad's.
         bind("secondary-=", ZoomIn, cx),
         bind("secondary-+", ZoomIn, cx),
         bind("secondary-shift-=", ZoomIn, cx),

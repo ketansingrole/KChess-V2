@@ -8,6 +8,10 @@ with nothing there.
 
 ## Unreleased
 
+## 2026.11.5 (2026-11-07)
+
+- **Fixes**: Puzzles opens on Train instead of an empty page when it cannot find the tab you left it on.
+
 ## 2026.11.4 (2026-11-07)
 
 - **What's new**: after each update, KChess shows you what changed. You can read it again any time in Settings → Updates.

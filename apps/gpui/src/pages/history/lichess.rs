@@ -205,7 +205,7 @@ impl HistoryPage {
             "offset": tab.page * tab.page_size,
             "limit": tab.page_size,
         });
-        // Filters left at "all" are left out, as Electron sends them.
+        // Filters left at "all" are left out.
         if tab.account != "all" {
             query["account"] = json!(tab.account);
         }

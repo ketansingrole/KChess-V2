@@ -1,4 +1,4 @@
-//! Boards and pieces as the Electron app draws them (`crates/kchess-domain/data/looks.json`): the
+//! Boards and pieces (`crates/kchess-domain/data/looks.json`): the
 //! board images and their coordinate colors, and the piece sets, rasterized at the exact size they
 //! are shown so they stay sharp at any board size.
 
