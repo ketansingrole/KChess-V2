@@ -26,7 +26,10 @@ ad hoc in the sandbox and leaves it in `apps/gpui/dist/mas/KChess.app`.
 1. **Tag push:** the Release workflow's `app-store` job (`app-store-build.yml`) builds the signed
    `.pkg` and uploads it to App Store Connect, version and build number both the release version.
    It waits in TestFlight. Manual runs only make the package as an artifact.
-2. **Publishing the GitHub release:** `app-store-publish.yml` stages the App Store version with the
+2. **Publishing the GitHub release:** `app-store-publish.yml` first sends the build to the
+   **Public Beta** TestFlight group, whose public link (https://testflight.apple.com/join/qt2NQzhx)
+   is on the site, with the release notes as What to Test, and submits it for beta review. That
+   happens whatever App Review is doing. It then stages the App Store version with the
    listing in `app-store/` (and the release notes as What's New), attaches that build and submits
    it for review. Apple releases it when the review passes.
    While another version is with Apple (waiting for or in review, or approved and not yet
