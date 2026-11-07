@@ -168,20 +168,6 @@ pub const SESSION_KINDS: &[&str] = &[
     "archive:board",
     "archive:clock",
 ];
-/// Earlier releases' storage keys, in its order.
-pub const LEGACY_DOCUMENT_KEYS: &[&str] = &[
-    "kchess:studies:v1",
-    "kchess:game-history:v1",
-    "kchess:mistakes:v1",
-    "kchess:analysis:v1",
-    "kchess:local:v1",
-    "kchess:computer:v1",
-    "kchess:history-session:computer",
-    "kchess:history-session:board",
-    "kchess:history-session:clock",
-    "kchess:tournaments-joined",
-    "kchess:repertoire-misses",
-];
 pub const TOURNAMENT_SYSTEMS: &[&str] = &["arena", "swiss"];
 
 /// Largest serialized document the core stores (`MAX_DOCUMENT`).

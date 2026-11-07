@@ -3,8 +3,8 @@
 //! `{ id, kind, payload }`; the host answers with `host.reply(id, { value } | { error })`.
 //! Every request is bounded, so a host that never answers cannot hang the core.
 //!
-//! A host that uses the profile's own credentials (`Config::system_credentials`) is asked only to
-//! open tokens an earlier release sealed; the core seals and opens the rest (`secrets.rs`).
+//! With the profile's own credentials (`Config::system_credentials`) the core seals and opens every
+//! token itself (`secrets.rs`); without them (tests, `--no-credentials`) the host does.
 
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -38,9 +38,6 @@ pub struct Capabilities {
     pending: Pending,
     /// The profile's credentials, when the host uses them instead of sealing tokens itself.
     credentials: Option<Arc<Credentials>>,
-    /// The profile, whose logins an Electron release may have sealed with `safeStorage`: the core
-    /// opens those itself (`kchess-electron-legacy`) and reseals them.
-    electron_profile: Option<std::path::PathBuf>,
     /// The core's clients: a request goes to one that can answer it (`Connections::route`).
     /// Without them (tests), requests go to the host as any event.
     connections: Option<Arc<Connections>>,
@@ -50,7 +47,7 @@ pub struct Capabilities {
 fn needed(kind: &str) -> Capability {
     match kind {
         "openExternal" => Capability::Browser,
-        kind if kind.starts_with("secrets.") => Capability::LegacySecrets,
+        kind if kind.starts_with("secrets.") => Capability::Secrets,
         // `focus`, `onBattery`: a window.
         _ => Capability::Focus,
     }
@@ -70,7 +67,6 @@ impl Capabilities {
             next: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
             credentials,
-            electron_profile: None,
             connections: None,
         }
     }
@@ -84,11 +80,6 @@ impl Capabilities {
     /// A log line through the host.
     pub fn log(&self, level: crate::host::Level, scope: &str, message: &str) {
         self.host.log(level, scope, message);
-    }
-
-    /// Whether tokens the host sealed should be resealed with the profile's credentials.
-    pub fn reseals(&self) -> bool {
-        self.credentials.is_some()
     }
 
     /// Ask the host; its error message becomes the error.
@@ -168,15 +159,6 @@ impl Capabilities {
         let _ = send.send(result);
     }
 
-    /// Open logins Electron's `safeStorage` sealed in `profile` without asking a client. Not
-    /// under the test switch, so automated runs never read the user's credential store.
-    pub fn with_electron_profile(mut self, profile: std::path::PathBuf) -> Capabilities {
-        if !crate::store::debug::enabled() {
-            self.electron_profile = Some(profile);
-        }
-        self
-    }
-
     /// Fail every unanswered request (the core is closing).
     pub fn close(&self) {
         if let Ok(mut pending) = self.pending.lock() {
@@ -206,35 +188,24 @@ impl Capabilities {
         text(self.request("secrets.encrypt", json!(plain)).await?)
     }
 
-    /// Open a token. One the profile's credentials sealed opens here; any other was sealed by
-    /// Electron's `safeStorage` in an earlier release, which opens here too, or else by a host
-    /// that still can (`SecretStore.decrypt(base64)`).
+    /// Open a token: with the profile's credentials, or `SecretStore.decrypt(base64)` when the host
+    /// seals them.
     pub async fn decrypt(&self, ciphertext: &str) -> Result<String> {
-        if secrets::is_sealed(ciphertext) {
-            let Some(credentials) = &self.credentials else {
+        let Some(credentials) = &self.credentials else {
+            if secrets::is_sealed(ciphertext) {
                 return Err(CoreError::new(
                     "This account was saved by another KChess app. Reconnect your account.",
                 ));
-            };
-            let (credentials, sealed) = (Arc::clone(credentials), ciphertext.to_string());
-            return blocking(move || credentials.open(&sealed)).await;
+            }
+            return text(self.request("secrets.decrypt", json!(ciphertext)).await?);
+        };
+        if !secrets::is_sealed(ciphertext) {
+            return Err(CoreError::new(
+                "This account was saved by an older KChess. Reconnect your account.",
+            ));
         }
-        if let Some(profile) = &self.electron_profile {
-            let (profile, sealed) = (profile.clone(), ciphertext.to_string());
-            let opened = blocking(move || {
-                kchess_electron_legacy::safe_storage::open(&profile, &sealed)
-                    .map_err(|cause| CoreError::new(cause.0))
-            })
-            .await;
-            return match opened {
-                Ok(token) => Ok(token),
-                Err(cause) => match self.request("secrets.decrypt", json!(ciphertext)).await {
-                    Ok(value) => text(value),
-                    Err(_) => Err(cause),
-                },
-            };
-        }
-        text(self.request("secrets.decrypt", json!(ciphertext)).await?)
+        let (credentials, sealed) = (Arc::clone(credentials), ciphertext.to_string());
+        blocking(move || credentials.open(&sealed)).await
     }
 
     /// `CorePlatform.openExternal(url)`.
@@ -322,6 +293,44 @@ mod tests {
         assert_eq!(caps.decrypt("abc").await.unwrap(), "plain:abc");
         assert!(caps.on_battery().await.unwrap());
         assert_eq!(caps.focus().await.unwrap_err().message, "Not supported.");
+        assert!(caps.pending.lock().unwrap().is_empty());
+    }
+
+    /// A credential store in memory.
+    struct Keys(Mutex<Option<String>>);
+
+    impl crate::secrets::KeyStore for Keys {
+        fn available(&self) -> bool {
+            true
+        }
+        fn read(&self) -> Result<Option<String>> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+        fn write(&self, key: &str) -> Result<()> {
+            *self.0.lock().unwrap() = Some(key.to_string());
+            Ok(())
+        }
+    }
+
+    /// 2026-11-07: with the Electron takeover gone, a login the Electron app sealed
+    /// (`safeStorage`'s `v10`) is not sent to a host that cannot open it: it asks to reconnect,
+    /// while the profile's own logins still open.
+    #[tokio::test]
+    async fn a_login_the_profile_did_not_seal_asks_to_reconnect() {
+        let echo = Arc::new(Echo(Mutex::new(None)));
+        let credentials = Arc::new(Credentials::new(Box::new(Keys(Mutex::new(None)))));
+        let caps = Arc::new(Capabilities::with_credentials(
+            echo.clone(),
+            Some(credentials),
+        ));
+        *echo.0.lock().unwrap() = Some(Arc::clone(&caps));
+        let electron = "djEwuQ7Zl0Jx";
+        assert_eq!(
+            caps.decrypt(electron).await.unwrap_err().message,
+            "This account was saved by an older KChess. Reconnect your account."
+        );
+        let sealed = caps.encrypt("lip_token").await.unwrap();
+        assert_eq!(caps.decrypt(&sealed).await.unwrap(), "lip_token");
         assert!(caps.pending.lock().unwrap().is_empty());
     }
 

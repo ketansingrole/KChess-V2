@@ -14,7 +14,6 @@ crates/
   kchess-core/           The headless core: storage, engines, Lichess, puzzles, reviews, voice
   kchess-service/        One core per profile, served to every KChess window and the CLI
   kchess-voice/          The speech recognition helper (libvosk)
-  kchess-electron-legacy/ What the Electron app left in a profile, read once by the core
 tooling/xtask/           `cargo xtask`: checks, the pre-push hook, release versions, packaging
 fuzz/                    cargo-fuzz targets
 vendor/gpui-pre/         GPUI with a window zoom (`KCHESS-PATCH.md`)

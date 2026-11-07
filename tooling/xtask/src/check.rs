@@ -16,12 +16,7 @@ use crate::util::{Result, available, output, root, run, run_with, say};
 const FLOORS: [(&str, f64); 3] = [("lines", 88.0), ("regions", 86.0), ("functions", 86.0)];
 
 /// The shipped binaries, whose code must not unwrap or expect outside tests.
-const SHIPPED_BINS: [&str; 4] = [
-    "kchess-voice",
-    "kchess-service",
-    "kchess-cli",
-    "kchess-electron-bridge",
-];
+const SHIPPED_BINS: [&str; 3] = ["kchess-voice", "kchess-service", "kchess-cli"];
 
 fn step(name: &str, work: impl FnOnce() -> Result) -> Result {
     say(&format!("Checking {name}…"));
@@ -554,7 +549,7 @@ mod tests {
     fn a_file_a_package_reads_is_a_change_to_test() {
         assert!(builds_into_a_package("apps/gpui/update-key.pub"));
         assert!(builds_into_a_package(
-            "crates/kchess-electron-legacy/tests/fixtures/local-storage/CURRENT"
+            "crates/kchess-domain/tests/fixtures/rules-corpus.jsonl.gz"
         ));
         assert!(builds_into_a_package("Cargo.lock"));
         assert!(!builds_into_a_package("docs/releasing.md"));

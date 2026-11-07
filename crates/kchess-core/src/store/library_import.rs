@@ -1,5 +1,4 @@
-//! The library snapshot (`library`), its readers, and the one-time legacy import
-//! (`importLibrary`) with the studies-table migration.
+//! The library snapshot (`library`), its readers, and the studies-table migration.
 //! Split from the library store; bodies are unchanged. Named `library_import` because
 //! `store::import` already owns the JSON-backup/legacy-database profile migration.
 
@@ -7,20 +6,17 @@ use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
 use super::documents::{
-    DAMAGED_STUDIES, decode_archive_text, decode_archived_game_text, decode_mistakes_text,
-    decode_studies_text, parse_text, read_document, read_document_text, stored, stored_studies,
-    write_document,
+    DAMAGED_STUDIES, decode_archived_game_text, decode_mistakes_text, parse_text, read_document,
+    read_document_text, stored_studies, write_document,
 };
 use super::json_codec::{js_json, utf16_len};
 use super::library::{
-    GAMES, IMPORTED, JOINED, LEGACY_TARGETS, MISSES, MISTAKES, SCHEDULE, SESSION_KINDS, STUDIES,
-    db_err, misc, now_ms, transaction, truthy, write_game,
+    JOINED, MISSES, MISTAKES, SCHEDULE, SESSION_KINDS, STUDIES, db_err, misc, transaction, truthy,
 };
 use super::studies::id_of;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::library::MAX_STUDIES;
-use kchess_domain::misc::MAX_DOCUMENT;
 
 /// Migrate an earlier release's document atomically, retaining it unchanged on any failure.
 pub(crate) fn migrate_studies(db: &Connection) -> Result<()> {
@@ -179,7 +175,6 @@ pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
         "joinedTournaments": joined,
         "repertoireMisses": read_misses(host, db)?,
         "repertoireSchedule": Value::Object(read_schedule_lines(host, db)?),
-        "imported": read_document(host, db, IMPORTED)? == Some(Value::Bool(true)),
     });
     if let Some(error) = study_error {
         snapshot["studyError"] = json!(error);
@@ -193,78 +188,4 @@ pub(crate) fn until_after(entry: &Value, now: f64) -> bool {
         .get("until")
         .and_then(Value::as_f64)
         .is_some_and(|until| until > now)
-}
-
-/// `importLibrary(documents)`: take over documents an earlier release kept, once.
-pub(crate) fn import_library(
-    host: &dyn Host,
-    db: &Connection,
-    documents: Option<&Value>,
-) -> Result<Value> {
-    if read_document(host, db, IMPORTED)? == Some(Value::Bool(true)) {
-        return library(host, db, now_ms()?);
-    }
-    let documents = documents.and_then(Value::as_object);
-    transaction(db, || {
-        for (legacy, key) in LEGACY_TARGETS {
-            let Some(text) = documents
-                .and_then(|map| map.get(legacy))
-                .and_then(Value::as_str)
-            else {
-                continue;
-            };
-            if utf16_len(text) > MAX_DOCUMENT || stored(host, db, key)? {
-                continue;
-            }
-            let Some(raw) = parse_text(text) else {
-                host.log(
-                    Level::Warn,
-                    "library",
-                    &format!("Skipped an unreadable saved document: key={legacy}"),
-                );
-                continue;
-            };
-            let Some(value) = legacy_value(key, &raw, text)? else {
-                host.log(
-                    Level::Warn,
-                    "library",
-                    &format!("Skipped an invalid saved document: key={legacy}"),
-                );
-                continue;
-            };
-            if key == GAMES {
-                // Oldest first, so the most recent game ends up most recent again.
-                if let Value::Array(games) = &value {
-                    for game in games.iter().rev() {
-                        write_game(db, game)?;
-                    }
-                }
-                continue;
-            }
-            write_document(db, key, &value, "A saved document is too large to import.")?;
-        }
-        write_document(db, IMPORTED, &Value::Bool(true), "")?;
-        Ok(())
-    })?;
-    library(host, db, now_ms()?)
-}
-
-/// The value a legacy document becomes in the library, or None when it is invalid.
-fn legacy_value(key: &str, raw: &Value, text: &str) -> Result<Option<Value>> {
-    Ok(match key {
-        STUDIES => decode_studies_text(text).map(|items| json!({ "version": 2, "items": items })),
-        GAMES => decode_archive_text(text).map(Value::Array),
-        MISTAKES => decode_mistakes_text(text).map(|items| json!({ "version": 1, "items": items })),
-        JOINED => Some(misc("decodeJoinedTournaments", vec![raw.clone()])?),
-        MISSES => Some(misc("decodeRepertoireMisses", vec![raw.clone()])?),
-        _ => {
-            let kind = key.strip_prefix("session:").unwrap_or_default();
-            let session = misc("decodeStoredSession", vec![json!(kind), raw.clone()])?;
-            if truthy(Some(&session)) {
-                Some(misc("encodeSession", vec![json!(kind), session])?)
-            } else {
-                None
-            }
-        }
-    })
 }

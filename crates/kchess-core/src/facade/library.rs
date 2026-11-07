@@ -11,26 +11,8 @@ impl Core {
     pub(crate) async fn run_library(&self, method: &str, args: &[Value]) -> Result<Value> {
         match method {
             "library" => {
-                let library = self
-                    .database
-                    .call_async("store.library.library", &[json!(now_ms())])
-                    .await?;
-                if library["imported"] == json!(true) {
-                    return Ok(library);
-                }
-                // The documents the Electron renderer kept before the core did, taken over once.
-                let Some(found) =
-                    crate::electron_migration::local_storage(self.host.as_ref(), &self.data_dir)
-                        .await
-                else {
-                    return Ok(library);
-                };
-                crate::electron_migration::take_over_library(&self.database, &found).await
-            }
-            "importLibrary" => {
-                let documents = normal("assertLegacyDocuments", &arg(args, 0))?;
                 self.database
-                    .call_async("store.library.importLibrary", &[documents])
+                    .call_async("store.library.library", &[json!(now_ms())])
                     .await
             }
             "studyCommand" => {
@@ -133,27 +115,9 @@ impl Core {
                     .await
             }
             "viewPreferences" => {
-                let imported = self
-                    .database
-                    .call_async("store.viewPreferences.imported", &[])
-                    .await?;
-                if imported == json!(true) {
-                    return self
-                        .database
-                        .call_async("store.viewPreferences.all", &[])
-                        .await;
-                }
-                // The view preferences the Electron renderer kept in `localStorage`, taken over once.
-                let Some(found) =
-                    crate::electron_migration::local_storage(self.host.as_ref(), &self.data_dir)
-                        .await
-                else {
-                    return self
-                        .database
-                        .call_async("store.viewPreferences.all", &[])
-                        .await;
-                };
-                crate::electron_migration::take_over_preferences(&self.database, &found).await
+                self.database
+                    .call_async("store.viewPreferences.all", &[])
+                    .await
             }
             "setViewPreference" => {
                 let key = normal("assertViewPreferenceKey", &arg(args, 0))?;

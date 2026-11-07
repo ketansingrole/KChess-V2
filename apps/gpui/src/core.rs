@@ -716,18 +716,13 @@ fn test_lichess() -> bool {
 }
 
 /// Answer a `host:request` (`crates/kchess-core/src/capabilities.rs`). Tokens are sealed by the
-/// core (`system_credentials`); the host is only asked to open ones Electron's `safeStorage`
-/// sealed, which this app cannot read.
+/// core (`system_credentials`), so this app is never asked to seal or open one.
 fn answer_host(request: &Value, cx: &mut App) {
     let Some(id) = request["id"].as_u64() else {
         return;
     };
     let payload = &request["payload"];
     let reply = match request["kind"].as_str().unwrap_or_default() {
-        "secrets.available" => json!({ "value": false }),
-        "secrets.encrypt" | "secrets.decrypt" => json!({
-            "error": "This login was saved by an earlier KChess release. Reconnect your account."
-        }),
         "openExternal" => match payload.as_str() {
             // With a local stand-in for Lichess (the test switch), the page a sign-in opens is
             // written to the profile for the test to follow, instead of the person's browser.

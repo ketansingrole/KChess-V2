@@ -28,7 +28,6 @@ const CONTRACTS: [&str; 4] = [
 pub enum Capability {
     Browser,
     Focus,
-    LegacySecrets,
 }
 
 impl From<Capability> for kchess_core::connection::Capability {
@@ -36,7 +35,6 @@ impl From<Capability> for kchess_core::connection::Capability {
         match capability {
             Capability::Browser => kchess_core::connection::Capability::Browser,
             Capability::Focus => kchess_core::connection::Capability::Focus,
-            Capability::LegacySecrets => kchess_core::connection::Capability::LegacySecrets,
         }
     }
 }
@@ -227,11 +225,11 @@ mod tests {
             kind: "gpui".into(),
             release: "2026.10.12".into(),
             protocol: protocol(),
-            capabilities: vec![Capability::Browser, Capability::LegacySecrets],
+            capabilities: vec![Capability::Browser, Capability::Focus],
         };
         let text = serde_json::to_value(&hello).expect("json");
         assert_eq!(text["type"], json!("hello"));
-        assert_eq!(text["capabilities"], json!(["browser", "legacySecrets"]));
+        assert_eq!(text["capabilities"], json!(["browser", "focus"]));
         let result = Frame::Result {
             id: 1,
             value: None,

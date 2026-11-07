@@ -38,26 +38,19 @@ draft release by rerunning its original tag-push workflow.
 | Windows  | `.exe` installer (x64)                        |
 | Linux    | `.AppImage`, `.deb` and the Snap (x64)        |
 
-Each is made by `cargo xtask package`. The release adds `latest-mac.yml`, `latest.yml` and
-`latest-linux.yml` for Electron installations (below). Releases from 2026.10.12 to 2026.10.17 also
-carried `KChess-Preview-*` packages, a side-by-side preview of the Rust app; later releases do not,
-and a preview installation stays on 2026.10.17 (it shares the KChess profile, so installing KChess
-loses nothing).
+Each is made by `cargo xtask package`. The release job adds `latest-mac.yml`, `latest.yml` and
+`latest-linux.yml` for Electron installations (below).
 
 ### Electron installations
 
-Releases up to 2026.10.15 were an Electron app, whose updater (electron-updater) reads
-`latest*.yml` from the newest published release. Every release sends it to one frozen
-stepping-stone release, `STEP` in `tooling/xtask/src/electron_step.rs`: the release job's
-`cargo xtask electron-step` checks the step's original installers against their pinned size,
-SHA-256 and SHA-512 and against the step's `SHA256SUMS.txt` signed by the release key, then writes
-manifests whose `url` is `../<step tag>/<name>`, which electron-updater resolves into the step's own
-release. The step's installers keep the Electron app's identity (the Windows GUID, install folder
-and executables, the `.deb` package and `/opt/KChess`, a Mac zip bridge for the
-`com.kchess.electron` installations from before 2026.10.12), take over the Electron profile whole
-at their first start (`electron:migrated` in the profile), and then update themselves to the newest
-release like any KChess. Never change the step or skip the release job's step: Electron
-installations from any earlier version depend on it.
+Releases up to 2026.10.15 were an Electron app, whose updater reads `latest*.yml` from the newest
+published release. Every release's manifests send it to 2026.11.4, the frozen stepping-stone that
+still carries what an Electron install needs (its identity, the Mac zip's bridge for
+`com.kchess.electron`, and the takeover of its profile); from there it updates like any KChess. The
+release job's `cargo xtask electron-step` checks the step's installers against their pins and its
+signed checksums, then writes manifests whose `url` is `../v2026.11.4/<name>`, which the Electron
+updater resolves into that release. Electron installs depend on this step: don't change it, its
+pins (`STEP` in `tooling/xtask/src/electron_step.rs`) or 2026.11.4's assets.
 
 Without signing credentials, Windows releases are unsigned and macOS builds are ad hoc signed, so on
 first launch macOS says it can't verify the developer: open **System Settings → Privacy &
@@ -105,8 +98,7 @@ creating/pushing a tag or publishing a release.
   x64 (`.exe`), Linux x64 (`.AppImage` and `.deb`), and the Snap, as `KChess-*`. Keep their
   names, the Windows GUID, install folder, executable and uninstaller names, the `.deb` package
   and `/opt/KChess` layout: installed KChess apps update through them. Electron installations
-  update to the stepping-stone release through the `latest*.yml` the release job writes; don't
-  change that step.
+  update to 2026.11.4 through the `latest*.yml` the release job writes; don't change that step.
   Keep `SHA256SUMS.txt` with the installers. Verify all packages and checksums before
   publishing; macOS ZIPs are required for the update feed.
 
