@@ -8,7 +8,8 @@ with nothing there.
 
 ## Unreleased
 
-- **Coming from an older KChess**: your studies, page settings and every saved Lichess login move over the first time you open KChess, even accounts you were not signed in to.
+## 2026.11.4 (2026-11-07)
+
 - **What's new**: after each update, KChess shows you what changed. You can read it again any time in Settings → Updates.
 - **Crazyhouse**: a new way to play, where captured pieces join your side and can be dropped back on the board. Play it against the computer, with a friend, or on Lichess.
 - **Guess the move**: play through a famous game and try to guess each move the player made. Find it in Practice.
@@ -22,6 +23,7 @@ with nothing there.
 - **Calmer animations**: KChess follows your computer's reduce motion setting.
 - **Find us**: Settings → Updates links to the KChess website, its source code, and a place to report a problem.
 - **More reliable updates**: if an update download is interrupted, it carries on where it stopped.
+- **Coming from an older KChess**: your studies, page settings and every saved Lichess login move over the first time you open KChess, even accounts you were not signed in to.
 - **Fixes**: KChess uses less memory over long sessions, is safer, and busy pages respond faster. New opponent works right after a Lichess game ends, instead of asking you to reconnect.
 
 ## 2026.11.3 (2026-11-04)
