@@ -1929,7 +1929,7 @@ mod tests {
     }
 
     #[test]
-    fn sizes_and_counts_read_as_in_electron() {
+    fn sizes_and_counts_read_plainly() {
         assert_eq!(format_bytes(0.), "0 B");
         assert_eq!(format_bytes(1536.), "1.5 KB");
         assert_eq!(format_bytes(300. * 1024. * 1024.), "300 MB");

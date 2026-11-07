@@ -1,6 +1,6 @@
 //! View preferences: how each page was last left (tabs, filters, sort orders, toggles), one JSON
-//! value per `kchess:` key. They were the Electron app's `localStorage`; kept here, every
-//! KChess app over the profile (Electron or GPUI) opens a page as it was left.
+//! value per `kchess:` key. Kept here, every KChess app over
+//! the profile opens a page as it was left.
 
 use rusqlite::Connection;
 use serde_json::{Map, Value};

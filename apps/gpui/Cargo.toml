@@ -35,7 +35,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "time", "fs", "io-util"]
 getrandom = "0.4"
 # Channels from the core's threads to the UI thread.
 futures = "0.3"
-# The Electron renderer's boards, pieces and sounds, embedded (already in Cargo.lock through GPUI Kit).
+# The boards, pieces and sounds, embedded (already in Cargo.lock through GPUI Kit).
 rust-embed = "8"
 # Move and game sounds: the default output device (cpal) and the MP3 clips (Symphonia).
 rodio = { version = "0.23", default-features = false, features = ["playback", "mp3"] }
@@ -64,8 +64,8 @@ base64 = "0.23"
 [lints]
 workspace = true
 
-# Microphone access status and the system's request for it (`systemPreferences.getMediaAccess
-# Status` / `askForMediaAccess` in Electron): AVCaptureDevice, macOS 10.14 and later.
+# Microphone access status and the system's request for it: AVCaptureDevice, macOS 10.14 and
+# later.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSData", "NSBundle"] }
@@ -76,7 +76,7 @@ block2 = "0.6"
 # safe wrapper); both already in Cargo.lock.
 rustix = { version = "1", features = ["fs"] }
 nix = { version = "0.31", default-features = false, features = ["resource"] }
-# The Dock icon (`app.dock.setIcon` in Electron): NSApplication's icon image; and the system's
+# The Dock icon: NSApplication's icon image; and the system's
 # reduced-motion setting (NSWorkspace).
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSAccessibility", "NSWorkspace"] }
 

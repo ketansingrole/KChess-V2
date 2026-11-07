@@ -398,7 +398,7 @@ mod tests {
         clock.start(30);
         assert!(!clock.expired());
         assert!(!clock.low());
-        // At the start, and with a second gone; the clock rounds down, as Electron's does.
+        // At the start, and with a second gone; the clock rounds down.
         clock.stopped_at = Some(Duration::ZERO);
         assert_eq!(clock.text(), "0:30");
         clock.stopped_at = Some(Duration::from_millis(1500));

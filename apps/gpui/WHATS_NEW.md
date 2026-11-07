@@ -14,6 +14,10 @@ with nothing there.
 - **Clearer dialogs**: dialogs open in the middle of the window and dim the page behind them, so they stand out from the board.
 - **Fixes**: while you wait for an opponent on Lichess, the waiting card sits in the middle of the page, the time on each clock is centred, the computer's difficulty list shows each level's full name and rating, clicking a selected piece again puts it down, and a king in check glows red within its own square, as on Lichess, with a red # when it is checkmated.
 
+## 2026.11.5 (2026-11-07)
+
+- **Fixes**: Puzzles opens on Train instead of an empty page when it cannot find the tab you left it on.
+
 ## 2026.11.4 (2026-11-07)
 
 - **What's new**: after each update, KChess shows you what changed. You can read it again any time in Settings → Updates.

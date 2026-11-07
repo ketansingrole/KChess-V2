@@ -1276,7 +1276,7 @@ mod tests {
     use super::{ping_points, ping_stats, signal_from_latency};
 
     #[test]
-    fn the_ping_summary_reads_as_electrons() {
+    fn the_ping_summary_gives_median_and_spread() {
         assert_eq!(ping_stats(&[]), None);
         assert_eq!(ping_stats(&[80., 120., 101.]), Some((101., 100., 120.)));
         let quality: Vec<usize> = [149., 150., 299., 300., 499., 500.]

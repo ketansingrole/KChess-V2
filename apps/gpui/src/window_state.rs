@@ -1,5 +1,5 @@
 //! Where the window opens: as it was left, in the profile's
-//! `window-state.json` that Electron keeps too, unless no connected display can still show it.
+//! `window-state.json`, unless no connected display can still show it.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

@@ -1,7 +1,7 @@
 //! Play with computer: a game against
 //! Stockfish at a chosen level. The rules run the game (`game::computer`); this page answers their
 //! reads, runs the engine searches the game asks for, keeps the clocks moving and saves the
-//! unfinished game in the profile, where the Electron app resumes it too.
+//! unfinished game in the profile, to resume it.
 
 use std::time::{Duration, Instant};
 

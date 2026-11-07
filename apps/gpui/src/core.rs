@@ -113,7 +113,6 @@ fn refusal(error: &kchess_service::ConnectError) -> String {
         return error.to_string();
     };
     let app = match other.kind.as_str() {
-        "electron" => "Electron",
         "gpui" => "GPUI",
         kind => kind,
     };
@@ -336,7 +335,6 @@ pub type BoxedSave = std::pin::Pin<Box<dyn Future<Output = Saved>>>;
 impl Global for QuitFlushes {}
 
 /// Run `flush` when the app quits, before the core closes, so unsaved work reaches the profile.
-/// The Electron app does the same through its prepare-quit handshake.
 pub fn on_quit(cx: &mut App, flush: impl Fn(&mut App) -> Option<BoxedSave> + 'static) {
     cx.default_global::<QuitFlushes>().0.push(Box::new(flush));
 }
@@ -373,7 +371,7 @@ pub fn after_quit(cx: &mut App, last: impl Fn(&mut App) -> Option<Box<dyn FnOnce
     cx.default_global::<QuitLast>().0.push(Box::new(last));
 }
 
-/// How far preparing to quit has got (`QuitPreparation` in the Electron app).
+/// How far preparing to quit has got.
 #[derive(Default)]
 struct Quitting {
     /// Saving with the window open: a second request waits for this one.
@@ -555,7 +553,7 @@ async fn finish(
     }
 }
 
-/// Orders a surface's reads of the profile (`RequestScope` in the Electron app): only the newest
+/// Orders a surface's reads of the profile : only the newest
 /// read is shown, and one started before a local change is read again rather than shown over it.
 #[derive(Default)]
 pub struct Reads {
@@ -709,7 +707,7 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
 }
 
 /// The core serves Lichess from a local stand-in (`KCHESS_TEST_LICHESS_BASE` under the test
-/// switch, as the Electron end-to-end suite runs it).
+/// switch).
 fn test_lichess() -> bool {
     kchess_core::store::debug::enabled()
         && kchess_core::env::var("KCHESS_TEST_LICHESS_BASE").is_some_and(|base| !base.is_empty())

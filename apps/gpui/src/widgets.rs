@@ -1,4 +1,4 @@
-//! Pieces the board pages share, drawn as the Electron app draws them (`main.css`): the player
+//! Pieces the board pages share: the player
 //! line above and below a board, the status banner and the move list panel.
 
 use gpui_kit::base::TestSupportExt as _;
@@ -468,7 +468,7 @@ impl StatusBanner {
         }
     }
 
-    /// Say the title when it appears or changes (`role="status"` in Electron): results and
+    /// Say the title when it appears or changes (a live status): results and
     /// feedback, not a turn line the board already says.
     pub fn announce(mut self) -> StatusBanner {
         self.announce = true;

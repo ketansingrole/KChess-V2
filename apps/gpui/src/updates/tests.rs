@@ -581,7 +581,7 @@ fn release_versions_compare_as_numbers() {
 }
 
 #[test]
-fn packages_are_named_as_electrons_are() {
+fn packages_are_named_as_the_release_names_them() {
     let x64 = std::env::consts::ARCH == "x86_64";
     let name = |package| asset_name("2026.11.0", package).unwrap();
     assert!(name(Package::MacZip).starts_with("KChess-2026.11.0-mac-"));

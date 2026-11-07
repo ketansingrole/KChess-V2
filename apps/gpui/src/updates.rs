@@ -1,10 +1,8 @@
 //! App updates: the GPUI app checks the release feed
-//! the Electron app reads (GitHub releases of KChess), downloads the package it was installed from
-//! (packaged in Electron's formats), checks it against the release's
+//! (GitHub releases of KChess), downloads the package it was installed from, checks it against the release's
 //! `SHA256SUMS.txt` (itself signed with the release key, `update-key.pub`) and against the
 //! running app's signature, and installs it on restart or when
-//! KChess quits: a new bundle on macOS, the installer run silently on Windows (as Electron's
-//! updater does), a new AppImage, or the .deb through the package manager.
+//! KChess quits: a new bundle on macOS, the installer run silently on Windows, a new AppImage, or the .deb through the package manager.
 //!
 //! Only an installed package updates: a development build reports updates as manual, unless
 //! `KCHESS_UPDATE_FEED` points it at another feed (tests serve one locally).
@@ -32,7 +30,7 @@ const IDLE: Duration = if cfg!(test) {
 };
 /// `checkAutomatically`: on startup and every six hours.
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
-/// The name KChess's packages carry, as the Electron app's did.
+/// The name KChess's packages carry.
 const PREFIX: &str = "KChess";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,7 +156,7 @@ pub fn current_version() -> String {
     env!("KCHESS_VERSION").to_string()
 }
 
-/// This platform's `package` of a release, named as electron-builder names Electron's
+/// This platform's `package` of a release, as the release names it
 /// (`KChess-2026.10.12-linux-x86_64.AppImage`, `…-linux-amd64.deb`).
 pub fn asset_name(version: &str, package: Package) -> Option<String> {
     let arm = match std::env::consts::ARCH {
@@ -933,7 +931,7 @@ fn apply(staged: &Path, install: &Install, lock: &InstallLock, reopen: bool) -> 
             }
         }
         Package::WindowsInstaller => {
-            // As Electron's updater runs it: silently over this installation, which it closes, so
+            // Silently over this installation, which it closes, so
             // only once this app has saved and closed its core (`apply_on_quit`).
             let mut installer = Command::new(staged);
             // It runs on after this app exits: the installation stays locked until it is done.

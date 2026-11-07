@@ -1,4 +1,4 @@
-//! The window's frame, as the Electron app draws it: a sidebar that collapses
+//! The window's frame: a sidebar that collapses
 //! to icons, a top bar, and the current page.
 
 use gpui_kit::component::animation::{EffectTransition, ease_out_cubic};
@@ -84,7 +84,7 @@ fn title_bar(id: &'static str) -> Stateful<Div> {
         })
 }
 
-/// The sidebar's pages, in the Electron app's order.
+/// The sidebar's pages, in order.
 pub(crate) fn nav() -> [(Page, &'static str, Icon); 16] {
     [
         (Page::Dashboard, "Home", icon("house")),
@@ -622,7 +622,7 @@ pub fn open_lichess_game(game: serde_json::Value, window: &mut Window, cx: &mut 
     }
 }
 
-/// Start every page afresh at Home (after signing out, as Electron reloads its window), so
+/// Start every page afresh at Home (after signing out), so
 /// nothing a page kept for an account outlives it.
 pub fn restart_pages(window: &mut Window, cx: &mut App) {
     let Some(workspace) = cx
@@ -2058,7 +2058,7 @@ fn game_mark(cx: &App) -> Option<GameMark> {
     }
 }
 
-/// The Electron app's neutral ghost button: the text color, the accented
+/// The neutral ghost button: the text color, the accented
 /// background on hover and while pressed.
 fn ghost_neutral(cx: &App) -> ButtonCustomVariant {
     let palette = cx.global::<Palette>();
@@ -2114,8 +2114,8 @@ fn footer_button(
         .when(!open, |button| button.tooltip(label))
 }
 
-/// Marks a debug build (`cargo run -p kchess-gpui`) above Settings, as the Electron app marked
-/// its dev builds. Release builds compile none of it; packaging checks the binary for
+/// Marks a debug build (`cargo run -p kchess-gpui`) above Settings.
+/// Release builds compile none of it; packaging checks the binary for
 /// its id.
 #[cfg(debug_assertions)]
 fn dev_build_badge(open: bool, cx: &App) -> Option<AnyElement> {

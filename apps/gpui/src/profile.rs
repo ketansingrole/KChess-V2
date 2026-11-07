@@ -1,10 +1,10 @@
-//! Where the app keeps its data: the Electron app's profile, so either app opens the other's
-//! games, settings and accounts. `KCHESS_USER_DATA_DIR` picks another profile, as it does for
-//! Electron (isolated tests, development with fresh data).
+//! Where the app keeps its data: the profile every KChess release has used, with its games,
+//! settings and accounts. `KCHESS_USER_DATA_DIR` picks another profile (isolated tests,
+//! development with fresh data).
 
 use std::path::PathBuf;
 
-/// The Electron app's product name, which named the profile folder both apps use.
+/// The product name, which names the profile folder.
 pub const APP_NAME: &str = "KChess";
 
 fn home() -> PathBuf {
@@ -30,7 +30,7 @@ thread_local! {
     pub static TEST_DATA_DIR: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Electron's `app.getPath('userData')` for this app, created if it is missing.
+/// The profile folder (`KChess` in the platform's application data), created if it is missing.
 pub fn data_dir() -> std::io::Result<PathBuf> {
     #[cfg(test)]
     if let Some(dir) = TEST_DATA_DIR.with_borrow(Clone::clone) {

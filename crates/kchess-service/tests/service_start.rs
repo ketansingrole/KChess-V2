@@ -43,19 +43,18 @@ async fn the_first_app_starts_the_service_and_the_second_reuses_it() {
     assert!(copied.exists(), "it runs from this release's copy");
     assert!(!earlier.exists(), "other releases' copies are removed");
 
-    let (electron, _electron_events) =
-        connect_or_start(profile.path(), &window("electron"), &start)
-            .await
-            .expect("reused");
+    let (second, _second_events) = connect_or_start(profile.path(), &window("second"), &start)
+        .await
+        .expect("reused");
     assert_eq!(
         discovery::read_info(profile.path()).expect("core.json").pid,
         info.pid
     );
-    assert_ne!(gpui.connection(), electron.connection());
-    electron.call("library", vec![]).await.expect("works");
+    assert_ne!(gpui.connection(), second.connection());
+    second.call("library", vec![]).await.expect("works");
 
     // Both gone: the service stops after its idle period (10 s by default).
-    drop((gpui, electron));
+    drop((gpui, second));
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     while discovery::read_info(profile.path()).is_some() {
         assert!(

@@ -1,5 +1,5 @@
 //! The profile's settings as the app holds them: the core's and the desktop's together
-//! (`desktopSettings`), shared with the Electron app. Views read `AppSettings` and save through it;
+//! (`desktopSettings`). Views read `AppSettings` and save through it;
 //! saves wait for a pause in editing and are written one at a time.
 
 use std::time::Duration;
@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::core::{Answer, AppCore, BoxedSave, CoreEvent, Reads};
 
-/// How long edits settle before they are saved, as in the Electron app.
+/// How long edits settle before they are saved.
 const SAVE_DELAY: Duration = Duration::from_millis(400);
 
 /// The settings and the user's own themes, as last read from the core.

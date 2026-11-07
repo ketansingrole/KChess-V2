@@ -1157,7 +1157,7 @@ mod tests {
     use super::Form;
 
     #[test]
-    fn the_form_starts_as_the_electron_app_does() {
+    fn the_form_starts_at_15_plus_10() {
         let form = Form::default();
         assert_eq!((form.minutes, form.increment), (15., 10.));
         assert_eq!(form.color, "random");

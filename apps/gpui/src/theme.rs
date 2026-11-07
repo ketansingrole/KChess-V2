@@ -1,5 +1,5 @@
 //! The app's colors: KChess's default look or the theme chosen in Settings, resolved by
-//! `kchess_domain::theme` exactly as the Electron app resolved them, then given to GPUI Kit's
+//! `kchess_domain::theme`, then given to GPUI Kit's
 //! theme so every component paints with them. Follows the system appearance when Settings says so.
 
 use std::rc::Rc;

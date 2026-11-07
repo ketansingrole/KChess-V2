@@ -1,6 +1,6 @@
 //! The analysis board: a move tree explored on the
 //! board, Stockfish's lines and arrows for the position shown, Lichess's cloud evaluation, and the
-//! session the Electron app keeps (`sessions.analysis`), so either app opens it as it was left.
+//! session the profile keeps (`sessions.analysis`), so it opens as it was left.
 
 mod edits;
 mod engine;

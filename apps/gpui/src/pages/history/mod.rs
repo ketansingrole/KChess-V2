@@ -63,7 +63,6 @@ fn filter_of(outcome: &str) -> Option<Filter> {
     })
 }
 
-/// `archivedOutcome`, shared with the Electron app.
 /// Whether openings are named (Settings → Gameplay → _Show opening names_).
 pub(crate) fn opening_names_shown(cx: &App) -> bool {
     cx.global::<crate::settings::SettingsHandle>()
@@ -1225,7 +1224,7 @@ impl HistoryPage {
                         "Actions for the game from {}",
                         crate::game::game_date(game["startedAt"].as_f64().unwrap_or_default())
                     ))
-                    // Aligned to the button's end, as Electron's menu is, so it stays in the window.
+                    // Aligned to the button's end, so it stays in the window.
                     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                         let (exported, deleted) = (exported.clone(), deleted.clone());
                         let (export_page, delete_page) = (page.clone(), page.clone());
