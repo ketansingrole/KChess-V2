@@ -62,23 +62,10 @@ pub fn next_version(tags: &[&str], year: u32, month: u32) -> Result<String> {
     ))
 }
 
-/// The UTC date now, from the system clock (days since 1970 → civil date).
+/// The UTC date now, from the system clock.
 fn utc_date() -> (u32, u32, u32) {
-    let seconds = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
-    let days = (seconds / 86_400) as i64;
-    // Howard Hinnant's civil_from_days.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    (year as u32, month as u32, day as u32)
+    let (year, month, day) = crate::util::civil_date(crate::util::unix_now());
+    (year as u32, month, day)
 }
 
 /// The notes the app shows after an update (`apps/gpui/src/whats_new.rs`): what each change

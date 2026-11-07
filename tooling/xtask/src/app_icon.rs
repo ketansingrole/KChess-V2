@@ -486,6 +486,48 @@ mod tests {
         )));
     }
 
+    /// The largest visible difference between two images: of any pixel's opacity, and of the
+    /// colour of any pixel both show (a fully transparent pixel's colour is not seen).
+    fn largest_difference(a: &RgbaImage, b: &RgbaImage) -> u8 {
+        assert_eq!(a.dimensions(), b.dimensions());
+        a.pixels()
+            .zip(b.pixels())
+            .map(|(a, b)| {
+                let alpha = a[3].abs_diff(b[3]);
+                if a[3] < 16 || b[3] < 16 {
+                    return alpha;
+                }
+                (0..3).map(|i| a[i].abs_diff(b[i])).fold(alpha, u8::max)
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The drawing, pinned: each theme at a small size, edge to edge and with the macOS margin,
+    /// matches its reference render within rounding. The shipped rasters predate this drawing
+    /// (they came from the former Python one, which looks the same), so they cannot be the
+    /// reference. After an intended change, rewrite the references with
+    /// `KCHESS_WRITE_ICON_FIXTURES=1 cargo test -p xtask app_icon` and look at them.
+    #[test]
+    fn the_drawing_matches_its_reference_renders() {
+        let fixtures = root().join("tooling/xtask/tests/fixtures");
+        let write = std::env::var_os("KCHESS_WRITE_ICON_FIXTURES").is_some();
+        for (name, theme, inset) in [
+            ("icon-light-96.png", &LIGHT, 0.0),
+            ("icon-dark-96.png", &DARK, MACOS_INSET),
+        ] {
+            let drawn = framed(theme, 96, inset).unwrap();
+            let path = fixtures.join(name);
+            if write {
+                std::fs::create_dir_all(&fixtures).unwrap();
+                save(&drawn, &path).unwrap();
+            }
+            let reference = image::open(&path).unwrap().to_rgba8();
+            let difference = largest_difference(&drawn, &reference);
+            assert!(difference <= 2, "{name} differs by {difference}");
+        }
+    }
+
     #[test]
     fn the_svg_matches_the_committed_one() {
         // A Windows checkout may end its lines with CRLF.
