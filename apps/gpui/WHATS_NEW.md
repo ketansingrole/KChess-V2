@@ -8,6 +8,7 @@ with nothing there.
 
 ## Unreleased
 
+- **Smarter Guess the move**: look up any Lichess player and guess one of their games as them, or pick a famous game like the Opera Game or the Game of the Century. The engine now checks the moves that were played too: when a player went wrong, finding the better move earns full points, and you're told what today's engines prefer.
 - **Reply from the notification**: when it's your move in a correspondence game, type your move right into the notification on Windows or Mac. KChess asks you to confirm it before it's played.
 - **A tidier sidebar**: your account sits at the bottom of the sidebar with Settings beside it. Its menu also opens What's new and lets you report a problem.
 - **Notifications you can click**: notifications come from KChess and Go to board takes you straight to the game, and a Lichess challenge can be accepted or declined right from its notification. On Windows they no longer show as Windows PowerShell.

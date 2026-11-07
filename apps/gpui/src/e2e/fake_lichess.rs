@@ -395,6 +395,15 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         }
         return pgn(&mut out, LINKED_PGN);
     }
+    // The showcase account's games are public too, as the single export sends one (without
+    // an account, so named for the showcase test's player).
+    if (request.method.as_str(), request.path.as_str()) == ("POST", "/api/games/export/_ids")
+        && let Some(game) = showcase_games("Showcase")
+            .into_iter()
+            .find(|game| game["id"].as_str() == Some(request.body.trim()))
+    {
+        return pgn(&mut out, game["pgn"].as_str().unwrap_or_default());
+    }
     // Games are public: the one a pasted link can fetch here.
     if (request.method.as_str(), request.path.as_str()) == ("POST", "/api/games/export/_ids")
         && request.body.trim() == LINKED_GAME
