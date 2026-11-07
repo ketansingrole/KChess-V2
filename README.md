@@ -61,9 +61,8 @@ identifier (`tooling/macos-dev-runner.sh`), so the keychain's "Always Allow" for
 credential key lasts across rebuilds. Choose another identity with `KCHESS_DEV_SIGNING_IDENTITY`,
 or `-` to skip signing.
 
-A profile last used by the Electron app that KChess once was (any release up to 2026.10.15) is
-taken over as it is: its studies, games and sessions, page settings, and Lichess logins
-(`crates/kchess-electron-legacy`).
+The Electron app that KChess once was (releases up to 2026.10.15) updates to 2026.11.4 first, which
+takes over its profile, and from there to the newest release ([releasing](docs/releasing.md)).
 
 ### Command line
 
@@ -224,8 +223,7 @@ On first launch on macOS, the app imports accounts, game history, settings, and 
   to every KChess window and the command line.
 - `crates/kchess-domain/` holds the pure chess, training and document rules; `crates/kchess-games/`
   the computer, over-the-board and Game history sessions as frontends drive them;
-  `crates/kchess-voice/` the speech recognition helper; `crates/kchess-electron-legacy/` reads what
-  the Electron app left in a profile.
+  `crates/kchess-voice/` the speech recognition helper.
 - `tooling/xtask/` is the repository's tooling (`cargo xtask`); `fuzz/` the cargo-fuzz targets.
 
 ## Security notes

@@ -339,7 +339,6 @@ validators! {
     "assertViewPreferenceKey" => assert_view_preference_key,
     "assertSessionKind" => assert_session_kind,
     "assertSide" => assert_side,
-    "assertLegacyDocuments" => assert_legacy_documents,
 }
 
 #[cfg(test)]

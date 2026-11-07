@@ -1820,9 +1820,8 @@ impl Render for PuzzlesPage {
             false,
             &palette,
         );
-        let body = if tab == "train" {
-            self.render_train(window, cx, &palette)
-        } else if tab == "daily" {
+        // Train, as the tab row shows, for a tab this release does not have.
+        let body = if tab == "daily" {
             self.daily_view(window, cx).into_any_element()
         } else if tab == "history" {
             let history = match &self.history {
@@ -1885,17 +1884,7 @@ impl Render for PuzzlesPage {
             };
             rush.into_any_element()
         } else {
-            div()
-                .px(side_padding(window))
-                .pt(px(20.))
-                .child(
-                    widgets::card(&palette)
-                        .items_center()
-                        .py(px(40.))
-                        .text_color(palette.text_muted)
-                        .child("Use the Electron app for this tab for now"),
-                )
-                .into_any_element()
+            self.render_train(window, cx, &palette)
         };
         if self.shown_tab == "rush"
             && tab != "rush"

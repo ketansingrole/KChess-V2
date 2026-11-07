@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
 use super::json_codec::{js_json, utf16_len};
-use super::library::{GAMES, STUDIES, db_err, now_ms};
+use super::library::{db_err, now_ms};
 use super::studies::id_of;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
@@ -63,38 +63,12 @@ pub(crate) fn write_document(
     Ok(Value::Null)
 }
 
-/// Whether the library already has this document (or, for games, any game).
-pub(crate) fn stored(host: &dyn Host, db: &Connection, key: &str) -> Result<bool> {
-    if key == GAMES {
-        let any = db
-            .query_row("SELECT 1 FROM archived_games LIMIT 1", [], |_| Ok(()))
-            .optional()
-            .map_err(db_err)?;
-        return Ok(any.is_some());
-    }
-    if key == STUDIES {
-        let count: i64 = db
-            .query_row("SELECT COUNT(*) FROM studies", [], |row| row.get(0))
-            .map_err(db_err)?;
-        return Ok(count > 0 || read_document_text(db, key)?.is_some());
-    }
-    Ok(read_document(host, db, key)?.is_some())
-}
-
 pub(crate) fn parse_text(text: &str) -> Option<Value> {
     serde_json::from_str(text).ok()
 }
 
-pub(crate) fn decode_studies_text(text: &str) -> Option<Vec<Value>> {
-    parse_text(text).and_then(|raw| kchess_domain::library::decode_studies(&raw))
-}
-
 pub(crate) fn decode_mistakes_text(text: &str) -> Option<Vec<Value>> {
     parse_text(text).and_then(|raw| kchess_domain::library::decode_mistakes(&raw))
-}
-
-pub(crate) fn decode_archive_text(text: &str) -> Option<Vec<Value>> {
-    parse_text(text).and_then(|raw| kchess_domain::library::decode_archive(&raw))
 }
 
 pub(crate) fn decode_archived_game_text(text: &str) -> Option<Value> {

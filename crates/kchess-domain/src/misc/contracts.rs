@@ -355,7 +355,6 @@ const CORE: &[Row] = &[
     ("voiceFinish", 0, &[]),
     ("voiceStop", 0, &[]),
     ("library", 0, &[]),
-    ("importLibrary", 1, &[Valid("assertLegacyDocuments")]),
     (
         "studyCommand",
         1,

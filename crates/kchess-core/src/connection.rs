@@ -18,14 +18,14 @@ pub enum Capability {
     Browser,
     /// Bring its window to the front (`focus`).
     Focus,
-    /// Open logins sealed by an earlier Electron release (`secrets.*`, `safeStorage`).
-    LegacySecrets,
+    /// Seal and open logins itself (`secrets.*`), for a core without the profile's credentials.
+    Secrets,
 }
 
 /// Who a client is, as it says when it connects.
 #[derive(Clone, Debug)]
 pub struct ClientInfo {
-    /// `electron`, `gpui`, `cli`, `mcp`...
+    /// `gpui`, `cli`, `mcp`...
     pub kind: String,
     /// The KChess release it was built from.
     pub release: String,
@@ -38,11 +38,7 @@ impl ClientInfo {
         ClientInfo {
             kind: "app".into(),
             release: String::new(),
-            capabilities: vec![
-                Capability::Browser,
-                Capability::Focus,
-                Capability::LegacySecrets,
-            ],
+            capabilities: vec![Capability::Browser, Capability::Focus, Capability::Secrets],
         }
     }
 }
@@ -224,7 +220,7 @@ mod tests {
     fn the_window_focused_last_alerts_and_tools_never_do() {
         let connections = Connections::new();
         connections.without_app();
-        let electron = connections.connect(window("electron"));
+        let first = connections.connect(window("gpui"));
         let gpui = connections.connect(window("gpui"));
         let cli = connections.connect(ClientInfo {
             kind: "cli".into(),
@@ -233,12 +229,12 @@ mod tests {
         });
         // Nobody focused yet: the window that connected last.
         assert_eq!(connections.alert_owner(), Some(gpui));
-        connections.focus(electron, true);
-        assert_eq!(connections.alert_owner(), Some(electron));
+        connections.focus(first, true);
+        assert_eq!(connections.alert_owner(), Some(first));
         connections.focus(gpui, true);
         assert_eq!(connections.alert_owner(), Some(gpui));
         connections.disconnect(gpui);
-        assert_eq!(connections.alert_owner(), Some(electron));
+        assert_eq!(connections.alert_owner(), Some(first));
         assert_ne!(connections.alert_owner(), Some(cli));
     }
 
@@ -261,18 +257,15 @@ mod tests {
             connections.route(Capability::Browser, Some(gpui)),
             Some(gpui)
         );
-        // Nobody can open Electron's sealed logins.
-        assert_eq!(
-            connections.route(Capability::LegacySecrets, Some(gpui)),
-            None
-        );
-        let electron = connections.connect(ClientInfo {
-            capabilities: vec![Capability::Focus, Capability::LegacySecrets],
-            ..window("electron")
+        // Only a client that seals logins itself is asked to open one.
+        assert_eq!(connections.route(Capability::Secrets, Some(gpui)), None);
+        let sealer = connections.connect(ClientInfo {
+            capabilities: vec![Capability::Focus, Capability::Secrets],
+            ..window("gpui")
         });
         assert_eq!(
-            connections.route(Capability::LegacySecrets, Some(gpui)),
-            Some(electron)
+            connections.route(Capability::Secrets, Some(gpui)),
+            Some(sealer)
         );
     }
 

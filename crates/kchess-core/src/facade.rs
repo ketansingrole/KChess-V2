@@ -161,7 +161,6 @@ pub const FACADE_METHODS: &[&str] = &[
     "voiceFinish",
     "voiceStop",
     "library",
-    "importLibrary",
     "studyCommand",
     "saveArchivedGame",
     "removeArchivedGame",
@@ -333,14 +332,6 @@ pub const PROFILE_CHANGED: &str = "profile:changed";
 /// other windows refetch them. `saveSettings` reports `settings:saved` instead.
 pub fn changed_areas(method: &str) -> &'static [&'static str] {
     match method {
-        "importLibrary" => &[
-            "studies",
-            "playedGames",
-            "drills",
-            "sessions",
-            "tournaments",
-            "repertoire",
-        ],
         "studyCommand" => &["studies"],
         "saveArchivedGame" | "removeArchivedGame" => &["playedGames"],
         "addMistakes" | "answerMistake" => &["drills"],
@@ -717,7 +708,6 @@ impl Core {
                 self.run_voice(method, args).await
             }
             "library"
-            | "importLibrary"
             | "studyCommand"
             | "saveArchivedGame"
             | "removeArchivedGame"

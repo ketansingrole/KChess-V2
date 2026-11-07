@@ -377,18 +377,3 @@ pub const SESSION_KINDS: &[&str] = &[
     "archive:board",
     "archive:clock",
 ];
-
-/// Where earlier releases kept each document in the Electron app's `localStorage`.
-pub const LEGACY_DOCUMENT_KEYS: &[&str] = &[
-    "kchess:studies:v1",
-    "kchess:game-history:v1",
-    "kchess:mistakes:v1",
-    "kchess:analysis:v1",
-    "kchess:local:v1",
-    "kchess:computer:v1",
-    "kchess:history-session:computer",
-    "kchess:history-session:board",
-    "kchess:history-session:clock",
-    "kchess:tournaments-joined",
-    "kchess:repertoire-misses",
-];

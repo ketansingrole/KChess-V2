@@ -13,8 +13,6 @@ use super::client::TokenSource;
 use super::lookups::{ExplorerLogin, LookupCache};
 use crate::capabilities::Capabilities;
 use crate::error::{CoreError, Result as CoreResult};
-use crate::host::Level;
-use crate::secrets;
 use crate::store::Database;
 
 /// `LichessStore` over `kchess.db`.
@@ -280,42 +278,8 @@ impl TokenSource for DbTokens {
             let Some(ciphertext) = ciphertext.as_str() else {
                 return Ok(None);
             };
-            let token = self.capabilities.decrypt(ciphertext).await?;
-            if self.capabilities.reseals() && !secrets::is_sealed(ciphertext) {
-                self.reseal(account, ciphertext, &token).await;
-            }
-            Ok(Some(token))
+            Ok(Some(self.capabilities.decrypt(ciphertext).await?))
         })
-    }
-}
-
-impl DbTokens {
-    /// Reseal a token an earlier release's host sealed (Electron's `safeStorage`) with the
-    /// profile's credentials, so every KChess app opens it, when the token is needed before the
-    /// background migration (`electron_migration`) got to it. Never before a startup read, where
-    /// a keychain prompt once hung the app (`core_startup.rs`). A token that cannot be resealed
-    /// keeps working through the host and is tried again next time.
-    async fn reseal(&self, account: &str, previous: &str, token: &str) {
-        let resealed = async {
-            let sealed = self.capabilities.encrypt(token).await?;
-            self.database
-                .call_async(
-                    "store.games.resealTokenCiphertext",
-                    &[json!(account), json!(previous), json!(sealed)],
-                )
-                .await
-        }
-        .await;
-        if let Err(cause) = resealed {
-            self.capabilities.log(
-                Level::Warn,
-                "credentials",
-                &format!(
-                    "The saved login of {account} was not resealed: {}",
-                    cause.message
-                ),
-            );
-        }
     }
 }
 

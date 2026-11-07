@@ -467,11 +467,6 @@ pub fn methods() -> Vec<Method> {
             vec![],
         ),
         method(
-            "importLibrary",
-            "Take over the documents an earlier release kept in the Electron app's localStorage; runs once.",
-            vec![req("documents")],
-        ),
-        method(
             "studyCommand",
             "",
             vec![req("command"), opt("incremental"), opt("basedOn")],

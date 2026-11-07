@@ -41,11 +41,9 @@ base64 = "0.23"
 
 # Profile credentials (`secrets.rs`): Lichess tokens sealed with AES-256-GCM (`aes-gcm`, RustCrypto,
 # MIT/Apache-2.0; its `aes` is already in Cargo.lock) under a key the OS credential store keeps
-# (`keyring`: Keychain, Credential Manager, Secret Service; MIT/Apache-2.0), so the Electron and
-# GPUI apps open the same tokens. Electron's `safeStorage` format only Electron can read.
+# (`keyring`: Keychain, Credential Manager, Secret Service; MIT/Apache-2.0), so every KChess app on
+# the profile opens the same tokens.
 aes-gcm = "0.11"
-# What the Electron app left in a profile: its localStorage and the logins its safeStorage sealed.
-kchess-electron-legacy = { path = "../kchess-electron-legacy" }
 keyring = { version = "4", default-features = false, features = ["v1"] }
 
 # `CancellationToken`: the AbortSignal of the engine controllers and scheduler. Already in

@@ -13,9 +13,7 @@ mod support;
 
 mod chesscom_sync;
 mod core_startup;
-mod credentials_reseal;
 mod domain_dispatch;
-mod electron_migration;
 mod engine_admission;
 mod engine_analysis;
 mod engine_options;

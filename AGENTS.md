@@ -34,8 +34,10 @@ versions, tagging, verification and assets.
   tag. Never force-push, move, reuse or delete a release tag.
 - A published release is permanent: ship fixes in the next version. Replace assets only while
   the release is a draft, and never bypass the `attach-draft-release` guard.
-- Keep the installer names, the Windows GUID, the install layouts and the Mac zip's Electron
-  bridge (`tooling/xtask/src/package`): every Electron install ever shipped updates through them.
+- Keep the installer names, the Windows GUID, the install layouts, the `.deb` name and
+  `/opt/KChess`, and the Snap name (`tooling/xtask/src/package`): installed apps update through them.
+- Electron installs update to the frozen 2026.11.4 release through the manifests every release
+  writes (`cargo xtask electron-step`, `tooling/xtask/src/electron_step.rs`); don't change that step.
 
 ## Running the app
 
@@ -135,9 +137,6 @@ and in the App Store. Its readers play chess; they are not developers.
 - `tests/rules_corpus.rs` (kchess-domain) pins every rules method to answers recorded from the
   former TypeScript suites; rewrite it (`KCHESS_WRITE_CORPUS=1`) only for an intended behaviour
   change.
-- What the Electron app left in a profile (its `localStorage` documents and preferences, logins
-  its `safeStorage` sealed) is taken over by the core itself (`crates/kchess-electron-legacy`);
-  keep that working for profiles from any Electron release.
 - `UciController` (`crates/kchess-core/src/engine/uci.rs`) owns UCI deadlines and pipes; acquire
   the shared engine scheduler (`EngineContext::lease`, `engine/mod.rs`) before configuring search
   threads and release it on every path. Cancellation must reach the search, not merely discard

@@ -16,7 +16,6 @@ crates/
   kchess-games/            Game sessions as frontends drive them (computer, local, archive)
   kchess-core/             Services: storage, SQLite, engines, Lichess, OAuth, logging (tokio)
   kchess-service/          The profile's shared core service (docs/shared-core.md)
-  kchess-electron-legacy/  Takes over what an Electron profile left (localStorage, safeStorage)
   kchess-voice/            The speech helper (Vosk in its own process)
 apps/
   gpui/                    The desktop app (GPUI Kit)
@@ -83,7 +82,7 @@ live in `crates/kchess-core/tests/`.
 `crates/kchess-core/src/facade.rs` (and `facade/`) answers every `CoreApi` method: argument
 contracts (`kchess_domain::misc::validate_arguments`), assistance gating during live games, login
 and account epochs, settings that stop the engines, challenge and tournament bookkeeping, the
-settings and data projections, the Electron profile takeover, the profile claim (one live core per
+settings and data projections, the profile claim (one live core per
 profile, released on close), the closed state and the close sequence.
 
 - Close aborts in-flight work (an engine search, a Lichess request, a puzzle download) and waits

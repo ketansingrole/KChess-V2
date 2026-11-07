@@ -45,10 +45,7 @@ crate they depend on directly is named here.
 | [`objc2-app-kit`](https://github.com/madsmtm/objc2) | MIT | The Dock icon on macOS |
 | [`nix`](https://github.com/nix-rust/nix) | MIT | The benchmark's CPU time and peak memory on macOS |
 | [`libloading`](https://github.com/nagisa/rust_libloading) | ISC | Loading libvosk into the speech recognition helper |
-| [`rusty-leveldb`](https://github.com/dermesser/leveldb-rs) | MIT | Reading what the Electron app kept in its `localStorage`, once |
-| [`aes`](https://github.com/RustCrypto/block-ciphers), [`cbc`](https://github.com/RustCrypto/block-modes), [`pbkdf2`](https://github.com/RustCrypto/password-hashes), [`sha1`](https://github.com/RustCrypto/hashes) | MIT OR Apache-2.0 | Opening Lichess logins the Electron app sealed with `safeStorage`, to seal them again |
-| [`secret-service`](https://github.com/hwchen/secret-service-rs) | MIT OR Apache-2.0 | Finding the Electron app's `safeStorage` key on Linux |
-| [`windows-sys`](https://github.com/microsoft/windows-rs) | MIT OR Apache-2.0 | Opening the Electron app's `safeStorage` key on Windows (DPAPI) |
+| [`windows-sys`](https://github.com/microsoft/windows-rs) | MIT OR Apache-2.0 | Windows' reduce-motion setting, and keeping the core service's pipe to your own account |
 
 ## Game review method
 
