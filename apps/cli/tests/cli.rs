@@ -6,9 +6,19 @@ use std::process::{Command, Output, Stdio};
 
 use serde_json::{Value, json};
 
+/// The CLI under test, with no engine from the environment: CI sets `KCHESS_ENGINE_PATH` to a
+/// real Stockfish, which a test's `--engine` would not replace.
+fn kchess_cli() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kchess-cli"));
+    command
+        .env_remove("KCHESS_ENGINE_PATH")
+        .env_remove("KCHESS_VARIANT_ENGINE_PATH");
+    command
+}
+
 /// Runs `kchess-cli --embedded --no-credentials --data-dir <profile> <args>` with `input` on stdin.
 fn cli(profile: &std::path::Path, args: &[&str], input: &str) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+    let mut child = kchess_cli()
         .args(["--embedded", "--no-credentials", "--data-dir"])
         .arg(profile)
         .args(args)
@@ -236,7 +246,7 @@ fn local_answers_open_no_core() {
 fn a_generic_call_answers_the_sign_in_page() {
     use std::io::{BufRead, BufReader};
     let profile = tempfile::tempdir().expect("a profile");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+    let mut child = kchess_cli()
         .args([
             "--embedded",
             "--no-credentials",
@@ -330,7 +340,7 @@ fn analyze_streams_until_interrupted() {
     use std::io::BufRead;
     let profile = tempfile::tempdir().expect("profile");
     let engine = scripted_engine();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+    let mut child = kchess_cli()
         .args(["--embedded", "--no-credentials", "--data-dir"])
         .arg(profile.path())
         .arg("--engine")
@@ -368,7 +378,7 @@ fn the_cli_shares_the_profiles_core_unless_embedded() {
     let service = workspace_binary("kchess-service", "kchess-service");
     let runtime = tempfile::tempdir().expect("runtime");
     let run = |profile: &std::path::Path, embedded: bool| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_kchess-cli"));
+        let mut command = kchess_cli();
         if embedded {
             command.arg("--embedded");
         }
@@ -413,7 +423,7 @@ fn a_computer_game_names_its_players() {
     let engine = scripted_engine();
     let pgn = |color: &str| {
         let profile = tempfile::tempdir().expect("profile");
-        let mut child = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+        let mut child = kchess_cli()
             .args(["--embedded", "--no-credentials", "--data-dir"])
             .arg(profile.path())
             .arg("--engine")
@@ -469,7 +479,7 @@ fn a_computer_game_is_played_saved_and_resumed() {
     let engine = scripted_engine();
     let profile = tempfile::tempdir().expect("profile");
     let play = |args: &[&str], input: &str| {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+        let mut child = kchess_cli()
             .args(["--embedded", "--no-credentials", "--data-dir"])
             .arg(profile.path())
             .arg("--engine")
@@ -614,7 +624,7 @@ fn review_numbers_the_faults_as_the_game_does() {
     let engine = scripted_engine_in("review");
     let review = |game: &str| {
         let profile = tempfile::tempdir().expect("profile");
-        let output = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+        let output = kchess_cli()
             .args(["--embedded", "--no-credentials", "--data-dir"])
             .arg(profile.path())
             .arg("--engine")
@@ -686,7 +696,7 @@ impl Lichess {
 
     /// `kchess-cli <args>` over a scratch profile, reaching this stand-in for Lichess.
     fn cli(&self, profile: &std::path::Path, args: &[&str], input: &str) -> Output {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+        let mut child = kchess_cli()
             .args(["--embedded", "--no-credentials", "--data-dir"])
             .arg(profile)
             .args(args)
@@ -784,7 +794,7 @@ fn watch_prints_the_game_until_interrupted() {
         }
     });
     let profile = tempfile::tempdir().expect("profile");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+    let mut child = kchess_cli()
         .args(["--embedded", "--no-credentials", "--data-dir"])
         .arg(profile.path())
         .args(["watch", "https://lichess.org/VuAqDosj"])
@@ -923,7 +933,7 @@ fn a_random_colour_is_either() {
     // Both colours within 40 draws, unless the draw is broken (one in 2^39 otherwise).
     for _ in 0..40 {
         let profile = tempfile::tempdir().expect("profile");
-        let output = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+        let output = kchess_cli()
             .args(["--embedded", "--no-credentials", "--data-dir"])
             .arg(profile.path())
             .arg("--engine")
@@ -968,7 +978,7 @@ fn a_resumed_clock_runs_out() {
         "",
     );
     assert!(saved.status.success(), "{saved:?}");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+    let mut child = kchess_cli()
         .args(["--embedded", "--no-credentials", "--data-dir"])
         .arg(profile.path())
         .arg("local")
@@ -1002,7 +1012,7 @@ fn play_needs_an_engine() {
     // No engine the person installed either: their home is the scratch profile.
     for args in [&["play"][..], &["play", "standard"]] {
         let profile = tempfile::tempdir().expect("profile");
-        let refused = Command::new(env!("CARGO_BIN_EXE_kchess-cli"))
+        let refused = kchess_cli()
             .args(["--embedded", "--no-credentials", "--data-dir"])
             .arg(profile.path())
             .args(["--engine", "/nonexistent/stockfish"])
