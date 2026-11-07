@@ -573,7 +573,6 @@ impl Core {
             }
             "reviews.setup" => {
                 self.reviews.setup_reviews(Arc::new(self.review_bridge()));
-                tokio::spawn(self.electron.clone().run_logged());
                 Ok(Value::Null)
             }
             "reviews.request" => json(
@@ -753,6 +752,8 @@ impl Core {
             self.battery
                 .start_refreshing(Arc::clone(&self.capabilities));
             self.reviews.setup_reviews(Arc::new(self.review_bridge()));
+            // What the Electron app left, taken over once in the background: never ahead of a read.
+            tokio::spawn(self.electron.clone().run_logged());
         }
     }
 

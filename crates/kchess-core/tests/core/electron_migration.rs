@@ -302,20 +302,30 @@ async fn a_profile_without_electron_data_is_left_alone() {
     assert_eq!(profile.marker().await, Value::Null);
 }
 
+/// 2026-11-07: the background run was started from `reviews.setup` rather than the core's start,
+/// so a real Electron profile was never marked; this test then still passed because it ran the
+/// migration itself. Now only the core's own start may do it.
 #[tokio::test]
 async fn the_core_takes_over_an_electron_profile_once_started() {
     let dir = tempfile::tempdir().unwrap();
     copy_local_storage(dir.path());
     let core =
         kchess_core::Core::open(Config::new(dir.path().to_path_buf()), Arc::new(Quiet)).unwrap();
-    // The first call starts the core, whose background run takes the profile over; this one
-    // waits for it or does it.
+    // The first call starts the core, whose background run takes the profile over.
     core.call("loadData", vec![]).await.unwrap();
-    let outcome = core.migrate_electron().await.unwrap();
-    assert!(
-        matches!(outcome, Outcome::Migrated | Outcome::AlreadyDone),
-        "{outcome:?}"
-    );
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let marker = core.call("store.electron.migrated", vec![]).await.unwrap();
+        if !marker.is_null() {
+            assert_eq!(marker, json!({ "release": env!("CARGO_PKG_VERSION") }));
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the core's start never took the profile over"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     assert_eq!(core.migrate_electron().await.unwrap(), Outcome::AlreadyDone);
     let library = core.call("library", vec![]).await.unwrap();
     assert_eq!(library["studies"].as_array().unwrap().len(), 1);
