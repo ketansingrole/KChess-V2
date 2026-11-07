@@ -590,6 +590,31 @@ mod tests {
         assert_eq!(request["mateAfter"], -7);
     }
 
+    /// The rules API answers `reviewMoment` and `puzzleClue` with these.
+    #[test]
+    fn the_rules_api_names_a_moment_and_a_clue() {
+        let review = json!({
+            "fen": FORK,
+            "moves": ["a2a3", "e8e7", "e1e2"],
+            "evals": [
+                { "cp": 0 },
+                { "cp": 0 },
+                { "cp": 500, "pv": ["b5c7", "e7d7", "c7a8"] },
+                { "cp": 0, "pv": ["e7d7"] },
+            ],
+        });
+        let answer = |method: &str, args: Value| -> Value {
+            serde_json::from_str(&crate::api::call(method, &args.to_string()).unwrap()).unwrap()
+        };
+        let moment = answer("reviewMoment", json!([review, 2]));
+        assert_eq!(moment, review_moment(&review, 2).unwrap());
+        assert_eq!(answer("reviewMoment", json!([review, 9])), Value::Null);
+        assert_eq!(
+            answer("puzzleClue", json!([MATE, MATE_LINE])),
+            json!("There is a forced mate.")
+        );
+    }
+
     #[test]
     fn clues_follow_the_tactic() {
         let line = |san: &[&str], material, tactics| LineFacts {

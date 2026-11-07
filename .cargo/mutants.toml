@@ -1,0 +1,27 @@
+# cargo-mutants (`cargo install cargo-mutants`): `cargo mutants -p <package>` changes the code one
+# small edit at a time and reports each edit no test notices. See docs/mutation-testing.md.
+
+# Mutants no test can tell apart from the original, because the program behaves the same. Each
+# entry names why; never add one only because a test is missing.
+exclude_re = [
+    # The version bits are cleared by the mask first, so `| 0x40` and `^ 0x40` (and `| 0x80` and
+    # `^ 0x80`) set the same byte.
+    'kchess-games/src/archive\.rs:.*: replace \| with \^ in new_id',
+    # A deadline compared with `<=` instead of `<` differs only at the very instant it passes, and
+    # the next attempt's own deadline ends the loop at that instant either way.
+    'kchess-service/src/client\.rs:.*: replace < with <= in (connect_or_start|wait_until_gone)',
+    # Setting the folder's mode to 0700 when it already is 0700 changes nothing.
+    'kchess-service/src/discovery\.rs:.*: replace & with [|^] in private_dir',
+    # DETACHED_PROCESS and CREATE_NEW_PROCESS_GROUP share no bit, so `|` and `^` are the same.
+    'kchess-service/src/client\.rs:.*: replace \| with \^ in launch',
+    # Arguments exactly at the depth that moves a call to the large stack answer the same on
+    # either stack, and so does every call when all of them move there: only the stack differs.
+    'kchess-domain/src/api\.rs:.*: replace > with >= in goes_deep$',
+    'kchess-domain/src/api\.rs:.*: replace (goes_deep|needs_large_stack) -> bool with true',
+    # A uniform draw picks White half the time whether below or above 0.5 counts, and exactly
+    # 0.5 has no weight.
+    'apps/cli/src/play\.rs:.*: replace < with (>|<=) in Session<.*>::choose_color',
+]
+
+# Compiled only for WebAssembly, where no test runs.
+exclude_globs = ["crates/kchess-domain/src/api/wasm.rs"]

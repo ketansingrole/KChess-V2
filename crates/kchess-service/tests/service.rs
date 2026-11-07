@@ -185,6 +185,26 @@ async fn a_client_reaches_only_the_core_api() {
     service.abort();
 }
 
+/// A `hello` is read up to 64 KiB before its token is checked; a larger one is dropped unread.
+#[tokio::test(flavor = "multi_thread")]
+async fn hello_is_read_up_to_its_limit() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (_gpui, _events) = connect(profile.path(), "gpui").await;
+    let near = "w".repeat(60_000);
+    let (near, _) = Client::connect(profile.path(), &window(&near))
+        .await
+        .expect("welcomed");
+    drop(near);
+    let over = "w".repeat(70_000);
+    assert!(
+        Client::connect(profile.path(), &window(&over))
+            .await
+            .is_err()
+    );
+    service.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn hello_is_refused_without_the_token_or_with_another_release() {
     let profile = tempfile::tempdir().expect("profile");
@@ -276,6 +296,100 @@ async fn one_core_per_profile_and_it_stops_when_idle() {
     })
     .await;
     assert!(closed.is_ok());
+}
+
+/// A host request goes to the window that can answer it (the caller here), not to every window.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_request_reaches_only_the_window_that_answers_it() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (gpui, mut gpui_events) = connect(profile.path(), "gpui").await;
+    let (_second, mut second_events) = connect(profile.path(), "second").await;
+    // Signing in opens the browser through the window that asked.
+    let signing_in = tokio::spawn(async move { gpui.call("connectLichess", vec![]).await });
+    // The core also asks a window whether it runs on battery; that one may go anywhere.
+    let request = loop {
+        let request = event(&mut gpui_events, "host:request").await;
+        if request["kind"] == "openExternal" {
+            break request;
+        }
+    };
+    assert!(
+        request["payload"]
+            .as_str()
+            .is_some_and(|url| url.contains("/oauth"))
+    );
+    let elsewhere = tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            match second_events.recv().await {
+                Some(ClientEvent::Event { name, payload })
+                    if name == "host:request" && payload["kind"] == "openExternal" =>
+                {
+                    return;
+                }
+                Some(_) => {}
+                None => std::future::pending::<()>().await,
+            }
+        }
+    })
+    .await;
+    assert!(elsewhere.is_err(), "the other window is not asked");
+    signing_in.abort();
+    service.abort();
+}
+
+/// A client may cancel a call it made: the call stops and is answered as cancelled.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_call_is_answered_as_cancelled() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (_gpui, _events) = connect(profile.path(), "gpui").await;
+    let info = discovery::read_info(profile.path()).expect("core.json");
+    let stream = transport::connect(Path::new(&info.socket))
+        .await
+        .expect("socket");
+    let (mut reader, mut writer) = tokio::io::split(stream);
+    let hello = Frame::Hello {
+        token: discovery::read_token(profile.path()).expect("token"),
+        kind: "raw".into(),
+        release: protocol::release(),
+        protocol: protocol::protocol(),
+        capabilities: vec![Capability::Browser],
+    };
+    write_frame(&mut writer, &hello).await.expect("hello");
+    let next = async |reader: &mut tokio::io::ReadHalf<transport::Stream>| {
+        tokio::time::timeout(WAIT, read_frame(reader))
+            .await
+            .expect("a frame in time")
+            .expect("read")
+            .expect("a frame")
+    };
+    assert!(matches!(next(&mut reader).await, Frame::Welcome { .. }));
+    // Signing in waits for the browser this client never opens.
+    let call = Frame::Call {
+        id: 1,
+        method: "connectLichess".into(),
+        args: Vec::new(),
+    };
+    write_frame(&mut writer, &call).await.expect("call");
+    loop {
+        if let Frame::Event { name, payload } = next(&mut reader).await
+            && name == "host:request"
+            && payload["kind"] == "openExternal"
+        {
+            break;
+        }
+    }
+    write_frame(&mut writer, &Frame::Cancel { id: 1 })
+        .await
+        .expect("cancel");
+    let answer = loop {
+        if let Frame::Result { id: 1, error, .. } = next(&mut reader).await {
+            break error;
+        }
+    };
+    assert_eq!(answer.as_deref(), Some("The call was cancelled."));
+    service.abort();
 }
 
 #[tokio::test(flavor = "multi_thread")]

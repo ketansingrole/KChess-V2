@@ -53,13 +53,15 @@ Local games also accept draw and pause. Sessions are saved in the core library.
 /// The most argument text `call` reads.
 const MAX_ARGUMENTS: u64 = 2_000_000;
 
-#[derive(Debug, PartialEq)]
+// Compared and printed only by the tests.
+#[cfg_attr(test, derive(Debug, PartialEq))]
 struct Cli {
     options: Options,
     args: Vec<String>,
     engine: Option<String>,
 }
 
+#[cfg(test)]
 impl PartialEq for Options {
     fn eq(&self, other: &Options) -> bool {
         self.data_dir == other.data_dir
@@ -69,6 +71,7 @@ impl PartialEq for Options {
     }
 }
 
+#[cfg(test)]
 impl std::fmt::Debug for Options {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Options")
@@ -510,18 +513,23 @@ async fn review_input(core: &CoreClient, words: &[String]) -> Result<String, Str
     }
     let path = std::path::Path::new(text);
     if path.is_file() {
-        let size = tokio::fs::metadata(path)
-            .await
-            .map_err(|cause| format!("Cannot read {text}: {cause}"))?
-            .len();
-        if size > MAX_ARGUMENTS {
-            return Err(format!("{text} is too large."));
-        }
-        return tokio::fs::read_to_string(path)
-            .await
-            .map_err(|cause| format!("Cannot read {text}: {cause}"));
+        return game_file(text).await;
     }
     Ok(text.to_string())
+}
+
+/// A PGN file `review` was given, refused by its size before it is read.
+async fn game_file(path: &str) -> Result<String, String> {
+    let size = tokio::fs::metadata(path)
+        .await
+        .map_err(|cause| format!("Cannot read {path}: {cause}"))?
+        .len();
+    if size > MAX_ARGUMENTS {
+        return Err(format!("{path} is too large."));
+    }
+    tokio::fs::read_to_string(path)
+        .await
+        .map_err(|cause| format!("Cannot read {path}: {cause}"))
 }
 
 /// What `analyze` searches: a position, or the one a game's moves (SAN or a PGN) reach, sent
@@ -766,6 +774,10 @@ mod tests {
             unknown_command("bogus"),
             "Unknown command: bogus. Run --help."
         );
+        // A three-letter command allows one typo, not two.
+        assert_eq!(unknown_command("pzz"), "Unknown command: pzz. Run --help.");
+        assert_eq!(edit_distance("pgn", ""), 3);
+        assert_eq!(edit_distance("ab", "b"), 1);
     }
 
     #[test]
@@ -903,6 +915,26 @@ mod tests {
         assert_eq!(
             parse(&strings(&["--browser", "never"])).unwrap_err(),
             "--browser must be open or print."
+        );
+    }
+
+    /// Without --data-dir, the CLI uses the app's own profile.
+    #[test]
+    fn the_profile_defaults_to_the_apps() {
+        let options = parse(&[]).unwrap().options;
+        assert_eq!(options.data_dir, crate::core::default_data_dir());
+        assert!(!options.data_dir.as_os_str().is_empty());
+        assert_eq!(options.browser, Browser::Open);
+        assert!(options.credentials && !options.embedded);
+    }
+
+    #[test]
+    fn the_last_browser_mode_wins() {
+        let mode = |args: &[&str]| parse(&strings(args)).unwrap().options.browser;
+        assert_eq!(mode(&["--browser", "print"]), Browser::Print);
+        assert_eq!(
+            mode(&["--browser", "print", "--browser", "open"]),
+            Browser::Open
         );
     }
 
@@ -1100,6 +1132,67 @@ mod tests {
         assert_eq!(
             arguments(&strings(&["--args-file", &path])).await.unwrap(),
             vec![json!(true)]
+        );
+    }
+
+    /// A game file up to `MAX_ARGUMENTS` bytes is read; a larger one is refused unread.
+    #[tokio::test]
+    async fn a_game_file_is_read_up_to_its_limit() {
+        let limit = usize::try_from(MAX_ARGUMENTS).unwrap();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_string_lossy().to_string();
+        std::fs::write(file.path(), "e".repeat(limit)).unwrap();
+        assert_eq!(game_file(&path).await.unwrap().len(), limit);
+        std::fs::write(file.path(), vec![0xff; limit + 1]).unwrap();
+        assert_eq!(
+            game_file(&path).await.unwrap_err(),
+            format!("{path} is too large.")
+        );
+        std::fs::write(file.path(), [0xff]).unwrap();
+        assert!(
+            game_file(&path)
+                .await
+                .unwrap_err()
+                .starts_with("Cannot read")
+        );
+    }
+
+    #[test]
+    fn a_variant_flag_needs_its_variant() {
+        assert_eq!(
+            analysis_request(&strings(&["--variant"])).unwrap_err(),
+            "--variant needs a variant."
+        );
+    }
+
+    /// Arguments up to `MAX_ARGUMENTS` bytes are read, inline or from a file; a larger file is
+    /// refused by its size, before it is read.
+    #[tokio::test]
+    async fn arguments_are_read_up_to_their_limit() {
+        let limit = usize::try_from(MAX_ARGUMENTS).unwrap();
+        let padded = |length: usize| format!("[{}]", " ".repeat(length - 2));
+        assert_eq!(
+            arguments(&[padded(limit)]).await.unwrap(),
+            Vec::<Value>::new()
+        );
+        assert_eq!(
+            arguments(&[padded(limit + 1)]).await.unwrap_err(),
+            "Arguments are too large."
+        );
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_string_lossy().to_string();
+        std::fs::write(file.path(), padded(limit)).unwrap();
+        assert_eq!(
+            arguments(&strings(&["--args-file", &path])).await.unwrap(),
+            Vec::<Value>::new()
+        );
+        // Not even text: only the size check can name the problem.
+        std::fs::write(file.path(), vec![0xff; limit + 1]).unwrap();
+        assert_eq!(
+            arguments(&strings(&["--args-file", &path]))
+                .await
+                .unwrap_err(),
+            "Arguments are too large."
         );
     }
 }

@@ -100,10 +100,16 @@ pub fn call(method: &str, args: &str) -> std::result::Result<String, String> {
     if depth > MAX_JSON_DEPTH {
         return Err("arguments nest too deeply".to_string());
     }
-    if depth > DEEP_JSON || TREE_METHODS.contains(&method) {
+    if goes_deep(method, depth) {
         return call_deep(method, args);
     }
     call_inner(method, args).map_err(|e| e.to_string())
+}
+
+/// Whether `call` answers on the large stack: arguments `depth` deep past `DEEP_JSON`, and the
+/// methods that build deep trees.
+fn goes_deep(method: &str, depth: usize) -> bool {
+    depth > DEEP_JSON || TREE_METHODS.contains(&method)
 }
 
 /// `call_inner` on a thread whose stack holds `MAX_JSON_DEPTH` levels, whatever thread asked.
@@ -128,13 +134,10 @@ pub fn on_large_stack<T: Send>(
     })
 }
 
-/// The WebAssembly build has no threads; its own stack (`.cargo/config.toml`) is large enough.
 #[cfg(target_arch = "wasm32")]
-pub fn on_large_stack<T>(
-    work: impl FnOnce() -> std::result::Result<T, String>,
-) -> std::result::Result<T, String> {
-    work()
-}
+mod wasm;
+#[cfg(target_arch = "wasm32")]
+pub use wasm::on_large_stack;
 
 fn call_inner(method: &str, args: &str) -> Result<String> {
     // Analysis trees nest deeper than serde_json's default limit of 128 levels; `call` bounds
@@ -259,9 +262,9 @@ fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
         }
         "dests" => {
             let pos = setup_position(args)?;
+            // "board960" lists castling as the rules do.
             let mode = match arg(args, 1).and_then(Value::as_str) {
                 Some("board") => DestMode::Board,
-                Some("board960") => DestMode::Board960,
                 _ => DestMode::Rules,
             };
             Value::Array(
@@ -746,6 +749,48 @@ mod tests {
         assert!(call("pathOf", &text).is_ok());
     }
 
+    /// A board's destinations castle onto the king's square too, a Chess960 board's onto the
+    /// rook only, as the rules do.
+    #[test]
+    fn dests_castle_as_the_board_asks() {
+        let setup = json!({ "variant": "standard", "fen": "4k3/8/8/8/8/8/8/4K2R w K - 0 1" });
+        let king = |mode: Value| {
+            let dests: Value =
+                serde_json::from_str(&call("dests", &json!([setup, mode]).to_string()).unwrap())
+                    .unwrap();
+            dests
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry[0] == "e1")
+                .unwrap()[1]
+                .clone()
+        };
+        assert!(
+            king(json!("board"))
+                .as_array()
+                .unwrap()
+                .contains(&json!("g1"))
+        );
+        for mode in [json!("board960"), Value::Null] {
+            let squares = king(mode);
+            assert!(squares.as_array().unwrap().contains(&json!("h1")));
+            assert!(!squares.as_array().unwrap().contains(&json!("g1")));
+        }
+    }
+
+    /// Closing brackets end a level; an escaped quote does not end a string.
+    #[test]
+    fn nesting_counts_open_levels_outside_strings() {
+        assert_eq!(nesting("[]"), 1);
+        assert_eq!(nesting("[[], [], {}]"), 2);
+        assert_eq!(nesting("[[[]], [[]]]"), 3);
+        assert_eq!(nesting(r#"["]"]"#), 1);
+        assert_eq!(nesting(r#"["\"", [[]]]"#), 3);
+        assert_eq!(nesting(r#"["\" [[[", 1]"#), 1);
+        assert_eq!(nesting(r#"["\\", [[]]]"#), 3);
+    }
+
     /// Runs `f` on a 256 KiB thread, far smaller than any host's, so a deep call that stayed on
     /// the caller's stack would overflow.
     fn on_small_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
@@ -757,6 +802,68 @@ mod tests {
                 .join()
                 .unwrap()
         })
+    }
+
+    /// Values nested `depth` arrays deep.
+    fn nested_value(depth: usize) -> Value {
+        let mut value = json!([]);
+        for _ in 1..depth {
+            value = Value::Array(vec![value]);
+        }
+        value
+    }
+
+    /// `call_value` refuses arguments past the depth limit, and takes deep arguments and the
+    /// tree methods to the large stack: on a small one they would overflow it.
+    #[test]
+    fn call_value_bounds_and_moves_deep_work_off_the_callers_stack() {
+        let too_deep = nested_value(MAX_JSON_DEPTH + 1);
+        assert_eq!(
+            call_value("pathOf", std::slice::from_ref(&too_deep)).unwrap_err(),
+            "arguments nest too deeply"
+        );
+        on_large_stack(move || {
+            drop(too_deep);
+            Ok(())
+        })
+        .unwrap();
+        let deep = nested_value(MAX_JSON_DEPTH - 8);
+        assert!(needs_large_stack("pathOf", std::slice::from_ref(&deep)));
+        // Answered, whatever the answer, without overflowing the small stack.
+        on_small_stack(|| drop(call_value("pathOf", std::slice::from_ref(&deep))));
+        on_large_stack(move || {
+            drop(deep);
+            Ok(())
+        })
+        .unwrap();
+        // Objects nest as arrays do.
+        let mut object = json!({});
+        for _ in 0..DEEP_JSON {
+            object = json!({ "a": object });
+        }
+        assert!(needs_large_stack("pathOf", std::slice::from_ref(&object)));
+        assert!(!needs_large_stack("pathOf", &[nested_value(DEEP_JSON - 1)]));
+        assert!(needs_large_stack("pathOf", &[nested_value(DEEP_JSON)]));
+        assert!(needs_large_stack("treeFromPgn", &[json!("1. e4 *")]));
+        assert!(!needs_large_stack("replay", &[json!("1. e4 *")]));
+
+        let moves = ["Nf3", "Nf6", "Ng1", "Ng8"].repeat(256).join(" ");
+        let pgn = json!(format!("{moves} *"));
+        let plies = on_small_stack(|| {
+            let tree = call_value("treeFromPgn", &[pgn]).unwrap();
+            let (mut node, mut plies) = (&tree, 0);
+            while let Some(next) = node["children"].get(0) {
+                node = next;
+                plies += 1;
+            }
+            // Dropped where it was built would be on this small stack: dropped on a large one.
+            let _ = on_large_stack(move || {
+                drop(tree);
+                Ok(())
+            });
+            plies
+        });
+        assert_eq!(plies, 1024);
     }
 
     /// The deepest accepted input is parsed and dropped whatever stack the caller has.

@@ -88,3 +88,6 @@ reduced motion, so dialogs and popovers are at rest when a test clicks them.
   TypeScript suites; regenerate it only for an intended behaviour change.
 - `fuzz/` holds cargo-fuzz targets for PGN, FEN, UCI output, online events and the rules API
   (`.github/workflows/fuzz.yml`).
+- Mutation testing (`cargo mutants -p <package>`, `docs/mutation-testing.md`) shows code no test
+  pins; `.github/workflows/mutants.yml` runs it weekly in shards. A missed mutant is a test to
+  write, or an equivalent mutant to exclude in `.cargo/mutants.toml` with its reason.
