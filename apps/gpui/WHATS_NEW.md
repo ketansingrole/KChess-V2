@@ -9,7 +9,8 @@ with nothing there.
 ## Unreleased
 
 - **A tidier sidebar**: your account sits at the bottom of the sidebar with Settings beside it. Its menu also opens What's new and lets you report a problem.
-- **Fixes**: while you wait for an opponent on Lichess, the waiting card sits in the middle of the page, the time on each clock is centred, the computer's difficulty list shows each level's full name and rating, and clicking a selected piece again puts it down.
+- **Clearer dialogs**: dialogs open in the middle of the window and dim the page behind them, so they stand out from the board.
+- **Fixes**: while you wait for an opponent on Lichess, the waiting card sits in the middle of the page, the time on each clock is centred, the computer's difficulty list shows each level's full name and rating, clicking a selected piece again puts it down, and a king in check glows red within its own square, as on Lichess.
 
 ## 2026.11.4 (2026-11-07)
 

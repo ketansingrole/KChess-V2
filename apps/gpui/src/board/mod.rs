@@ -1913,7 +1913,8 @@ impl Render for ChessBoard {
         let entity = cx.entity().downgrade();
         let dragging = self.drag.is_some();
 
-        // The king in check glows red, as Chessground's radial gradient does.
+        // The king in check sits in Chessground's radial gradient, clipped to its square: solid
+        // red to a quarter of the way out, fading to nothing at 89% of the square's half-diagonal.
         let check = self.state.check.map(|square| {
             let (column, row) = self.cell(square);
             div()
@@ -1921,22 +1922,16 @@ impl Render for ChessBoard {
                 .left(relative(column as f32 / 8.))
                 .top(relative(row as f32 / 8.))
                 .size(relative(0.125))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
+                .overflow_hidden()
+                .children(check_rings(side).into_iter().map(|(radius, color)| {
                     div()
-                        .size(relative(0.5))
+                        .absolute()
+                        .left(side / 2. - radius)
+                        .top(side / 2. - radius)
+                        .size(radius * 2.)
                         .rounded_full()
-                        .bg(rgb(0xff0000))
-                        .shadow(vec![BoxShadow {
-                            color: rgba(0xe70000cc).into(),
-                            offset: point(px(0.), px(0.)),
-                            blur_radius: side * 0.3,
-                            spread_radius: side * 0.08,
-                            inset: false,
-                        }]),
-                )
+                        .bg(color)
+                }))
         });
         // The piece's own square keeps a faint ghost while it is dragged (Chessground's `ghost`).
         let ghost = lifted.and_then(|square| {
@@ -2195,6 +2190,33 @@ impl Render for ChessBoard {
     }
 }
 
+/// Discs from the outermost in, each with the opacity that makes those stacked over a radius add
+/// up to Chessground's check gradient there (`radial-gradient(ellipse at center, #ff0000 0%,
+/// #e70000 25%, transparent 89%)` over a square, its ellipse reaching the corners).
+fn check_rings(side: Pixels) -> Vec<(Pixels, Hsla)> {
+    const BANDS: usize = 28;
+    let reach = side * std::f32::consts::FRAC_1_SQRT_2;
+    let (solid, gone) = (reach * 0.25, reach * 0.89);
+    let mut rings = Vec::with_capacity(BANDS + 1);
+    let mut below = 0f32;
+    for band in 0..BANDS {
+        let outer = gone - (gone - solid) * (band as f32 / BANDS as f32);
+        let middle = gone - (gone - solid) * ((band as f32 + 0.5) / BANDS as f32);
+        let wanted = (gone - middle) / (gone - solid);
+        // Over what the discs outside it already cover, this one brings the rest.
+        let alpha = 1. - (1. - wanted) / (1. - below);
+        below = wanted;
+        let mut color: Hsla = rgb(0xe70000).into();
+        color.a = alpha.clamp(0., 1.);
+        rings.push((outer, color));
+    }
+    // Chessground's centre is a shade brighter (#ff0000); one flat disc of it reads as a spot.
+    let mut core: Hsla = rgb(0xe70000).into();
+    core.a = 1.;
+    rings.push((solid, core));
+    rings
+}
+
 #[cfg(test)]
 mod drawing_tests {
     use super::{Drawn, drawing_brush, toggle_shape};
@@ -2447,5 +2469,41 @@ mod keyboard_tests {
         assert!(!board.interactive());
         assert_eq!(board.press_key(Square::E2), Press::Clear);
         assert_eq!(board.selected, None);
+    }
+}
+
+#[cfg(test)]
+mod check_tests {
+    use super::check_rings;
+    use gpui_kit::px;
+
+    /// Stacked, the discs fade as Chessground's gradient does: solid red in the middle, half
+    /// way out half as strong, nothing past 89% of the half-diagonal, and all of it inside the
+    /// square's corners.
+    #[test]
+    fn the_check_rings_add_up_to_the_lichess_gradient() {
+        let side = px(80.);
+        let rings = check_rings(side);
+        let opacity = |radius: f32| {
+            1. - rings
+                .iter()
+                .filter(|(outer, _)| f32::from(*outer) >= radius)
+                .map(|(_, color)| 1. - color.a)
+                .product::<f32>()
+        };
+        let reach = 80. * std::f32::consts::FRAC_1_SQRT_2;
+        let (solid, gone) = (reach * 0.25, reach * 0.89);
+        assert!((opacity(0.) - 1.).abs() < 1e-4);
+        assert!((opacity(solid) - 1.).abs() < 1e-4);
+        assert!(opacity(gone + 0.1) < 1e-4);
+        let middle = (solid + gone) / 2.;
+        assert!((opacity(middle) - 0.5).abs() < 0.08, "{}", opacity(middle));
+        // Never brighter further out.
+        let steps: Vec<f32> = (0..=50)
+            .map(|step| opacity(gone * step as f32 / 50.))
+            .collect();
+        assert!(steps.windows(2).all(|pair| pair[1] <= pair[0] + 1e-4));
+        // The faded edge reaches past the square's sides (40px) into its corners, as on Lichess.
+        assert!(gone > 40.);
     }
 }

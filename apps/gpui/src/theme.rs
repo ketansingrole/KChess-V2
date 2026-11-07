@@ -243,6 +243,7 @@ pub fn apply(window: &mut Window, cx: &mut App) {
             keys.insert((*key).to_string(), value.clone());
         }
     }
+    keys.insert("overlay".into(), json!(OVERLAY[usize::from(dark)]));
     match kit_config(dark, keys) {
         Ok(config) => {
             Theme::global_mut(cx).apply_config(&Rc::new(config));
@@ -258,6 +259,10 @@ pub fn apply(window: &mut Window, cx: &mut App) {
 
 /// GPUI Kit's theme: the colors, controls rounded to `radii::SM` and dialogs to `radii::MD`
 /// (whole pixels, as the kit reads them).
+/// What a dialog lays over the page, light and dark: the kit's own (5% and 20% black) left a
+/// dialog hard to tell from a board or list under it.
+pub const OVERLAY: [&str; 2] = ["#00000059", "#00000099"];
+
 fn kit_config(dark: bool, colors: Map<String, Value>) -> serde_json::Result<ThemeConfig> {
     serde_json::from_value(json!({
         "name": "KChess",
@@ -272,6 +277,21 @@ fn kit_config(dark: bool, colors: Map<String, Value>) -> serde_json::Result<Them
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A dialog dims the page under it enough to stand apart from it, more in the dark.
+    #[test]
+    fn dialogs_dim_the_page_under_them() {
+        for dark in [false, true] {
+            let mut colors = Map::new();
+            colors.insert("overlay".into(), json!(OVERLAY[usize::from(dark)]));
+            let config = kit_config(dark, colors).unwrap();
+            assert_eq!(
+                config.colors.overlay.as_deref(),
+                Some(OVERLAY[usize::from(dark)])
+            );
+        }
+        assert!(OVERLAY[1] > OVERLAY[0]);
+    }
 
     /// A theme GPUI Kit cannot read leaves its components in the kit's own colors and corners.
     #[test]

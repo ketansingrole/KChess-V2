@@ -323,8 +323,10 @@ pub fn open_dialog(
 ) {
     use gpui_kit::component::WindowExt as _;
     let entrance = dialog_entrance(window);
+    // In the middle of the window, over the page dimmed (`theme::OVERLAY`), so the dialog
+    // stands apart from a board or list under it.
     window.open_dialog(cx, move |dialog, window, cx| {
-        build(dialog.entrance(entrance), window, cx)
+        build(dialog.entrance(entrance).centered(), window, cx)
     });
 }
 
@@ -342,7 +344,7 @@ pub fn open_alert_dialog(
     use gpui_kit::component::WindowExt as _;
     let entrance = dialog_entrance(window);
     window.open_alert_dialog(cx, move |dialog, window, cx| {
-        build(dialog.entrance(entrance), window, cx)
+        build(dialog.entrance(entrance).centered(), window, cx)
     });
 }
 
