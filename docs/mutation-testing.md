@@ -43,7 +43,8 @@ These stay in the reports on purpose; each is listed with the reason.
 
 - **Windows-only code** (`kchess-service`'s named pipes and owner checks, `launch`'s creation
   flags): not compiled on Linux or macOS, so a mutant there builds and passes on them. They can
-  only be caught by a run on Windows.
+  only be caught by a run on Windows. Likewise the CLI's import of the old Mac database
+  (`config_from`'s `legacy_database_path`) is caught only on macOS, where its test checks it.
 - **Stack sizes** (`kchess-service`'s and the CLI's 8 MiB core threads): a smaller stack changes
   nothing until a call overflows it, and no deterministic test overflows a 1 MiB stack on
   Linux or macOS (the case it guards, an embedded sign-in in a Windows debug build, needs
@@ -53,6 +54,9 @@ These stay in the reports on purpose; each is listed with the reason.
   the client receives the same frames and the same end.
 - **Per-window `suspend`** (`server.rs`): the difference from the core-wide `suspend` shows
   only in an engine search or a puzzle download of another window.
+- **The CLI's own list of saved games** (`play.rs`, `written`): it only feeds the Game history
+  rules within one run, which find an entry by its id with or without the duplicates a mutant
+  leaves; the saved library is the same.
 - **The CLI's `close` and `open_browser`**: the process exits right after `close`, with the
   core's writes already on disk; `open_browser` starts the desktop's opener, which a test must
   not do.
