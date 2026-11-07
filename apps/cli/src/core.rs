@@ -98,17 +98,25 @@ fn executable(name: &str) -> String {
 }
 
 fn config(options: &Options) -> Config {
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+    config_from(options, &|name| kchess_core::env::var_os(name))
+}
+
+/// `config` with the environment read through `var`.
+fn config_from(options: &Options, var: &dyn Fn(&str) -> Option<std::ffi::OsString>) -> Config {
+    let home = var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(PathBuf::from)
         .unwrap_or_default();
+    // A development override, as `kchess_core::dev_override` reads one.
+    let engine =
+        var("KCHESS_ENGINE_PATH").filter(|path| kchess_core::dev_overrides() && !path.is_empty());
     Config {
         managed_engine_dir: Some(home.join(".kchess/engines/stockfish/current")),
-        bundled_engine_path: kchess_core::dev_override("KCHESS_ENGINE_PATH")
+        bundled_engine_path: engine
             .map(PathBuf::from)
             .or_else(|| beside(&executable("stockfish"))),
         // Fairy-Stockfish for variants: beside the executable, or (a build in this repository)
         // where `cargo xtask fairy-stockfish` builds it.
-        variant_engine_path: std::env::var_os("KCHESS_VARIANT_ENGINE_PATH")
+        variant_engine_path: var("KCHESS_VARIANT_ENGINE_PATH")
             .filter(|path| !path.is_empty())
             .map(PathBuf::from)
             .or_else(|| beside(&executable("fairy-stockfish")))
@@ -129,8 +137,8 @@ fn config(options: &Options) -> Config {
         // Earlier macOS releases kept their database outside the profile; only the app's own
         // profile imports it, as the app does (`apps/gpui/src/profile.rs`).
         legacy_database_path: (cfg!(target_os = "macos")
-            && std::env::var_os("KCHESS_USER_DATA_DIR").is_none()
-            && options.data_dir == default_data_dir())
+            && var("KCHESS_USER_DATA_DIR").is_none()
+            && options.data_dir == data_dir_from(var))
         .then(|| home.join(".kchess/kchess.db")),
         system_credentials: options.credentials,
         ..Config::new(options.data_dir.clone())
@@ -216,23 +224,8 @@ impl CoreClient {
 
     /// Answers a `host:request` the core sent; other events are left to the caller.
     pub async fn answer(&self, request: &Value) {
-        let Some(id) = request["id"].as_u64() else {
+        let Some((id, reply)) = reply(request, self.browser, open_browser) else {
             return;
-        };
-        let reply = match request["kind"].as_str().unwrap_or_default() {
-            "openExternal" => match request["payload"].as_str() {
-                Some(url) if kchess_core::capabilities::opens_in_browser(url) => {
-                    if self.browser == Browser::Open && open_browser(url).is_ok() {
-                        eprintln!("Opened {url}");
-                    } else {
-                        eprintln!("Open this page to continue: {url}");
-                    }
-                    json!({ "value": null })
-                }
-                _ => json!({ "error": "Only web addresses open in the browser." }),
-            },
-            "onBattery" => json!({ "value": false }),
-            kind => json!({ "error": format!("The command line cannot answer {kind}.") }),
         };
         if let Err(cause) = self.call("host.reply", vec![json!(id), reply]).await {
             eprintln!("[cli] A host reply was not delivered: {cause}");
@@ -244,6 +237,32 @@ impl CoreClient {
             core.close().await;
         }
     }
+}
+
+/// The reply to a `host:request`, opening a web page with `open` when `browser` says so and
+/// telling the person on stderr. `None` for a request without an id.
+fn reply(
+    request: &Value,
+    browser: Browser,
+    open: impl FnOnce(&str) -> std::io::Result<()>,
+) -> Option<(u64, Value)> {
+    let id = request["id"].as_u64()?;
+    let reply = match request["kind"].as_str().unwrap_or_default() {
+        "openExternal" => match request["payload"].as_str() {
+            Some(url) if kchess_core::capabilities::opens_in_browser(url) => {
+                if browser == Browser::Open && open(url).is_ok() {
+                    eprintln!("Opened {url}");
+                } else {
+                    eprintln!("Open this page to continue: {url}");
+                }
+                json!({ "value": null })
+            }
+            _ => json!({ "error": "Only web addresses open in the browser." }),
+        },
+        "onBattery" => json!({ "value": false }),
+        kind => json!({ "error": format!("The command line cannot answer {kind}.") }),
+    };
+    Some((id, reply))
 }
 
 fn open_browser(url: &str) -> std::io::Result<()> {
@@ -278,7 +297,7 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
 
-    fn environment(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
+    fn environment(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
         let pairs: Vec<(String, OsString)> = pairs
             .iter()
             .map(|(name, value)| ((*name).to_string(), OsString::from(value)))
@@ -311,6 +330,140 @@ mod tests {
                 (home, "/home/someone")
             ])),
             own
+        );
+    }
+
+    fn options(data_dir: &str, credentials: bool) -> Options {
+        Options {
+            data_dir: PathBuf::from(data_dir),
+            browser: Browser::Print,
+            credentials,
+            embedded: true,
+        }
+    }
+
+    /// The paths the core is given: the overrides this build honours, else the app's own.
+    #[test]
+    fn the_core_is_configured_from_the_options_and_overrides() {
+        let home = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let config = config_from(
+            &options("/profile", false),
+            &environment(&[
+                (home, "/home/someone"),
+                ("KCHESS_ENGINE_PATH", "/engines/stockfish"),
+                ("KCHESS_VARIANT_ENGINE_PATH", "/engines/fairy"),
+            ]),
+        );
+        assert_eq!(config.data_dir, PathBuf::from("/profile"));
+        assert_eq!(
+            config.managed_engine_dir,
+            Some(PathBuf::from(
+                "/home/someone/.kchess/engines/stockfish/current"
+            ))
+        );
+        assert_eq!(
+            config.bundled_engine_path,
+            Some(PathBuf::from("/engines/stockfish"))
+        );
+        assert_eq!(
+            config.variant_engine_path,
+            Some(PathBuf::from("/engines/fairy"))
+        );
+        assert!(!config.system_credentials);
+        assert!(config_from(&options("/profile", true), &environment(&[])).system_credentials);
+        // Empty overrides count as unset.
+        let unset = config_from(
+            &options("/profile", true),
+            &environment(&[
+                ("KCHESS_ENGINE_PATH", ""),
+                ("KCHESS_VARIANT_ENGINE_PATH", ""),
+            ]),
+        );
+        assert_ne!(unset.bundled_engine_path, Some(PathBuf::new()));
+        assert_ne!(unset.variant_engine_path, Some(PathBuf::new()));
+    }
+
+    /// Only the app's own profile on a Mac imports the database earlier releases kept outside it.
+    #[test]
+    fn only_the_apps_own_mac_profile_imports_the_old_database() {
+        let home = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let environment = environment(&[(home, "/home/someone")]);
+        let own = data_dir_from(&environment);
+        let own = own.to_string_lossy();
+        let legacy = Some(PathBuf::from("/home/someone/.kchess/kchess.db"));
+        assert_eq!(
+            config_from(&options(&own, true), &environment).legacy_database_path,
+            if cfg!(target_os = "macos") {
+                legacy
+            } else {
+                None
+            }
+        );
+        assert_eq!(
+            config_from(&options("/elsewhere", true), &environment).legacy_database_path,
+            None
+        );
+    }
+
+    /// The voice helper is taken from beside the executable, as the app ships it.
+    #[test]
+    fn the_voice_helper_beside_the_executable_is_used() {
+        let exe = std::env::current_exe().unwrap();
+        let voice = exe.parent().unwrap().join("voice");
+        std::fs::create_dir_all(&voice).unwrap();
+        let helper = voice.join(executable("kchess-voice"));
+        std::fs::write(&helper, b"").unwrap();
+        let config = config_from(&options("/profile", true), &environment(&[]));
+        let _ = std::fs::remove_file(&helper);
+        assert_eq!(config.voice_helper_path, Some(helper));
+    }
+
+    /// A web page opens in the browser only when asked to, and nothing else opens at all.
+    #[test]
+    fn host_requests_are_answered() {
+        let page = json!({ "id": 3, "kind": "openExternal", "payload": "https://lichess.org/" });
+        let opened = std::cell::RefCell::new(Vec::new());
+        let open = |url: &str| {
+            opened.borrow_mut().push(url.to_string());
+            Ok(())
+        };
+        assert_eq!(
+            reply(&page, Browser::Print, open),
+            Some((3, json!({ "value": null })))
+        );
+        assert!(opened.borrow().is_empty());
+        assert_eq!(
+            reply(&page, Browser::Open, open),
+            Some((3, json!({ "value": null })))
+        );
+        assert_eq!(*opened.borrow(), ["https://lichess.org/"]);
+        let file = json!({ "id": 4, "kind": "openExternal", "payload": "file:///etc/passwd" });
+        assert_eq!(
+            reply(&file, Browser::Open, open),
+            Some((
+                4,
+                json!({ "error": "Only web addresses open in the browser." })
+            ))
+        );
+        assert_eq!(opened.borrow().len(), 1);
+        assert_eq!(
+            reply(
+                &json!({ "id": 5, "kind": "onBattery" }),
+                Browser::Open,
+                open
+            ),
+            Some((5, json!({ "value": false })))
+        );
+        assert_eq!(
+            reply(&json!({ "id": 6, "kind": "focus" }), Browser::Open, open),
+            Some((
+                6,
+                json!({ "error": "The command line cannot answer focus." })
+            ))
+        );
+        assert_eq!(
+            reply(&json!({ "kind": "focus" }), Browser::Open, open),
+            None
         );
     }
 

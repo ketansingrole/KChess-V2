@@ -278,34 +278,34 @@ fn a_generic_call_answers_the_sign_in_page() {
     assert!(page.contains("/oauth"), "{page}");
 }
 
-/// The scripted engine (`kchess-fake-uci`, built when missing) as the copy `engine-search`,
-/// whose name chooses its streaming `search` mode.
+/// A binary of another workspace package, built when missing.
 #[cfg(unix)]
-fn scripted_engine() -> std::path::PathBuf {
+fn workspace_binary(package: &str, name: &str) -> std::path::PathBuf {
     let target = std::env::current_exe()
         .ok()
         .and_then(|exe| Some(exe.parent()?.parent()?.to_path_buf()))
         .expect("the test executable is in target/<profile>/deps");
-    let fake = target.join("kchess-fake-uci");
-    if !fake.exists() {
+    let binary = target.join(name);
+    if !binary.exists() {
         let mut build = Command::new(env!("CARGO"));
-        build.args([
-            "build",
-            "-q",
-            "--locked",
-            "-p",
-            "kchess-core",
-            "--bin",
-            "kchess-fake-uci",
-        ]);
+        build.args(["build", "-q", "--locked", "-p", package, "--bin", name]);
         if target.file_name().is_some_and(|name| name == "release") {
             build.arg("--release");
         }
         assert!(
             build.status().expect("cargo runs").success(),
-            "the scripted engine builds"
+            "{name} builds"
         );
     }
+    binary
+}
+
+/// The scripted engine (`kchess-fake-uci`, built when missing) as the copy `engine-search`,
+/// whose name chooses its streaming `search` mode.
+#[cfg(unix)]
+fn scripted_engine() -> std::path::PathBuf {
+    let fake = workspace_binary("kchess-core", "kchess-fake-uci");
+    let target = fake.parent().expect("target folder").to_path_buf();
     // A copy of this test's own, so tests running at once never share a half-written file.
     let folder = target.join(format!("cli-engine-{}", std::process::id()));
     std::fs::create_dir_all(&folder).expect("engine folder");
@@ -349,4 +349,49 @@ fn analyze_streams_until_interrupted() {
     let status = child.wait().expect("kchess-cli finishes");
     assert!(status.success(), "{status:?}");
     let _ = std::fs::remove_dir_all(engine.parent().expect("engine folder"));
+}
+
+/// Without `--embedded`, the CLI joins the profile's shared core, starting the service; with it,
+/// the core runs in the CLI alone.
+#[cfg(unix)]
+#[test]
+fn the_cli_shares_the_profiles_core_unless_embedded() {
+    let service = workspace_binary("kchess-service", "kchess-service");
+    let runtime = tempfile::tempdir().expect("runtime");
+    let run = |profile: &std::path::Path, embedded: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_kchess-cli"));
+        if embedded {
+            command.arg("--embedded");
+        }
+        command
+            .args(["--no-credentials", "--data-dir"])
+            .arg(profile)
+            .arg("library")
+            .env("KCHESS_USER_DATA_DIR", profile)
+            .env("KCHESS_SERVICE_BINARY", &service)
+            .env("KCHESS_RUNTIME_DIR", runtime.path())
+            .stdin(Stdio::null())
+            .output()
+            .expect("kchess-cli runs")
+    };
+    let embedded = tempfile::tempdir().expect("profile");
+    assert!(run(embedded.path(), true).status.success());
+    assert!(!embedded.path().join("core.json").exists(), "no service");
+
+    let shared = tempfile::tempdir().expect("profile");
+    let output = run(shared.path(), false);
+    assert!(output.status.success(), "{output:?}");
+    // The service outlives the command, until its idle period ends: stopped here instead.
+    let info: Value = serde_json::from_slice(
+        &std::fs::read(shared.path().join("core.json")).expect("the service runs"),
+    )
+    .expect("core.json");
+    let pid = info["pid"].as_u64().expect("pid").to_string();
+    assert!(
+        Command::new("kill")
+            .arg(&pid)
+            .status()
+            .expect("kill")
+            .success()
+    );
 }
