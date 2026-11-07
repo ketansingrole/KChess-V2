@@ -205,6 +205,31 @@ fn help_and_methods_need_no_core_and_bad_commands_fail() {
     }
 }
 
+/// Naming an opening, describing a position and refusing an unknown command need no core: the
+/// profile is left untouched.
+#[test]
+fn local_answers_open_no_core() {
+    let profile = tempfile::tempdir().expect("profile");
+    let opening = cli(
+        profile.path(),
+        &["opening", "1.", "e4", "e5", "2.", "Nf3", "Nc6", "3.", "Bb5"],
+        "",
+    );
+    assert!(opening.status.success(), "{opening:?}");
+    assert_eq!(lines(&opening)[0]["name"], "Ruy Lopez");
+    let position = cli(profile.path(), &["position", "startpos"], "");
+    assert!(position.status.success(), "{position:?}");
+    assert_eq!(lines(&position)[0]["turn"], "white");
+    let unknown = cli(profile.path(), &["bogus"], "");
+    assert!(!unknown.status.success());
+    let files: Vec<_> = std::fs::read_dir(profile.path())
+        .expect("profile")
+        .flatten()
+        .map(|entry| entry.file_name())
+        .collect();
+    assert!(files.is_empty(), "{files:?}");
+}
+
 /// A generic call that opens a sign-in page gets its page: the CLI answers the core's host
 /// requests while it waits, as `login` does.
 #[test]

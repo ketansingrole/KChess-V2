@@ -513,18 +513,23 @@ async fn review_input(core: &CoreClient, words: &[String]) -> Result<String, Str
     }
     let path = std::path::Path::new(text);
     if path.is_file() {
-        let size = tokio::fs::metadata(path)
-            .await
-            .map_err(|cause| format!("Cannot read {text}: {cause}"))?
-            .len();
-        if size > MAX_ARGUMENTS {
-            return Err(format!("{text} is too large."));
-        }
-        return tokio::fs::read_to_string(path)
-            .await
-            .map_err(|cause| format!("Cannot read {text}: {cause}"));
+        return game_file(text).await;
     }
     Ok(text.to_string())
+}
+
+/// A PGN file `review` was given, refused by its size before it is read.
+async fn game_file(path: &str) -> Result<String, String> {
+    let size = tokio::fs::metadata(path)
+        .await
+        .map_err(|cause| format!("Cannot read {path}: {cause}"))?
+        .len();
+    if size > MAX_ARGUMENTS {
+        return Err(format!("{path} is too large."));
+    }
+    tokio::fs::read_to_string(path)
+        .await
+        .map_err(|cause| format!("Cannot read {path}: {cause}"))
 }
 
 /// What `analyze` searches: a position, or the one a game's moves (SAN or a PGN) reach, sent
@@ -1117,6 +1122,36 @@ mod tests {
         assert_eq!(
             arguments(&strings(&["--args-file", &path])).await.unwrap(),
             vec![json!(true)]
+        );
+    }
+
+    /// A game file up to `MAX_ARGUMENTS` bytes is read; a larger one is refused unread.
+    #[tokio::test]
+    async fn a_game_file_is_read_up_to_its_limit() {
+        let limit = usize::try_from(MAX_ARGUMENTS).unwrap();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_string_lossy().to_string();
+        std::fs::write(file.path(), "e".repeat(limit)).unwrap();
+        assert_eq!(game_file(&path).await.unwrap().len(), limit);
+        std::fs::write(file.path(), vec![0xff; limit + 1]).unwrap();
+        assert_eq!(
+            game_file(&path).await.unwrap_err(),
+            format!("{path} is too large.")
+        );
+        std::fs::write(file.path(), [0xff]).unwrap();
+        assert!(
+            game_file(&path)
+                .await
+                .unwrap_err()
+                .starts_with("Cannot read")
+        );
+    }
+
+    #[test]
+    fn a_variant_flag_needs_its_variant() {
+        assert_eq!(
+            analysis_request(&strings(&["--variant"])).unwrap_err(),
+            "--variant needs a variant."
         );
     }
 

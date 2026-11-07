@@ -61,21 +61,26 @@ impl Host for StderrHost {
 
 /// The app's profile, which the CLI shares: `KCHESS_USER_DATA_DIR`, else the app's own folder.
 pub fn default_data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("KCHESS_USER_DATA_DIR").filter(|dir| !dir.is_empty()) {
+    data_dir_from(|name| std::env::var_os(name))
+}
+
+/// `default_data_dir` with the environment read through `var`.
+fn data_dir_from(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+    if let Some(dir) = var("KCHESS_USER_DATA_DIR").filter(|dir| !dir.is_empty()) {
         return PathBuf::from(dir);
     }
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+    let home = var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(PathBuf::from)
         .unwrap_or_default();
     if cfg!(target_os = "macos") {
         home.join("Library/Application Support/KChess")
     } else if cfg!(windows) {
-        std::env::var_os("APPDATA")
+        var("APPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join("AppData/Roaming"))
             .join("KChess")
     } else {
-        std::env::var_os("XDG_CONFIG_HOME")
+        var("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".config"))
             .join("KChess")
@@ -265,5 +270,59 @@ pub fn absolute(path: &Path) -> PathBuf {
         path.to_path_buf()
     } else {
         std::env::current_dir().unwrap_or_default().join(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn environment(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
+        let pairs: Vec<(String, OsString)> = pairs
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), OsString::from(value)))
+            .collect();
+        move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        }
+    }
+
+    /// `KCHESS_USER_DATA_DIR` names the profile; set but empty, it is ignored.
+    #[test]
+    fn the_profile_is_the_variable_else_the_apps_own() {
+        let home = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let own = data_dir_from(environment(&[(home, "/home/someone")]));
+        assert!(own.ends_with("KChess"), "{own:?}");
+        assert!(own.starts_with("/home/someone"), "{own:?}");
+        assert_eq!(
+            data_dir_from(environment(&[
+                ("KCHESS_USER_DATA_DIR", "/scratch"),
+                (home, "/h")
+            ])),
+            PathBuf::from("/scratch")
+        );
+        assert_eq!(
+            data_dir_from(environment(&[
+                ("KCHESS_USER_DATA_DIR", ""),
+                (home, "/home/someone")
+            ])),
+            own
+        );
+    }
+
+    #[test]
+    fn helpers_are_found_beside_the_executable() {
+        let exe = std::env::current_exe().unwrap();
+        let name = exe.file_name().unwrap().to_string_lossy().to_string();
+        assert_eq!(beside(&name), Some(exe));
+        assert_eq!(beside("no-such-helper"), None);
+        assert_eq!(
+            executable("kchess-voice"),
+            format!("kchess-voice{}", std::env::consts::EXE_SUFFIX)
+        );
     }
 }
