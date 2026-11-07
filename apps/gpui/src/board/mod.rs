@@ -304,6 +304,8 @@ struct Drag {
     position: Point<Pixels>,
     start: Point<Pixels>,
     moved: bool,
+    /// The piece was already selected when pressed: let go of it on release unless dragged.
+    again: bool,
 }
 
 /// Pieces sliding from one square to another, timed by the executor's clock: the real one in the
@@ -737,7 +739,7 @@ impl ChessBoard {
         match self.decide(square) {
             Press::Drop(role) => return self.drop_piece(role, square, cx),
             Press::Play(from) => return self.play(from, square, cx),
-            Press::Pick { piece, .. } => {
+            Press::Pick { piece, again } => {
                 // A second press on the selected piece lets go of it on release, unless it is
                 // dragged.
                 self.drag = Some(Drag {
@@ -746,6 +748,7 @@ impl ChessBoard {
                     position: event.position,
                     start: event.position,
                     moved: false,
+                    again,
                 });
             }
             Press::Queued | Press::Clear => {}
@@ -876,6 +879,7 @@ impl ChessBoard {
                         position,
                         start: position,
                         moved: false,
+                        again: false,
                     });
                 }
             }
@@ -938,10 +942,7 @@ impl ChessBoard {
                 Some(to) if to == drag.from => {}
                 _ => self.selected = None,
             }
-        } else if target == Some(drag.from)
-            && self.selected == Some(drag.from)
-            && drag.start != drag.position
-        {
+        } else if target == Some(drag.from) && self.selected == Some(drag.from) && drag.again {
             self.selected = None;
         }
         cx.notify();

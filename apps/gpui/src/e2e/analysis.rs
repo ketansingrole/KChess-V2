@@ -1309,3 +1309,18 @@ fn pieces_slide_only_when_there_is_time_to(cx: &mut gpui_kit::TestAppContext) {
         "a step after the slide ended slides again"
     );
 }
+
+/// A click picks a piece up and shows where it can go; a second click on it puts it down again,
+/// as on Lichess. A still second click kept it selected, since only a moved pointer counted.
+#[gpui_kit::test]
+fn a_second_click_on_a_piece_puts_it_down(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = analysis(cx);
+    let e2 = ("square", usize::from(shakmaty::Square::E2));
+    app.click_square("e2", true);
+    assert_eq!(app.find(e2).selected(), Some(true));
+    assert_eq!(app.square_name("e4"), "e4, empty, legal move");
+    app.click_square("e2", true);
+    assert_eq!(app.find(e2).selected(), Some(false));
+    app.click_square("e2", true);
+    assert_eq!(app.find(e2).selected(), Some(true));
+}
