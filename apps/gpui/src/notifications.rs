@@ -13,6 +13,147 @@ pub fn init(cx: &mut App) {
     gpui_kit::component::Theme::global_mut(cx)
         .notification
         .placement = gpui_kit::Anchor::BottomRight;
+    if through_gpui() {
+        identify(cx);
+        // Not from a test run, which would change the shortcuts of whoever runs it.
+        #[cfg(all(windows, not(test)))]
+        crate::windows_shortcuts::stamp(APP_ID);
+    }
+}
+
+/// Whether system notifications go through GPUI, which names KChess as their sender and tells it
+/// when one is clicked: on Windows (where the notification library sent them as PowerShell, whose
+/// clicks went nowhere), Linux, and macOS from an app bundle. GPUI's macOS notifications need the
+/// bundle (`UNUserNotificationCenter` aborts a bare binary), so a bare `cargo run` binary keeps
+/// the library, sending as the development app (`sender`).
+fn through_gpui() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        bundled()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        cfg!(any(windows, target_os = "linux", target_os = "freebsd"))
+    }
+}
+
+/// Whether KChess runs from an app bundle, read once before the notification library can
+/// replace what `bundleIdentifier` answers.
+#[cfg(target_os = "macos")]
+fn bundled() -> bool {
+    static BUNDLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *BUNDLED.get_or_init(|| {
+        objc2_foundation::NSBundle::mainBundle()
+            .bundleIdentifier()
+            .is_some()
+    })
+}
+
+/// KChess's identity: on Windows its AppUserModelID, so its notifications are its own and a click
+/// on one comes back to it. The installer's shortcuts carry it too (`windows_shortcuts`), so the
+/// taskbar keeps one KChess button. On Linux GPUI names the sender from it; macOS names it from
+/// the bundle.
+pub const APP_ID: &str = "com.kchess.app";
+
+/// Send notifications as KChess, and bring KChess forward on the game a clicked one is about.
+pub(crate) fn identify(cx: &mut App) {
+    cx.set_app_identity(APP_ID, "KChess");
+    cx.on_system_notification_response(|response, cx| {
+        open_from(&response.tag, response.action_id.as_deref(), cx)
+    });
+}
+
+/// A notification tagged `tag` was clicked (`action` the button, or none for its body).
+fn open_from(tag: &str, action: Option<&str>, cx: &mut App) {
+    if let Some(id) = tag.strip_prefix(CHALLENGE_TAG) {
+        return answer_challenge(id, action, cx);
+    }
+    show_page(game_page(tag), cx);
+}
+
+/// KChess comes forward, on `page` when there is one.
+fn show_page(page: Option<Page>, cx: &mut App) {
+    cx.activate(true);
+    if let Some(window) = cx.windows().into_iter().next() {
+        let _ = window.update(cx, |_, window, cx| {
+            window.activate_window();
+            if let Some(page) = page {
+                crate::shell::open(page, window, cx);
+            }
+        });
+    }
+}
+
+/// A challenge notification's tag: this, then the challenge's id.
+const CHALLENGE_TAG: &str = "challenge:";
+
+/// Accept or decline a challenge from its notification: Accept brings KChess forward on Play on
+/// Lichess, where the game starts; Decline answers it without; the body opens the challenges.
+fn answer_challenge(id: &str, action: Option<&str>, cx: &mut App) {
+    let online = crate::online::handle(cx);
+    let challenge = online
+        .read(cx)
+        .challenges
+        .iter()
+        .find(|challenge| challenge["id"].as_str() == Some(id))
+        .cloned();
+    match (action, challenge) {
+        (Some("decline"), Some(challenge)) => {
+            online.update(cx, |online, cx| online.decline(&challenge, "generic", cx));
+        }
+        (Some("accept"), Some(challenge)) => {
+            show_page(Some(Page::Online), cx);
+            online.update(cx, |online, cx| online.accept(&challenge, cx).detach());
+        }
+        // Answered or withdrawn meanwhile, or the body: the challenges as they are now.
+        _ => show_page(Some(Page::Online), cx),
+    }
+}
+
+/// A system notification through GPUI, tagged `tag` (its kind, or a challenge's), with `actions`
+/// as its buttons.
+fn post_tagged(
+    tag: String,
+    title: &str,
+    body: &str,
+    actions: Vec<gpui_kit::SystemNotificationAction>,
+    sound: bool,
+    cx: &mut App,
+) {
+    cx.show_system_notification(gpui_kit::SystemNotification {
+        tag: tag.into(),
+        title: title.to_string().into(),
+        body: body.to_string().into(),
+        actions,
+    });
+    // Windows shows it silently; the setting's sound is KChess's own.
+    if sound {
+        crate::sound::play(crate::sound::Sound::GenericNotify, cx);
+    }
+}
+
+fn action(id: &str, label: &str) -> gpui_kit::SystemNotificationAction {
+    gpui_kit::SystemNotificationAction {
+        id: id.to_string().into(),
+        label: label.to_string().into(),
+    }
+}
+
+/// A system notification about `kind`, tagged with it; a game's offers Go to board.
+pub(crate) fn post(kind: &str, title: &str, body: &str, sound: bool, cx: &mut App) {
+    let actions = game_page(kind)
+        .map(|_| action("open", "Go to board"))
+        .into_iter()
+        .collect();
+    post_tagged(kind.to_string(), title, body, actions, sound, cx);
+}
+
+/// Alert the player to a challenge `id` they received, with Accept and Decline where the system
+/// shows buttons.
+pub fn challenge(id: &str, title: &str, body: &str, cx: &mut App) -> Outcome {
+    let tag = format!("{CHALLENGE_TAG}{id}");
+    let actions = vec![action("accept", "Accept"), action("decline", "Decline")];
+    alert("challenge", Some((tag, actions)), title, body, cx)
 }
 
 /// Why an alert was not shown, or how it was.
@@ -101,6 +242,17 @@ const DEV_SENDER: &str = "com.kchess.app.dev";
 
 /// Alert the player about `kind` (`notifyDesktop`).
 pub fn desktop(kind: &str, title: &str, body: &str, cx: &mut App) -> Outcome {
+    alert(kind, None, title, body, cx)
+}
+
+/// `desktop`, with a system notification's own tag and buttons in place of its kind's.
+fn alert(
+    kind: &str,
+    tagged: Option<(String, Vec<gpui_kit::SystemNotificationAction>)>,
+    title: &str,
+    body: &str,
+    cx: &mut App,
+) -> Outcome {
     let Some(settings) = cx
         .try_global::<crate::settings::SettingsHandle>()
         .map(|settings| settings.0.read(cx).settings.clone())
@@ -116,6 +268,13 @@ pub fn desktop(kind: &str, title: &str, body: &str, cx: &mut App) -> Outcome {
     let outcome = decide(&settings, kind, away, page);
     match outcome {
         Outcome::InApp => crate::online::notice(cx, format!("{title}\n{body}")),
+        Outcome::System if through_gpui() => {
+            let sound = settings.frontend.notify_sound;
+            match tagged {
+                Some((tag, actions)) => post_tagged(tag, title, body, actions, sound, cx),
+                None => post(kind, title, body, sound, cx),
+            }
+        }
         Outcome::System => {
             let (title, body, sound) = (
                 title.to_string(),

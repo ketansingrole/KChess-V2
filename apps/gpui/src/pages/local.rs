@@ -1127,64 +1127,39 @@ impl LocalPage {
                 .w(px(64.))
                 .child(Input::new(input).small().aria_label(name))
         };
-        v_flex()
-            .id("local-clock")
-            .size_full()
+        let label = |text: &'static str| {
+            div()
+                .text_size(px(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(palette.text_muted)
+                .child(text)
+        };
+        // The same panel as the shared board's, at its right with the tabs on top, so switching
+        // modes moves nothing; the clocks take the board's place.
+        // Beside the clocks while both fit (the clocks at least 240px), under them otherwise, as
+        // the shared board's panel goes under the board.
+        let padding = crate::play_layout::side_padding(window);
+        let stacked = self.layout.width(window)
+            < px(240.) + crate::play_layout::LAYOUT_GAP + PANEL_ZEN + padding * 2.;
+        let panel = widgets::side_panel(palette)
+            .id("local-clock-panel")
+            .map(|panel| {
+                if stacked {
+                    panel.w_full()
+                } else {
+                    panel.w(PANEL_ZEN).overflow_y_scroll()
+                }
+            })
+            .flex_none()
             .gap(px(16.))
-            .pt(crate::play_layout::PAGE_TOP)
-            .pb(crate::play_layout::PAGE_BOTTOM)
-            .px(crate::play_layout::side_padding(window))
-            // The page header holds the tabs at the right; the clock's own controls sit below.
+            .child(mode_tabs(Mode::Clock, palette, cx))
             .child(
                 h_flex()
-                    .justify_end()
-                    .child(div().w(px(420.)).child(mode_tabs(Mode::Clock, palette, cx))),
-            )
-            .child(
-                h_flex()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .text_size(px(14.))
-                            .text_color(palette.text_muted)
-                            .child("Layout"),
-                    )
-                    .child(
-                        div().w(px(144.)).child(
-                            Select::new(&self.clock_layout)
-                                .small()
-                                .accessibility_label("Clock layout"),
-                        ),
-                    )
-                    .child(div().flex_1())
-                    .children(
-                        [(Side::Top, 1usize), (Side::Bottom, 2)].map(|(side, index)| {
-                            let degrees = Self::rotation(side, cx);
-                            Button::new(("clock-rotate", index))
-                                .small()
-                                .outline()
-                                .icon(icon("rotate-cw"))
-                                .label(format!("Player {index} · {degrees}°"))
-                                .accessibility_label(format!(
-                                    "Rotate Player {index} clock, currently {degrees} degrees"
-                                ))
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    Self::rotate(side, cx);
-                                    cx.notify();
-                                }))
-                        }),
-                    ),
-            )
-            .child(faces)
-            .child(
-                h_flex()
-                    .justify_center()
-                    .flex_wrap()
                     .gap(px(8.))
                     .child(
                         Button::new("clock-start")
-                            .outline()
-                            .small()
+                            .primary()
+                            .flex_1()
                             .icon(if self.clock.running.is_some() {
                                 icon("pause")
                             } else {
@@ -1200,31 +1175,82 @@ impl LocalPage {
                     .child(
                         Button::new("clock-reset")
                             .outline()
-                            .small()
+                            .flex_1()
                             .icon(icon("rotate-ccw"))
                             .label("Reset")
                             .on_click(cx.listener(|this, _, _, cx| this.reset_clock(cx))),
-                    )
-                    .child(
-                        h_flex()
-                            .gap(px(4.))
-                            .text_size(px(14.))
-                            .child(small_input(top_minutes, "Player 1 minutes"))
-                            .child(div().text_color(palette.text_muted).child("/"))
-                            .child(small_input(bottom_minutes, "Player 2 minutes"))
-                            .child("min +")
-                            .child(small_input(increment, "Increment in seconds"))
-                            .child("s"),
                     ),
             )
             .child(
+                v_flex().gap(px(6.)).child(label("Time")).child(
+                    h_flex()
+                        .gap(px(4.))
+                        .text_size(px(14.))
+                        .child(small_input(top_minutes, "Player 1 minutes"))
+                        .child(div().text_color(palette.text_muted).child("/"))
+                        .child(small_input(bottom_minutes, "Player 2 minutes"))
+                        .child("min +")
+                        .child(small_input(increment, "Increment in seconds"))
+                        .child("s"),
+                ),
+            )
+            .child(
+                v_flex().gap(px(6.)).child(label("Layout")).child(
+                    Select::new(&self.clock_layout)
+                        .small()
+                        .accessibility_label("Clock layout"),
+                ),
+            )
+            .child(
+                v_flex()
+                    .gap(px(6.))
+                    .child(label("Rotate"))
+                    .child(h_flex().gap(px(8.)).children(
+                        [(Side::Top, 1usize), (Side::Bottom, 2)].map(|(side, index)| {
+                            let degrees = Self::rotation(side, cx);
+                            Button::new(("clock-rotate", index))
+                                .small()
+                                .outline()
+                                .flex_1()
+                                .icon(icon("rotate-cw"))
+                                .label(format!("Player {index} · {degrees}°"))
+                                .accessibility_label(format!(
+                                    "Rotate Player {index} clock, currently {degrees} degrees"
+                                ))
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    Self::rotate(side, cx);
+                                    cx.notify();
+                                }))
+                        }),
+                    )),
+            )
+            .child(div().flex_1())
+            .child(
                 div()
-                    .w_full()
-                    .text_center()
                     .text_size(px(12.))
                     .text_color(palette.text_muted)
                     .child("Space switches turns · P pauses"),
+            );
+        let page = if stacked {
+            v_flex()
+        } else {
+            h_flex().items_stretch()
+        };
+        page.id("local-clock")
+            .relative()
+            .size_full()
+            .when(stacked, |page| page.overflow_y_scroll())
+            .gap(crate::play_layout::LAYOUT_GAP)
+            .pt(crate::play_layout::PAGE_TOP)
+            .pb(crate::play_layout::PAGE_BOTTOM)
+            .px(padding)
+            .child(self.layout.probe(cx))
+            .child(
+                faces
+                    .min_w(px(240.))
+                    .when(stacked, |faces| faces.flex_none()),
             )
+            .child(panel)
             .into_any_element()
     }
 }

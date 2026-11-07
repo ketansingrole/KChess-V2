@@ -64,6 +64,9 @@ mod voice;
 mod whats_new;
 mod widgets;
 mod window_state;
+// Only the app itself stamps the shortcuts: a test run would change its runner's.
+#[cfg(all(windows, not(test)))]
+mod windows_shortcuts;
 
 use gpui_kit::*;
 use kchess_core::Level;

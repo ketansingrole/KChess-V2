@@ -1,6 +1,7 @@
 //! The window and its sidebar.
 
 use super::Harness;
+use gpui_kit::test::TestQueryExt as _;
 
 #[gpui_kit::test]
 fn the_app_starts_on_home(cx: &mut gpui_kit::TestAppContext) {
@@ -15,7 +16,12 @@ fn the_app_starts_on_home(cx: &mut gpui_kit::TestAppContext) {
     ] {
         app.find(action);
     }
-    assert!(app.enabled("connect-lichess"));
+    app.click("account-menu");
+    app.wait_for("the menu to offer connecting", |window, _| {
+        window
+            .try_find_by_label("Connect Lichess account")
+            .is_some()
+    });
 }
 
 /// The board on a first Home looks playable, so clicking it has to lead to a game.
@@ -148,7 +154,6 @@ fn the_rail_still_marks_your_move(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn controls_over_the_title_bar_take_their_own_clicks(cx: &mut gpui_kit::TestAppContext) {
     use crate::updates::{Phase, UpdatesHandle};
-    use gpui_kit::test::TestQueryExt as _;
     let mut app = Harness::start(cx);
     app.with_window(|_, cx| {
         let updates = cx.global::<UpdatesHandle>().0.clone();
@@ -184,7 +189,6 @@ fn controls_over_the_title_bar_take_their_own_clicks(cx: &mut gpui_kit::TestAppC
 #[gpui_kit::test]
 fn the_title_bar_works_after_a_frame_that_reuses_the_top_bar(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::WindowControlArea::{Close, Drag, Max, Min};
-    use gpui_kit::test::TestQueryExt as _;
     let mut app = Harness::start(cx);
     let bar = app.with_window(|window, cx| {
         let search = window.try_find_by_label("Search pages and commands");
@@ -384,6 +388,9 @@ fn the_account_menu_opens_the_profile_and_the_accounts_settings(cx: &mut gpui_ki
             })
     });
 
+    // Settings opened over the page: closed, the account menu is in reach again.
+    app.press("escape");
+    app.wait_gone(super::SETTINGS_SHOWN);
     app.click("account-menu");
     app.click_label("Profile");
     app.wait_for("the account's own profile", |_, cx| {
@@ -458,4 +465,54 @@ fn only_a_click_eases_the_sidebar(cx: &mut gpui_kit::TestAppContext) {
         .executor()
         .advance_clock(std::time::Duration::from_secs(1));
     assert_eq!(width(&mut app), rail);
+}
+
+/// On Windows and Linux a system notification is KChess's own: sent under its name, a game's with
+/// Go to board, and a click on it brings KChess forward on that game's page. On Windows the
+/// notification library sent them as PowerShell, and a click went nowhere.
+#[cfg(any(windows, target_os = "linux"))]
+#[gpui_kit::test]
+fn a_clicked_notification_opens_its_game(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    assert_eq!(
+        app.cx.app_identity(),
+        Some((
+            crate::notifications::APP_ID.into(),
+            gpui_kit::SharedString::from("KChess")
+        ))
+    );
+    app.with_window(|_, cx| {
+        crate::notifications::post(
+            "computerMove",
+            "Stockfish moved",
+            "e5. Your move.",
+            false,
+            cx,
+        )
+    });
+    let shown = app.cx.shown_system_notifications();
+    let last = shown.last().expect("a notification");
+    assert_eq!(
+        (last.title.as_ref(), last.body.as_ref()),
+        ("Stockfish moved", "e5. Your move.")
+    );
+    assert_eq!(
+        last.actions
+            .iter()
+            .map(|action| action.label.as_ref())
+            .collect::<Vec<_>>(),
+        ["Go to board"]
+    );
+    app.cx
+        .simulate_system_notification_response(gpui_kit::SystemNotificationResponse {
+            tag: last.tag.clone(),
+            action_id: None,
+        });
+    app.cx.run_until_parked();
+    let shown = app.cx.update(|cx| crate::shell::current_page(cx));
+    assert_eq!(shown, Some(crate::pages::Page::Computer));
+    // A notification about no game has nothing to go to.
+    app.with_window(|_, cx| crate::notifications::post("test", "KChess", "Hello", false, cx));
+    let shown = app.cx.shown_system_notifications();
+    assert!(shown.last().expect("a notification").actions.is_empty());
 }

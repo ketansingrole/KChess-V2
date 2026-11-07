@@ -123,11 +123,38 @@ fn local_date(millis: f64) -> String {
 }
 
 /// The small muted word before a group of names under the search.
-fn chip_label(text: &'static str, palette: &Palette) -> Div {
-    div()
-        .text_size(px(12.))
-        .text_color(palette.text_muted)
-        .child(text)
+/// A group of name chips under the search: its label in a fixed column on the left, so it reads
+/// as a heading and not as one more name, then its chips, wrapping, and an action at the end.
+fn chip_row(
+    label: &'static str,
+    chips: Vec<AnyElement>,
+    action: Option<AnyElement>,
+    palette: &Palette,
+) -> Div {
+    h_flex()
+        .items_start()
+        .gap(px(8.))
+        .child(
+            div()
+                .w(px(72.))
+                .flex_none()
+                .h(px(24.))
+                .flex()
+                .items_center()
+                .text_size(px(12.))
+                .text_color(palette.text_muted)
+                .child(label),
+        )
+        .child(
+            h_flex()
+                .flex_1()
+                .min_w_0()
+                .flex_wrap()
+                .items_center()
+                .gap(px(6.))
+                .children(chips)
+                .children(action),
+        )
 }
 
 /// A player's name as a filled chip under the search: their title in the leaderboard's colour,
@@ -973,64 +1000,58 @@ impl PlayersPage {
             })
         };
         // Names typed so far match these players; otherwise the ones looked up lately and
-        // followed, each group under its own small label.
+        // followed. Each group is a row: its label in a column of its own, then its names.
+        let chips = |id: &'static str, names: Vec<String>| -> Vec<AnyElement> {
+            names
+                .into_iter()
+                .enumerate()
+                .map(|(index, name)| {
+                    name_chip((id, index), &name, None, false, palette, pick(name.clone()))
+                        .into_any_element()
+                })
+                .collect()
+        };
         let groups: Vec<AnyElement> = if self.matches.is_empty() {
             let mut groups = Vec::new();
             if !recent.is_empty() {
-                groups.push(chip_label("Recent", palette).into_any_element());
-                groups.extend(recent.into_iter().enumerate().map(|(index, name)| {
-                    name_chip(
-                        ("players-suggestion", index),
-                        &name,
-                        None,
-                        false,
-                        palette,
-                        pick(name.clone()),
-                    )
-                    .into_any_element()
-                }));
+                let clear = Button::new("players-recent-clear")
+                    .ghost()
+                    .xsmall()
+                    .icon(icon("x"))
+                    .label("Clear")
+                    .accessibility_label("Clear recent players")
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        crate::prefs::set(cx, RECENT_KEY, Vec::<String>::new());
+                        cx.notify();
+                    }));
                 groups.push(
-                    div()
-                        .id("players-recent-clear")
-                        .test_support()
-                        .role(Role::Button)
-                        .aria_label("Clear recent players")
-                        .keyboard_focus(palette.primary)
-                        .cursor_pointer()
-                        .h(px(24.))
-                        .flex()
-                        .items_center()
-                        .px(px(4.))
-                        .rounded(radii::SM)
-                        .text_size(px(12.))
-                        .text_color(palette.text_muted)
-                        .pressable_text(palette.highlighted)
-                        .child("Clear")
-                        .on_click(cx.listener(|_, _, _, cx| {
-                            crate::prefs::set(cx, RECENT_KEY, Vec::<String>::new());
-                            cx.notify();
-                        }))
-                        .into_any_element(),
+                    chip_row(
+                        "Recent",
+                        chips("players-suggestion", recent),
+                        Some(clear.into_any_element()),
+                        palette,
+                    )
+                    .into_any_element(),
                 );
             }
             if !followed.is_empty() {
-                groups.push(chip_label("Following", palette).into_any_element());
-                groups.extend(followed.into_iter().enumerate().map(|(index, name)| {
-                    name_chip(
-                        ("players-followed", index),
-                        &name,
+                groups.push(
+                    chip_row(
+                        "Following",
+                        chips("players-followed", followed),
                         None,
-                        false,
                         palette,
-                        pick(name.clone()),
                     )
-                    .into_any_element()
-                }));
+                    .into_any_element(),
+                );
             }
             groups
         } else {
-            std::iter::once(chip_label("Matches", palette).into_any_element())
-                .chain(self.matches.iter().enumerate().map(|(index, found)| {
+            let found = self
+                .matches
+                .iter()
+                .enumerate()
+                .map(|(index, found)| {
                     let name = found["username"].as_str().unwrap_or_default().to_string();
                     name_chip(
                         ("players-match", index),
@@ -1041,8 +1062,9 @@ impl PlayersPage {
                         pick(name.clone()),
                     )
                     .into_any_element()
-                }))
-                .collect()
+                })
+                .collect();
+            vec![chip_row("Matches", found, None, palette).into_any_element()]
         };
         widgets::card(palette)
             .gap(px(12.))
@@ -1082,13 +1104,7 @@ impl PlayersPage {
                     .child(error)
             }))
             .when(!groups.is_empty(), |card| {
-                card.child(
-                    h_flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap(px(6.))
-                        .children(groups),
-                )
+                card.child(v_flex().gap(px(8.)).children(groups))
             })
     }
 

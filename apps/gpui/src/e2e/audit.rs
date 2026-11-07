@@ -20,6 +20,19 @@ const CONTROLS: [Role; 7] = [
     Role::CheckBox,
 ];
 
+/// The controls a person can reach: while Settings' dialog is open, only its own, as the page
+/// under its overlay takes no clicks.
+fn in_front(elements: Vec<ElementSnapshot>) -> Vec<ElementSnapshot> {
+    let dialog = gpui_kit::ElementId::from("settings-dialog");
+    if !elements.iter().any(|e| e.path().contains(&dialog)) {
+        return elements;
+    }
+    elements
+        .into_iter()
+        .filter(|e| e.path().contains(&dialog))
+        .collect()
+}
+
 #[derive(Default)]
 struct Findings {
     problems: Vec<String>,
@@ -41,7 +54,7 @@ fn every_page_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
         for &(page, label) in &pages {
             app.with_window(|window, cx| crate::shell::open(page, window, cx));
             app.settle();
-            let controls = app.with_window(|window, _| window.elements());
+            let controls = app.with_window(|window, _| in_front(window.elements()));
             check(
                 &format!("{label} at {width}×{height}"),
                 width,
@@ -216,7 +229,7 @@ fn every_page_with_content_lays_out_its_controls(cx: &mut gpui_kit::TestAppConte
         for &(page, label) in &pages {
             app.with_window(|window, cx| crate::shell::open(page, window, cx));
             app.settle();
-            let controls = app.with_window(|window, _| window.elements());
+            let controls = app.with_window(|window, _| in_front(window.elements()));
             check(
                 &format!("{label} at {width}×{height}"),
                 width,
@@ -274,7 +287,7 @@ fn every_tab_and_settings_section_lays_out_its_controls(cx: &mut gpui_kit::TestA
                     continue;
                 }
                 settle(&mut app);
-                let controls = app.with_window(|window, _| window.elements());
+                let controls = app.with_window(|window, _| in_front(window.elements()));
                 check(
                     &format!("{label} → {tab} at {width}×{height}"),
                     width,
@@ -286,7 +299,7 @@ fn every_tab_and_settings_section_lays_out_its_controls(cx: &mut gpui_kit::TestA
         for (section, label, _) in crate::pages::settings::sections() {
             app.with_window(|window, cx| crate::shell::open_settings(section, window, cx));
             settle(&mut app);
-            let controls = app.with_window(|window, _| window.elements());
+            let controls = app.with_window(|window, _| in_front(window.elements()));
             check(
                 &format!("Settings → {label} at {width}×{height}"),
                 width,
@@ -483,7 +496,7 @@ fn every_page_with_the_longest_content_lays_out_its_controls(cx: &mut gpui_kit::
         for &(page, label) in &pages {
             app.with_window(|window, cx| crate::shell::open(page, window, cx));
             app.settle();
-            let controls = app.with_window(|window, _| window.elements());
+            let controls = app.with_window(|window, _| in_front(window.elements()));
             check(
                 &format!("{label} at {width}×{height}"),
                 width,

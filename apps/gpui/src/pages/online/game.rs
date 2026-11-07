@@ -978,13 +978,17 @@ impl OnlinePage {
             .unwrap_or_default()
             .to_string();
         let last_game = model["lastGame"].is_object();
+        // Sharing the row equally, as the computer's do, wrapping evenly in a narrow panel.
         let actions = if playing {
             h_flex()
                 .flex_wrap()
+                .justify_center()
                 .gap(px(8.))
                 .when(live.contains(&LiveAction::Berserk), |row| {
                     row.child(
                         Button::new("online-berserk")
+                            .flex_1()
+                            .min_w(px(120.))
                             .warning()
                             .icon(icon("flame"))
                             .label("Berserk")
@@ -994,6 +998,8 @@ impl OnlinePage {
                 .when(live.contains(&LiveAction::Takeback), |row| {
                     row.child(
                         Button::new("online-takeback")
+                            .flex_1()
+                            .min_w(px(120.))
                             .outline()
                             .icon(icon("undo-2"))
                             .label("Takeback")
@@ -1003,6 +1009,8 @@ impl OnlinePage {
                 .when(live.contains(&LiveAction::OfferDraw), |row| {
                     row.child(
                         Button::new("online-draw")
+                            .flex_1()
+                            .min_w(px(120.))
                             .outline()
                             .icon(icon("handshake"))
                             .label("Offer draw")
@@ -1011,6 +1019,8 @@ impl OnlinePage {
                 })
                 .child(if live.contains(&LiveAction::Resign) {
                     Button::new("online-resign")
+                        .flex_1()
+                        .min_w(px(120.))
                         .outline()
                         .danger()
                         .icon(icon("flag"))
@@ -1018,6 +1028,8 @@ impl OnlinePage {
                         .on_click(|_, window, cx| ask_resign(window, cx))
                 } else {
                     Button::new("online-abort")
+                        .flex_1()
+                        .min_w(px(120.))
                         .outline()
                         .danger()
                         .icon(icon("ban"))
@@ -1027,6 +1039,8 @@ impl OnlinePage {
                 .when(online.correspondence(), |row| {
                     row.child(
                         Button::new("online-close")
+                            .flex_1()
+                            .min_w(px(120.))
                             .ghost()
                             .icon(icon("x"))
                             .label("Close game")
@@ -1039,10 +1053,13 @@ impl OnlinePage {
             let export = finished.then(|| self.game_export(online, model));
             h_flex()
                 .flex_wrap()
+                .justify_center()
                 .gap(px(8.))
                 .when(live.contains(&LiveAction::Rematch), |row| {
                     row.child(
                         Button::new("online-rematch")
+                            .flex_1()
+                            .min_w(px(120.))
                             .primary()
                             .icon(icon("repeat"))
                             .label("Rematch")
@@ -1056,6 +1073,8 @@ impl OnlinePage {
                 .when(live.contains(&LiveAction::NewOpponent), |row| {
                     row.child(
                         Button::new("online-new-opponent")
+                            .flex_1()
+                            .min_w(px(120.))
                             .outline()
                             .icon(icon("users"))
                             .label("New opponent")
@@ -1068,6 +1087,8 @@ impl OnlinePage {
                 .when(live.contains(&LiveAction::Analyse), |row| {
                     row.child(
                         Button::new("online-analyse")
+                            .flex_1()
+                            .min_w(px(120.))
                             .outline()
                             .icon(icon("microscope"))
                             .label("Analyse")
@@ -1088,6 +1109,8 @@ impl OnlinePage {
                     let tournament = tournament.clone();
                     row.child(
                         Button::new("online-tournament")
+                            .flex_1()
+                            .min_w(px(120.))
                             .outline()
                             .icon(icon("trophy"))
                             .label("Tournament")
@@ -1098,6 +1121,8 @@ impl OnlinePage {
                 })
                 .child(
                     Button::new("online-new")
+                        .flex_1()
+                        .min_w(px(120.))
                         .when(last_game, |button| button.outline())
                         .when(!last_game, |button| button.primary())
                         .icon(icon("plus"))

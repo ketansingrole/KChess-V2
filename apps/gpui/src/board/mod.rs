@@ -78,6 +78,9 @@ pub struct BoardState {
     pub drops: HashMap<Role, Vec<Square>>,
 }
 
+/// The checkmated king's "#" badge, Lichess's red.
+const MATE_BADGE: u32 = 0xdf5353;
+
 /// A move's label as a badge over its square's top-right corner.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Badge {
@@ -212,6 +215,14 @@ impl BoardState {
             .is_check()
             .then(|| position.board().king_of(position.turn()))
             .flatten();
+        // Checkmate marks the king as Lichess does: a red "#" over its square's corner.
+        let badge = check
+            .filter(|_| position.is_checkmate())
+            .map(|square| Badge {
+                square,
+                glyph: "#",
+                color: rgb(MATE_BADGE).into(),
+            });
         let drops = if can_move {
             kchess_domain::position::drop_dests(position)
                 .into_iter()
@@ -234,7 +245,7 @@ impl BoardState {
             coordinates: None,
             square_names: false,
             edit: None,
-            badge: None,
+            badge,
             premove: None,
             pockets: position.pockets().copied(),
             drops,
@@ -304,6 +315,8 @@ struct Drag {
     position: Point<Pixels>,
     start: Point<Pixels>,
     moved: bool,
+    /// The piece was already selected when pressed: let go of it on release unless dragged.
+    again: bool,
 }
 
 /// Pieces sliding from one square to another, timed by the executor's clock: the real one in the
@@ -737,7 +750,7 @@ impl ChessBoard {
         match self.decide(square) {
             Press::Drop(role) => return self.drop_piece(role, square, cx),
             Press::Play(from) => return self.play(from, square, cx),
-            Press::Pick { piece, .. } => {
+            Press::Pick { piece, again } => {
                 // A second press on the selected piece lets go of it on release, unless it is
                 // dragged.
                 self.drag = Some(Drag {
@@ -746,6 +759,7 @@ impl ChessBoard {
                     position: event.position,
                     start: event.position,
                     moved: false,
+                    again,
                 });
             }
             Press::Queued | Press::Clear => {}
@@ -876,6 +890,7 @@ impl ChessBoard {
                         position,
                         start: position,
                         moved: false,
+                        again: false,
                     });
                 }
             }
@@ -938,10 +953,7 @@ impl ChessBoard {
                 Some(to) if to == drag.from => {}
                 _ => self.selected = None,
             }
-        } else if target == Some(drag.from)
-            && self.selected == Some(drag.from)
-            && drag.start != drag.position
-        {
+        } else if target == Some(drag.from) && self.selected == Some(drag.from) && drag.again {
             self.selected = None;
         }
         cx.notify();
@@ -1912,7 +1924,8 @@ impl Render for ChessBoard {
         let entity = cx.entity().downgrade();
         let dragging = self.drag.is_some();
 
-        // The king in check glows red, as Chessground's radial gradient does.
+        // The king in check sits in Chessground's radial gradient, clipped to its square: solid
+        // red to a quarter of the way out, fading to nothing at 89% of the square's half-diagonal.
         let check = self.state.check.map(|square| {
             let (column, row) = self.cell(square);
             div()
@@ -1920,22 +1933,16 @@ impl Render for ChessBoard {
                 .left(relative(column as f32 / 8.))
                 .top(relative(row as f32 / 8.))
                 .size(relative(0.125))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
+                .overflow_hidden()
+                .children(check_rings(side).into_iter().map(|(radius, color)| {
                     div()
-                        .size(relative(0.5))
+                        .absolute()
+                        .left(side / 2. - radius)
+                        .top(side / 2. - radius)
+                        .size(radius * 2.)
                         .rounded_full()
-                        .bg(rgb(0xff0000))
-                        .shadow(vec![BoxShadow {
-                            color: rgba(0xe70000cc).into(),
-                            offset: point(px(0.), px(0.)),
-                            blur_radius: side * 0.3,
-                            spread_radius: side * 0.08,
-                            inset: false,
-                        }]),
-                )
+                        .bg(color)
+                }))
         });
         // The piece's own square keeps a faint ghost while it is dragged (Chessground's `ghost`).
         let ghost = lifted.and_then(|square| {
@@ -2194,6 +2201,48 @@ impl Render for ChessBoard {
     }
 }
 
+/// Discs from the outermost in, each with the opacity that makes those stacked over a radius add
+/// up to Chessground's check gradient there (`radial-gradient(ellipse at center, #ff0000 0%,
+/// #e70000 25%, transparent 89%)` over a square, its ellipse reaching the corners).
+fn check_rings(side: Pixels) -> Vec<(Pixels, Hsla)> {
+    const BANDS: usize = 28;
+    let reach = side * std::f32::consts::FRAC_1_SQRT_2;
+    let (solid, gone) = (reach * 0.25, reach * 0.89);
+    let mut rings = Vec::with_capacity(BANDS + 1);
+    let mut below = 0f32;
+    for band in 0..BANDS {
+        let outer = gone - (gone - solid) * (band as f32 / BANDS as f32);
+        let middle = gone - (gone - solid) * ((band as f32 + 0.5) / BANDS as f32);
+        let wanted = (gone - middle) / (gone - solid);
+        // Over what the discs outside it already cover, this one brings the rest.
+        let alpha = 1. - (1. - wanted) / (1. - below);
+        below = wanted;
+        // Darkening toward #a90000 as it fades out, as the gradient's stops do.
+        let mut color = red_between(0xa90000, 0xe70000, wanted);
+        color.a = alpha.clamp(0., 1.);
+        rings.push((outer, color));
+    }
+    // Solid inside a quarter of the way out, brightening to #ff0000 in the middle.
+    const CORE: usize = 6;
+    for step in 0..CORE {
+        let share = step as f32 / CORE as f32;
+        rings.push((solid * (1. - share), red_between(0xe70000, 0xff0000, share)));
+    }
+    rings
+}
+
+/// The red `share` of the way from `from` to `to`, opaque.
+fn red_between(from: u32, to: u32, share: f32) -> Hsla {
+    let (from, to) = (rgb(from), rgb(to));
+    Rgba {
+        r: from.r + (to.r - from.r) * share,
+        g: from.g + (to.g - from.g) * share,
+        b: from.b + (to.b - from.b) * share,
+        a: 1.,
+    }
+    .into()
+}
+
 #[cfg(test)]
 mod drawing_tests {
     use super::{Drawn, drawing_brush, toggle_shape};
@@ -2446,5 +2495,60 @@ mod keyboard_tests {
         assert!(!board.interactive());
         assert_eq!(board.press_key(Square::E2), Press::Clear);
         assert_eq!(board.selected, None);
+    }
+}
+
+#[cfg(test)]
+mod check_tests {
+    use super::{BoardState, check_rings};
+    use gpui_kit::px;
+    use shakmaty::{Color, Square};
+
+    fn state(fen: &str) -> BoardState {
+        let position = kchess_domain::rules::setup_start("standard", fen).expect("a position");
+        BoardState::of(&position, Color::White, None, None)
+    }
+
+    /// A checkmated king wears Lichess's red "#"; a king only in check is lit but unmarked.
+    #[test]
+    fn checkmate_marks_the_king() {
+        // Fool's mate: White's king on e1 is mated.
+        let mate = state("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3");
+        assert_eq!(mate.check, Some(Square::E1));
+        let badge = mate.badge.expect("the mate badge");
+        assert_eq!((badge.square, badge.glyph), (Square::E1, "#"));
+        let check = state("rnbqkbnr/ppp2ppp/3p4/1B2p3/4P3/8/PPPP1PPP/RNBQK1NR b KQkq - 1 3");
+        assert_eq!(check.check, Some(Square::E8));
+        assert!(check.badge.is_none());
+    }
+
+    /// Stacked, the discs fade as Chessground's gradient does: solid red in the middle, half
+    /// way out half as strong, nothing past 89% of the half-diagonal, and all of it inside the
+    /// square's corners.
+    #[test]
+    fn the_check_rings_add_up_to_the_lichess_gradient() {
+        let side = px(80.);
+        let rings = check_rings(side);
+        let opacity = |radius: f32| {
+            1. - rings
+                .iter()
+                .filter(|(outer, _)| f32::from(*outer) >= radius)
+                .map(|(_, color)| 1. - color.a)
+                .product::<f32>()
+        };
+        let reach = 80. * std::f32::consts::FRAC_1_SQRT_2;
+        let (solid, gone) = (reach * 0.25, reach * 0.89);
+        assert!((opacity(0.) - 1.).abs() < 1e-4);
+        assert!((opacity(solid) - 1.).abs() < 1e-4);
+        assert!(opacity(gone + 0.1) < 1e-4);
+        let middle = (solid + gone) / 2.;
+        assert!((opacity(middle) - 0.5).abs() < 0.08, "{}", opacity(middle));
+        // Never brighter further out.
+        let steps: Vec<f32> = (0..=50)
+            .map(|step| opacity(gone * step as f32 / 50.))
+            .collect();
+        assert!(steps.windows(2).all(|pair| pair[1] <= pair[0] + 1e-4));
+        // The faded edge reaches past the square's sides (40px) into its corners, as on Lichess.
+        assert!(gone > 40.);
     }
 }

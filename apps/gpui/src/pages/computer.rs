@@ -1524,6 +1524,9 @@ impl Render for ComputerPage {
                                 Select::new(&self.level)
                                     .small()
                                     .appearance(false)
+                                    // Wider than its trigger: every level's name and rating
+                                    // in full ("International Master · ~2400").
+                                    .menu_width(px(260.))
                                     .accessibility_label("Difficulty"),
                             ),
                         ),

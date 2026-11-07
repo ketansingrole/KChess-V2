@@ -4,8 +4,7 @@
 
 use std::collections::HashSet;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -403,20 +402,29 @@ impl Render for RatingSpeeds {
             .iter()
             .map(|speed| self.chip(speed, cx, &palette).into_any_element())
             .collect();
-        let ranges = h_flex().children(RANGES.iter().map(|(label, _)| {
-            let chosen = self.range == *label;
-            Button::new(SharedString::from(format!("speeds-range-{label}")))
-                .xsmall()
-                .label(*label)
-                .map(|button| {
-                    if chosen {
-                        button.primary()
-                    } else {
-                        button.outline()
-                    }
+        // The compact pills every page's small choices use, spaced as they are.
+        let page = cx.entity().downgrade();
+        let ranges = widgets::pills(
+            "speeds-range",
+            RANGES
+                .iter()
+                .map(|(label, _)| widgets::Pill {
+                    icon: None,
+                    label: (*label).into(),
+                    badge: None,
+                    disabled: false,
                 })
-                .on_click(cx.listener(move |this, _, _, cx| this.choose_range(label, cx)))
-        }));
+                .collect(),
+            RANGES
+                .iter()
+                .position(|(label, _)| self.range == *label)
+                .unwrap_or(RANGES.len() - 1),
+            move |index, _, cx| {
+                let _ = page.update(cx, |this, cx| this.choose_range(RANGES[index].0, cx));
+            },
+            true,
+            &palette,
+        );
         let empty = |text: &'static str| {
             div()
                 .h(px(260.))

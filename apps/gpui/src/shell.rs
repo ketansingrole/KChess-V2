@@ -1017,9 +1017,14 @@ pub struct Workspace {
     /// while its width eases.
     sidebar_toggled: Option<std::time::Instant>,
     sidebar: Entity<Part<Workspace>>,
-    /// The sidebar's list, scrolled in a short window: back to its top when it changes between
-    /// the pages and Settings' categories, and to the category Settings shows.
+    /// The sidebar's list of pages, scrolled in a short window.
     sidebar_scroll: ScrollHandle,
+    /// Settings' categories beside them in its dialog: to the top as it opens, and to the
+    /// category it shows.
+    sections_scroll: ScrollHandle,
+    /// The group to scroll the categories to once the dialog's list is drawn: one asked for as it
+    /// opens comes before the list exists.
+    sections_pending: std::cell::Cell<Option<usize>>,
     topbar: Entity<Part<Workspace>>,
     /// The sidebar toggle over the top bar (`render_sidebar_toggle`).
     toggle: Entity<Part<Workspace>>,
@@ -1141,6 +1146,8 @@ impl Workspace {
                 cx,
             ),
             sidebar_scroll: ScrollHandle::new(),
+            sections_scroll: ScrollHandle::new(),
+            sections_pending: std::cell::Cell::new(None),
             topbar: Part::keyed(
                 |this, window, cx| this.render_topbar(window, cx).into_any_element(),
                 TopbarInputs::of,
@@ -1206,8 +1213,8 @@ impl Workspace {
         if page == Page::Settings && current != Page::Settings {
             self.back = current;
         }
-        if (page == Page::Settings) != (current == Page::Settings) {
-            self.sidebar_scroll.set_offset(point(px(0.), px(0.)));
+        if page == Page::Settings && current != Page::Settings {
+            self.sections_scroll.set_offset(point(px(0.), px(0.)));
         }
         if page == Page::Settings
             && let Some(settings) = self.pages.settings()
@@ -1467,8 +1474,8 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Scroll the sidebar to the group of the category Settings shows, which the palette may have
-    /// chosen, or Settings remembered, out of a short window's sight: its block, after Back's.
+    /// Scroll Settings' categories to the group of the one it shows, which the palette may have
+    /// chosen, or Settings remembered, out of a short window's sight.
     fn scroll_to_section(&self, section: Section) {
         let row = sections()
             .iter()
@@ -1483,90 +1490,211 @@ impl Workspace {
                 .take_while(|end| *end <= row)
                 .count()
         });
-        self.sidebar_scroll.scroll_to_item(1 + group);
+        self.sections_scroll.scroll_to_item(group);
+        self.sections_pending.set(Some(group));
     }
 
-    /// The pages, or while Settings is open its categories with a way back (`navItems`).
-    fn nav_blocks(&self, open: bool, cx: &mut Context<Self>) -> Vec<NavBlock> {
-        let current = self.pages.current();
-        if current != Page::Settings {
-            let mut pages = nav().into_iter();
-            return NAV_GROUPS
-                .into_iter()
-                .zip(NAV_HEADINGS)
-                .map(|(size, heading)| {
-                    let group: Vec<_> = pages.by_ref().take(size).collect();
-                    let mark = group
-                        .iter()
-                        .position(|(page, _, _)| *page == Page::Online)
-                        .and_then(|row| Some((row, game_mark(cx)?)));
-                    NavBlock::Menu(
-                        heading,
-                        Box::new(SidebarMenu::new().gap_0().children(group.into_iter().map(
-                            |(page, label, glyph)| {
-                                let marked =
-                                    (page == Page::Online).then(|| game_mark(cx)).flatten();
-                                let shown = if open { nav_label(page, label) } else { label };
-                                nav_item(shown, glyph)
-                                    .accessibility_label(label)
-                                    .active(current == page)
-                                    .when_some(marked, |item, mark| {
-                                        item.accessibility_label(match mark {
-                                            GameMark::Turn => format!("{label}, your move"),
-                                            GameMark::Live => format!("{label}, game in progress"),
-                                        })
-                                        .suffix(move |_, cx| game_dot(mark, cx))
-                                    })
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.choose(page, window, cx)
-                                    }))
-                            },
-                        ))),
-                        mark,
-                    )
-                })
-                .collect();
+    /// The page shown in the window: while Settings is open, the one under its dialog.
+    fn shown_page(&self) -> Page {
+        match self.pages.current() {
+            Page::Settings => self.back,
+            page => page,
         }
+    }
+
+    /// The pages (`navItems`), the one under Settings marked while its dialog is open.
+    fn nav_blocks(&self, open: bool, cx: &mut Context<Self>) -> Vec<NavBlock> {
+        let current = self.shown_page();
+        let mut pages = nav().into_iter();
+        NAV_GROUPS
+            .into_iter()
+            .zip(NAV_HEADINGS)
+            .map(|(size, heading)| {
+                let group: Vec<_> = pages.by_ref().take(size).collect();
+                let mark = group
+                    .iter()
+                    .position(|(page, _, _)| *page == Page::Online)
+                    .and_then(|row| Some((row, game_mark(cx)?)));
+                NavBlock::Menu(
+                    heading,
+                    Box::new(SidebarMenu::new().gap_0().children(group.into_iter().map(
+                        |(page, label, glyph)| {
+                            let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
+                            let shown = if open { nav_label(page, label) } else { label };
+                            nav_item(shown, glyph)
+                                .accessibility_label(label)
+                                .active(current == page)
+                                .when_some(marked, |item, mark| {
+                                    item.accessibility_label(match mark {
+                                        GameMark::Turn => format!("{label}, your move"),
+                                        GameMark::Live => format!("{label}, game in progress"),
+                                    })
+                                    .suffix(move |_, cx| game_dot(mark, cx))
+                                })
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.choose(page, window, cx)
+                                }))
+                        },
+                    ))),
+                    mark,
+                )
+            })
+            .collect()
+    }
+
+    /// Settings' categories in its dialog, in their groups.
+    fn section_blocks(&self, cx: &mut Context<Self>) -> Vec<NavBlock> {
         let shown = self
             .pages
             .settings()
             .map_or(Section::Appearance, |page| page.read(cx).section());
-        let back = self.back;
-        // The rail's tooltip, and a screen reader, name the page it returns to.
-        let to = nav()
-            .into_iter()
-            .find_map(|(page, label, _)| (page == back).then(|| format!("Back to {label}")))
-            .unwrap_or_else(|| "Back".into());
-        let label = if open { "Back".into() } else { to.clone() };
-        let back = std::iter::once(NavBlock::Menu(
-            None,
-            Box::new(
-                SidebarMenu::new().child(
-                    nav_item(label, icon("arrow-left"))
-                        .accessibility_label(to)
-                        .on_click(
-                            cx.listener(move |this, _, window, cx| this.choose(back, window, cx)),
-                        ),
-                ),
-            ),
-            None,
-        ));
         let mut rows = sections().into_iter();
-        back.chain(SECTION_GROUPS.into_iter().map(|(heading, size)| {
-            NavBlock::Group(
-                heading,
-                Box::new(
-                    SidebarMenu::new()
-                        .gap_0()
-                        .children(rows.by_ref().take(size).map(|(section, label, glyph)| {
-                            nav_item(label, glyph).active(shown == section).on_click(
-                                cx.listener(move |this, _, _, cx| this.choose_section(section, cx)),
-                            )
-                        })),
-                ),
+        SECTION_GROUPS
+            .into_iter()
+            .map(|(heading, size)| {
+                NavBlock::Group(
+                    heading,
+                    Box::new(
+                        SidebarMenu::new()
+                            .gap_0()
+                            .children(rows.by_ref().take(size).map(|(section, label, glyph)| {
+                                nav_item(label, glyph).active(shown == section).on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.choose_section(section, cx)
+                                    }),
+                                )
+                            })),
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    /// Settings as a dialog over the page it was opened from, below the top bar (whose search
+    /// finds settings, and whose window controls stay in reach): its categories on the left,
+    /// the one chosen on the right. The close button, Escape or a press outside it closes it.
+    fn settings_dialog(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let palette = *cx.global::<Palette>();
+        let overlay = cx.theme().overlay;
+        let viewport = window.viewport_size();
+        let margin = px(24.);
+        let width = (viewport.width - margin * 2.).min(px(1040.));
+        let height = viewport.height - TOPBAR_HEIGHT - margin * 2.;
+        let blocks: Vec<AnyElement> = self
+            .section_blocks(cx)
+            .into_iter()
+            .enumerate()
+            .map(|(ix, block)| {
+                block
+                    .collapsed(false)
+                    .render(SharedString::from(format!("s{}", ix + 1)), window, cx)
+                    .into_any_element()
+            })
+            .collect();
+        // GPUI drops a scroll asked for before the list's first layout, when it does not know yet
+        // that the list scrolls: ask again once it has been laid out.
+        if let Some(group) = self.sections_pending.get() {
+            if self.sections_scroll.bounds().size.height > px(0.) {
+                self.sections_pending.set(None);
+                self.sections_scroll.scroll_to_item(group);
+            } else {
+                window.request_animation_frame();
+            }
+        }
+        let close = cx.listener(|this, _, window, cx| this.choose(this.back, window, cx));
+        div()
+            .id("settings-backdrop")
+            .absolute()
+            .top(TOPBAR_HEIGHT)
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .occlude()
+            .bg(overlay)
+            .flex()
+            .items_center()
+            .justify_center()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.choose(this.back, window, cx)),
             )
-        }))
-        .collect()
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if crate::widgets::is_escape(event) {
+                    cx.stop_propagation();
+                    this.choose(this.back, window, cx);
+                }
+            }))
+            .child(
+                v_flex()
+                    .id("settings-dialog")
+                    .test_support()
+                    .role(Role::Dialog)
+                    .aria_label("Settings")
+                    .w(width)
+                    .h(height)
+                    .rounded(crate::theme::radii::XL)
+                    .border_1()
+                    .border_color(palette.border)
+                    .bg(cx.theme().background)
+                    .overflow_hidden()
+                    // A press inside is the dialog's own, not one outside it.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .h(px(52.))
+                            .px(px(20.))
+                            .border_b_1()
+                            .border_color(palette.border)
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_size(px(16.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(palette.highlighted)
+                                    .child("Settings"),
+                            )
+                            .child(
+                                Button::new("settings-close")
+                                    .ghost()
+                                    .small()
+                                    .icon(icon("x"))
+                                    .accessibility_label("Close settings")
+                                    .tooltip("Close (Esc)")
+                                    .on_click(close),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_h_0()
+                            .items_stretch()
+                            .child(
+                                v_flex()
+                                    .id("settings-sections")
+                                    .test_support()
+                                    .w(px(232.))
+                                    .flex_none()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.sections_scroll)
+                                    .px_3()
+                                    .py_2()
+                                    .gap_1()
+                                    .border_r_1()
+                                    .border_color(palette.border)
+                                    .bg(cx.theme().tokens.sidebar)
+                                    .children(blocks),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .child(self.pages.view().cached(page_style())),
+                            ),
+                    ),
+            )
+            .into_any_element()
     }
 
     /// Whether the sidebar is open as shown: in a narrow window, only while opened there.
@@ -1669,31 +1797,7 @@ impl Workspace {
                             .border_t_1()
                             .border_color(border)
                             .children(dev_build_badge(open, cx))
-                            .child(
-                                footer_button(
-                                    "settings",
-                                    icon("settings-2"),
-                                    "Settings".into(),
-                                    open,
-                                    cx,
-                                )
-                                // Open while Settings is, and a second press closes it.
-                                .when(in_settings, |button| {
-                                    button.custom(open_sidebar(cx)).selected(true).toggled(true)
-                                })
-                                .accessibility_label("Settings")
-                                .on_click(cx.listener(
-                                    move |this, _, window, cx| {
-                                        let page = if in_settings {
-                                            this.back
-                                        } else {
-                                            Page::Settings
-                                        };
-                                        this.choose(page, window, cx)
-                                    },
-                                )),
-                            )
-                            .child(account_button(open, cx)),
+                            .child(self.footer_row(open, in_settings, cx)),
                     ),
             );
         let frame = div()
@@ -1715,6 +1819,37 @@ impl Workspace {
                 SharedString::from(format!("sidebar-{}-{}", f32::from(from), f32::from(width))),
             )
             .into_any_element()
+    }
+
+    /// The account menu with Settings beside it on the right; on the rail, Settings above it.
+    fn footer_row(&self, open: bool, in_settings: bool, cx: &mut Context<Self>) -> AnyElement {
+        let settings = footer_button("settings", icon("settings-2"), "Settings".into(), false, cx)
+            // Open while Settings is, and a second press closes it.
+            .when(in_settings, |button| {
+                button.custom(open_sidebar(cx)).selected(true).toggled(true)
+            })
+            .when(open, |button| button.w(px(32.)).flex_none())
+            .accessibility_label("Settings")
+            .on_click(cx.listener(move |this, _, window, cx| {
+                let page = if in_settings {
+                    this.back
+                } else {
+                    Page::Settings
+                };
+                this.choose(page, window, cx)
+            }));
+        if open {
+            h_flex()
+                .gap(px(4.))
+                .child(div().flex_1().min_w_0().child(account_button(true, cx)))
+                .child(settings)
+                .into_any_element()
+        } else {
+            v_flex()
+                .child(settings)
+                .child(account_button(false, cx))
+                .into_any_element()
+        }
     }
 
     /// Whether the sidebar's width has finished easing since it last opened or closed.
@@ -2014,30 +2149,19 @@ fn dev_build_badge(_open: bool, _cx: &App) -> Option<AnyElement> {
     None
 }
 
-/// The sidebar's account button: Connect Lichess while no account plays online, else the account
-/// menu: which account plays (with several), its profile, managing and connecting accounts, and
-/// logging out.
+/// The sidebar's account menu: which account plays (with several), its profile, managing and
+/// connecting accounts, What's new, reporting a problem, and logging out. With no account it is
+/// named Connect Lichess and opens on connecting one.
 fn account_button(expanded: bool, cx: &App) -> AnyElement {
     let handle = crate::accounts::handle(cx);
     let accounts = handle.read(cx);
-    let Some(active) = accounts.active(cx) else {
-        let target = handle.downgrade();
-        return footer_button(
-            "connect-lichess",
-            icon("log-in"),
-            "Connect Lichess".into(),
-            expanded,
-            cx,
-        )
-        .accessibility_label("Connect Lichess")
-        .disabled(!crate::network::online(cx) || accounts.busy)
-        .on_click(move |_, window, cx| {
-            let _ = target.update(cx, |accounts, cx| accounts.connect(window, cx));
-        })
-        .into_any_element();
-    };
+    let active = accounts.active(cx);
     let connected = accounts.connected();
-    let label = format!("@{active}");
+    let can_connect = crate::network::online(cx) && !accounts.busy;
+    let (glyph, label) = match &active {
+        Some(active) => (icon("user"), format!("@{active}")),
+        None => (icon("log-in"), "Connect Lichess".to_string()),
+    };
     let target = handle.downgrade();
     // A navigation row: the label between the icon and a dimmed up-down chevron; elevated while
     // its menu is open.
@@ -2053,9 +2177,9 @@ fn account_button(expanded: bool, cx: &App) -> AnyElement {
                 .min_w_0()
                 .gap(px(8.))
                 .when(!expanded, |row| row.justify_center())
-                .child(icon("user").size(px(18.)).flex_none())
+                .child(glyph.size(px(18.)).flex_none())
                 .when(expanded, |row| {
-                    row.child(div().flex_1().min_w_0().child(label.clone()))
+                    row.child(div().flex_1().min_w_0().truncate().child(label.clone()))
                         .child(
                             icon("chevrons-up-down")
                                 .size(px(18.))
@@ -2064,90 +2188,122 @@ fn account_button(expanded: bool, cx: &App) -> AnyElement {
                         )
                 }),
         )
-        .accessibility_label(format!("{label} account menu"))
+        .accessibility_label(match &active {
+            Some(_) => format!("{label} account menu"),
+            None => label.clone(),
+        })
         // On the rail the icon stands alone: name the account as the footer's other buttons do.
         .when(!expanded, |button| button.tooltip(label.clone()))
-        // Above the button, centred on it and as wide (at least 192px), 8px clear.
-        .dropdown_menu_with_anchor(Anchor::BottomCenter, move |menu, _, _| {
-            let menu = menu.min_w(if expanded {
-                SIDEBAR_WIDTH - px(33.)
+        // Above the button: open, from its left edge across the sidebar; on the rail, centred on
+        // it. At least 192px wide, 8px clear.
+        .dropdown_menu_with_anchor(
+            if expanded {
+                Anchor::BottomLeft
             } else {
-                px(192.)
-            });
-            let act = |run: fn(
-                &mut crate::accounts::Accounts,
-                &mut Window,
-                &mut Context<crate::accounts::Accounts>,
-            )| {
-                let target = target.clone();
-                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                    let _ = target.update(cx, |accounts, cx| run(accounts, window, cx));
+                Anchor::BottomCenter
+            },
+            move |menu, _, _| {
+                let menu = menu.min_w(if expanded {
+                    SIDEBAR_WIDTH - px(33.)
+                } else {
+                    px(192.)
+                });
+                let act = |run: fn(
+                    &mut crate::accounts::Accounts,
+                    &mut Window,
+                    &mut Context<crate::accounts::Accounts>,
+                )| {
+                    let target = target.clone();
+                    move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                        let _ = target.update(cx, |accounts, cx| run(accounts, window, cx));
+                    }
+                };
+                let mut menu = menu;
+                // Several accounts: which one plays, then the account's pages, then signing out.
+                // One account: the trigger already names it, so the menu opens on its pages.
+                let several = connected.len() > 1;
+                if let Some(active) = &active {
+                    if several {
+                        menu = menu.label("Play as");
+                        for name in &connected {
+                            let (name, target) = (name.clone(), target.clone());
+                            menu = menu.item(
+                                PopupMenuItem::new(format!("@{name}"))
+                                    .checked(&name == active)
+                                    .on_click(move |_, _, cx| {
+                                        let _ = target.update(cx, |accounts, cx| {
+                                            accounts.set_active(&name, cx)
+                                        });
+                                    }),
+                            );
+                        }
+                        menu = menu.separator();
+                    }
+                    let profile = active.clone();
+                    // The Settings button sits beside this one; the menu goes to its accounts.
+                    menu = menu
+                        .item(
+                            PopupMenuItem::new("Profile")
+                                .icon(icon("user"))
+                                .on_click(move |_, window, cx| open_player(&profile, window, cx)),
+                        )
+                        .item(
+                            PopupMenuItem::new("Manage accounts")
+                                .icon(icon("users"))
+                                .on_click(|_, window, cx| {
+                                    open_settings(Section::Accounts, window, cx)
+                                }),
+                        );
                 }
-            };
-            // Several accounts: which one plays, then the account's pages, then signing out.
-            // One account: the trigger already names it, so the menu opens on its pages.
-            let several = connected.len() > 1;
-            let mut menu = menu;
-            if several {
-                menu = menu.label("Play as");
-                for name in &connected {
-                    let (name, target) = (name.clone(), target.clone());
-                    menu = menu.item(
-                        PopupMenuItem::new(format!("@{name}"))
-                            .checked(name == active)
-                            .on_click(move |_, _, cx| {
-                                let _ = target
-                                    .update(cx, |accounts, cx| accounts.set_active(&name, cx));
+                menu = menu
+                    .item(
+                        PopupMenuItem::new(if active.is_none() {
+                            "Connect Lichess account"
+                        } else {
+                            "Connect another account"
+                        })
+                        .icon(icon("user-plus"))
+                        .disabled(!can_connect)
+                        .on_click(act(|accounts, window, cx| accounts.connect(window, cx))),
+                    )
+                    .separator()
+                    .item(
+                        PopupMenuItem::new("What's new")
+                            .icon(icon("rocket"))
+                            .on_click(|_, window, cx| crate::whats_new::open(window, cx)),
+                    )
+                    .item(
+                        PopupMenuItem::new("Report a problem")
+                            .icon(icon("message-circle"))
+                            .on_click(|_, _, cx| {
+                                cx.open_url(crate::pages::settings::updates::ISSUES)
                             }),
                     );
-                }
-                menu = menu.separator();
-            }
-            let profile = active.clone();
-            let mut menu = menu
-                .item(
-                    PopupMenuItem::new("Profile")
-                        .icon(icon("user"))
-                        .on_click(move |_, window, cx| open_player(&profile, window, cx)),
-                )
-                // The Settings button sits right above this one; the menu goes to its accounts.
-                .item(
-                    PopupMenuItem::new("Manage accounts")
-                        .icon(icon("users"))
-                        .on_click(|_, window, cx| open_settings(Section::Accounts, window, cx)),
-                )
-                .item(
-                    PopupMenuItem::new(if connected.is_empty() {
-                        "Connect Lichess account"
-                    } else {
-                        "Connect another account"
-                    })
-                    .icon(icon("user-plus"))
-                    .on_click(act(|accounts, window, cx| accounts.connect(window, cx))),
-                )
-                .separator()
-                .item(
-                    PopupMenuItem::new(if several {
-                        format!("Log out @{active}")
-                    } else {
-                        "Log out".into()
-                    })
-                    .icon(icon("log-out"))
-                    .on_click(act(|accounts, window, cx| {
-                        accounts.logout(false, window, cx)
-                    })),
-                );
-            if several {
-                menu = menu.item(
-                    PopupMenuItem::new("Log out all accounts")
+                if let Some(active) = &active {
+                    menu = menu.separator().item(
+                        PopupMenuItem::new(if several {
+                            format!("Log out @{active}")
+                        } else {
+                            "Log out".into()
+                        })
                         .icon(icon("log-out"))
                         .on_click(act(|accounts, window, cx| {
-                            accounts.logout(true, window, cx)
+                            accounts.logout(false, window, cx)
                         })),
-                );
-            }
-            menu
-        })
+                    );
+                    if several {
+                        menu = menu.item(
+                            PopupMenuItem::new("Log out all accounts")
+                                .icon(icon("log-out"))
+                                .on_click(act(|accounts, window, cx| {
+                                    accounts.logout(true, window, cx)
+                                })),
+                        );
+                    }
+                }
+                menu
+            },
+        )
         .into_any_element()
 }
 
@@ -2286,7 +2442,13 @@ impl Render for Workspace {
                                     .size_full()
                                     .relative()
                                     .left(px(self.swipe_shift))
-                                    .child(self.pages.view().cached(page_style())),
+                                    // Settings opens over the page it was opened from.
+                                    .child(
+                                        self.pages
+                                            .view_for(self.shown_page())
+                                            .unwrap_or_else(|| self.pages.view())
+                                            .cached(page_style()),
+                                    ),
                             )
                             .children(self.swipe_edge(cx))
                             .child(drop_zone(cx.global::<Palette>())),
@@ -2298,6 +2460,9 @@ impl Render for Workspace {
                         .clone()
                         .cached(toggle_style(self.shown(), window)),
                 )
+            })
+            .when(self.pages.current() == Page::Settings, |shell| {
+                shell.child(self.settings_dialog(window, cx))
             })
     }
 }

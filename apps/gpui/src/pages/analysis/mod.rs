@@ -970,8 +970,9 @@ impl AnalysisPage {
             Some(position.turn()),
             last_move,
         );
-        // The review's label on the move just played.
+        // The review's label on the move just played; without one, checkmate's "#".
         let marks = self.review_marks(cx);
+        let mate = state.badge.take();
         state.badge = marks
             .get(&self.path)
             .and_then(|mark| mark.classification.as_deref())
@@ -984,7 +985,8 @@ impl AnalysisPage {
                     glyph,
                     color,
                 }
-            });
+            })
+            .or(mate);
         // Practising: the game's move in red, to find a better one, and the piece to move once
         // hinted.
         if let Some(practice::PracticeShapes { played, hint }) = self.practice_shapes() {

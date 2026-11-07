@@ -951,6 +951,21 @@ impl OnlineState {
                 self.challenges = event.payload.as_array().cloned().unwrap_or_default();
                 cx.notify();
             }
+            // A new challenge for one of the accounts: Accept and Decline from its notification.
+            "challenge:received" if event.payload["direction"] == json!("in") => {
+                let challenge = &event.payload;
+                let (title, body) = challenge_alert(challenge);
+                // The notification's buttons find it here, before the inbox's next update.
+                let id = challenge["id"].as_str().unwrap_or_default().to_string();
+                if !self
+                    .challenges
+                    .iter()
+                    .any(|known| known["id"] == challenge["id"])
+                {
+                    self.challenges.push(challenge.clone());
+                }
+                crate::notifications::challenge(&id, &title, &body, cx);
+            }
             _ => {}
         }
     }
@@ -1050,7 +1065,10 @@ pub fn init(cx: &mut App) {
     cx.subscribe(&events, {
         let state = state.clone();
         move |_, event: &CoreEvent, cx| {
-            if event.name.starts_with("online:") || event.name == "challenges:update" {
+            if event.name.starts_with("online:")
+                || event.name == "challenges:update"
+                || event.name == "challenge:received"
+            {
                 state.update(cx, |state, cx| state.receive(event, cx));
             }
         }
@@ -1150,6 +1168,25 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
         });
     })
     .detach();
+}
+
+/// A challenge's notification: who sent it, then its clock, variant and whether it is rated
+/// ("Alice (1800) challenges you", "5+3 · Standard · Rated").
+pub fn challenge_alert(challenge: &Value) -> (String, String) {
+    let opponent = &challenge["opponent"];
+    let name = opponent["name"].as_str().unwrap_or("Someone");
+    let title = match opponent["rating"].as_f64() {
+        Some(rating) => format!("{name} ({rating}) challenges you"),
+        None => format!("{name} challenges you"),
+    };
+    let variant = challenge["variantName"].as_str().unwrap_or("Standard");
+    let rated = if challenge["rated"] == json!(true) {
+        "Rated"
+    } else {
+        "Casual"
+    };
+    let control = crate::pages::online::lists::describe_control(challenge);
+    (title, format!("{control} · {variant} · {rated}"))
 }
 
 #[cfg(test)]

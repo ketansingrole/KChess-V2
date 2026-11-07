@@ -41,14 +41,34 @@ pub fn save_bytes(
         .or_else(dirs::home_dir)
         .unwrap_or_else(|| PathBuf::from("."));
     let chosen = cx.prompt_for_new_path(&folder, Some(name));
+    let extension = std::path::Path::new(name)
+        .extension()
+        .map(|extension| extension.to_os_string());
     async move {
         match chosen.await {
             Ok(Ok(Some(path))) => {
+                let path = with_extension(path, extension.as_deref());
                 Some(std::fs::write(&path, data).map_err(|cause| cause.to_string()))
             }
             Ok(Ok(None)) | Err(_) => None,
             Ok(Err(cause)) => Some(Err(cause.to_string())),
         }
+    }
+}
+
+/// `path` with the export's extension when the name typed has none: Windows' save dialog filters
+/// on All files and hides known extensions, so a retyped name easily loses it. An existing file
+/// the dialog did not confirm replacing is left alone, and `path` kept as chosen.
+fn with_extension(path: PathBuf, extension: Option<&std::ffi::OsStr>) -> PathBuf {
+    match extension {
+        Some(extension) if path.extension().is_none() => {
+            let mut name = path.clone().into_os_string();
+            name.push(".");
+            name.push(extension);
+            let added = PathBuf::from(name);
+            if added.exists() { path } else { added }
+        }
+        _ => path,
     }
 }
 
@@ -446,8 +466,27 @@ pub fn export_menu(
 
 #[cfg(test)]
 mod tests {
-    use super::{GameExport, game_file_name, game_pgn, shown_fen};
+    use super::{GameExport, game_file_name, game_pgn, shown_fen, with_extension};
     use shakmaty::Color;
+    use std::ffi::OsStr;
+
+    /// A name retyped without its extension in Windows' save dialog still saves as a GIF; one
+    /// typed with any extension, or without one when that file already exists, is kept.
+    #[test]
+    fn a_name_without_an_extension_gets_the_exports() {
+        let gif = Some(OsStr::new("gif"));
+        let folder = tempfile::tempdir().unwrap();
+        let typed = folder.path().join("My game");
+        assert_eq!(
+            with_extension(typed.clone(), gif),
+            folder.path().join("My game.gif")
+        );
+        let named = folder.path().join("My game.png");
+        assert_eq!(with_extension(named.clone(), gif), named);
+        assert_eq!(with_extension(typed.clone(), None), typed);
+        std::fs::write(folder.path().join("My game.gif"), b"").unwrap();
+        assert_eq!(with_extension(typed.clone(), gif), typed);
+    }
 
     fn game(variant: &str, fen: &str, moves: &[&str], ply: Option<usize>) -> GameExport {
         GameExport {

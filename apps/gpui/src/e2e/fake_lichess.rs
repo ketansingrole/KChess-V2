@@ -75,6 +75,8 @@ pub struct Session {
     pub takeback_offered: bool,
     /// The app's writes, in order ("POST /api/board/game/E2eGame1/move/e2e4").
     pub writes: Vec<String>,
+    /// Events still to send on the account's event stream, in order (a challenge received).
+    pub events: Vec<Value>,
     /// The account's game download waits until this is cleared: a sync still running.
     pub hold_games: bool,
     /// Counts changes: a game stream sends the state again whenever this moves on.
@@ -613,9 +615,17 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             {
                 std::thread::sleep(Duration::from_millis(5));
             }
-            let open = move || !session.lock().revoked;
-            // Until the app hangs up (a keep-alive fails to send) or the login is revoked.
-            let ended = stream(&mut out, first.into_iter().collect(), open, |_| None);
+            let open = {
+                let session = session.clone();
+                move || !session.lock().revoked
+            };
+            let queued = session.clone();
+            // Until the app hangs up (a keep-alive fails to send) or the login is revoked; the
+            // events a test queues go out as they come.
+            let ended = stream(&mut out, first.into_iter().collect(), open, move |_| {
+                let mut session = queued.lock();
+                (!session.events.is_empty()).then(|| session.events.remove(0))
+            });
             listening.lock().listening -= 1;
             ended
         }
@@ -670,6 +680,10 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             stream(&mut out, Vec::new(), open, |_| None)
         }
         ("GET", "/api/challenge") => reply(&mut out, &json!({ "in": [], "out": [] })),
+        ("POST", p) if p.starts_with("/api/challenge/") => {
+            session.lock().writes.push(format!("POST {p}"));
+            reply(&mut out, &json!({ "ok": true }))
+        }
         ("GET", "/api/timeline") => reply(&mut out, &json!({ "entries": [], "users": {} })),
         ("GET", p) if p.ends_with("/chat") || p.starts_with("/api/team/of/") => {
             reply(&mut out, &json!([]))

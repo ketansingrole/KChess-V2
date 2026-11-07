@@ -23,7 +23,7 @@ use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
 
 mod chat;
 pub(crate) mod game;
-mod lists;
+pub(crate) mod lists;
 
 /// The time controls offered (`timeControls`).
 const TIME_CONTROLS: [(f64, &str); 6] = [
@@ -761,7 +761,7 @@ impl OnlinePage {
             .iter()
             .find(|text| text.key == online.form.variant)
             .map(|text| text.label.clone());
-        h_flex().justify_center().pt(px(40.)).child(
+        h_flex().flex_1().items_center().justify_center().child(
             widgets::card(palette)
                 .w(px(420.))
                 .items_center()
@@ -845,11 +845,13 @@ impl Render for OnlinePage {
         };
         div()
             .id("online-page")
+            .test_support()
             .track_focus(&self.focus)
             .size_full()
             .overflow_y_scroll()
             .child(
                 v_flex()
+                    .min_h_full()
                     .gap(px(16.))
                     .px(side_padding(window))
                     .pt(PAGE_TOP)

@@ -1537,6 +1537,7 @@ impl Render for SettingsPage {
         self.sync_ai(window, cx);
         div()
             .id("settings-page")
+            .test_support()
             .track_focus(&self.focus)
             .size_full()
             .relative()
