@@ -38,6 +38,7 @@ pub mod chesscom;
 pub mod connection;
 pub mod core;
 pub mod download;
+pub mod electron_migration;
 pub mod engine;
 pub mod env;
 pub mod error;

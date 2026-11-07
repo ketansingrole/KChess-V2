@@ -7,29 +7,6 @@ use crate::error::{CoreError, Result};
 use serde_json::{Value, json};
 
 impl Core {
-    /// What the Electron app's renderer kept in this profile's `localStorage`; None when it
-    /// cannot be read, which is logged, so nothing is marked as taken over and the next start
-    /// tries again.
-    async fn electron_local_storage(&self) -> Option<std::collections::BTreeMap<String, String>> {
-        let profile = self.data_dir.clone();
-        let read = tokio::task::spawn_blocking(move || {
-            kchess_electron_legacy::local_storage::read(&profile)
-        })
-        .await;
-        match read {
-            Ok(Ok(found)) => Some(found),
-            Ok(Err(cause)) => {
-                self.host.log(
-                    crate::host::Level::Warn,
-                    "library",
-                    &format!("The Electron app's saved data could not be read: {cause}"),
-                );
-                None
-            }
-            Err(_) => None,
-        }
-    }
-
     /// Answers the facade's library methods.
     pub(crate) async fn run_library(&self, method: &str, args: &[Value]) -> Result<Value> {
         match method {
@@ -42,20 +19,13 @@ impl Core {
                     return Ok(library);
                 }
                 // The documents the Electron renderer kept before the core did, taken over once.
-                let Some(found) = self.electron_local_storage().await else {
+                let Some(found) =
+                    crate::electron_migration::local_storage(self.host.as_ref(), &self.data_dir)
+                        .await
+                else {
                     return Ok(library);
                 };
-                let mut documents = serde_json::Map::new();
-                for (key, text) in found {
-                    if kchess_domain::misc::constants::LEGACY_DOCUMENT_KEYS.contains(&key.as_str())
-                    {
-                        documents.insert(key, Value::String(text));
-                    }
-                }
-                let documents = normal("assertLegacyDocuments", &Value::Object(documents))?;
-                self.database
-                    .call_async("store.library.importLibrary", &[documents])
-                    .await
+                crate::electron_migration::take_over_library(&self.database, &found).await
             }
             "importLibrary" => {
                 let documents = normal("assertLegacyDocuments", &arg(args, 0))?;
@@ -174,26 +144,16 @@ impl Core {
                         .await;
                 }
                 // The view preferences the Electron renderer kept in `localStorage`, taken over once.
-                let Some(found) = self.electron_local_storage().await else {
+                let Some(found) =
+                    crate::electron_migration::local_storage(self.host.as_ref(), &self.data_dir)
+                        .await
+                else {
                     return self
                         .database
                         .call_async("store.viewPreferences.all", &[])
                         .await;
                 };
-                let texts: serde_json::Map<String, Value> = found
-                    .into_iter()
-                    .filter(|(key, _)| {
-                        !kchess_domain::misc::constants::LEGACY_DOCUMENT_KEYS
-                            .contains(&key.as_str())
-                    })
-                    .map(|(key, text)| (key, Value::String(text)))
-                    .collect();
-                self.database
-                    .call_async(
-                        "store.viewPreferences.importLegacy",
-                        &[Value::Object(texts)],
-                    )
-                    .await
+                crate::electron_migration::take_over_preferences(&self.database, &found).await
             }
             "setViewPreference" => {
                 let key = normal("assertViewPreferenceKey", &arg(args, 0))?;

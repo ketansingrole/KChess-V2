@@ -291,9 +291,9 @@ impl TokenSource for DbTokens {
 
 impl DbTokens {
     /// Reseal a token an earlier release's host sealed (Electron's `safeStorage`) with the
-    /// profile's credentials, so every KChess app opens it. This runs when the token is first
-    /// needed, as opening it already used the OS credential store; never at startup, where a
-    /// keychain prompt once hung the app (`core_startup.rs`). A token that cannot be resealed
+    /// profile's credentials, so every KChess app opens it, when the token is needed before the
+    /// background migration (`electron_migration`) got to it. Never before a startup read, where
+    /// a keychain prompt once hung the app (`core_startup.rs`). A token that cannot be resealed
     /// keeps working through the host and is tried again next time.
     async fn reseal(&self, account: &str, previous: &str, token: &str) {
         let resealed = async {

@@ -22,7 +22,7 @@ use crate::host::{Host, Level};
 
 mod accounts;
 mod ai;
-mod args;
+pub(crate) mod args;
 mod chesscom;
 mod engine;
 mod games;
