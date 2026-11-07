@@ -45,6 +45,7 @@ crate they depend on directly is named here.
 | [`objc2-app-kit`](https://github.com/madsmtm/objc2) | MIT | The Dock icon on macOS |
 | [`nix`](https://github.com/nix-rust/nix) | MIT | The benchmark's CPU time and peak memory on macOS |
 | [`libloading`](https://github.com/nagisa/rust_libloading) | ISC | Loading libvosk into the speech recognition helper |
+| [`windows-sys`](https://github.com/microsoft/windows-rs) | MIT OR Apache-2.0 | Windows' reduce-motion setting, and keeping the core service's pipe to your own account |
 
 ## Game review method
 
