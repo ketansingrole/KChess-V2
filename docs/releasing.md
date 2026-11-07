@@ -38,40 +38,26 @@ draft release by rerunning its original tag-push workflow.
 | Windows  | `.exe` installer (x64)                        |
 | Linux    | `.AppImage`, `.deb` and the Snap (x64)        |
 
-Each is made by `cargo xtask package`, with the `latest*.yml` manifests. Releases from 2026.10.12
-to 2026.10.17 also carried `KChess-Preview-*` packages, a side-by-side preview of the Rust app;
-later releases do not, and a preview installation stays on 2026.10.17 (it shares the KChess
-profile, so installing KChess loses nothing).
+Each is made by `cargo xtask package`. The release adds `latest-mac.yml`, `latest.yml` and
+`latest-linux.yml` for Electron installations (below). Releases from 2026.10.12 to 2026.10.17 also
+carried `KChess-Preview-*` packages, a side-by-side preview of the Rust app; later releases do not,
+and a preview installation stays on 2026.10.17 (it shares the KChess profile, so installing KChess
+loses nothing).
 
-### The move from the Electron app
+### Electron installations
 
-Releases up to 2026.10.15 were an Electron app. Its updater (electron-updater) reads the same
-GitHub feed through `latest-mac.yml`, `latest.yml` and `latest-linux.yml`, so the first Rust release
-reaches every Electron installation as an ordinary update, from any earlier version:
-
-- **Windows**: the installer keeps the Electron app's identity (per-user, GUID
-  `6bb66f38-a1a5-5ec8-b24f-c899466885ca`, `%LOCALAPPDATA%\Programs\KChess` or the existing folder,
-  `KChess.exe`, `Uninstall KChess.exe`, the Start menu and desktop shortcuts), runs the Electron
-  installation's own uninstaller in place, keeping user data, and removes an all-users copy from
-  releases up to 2026.10.11. The **Windows upgrade** workflow, which CI runs with the packages,
-  checks per-user, custom-folder, all-users and fresh installs.
-- **macOS**: Squirrel.Mac installs a bundle from the `.zip` only when it has the running app's
-  bundle identifier and meets its Developer ID requirement. Electron releases from 2026.10.12 were
-  `com.kchess.app`, as KChess is; earlier ones were `com.kchess.electron`, so the zip also holds
-  `legacy/KChess.app`, a bridge with that identifier (`apps/electron-bridge`). Squirrel installs the
-  bridge, which unpacks KChess from the zip electron-updater kept (or downloads it), checks it is
-  `com.kchess.app` signed by the same team, takes its place and opens it. Ad hoc signed
-  installations link to a manual download.
-- **Linux**: the AppImage replaces the running one; the `.deb` (package `kchess`, `/opt/KChess`)
-  upgrades the Electron package in place and dpkg removes its files. The Snap keeps the store name
-  `kchess` and its plugs.
-- **The profile**: the app opens the same folder. The core takes over what the Electron renderer
-  kept in `localStorage` (studies, games and sessions from before the core kept them, and page
-  settings) and opens Lichess logins sealed with Electron's `safeStorage`, sealing them again with
-  the profile's own key (`crates/kchess-electron-legacy`). It does all of it in the background at
-  the first start, every stored login included, and records `electron:migrated` (the release) in
-  the profile only once everything worked; until then each start tries again
-  (`crates/kchess-core/src/electron_migration.rs`).
+Releases up to 2026.10.15 were an Electron app, whose updater (electron-updater) reads
+`latest*.yml` from the newest published release. Every release sends it to one frozen
+stepping-stone release, `STEP` in `tooling/xtask/src/electron_step.rs`: the release job's
+`cargo xtask electron-step` checks the step's original installers against their pinned size,
+SHA-256 and SHA-512 and against the step's `SHA256SUMS.txt` signed by the release key, then writes
+manifests whose `url` is `../<step tag>/<name>`, which electron-updater resolves into the step's own
+release. The step's installers keep the Electron app's identity (the Windows GUID, install folder
+and executables, the `.deb` package and `/opt/KChess`, a Mac zip bridge for the
+`com.kchess.electron` installations from before 2026.10.12), take over the Electron profile whole
+at their first start (`electron:migrated` in the profile), and then update themselves to the newest
+release like any KChess. Never change the step or skip the release job's step: Electron
+installations from any earlier version depend on it.
 
 Without signing credentials, Windows releases are unsigned and macOS builds are ad hoc signed, so on
 first launch macOS says it can't verify the developer: open **System Settings → Privacy &
@@ -116,11 +102,11 @@ creating/pushing a tag or publishing a release.
   is permanent: ship fixes with the next version and a new tag. Never bypass the
   `attach-draft-release` guard with a direct `gh release upload --clobber`.
 - Supported downloads: macOS **Apple Silicon (arm64) only** (`.dmg` and `.zip`), Windows
-  x64 (`.exe`), Linux x64 (`.AppImage` and `.deb`), and the Snap, as `KChess-*` with
-  `latest*.yml`. Every Electron installation ever released updates itself through those
-  manifests: keep their names, the Windows GUID, install folder, executable and uninstaller
-  names, the `.deb` package and `/opt/KChess` layout, and the Mac zip's Electron bridge
-  (`legacy/KChess.app`, `com.kchess.electron`) (`tooling/xtask/src/package`).
+  x64 (`.exe`), Linux x64 (`.AppImage` and `.deb`), and the Snap, as `KChess-*`. Keep their
+  names, the Windows GUID, install folder, executable and uninstaller names, the `.deb` package
+  and `/opt/KChess` layout: installed KChess apps update through them. Electron installations
+  update to the stepping-stone release through the `latest*.yml` the release job writes; don't
+  change that step.
   Keep `SHA256SUMS.txt` with the installers. Verify all packages and checksums before
   publishing; macOS ZIPs are required for the update feed.
 

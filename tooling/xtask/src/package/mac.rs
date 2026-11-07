@@ -1,12 +1,7 @@
 //! macOS: the `.app` bundle, signed (ad hoc, or Developer ID with the hardened runtime and
-//! notarization), as a `.zip` (what the updaters install) and a `.dmg` (what people download).
-//!
-//! The zip also holds `legacy/KChess.app`, the Electron bridge (`apps/electron-bridge`): Electron
-//! releases before 2026.10.12 were `com.kchess.electron`, and Squirrel.Mac only installs a bundle
-//! with the running app's identifier, which it looks for anywhere in the zip. The bridge has that
-//! identifier and puts this KChess in its place. Its executable is named like the app because
-//! ShipIt names the installed folder after the update's executable (`SQRLInstaller.m`), so with
-//! any other name an update left `/Applications/<executable>.app`, which Spotlight never finds.
+//! notarization), as a `.zip` (what the updater installs) and a `.dmg` (what people download).
+//! Electron installations never install this zip: they step through the frozen release
+//! (`electron_step`), whose zip carries the bridge for `com.kchess.electron`.
 
 use std::path::{Path, PathBuf};
 
@@ -22,9 +17,6 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// The identifier of the Electron releases before 2026.10.12, which the bridge carries.
-const ELECTRON_APP_ID: &str = "com.kchess.electron";
-
 pub fn info_plist(identity: &Identity) -> String {
     plist(identity, identity.app_id, "kchess", false, false)
 }
@@ -33,11 +25,6 @@ pub fn info_plist(identity: &Identity) -> String {
 /// Connect otherwise asks about for every build.
 pub fn store_plist(identity: &Identity) -> String {
     plist(identity, identity.app_id, "kchess", false, true)
-}
-
-/// The bridge's: Electron's identifier, and no Dock icon while it works.
-fn bridge_plist(identity: &Identity) -> String {
-    plist(identity, ELECTRON_APP_ID, identity.name, true, false)
 }
 
 fn plist(
@@ -180,21 +167,6 @@ fn notarize(apps: &[&Path], stage: &Path) -> Result {
     Ok(())
 }
 
-/// The Electron bridge's bundle at `app`, signed.
-fn bridge(identity: &Identity, built: &Built, app: &Path, stage: &Path) -> Result {
-    let contents = app.join("Contents");
-    copy_program(&built.bridge, &contents.join("MacOS").join(identity.name))?;
-    std::fs::create_dir_all(contents.join("Resources")).map_err(|cause| cause.to_string())?;
-    std::fs::copy(
-        root().join("apps/gpui/build/icon.icns"),
-        contents.join("Resources/icon.icns"),
-    )
-    .map_err(|cause| cause.to_string())?;
-    std::fs::write(contents.join("Info.plist"), bridge_plist(identity))
-        .map_err(|cause| cause.to_string())?;
-    sign(app, &[], stage)
-}
-
 /// The unsigned bundle at `app`, with `plist`; the programs and libraries in it that are signed
 /// before it. The app finds Stockfish, Fairy-Stockfish, the core service and the voice runtime beside itself
 /// (apps/gpui/src/profile.rs, core.rs); the command line only where it can reach the core, which
@@ -242,17 +214,13 @@ pub fn package(
     let app = stage.join(format!("{}.app", identity.name));
     let nested = assemble(built, &app, &info_plist(identity), true)?;
     sign(&app, &nested, stage)?;
-    let bridged = stage.join("zip");
-    let bridge_app = bridged
-        .join("legacy")
-        .join(format!("{}.app", identity.name));
-    bridge(identity, built, &bridge_app, stage)?;
-    notarize(&[&app, &bridge_app], stage)?;
+    notarize(&[&app], stage)?;
+    let zipped = stage.join("zip");
     run(
         "ditto",
         &[
             &text(&app),
-            &text(&bridged.join(format!("{}.app", identity.name))),
+            &text(&zipped.join(format!("{}.app", identity.name))),
         ],
     )?;
 
@@ -262,7 +230,7 @@ pub fn package(
     // ditto keeps the bundles' symlinks, permissions and signatures, as Squirrel.Mac expects.
     run(
         "ditto",
-        &["-c", "-k", "--sequesterRsrc", &text(&bridged), &text(&zip)],
+        &["-c", "-k", "--sequesterRsrc", &text(&zipped), &text(&zip)],
     )?;
     say("Making the disk image…");
     let image = stage.join("dmg");
@@ -306,15 +274,11 @@ fn plist_value<'a>(plist: &'a str, key: &str) -> Option<&'a str> {
     value.split_once("</string>").map(|(value, _)| value)
 }
 
-/// What every Mac install updates from must be in the zip: this KChess, and the bridge an
-/// Electron release before 2026.10.12 installs (with its identifier, and its executable named so
-/// ShipIt installs it as `KChess.app`), each signed. `entry` reads one file of the zip.
+/// What the updater installs must be in the zip: this KChess, signed. `entry` reads one file of
+/// the zip.
 fn check_zip(identity: &Identity, mut entry: impl FnMut(&str) -> Option<Vec<u8>>) -> Result {
     let app = format!("{}.app/Contents", identity.name);
-    let bundles = [
-        (app.clone(), identity.app_id, "kchess"),
-        (format!("legacy/{app}"), ELECTRON_APP_ID, identity.name),
-    ];
+    let bundles = [(app, identity.app_id, "kchess")];
     for (contents, app_id, executable) in bundles {
         let plist = entry(&format!("{contents}/Info.plist"))
             .ok_or_else(|| format!("The zip has no {contents}/Info.plist."))?;
@@ -354,7 +318,7 @@ fn verify_zip(identity: &Identity, zip: &Path) -> Result {
         file.read_to_end(&mut bytes).ok()?;
         Some(bytes)
     })?;
-    say("The zip holds KChess and the Electron bridge.");
+    say("The zip holds KChess.");
     Ok(())
 }
 
@@ -362,48 +326,32 @@ fn verify_zip(identity: &Identity, zip: &Path) -> Result {
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_bridge_executable_is_named_like_the_app() {
-        // ShipIt installs the update as `<executable>.app`; 2026.10.18 landed as
-        // `/Applications/kchess-electron-bridge.app`.
-        let identity = Identity::new("2026.10.19".into());
-        let plist = bridge_plist(&identity);
-        assert!(plist.contains("<key>CFBundleExecutable</key>\n  <string>KChess</string>"));
-        assert!(plist.contains("<string>com.kchess.electron</string>"));
-    }
-
-    fn zip_of(identity: &Identity, bridge: String) -> std::collections::HashMap<String, Vec<u8>> {
+    fn zip_of(identity: &Identity) -> std::collections::HashMap<String, Vec<u8>> {
         let mut files = std::collections::HashMap::new();
-        for (dir, plist, executable) in [
-            ("KChess.app", info_plist(identity), "kchess"),
-            ("legacy/KChess.app", bridge, "KChess"),
-        ] {
-            files.insert(format!("{dir}/Contents/Info.plist"), plist.into_bytes());
-            files.insert(format!("{dir}/Contents/MacOS/{executable}"), vec![0]);
-            files.insert(
-                format!("{dir}/Contents/_CodeSignature/CodeResources"),
-                vec![0],
-            );
-        }
+        let dir = "KChess.app";
+        files.insert(
+            format!("{dir}/Contents/Info.plist"),
+            info_plist(identity).into_bytes(),
+        );
+        files.insert(format!("{dir}/Contents/MacOS/kchess"), vec![0]);
+        files.insert(
+            format!("{dir}/Contents/_CodeSignature/CodeResources"),
+            vec![0],
+        );
         files
     }
 
     #[test]
-    fn the_zip_must_carry_the_bridge_as_electron_installs_it() {
-        let identity = Identity::new("2026.10.19".into());
-        let good = zip_of(&identity, bridge_plist(&identity));
+    fn the_zip_must_carry_the_signed_app() {
+        let identity = Identity::new("2026.12.0".into());
+        let good = zip_of(&identity);
         assert_eq!(check_zip(&identity, |name| good.get(name).cloned()), Ok(()));
 
-        // 2026.10.18's bridge, whose executable ShipIt installed as kchess-electron-bridge.app.
-        let renamed = bridge_plist(&identity).replace(
-            "<key>CFBundleExecutable</key>\n  <string>KChess</string>",
-            "<key>CFBundleExecutable</key>\n  <string>kchess-electron-bridge</string>",
-        );
-        let bad = zip_of(&identity, renamed);
-        assert!(check_zip(&identity, |name| bad.get(name).cloned()).is_err());
+        let mut unsigned = zip_of(&identity);
+        unsigned.retain(|name, _| !name.contains("_CodeSignature"));
+        assert!(check_zip(&identity, |name| unsigned.get(name).cloned()).is_err());
 
-        let mut missing = zip_of(&identity, bridge_plist(&identity));
-        missing.retain(|name, _| !name.starts_with("legacy/"));
-        assert!(check_zip(&identity, |name| missing.get(name).cloned()).is_err());
+        let older = zip_of(&Identity::new("2026.11.0".into()));
+        assert!(check_zip(&identity, |name| older.get(name).cloned()).is_err());
     }
 }

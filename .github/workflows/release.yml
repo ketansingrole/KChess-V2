@@ -46,9 +46,8 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: git merge-base --is-ancestor HEAD origin/main
 
-  # KChess for every platform, with the update manifests the Electron app's updater reads
-  # (`latest*.yml`), so it installs this over itself. Signed and notarized on macOS with the
-  # Developer ID when its secrets are set, ad hoc otherwise.
+  # KChess for every platform. Signed and notarized on macOS with the Developer ID when its
+  # secrets are set, ad hoc otherwise.
   package:
     # Only a validated commit is packaged, and only a `v*` tag reaches the `release` environment
     # that holds the Developer ID and notarization secrets: a manual run builds ad hoc.
@@ -121,7 +120,7 @@ jobs:
           unpacked="$RUNNER_TEMP/kchess-zip"
           rm -rf "$unpacked" && mkdir -p "$unpacked"
           ditto -x -k apps/gpui/dist/KChess-*-mac-arm64.zip "$unpacked"
-          for mac_app in "$unpacked/KChess.app" "$unpacked/legacy/KChess.app"; do
+          for mac_app in "$unpacked/KChess.app"; do
             codesign --verify --deep --strict --verbose=2 "$mac_app"
             signing_team="$(codesign --display --verbose=4 "$mac_app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
             if [ "$signing_team" != "$EXPECTED_TEAM_ID" ]; then
@@ -131,23 +130,18 @@ jobs:
             spctl --assess --type execute --verbose=2 "$mac_app"
             xcrun stapler validate "$mac_app"
           done
-          # Squirrel.Mac in an Electron release before 2026.10.12 installs only what meets its
-          # own designated requirement: the bridge must.
-          codesign --verify --deep --strict -R "=identifier \"com.kchess.electron\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = \"$EXPECTED_TEAM_ID\"" "$unpacked/legacy/KChess.app"
       - name: Verify every supported package exists
         shell: bash
         run: |
           case "${{ runner.os }}" in
-            macOS) manifest=latest-mac.yml; packages="KChess-*-mac-arm64.dmg KChess-*-mac-arm64.zip" ;;
-            Windows) manifest=latest.yml; packages="KChess-*-win-x64.exe" ;;
-            Linux) manifest=latest-linux.yml; packages="KChess-*-linux-x86_64.AppImage KChess-*-linux-amd64.deb" ;;
+            macOS) packages="KChess-*-mac-arm64.dmg KChess-*-mac-arm64.zip" ;;
+            Windows) packages="KChess-*-win-x64.exe" ;;
+            Linux) packages="KChess-*-linux-x86_64.AppImage KChess-*-linux-amd64.deb" ;;
           esac
           for pattern in $packages; do
             found=$(find apps/gpui/dist -maxdepth 1 -name "$pattern" -size +0 | head -n 1)
             test -n "$found" || { echo "::error::Missing package: $pattern"; exit 1; }
           done
-          # The Electron app's updater finds the app replacing it through these.
-          test -s "apps/gpui/dist/$manifest" || { echo "::error::Missing update metadata: $manifest"; exit 1; }
       # The release job writes one SHA256SUMS.txt for every package.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -197,6 +191,14 @@ jobs:
           pattern: kchess-*
           path: packages
           merge-multiple: true
+      # Electron's updater reads `latest*.yml` from the newest release: they send every Electron
+      # installation to the frozen stepping-stone release's own installers, checked against the
+      # pins and its signed checksums first (`tooling/xtask/src/electron_step.rs`). Never skip it.
+      - name: Point Electron installs at the stepping-stone release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: cargo xtask electron-step packages
       - name: Add checksums
         working-directory: packages
         run: sha256sum * > SHA256SUMS.txt
