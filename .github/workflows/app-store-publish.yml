@@ -97,15 +97,16 @@ jobs:
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: |
           gh release view "$RELEASE_TAG" --json body --jq .body > "$RUNNER_TEMP/beta-notes.md"
-          notes="$(python3 - "$RUNNER_TEMP/beta-notes.md" <<'PY'
+          # Not inside `$(...)`: bash ends a command substitution at the heredoc's backtick.
+          python3 - "$RUNNER_TEMP/beta-notes.md" "$RUNNER_TEMP/beta-notes.txt" <<'PY'
           import re, sys
           notes = open(sys.argv[1]).read()
           notes = re.sub(r"^#+\s*", "", notes, flags=re.M)
           notes = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", notes)
           notes = notes.replace("**", "").replace("`", "").strip()
-          print((notes or "Improvements and fixes.")[:4000])
+          open(sys.argv[2], "w").write((notes or "Improvements and fixes.")[:4000])
           PY
-          )"
+          notes="$(cat "$RUNNER_TEMP/beta-notes.txt")"
           asc publish testflight --app "$ASC_APP_ID" --platform MAC_OS --build-id "$BUILD_ID" \
             --group "Public Beta" --test-notes "$notes" --locale en-US \
             --submit --confirm --notify --output table

@@ -267,7 +267,11 @@ pub fn fast() -> Result {
     if touches_dependencies(&files) {
         step("notices", crate::licenses::check_notices)?;
     }
-    if !files.iter().any(|file| builds_into_a_package(file)) {
+    // xtask's tests check the workflows' scripts (`every_workflow_step_parses_in_bash`).
+    let workflows = files
+        .iter()
+        .any(|file| file.starts_with(".github/workflows/"));
+    if !workflows && !files.iter().any(|file| builds_into_a_package(file)) {
         say("No Rust changes since main.");
         return Ok(());
     }
@@ -287,6 +291,9 @@ pub fn fast() -> Result {
         )
     })?;
     let mut changed: Vec<String> = files.iter().filter_map(|file| package_of(file)).collect();
+    if workflows {
+        changed.push("xtask".into());
+    }
     changed.sort();
     changed.dedup();
     if changed.is_empty()
@@ -589,5 +596,117 @@ mod tests {
         assert!(!builds_into_a_package("docs/releasing.md"));
         assert!(!builds_into_a_package(".github/workflows/ci.yml"));
         assert!(!builds_into_a_package("AGENTS.md"));
+    }
+
+    /// Each workflow step's shell script that runs on bash, with its line: every step of a
+    /// workflow that never runs on Windows, and elsewhere those that say `shell: bash` (a Windows
+    /// runner's default shell is PowerShell).
+    fn bash_steps(text: &str) -> Vec<(usize, String)> {
+        let windows = text.contains("windows");
+        let lines: Vec<&str> = text.lines().collect();
+        let indent = |line: &str| line.len() - line.trim_start().len();
+        let mut found = Vec::new();
+        let mut start = 0;
+        while start < lines.len() {
+            let line = lines[start];
+            if !line.trim_start().starts_with("- ") {
+                start += 1;
+                continue;
+            }
+            // The step runs to the next item at its indentation or less.
+            let item = indent(line);
+            let end = (start + 1..lines.len())
+                .find(|&n| {
+                    let next = lines[n];
+                    !next.trim().is_empty()
+                        && (indent(next) < item
+                            || (indent(next) == item && next.trim_start().starts_with("- ")))
+                })
+                .unwrap_or(lines.len());
+            let step = &lines[start..end];
+            let key = |name: &str| {
+                step.iter().position(|line| {
+                    let trimmed = line.trim_start().trim_start_matches("- ");
+                    trimmed.starts_with(&format!("{name}:"))
+                })
+            };
+            let shell = key("shell").map(|n| step[n].split(':').nth(1).unwrap_or("").trim());
+            let runs_on_bash = match shell {
+                Some(shell) => shell == "bash",
+                None => !windows,
+            };
+            if let Some(run) = key("run")
+                && runs_on_bash
+            {
+                let head = step[run]
+                    .split_once("run:")
+                    .map(|(_, rest)| rest.trim())
+                    .unwrap_or("");
+                let script = if head == "|" || head == ">" {
+                    let base = indent(step[run]);
+                    step[run + 1..]
+                        .iter()
+                        .take_while(|line| line.trim().is_empty() || indent(line) > base)
+                        .map(|line| line.get(base + 2..).unwrap_or("").to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    head.to_string()
+                };
+                found.push((start + run + 1, script));
+            }
+            start += 1;
+        }
+        found
+    }
+
+    /// 2026-11-07: a heredoc inside `$(...)` with a backtick in it parsed in zsh but not in bash,
+    /// and the TestFlight step failed on the first release that ran it. Every bash step parses.
+    #[cfg(unix)]
+    #[test]
+    fn every_workflow_step_parses_in_bash() {
+        let dir = crate::util::root().join(".github/workflows");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "yml") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            for (line, script) in bash_steps(&text) {
+                let mut bash = std::process::Command::new("bash")
+                    .arg("-n")
+                    .stdin(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                use std::io::Write as _;
+                bash.stdin
+                    .take()
+                    .unwrap()
+                    .write_all(script.as_bytes())
+                    .unwrap();
+                let out = bash.wait_with_output().unwrap();
+                assert!(
+                    out.status.success(),
+                    "{}:{line} does not parse in bash: {}",
+                    path.display(),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 20, "only {checked} steps found");
+    }
+
+    #[test]
+    fn bash_steps_are_found_with_their_shell() {
+        let text = "jobs:\n  a:\n    runs-on: macos-latest\n    steps:\n      - name: One\n        run: |\n          echo \"$(date)\"\n          echo two\n      - run: echo three\n";
+        let steps = bash_steps(text);
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].1, "echo \"$(date)\"\necho two");
+        assert_eq!(steps[1].1, "echo three");
+        let windows = "jobs:\n  a:\n    runs-on: windows-latest\n    steps:\n      - run: Get-Item x\n      - shell: bash\n        run: echo bash\n";
+        assert_eq!(bash_steps(windows), vec![(7, "echo bash".to_string())]);
     }
 }
