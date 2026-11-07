@@ -983,8 +983,29 @@ impl LocalPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let now = self.now();
-        let stacked = crate::prefs::get(cx, "kchess:clock-layout", ClockLayout::Horizontal)
+        let vertical = crate::prefs::get(cx, "kchess:clock-layout", ClockLayout::Horizontal)
             == ClockLayout::Vertical;
+        // The clocks take the board's place, so switching modes moves nothing else: its side
+        // across, and its column's height beside the panel (its side again when stacked).
+        let board_size = self.board_size(window);
+        let page_stacked = self.layout.is_stacked();
+        let area = size(
+            board_size,
+            if page_stacked {
+                board_size
+            } else {
+                self.layout.panel_height_px(board_size)
+            },
+        );
+        let face_size = if vertical {
+            size(area.width, (area.height - FACE_GAP) / 2.)
+        } else {
+            size((area.width - FACE_GAP) / 2., area.height)
+        };
+        // As large as the face holds "10:00" with its lines above and below.
+        let digits = ((face_size.width - px(32.)) / 3.2)
+            .min((face_size.height - px(120.)) / 1.2)
+            .clamp(px(36.), px(180.));
         let mut face = |side: Side, index: usize, cx: &mut Context<Self>| {
             let running = self.clock.running == Some(side);
             let flagged = self.clock.flagged == Some(side);
@@ -1073,7 +1094,7 @@ impl LocalPage {
                         .opacity(0.75)
                         .child(format!("Player {index}")),
                 )
-                .child(crate::widgets::timer(time.clone(), px(120.)))
+                .child(crate::widgets::timer(time.clone(), digits))
                 .child(div().text_size(px(14.)).opacity(0.75).child(
                     crate::widgets::format_counted(moves as f64, "move", "moves"),
                 ))
@@ -1110,68 +1131,101 @@ impl LocalPage {
                     None => face.child(content),
                 })
         };
-        let faces = if stacked {
-            v_flex().flex_1().gap(px(16.)).min_h(px(480.))
-        } else {
-            h_flex()
-                .flex_1()
-                .items_stretch()
-                .gap(px(16.))
-                .min_h(px(300.))
-        }
-        .child(face(Side::Top, 1, cx))
-        .child(face(Side::Bottom, 2, cx));
+        let faces = if vertical { v_flex() } else { h_flex() }
+            .id("local-clock-faces")
+            .w(area.width)
+            .h(area.height)
+            .flex_none()
+            .items_stretch()
+            .gap(FACE_GAP)
+            .child(face(Side::Top, 1, cx))
+            .child(face(Side::Bottom, 2, cx));
         let [top_minutes, bottom_minutes, increment] = &self.clock_inputs;
-        let small_input = |input: &Entity<InputState>, name: &'static str| {
-            div()
-                .w(px(64.))
-                .child(Input::new(input).small().aria_label(name))
-        };
-        let label = |text: &'static str| {
-            div()
-                .text_size(px(12.))
-                .font_weight(FontWeight::MEDIUM)
+        let number = |input: &Entity<InputState>, name: &'static str, unit: &'static str| {
+            h_flex()
+                .gap(px(6.))
+                .text_size(px(13.))
                 .text_color(palette.text_muted)
-                .child(text)
+                .child(
+                    div()
+                        .w(px(64.))
+                        .child(Input::new(input).small().aria_label(name)),
+                )
+                .child(unit)
         };
-        // The same panel as the shared board's, at its right with the tabs on top, so switching
-        // modes moves nothing; the clocks take the board's place.
-        // Beside the clocks while both fit (the clocks at least 240px), under them otherwise, as
-        // the shared board's panel goes under the board.
-        let padding = crate::play_layout::side_padding(window);
-        let stacked = self.layout.width(window)
-            < px(240.) + crate::play_layout::LAYOUT_GAP + PANEL_ZEN + padding * 2.;
+        let row = |title: &'static str, control: AnyElement| {
+            widgets::setting_row(widgets::setting_info(title, None, palette), control)
+        };
+        let rotate = h_flex()
+            .gap(px(8.))
+            .children(
+                [(Side::Top, 1usize), (Side::Bottom, 2)].map(|(side, index)| {
+                    let degrees = Self::rotation(side, cx);
+                    Button::new(("clock-rotate", index))
+                        .small()
+                        .outline()
+                        .icon(icon("rotate-cw"))
+                        .label(format!("{index} · {degrees}°"))
+                        .accessibility_label(format!(
+                            "Rotate Player {index} clock, currently {degrees} degrees"
+                        ))
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            Self::rotate(side, cx);
+                            cx.notify();
+                        }))
+                }),
+            );
+        let running = self.clock.running.is_some();
+        let zen = cx
+            .global::<SettingsHandle>()
+            .0
+            .read(cx)
+            .settings
+            .frontend
+            .zen_mode;
+        // The shared board's panel's place and size, its actions at the foot as there.
         let panel = widgets::side_panel(palette)
             .id("local-clock-panel")
-            .map(|panel| {
-                if stacked {
-                    panel.w_full()
-                } else {
-                    panel.w(PANEL_ZEN).overflow_y_scroll()
-                }
-            })
-            .flex_none()
-            .gap(px(16.))
-            .child(mode_tabs(Mode::Clock, palette, cx))
+            .h(self.layout.panel_height(board_size))
+            .flex_1()
+            .min_w(PANEL_MIN)
+            .max_w(if zen { PANEL_ZEN } else { PANEL_MAX })
+            .child(widgets::setting_list(
+                [
+                    row(
+                        "Player 1",
+                        number(top_minutes, "Player 1 minutes", "min").into_any_element(),
+                    ),
+                    row(
+                        "Player 2",
+                        number(bottom_minutes, "Player 2 minutes", "min").into_any_element(),
+                    ),
+                    row(
+                        "Increment",
+                        number(increment, "Increment in seconds", "s").into_any_element(),
+                    ),
+                    row(
+                        "Layout",
+                        div()
+                            .w(px(160.))
+                            .child(
+                                Select::new(&self.clock_layout)
+                                    .small()
+                                    .accessibility_label("Clock layout"),
+                            )
+                            .into_any_element(),
+                    ),
+                    row("Rotate", rotate.into_any_element()),
+                ],
+                palette,
+            ))
+            .child(div().flex_1())
             .child(
                 h_flex()
                     .gap(px(8.))
-                    .child(
-                        Button::new("clock-start")
-                            .primary()
-                            .flex_1()
-                            .icon(if self.clock.running.is_some() {
-                                icon("pause")
-                            } else {
-                                icon("play")
-                            })
-                            .label(if self.clock.running.is_some() {
-                                "Pause"
-                            } else {
-                                "Start"
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| this.start_or_pause(cx))),
-                    )
+                    .pt(px(14.))
+                    .border_t_1()
+                    .border_color(palette.border)
                     .child(
                         Button::new("clock-reset")
                             .outline()
@@ -1179,99 +1233,54 @@ impl LocalPage {
                             .icon(icon("rotate-ccw"))
                             .label("Reset")
                             .on_click(cx.listener(|this, _, _, cx| this.reset_clock(cx))),
+                    )
+                    .child(
+                        Button::new("clock-start")
+                            .primary()
+                            .flex_1()
+                            .icon(if running { icon("pause") } else { icon("play") })
+                            .label(if running { "Pause" } else { "Start" })
+                            .tooltip("Space switches turns · P pauses")
+                            .on_click(cx.listener(|this, _, _, cx| this.start_or_pause(cx))),
                     ),
-            )
-            .child(
-                v_flex().gap(px(6.)).child(label("Time")).child(
-                    h_flex()
-                        .gap(px(4.))
-                        .text_size(px(14.))
-                        .child(small_input(top_minutes, "Player 1 minutes"))
-                        .child(div().text_color(palette.text_muted).child("/"))
-                        .child(small_input(bottom_minutes, "Player 2 minutes"))
-                        .child("min +")
-                        .child(small_input(increment, "Increment in seconds"))
-                        .child("s"),
-                ),
-            )
-            .child(
-                v_flex().gap(px(6.)).child(label("Layout")).child(
-                    Select::new(&self.clock_layout)
-                        .small()
-                        .accessibility_label("Clock layout"),
-                ),
-            )
-            .child(
-                v_flex()
-                    .gap(px(6.))
-                    .child(label("Rotate"))
-                    .child(h_flex().gap(px(8.)).children(
-                        [(Side::Top, 1usize), (Side::Bottom, 2)].map(|(side, index)| {
-                            let degrees = Self::rotation(side, cx);
-                            Button::new(("clock-rotate", index))
-                                .small()
-                                .outline()
-                                .flex_1()
-                                .icon(icon("rotate-cw"))
-                                .label(format!("Player {index} · {degrees}°"))
-                                .accessibility_label(format!(
-                                    "Rotate Player {index} clock, currently {degrees} degrees"
-                                ))
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    Self::rotate(side, cx);
-                                    cx.notify();
-                                }))
-                        }),
-                    )),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(palette.text_muted)
-                    .child("Space switches turns · P pauses"),
             );
-        let page = if stacked {
-            v_flex()
-        } else {
-            h_flex().items_stretch()
-        };
-        page.id("local-clock")
-            .relative()
-            .size_full()
-            .when(stacked, |page| page.overflow_y_scroll())
-            .gap(crate::play_layout::LAYOUT_GAP)
-            .pt(crate::play_layout::PAGE_TOP)
-            .pb(crate::play_layout::PAGE_BOTTOM)
-            .px(padding)
-            .child(self.layout.probe(cx))
-            .child(
-                faces
-                    .min_w(px(240.))
-                    .when(stacked, |faces| faces.flex_none()),
-            )
-            .child(panel)
+        let tabs = mode_tabs(Mode::Clock, palette, cx).into_any_element();
+        self.layout
+            .render_under("local-clock", tabs, faces, panel, window, cx)
             .into_any_element()
     }
 }
 
-/// "Shared board" and "Chess clock".
-fn mode_tabs(mode: Mode, palette: &Palette, cx: &mut Context<LocalPage>) -> impl IntoElement {
+/// The row above the page that holds the mode tabs, and its gap to the board: the board is
+/// sized to leave room for it.
+const MODE_BAR: Pixels = px(48.);
+/// The gap between the two clock faces.
+const FACE_GAP: Pixels = px(16.);
+
+/// "Shared board" and "Chess clock", above the page in both modes, so switching moves nothing but
+/// what is in the board's place.
+fn mode_tabs(mode: Mode, palette: &Palette, cx: &mut Context<LocalPage>) -> Div {
     let page = cx.entity().downgrade();
-    widgets::pill_tabs(
+    div().h(MODE_BAR).child(widgets::pills(
         "local-mode",
-        vec![
-            (Some(icon("users-round")), "Shared board".into()),
-            (Some(icon("timer")), "Chess clock".into()),
-        ],
+        [("users-round", "Shared board"), ("timer", "Chess clock")]
+            .into_iter()
+            .map(|(glyph, label)| widgets::Pill {
+                icon: Some(icon(glyph)),
+                label: label.into(),
+                badge: None,
+                disabled: false,
+            })
+            .collect(),
         usize::from(mode == Mode::Clock),
         move |index, _, cx| {
             let mode = if index == 1 { Mode::Clock } else { Mode::Board };
             crate::prefs::set(cx, "kchess:local-mode", mode);
             let _ = page.update(cx, |page, cx| page.after_change(cx));
         },
+        false,
         palette,
-    )
+    ))
 }
 
 impl Render for LocalPage {
@@ -1291,7 +1300,7 @@ impl Render for LocalPage {
                 .into_any_element();
         }
         let now = self.now();
-        let board_size = self.layout.board_size(window);
+        let board_size = self.board_size(window);
         let moves = self.moves();
         let shown = self.shown_ply();
         let over = self.game.over(now);
@@ -1416,8 +1425,9 @@ impl Render for LocalPage {
                 ))
                 .into_any_element()
         };
+        let tabs = mode_tabs(Mode::Board, &palette, cx).into_any_element();
         self.layout
-            .render("local-page", board_column, panel, window, cx)
+            .render_under("local-page", tabs, board_column, panel, window, cx)
             .track_focus(&self.focus)
             // ⌘Z outside the move box takes back, as the button does.
             .on_action(
@@ -1436,12 +1446,17 @@ impl Render for LocalPage {
 }
 
 impl LocalPage {
+    /// The board's side, under the mode tabs.
+    fn board_size(&self, window: &Window) -> Pixels {
+        self.layout.board_size_in(px(0.), MODE_BAR, window)
+    }
+
     /// The panel beside (or under) the board: the game's setup and status, its moves and the
     /// actions. Beside the board it is the page's `Part`, kept while only a clock face redraws.
     fn render_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let palette = *cx.global::<Palette>();
         let now = self.now();
-        let board_size = self.layout.board_size(window);
+        let board_size = self.board_size(window);
         let narrow = widgets::is_narrow(self.panel_area.size().width);
         let moves = self.moves();
         let sans = view::sans(self.setup(), &moves);
@@ -1568,7 +1583,6 @@ impl LocalPage {
             } else {
                 PANEL_MAX
             })
-            .child(mode_tabs(Mode::Board, &palette, cx))
             .child(
                 h_flex()
                     .gap(px(8.))

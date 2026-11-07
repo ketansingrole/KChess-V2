@@ -1018,6 +1018,51 @@ pub fn view_toggles(blindfold: bool, zen: bool) -> impl IntoElement {
         )
 }
 
+/// A setting's title and its optional hint, the left of a setting row.
+pub fn setting_info(
+    title: impl Into<SharedString>,
+    hint: Option<SharedString>,
+    palette: &Palette,
+) -> Div {
+    v_flex()
+        .gap(px(4.))
+        .min_w_0()
+        .child(
+            div()
+                .text_size(px(14.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(palette.highlighted)
+                .child(title.into()),
+        )
+        .children(hint.map(|hint| {
+            div()
+                .text_size(px(12.))
+                .line_height(relative(1.45))
+                .text_color(palette.text_muted)
+                .child(hint)
+        }))
+}
+
+/// A setting row: its title (and hint) on the left, taking what the control leaves, and the
+/// control at the right edge, at its own width.
+pub fn setting_row(info: Div, control: impl IntoElement) -> Div {
+    h_flex()
+        .w_full()
+        .justify_between()
+        .gap(px(24.))
+        .child(info.flex_1())
+        .child(h_flex().flex_none().justify_end().child(control))
+}
+
+/// Setting rows one under another, with dividers between them.
+pub fn setting_list(rows: impl IntoIterator<Item = Div>, palette: &Palette) -> Div {
+    v_flex().children(rows.into_iter().enumerate().map(|(index, row)| {
+        row.py(px(12.)).when(index > 0, |row| {
+            row.border_t_1().border_color(palette.border)
+        })
+    }))
+}
+
 /// A form field: its label above, and a problem below when there is one.
 pub fn field(
     label: &'static str,
@@ -1354,9 +1399,13 @@ fn entry_line(entry: Div, controls: Option<AnyElement>) -> Div {
             .gap(px(8.))
             .justify_end()
             .child(entry)
-            .children(
-                controls.map(|controls| div().max_w(relative(0.6)).min_w_0().child(controls)),
-            ),
+            .children(controls.map(|controls| {
+                div()
+                    .flex_none()
+                    .max_w(relative(0.6))
+                    .min_w_0()
+                    .child(controls)
+            })),
     )
 }
 

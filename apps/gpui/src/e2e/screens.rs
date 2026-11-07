@@ -733,6 +733,55 @@ fn low_clock() {
     }
 }
 
+/// Over the board in both of its modes, a game under way on the shared board, at every size, so
+/// switching between them can be compared by eye:
+/// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::over_the_board -- --ignored`
+/// writes `<dir>/over-the-board/<width>-<mode>.png`.
+#[test]
+#[ignore = "needs a GPU and KCHESS_SCREENSHOTS"]
+fn over_the_board() {
+    use crate::pages::local::LocalPage;
+    let out = std::env::var_os("KCHESS_SCREENSHOTS").expect("KCHESS_SCREENSHOTS names a folder");
+    let out = Path::new(&out).join("over-the-board");
+    std::fs::create_dir_all(&out).expect("the screenshot folder");
+    super::environment();
+    for (width, height) in SIZES {
+        let profile = tempfile::tempdir().expect("a temporary profile");
+        let (mut cx, window) = start(profile.path(), width, height);
+        cx.update(|cx| crate::settings::change(cx, |s| s.frontend.appearance = Appearance::Dark));
+        cx.update_window(window, |_, window, cx| {
+            crate::shell::open(Page::Local, window, cx);
+            let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+            local.update(cx, |local, cx| {
+                let setup =
+                    serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+                let clock = serde_json::json!({
+                    "white": { "minutes": 5, "increment": 3 },
+                    "black": { "minutes": 5, "increment": 3 },
+                });
+                local.replace_game(setup, clock, window, cx);
+                local.play("e2e4", window, cx);
+                local.play("e7e5", window, cx);
+            });
+        })
+        .expect("the window");
+        for (index, mode) in ["board", "clock"].into_iter().enumerate() {
+            cx.update_window(window, |_, window, cx| {
+                window.click(("local-mode", index), cx);
+            })
+            .expect("the window");
+            settle(&mut cx, window);
+            cx.capture_screenshot(window)
+                .expect("a screenshot")
+                .save(out.join(format!("{width}-{mode}.png")))
+                .expect("the screenshot saves");
+        }
+        let quit = cx.update(crate::core::quit);
+        cx.foreground_executor().block_test(quit);
+        crate::profile::TEST_DATA_DIR.set(None);
+    }
+}
+
 /// The analysis board's import dialog at the default and the smallest size:
 /// `KCHESS_SCREENSHOTS=<dir> cargo test -p kchess-gpui e2e::screens::import_dialog -- --ignored`
 /// writes `<dir>/import/<width>.png`.
