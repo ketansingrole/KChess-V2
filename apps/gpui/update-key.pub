@@ -3,3 +3,4 @@
 # `cargo xtask update-key <secret file>` makes the pair and writes the public key below;
 # the secret goes to the `release` environment's KCHESS_UPDATE_SIGNING_KEY. A tag build
 # refuses to release until this file holds a key (`cargo xtask release-verify`).
+FtDGoVgCmiOq4Hve1HOHT05VL+KZEAL2tNIn+VT8Eso=

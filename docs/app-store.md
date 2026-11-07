@@ -29,6 +29,9 @@ ad hoc in the sandbox and leaves it in `apps/gpui/dist/mas/KChess.app`.
 2. **Publishing the GitHub release:** `app-store-publish.yml` stages the App Store version with the
    listing in `app-store/` (and the release notes as What's New), attaches that build and submits
    it for review. Apple releases it when the review passes.
+   While another version is with Apple (waiting for or in review, or approved and not yet
+   released) it submits nothing, so that review never restarts: once that version is out, run
+   Publish to the App Store by hand with the newest tag.
 
 A failed upload: rerun the tag's `app-store` job; a build number is accepted once, so a build that
 reached App Store Connect needs no rerun. A failed submission: rerun Publish to the App Store, or
