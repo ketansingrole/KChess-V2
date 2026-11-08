@@ -1,10 +1,12 @@
 # Upgrades a published KChess Windows installation with a newly built installer, the way
 # electron-updater runs it (`--updated /S`), and checks what the upgrade leaves behind. The fresh
-# mode installs the new installer on a clean machine instead.
+# mode installs the new installer on a clean machine instead. The patch mode's new installer is
+# the update installer (`KChess-update.exe`), which writes the `files` folder beside it, as the
+# updater runs it after rebuilding the release from an update patch.
 # Run by .github/workflows/windows-upgrade.yml on a disposable windows-latest runner: it installs
 # software, writes to the registry and does not clean up.
 param(
-  [Parameter(Mandatory)][ValidateSet('fresh', 'default', 'custom', 'allusers')][string]$Mode,
+  [Parameter(Mandatory)][ValidateSet('fresh', 'default', 'custom', 'allusers', 'patch')][string]$Mode,
   [string]$OldInstaller,
   [Parameter(Mandatory)][string]$NewInstaller,
   [Parameter(Mandatory)][string]$NewVersion
@@ -98,6 +100,7 @@ $old = $null
 if ($Mode -ne 'fresh') {
   $oldArguments = switch ($Mode) {
     'default' { '/S' }
+    'patch' { '/S' }
     'allusers' { '/S /allusers' }
     # /D= must come last and unquoted, even with spaces.
     'custom' { "/S /D=$customFolder" }

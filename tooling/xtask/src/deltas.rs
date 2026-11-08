@@ -24,6 +24,9 @@ const WORTH: f64 = 0.75;
 /// The bundle a macOS zip holds.
 const BUNDLE: &str = "KChess.app";
 
+/// What a patch carries beside the files, by name.
+type Extras = Vec<(String, Vec<u8>)>;
+
 /// The kind of package, by its release asset's name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
@@ -83,7 +86,7 @@ fn previous(
             Some((parsed, tag.trim_start_matches('v').to_string(), assets))
         })
         .collect();
-    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.sort_by_key(|release| std::cmp::Reverse(release.0));
     found
         .into_iter()
         .take(count)
@@ -248,7 +251,7 @@ fn installed_tree(installer: &Path, work: &Path) -> Result<Tree> {
 }
 
 /// A package's files, and what its patches carry beside them, read from `path`.
-fn files(kind: Kind, path: &Path, work: &Path) -> Result<(Tree, Vec<(String, Vec<u8>)>)> {
+fn files(kind: Kind, path: &Path, work: &Path) -> Result<(Tree, Extras)> {
     let read = || std::fs::read(path).map_err(|cause| format!("{}: {cause}", path.display()));
     match kind {
         Kind::Deb => {
@@ -262,7 +265,7 @@ fn files(kind: Kind, path: &Path, work: &Path) -> Result<(Tree, Vec<(String, Vec
 }
 
 /// What a Windows patch carries beside the files: the update installer packaging made.
-fn windows_extras(version: &str) -> Result<Vec<(String, Vec<u8>)>> {
+fn windows_extras(version: &str) -> Result<Extras> {
     let identity = crate::package::Identity::new(version.to_string());
     let path = crate::package::windows::update_installer(&identity);
     let data = std::fs::read(&path).map_err(|cause| {
@@ -274,16 +277,15 @@ fn windows_extras(version: &str) -> Result<Vec<(String, Vec<u8>)>> {
     Ok(vec![(WINDOWS_INSTALLER.to_string(), data)])
 }
 
-/// Write the patch from `old` (release `from`) to `new` as `delta` when it is worth publishing;
-/// whether it was.
+/// Write the patch from `old` (release `from`) to `new` (`to`) as `delta`, with `only_worth` only when
+/// it is worth publishing; whether it is.
 fn write(
-    from: &str,
-    to: &str,
-    old: &Tree,
-    new: &Tree,
+    (from, to): (&str, &str),
+    (old, new): (&Tree, &Tree),
     extras: &[(String, Vec<u8>)],
     package_size: u64,
     delta: &Path,
+    only_worth: bool,
 ) -> Result<bool> {
     let mut out = Vec::new();
     let stats = kchess_delta::build(from, to, old, new, extras, &mut out)
@@ -303,7 +305,7 @@ fn write(
         stats.whole,
         if worth { "" } else { "; too large to publish" }
     ));
-    if worth {
+    if worth || !only_worth {
         std::fs::write(delta, &out).map_err(|cause| cause.to_string())?;
     }
     Ok(worth)
@@ -340,14 +342,37 @@ fn between(old_path: &Path, new_path: &Path) -> Result {
     let delta = new_path.with_file_name(
         kchess_delta::name(&new_name, &from).ok_or("A package without a patch name.")?,
     );
-    write(&from, &to, &old, &new, &extras, size, &delta).map(|_| ())
+    write((&from, &to), (&old, &new), &extras, size, &delta, false).map(|_| ())
+}
+
+/// `deltas --apply <patch> <installed folder> <out>`: what the Windows updater stages from a
+/// patch: the rebuilt files in `<out>/files` and the update installer beside them as
+/// `KChess-update.exe` (the Windows upgrade test runs it as an installed KChess does).
+fn apply(delta: &Path, installed: &Path, out: &Path) -> Result {
+    let text = |cause: kchess_delta::Error| cause.0;
+    let mut patch = kchess_delta::Delta::open(delta).map_err(text)?;
+    let _ = std::fs::remove_dir_all(out);
+    patch
+        .rebuild(|path| installed.join(path), &out.join("files"))
+        .map_err(text)?;
+    let installer = patch.extra(WINDOWS_INSTALLER).map_err(text)?;
+    std::fs::write(out.join("KChess-update.exe"), installer).map_err(|cause| cause.to_string())?;
+    say(&format!(
+        "{} to {} staged in {}.",
+        patch.header.from,
+        patch.header.to,
+        out.display()
+    ));
+    Ok(())
 }
 
 pub fn run(args: &[String]) -> Result {
-    if let [flag, old, new] = args
-        && flag == "--from"
-    {
-        return between(Path::new(old), Path::new(new));
+    match args {
+        [flag, old, new] if flag == "--from" => return between(Path::new(old), Path::new(new)),
+        [flag, delta, installed, out] if flag == "--apply" => {
+            return apply(Path::new(delta), Path::new(installed), Path::new(out));
+        }
+        _ => {}
     }
     let dir = args
         .first()
@@ -407,7 +432,14 @@ pub fn run(args: &[String]) -> Result {
             let (old, _) = files(*kind, &old_path, &folder)?;
             let delta =
                 dir.join(kchess_delta::name(name, from).ok_or("A package without a patch name.")?);
-            if write(from, &current, &old, &new, &extras, package_size, &delta)? {
+            if write(
+                (from, &current),
+                (&old, &new),
+                &extras,
+                package_size,
+                &delta,
+                true,
+            )? {
                 written += 1;
             }
         }
@@ -422,6 +454,48 @@ pub fn run(args: &[String]) -> Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `--apply` stages a Windows patch as the updater does: the files, and the update installer
+    /// beside them.
+    #[test]
+    fn a_windows_patch_is_staged_beside_its_installer() {
+        let dir = std::env::temp_dir().join(format!("xtask-apply-{}", std::process::id()));
+        let installed = dir.join("installed");
+        std::fs::create_dir_all(installed.join("voice")).unwrap();
+        std::fs::write(installed.join("KChess.exe"), b"old app").unwrap();
+        std::fs::write(installed.join("voice/vosk.dll"), b"voice").unwrap();
+        let old = Tree::read(&installed, |_| false).unwrap();
+        let mut new = old.clone();
+        new.insert(
+            "KChess.exe",
+            Node::File {
+                data: b"new app".to_vec(),
+                executable: false,
+            },
+        );
+        let extras = vec![(WINDOWS_INSTALLER.to_string(), b"MZ update".to_vec())];
+        let mut bytes = Vec::new();
+        kchess_delta::build("1.0.0", "1.0.1", &old, &new, &extras, &mut bytes).unwrap();
+        let delta = dir.join("win.delta");
+        std::fs::write(&delta, bytes).unwrap();
+        let out = dir.join("patch");
+        apply(&delta, &installed, &out).unwrap();
+        assert_eq!(
+            std::fs::read(out.join("files/KChess.exe")).unwrap(),
+            b"new app"
+        );
+        assert_eq!(
+            std::fs::read(out.join("files/voice/vosk.dll")).unwrap(),
+            b"voice"
+        );
+        assert_eq!(
+            std::fs::read(out.join("KChess-update.exe")).unwrap(),
+            b"MZ update"
+        );
+        std::fs::remove_file(installed.join("voice/vosk.dll")).unwrap();
+        assert!(apply(&delta, &installed, &out).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn packages_are_known_by_their_names() {
@@ -639,12 +713,35 @@ mod tests {
         changed[1000..1010].copy_from_slice(b"0123456789");
         let new = appimage_tree(changed);
         let delta = dir.join("small.delta");
-        assert!(write("1.0.0", "1.0.1", &old, &new, &[], 200_000, &delta).unwrap());
+        assert!(write(("1.0.0", "1.0.1"), (&old, &new), &[], 200_000, &delta, true).unwrap());
         assert!(kchess_delta::Delta::open(&delta).is_ok());
         let other = appimage_tree(noise(2));
         let large = dir.join("large.delta");
-        assert!(!write("1.0.0", "1.0.1", &old, &other, &[], 200_000, &large).unwrap());
+        assert!(
+            !write(
+                ("1.0.0", "1.0.1"),
+                (&old, &other),
+                &[],
+                200_000,
+                &large,
+                true
+            )
+            .unwrap()
+        );
         assert!(!large.exists());
+        // Trying a patch by hand writes it whatever its size.
+        assert!(
+            !write(
+                ("1.0.0", "1.0.1"),
+                (&old, &other),
+                &[],
+                200_000,
+                &large,
+                false
+            )
+            .unwrap()
+        );
+        assert!(large.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

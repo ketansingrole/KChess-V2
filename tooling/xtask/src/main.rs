@@ -69,6 +69,9 @@ const HELP: &str = "cargo xtask <command>
                         (apps/gpui/dist) from the latest published releases (release CI)
   deltas --from <old package> <new package>
                         Write the one patch between two packages, beside the new one
+  deltas --apply <patch> <installed folder> <out>
+                        Stage a Windows patch as the updater does: <out>/files and
+                        <out>/KChess-update.exe (the Windows upgrade test)
 ";
 
 fn main() -> ExitCode {

@@ -186,9 +186,9 @@ fn write_deb(
     let mut deb = std::io::BufWriter::new(std::fs::File::create(out).map_err(fail)?);
     deb.write_all(b"!<arch>\n").map_err(fail)?;
     let mut member = |name: &str, size: u64, data: &mut dyn std::io::Read| {
-        write!(
+        writeln!(
             deb,
-            "{name:<16}{:<12}{:<6}{:<6}{:<8}{size:<10}`\n",
+            "{name:<16}{:<12}{:<6}{:<6}{:<8}{size:<10}`",
             0, 0, 0, "100644"
         )?;
         std::io::copy(data, &mut deb)?;
