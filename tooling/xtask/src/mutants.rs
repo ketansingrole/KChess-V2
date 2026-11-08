@@ -176,11 +176,10 @@ fn recounted(lines: &[String]) -> Vec<String> {
             (Some(hunk), Some(b'-')) => hunk.old += 1,
             (Some(hunk), Some(b'+')) => hunk.new += 1,
             (Some(_), Some(b'\\')) => {}
+            // Outside a hunk is a file's header: the next file starts afresh.
             _ => {
-                shift += close(&mut out, hunk.take());
-                if line.starts_with("diff ") {
-                    shift = 0;
-                }
+                close(&mut out, hunk.take());
+                shift = 0;
             }
         }
         out.push(line.clone());
@@ -518,7 +517,64 @@ mod tests {
             hunks(&diff)[0].len() > 1,
             "the move and the edit are hunks apart: {diff}"
         );
-        for file in hunks(&diff) {
+        assert_hunks_in_order(&diff);
+    }
+
+    /// Regression: the old lines a file's hunks gained (moved code turned to context) moved the
+    /// next file's hunks too. A function moved from b.rs to the top of a.rs now leaves b.rs's
+    /// hunks where they are.
+    #[test]
+    fn a_move_between_files_shifts_only_its_own_file() {
+        let (dir, _) = repo();
+        let filler: String = (0..40).map(|n| format!("fn filler_{n}() {{}}\n")).collect();
+        std::fs::write(
+            dir.path().join("a.rs"),
+            format!("fn first() {{}}\n{filler}"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("b.rs"),
+            format!("fn b() {{}}\n{filler}\n{MOVED_FN}"),
+        )
+        .unwrap();
+        commit(dir.path());
+        let base = git(dir.path(), &["rev-parse", "HEAD"], &[0])
+            .unwrap()
+            .trim()
+            .to_string();
+        std::fs::write(
+            dir.path().join("a.rs"),
+            format!(
+                "fn first() {{}}\n{MOVED_FN}{}",
+                filler.replace("fn filler_20() {}", "fn filler_20() { edited(); }")
+            ),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("b.rs"), format!("fn b() {{}}\n{filler}")).unwrap();
+        commit(dir.path());
+        let diff = diff_since(dir.path(), &base).unwrap();
+        assert!(
+            !diff.contains("+fn moved") && !diff.contains("-fn moved"),
+            "{diff}"
+        );
+        assert_eq!(
+            hunks(&diff).iter().map(Vec::len).collect::<Vec<_>>(),
+            [2, 1],
+            "the move and the edit in a.rs, what is left in b.rs: {diff}"
+        );
+        assert_hunks_in_order(&diff);
+    }
+
+    /// Each file's hunks start where the two sides agree, and follow one another in order with
+    /// the same lines between them on both sides.
+    fn assert_hunks_in_order(diff: &str) {
+        for file in hunks(diff) {
+            // Before its first hunk a file is the same on both sides.
+            if let Some(&(old, old_count, new, _)) = file.first()
+                && old_count > 0
+            {
+                assert_eq!(old, new, "{diff}");
+            }
             for pair in file.windows(2) {
                 let ((old, old_count, new, new_count), (next_old, _, next_new, _)) =
                     (pair[0], pair[1]);

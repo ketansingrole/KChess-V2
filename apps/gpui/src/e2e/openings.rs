@@ -127,13 +127,28 @@ fn openings_that_leave_recent_let_their_preview_go(cx: &mut gpui_kit::TestAppCon
             .update(|cx| crate::prefs::set(cx, "kchess:recent-openings", vec![choice]));
         app.find(format!("recent-{line}"));
     }
-    let kept = app.cx.update(|cx| {
+    let kept = |app: &mut Harness| {
+        app.cx.update(|cx| {
+            crate::shell::view_of::<OpeningsPage>(Page::Openings, cx)
+                .expect("the page")
+                .read(cx)
+                .kept_previews()
+        })
+    };
+    let shown = kept(&mut app);
+    assert_eq!(
+        shown.len(),
+        13,
+        "the twelve popular openings and the one recent"
+    );
+    // The boards shown stay from one frame to the next, not made afresh each time.
+    app.cx.update(|cx| {
         crate::shell::view_of::<OpeningsPage>(Page::Openings, cx)
             .expect("the page")
-            .read(cx)
-            .preview_count()
+            .update(cx, |_, cx| cx.notify());
     });
-    assert_eq!(kept, 13, "the twelve popular openings and the one recent");
+    app.settle();
+    assert_eq!(kept(&mut app), shown);
 }
 
 #[gpui_kit::test]

@@ -367,10 +367,13 @@ impl OpeningsPage {
         }
     }
 
-    /// The positions with a preview board kept.
+    /// The preview boards kept, by position.
     #[cfg(test)]
-    pub(crate) fn preview_count(&self) -> usize {
-        self.previews.len()
+    pub(crate) fn kept_previews(&self) -> std::collections::BTreeMap<String, gpui_kit::EntityId> {
+        self.previews
+            .iter()
+            .map(|(fen, board)| (fen.clone(), board.entity_id()))
+            .collect()
     }
 
     /// A small board picturing a position, made once per position.
