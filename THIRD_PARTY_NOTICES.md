@@ -102,6 +102,18 @@ The variant engine is Fairy-Stockfish, compiled from its source at commit
 the source archive verified against a pinned SHA-256. It is built unmodified and without a neural
 network. Its source is available from <https://github.com/fairy-stockfish/Fairy-Stockfish>.
 
+## AppImage runtime
+
+The Linux AppImage starts with the AppImage type-2 runtime, the launcher that mounts the app and
+runs it, by the AppImage project under the MIT license. It is the unmodified official
+`runtime-x86_64` of release
+[20251108](https://github.com/AppImage/type2-runtime/releases/tag/20251108) (commit
+`dd6cebedcbddde9c82f89b011e8e1d40b6e43868`), verified when KChess is packaged against the pinned
+SHA-256 `2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d`. It is linked statically
+with musl libc (MIT), libfuse (LGPL-2.1), squashfuse (BSD-2-Clause), zstd (BSD-3-Clause) and zlib
+(zlib license), as its [license file](https://github.com/AppImage/type2-runtime/blob/dd6cebedcbddde9c82f89b011e8e1d40b6e43868/LICENSE)
+lists; its source and build scripts are at <https://github.com/AppImage/type2-runtime>.
+
 ## Offline voice recognition
 
 The speech recognition helper (`crates/kchess-voice`) loads `libvosk`, the official prebuilt
@@ -130,4 +142,5 @@ KChess is not affiliated with or endorsed by Lichess or the Stockfish team.
 ## Development and verification tooling
 
 Development-only crates (`cargo xtask`, test-only dependencies such as `regex-syntax`) and the
-tools CI installs (`cargo-llvm-cov`, NSIS, appimagetool, cargo-fuzz) do not ship in KChess.
+tools CI installs (`cargo-llvm-cov`, NSIS, appimagetool, cargo-fuzz) do not ship in KChess;
+only the AppImage runtime appimagetool embeds does (above).
