@@ -19,57 +19,71 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-pub fn info_plist(identity: &Identity) -> String {
-    plist(identity, identity.app_id, "kchess", false, false)
+/// A value in a property list.
+#[derive(Clone, Copy)]
+pub enum Value<'a> {
+    Text(&'a str),
+    True,
+    False,
 }
 
-/// The Mac App Store's: it also says KChess uses only exempt encryption (HTTPS), which App Store
-/// Connect otherwise asks about for every build.
-pub fn store_plist(identity: &Identity) -> String {
-    plist(identity, identity.app_id, "kchess", false, true)
+/// A property list of `entries`, in order: a bundle's Info.plist or a signature's entitlements.
+pub fn plist(entries: &[(&str, Value)]) -> String {
+    let mut out = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n",
+    );
+    for (key, value) in entries {
+        out.push_str(&format!("  <key>{key}</key>\n"));
+        match value {
+            Value::Text(text) => out.push_str(&format!("  <string>{}</string>\n", escape(text))),
+            Value::True => out.push_str("  <true/>\n"),
+            Value::False => out.push_str("  <false/>\n"),
+        }
+    }
+    out.push_str("</dict>\n</plist>\n");
+    out
 }
 
-fn plist(
-    identity: &Identity,
-    app_id: &str,
-    executable: &str,
-    background: bool,
-    store: bool,
-) -> String {
-    let strings = [
-        ("CFBundleName", identity.name),
-        ("CFBundleDisplayName", identity.name),
-        ("CFBundleIdentifier", app_id),
-        ("CFBundleExecutable", executable),
-        ("CFBundleIconFile", "icon"),
-        ("CFBundlePackageType", "APPL"),
-        ("CFBundleShortVersionString", &identity.version),
-        ("CFBundleVersion", &identity.version),
+/// The bundle's Info.plist. The Mac App Store's (`store`) also says KChess uses only exempt
+/// encryption (HTTPS), which App Store Connect otherwise asks about for every build.
+pub fn info_plist(identity: &Identity, store: bool) -> String {
+    let mut entries = vec![
+        ("CFBundleName", Value::Text(identity.name)),
+        ("CFBundleDisplayName", Value::Text(identity.name)),
+        ("CFBundleIdentifier", Value::Text(identity.app_id)),
+        ("CFBundleExecutable", Value::Text(identity.mac_exe)),
+        ("CFBundleIconFile", Value::Text("icon")),
+        ("CFBundlePackageType", Value::Text("APPL")),
+        ("CFBundleShortVersionString", Value::Text(&identity.version)),
+        ("CFBundleVersion", Value::Text(&identity.version)),
         (
             "LSApplicationCategoryType",
-            "public.app-category.board-games",
+            Value::Text("public.app-category.board-games"),
         ),
-        ("LSMinimumSystemVersion", "12.0"),
-        ("NSHumanReadableCopyright", super::COPYRIGHT),
-        ("NSMicrophoneUsageDescription", MICROPHONE),
+        ("LSMinimumSystemVersion", Value::Text("12.0")),
+        ("NSHumanReadableCopyright", Value::Text(super::COPYRIGHT)),
+        ("NSMicrophoneUsageDescription", Value::Text(MICROPHONE)),
+        ("NSHighResolutionCapable", Value::True),
     ];
-    let mut body = String::new();
-    for (key, value) in strings {
-        body.push_str(&format!(
-            "  <key>{key}</key>\n  <string>{}</string>\n",
-            escape(value)
-        ));
-    }
-    body.push_str("  <key>NSHighResolutionCapable</key>\n  <true/>\n");
-    if background {
-        body.push_str("  <key>LSUIElement</key>\n  <true/>\n");
-    }
     if store {
-        body.push_str("  <key>ITSAppUsesNonExemptEncryption</key>\n  <false/>\n");
+        entries.push(("ITSAppUsesNonExemptEncryption", Value::False));
     }
-    format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n{body}</dict>\n</plist>\n"
-    )
+    plist(&entries)
+}
+
+/// The Developer ID app's entitlements: the microphone is for voice input, and nothing else needs
+/// an exception to the hardened runtime.
+fn developer_id_entitlements() -> String {
+    plist(&[("com.apple.security.device.audio-input", Value::True)])
+}
+
+/// KChess's Mac packages are for Apple Silicon only.
+pub fn apple_silicon() -> Result {
+    if std::env::consts::ARCH == "aarch64" {
+        Ok(())
+    } else {
+        Err("macOS packages are Apple Silicon only.".into())
+    }
 }
 
 pub fn text(path: &Path) -> String {
@@ -91,13 +105,9 @@ fn sign(app: &Path, nested: &[PathBuf], stage: &Path) -> Result {
         return run("codesign", &["--force", "--sign", "-", &text(app)]);
     }
     say(&format!("Signing as {identity} with the hardened runtime…"));
-    // The microphone is for voice input; nothing else needs an exception to the hardened runtime.
     let entitlements = stage.join("entitlements.plist");
-    std::fs::write(
-        &entitlements,
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>com.apple.security.device.audio-input</key>\n  <true/>\n</dict>\n</plist>\n",
-    )
-    .map_err(|cause| cause.to_string())?;
+    std::fs::write(&entitlements, developer_id_entitlements())
+        .map_err(|cause| cause.to_string())?;
     let flags = [
         "--force",
         "--timestamp",
@@ -169,14 +179,20 @@ fn notarize(apps: &[&Path], stage: &Path) -> Result {
     Ok(())
 }
 
-/// The unsigned bundle at `app`, with `plist`; the programs and libraries in it that are signed
-/// before it. The app finds Stockfish, Fairy-Stockfish, the core service and the voice runtime beside itself
-/// (apps/gpui/src/profile.rs, core.rs); the command line only where it can reach the core, which
-/// a sandboxed app's core is not.
-pub fn assemble(built: &Built, app: &Path, plist: &str, cli: bool) -> Result<Vec<PathBuf>> {
+/// The unsigned bundle at `app`, the Mac App Store's with `store`; the programs and libraries in
+/// it that are signed before it. The app finds Stockfish, Fairy-Stockfish, the core service and
+/// the voice runtime beside itself (apps/gpui/src/profile.rs, core.rs); the command line only
+/// where it can reach the core, which a sandboxed (store) app's core is not.
+pub fn assemble(
+    identity: &Identity,
+    built: &Built,
+    app: &Path,
+    store: bool,
+) -> Result<Vec<PathBuf>> {
+    let cli = !store;
     let contents = app.join("Contents");
     let macos = contents.join("MacOS");
-    copy_program(&built.app, &macos.join("kchess"))?;
+    copy_program(&built.app, &macos.join(identity.mac_exe))?;
     copy_program(&built.stockfish, &macos.join("stockfish"))?;
     copy_program(&built.fairy, &macos.join("fairy-stockfish"))?;
     copy_program(&built.service, &macos.join("kchess-service"))?;
@@ -193,7 +209,8 @@ pub fn assemble(built: &Built, app: &Path, plist: &str, cli: bool) -> Result<Vec
     .map_err(|cause| cause.to_string())?;
     std::fs::copy(&built.licenses, resources.join("THIRD_PARTY_LICENSES.txt"))
         .map_err(|cause| cause.to_string())?;
-    std::fs::write(contents.join("Info.plist"), plist).map_err(|cause| cause.to_string())?;
+    std::fs::write(contents.join("Info.plist"), info_plist(identity, store))
+        .map_err(|cause| cause.to_string())?;
     nested.push(macos.join("kchess-service"));
     if cli {
         nested.push(macos.join("kchess-cli"));
@@ -203,18 +220,16 @@ pub fn assemble(built: &Built, app: &Path, plist: &str, cli: bool) -> Result<Vec
     Ok(nested)
 }
 
-/// The `.zip` and `.dmg`, as `(file name, path)`.
+/// The `.zip` and `.dmg`.
 pub fn package(
     identity: &Identity,
     built: &Built,
     stage: &Path,
     out: &Path,
 ) -> Result<Vec<PathBuf>> {
-    if std::env::consts::ARCH != "aarch64" {
-        return Err("macOS packages are Apple Silicon only.".into());
-    }
+    apple_silicon()?;
     let app = stage.join(format!("{}.app", identity.name));
-    let nested = assemble(built, &app, &info_plist(identity), true)?;
+    let nested = assemble(identity, built, &app, false)?;
     sign(&app, &nested, stage)?;
     notarize(&[&app], stage)?;
     let zipped = stage.join("zip");
@@ -297,32 +312,29 @@ fn plist_value<'a>(plist: &'a str, key: &str) -> Option<&'a str> {
 /// What the updater installs must be in the zip: this KChess, signed. `entry` reads one file of
 /// the zip.
 fn check_zip(identity: &Identity, mut entry: impl FnMut(&str) -> Option<Vec<u8>>) -> Result {
-    let app = format!("{}.app/Contents", identity.name);
-    let bundles = [(app, identity.app_id, "kchess")];
-    for (contents, app_id, executable) in bundles {
-        let plist = entry(&format!("{contents}/Info.plist"))
-            .ok_or_else(|| format!("The zip has no {contents}/Info.plist."))?;
-        let plist = String::from_utf8_lossy(&plist);
-        let expected = [
-            ("CFBundleIdentifier", app_id),
-            ("CFBundleExecutable", executable),
-            ("CFBundleShortVersionString", identity.version.as_str()),
-        ];
-        for (key, value) in expected {
-            if plist_value(&plist, key) != Some(value) {
-                return Err(format!(
-                    "{contents}/Info.plist has {key} {:?}, not {value:?}.",
-                    plist_value(&plist, key)
-                ));
-            }
+    let contents = format!("{}.app/Contents", identity.name);
+    let plist = entry(&format!("{contents}/Info.plist"))
+        .ok_or_else(|| format!("The zip has no {contents}/Info.plist."))?;
+    let plist = String::from_utf8_lossy(&plist);
+    let expected = [
+        ("CFBundleIdentifier", identity.app_id),
+        ("CFBundleExecutable", identity.mac_exe),
+        ("CFBundleShortVersionString", identity.version.as_str()),
+    ];
+    for (key, value) in expected {
+        if plist_value(&plist, key) != Some(value) {
+            return Err(format!(
+                "{contents}/Info.plist has {key} {:?}, not {value:?}.",
+                plist_value(&plist, key)
+            ));
         }
-        for file in [
-            format!("MacOS/{executable}"),
-            "_CodeSignature/CodeResources".into(),
-        ] {
-            if entry(&format!("{contents}/{file}")).is_none() {
-                return Err(format!("The zip has no {contents}/{file}."));
-            }
+    }
+    for file in [
+        format!("MacOS/{}", identity.mac_exe),
+        "_CodeSignature/CodeResources".into(),
+    ] {
+        if entry(&format!("{contents}/{file}")).is_none() {
+            return Err(format!("The zip has no {contents}/{file}."));
         }
     }
     Ok(())
@@ -374,7 +386,7 @@ mod tests {
         let dir = "KChess.app";
         files.insert(
             format!("{dir}/Contents/Info.plist"),
-            info_plist(identity).into_bytes(),
+            info_plist(identity, false).into_bytes(),
         );
         files.insert(format!("{dir}/Contents/MacOS/kchess"), vec![0]);
         files.insert(
@@ -396,5 +408,30 @@ mod tests {
 
         let older = zip_of(&Identity::new("2026.11.0".into()));
         assert!(check_zip(&identity, |name| older.get(name).cloned()).is_err());
+    }
+
+    /// The bundle's Info.plist and the Developer ID entitlements, as every KChess has had them.
+    #[test]
+    fn the_plists_keep_their_text() {
+        const HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n";
+        assert_eq!(
+            developer_id_entitlements(),
+            format!(
+                "{HEAD}  <key>com.apple.security.device.audio-input</key>\n  <true/>\n</dict>\n</plist>\n"
+            )
+        );
+        let info = info_plist(&Identity::new("2026.12.0".into()), false);
+        assert!(info.starts_with(&format!(
+            "{HEAD}  <key>CFBundleName</key>\n  <string>KChess</string>\n"
+        )));
+        assert!(info.contains(
+            "  <key>CFBundleIdentifier</key>\n  <string>com.kchess.app</string>\n  <key>CFBundleExecutable</key>\n  <string>kchess</string>\n"
+        ));
+        assert!(
+            info.ends_with("  <key>NSHighResolutionCapable</key>\n  <true/>\n</dict>\n</plist>\n")
+        );
+        assert!(info.contains(
+            "<string>Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.</string>"
+        ));
     }
 }

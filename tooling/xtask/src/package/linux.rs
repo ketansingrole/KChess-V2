@@ -268,10 +268,10 @@ base: core24
 grade: stable
 confinement: strict
 license: GPL-3.0-or-later
-website: https://ketansingrole.github.io/KChess-V2/
-source-code: https://github.com/ketansingrole/KChess-V2
-issues: https://github.com/ketansingrole/KChess-V2/issues
-contact: https://github.com/ketansingrole/KChess-V2/issues
+website: {homepage}
+source-code: https://github.com/{repository}
+issues: https://github.com/{repository}/issues
+contact: https://github.com/{repository}/issues
 platforms:
   amd64:
 
@@ -306,7 +306,9 @@ parts:
       - libx11-xcb1
       - libasound2t64
 "#,
-        super::DESCRIPTION
+        super::DESCRIPTION,
+        homepage = super::HOMEPAGE,
+        repository = crate::util::REPOSITORY,
     )
 }
 
@@ -477,6 +479,9 @@ mod tests {
         assert!(text.contains("confinement: strict"));
         assert!(text.contains("- password-manager-service"));
         assert!(text.contains("- audio-record"));
+        assert!(text.contains(
+            "website: https://ketansingrole.github.io/KChess-V2/\nsource-code: https://github.com/ketansingrole/KChess-V2\n"
+        ));
     }
 
     /// The .deb holds the staged programs under /opt/KChess, with the launcher and icon, and the

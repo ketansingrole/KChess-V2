@@ -29,30 +29,39 @@ use kchess_delta::Asset;
 
 use crate::util::{Result, root, run_with, say};
 
-// Each platform's packages use some of these; the others are for the other platforms.
-#[allow(dead_code)]
 pub const AUTHOR: &str = "Ketan Singrole";
 pub const COPYRIGHT: &str = "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.";
-#[allow(dead_code)]
+#[cfg(unix)]
 pub const HOMEPAGE: &str = "https://ketansingrole.github.io/KChess-V2/";
-#[allow(dead_code)]
+#[cfg(unix)]
 pub const SYNOPSIS: &str = "Desktop chess: Stockfish, Lichess, puzzles and training";
-#[allow(dead_code)]
+#[cfg(unix)]
 pub const DESCRIPTION: &str =
     "A desktop chess app: play Stockfish, play on Lichess, follow friends, review games.";
 
-/// Who the package installs as (each platform reads its own fields).
-#[allow(dead_code)]
+/// The Mac app (`KChess.app`), the Windows product and its install folder, and the Linux app's
+/// folder (`/opt/KChess`).
+pub const NAME: &str = "KChess";
+/// The NSIS installation's GUID: the Electron app's, so its installers upgrade it in place.
+pub const GUID: &str = "6bb66f38-a1a5-5ec8-b24f-c899466885ca";
+
+/// Who the package installs as: every KChess installation updates through these, so they never
+/// change. Each platform has only the fields it reads.
 pub struct Identity {
-    /// The Mac app, the Windows product and install folder.
     pub name: &'static str,
+    #[cfg(target_os = "macos")]
     pub app_id: &'static str,
-    /// The Windows executable's and the Linux launcher's name.
+    /// The program inside the Mac bundle (`Contents/MacOS`).
+    #[cfg(target_os = "macos")]
+    pub mac_exe: &'static str,
+    /// The Windows executable, without `.exe`.
     pub windows_exe: &'static str,
+    /// The Linux launcher, and its desktop entry's and icon's names.
+    #[cfg(unix)]
     pub linux_exe: &'static str,
-    /// The .deb package (and the Windows uninstall key's display name base).
+    /// The .deb package.
+    #[cfg(unix)]
     pub package: &'static str,
-    /// The NSIS installation's GUID: the Electron app's, so its installers upgrade it in place.
     pub guid: &'static str,
     pub version: String,
 }
@@ -60,12 +69,17 @@ pub struct Identity {
 impl Identity {
     pub fn new(version: String) -> Identity {
         Identity {
-            name: "KChess",
+            name: NAME,
+            #[cfg(target_os = "macos")]
             app_id: "com.kchess.app",
+            #[cfg(target_os = "macos")]
+            mac_exe: "kchess",
             windows_exe: "KChess",
+            #[cfg(unix)]
             linux_exe: "kchess",
+            #[cfg(unix)]
             package: "kchess",
-            guid: "6bb66f38-a1a5-5ec8-b24f-c899466885ca",
+            guid: GUID,
             version,
         }
     }

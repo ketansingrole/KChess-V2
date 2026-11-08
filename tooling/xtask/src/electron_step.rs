@@ -118,18 +118,15 @@ pub fn manifest_text(step: &Step, manifest: &str, version: &str, release_date: &
 
 /// What is wrong with `step` itself, before anything is downloaded.
 pub fn check_step(step: &Step) -> Result {
-    let version = step
-        .tag
-        .strip_prefix('v')
-        .ok_or("The step's tag must start with v.")?;
-    crate::release::parse(version)?;
+    let version = crate::release::tag_version(step.tag)?;
     for manifest in MANIFESTS {
         if !step.files.iter().any(|file| file.manifest == manifest) {
             return Err(format!("The step names no file for {manifest}."));
         }
     }
     for file in step.files {
-        // The step's own installers, never a later release's: the updater of B takes it on.
+        // The step's own installers, never a later release's: from the step, KChess's own
+        // updater brings the installation up to date.
         if kchess_delta::Asset::parse(file.name).is_none_or(|(_, of, _)| of != version) {
             return Err(format!(
                 "{} is not one of {}'s installers.",
@@ -190,7 +187,7 @@ pub fn check_sums(step: &Step, key: &[u8], sums: &[u8], signature: &str) -> Resu
 }
 
 fn download(tag: &str, name: &str, into: &Path) -> Result<Vec<u8>> {
-    let repo = std::env::var("GH_REPO").unwrap_or_else(|_| "ketansingrole/KChess-V2".into());
+    let repo = crate::util::repository();
     output(
         "gh",
         &[
@@ -215,8 +212,7 @@ fn download(tag: &str, name: &str, into: &Path) -> Result<Vec<u8>> {
 pub fn write(packages: &Path) -> Result {
     let step = STEP;
     check_step(&step)?;
-    let key = crate::update_key::public_key()
-        .ok_or("apps/gpui/update-key.pub holds no key to check the step with.")?;
+    let key = crate::update_key::require_public_key()?;
     let work = tempfile::tempdir().map_err(|cause| cause.to_string())?;
     let sums = download(step.tag, "SHA256SUMS.txt", work.path())?;
     let signature = download(step.tag, "SHA256SUMS.txt.sig", work.path())?;
@@ -227,7 +223,7 @@ pub fn write(packages: &Path) -> Result {
         say(&format!("{} matches the pinned step.", file.name));
     }
     let version = crate::util::version()?;
-    let date = now_iso();
+    let date = crate::util::iso_timestamp(crate::util::unix_now());
     std::fs::create_dir_all(packages).map_err(|cause| cause.to_string())?;
     for manifest in MANIFESTS {
         std::fs::write(
@@ -243,22 +239,10 @@ pub fn write(packages: &Path) -> Result {
     Ok(())
 }
 
-fn now_iso() -> String {
-    crate::util::iso_timestamp(crate::util::unix_now())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use ring::signature::KeyPair as _;
-
-    #[test]
-    fn manifests_are_dated_now() {
-        let date = now_iso();
-        let (year, ..) = crate::util::civil_date(crate::util::unix_now());
-        assert!(date.starts_with(&format!("{year}-")), "{date}");
-        assert!(date.ends_with(".000Z") && date.len() == 24, "{date}");
-    }
 
     fn pinned(manifest: &'static str, name: &'static str, bytes: &[u8]) -> Pinned {
         Pinned {
@@ -323,8 +307,13 @@ mod tests {
     /// URL parsing (Node's `new URL`) removes the dot segment: the step's own release.
     #[test]
     fn the_url_resolves_into_the_steps_release() {
+        let manifest = manifest_text(&STEP, "latest.yml", "2026.12.0", "x");
+        let url = manifest
+            .lines()
+            .find_map(|line| line.strip_prefix("  - url: "))
+            .unwrap();
         let base = "/ketansingrole/KChess-V2/releases/download/v2026.12.0/";
-        let joined = format!("{base}../v2026.11.4/KChess-2026.11.4-win-x64.exe");
+        let joined = format!("{base}{url}");
         let mut parts: Vec<&str> = Vec::new();
         for segment in joined.split('/') {
             match segment {
@@ -350,6 +339,11 @@ mod tests {
         files[1].name = "KChess-2026.12.0-win-x64.exe";
         bad.files = Box::leak(files.into_boxed_slice());
         assert!(check_step(&bad).is_err());
+        let mut manifest = step();
+        let mut files = manifest.files.to_vec();
+        files[0].name = "latest-mac.yml";
+        manifest.files = Box::leak(files.into_boxed_slice());
+        assert!(check_step(&manifest).is_err());
 
         let mut missing = step();
         missing.files = &missing.files[..1];
@@ -398,7 +392,7 @@ mod tests {
         assert!(check_sums(&step, &key, changed.as_bytes(), &sign(&changed)).is_err());
     }
 
-    /// Never shipped unpinned: a release with the placeholder step fails.
+    /// The frozen step passes its own checks, so every release's `electron-step` can run.
     #[test]
     fn the_shipped_step_is_complete() {
         check_step(&STEP).unwrap();

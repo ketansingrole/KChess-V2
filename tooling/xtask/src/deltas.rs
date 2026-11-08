@@ -21,8 +21,6 @@ use crate::util::{Result, output, root, run_with, say, version};
 const PREVIOUS: usize = 3;
 /// A patch is published only while it is at most this share of the whole package.
 const WORTH: f64 = 0.75;
-/// The bundle a macOS zip holds.
-const BUNDLE: &str = "KChess.app";
 
 /// What a patch carries beside the files, by name.
 type Extras = Vec<(String, Vec<u8>)>;
@@ -106,9 +104,10 @@ fn zip_tree(bytes: &[u8]) -> Result<Tree> {
         };
         tree.insert(path, node);
     }
-    let bundle = tree.under(BUNDLE);
+    let name = format!("{}.app", crate::package::NAME);
+    let bundle = tree.under(&name);
     if bundle.is_empty() {
-        return Err(format!("The zip holds no {BUNDLE}."));
+        return Err(format!("The zip holds no {name}."));
     }
     Ok(bundle)
 }
@@ -156,7 +155,8 @@ fn installed_tree(installer: &Path, work: &Path) -> Result<Tree> {
     if !folder.is_dir() {
         return Err(nothing());
     }
-    let tree = Tree::read(&folder, |path| path.starts_with("Uninstall "))
+    let uninstaller = crate::package::windows::uninstaller(crate::package::NAME);
+    let tree = Tree::read(&folder, |path| path == uninstaller)
         .map_err(|cause| format!("{}: {cause}", folder.display()))?;
     if tree.is_empty() {
         return Err(nothing());
@@ -170,7 +170,7 @@ fn installed_tree(installer: &Path, work: &Path) -> Result<Tree> {
 /// the machines that make patches run installers (the Windows package job, a disposable runner).
 fn forget_installation() {
     if cfg!(windows) {
-        let guid = crate::package::Identity::new(String::new()).guid;
+        let guid = crate::package::GUID;
         let _ = Command::new("reg")
             .args(["delete", &format!("HKCU\\Software\\{guid}"), "/f"])
             .stdout(std::process::Stdio::null())
@@ -395,7 +395,10 @@ pub fn run(args: &[String]) -> Result {
     }
     let releases: serde_json::Value = serde_json::from_str(&output(
         "gh",
-        &["api", "repos/{owner}/{repo}/releases?per_page=30"],
+        &[
+            "api",
+            &format!("repos/{}/releases?per_page=30", crate::util::repository()),
+        ],
     )?)
     .map_err(|cause| format!("The release list could not be read: {cause}"))?;
     let download = |from: &str, name: &str, folder: &Path| {
@@ -405,6 +408,8 @@ pub fn run(args: &[String]) -> Result {
                     "release",
                     "download",
                     &format!("v{from}"),
+                    "--repo",
+                    &crate::util::repository(),
                     "--pattern",
                     name,
                     "--dir",

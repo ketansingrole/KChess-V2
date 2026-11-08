@@ -54,6 +54,13 @@ pub fn update_installer(identity: &Identity) -> PathBuf {
         .join(identity.asset(Asset::WindowsUpdateInstaller))
 }
 
+/// The uninstaller every installer writes beside product `product` (`Uninstall KChess.exe`, as
+/// the Electron app's did): the next installer runs it, and the updater leaves it out of the
+/// installation's files.
+pub fn uninstaller(product: &str) -> String {
+    format!("Uninstall {product}.exe")
+}
+
 /// The installer script for the program files of `payload`.
 pub fn script(
     identity: &Identity,
@@ -66,6 +73,7 @@ pub fn script(
     let exe = identity.windows_exe;
     let version = &identity.version;
     let guid = identity.guid;
+    let uninstaller = uninstaller(product);
     let files = match payload {
         Payload::Inside(files) => format!(r#"File /r "{}\*.*""#, files.display()),
         // A copy that fails leaves no half-written installation reported as done.
@@ -96,7 +104,7 @@ RequestExecutionLevel user
 !define VERSION "{version}"
 !define INSTALL_KEY "Software\{guid}"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\{guid}"
-!define UNINSTALLER "Uninstall {product}.exe"
+!define UNINSTALLER "{uninstaller}"
 
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"

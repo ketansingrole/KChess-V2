@@ -13,6 +13,18 @@ pub fn root() -> PathBuf {
         .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
 }
 
+/// KChess's GitHub repository, whose releases installed apps update from.
+pub const REPOSITORY: &str = "ketansingrole/KChess-V2";
+
+/// The repository the release tooling works on: `GH_REPO` (CI sets it to the one it runs in, so
+/// `gh` and these agree), else KChess's.
+pub fn repository() -> String {
+    std::env::var("GH_REPO")
+        .ok()
+        .filter(|repo| !repo.is_empty())
+        .unwrap_or_else(|| REPOSITORY.to_string())
+}
+
 pub fn say(message: &str) {
     eprintln!("[xtask] {message}");
 }

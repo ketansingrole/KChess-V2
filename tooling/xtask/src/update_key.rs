@@ -16,7 +16,8 @@ fn key_file() -> std::path::PathBuf {
     root().join("apps/gpui/update-key.pub")
 }
 
-/// The committed public key, if one has been made.
+/// The committed public key, if one has been made: the base64 of 32 bytes on the file's one line
+/// that is not a comment, as the app reads it (`apps/gpui/src/updates.rs`, `parse_update_key`).
 pub fn public_key() -> Option<Vec<u8>> {
     let text = std::fs::read_to_string(key_file()).ok()?;
     let line = text
@@ -27,6 +28,15 @@ pub fn public_key() -> Option<Vec<u8>> {
         .decode(line)
         .ok()
         .filter(|key| key.len() == 32)
+}
+
+/// The committed public key, which every release step that signs or checks needs.
+pub fn require_public_key() -> Result<Vec<u8>> {
+    public_key().ok_or_else(|| {
+        "apps/gpui/update-key.pub holds no release key, so installed apps could not tell a \
+         release's checksums from replaced ones. Run `cargo xtask update-key`."
+            .into()
+    })
 }
 
 /// `update-key <secret file>`: make the pair, write the secret half to `secret` (owner-only,
@@ -98,8 +108,7 @@ fn write_private(path: &Path, text: &str) -> Result {
 /// `<file>.sig`, and check the signature against the committed public key, so a wrong secret
 /// fails the release instead of every app's update.
 pub fn sign(file: &Path) -> Result {
-    let public = public_key()
-        .ok_or("apps/gpui/update-key.pub holds no key: run `cargo xtask update-key` first.")?;
+    let public = require_public_key()?;
     let secret = std::env::var(SECRET).map_err(|_| format!("{SECRET} is not set."))?;
     let pkcs8 = base64::engine::general_purpose::STANDARD
         .decode(secret.trim())
