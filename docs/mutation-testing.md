@@ -88,3 +88,8 @@ These stay in the reports on purpose; each is listed with the reason.
   stand-in appimagetool. The binding downloads from GitHub and runs the real tool, so only
   `cargo xtask package` on Linux (CI's package job) sees it; it is excluded in
   `.cargo/mutants.toml`.
+- **The Fairy-Stockfish and voice-runtime bindings** (`fairy.rs`, `build`; `voice.rs`, `stage`):
+  they hand the real pins, `target` folders and `download` to `build_with` and `stage_with`,
+  which their tests run whole with stand-in archives. The bindings download from GitHub (and
+  `build` compiles Fairy-Stockfish), so only `cargo xtask fairy-stockfish`, `voice-runtime` and
+  `package` see them; they are excluded in `.cargo/mutants.toml`.
