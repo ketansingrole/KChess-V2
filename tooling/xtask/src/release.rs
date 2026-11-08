@@ -415,11 +415,7 @@ fn store_only(file: &str) -> bool {
 pub fn verify_snap(tag: &str, checksums: &str, digest: &str) -> Result<String> {
     parse(tag.strip_prefix('v').ok_or("Missing release tag.")?)?;
     let name = Asset::Snap.released(&tag[1..]);
-    let entries: Vec<&str> = checksums
-        .lines()
-        .filter(|line| line.ends_with(&format!("  {name}")))
-        .collect();
-    if entries.len() != 1 || entries[0] != format!("{digest}  {name}") {
+    if crate::sums::listed(checksums, &name) != [digest] {
         return Err("Snap checksum is missing, ambiguous or incorrect.".into());
     }
     Ok(name)
@@ -456,7 +452,7 @@ pub fn download_snap() -> Result {
     )?;
     let checksums = std::fs::read_to_string(root().join("packages/SHA256SUMS.txt"))
         .map_err(|cause| cause.to_string())?;
-    let digest = crate::util::sha256_file(&root().join("packages").join(&name))?;
+    let digest = crate::sums::file(&root().join("packages").join(&name))?;
     verify_snap(&tag, &checksums, &digest).map(|_| ())
 }
 

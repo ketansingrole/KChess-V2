@@ -136,11 +136,6 @@ pub fn workspace_version(manifest: &str) -> Option<String> {
     None
 }
 
-/// Lowercase hex.
-pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 /// Downloads `url` to `path` with curl (on every CI image and developer machine).
 pub fn download(url: &str, path: &Path) -> Result {
     if let Some(parent) = path.parent() {
@@ -160,12 +155,12 @@ pub fn pinned(
     path: &Path,
     fetch: impl FnOnce(&str, &Path) -> Result,
 ) -> Result {
-    if path.exists() && sha256_file(path)? == sha256 {
+    if path.exists() && crate::sums::file(path)? == sha256 {
         return Ok(());
     }
     say(&format!("Downloading {what}…"));
     fetch(url, path)?;
-    let found = sha256_file(path)?;
+    let found = crate::sums::file(path)?;
     if found == sha256 {
         return Ok(());
     }
@@ -174,13 +169,6 @@ pub fn pinned(
         "{what} from {url} has SHA-256 {found}, not the pinned {sha256}, so it was removed. \
          If upstream changed the file, re-check it and update the pin."
     ))
-}
-
-pub fn sha256_file(path: &Path) -> Result<String> {
-    use sha2::Digest;
-    let bytes =
-        std::fs::read(path).map_err(|cause| format!("Cannot read {}: {cause}", path.display()))?;
-    Ok(hex(&sha2::Sha256::digest(&bytes)))
 }
 
 #[cfg(test)]

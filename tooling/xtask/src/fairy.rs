@@ -146,7 +146,6 @@ mod tests {
     /// program naming the `ARCH` it was given.
     #[test]
     fn the_pinned_source_is_fetched_built_and_staged_once() {
-        use sha2::Digest;
         const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
         let scratch = std::env::temp_dir().join(format!("xtask-fairy-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&scratch);
@@ -174,7 +173,7 @@ mod tests {
         let source = Source {
             dir: scratch.clone(),
             commit: COMMIT,
-            sha256: crate::util::hex(&sha2::Sha256::digest(&archive)).leak(),
+            sha256: kchess_delta::digest(&archive).leak(),
             fetch: |url: &str, to: &Path| -> Result {
                 fetched.borrow_mut().push(url.to_string());
                 std::fs::create_dir_all(to.parent().unwrap()).unwrap();

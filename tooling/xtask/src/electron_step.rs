@@ -24,7 +24,7 @@ use std::path::Path;
 use base64::Engine as _;
 use sha2::Digest as _;
 
-use crate::util::{Result, hex, output, say};
+use crate::util::{Result, output, say};
 
 /// One of the stepping stone's installers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,7 +158,7 @@ pub fn matches(file: &Pinned, bytes: &[u8]) -> Result {
             file.size
         ));
     }
-    if hex(&sha2::Sha256::digest(bytes)) != file.sha256 {
+    if kchess_delta::digest(bytes) != file.sha256 {
         return Err(format!("{}'s SHA-256 is not the pinned one.", file.name));
     }
     let sha512 = base64::engine::general_purpose::STANDARD.encode(sha2::Sha512::digest(bytes));
@@ -179,13 +179,7 @@ pub fn check_sums(step: &Step, key: &[u8], sums: &[u8], signature: &str) -> Resu
         .map_err(|_| "The step's SHA256SUMS.txt is not signed by the release key.".to_string())?;
     let text = String::from_utf8_lossy(sums);
     for file in step.files {
-        let listed: Vec<&str> = text
-            .lines()
-            .filter_map(|line| line.split_once("  "))
-            .filter(|(_, name)| *name == file.name)
-            .map(|(digest, _)| digest)
-            .collect();
-        if listed != [file.sha256] {
+        if crate::sums::listed(&text, file.name) != [file.sha256] {
             return Err(format!(
                 "The step's SHA256SUMS.txt does not list {} with its pinned digest.",
                 file.name
@@ -271,7 +265,7 @@ mod tests {
             manifest,
             name,
             size: bytes.len() as u64,
-            sha256: Box::leak(hex(&sha2::Sha256::digest(bytes)).into_boxed_str()),
+            sha256: kchess_delta::digest(bytes).leak(),
             sha512: Box::leak(
                 base64::engine::general_purpose::STANDARD
                     .encode(sha2::Sha512::digest(bytes))

@@ -199,8 +199,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: cargo xtask electron-step packages
       - name: Add checksums
-        working-directory: packages
-        run: sha256sum * > SHA256SUMS.txt
+        run: cargo xtask sums packages
       # Installed apps refuse checksums the release key has not signed (apps/gpui/update-key.pub).
       - name: Sign the checksums
         env:

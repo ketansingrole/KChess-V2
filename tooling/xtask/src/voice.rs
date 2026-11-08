@@ -195,7 +195,6 @@ mod tests {
     /// helper Cargo built, the archive's libraries under their staged names and the notices.
     #[test]
     fn the_helper_is_staged_with_the_pinned_libraries_and_the_notices() {
-        use sha2::Digest;
         use std::io::Write;
         let scratch = std::env::temp_dir().join(format!("xtask-voice-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&scratch);
@@ -223,7 +222,7 @@ mod tests {
         let runtime = Runtime {
             pin: Pin {
                 archive: "v0.1/vosk-0.1.zip",
-                sha256: crate::util::hex(&sha2::Sha256::digest(&archive)).leak(),
+                sha256: kchess_delta::digest(&archive).leak(),
                 files: &[
                     ("vosk-0.1/libvosk", "libvosk.so"),
                     ("vosk-0.1/runtime", "libc.so"),

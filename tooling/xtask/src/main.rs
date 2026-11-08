@@ -19,6 +19,7 @@ mod package;
 #[cfg(unix)]
 mod pins;
 mod release;
+mod sums;
 mod update_key;
 mod util;
 mod voice;
@@ -53,6 +54,7 @@ const HELP: &str = "cargo xtask <command>
   update-key <secret file>
                         Make the release key: the secret to <secret file>, the public half
                         to apps/gpui/update-key.pub
+  sums <dir>            Write <dir>/SHA256SUMS.txt for every other file in <dir> (release CI)
   sign-sums <file>      Sign a release's SHA256SUMS.txt into <file>.sig with
                         KCHESS_UPDATE_SIGNING_KEY (CI)
   download-release-snap Fetch and verify the published release's Snap (CI)
@@ -103,6 +105,10 @@ fn main() -> ExitCode {
         Some("update-key") => match rest.first() {
             Some(path) => update_key::generate(std::path::Path::new(path)),
             None => Err("update-key needs the file to write the secret key to.".into()),
+        },
+        Some("sums") => match rest.first() {
+            Some(dir) => sums::run(std::path::Path::new(dir)),
+            None => Err("sums needs the folder of the release's files.".into()),
         },
         Some("sign-sums") => match rest.first() {
             Some(path) => update_key::sign(std::path::Path::new(path)),

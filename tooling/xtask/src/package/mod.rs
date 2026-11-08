@@ -27,7 +27,7 @@ use std::process::Command;
 
 use kchess_delta::Asset;
 
-use crate::util::{Result, hex, root, run_with, say};
+use crate::util::{Result, root, run_with, say};
 
 // Each platform's packages use some of these; the others are for the other platforms.
 #[allow(dead_code)]
@@ -240,12 +240,6 @@ fn check_released(out: &Path, identity: &Identity, kinds: &[Asset]) -> Result {
     Ok(())
 }
 
-fn sha256(path: &Path) -> Result<String> {
-    use sha2::Digest;
-    let bytes = std::fs::read(path).map_err(|cause| cause.to_string())?;
-    Ok(hex(&sha2::Sha256::digest(&bytes)))
-}
-
 pub fn run(args: &[String]) -> Result {
     let skip = args.iter().any(|arg| arg == "--skip-build");
     let snap = args.iter().any(|arg| arg == "--snap");
@@ -298,23 +292,7 @@ pub fn run(args: &[String]) -> Result {
         say(&format!("Packaged {}", package.display()));
     }
     check_released(&out, &identity, released(snap))?;
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&out)
-        .map_err(|cause| cause.to_string())?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file())
-        .collect();
-    files.sort();
-    let mut sums = String::new();
-    for path in &files {
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        sums.push_str(&format!("{}  {name}\n", sha256(path)?));
-    }
-    std::fs::write(out.join("SHA256SUMS.txt"), &sums).map_err(|cause| cause.to_string())?;
+    let sums = crate::sums::write(&out)?;
     say(&format!("Done: {}", out.display()));
     eprint!("{sums}");
     Ok(())
