@@ -692,6 +692,7 @@ impl Render for PuzzleHistory {
 mod tests {
     use super::{PuzzleHistory, compact, rows_of};
     use crate::e2e::Harness;
+    use gpui_kit::AppContext as _;
 
     /// Signing out while an account's puzzle activity loaded kept the request current: its
     /// answer then filled the page with that account's attempts, under no account.

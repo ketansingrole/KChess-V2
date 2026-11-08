@@ -958,6 +958,7 @@ mod tests {
         speed_name,
     };
     use crate::e2e::Harness;
+    use gpui_kit::AppContext as _;
 
     /// Signing out while an account's report loaded kept the request current: the report then
     /// landed under no account, and the page kept loading until it did.

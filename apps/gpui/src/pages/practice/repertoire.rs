@@ -21,7 +21,7 @@ use kchess_contracts::Level;
 use kchess_domain::training::repetition;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use shakmaty::{Color, Position as _};
+use shakmaty::Color;
 
 use super::run;
 use crate::assets::icon;
