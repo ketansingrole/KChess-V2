@@ -15,9 +15,6 @@ use crate::util::{Result, available, output, root, run, run_with, say};
 /// tests still run here, outside the coverage totals.
 const FLOORS: [(&str, f64); 3] = [("lines", 88.0), ("regions", 86.0), ("functions", 86.0)];
 
-/// The shipped binaries, whose code must not unwrap or expect outside tests.
-const SHIPPED_BINS: [&str; 3] = ["kchess-voice", "kchess-service", "kchess-cli"];
-
 fn step(name: &str, work: impl FnOnce() -> Result) -> Result {
     say(&format!("Checking {name}…"));
     work().map_err(|cause| format!("{name}: {cause}"))
@@ -63,10 +60,18 @@ fn lints() -> Result {
     run("cargo", &shipped_bins_args())
 }
 
+/// The shipped binaries whose code must not unwrap or expect outside tests: every shipped
+/// program's crate but the app's.
+fn shipped_bins() -> impl Iterator<Item = &'static str> {
+    crate::package::SHIPPED
+        .into_iter()
+        .filter(|package| *package != APP)
+}
+
 /// One clippy run over every shipped binary, its `unwrap`/`expect` denied as the libraries' are.
 fn shipped_bins_args() -> Vec<&'static str> {
     let mut args = vec!["clippy"];
-    for bin in SHIPPED_BINS {
+    for bin in shipped_bins() {
         args.extend(["-p", bin]);
     }
     args.extend([
@@ -462,9 +467,10 @@ mod tests {
     #[test]
     fn one_run_checks_every_shipped_binary() {
         let args = shipped_bins_args();
-        for bin in SHIPPED_BINS {
+        for bin in ["kchess-voice", "kchess-service", "kchess-cli"] {
             assert!(args.windows(2).any(|pair| pair == ["-p", bin]), "{bin}");
         }
+        assert!(!args.contains(&APP));
         assert!(args.contains(&"--bins"));
         assert!(args.ends_with(&["-D", "clippy::expect_used"]));
     }
@@ -692,6 +698,67 @@ mod tests {
             }
         }
         assert!(checked > 20, "only {checked} steps found");
+    }
+
+    /// CI packages, builds the Snap and runs the Windows upgrade only when a file matching its
+    /// `PACKAGING` pattern changed. A change to the code packaging runs (util.rs, the patches,
+    /// kchess-delta) once skipped the jobs that test it: every such file must match.
+    #[cfg(unix)]
+    #[test]
+    fn packaging_changes_run_the_package_jobs() {
+        let ci = std::fs::read_to_string(root().join(".github/workflows/ci.yml")).unwrap();
+        let pattern = ci
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("PACKAGING: '"))
+            .and_then(|rest| rest.strip_suffix('\''))
+            .expect("ci.yml has a PACKAGING pattern");
+        let mut files: Vec<String> = std::fs::read_dir(root().join("tooling/xtask/src/package"))
+            .unwrap()
+            .flatten()
+            .map(|entry| {
+                format!(
+                    "tooling/xtask/src/package/{}",
+                    entry.file_name().to_string_lossy()
+                )
+            })
+            .collect();
+        for module in [
+            "deb", "deltas", "engines", "fairy", "licenses", "sums", "util", "voice",
+        ] {
+            files.push(format!("tooling/xtask/src/{module}.rs"));
+        }
+        files.extend(
+            [
+                "crates/kchess-delta/src/lib.rs",
+                "crates/kchess-voice/src/main.rs",
+                "Cargo.lock",
+            ]
+            .map(String::from),
+        );
+        let matches = |file: &str| {
+            let mut grep = Command::new("grep")
+                .args(["-qE", pattern])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            use std::io::Write as _;
+            grep.stdin
+                .take()
+                .unwrap()
+                .write_all(format!("{file}\n").as_bytes())
+                .unwrap();
+            grep.wait().unwrap().success()
+        };
+        for file in &files {
+            assert!(matches(file), "{file} does not run CI's packaging jobs");
+        }
+        for file in [
+            "apps/gpui/src/explorer.rs",
+            "tooling/xtask/src/bench.rs",
+            "docs/releasing.md",
+        ] {
+            assert!(!matches(file), "{file} runs CI's packaging jobs");
+        }
     }
 
     #[test]

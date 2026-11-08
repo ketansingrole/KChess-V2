@@ -29,6 +29,18 @@ pub fn say(message: &str) {
     eprintln!("[xtask] {message}");
 }
 
+/// When the file or folder at `path` last changed, if it is there.
+pub fn modified(path: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|file| file.modified())
+        .ok()
+}
+
+/// The file name of program `name` on this platform (`.exe` on Windows).
+pub fn exe(name: &str) -> String {
+    format!("{name}{}", std::env::consts::EXE_SUFFIX)
+}
+
 /// Runs `program` in the repository, its output going to this terminal.
 pub fn run(program: &str, args: &[&str]) -> Result {
     run_with(Command::new(program).args(args))

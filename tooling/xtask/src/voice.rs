@@ -58,14 +58,10 @@ pub fn staged() -> PathBuf {
 /// Stage the helper built for `profile` unless what is staged is already as new. Staging replaces
 /// the folder, so a running helper is left alone when nothing changed.
 pub fn stage_if_outdated(profile: &str) -> Result<()> {
-    let executable = format!("kchess-voice{}", std::env::consts::EXE_SUFFIX);
-    let modified = |path: PathBuf| {
-        std::fs::metadata(path)
-            .and_then(|file| file.modified())
-            .ok()
-    };
-    let built = modified(root().join("target").join(profile).join(&executable));
-    if modified(staged().join(&executable)).is_none_or(|current| Some(current) < built) {
+    use crate::util::modified;
+    let executable = crate::util::exe("kchess-voice");
+    let built = modified(&root().join("target").join(profile).join(&executable));
+    if modified(&staged().join(&executable)).is_none_or(|current| Some(current) < built) {
         stage(profile)?;
     }
     Ok(())
@@ -116,7 +112,7 @@ fn stage_with(runtime: &Runtime<impl Fn(&str, &Path) -> Result>, profile: &str) 
             .map_err(|cause| cause.to_string())?;
     let _ = std::fs::remove_dir_all(target);
     std::fs::create_dir_all(target).map_err(|cause| cause.to_string())?;
-    let executable = format!("kchess-voice{}", std::env::consts::EXE_SUFFIX);
+    let executable = crate::util::exe("kchess-voice");
     let helper = built.join(&executable);
     if !helper.exists() {
         return Err(format!(
@@ -205,7 +201,7 @@ mod tests {
             zip.write_all(&archived(bytes)).unwrap();
         }
         let archive = zip.finish().unwrap().into_inner();
-        let executable = format!("kchess-voice{}", std::env::consts::EXE_SUFFIX);
+        let executable = crate::util::exe("kchess-voice");
         let built = scratch.join("built");
         let licenses = scratch.join("licenses");
         for (dir, name, text) in [

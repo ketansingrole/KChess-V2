@@ -27,7 +27,7 @@ use std::process::Command;
 
 use kchess_delta::Asset;
 
-use crate::util::{Result, root, run_with, say};
+use crate::util::{Result, exe, root, run_with, say};
 
 pub const AUTHOR: &str = "Ketan Singrole";
 pub const COPYRIGHT: &str = "Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.";
@@ -90,6 +90,19 @@ impl Identity {
     }
 }
 
+/// The crates whose programs every package ships: the app, the core service, the command line
+/// and the speech helper. They are built for release, attributed (`licenses`), and checked for
+/// `unwrap` (`check`).
+pub const SHIPPED: [&str; 4] = [
+    "kchess-gpui",
+    "kchess-service",
+    "kchess-cli",
+    "kchess-voice",
+];
+
+/// The license texts of everything a package ships, beside its programs.
+const LICENSES: &str = "THIRD_PARTY_LICENSES.txt";
+
 /// What is built and staged before the platform's packages are made.
 pub struct Built {
     pub app: PathBuf,
@@ -102,8 +115,38 @@ pub struct Built {
     pub licenses: PathBuf,
 }
 
-fn exe(name: &str) -> String {
-    format!("{name}{}", std::env::consts::EXE_SUFFIX)
+impl Built {
+    /// The programs a package installs side by side, each with the name it is installed as: the
+    /// app as `app`, the engines, the core service and, with `cli`, the command line. The app
+    /// finds them by these names beside itself (`apps/gpui/src/profile.rs`).
+    pub fn programs(&self, app: &str, cli: bool) -> Vec<(&Path, String)> {
+        let mut programs = vec![
+            (self.app.as_path(), exe(app)),
+            (self.stockfish.as_path(), exe("stockfish")),
+            (self.fairy.as_path(), exe("fairy-stockfish")),
+            (self.service.as_path(), exe("kchess-service")),
+        ];
+        if cli {
+            programs.push((self.cli.as_path(), exe("kchess-cli")));
+        }
+        programs
+    }
+}
+
+/// The installation's folder as Windows and Linux lay it out: the programs (the app as `app`),
+/// the voice runtime in `voice/` and the license texts.
+pub fn stage_folder(built: &Built, folder: &Path, app: &str) -> Result {
+    for (from, name) in built.programs(app, true) {
+        copy_program(from, &folder.join(name))?;
+    }
+    copy_voice(built, folder)?;
+    copy_licenses(built, folder)
+}
+
+pub fn copy_licenses(built: &Built, dir: &Path) -> Result {
+    std::fs::copy(&built.licenses, dir.join(LICENSES))
+        .map(|_| ())
+        .map_err(|cause| cause.to_string())
 }
 
 /// Copy `from` to `to`, executable on Unix.
@@ -167,51 +210,18 @@ fn build(skip: bool) -> Result<Built> {
     if !skip {
         say("Building the app, core service, command line and voice helper (release)…");
         let mut cargo = Command::new("cargo");
-        cargo.args([
-            "build",
-            "--release",
-            "--locked",
-            "-p",
-            "kchess-gpui",
-            "-p",
-            "kchess-service",
-            "-p",
-            "kchess-cli",
-            "-p",
-            "kchess-voice",
-            // A shipped build ignores the development overrides (`kchess_core::dev_overrides`).
-            "--features",
-            "kchess-core/packaged",
-        ]);
+        cargo.args(["build", "--release", "--locked"]);
+        for package in SHIPPED {
+            cargo.args(["-p", package]);
+        }
+        // A shipped build ignores the development overrides (`kchess_core::dev_overrides`).
+        cargo.args(["--features", "kchess-core/packaged"]);
         run_with(&mut cargo)?;
     }
     let voice = crate::voice::stage("release")?;
     let fairy = crate::fairy::build()?;
-    say("Fetching Stockfish…");
-    let fetched = Command::new("cargo")
-        .args([
-            "run",
-            "--release",
-            "--locked",
-            "-q",
-            "-p",
-            "kchess-core",
-            "--example",
-            "fetch_stockfish",
-            "--",
-        ])
-        .arg(root().join("target/package/stockfish"))
-        .current_dir(root())
-        .output()
-        .map_err(|cause| cause.to_string())?;
-    if !fetched.status.success() {
-        return Err(format!(
-            "Fetching Stockfish failed: {}",
-            String::from_utf8_lossy(&fetched.stderr).trim()
-        ));
-    }
-    let stockfish = PathBuf::from(String::from_utf8_lossy(&fetched.stdout).trim());
-    let licenses = root().join("target/package/THIRD_PARTY_LICENSES.txt");
+    let stockfish = crate::engines::stockfish(&root().join("target/package/stockfish"), true)?;
+    let licenses = root().join("target/package").join(LICENSES);
     std::fs::create_dir_all(root().join("target/package")).map_err(|cause| cause.to_string())?;
     crate::licenses::write(&licenses)?;
     let built = Built {

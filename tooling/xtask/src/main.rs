@@ -9,6 +9,7 @@ mod check;
 mod deb;
 mod deltas;
 mod electron_step;
+mod engines;
 mod fairy;
 mod fake_lichess;
 mod icons;
@@ -66,7 +67,11 @@ const HELP: &str = "cargo xtask <command>
   licenses <file>       Write the license texts of every crate compiled into the app
   voice-runtime [profile]  Stage the speech helper with libvosk (target/voice-runtime)
   fairy-stockfish       Build the pinned Fairy-Stockfish, the variant engine
-                        (target/fairy-stockfish/bin)
+                        (target/fairy-stockfish/bin); print its path
+  engines [--github-env] <stockfish folder>
+                        Fetch Stockfish into the folder and build Fairy-Stockfish; print
+                        KCHESS_ENGINE_PATH and KCHESS_VARIANT_ENGINE_PATH, or add them to
+                        $GITHUB_ENV (CI)
   package [--skip-build] [--snap|--mas]
                         Package the app for this machine (apps/gpui/dist): .dmg and .zip,
                         the NSIS installer, or the AppImage and .deb; --snap makes the Snap,
@@ -129,7 +134,8 @@ fn main() -> ExitCode {
         Some("voice-runtime") => {
             voice::stage(rest.first().map_or("release", String::as_str)).map(|_| ())
         }
-        Some("fairy-stockfish") => fairy::build().map(|_| ()),
+        Some("fairy-stockfish") => fairy::build().map(|path| println!("{}", path.display())),
+        Some("engines") => engines::run(rest),
         Some("package") => package::run(rest),
         Some("deltas") => deltas::run(rest),
         #[cfg(unix)]

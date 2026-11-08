@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use kchess_delta::Asset;
 
-use super::{Built, Identity, copy_program, copy_voice};
+use super::{Built, Identity, copy_licenses, copy_program, copy_voice};
 use crate::util::{Result, root, run, run_redacted, say};
 
 const MICROPHONE: &str =
@@ -189,15 +189,11 @@ pub fn assemble(
     app: &Path,
     store: bool,
 ) -> Result<Vec<PathBuf>> {
-    let cli = !store;
     let contents = app.join("Contents");
     let macos = contents.join("MacOS");
-    copy_program(&built.app, &macos.join(identity.mac_exe))?;
-    copy_program(&built.stockfish, &macos.join("stockfish"))?;
-    copy_program(&built.fairy, &macos.join("fairy-stockfish"))?;
-    copy_program(&built.service, &macos.join("kchess-service"))?;
-    if cli {
-        copy_program(&built.cli, &macos.join("kchess-cli"))?;
+    let programs = built.programs(identity.mac_exe, !store);
+    for (from, name) in &programs {
+        copy_program(from, &macos.join(name))?;
     }
     let resources = contents.join("Resources");
     // Resources, not MacOS: the notices beside the helper are not code, which codesign rejects there.
@@ -207,16 +203,11 @@ pub fn assemble(
         resources.join("icon.icns"),
     )
     .map_err(|cause| cause.to_string())?;
-    std::fs::copy(&built.licenses, resources.join("THIRD_PARTY_LICENSES.txt"))
-        .map_err(|cause| cause.to_string())?;
+    copy_licenses(built, &resources)?;
     std::fs::write(contents.join("Info.plist"), info_plist(identity, store))
         .map_err(|cause| cause.to_string())?;
-    nested.push(macos.join("kchess-service"));
-    if cli {
-        nested.push(macos.join("kchess-cli"));
-    }
-    nested.push(macos.join("stockfish"));
-    nested.push(macos.join("fairy-stockfish"));
+    // Every program but the app, which seals them.
+    nested.extend(programs.iter().skip(1).map(|(_, name)| macos.join(name)));
     Ok(nested)
 }
 

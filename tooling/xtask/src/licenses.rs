@@ -8,13 +8,7 @@ use serde_json::Value;
 
 use crate::util::{Result, output, root, say};
 
-/// The programs a package ships, whose runtime crates it must attribute.
-const SHIPPED: [&str; 4] = [
-    "kchess-gpui",
-    "kchess-service",
-    "kchess-voice",
-    "kchess-cli",
-];
+use crate::package::SHIPPED;
 
 fn metadata(no_deps: bool) -> Result<Value> {
     let mut args = vec!["metadata", "--format-version", "1", "--locked"];
@@ -102,6 +96,15 @@ FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TOR
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.";
 
+/// Whether the SPDX expression `license` (`MIT OR Apache-2.0`, or the older `MIT/Apache-2.0`)
+/// offers license `id`.
+fn offers(license: &str, id: &str) -> bool {
+    license
+        .split(" OR ")
+        .flat_map(|choice| choice.split('/'))
+        .any(|choice| choice.trim_matches(['(', ')', ' ']) == id)
+}
+
 /// A crate's license files, or the standard text of its SPDX license when it ships none.
 fn license_text(package: &Value) -> Result<String> {
     let manifest = package["manifest_path"].as_str().unwrap_or_default();
@@ -138,11 +141,7 @@ fn license_text(package: &Value) -> Result<String> {
         ));
     }
     // `MIT OR …` (or the older `…/MIT`): the MIT option is elected, so its text applies.
-    if license
-        .split(" OR ")
-        .flat_map(|choice| choice.split('/'))
-        .any(|choice| choice.trim_matches(['(', ')', ' ']) == "MIT")
-    {
+    if offers(license, "MIT") {
         let authors: Vec<&str> = package["authors"]
             .as_array()
             .into_iter()
@@ -167,11 +166,7 @@ fn license_text(package: &Value) -> Result<String> {
         ("Unicode-3.0", include_str!("../licenses/Unicode-3.0.txt")),
         ("CC0-1.0", include_str!("../licenses/CC0-1.0.txt")),
     ] {
-        if license
-            .split(" OR ")
-            .flat_map(|choice| choice.split('/'))
-            .any(|choice| choice.trim_matches(['(', ')', ' ']) == id)
-        {
+        if offers(license, id) {
             return Ok(format!("--- {id} ---\n{}\n", text.trim()));
         }
     }
@@ -298,7 +293,16 @@ pub fn write(path: &Path) -> Result {
 
 #[cfg(test)]
 mod tests {
-    use super::names;
+    use super::{names, offers};
+
+    #[test]
+    fn a_license_is_offered_by_any_choice_of_its_expression() {
+        assert!(offers("MIT OR Apache-2.0", "Apache-2.0"));
+        assert!(offers("(MIT OR Apache-2.0) AND Unicode-3.0", "MIT"));
+        assert!(offers("Apache-2.0/MIT", "MIT"));
+        assert!(!offers("MIT-0", "MIT"));
+        assert!(!offers("GPL-3.0-or-later", "MIT"));
+    }
 
     #[test]
     fn names_are_whole_words() {

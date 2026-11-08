@@ -11,7 +11,7 @@ use std::process::Command;
 
 use kchess_delta::Asset;
 
-use super::{Built, Identity, copy_program, copy_voice};
+use super::{Built, Identity};
 use crate::deb::{ar, gzip, tarball, xz};
 use crate::util::{Result, download, pinned, root, run_with, say};
 
@@ -44,18 +44,8 @@ pub fn desktop_entry(identity: &Identity, exec: &str) -> String {
     )
 }
 
-/// The app folder: the launcher, Stockfish and Fairy-Stockfish, the core service, the command
-/// line and voice.
 fn stage_folder(identity: &Identity, built: &Built, folder: &Path) -> Result {
-    copy_program(&built.app, &folder.join(identity.linux_exe))?;
-    copy_program(&built.stockfish, &folder.join("stockfish"))?;
-    copy_program(&built.fairy, &folder.join("fairy-stockfish"))?;
-    copy_program(&built.service, &folder.join("kchess-service"))?;
-    copy_program(&built.cli, &folder.join("kchess-cli"))?;
-    copy_voice(built, folder)?;
-    std::fs::copy(&built.licenses, folder.join("THIRD_PARTY_LICENSES.txt"))
-        .map_err(|cause| cause.to_string())?;
-    Ok(())
+    super::stage_folder(built, folder, identity.linux_exe)
 }
 
 fn appimage(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<PathBuf> {
