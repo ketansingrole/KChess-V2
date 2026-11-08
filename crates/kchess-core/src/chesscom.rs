@@ -23,6 +23,7 @@ use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use crate::store::Database;
 use crate::store::games::MAX_GAMES;
+use crate::tasks::lock;
 use kchess_domain::chesscom::{archive_month, game_row};
 
 /// Chess.com's public API.
@@ -71,12 +72,6 @@ struct MonthArchive<'a> {
     last_modified: Option<&'a str>,
     complete: bool,
     games: &'a [Value],
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn unreachable() -> CoreError {

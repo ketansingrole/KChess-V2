@@ -13,6 +13,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::host::Host;
+use crate::tasks::lock;
 
 mod feed;
 mod listings;
@@ -316,10 +317,7 @@ impl Spectators {
     /// The calling connection's watch, made on first use.
     pub fn mine(&self) -> Spectator {
         let connection = crate::connection::current_or_app();
-        let mut watches = self
-            .watches
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut watches = lock(&self.watches);
         watches
             .entry(connection)
             .or_insert_with(|| {
@@ -332,10 +330,7 @@ impl Spectators {
     }
 
     fn all(&self) -> Vec<Spectator> {
-        self.watches
-            .lock()
-            .map(|watches| watches.values().cloned().collect())
-            .unwrap_or_default()
+        lock(&self.watches).values().cloned().collect()
     }
 
     /// Stops every client's watch: a live game, closing.
@@ -350,11 +345,7 @@ impl Spectators {
     /// after it, must not end the newer one.
     pub fn stop_mine(&self, session: Option<u64>) {
         let connection = crate::connection::current_or_app();
-        let spectator = self
-            .watches
-            .lock()
-            .ok()
-            .and_then(|watches| watches.get(&connection).cloned());
+        let spectator = lock(&self.watches).get(&connection).cloned();
         if let Some(spectator) = spectator {
             match session {
                 Some(session) => spectator.stop_session(session),
@@ -365,11 +356,7 @@ impl Spectators {
 
     /// A client went away: its watch stops.
     pub fn forget(&self, connection: u64) {
-        let spectator = self
-            .watches
-            .lock()
-            .ok()
-            .and_then(|mut watches| watches.remove(&connection));
+        let spectator = lock(&self.watches).remove(&connection);
         if let Some(spectator) = spectator {
             spectator.stop();
         }

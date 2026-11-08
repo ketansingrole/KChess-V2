@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::{CoreError, Result};
 use crate::host::{Config, Host, Level};
+use crate::tasks::lock;
 use kchess_domain::puzzle::{Random, Sampler};
 use queries::{LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleDbStatus};
 
@@ -40,10 +41,10 @@ struct Installing<'a> {
 impl Drop for Installing<'_> {
     fn drop(&mut self) {
         self.download.cancel.cancel();
-        if let Ok(mut running) = self.inner.running.lock()
-            && running
-                .as_ref()
-                .is_some_and(|current| Arc::ptr_eq(current, &self.download))
+        let mut running = lock(&self.inner.running);
+        if running
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &self.download))
         {
             running.take();
         }
@@ -219,7 +220,7 @@ impl Inner {
     }
 
     fn running(&self) -> Option<Arc<Download>> {
-        self.running.lock().ok().and_then(|r| r.clone())
+        lock(&self.running).clone()
     }
 
     fn usage(&self, requests: u32, bytes: u64) {
@@ -344,9 +345,7 @@ impl PuzzleService {
         let inner = Arc::clone(&self.inner);
         // Closing drains admitted workers first, then releases the file.
         let _ = tokio::task::spawn_blocking(move || {
-            if let Ok(mut db) = inner.db.lock() {
-                db.take();
-            }
+            lock(&inner.db).take();
         })
         .await;
     }
@@ -356,11 +355,7 @@ impl PuzzleService {
     /// completion via the `puzzledb:progress` `cancelled`/`done` phase, not the result.
     pub async fn install(&self, url: String) -> Result<PuzzleDbStatus> {
         let download = {
-            let mut running = self
-                .inner
-                .running
-                .lock()
-                .map_err(|_| CoreError::new("Puzzle service stopped. Retry the operation."))?;
+            let mut running = lock(&self.inner.running);
             if running.is_some() {
                 let error = CoreError::new("The puzzle database is already downloading.");
                 self.inner.failed("install", &error);

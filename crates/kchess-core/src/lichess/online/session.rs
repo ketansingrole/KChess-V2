@@ -20,8 +20,9 @@ use super::events::{is_challenge_event, validate_online_event};
 use super::requests::{Emitter, Listen, Quiet, StreamRequest, body_value, refs};
 use super::state::{
     ANNOUNCED_MAX, Handle, Inner, LOST_CONNECTION, Lane, MAX_RECONNECTS, ONGOING_DEBOUNCE,
-    OnlineSession, Res, SEEK_REJECTED, State, core, lock,
+    OnlineSession, Res, SEEK_REJECTED, State, core,
 };
+use crate::tasks::lock;
 
 mod lobby;
 mod play;

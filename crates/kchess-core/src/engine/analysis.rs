@@ -21,10 +21,11 @@ use tokio_util::sync::CancellationToken;
 use super::status::{
     EngineStatus, engine_identity, engine_status, fairy_variant, variant_engine_status,
 };
-use super::uci::{UciController, error_summary, lock, signal_aborted, truncate_for_log};
+use super::uci::{UciController, error_summary, signal_aborted, truncate_for_log};
 use super::{EngineContext, after, clear_timer, domain, parse_info, replace_timer, validate};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use crate::tasks::lock;
 
 /// The event analysis updates are delivered as (`engine:analysis`).
 pub const ANALYSIS_EVENT: &str = "engine:analysis";

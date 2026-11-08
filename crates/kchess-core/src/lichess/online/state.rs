@@ -251,8 +251,6 @@ pub struct OnlineSession {
     pub(crate) inner: Arc<Inner>,
 }
 
-pub(crate) use crate::tasks::lock;
-
 pub(crate) fn aborted(message: &str) -> Failure {
     Failure::Core(CoreError::aborted(message))
 }

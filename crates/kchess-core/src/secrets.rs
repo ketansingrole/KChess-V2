@@ -121,10 +121,7 @@ impl Credentials {
     }
 
     fn key(&self, create: bool) -> Result<[u8; 32]> {
-        let mut cached = self
-            .key
-            .lock()
-            .map_err(|_| CoreError::new("The credential store is unavailable."))?;
+        let mut cached = crate::tasks::lock(&self.key);
         if let Some(key) = *cached {
             return Ok(key);
         }

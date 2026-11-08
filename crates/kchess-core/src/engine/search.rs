@@ -25,12 +25,13 @@ use super::status::{
     variant_engine_status,
 };
 use super::uci::{
-    UciController, error_summary, lock, search_cancelled, signal_aborted, truncate_for_log,
+    UciController, error_summary, search_cancelled, signal_aborted, truncate_for_log,
 };
 use super::{EngineContext, after, clear_timer, random_unit, replace_timer};
 use crate::clock::now_ms;
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use crate::tasks::lock;
 use kchess_domain::js;
 
 /// The message a superseded search rejects with (`SUPERSEDED`).

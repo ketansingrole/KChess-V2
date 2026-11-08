@@ -19,6 +19,7 @@ use std::sync::Arc;
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use crate::tasks::lock;
 
 mod accounts;
 mod ai;
@@ -218,9 +219,7 @@ impl ProfileClaim {
         let path = std::fs::canonicalize(data_dir)
             .map_err(|cause| CoreError::wrap("profile path", cause))?;
         let token = CLAIMS.fetch_add(1, Ordering::SeqCst);
-        let mut profiles = PROFILES
-            .lock()
-            .map_err(|_| CoreError::new("The profiles are unavailable."))?;
+        let mut profiles = lock(&PROFILES);
         if profiles.contains_key(&path) {
             return Err(CoreError::new(
                 "A KChess core is already running for this profile.",
@@ -250,16 +249,15 @@ impl ProfileClaim {
 
     /// Frees the profile, once the core has closed it.
     pub fn release(&self) {
-        if let Ok(mut profiles) = PROFILES.lock()
-            && profiles.get(&self.path) == Some(&self.token)
         {
-            profiles.remove(&self.path);
+            let mut profiles = lock(&PROFILES);
+            if profiles.get(&self.path) == Some(&self.token) {
+                profiles.remove(&self.path);
+            }
         }
         // Free the OS lock now, not at drop: a closed core must be reopenable
         // while its (shut down) object still exists.
-        if let Ok(mut held) = self.lock.lock()
-            && let Some(file) = held.take()
-        {
+        if let Some(file) = lock(&self.lock).take() {
             let _ = file.unlock();
         }
     }

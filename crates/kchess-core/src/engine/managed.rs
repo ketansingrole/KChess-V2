@@ -316,10 +316,7 @@ impl ManagedEngine {
 fn dir_lock(dir: &Path) -> Arc<AsyncMutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> = OnceLock::new();
     let locks = LOCKS.get_or_init(Default::default);
-    let mut locks = match locks.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let mut locks = crate::tasks::lock(locks);
     locks.retain(|_, lock| lock.strong_count() > 0);
     if let Some(lock) = locks.get(dir).and_then(Weak::upgrade) {
         return lock;
