@@ -144,28 +144,44 @@ fn without_moves(plain: &str, coloured: &str) -> String {
 }
 
 /// `lines` with each hunk's header counting the lines that follow it: the old side's context
-/// and removed lines, the new side's context and added lines.
+/// and removed lines, the new side's context and added lines. A hunk that gained or lost old
+/// lines (moved code turned to context, or dropped) moves the old starts of the file's later
+/// hunks by as much, so the old side stays one file in order: a block moved within a file left
+/// a later hunk starting inside an earlier one, and cargo-mutants refused the whole diff.
 fn recounted(lines: &[String]) -> Vec<String> {
     let mut out: Vec<String> = Vec::with_capacity(lines.len());
-    // The hunk being counted: its header's place in `out`, its starts and the rest of its
-    // header, and its old and new counts so far.
-    let mut hunk: Option<(usize, usize, usize, String, usize, usize)> = None;
+    let mut hunk: Option<Hunk> = None;
+    // Old lines the rewritten hunks so far in this file gained, less those they lost.
+    let mut shift: isize = 0;
     for line in lines {
-        if let Some((old_start, new_start, rest)) = hunk_header(line) {
-            close(&mut out, hunk.take());
-            hunk = Some((out.len(), old_start, new_start, rest.to_string(), 0, 0));
+        if let Some((old_start, old_count, new_start, rest)) = hunk_header(line) {
+            shift += close(&mut out, hunk.take());
+            hunk = Some(Hunk {
+                at: out.len(),
+                old_start: old_start.saturating_add_signed(shift),
+                old_count,
+                new_start,
+                rest: rest.to_string(),
+                old: 0,
+                new: 0,
+            });
             out.push(line.clone());
             continue;
         }
         match (hunk.as_mut(), line.as_bytes().first()) {
-            (Some((.., old, new)), Some(b' ')) => {
-                *old += 1;
-                *new += 1;
+            (Some(hunk), Some(b' ')) => {
+                hunk.old += 1;
+                hunk.new += 1;
             }
-            (Some((.., old, _)), Some(b'-')) => *old += 1,
-            (Some((.., new)), Some(b'+')) => *new += 1,
+            (Some(hunk), Some(b'-')) => hunk.old += 1,
+            (Some(hunk), Some(b'+')) => hunk.new += 1,
             (Some(_), Some(b'\\')) => {}
-            _ => close(&mut out, hunk.take()),
+            _ => {
+                shift += close(&mut out, hunk.take());
+                if line.starts_with("diff ") {
+                    shift = 0;
+                }
+            }
         }
         out.push(line.clone());
     }
@@ -173,23 +189,50 @@ fn recounted(lines: &[String]) -> Vec<String> {
     out
 }
 
-/// Writes a counted hunk's header in place.
-fn close(out: &mut [String], hunk: Option<(usize, usize, usize, String, usize, usize)>) {
-    let Some((at, old_start, new_start, rest, old, new)) = hunk else {
-        return;
+/// A hunk being counted: its header's place in `out`, its old start (moved by the hunks before
+/// it) and count as Git wrote them, its new start, the rest of its header, and its counts so far.
+struct Hunk {
+    at: usize,
+    old_start: usize,
+    old_count: usize,
+    new_start: usize,
+    rest: String,
+    old: usize,
+    new: usize,
+}
+
+/// Writes a counted hunk's header in place; how many old lines it gained (or, negative, lost).
+fn close(out: &mut [String], hunk: Option<Hunk>) -> isize {
+    let Some(Hunk {
+        at,
+        old_start,
+        old_count,
+        new_start,
+        rest,
+        old,
+        new,
+    }) = hunk
+    else {
+        return 0;
     };
     // A new file's hunk starts at line 0 of nothing; once it has context it starts at 1.
     let old_start = if old > 0 { old_start.max(1) } else { old_start };
     out[at] = format!("@@ -{old_start},{old} +{new_start},{new} @@{rest}");
+    old as isize - old_count as isize
 }
 
-/// A hunk header's old and new start lines and what follows its closing `@@`.
-fn hunk_header(line: &str) -> Option<(usize, usize, &str)> {
+/// A hunk header's old start and count, its new start, and what follows its closing `@@`.
+fn hunk_header(line: &str) -> Option<(usize, usize, usize, &str)> {
     let ranges = line.strip_prefix("@@ -")?;
     let (ranges, rest) = ranges.split_once(" @@")?;
     let (old, new) = ranges.split_once(" +")?;
     let start = |range: &str| range.split(',').next()?.parse::<usize>().ok();
-    Some((start(old)?, start(new)?, rest))
+    // A count left out is one line.
+    let count = |range: &str| match range.split_once(',') {
+        Some((_, count)) => count.parse::<usize>().ok(),
+        None => Some(1),
+    };
+    Some((start(old)?, count(old)?, start(new)?, rest))
 }
 
 /// cargo-mutants' arguments: only mutants on the diff's lines, each tested with the tests of its
@@ -420,6 +463,77 @@ mod tests {
         assert!(diff.contains("@@ -1,4 +1,10 @@"), "{diff}");
     }
 
+    /// Each file's hunks as (old start, old count, new start, new count), in diff order.
+    fn hunks(diff: &str) -> Vec<Vec<(usize, usize, usize, usize)>> {
+        let mut files = Vec::new();
+        for line in diff.lines() {
+            if line.starts_with("diff ") {
+                files.push(Vec::new());
+            }
+            let Some((old_start, old_count, new_start, _)) = hunk_header(line) else {
+                continue;
+            };
+            let new_count = line
+                .split(" +")
+                .nth(1)
+                .and_then(|range| range.split(' ').next()?.split(',').nth(1)?.parse().ok())
+                .unwrap_or(1);
+            if let Some(file) = files.last_mut() {
+                file.push((old_start, old_count, new_start, new_count));
+            }
+        }
+        files
+    }
+
+    /// Regression: a function moved from the end of a file to its start became context in the
+    /// first hunk (one more old line) and left the last one (one fewer), but the hunks after the
+    /// first kept their old starts, so one started inside the one before it and cargo-mutants
+    /// refused the diff ("hunks not in order or overlap"). Each file's hunks now stay in order.
+    #[test]
+    fn code_moved_within_a_file_keeps_its_hunks_in_order() {
+        let (dir, _) = repo();
+        let filler: String = (0..40).map(|n| format!("fn filler_{n}() {{}}\n")).collect();
+        std::fs::write(
+            dir.path().join("a.rs"),
+            format!("fn first() {{}}\n{filler}\n{MOVED_FN}"),
+        )
+        .unwrap();
+        commit(dir.path());
+        let base = git(dir.path(), &["rev-parse", "HEAD"], &[0])
+            .unwrap()
+            .trim()
+            .to_string();
+        let edited = filler.replace("fn filler_12() {}", "fn filler_12() { edited(); }");
+        std::fs::write(
+            dir.path().join("a.rs"),
+            format!("fn first() {{}}\n{MOVED_FN}\n{edited}"),
+        )
+        .unwrap();
+        commit(dir.path());
+        let diff = diff_since(dir.path(), &base).unwrap();
+        assert!(!diff.contains("+fn moved"), "{diff}");
+        assert!(!diff.contains("-fn moved"), "{diff}");
+        assert!(diff.contains("+fn filler_12() { edited(); }"), "{diff}");
+        assert!(
+            hunks(&diff)[0].len() > 1,
+            "the move and the edit are hunks apart: {diff}"
+        );
+        for file in hunks(&diff) {
+            for pair in file.windows(2) {
+                let ((old, old_count, new, new_count), (next_old, _, next_new, _)) =
+                    (pair[0], pair[1]);
+                assert!(old + old_count <= next_old, "old sides overlap: {diff}");
+                assert!(new + new_count <= next_new, "new sides overlap: {diff}");
+                // Between hunks the two sides are the same lines.
+                assert_eq!(
+                    next_old - old - old_count,
+                    next_new - new - new_count,
+                    "{diff}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn an_edit_inside_moved_code_is_a_change() {
         let (dir, _) = repo();
@@ -478,7 +592,11 @@ mod tests {
         );
         // Diffs that disagree keep every change.
         assert_eq!(without_moves("+a\n", ""), "+a\n");
-        assert_eq!(hunk_header("@@ -12 +13,4 @@ fn f"), Some((12, 13, " fn f")));
+        assert_eq!(
+            hunk_header("@@ -12 +13,4 @@ fn f"),
+            Some((12, 1, 13, " fn f"))
+        );
+        assert_eq!(hunk_header("@@ -12,5 +13,4 @@"), Some((12, 5, 13, "")));
         assert_eq!(hunk_header("@@ broken"), None);
         assert_eq!(hunk_header("+@@ -1 +1 @@"), None);
     }
