@@ -94,12 +94,18 @@ impl OnlineSession {
                 .await;
             // `.finally`: the live game ends when its stream ended for a finished game, and this
             // stream is still the game's controller.
-            let mut st = this.st();
-            if finished.load(Ordering::SeqCst)
-                && finished_check(&st, handle_id)
-                && st.live_game == game_id
-            {
-                st.live_game.clear();
+            let ended = {
+                let mut st = this.st();
+                let ended = finished.load(Ordering::SeqCst)
+                    && finished_check(&st, handle_id)
+                    && st.live_game == game_id;
+                if ended {
+                    st.live_game.clear();
+                }
+                ended
+            };
+            if ended {
+                this.refresh_assistance();
             }
         });
     }
@@ -123,13 +129,16 @@ impl OnlineSession {
         let over = status.is_some_and(|status| !status.is_empty() && !game_in_progress(status));
         if over {
             finished.store(true, Ordering::SeqCst);
-            let mut st = self.st();
-            if st.live_game == game_id {
-                st.live_game.clear();
+            {
+                let mut st = self.st();
+                if st.live_game == game_id {
+                    st.live_game.clear();
+                }
+                if st.protected_game == game_id {
+                    st.protected_game.clear();
+                }
             }
-            if st.protected_game == game_id {
-                st.protected_game.clear();
-            }
+            self.refresh_assistance();
         }
         let mut payload = event;
         payload["id"] = json!(game_id);
@@ -142,6 +151,13 @@ impl OnlineSession {
         if let Ok(mut slot) = self.inner.state_hook.lock() {
             *slot = Some(hook);
         }
+    }
+
+    /// A game just stopped being live or protected: the engines' busy state follows now. It
+    /// was taken only from the next state report, so reviews stayed paused after a game ended.
+    /// Called without the state lock held.
+    pub(super) fn refresh_assistance(&self) {
+        self.run_state_hook(false, self.assistance_blocked());
     }
 
     /// Runs the state hook, if any; called without the state lock held.

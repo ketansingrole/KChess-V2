@@ -1445,6 +1445,47 @@ async fn lists_the_challenges_of_accounts_without_an_open_event_stream() {
     online.close();
 }
 
+/// The engines' busy state (which pauses reviews during a live game) was taken only from the
+/// next state report, and a game that ended reported none: reviews stayed paused after it.
+#[tokio::test]
+async fn a_finished_game_frees_the_engines_at_once() {
+    let events: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
+        Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&events);
+    let (host, fixture, online) = playing(move |seen| match seen.path() {
+        "/api/stream/event" => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            *slot.lock().unwrap() = Some(tx);
+            Some(Reply::Stream(rx))
+        }
+        _ => None,
+    })
+    .await;
+    let busy = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let seen = Arc::clone(&busy);
+    online.set_state_hook(Arc::new(move |_, blocked| {
+        seen.store(blocked, std::sync::atomic::Ordering::SeqCst);
+    }));
+    wait_requests(&fixture, "/api/stream/event", 1).await;
+    let sender = events.lock().unwrap().clone().unwrap();
+    let finish = json!({
+        "type": "gameFinish",
+        "game": { "gameId": "AbCd1234", "status": { "name": "resign" }, "winner": "black" }
+    });
+    sender.send(format!("{finish}\n")).unwrap();
+    // Free by the time the window hears of the finish, not at some later report (the silent
+    // game stream reports reconnecting only seconds later).
+    until("the finish to reach the window", || {
+        emitted(&host, "online:event")
+            .iter()
+            .any(|event| event["type"] == "gameFinish")
+    })
+    .await;
+    assert!(!busy.load(std::sync::atomic::Ordering::SeqCst));
+    online.cancel();
+    online.close();
+}
+
 /// Lichess's account stream can say a game finished before the game's own stream does. The
 /// window shows Rematch and New opponent on that `gameFinish`, so the session must end the game
 /// then too: a New opponent clicked at once was refused with "Reconnect to your current game

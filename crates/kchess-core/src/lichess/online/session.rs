@@ -581,6 +581,7 @@ impl OnlineSession {
                     st.protected_game.clear();
                 }
             }
+            self.refresh_assistance();
         }
         self.emit("online:event", event);
     }
