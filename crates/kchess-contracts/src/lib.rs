@@ -11,6 +11,7 @@ pub mod raw;
 pub mod settings;
 pub mod types;
 pub mod variant;
+pub mod voice;
 
 pub use error::{CoreError, ErrorKind, Level};
 
