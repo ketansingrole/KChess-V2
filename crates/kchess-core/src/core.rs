@@ -23,8 +23,7 @@ use crate::engine::EngineContext;
 use crate::engine::analysis::{ANALYSIS_EVENT, Analysis, AnalysisSink, AnalysisUpdate};
 use crate::engine::bridge::{Battery, EngineOwners, ReviewBridge, ReviewRecords};
 use crate::engine::managed::{
-    ManagedLocation, ReleaseAsset, Target, default_dir, delete_managed_engine,
-    install_managed_engine, managed_engine, pick_mac_asset, pick_stockfish_asset,
+    ManagedLocation, Target, default_dir, delete_managed_engine, install_managed_engine,
 };
 use crate::engine::review::{ReviewRequest, Reviews};
 use crate::engine::scheduler::Scheduler;
@@ -429,13 +428,10 @@ impl Core {
     }
 
     /// The internal service methods, by their service names.
-    /// `dispatch` routes async methods by owner: usage accounting, puzzles, engines,
+    /// `dispatch` routes async methods by owner: puzzles, engines,
     /// then storage/services/sync. Each owner below is one function so `core.rs` stays
     /// composition plus lifecycle instead of one large match.
     pub(crate) async fn dispatch(&self, method: &str, args: Vec<Value>) -> Result<Value> {
-        if method.starts_with("usage.") {
-            return self.usage_dispatch(method).await;
-        }
         if method.starts_with("puzzles.") {
             return self.puzzles_dispatch(method, &args).await;
         }
@@ -478,19 +474,6 @@ impl Core {
             return result;
         }
         self.call_sync(method, args)
-    }
-
-    /// Usage accounting arms of `dispatch`.
-    async fn usage_dispatch(&self, method: &str) -> Result<Value> {
-        match method {
-            "usage.flush" => {
-                self.usage.flush().await;
-                Ok(Value::Null)
-            }
-            "usage.report" => self.usage.report().await,
-            "usage.reset" => self.usage.reset().await,
-            _ => self.call_sync(method, vec![]),
-        }
     }
 
     /// Puzzle service arms of `dispatch` (the sole owner of `puzzles.db`).
@@ -576,14 +559,6 @@ impl Core {
                 self.reviews.reviews_changed();
                 Ok(Value::Null)
             }
-            "reviews.stop" => {
-                self.reviews.stop_reviews().await;
-                Ok(Value::Null)
-            }
-            "managedEngine.status" => {
-                let dir = self.managed_dir(&location_override(args, 0)?);
-                json(managed_engine(self.host.as_ref(), &dir).await)
-            }
             "managedEngine.install" => {
                 let id: u64 = arg(args, 0, "requestId")?;
                 let location = location_override(args, 1)?;
@@ -593,22 +568,6 @@ impl Core {
                 let id: u64 = arg(args, 0, "requestId")?;
                 let location = location_override(args, 1)?;
                 self.managed_request(id, Mutation::Delete, &location).await
-            }
-            "managedEngine.cancel" => {
-                let id: u64 = arg(args, 0, "requestId")?;
-                self.cancel_install(id);
-                Ok(Value::Null)
-            }
-            "engines.maintenance" => {
-                self.ctx
-                    .hub
-                    .with_maintenance(|| self.stop_owners(), || async { Ok(()) })
-                    .await?;
-                Ok(Value::Null)
-            }
-            "engines.close" => {
-                self.ctx.hub.close_engines().await?;
-                Ok(Value::Null)
             }
             _ => self.call_sync(method, args.to_vec()),
         }
@@ -622,16 +581,13 @@ impl Core {
     }
 
     /// Run one synchronous method: storage, and the engine state that a synchronous caller reads
-    /// or changes without starting work (`engine.stop`, `engine.computerPlaying`,
+    /// or changes without starting work (`engine.threads`, `analysis.running`,
     /// `reviews.status`, ...). Unknown methods and malformed arguments are errors.
     pub fn call_sync(&self, method: &str, args: Vec<Value>) -> Result<Value> {
         if let Some(result) = self.engine_sync(method, &args) {
             return result;
         }
         if let Some(result) = self.services.call_sync(method, &args) {
-            return result;
-        }
-        if let Some(result) = self.usage_sync(method, &args) {
             return result;
         }
         if let Some(result) = self.facade_sync(method, &args) {
@@ -643,42 +599,14 @@ impl Core {
         self.database.call(method, &args)
     }
 
-    /// The network accounting methods.
-    fn usage_sync(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
-        let result = match method {
-            "usage.close" => {
-                self.usage.close();
-                Ok(Value::Null)
-            }
-            "usage.forget" => optional::<Vec<String>>(args, 0, "accounts").map(|accounts| {
-                self.services.forget_usage(&accounts);
-                Value::Null
-            }),
-            _ => return None,
-        };
-        Some(result)
-    }
-
     /// The engine methods that start no work and need no runtime: safe from a synchronous caller.
     fn engine_sync(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
         let result = match method {
-            "engine.stop" => optional::<bool>(args, 0, "close").map(|close| {
-                self.search.stop_engine(close);
-                Value::Null
-            }),
-            "engine.reset" => {
-                self.search.reset_engine();
-                Ok(Value::Null)
-            }
-            "engine.computerPlaying" => arg::<i64>(args, 0, "withinMs")
-                .and_then(|within| json(self.search.computer_playing(within))),
             "engine.threads" => json(self.search.engine_threads()),
             "engine.trust" => arg::<String>(args, 0, "path").map(|path| {
                 self.search.trust_engine_path(&PathBuf::from(path));
                 Value::Null
             }),
-            "engine.isTrusted" => arg::<String>(args, 0, "path")
-                .and_then(|path| json(self.search.is_trusted_engine_path(&PathBuf::from(path)))),
             "analysis.running" => json(self.analysis.analysis_running()),
             "analysis.stop" => optional::<bool>(args, 0, "kill").map(|kill| {
                 self.analysis.stop_mine(kill);
@@ -689,34 +617,11 @@ impl Core {
                 self.busy.store(online, Ordering::SeqCst);
                 Value::Null
             }),
-            "managedEngine.pickMacAsset" => {
-                arg::<Vec<ReleaseAsset>>(args, 0, "assets").and_then(|assets| {
-                    let cpu: String = arg(args, 1, "arch")?;
-                    json(pick_mac_asset(&assets, &cpu).cloned())
-                })
-            }
-            "managedEngine.pickAsset" => {
-                arg::<Vec<ReleaseAsset>>(args, 0, "assets").and_then(|assets| {
-                    let platform: String = arg(args, 1, "platform")?;
-                    let cpu: String = arg(args, 2, "arch")?;
-                    json(pick_stockfish_asset(&assets, &platform, &cpu).cloned())
-                })
-            }
             "reviews.status" => json(self.reviews.review_status()),
             "reviews.cancel" => arg::<String>(args, 0, "key").map(|key| {
                 self.reviews.cancel_review(&key);
                 Value::Null
             }),
-            "reviews.discardAccounts" => {
-                optional::<Vec<String>>(args, 0, "accounts").map(|accounts| {
-                    self.reviews.discard_account_reviews(&accounts);
-                    Value::Null
-                })
-            }
-            "reviews.restartEngine" => {
-                self.reviews.restart_review_engine();
-                Ok(Value::Null)
-            }
             _ => return None,
         };
         Some(result)
@@ -771,8 +676,9 @@ impl Core {
             .unwrap_or_else(|| self.ctx.locations.managed_dir.clone())
     }
 
-    /// `managedEngine.install` / `managedEngine.delete`: runs under a request id so the host can
-    /// cancel it, and suspends the engines while the executable is replaced.
+    /// `managedEngine.install` / `managedEngine.delete`: runs under a request id so closing
+    /// the core cancels it (`cancel_installs`), and suspends the engines while the executable is
+    /// replaced.
     async fn managed_request(
         &self,
         id: u64,
@@ -809,22 +715,6 @@ impl Core {
                 .await
                 .map(|()| Value::Null),
         }
-    }
-
-    fn cancel_install(&self, id: u64) {
-        if let Ok(installs) = self.installs.lock()
-            && let Some(sender) = installs.get(&id)
-        {
-            sender.send_replace(true);
-        }
-    }
-
-    /// `withEngineMaintenance`'s owners: the computer's search, the analysis and the review
-    /// engine stop before engines are closed.
-    fn stop_owners(&self) {
-        self.search.stop_engine(true);
-        self.analysis.stop_analysis(true);
-        self.reviews.restart_review_engine();
     }
 
     /// The host capabilities, for services that need them.

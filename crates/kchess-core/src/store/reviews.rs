@@ -43,7 +43,6 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
                 .unwrap_or(GAMES_TO_REVIEW_LIMIT);
             games_to_review(db, &string_list(args.first()), since, limit)
         }
-        "store.reviewStore.reviewCount" => review_count(db).map(|n| json!(n)),
         _ => return None,
     };
     Some(result)
@@ -377,10 +376,4 @@ fn games_to_review(db: &Connection, accounts: &[String], since: f64, limit: f64)
         out.push(row.map_err(db_err)?);
     }
     Ok(Value::Array(out))
-}
-
-/// Reviews kept, for the storage report.
-pub fn review_count(db: &Connection) -> Result<i64> {
-    db.query_row("SELECT COUNT(*) AS n FROM reviews", [], |row| row.get(0))
-        .map_err(db_err)
 }
