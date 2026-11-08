@@ -6,10 +6,10 @@
 //! (`nnue=no`, the Makefile's default), so the build downloads nothing else. The program lands in
 //! `target/fairy-stockfish/bin`, where a development build of the app finds it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::util::{Result, root, run_with, say, sha256_file};
+use crate::util::{Result, download, pinned, root, run_with, say};
 
 /// The commit built, and the SHA-256 of GitHub's archive of it.
 const COMMIT: &str = "2f1959e1f0b44d4648ff35015b89d8e918a5c746";
@@ -18,11 +18,6 @@ const SHA256: &str = "f226f3c67cb30e87b6990ce7d38cf29cbaca59709f2dba23f421fafdec
 /// The program's name, as the app looks for it.
 pub fn executable() -> String {
     format!("fairy-stockfish{}", std::env::consts::EXE_SUFFIX)
-}
-
-/// Where the built program is staged.
-pub fn staged() -> PathBuf {
-    root().join("target/fairy-stockfish/bin").join(executable())
 }
 
 /// The Makefile's `ARCH` for this machine: Apple Silicon, or 64-bit x86 with SSE4.1 and POPCNT.
@@ -36,26 +31,42 @@ fn arch() -> Result<&'static str> {
 
 /// Build the pinned commit unless it is staged already; the staged program's path.
 pub fn build() -> Result<PathBuf> {
-    let stamp = root().join("target/fairy-stockfish/bin/COMMIT");
-    let target = staged();
-    if target.exists() && std::fs::read_to_string(&stamp).is_ok_and(|built| built.trim() == COMMIT)
+    build_with(&Source {
+        dir: root().join("target/fairy-stockfish"),
+        commit: COMMIT,
+        sha256: SHA256,
+        fetch: download,
+    })
+}
+
+/// The commit to build with its archive's SHA-256, the folder it is cached, built and staged in,
+/// and how the archive is fetched.
+struct Source<F> {
+    dir: PathBuf,
+    commit: &'static str,
+    sha256: &'static str,
+    fetch: F,
+}
+
+fn build_with(source: &Source<impl Fn(&str, &Path) -> Result>) -> Result<PathBuf> {
+    let Source {
+        dir,
+        commit,
+        sha256,
+        fetch,
+    } = source;
+    let stamp = dir.join("bin/COMMIT");
+    let target = dir.join("bin").join(executable());
+    if target.exists() && std::fs::read_to_string(&stamp).is_ok_and(|built| built.trim() == *commit)
     {
         return Ok(target);
     }
-    let cache = root().join(format!("target/fairy-stockfish/{COMMIT}.tar.gz"));
-    if !cache.exists() || sha256_file(&cache)? != SHA256 {
-        let url =
-            format!("https://codeload.github.com/fairy-stockfish/Fairy-Stockfish/tar.gz/{COMMIT}");
-        say(&format!("Downloading Fairy-Stockfish {}…", &COMMIT[..12]));
-        crate::util::download(&url, &cache)?;
-        if sha256_file(&cache)? != SHA256 {
-            let _ = std::fs::remove_file(&cache);
-            return Err(format!(
-                "Fairy-Stockfish source checksum mismatch for {COMMIT}."
-            ));
-        }
-    }
-    let work = root().join("target/fairy-stockfish/work");
+    let cache = dir.join(format!("{commit}.tar.gz"));
+    let url =
+        format!("https://codeload.github.com/fairy-stockfish/Fairy-Stockfish/tar.gz/{commit}");
+    let what = format!("Fairy-Stockfish {}", &commit[..12]);
+    pinned(&what, &url, sha256, &cache, fetch)?;
+    let work = dir.join("work");
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).map_err(|cause| cause.to_string())?;
     run_with(
@@ -65,7 +76,7 @@ pub fn build() -> Result<PathBuf> {
             .arg("-C")
             .arg(&work),
     )?;
-    let src = work.join(format!("Fairy-Stockfish-{COMMIT}/src"));
+    let src = work.join(format!("Fairy-Stockfish-{commit}/src"));
     say(&format!("Building Fairy-Stockfish ({})…", arch()?));
     let jobs = std::thread::available_parallelism().map_or(2, usize::from);
     // `run_with` runs in the repository; the Makefile is in `src`.
@@ -93,11 +104,11 @@ pub fn build() -> Result<PathBuf> {
     std::fs::copy(&built, &target)
         .map_err(|cause| format!("Make did not produce {}: {cause}", built.display()))?;
     std::fs::copy(
-        work.join(format!("Fairy-Stockfish-{COMMIT}/Copying.txt")),
+        work.join(format!("Fairy-Stockfish-{commit}/Copying.txt")),
         target.with_file_name("Copying.txt"),
     )
     .map_err(|cause| format!("Fairy-Stockfish's license is missing: {cause}"))?;
-    std::fs::write(&stamp, COMMIT).map_err(|cause| cause.to_string())?;
+    std::fs::write(&stamp, commit).map_err(|cause| cause.to_string())?;
     let _ = std::fs::remove_dir_all(&work);
     say(&format!("Built Fairy-Stockfish in {}.", target.display()));
     Ok(target)
@@ -122,4 +133,104 @@ fn git_bash() -> PathBuf {
         })
         .filter(|bash| bash.is_file())
         .unwrap_or_else(|| PathBuf::from("bash"))
+}
+
+// The Windows build runs Git's Bash and MinGW's make.
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// The build fetches the pinned archive into its folder, unpacks it, runs `make` in its
+    /// `src` and stages the program with its license and a stamp of the commit; once staged, it
+    /// is kept without unpacking or building again. A stand-in archive's Makefile "builds" a
+    /// program naming the `ARCH` it was given.
+    #[test]
+    fn the_pinned_source_is_fetched_built_and_staged_once() {
+        use sha2::Digest;
+        const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+        let scratch = std::env::temp_dir().join(format!("xtask-fairy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let top = format!("Fairy-Stockfish-{COMMIT}");
+        let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::fast(),
+        ));
+        for (name, text) in [
+            (
+                format!("{top}/src/Makefile"),
+                "build:\n\tprintf 'stockfish for $(ARCH)' > stockfish\n",
+            ),
+            (format!("{top}/Copying.txt"), "GPL"),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(text.len() as u64);
+            header.set_mode(0o644);
+            archive
+                .append_data(&mut header, name, text.as_bytes())
+                .unwrap();
+        }
+        let archive = archive.into_inner().unwrap().finish().unwrap();
+        let fetched = std::cell::RefCell::new(Vec::new());
+        let source = Source {
+            dir: scratch.clone(),
+            commit: COMMIT,
+            sha256: crate::util::hex(&sha2::Sha256::digest(&archive)).leak(),
+            fetch: |url: &str, to: &Path| -> Result {
+                fetched.borrow_mut().push(url.to_string());
+                std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+                std::fs::write(to, &archive).map_err(|cause| cause.to_string())
+            },
+        };
+
+        let target = build_with(&source).unwrap();
+
+        assert_eq!(target, scratch.join("bin").join(executable()));
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            format!("stockfish for {}", arch().unwrap())
+        );
+        assert_eq!(
+            std::fs::read_to_string(scratch.join("bin/Copying.txt")).unwrap(),
+            "GPL"
+        );
+        assert_eq!(
+            std::fs::read_to_string(scratch.join("bin/COMMIT")).unwrap(),
+            COMMIT
+        );
+        assert!(!scratch.join("work").exists(), "the work folder was kept");
+        assert_eq!(
+            *fetched.borrow(),
+            [format!(
+                "https://codeload.github.com/fairy-stockfish/Fairy-Stockfish/tar.gz/{COMMIT}"
+            )]
+        );
+
+        // Staged with its stamp: kept, even without the archive to build it from.
+        std::fs::remove_file(scratch.join(format!("{COMMIT}.tar.gz"))).unwrap();
+        std::fs::write(&target, "kept").unwrap();
+        assert_eq!(build_with(&source).unwrap(), target);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "kept");
+        assert_eq!(
+            fetched.borrow().len(),
+            1,
+            "a staged build was fetched again"
+        );
+
+        // Another commit's stamp, or no program: built again.
+        for stale in ["COMMIT", "program"] {
+            if stale == "COMMIT" {
+                std::fs::write(scratch.join("bin/COMMIT"), "another").unwrap();
+            } else {
+                std::fs::remove_file(&target).unwrap();
+            }
+            build_with(&source).unwrap();
+            assert!(
+                std::fs::read_to_string(&target)
+                    .unwrap()
+                    .starts_with("stockfish for ")
+            );
+        }
+        assert_eq!(fetched.borrow().len(), 2);
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
 }

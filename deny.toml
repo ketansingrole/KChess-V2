@@ -45,6 +45,9 @@ exceptions = [
   { crate = "hexf-parse", allow = ["CC0-1.0"] },
   { crate = "notify", allow = ["CC0-1.0"] },
   { crate = "tiny-keccak", allow = ["CC0-1.0"] },
+  # bzip2's own BSD-style license, for the Rust port of libbzip2 that compresses update patches
+  # (qbsdiff, `crates/kchess-delta`).
+  { crate = "libbz2-rs-sys", allow = ["bzip2-1.0.6"] },
   # LLVM's libFuzzer, in the fuzz workspace only (`fuzz/`); never shipped.
   { crate = "libfuzzer-sys", allow = ["NCSA"] },
 ]

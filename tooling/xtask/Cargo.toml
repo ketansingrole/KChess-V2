@@ -8,6 +8,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# The update patches (`deltas`).
+kchess-delta = { path = "../../crates/kchess-delta" }
 serde_json = { workspace = true }
 sha2 = { version = "0.11", default-features = false }
 base64 = "0.23"
@@ -16,6 +18,8 @@ ring = "0.17"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 tar = { version = "0.4", default-features = false }
+# The .deb's program files as xz (`package/linux.rs`).
+lzma-rust2 = { version = "0.25", default-features = false, features = ["std", "encoder", "optimization", "xz"] }
 tempfile = "3"
 # Drawing the app icon (`app-icon`).
 tiny-skia = { version = "0.12", default-features = false, features = ["std"] }

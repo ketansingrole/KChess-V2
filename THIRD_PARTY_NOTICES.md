@@ -26,6 +26,7 @@ crate they depend on directly is named here.
 | [`getrandom`](https://github.com/rust-random/getrandom), [`uuid`](https://github.com/uuid-rs/uuid)                                                | MIT OR Apache-2.0                                                      | Random ids for studies and chapters                                                    |
 | [`sha2`](https://github.com/RustCrypto/hashes), [`base64`](https://github.com/marshallpierce/rust-base64)                                         | MIT OR Apache-2.0                                                      | Engine download checks and the Lichess sign-in challenge                               |
 | [`flate2`](https://github.com/rust-lang/flate2-rs), [`tar`](https://github.com/composefs/tar-rs) (crate), [`zip`](https://github.com/zip-rs/zip2) | MIT OR Apache-2.0 (`zip`: MIT)                                         | Unpacking a downloaded engine; gzip-compressed API answers (through `reqwest`)         |
+| [`qbsdiff`](https://github.com/hucsmn/qbsdiff) (with `bzip2` and `libbz2-rs-sys`)                                                                 | MIT (`bzip2`: MIT OR Apache-2.0; `libbz2-rs-sys`: bzip2-1.0.6)         | Small app updates: patches from the installed files to the next release's              |
 | [`tempfile`](https://github.com/Stebalien/tempfile)                                                                                               | MIT OR Apache-2.0                                                      | A private staging directory for engine downloads                                       |
 | [`rustix`](https://github.com/bytecodealliance/rustix), [`libc`](https://github.com/rust-lang/libc)                                               | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; MIT OR Apache-2.0 | Engine process signals and file checks on macOS and Linux; swapping in an update on macOS |
 | [`aes-gcm`](https://github.com/RustCrypto/AEADs), [`keyring`](https://github.com/open-source-cooperative/keyring-rs)                              | Apache-2.0 OR MIT; MIT OR Apache-2.0                                   | Sealing Lichess logins in the profile with a key kept in the system's credential store |
@@ -102,6 +103,18 @@ The variant engine is Fairy-Stockfish, compiled from its source at commit
 the source archive verified against a pinned SHA-256. It is built unmodified and without a neural
 network. Its source is available from <https://github.com/fairy-stockfish/Fairy-Stockfish>.
 
+## AppImage runtime
+
+The Linux AppImage starts with the AppImage type-2 runtime, the launcher that mounts the app and
+runs it, by the AppImage project under the MIT license. It is the unmodified official
+`runtime-x86_64` of release
+[20251108](https://github.com/AppImage/type2-runtime/releases/tag/20251108) (commit
+`dd6cebedcbddde9c82f89b011e8e1d40b6e43868`), verified when KChess is packaged against the pinned
+SHA-256 `2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d`. It is linked statically
+with musl libc (MIT), libfuse (LGPL-2.1), squashfuse (BSD-2-Clause), zstd (BSD-3-Clause) and zlib
+(zlib license), as its [license file](https://github.com/AppImage/type2-runtime/blob/dd6cebedcbddde9c82f89b011e8e1d40b6e43868/LICENSE)
+lists; its source and build scripts are at <https://github.com/AppImage/type2-runtime>.
+
 ## Offline voice recognition
 
 The speech recognition helper (`crates/kchess-voice`) loads `libvosk`, the official prebuilt
@@ -130,4 +143,5 @@ KChess is not affiliated with or endorsed by Lichess or the Stockfish team.
 ## Development and verification tooling
 
 Development-only crates (`cargo xtask`, test-only dependencies such as `regex-syntax`) and the
-tools CI installs (`cargo-llvm-cov`, NSIS, appimagetool, cargo-fuzz) do not ship in KChess.
+tools CI installs (`cargo-llvm-cov`, NSIS, appimagetool, cargo-fuzz) do not ship in KChess;
+only the AppImage runtime appimagetool embeds does (above).

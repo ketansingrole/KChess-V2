@@ -10,6 +10,7 @@ use std::sync::Arc;
 use futures::StreamExt as _;
 use futures::channel::mpsc;
 use gpui_kit::{App, AppContext as _, Entity, EventEmitter, Global, PromptLevel};
+use kchess_contracts::calls::CoreCall;
 use kchess_contracts::{CoreError, Level};
 use kchess_core::{Config, Core, Host};
 use serde_json::{Value, json};
@@ -293,6 +294,11 @@ impl CoreBridge {
     pub fn call_now(&self, method: &str, args: Vec<Value>) -> Result<Value, CoreError> {
         let answer = self.call(method, args);
         self.runtime.block_on(answer)
+    }
+
+    /// A typed core call (`AppCore::request`), waited for as `call_now` waits.
+    pub fn request_now<C: CoreCall>(&self, call: C) -> Result<C::Answer, CoreError> {
+        kchess_contracts::calls::decode::<C>(self.call_now(C::METHOD, call.args())?)
     }
 
     /// Cancel the core's work and release the profile, waiting at most a few seconds.
@@ -657,6 +663,16 @@ impl AppCore {
         args: Vec<Value>,
     ) -> impl Future<Output = Result<Value, CoreError>> + 'static + use<> {
         self.bridge.call(method, args)
+    }
+
+    /// Run a typed core call (`kchess_contracts::calls`): its method with its arguments, and its
+    /// answer read in its shape.
+    pub fn request<C: CoreCall>(
+        &self,
+        call: C,
+    ) -> impl Future<Output = Result<C::Answer, CoreError>> + 'static + use<C> {
+        let answer = self.call(C::METHOD, call.args());
+        async move { kchess_contracts::calls::decode::<C>(answer.await?) }
     }
 }
 

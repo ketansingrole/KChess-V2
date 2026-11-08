@@ -7,9 +7,9 @@
 //! (Linux and Windows, Dec 2022) and 0.3.42 (macOS, May 2022).
 
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::util::{Result, root, run, say, sha256_file};
+use crate::util::{Result, download, pinned, root, run, say};
 
 const RELEASES: &str = "https://github.com/alphacep/vosk-api/releases/download";
 
@@ -73,28 +73,51 @@ pub fn stage_if_outdated(profile: &str) -> Result<()> {
 
 /// Stage the helper built for `profile` (`release` or `debug`) with libvosk and the notices.
 pub fn stage(profile: &str) -> Result<PathBuf> {
-    let pin = pin()?;
+    stage_with(
+        &Runtime {
+            pin: pin()?,
+            cache: root().join("target/vosk"),
+            built: root().join("target").join(profile),
+            licenses: root().join("crates/kchess-voice/licenses"),
+            target: staged(),
+            fetch: download,
+        },
+        profile,
+    )
+}
+
+/// What staging reads and writes: the pinned libvosk archive, the folder it is cached in, the
+/// folder Cargo built the helper in, the notices, the staging folder, and how the archive is
+/// fetched.
+struct Runtime<F> {
+    pin: Pin,
+    cache: PathBuf,
+    built: PathBuf,
+    licenses: PathBuf,
+    target: PathBuf,
+    fetch: F,
+}
+
+fn stage_with(runtime: &Runtime<impl Fn(&str, &Path) -> Result>, profile: &str) -> Result<PathBuf> {
+    let Runtime {
+        pin,
+        cache,
+        built,
+        licenses,
+        target,
+        fetch,
+    } = runtime;
     let name = pin.archive.rsplit('/').next().unwrap_or(pin.archive);
-    let cache = root().join("target/vosk").join(name);
-    if !cache.exists() || sha256_file(&cache)? != pin.sha256 {
-        say(&format!("Downloading {RELEASES}/{}…", pin.archive));
-        crate::util::download(&format!("{RELEASES}/{}", pin.archive), &cache)?;
-        if sha256_file(&cache)? != pin.sha256 {
-            let _ = std::fs::remove_file(&cache);
-            return Err(format!(
-                "Voice runtime checksum mismatch for {}.",
-                pin.archive
-            ));
-        }
-    }
+    let cache = cache.join(name);
+    let url = format!("{RELEASES}/{}", pin.archive);
+    pinned(&format!("libvosk ({url})"), &url, pin.sha256, &cache, fetch)?;
     let mut archive =
         zip::ZipArchive::new(std::fs::File::open(&cache).map_err(|cause| cause.to_string())?)
             .map_err(|cause| cause.to_string())?;
-    let target = staged();
-    let _ = std::fs::remove_dir_all(&target);
-    std::fs::create_dir_all(&target).map_err(|cause| cause.to_string())?;
+    let _ = std::fs::remove_dir_all(target);
+    std::fs::create_dir_all(target).map_err(|cause| cause.to_string())?;
     let executable = format!("kchess-voice{}", std::env::consts::EXE_SUFFIX);
-    let helper = root().join("target").join(profile).join(&executable);
+    let helper = built.join(&executable);
     if !helper.exists() {
         return Err(format!(
             "Cargo did not produce {}: build kchess-voice first.",
@@ -117,8 +140,7 @@ pub fn stage(profile: &str) -> Result<PathBuf> {
             run("lipo", &[&path, "-thin", "arm64", "-output", &path])?;
         }
     }
-    let licenses = root().join("crates/kchess-voice/licenses");
-    for entry in std::fs::read_dir(&licenses)
+    for entry in std::fs::read_dir(licenses)
         .map_err(|cause| cause.to_string())?
         .flatten()
     {
@@ -138,5 +160,131 @@ pub fn stage(profile: &str) -> Result<PathBuf> {
     say(&format!(
         "Staged the voice runtime in target/voice-runtime ({profile})."
     ));
-    Ok(target)
+    Ok(target.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A file as the stand-in archive holds it. On macOS staging thins the universal library to
+    /// Apple Silicon, so the archive holds `bytes` as the arm64 slice of a fat file.
+    fn archived(bytes: &[u8]) -> Vec<u8> {
+        if !cfg!(target_os = "macos") {
+            return bytes.to_vec();
+        }
+        const OFFSET: u32 = 1 << 14;
+        let mut fat = Vec::new();
+        for word in [
+            0xcafe_babe,
+            1,
+            0x0100_000c,
+            0,
+            OFFSET,
+            bytes.len() as u32,
+            14,
+        ] {
+            fat.extend_from_slice(&u32::to_be_bytes(word));
+        }
+        fat.resize(OFFSET as usize, 0);
+        fat.extend_from_slice(bytes);
+        fat
+    }
+
+    /// Staging fetches the pinned archive into its cache and replaces the staging folder with the
+    /// helper Cargo built, the archive's libraries under their staged names and the notices.
+    #[test]
+    fn the_helper_is_staged_with_the_pinned_libraries_and_the_notices() {
+        use sha2::Digest;
+        use std::io::Write;
+        let scratch = std::env::temp_dir().join(format!("xtask-voice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, bytes) in [("vosk-0.1/libvosk", b"vosk"), ("vosk-0.1/runtime", b"libc")] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(&archived(bytes)).unwrap();
+        }
+        let archive = zip.finish().unwrap().into_inner();
+        let executable = format!("kchess-voice{}", std::env::consts::EXE_SUFFIX);
+        let built = scratch.join("built");
+        let licenses = scratch.join("licenses");
+        for (dir, name, text) in [
+            (&built, executable.as_str(), "helper"),
+            (&licenses, "NOTICE.txt", "notice"),
+        ] {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        let target = scratch.join("staged");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("left over"), "").unwrap();
+        let fetched = std::cell::RefCell::new(Vec::new());
+        let runtime = Runtime {
+            pin: Pin {
+                archive: "v0.1/vosk-0.1.zip",
+                sha256: crate::util::hex(&sha2::Sha256::digest(&archive)).leak(),
+                files: &[
+                    ("vosk-0.1/libvosk", "libvosk.so"),
+                    ("vosk-0.1/runtime", "libc.so"),
+                ],
+            },
+            cache: scratch.join("cache"),
+            built,
+            licenses,
+            target: target.clone(),
+            fetch: |url: &str, to: &Path| -> Result {
+                fetched.borrow_mut().push(url.to_string());
+                std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+                std::fs::write(to, &archive).map_err(|cause| cause.to_string())
+            },
+        };
+
+        assert_eq!(stage_with(&runtime, "debug").unwrap(), target);
+
+        assert_eq!(*fetched.borrow(), [format!("{RELEASES}/v0.1/vosk-0.1.zip")]);
+        assert!(scratch.join("cache/vosk-0.1.zip").exists());
+        let mut staged: Vec<_> = std::fs::read_dir(&target)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        staged.sort();
+        let mut expected = vec![
+            executable.clone(),
+            "NOTICE.txt".into(),
+            "libc.so".into(),
+            "libvosk.so".into(),
+        ];
+        expected.sort();
+        assert_eq!(staged, expected);
+        for (name, text) in [
+            (executable.as_str(), "helper"),
+            ("libvosk.so", "vosk"),
+            ("libc.so", "libc"),
+            ("NOTICE.txt", "notice"),
+        ] {
+            assert_eq!(std::fs::read_to_string(target.join(name)).unwrap(), text);
+        }
+        #[cfg(unix)]
+        for name in [executable.as_str(), "libvosk.so", "libc.so"] {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(target.join(name))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o755, "{name}");
+        }
+
+        // Without the helper, staging stops and says to build it.
+        std::fs::remove_file(runtime.built.join(&executable)).unwrap();
+        let error = stage_with(&runtime, "debug").unwrap_err();
+        assert!(error.contains("build kchess-voice first"), "{error}");
+        assert_eq!(
+            fetched.borrow().len(),
+            1,
+            "a cached archive was fetched again"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
 }
