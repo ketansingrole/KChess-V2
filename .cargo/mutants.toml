@@ -32,6 +32,9 @@ exclude_re = [
     # Makes the installers with makensis, which only the Windows package jobs have (the Windows
     # upgrade workflow installs and checks what it makes); the scripts it runs are tested.
     'xtask/src/package/windows\.rs:.*: (replace package -> Result<Vec<PathBuf>> with .*|replace / with [%*] in package)$',
+    # Forgets a Windows installation in the registry; elsewhere it does nothing, so a run on Linux
+    # cannot tell it from nothing. The Windows upgrade workflow's patch step needs it.
+    'tooling/xtask/src/deltas\.rs:.*: replace forget_installation with \(\)$',
     # `appimage` only binds the real pins, cache and download to `appimage_with`, which its test
     # runs whole with a stand-in appimagetool; the binding itself downloads from GitHub and runs
     # the real tool, so it is seen only by `cargo xtask package` on Linux (CI's package job).

@@ -238,6 +238,7 @@ fn installed_tree(installer: &Path, work: &Path) -> Result<Tree> {
     // Windows installer does not take in `/D=`, so it installed somewhere else.
     let folder: PathBuf = work.join("installed").components().collect();
     let _ = std::fs::remove_dir_all(&folder);
+    forget_installation();
     // `/D=` is the last argument, unquoted, as NSIS reads it.
     run_with(
         Command::new(installer)
@@ -260,6 +261,21 @@ fn installed_tree(installer: &Path, work: &Path) -> Result<Tree> {
         return Err(nothing());
     }
     Ok(tree)
+}
+
+/// Forget the installation an earlier installer recorded (`Software\<GUID>`, per user), so the
+/// next one installs where `/D=` says: an installer upgrades a recorded installation in place,
+/// as it should on a person's machine, and NSIS takes `/D=` off the command line it reads. Only
+/// the machines that make patches run installers (the Windows package job, a disposable runner).
+fn forget_installation() {
+    if cfg!(windows) {
+        let guid = crate::package::Identity::new(String::new()).guid;
+        let _ = Command::new("reg")
+            .args(["delete", &format!("HKCU\\Software\\{guid}"), "/f"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
 }
 
 /// A package's files, and what its patches carry beside them, read from `path`.
