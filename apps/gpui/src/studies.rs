@@ -399,7 +399,10 @@ impl StudyLibrary {
 
 #[cfg(test)]
 mod tests {
-    use super::{StudyLibrary, Write, chapter_items, saved_chapter, time_ago, written_chapter};
+    use super::{
+        Bases, StudyLibrary, Write, chapter_items, forget_removed, saved_chapter, time_ago,
+        written_chapter,
+    };
     use futures::channel::mpsc;
     use serde_json::json;
 
