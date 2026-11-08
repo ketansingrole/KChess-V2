@@ -20,6 +20,8 @@ use sha2::{Digest, Sha256};
 
 use crate::settings::{SettingsChanged, SettingsHandle};
 
+mod patch;
+
 const REPOSITORY: &str = "ketansingrole/KChess-V2";
 const FEED: &str = "https://api.github.com";
 /// How long a download waits for the server's next bytes before it counts as stopped.
@@ -372,22 +374,78 @@ fn http() -> Result<reqwest::Client, String> {
         .map_err(|cause| cause.to_string())
 }
 
+/// How many times a small request (the check, the checksums, their signature) is made before
+/// it fails: a dropped connection or a busy server answers the next try, not six hours later.
+const TRIES: u32 = 3;
+
+/// One small request's answer, or why it failed: `Retry` for what a later try may not meet
+/// (no connection, a timeout, a server error, too many requests), `Fail` for the rest.
+enum Answer {
+    Fail(String),
+    Retry(String),
+}
+
+/// `request` until it answers, at most `TRIES` times, waiting as a resumed download does
+/// (`backoff`) between tries.
+async fn retried<T, F: Future<Output = Result<T, Answer>>>(
+    what: &str,
+    mut request: impl FnMut() -> F,
+) -> Result<T, String> {
+    let mut tries = 1;
+    loop {
+        match request().await {
+            Ok(answer) => return Ok(answer),
+            Err(Answer::Fail(cause)) => return Err(cause),
+            Err(Answer::Retry(cause)) if tries < TRIES => {
+                log(&format!("{what}: {cause}, trying again ({tries}/{TRIES})"));
+                tokio::time::sleep(backoff(tries)).await;
+                tries += 1;
+            }
+            Err(Answer::Retry(cause)) => return Err(cause),
+        }
+    }
+}
+
+/// The answer to a small request as `Answer`: `failure` when there was none, `refused` for a
+/// failing status. A server error or `429` may pass; any other failing status will not.
+fn answered(
+    response: Result<reqwest::Response, reqwest::Error>,
+    failure: &'static str,
+    refused: impl FnOnce(reqwest::StatusCode) -> String,
+) -> Result<reqwest::Response, Answer> {
+    let response = response.map_err(failed(failure)).map_err(Answer::Retry)?;
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
+    }
+    log(&format!("{failure}: the server answered {status}"));
+    let cause = refused(status);
+    if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        Err(Answer::Retry(cause))
+    } else {
+        Err(Answer::Fail(cause))
+    }
+}
+
 async fn latest(feed: String) -> Result<Release, String> {
     let url = format!("{feed}/repos/{REPOSITORY}/releases/latest");
-    let response = http()?
-        .get(url)
-        .header("Accept", "application/vnd.github+json")
-        .timeout(Duration::from_secs(30))
-        .send()
-        .await
-        .map_err(failed("Could not reach the update server"))?;
-    if !response.status().is_success() {
-        return Err(format!("The update server answered {}.", response.status()));
-    }
-    response
+    let client = http()?;
+    retried("check", || async {
+        let response = client
+            .get(&url)
+            .header("Accept", "application/vnd.github+json")
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await;
+        answered(response, "Could not reach the update server", |status| {
+            format!("The update server answered {status}.")
+        })?
         .json::<Release>()
         .await
         .map_err(failed("The update server's answer could not be read"))
+        .map_err(Answer::Retry)
+    })
+    .await
 }
 
 /// How many times a download that stops part way picks up again before it fails.
@@ -398,6 +456,11 @@ const RESUME_AFTER: Duration = if cfg!(test) {
 } else {
     Duration::from_secs(2)
 };
+
+/// The wait before try (or resume) `attempt`, counting from 1: `RESUME_AFTER`, doubled each time.
+fn backoff(attempt: u32) -> Duration {
+    RESUME_AFTER * 2u32.pow(attempt.saturating_sub(1))
+}
 
 /// How often a download reports its progress: every this many bytes, and at its end. One report
 /// for every chunk the server sent was thousands of redraws of the window for one update.
@@ -593,7 +656,7 @@ async fn receive_all(
                     "{cause} at {} of {} bytes, resuming ({resumes}/{RESUMES})",
                     part.received, part.total
                 ));
-                tokio::time::sleep(RESUME_AFTER * 2u32.pow(resumes - 1)).await;
+                tokio::time::sleep(backoff(resumes)).await;
             }
             Err(Stop::Dropped(cause)) => return Err(cause),
         }
@@ -634,17 +697,6 @@ fn prune_kept(root: &Path, stale: impl Fn(Option<[u64; 3]>) -> bool) {
     }
 }
 
-/// Download `asset` into `folder` (its version's kept folder) and check it against the
-/// release's digest; the downloaded file. `progress` hears the bytes received so far.
-async fn download(
-    release: Release,
-    asset: Asset,
-    folder: PathBuf,
-    progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
-) -> Result<PathBuf, String> {
-    download_signed(release, asset, folder, progress, update_key()).await
-}
-
 /// A small release file's text (the checksums or their signature).
 async fn small_file(
     client: &reqwest::Client,
@@ -658,19 +710,24 @@ async fn small_file(
         .iter()
         .find(|entry| entry.name == name)
         .ok_or(missing)?;
-    client
-        .get(&entry.browser_download_url)
-        .timeout(Duration::from_secs(60))
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(failed(failure))?
-        .text()
-        .await
-        .map_err(failed(failure))
+    retried(name, || async {
+        let response = client
+            .get(&entry.browser_download_url)
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await;
+        answered(response, failure, |_| failure.to_string())?
+            .text()
+            .await
+            .map_err(failed(failure))
+            .map_err(Answer::Retry)
+    })
+    .await
 }
 
-/// `download`, with the checksums required to be signed by `key` when there is one. The
+/// Download `asset` into `folder` (its version's kept folder) and check it against the
+/// release's digest; the downloaded file. `progress` hears the bytes received so far. The
+/// checksums must be signed by `key` when there is one (`update_key()`, the release key). The
 /// checksums sit in the same release as the packages, so on their own they only catch a broken
 /// download: the signature is what stops a replaced package.
 async fn download_signed(
@@ -872,8 +929,9 @@ fn running_signer(install: &Install) -> Signer {
 }
 
 /// Download and check `asset` (of `package`) into its kept `folder`, and stage it: the new
-/// bundle on macOS (unpacked into this app's `work` folder), else the package itself. With
+/// bundle unpacked into `work` on macOS, else the package itself. With the installation
 /// `install` known, the update must be signed as the running app is.
+#[allow(clippy::too_many_arguments)]
 async fn fetch(
     release: Release,
     asset: Asset,
@@ -882,22 +940,121 @@ async fn fetch(
     folder: PathBuf,
     work: PathBuf,
     progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
+    key: Option<Vec<u8>>,
 ) -> Result<PathBuf, String> {
-    let file = download(release, asset, folder, progress).await?;
+    let file = download_signed(release, asset, folder, progress, key).await?;
     let staged = match package {
         Package::MacZip => unpack(&file, &work)?,
         _ => file,
     };
     if let Some(install) = install {
-        let running = running_signer(&install);
-        signed_alike(&running, &signer(package, &staged))?;
-        if package == Package::MacZip
-            && let (Some(team), Some(app)) = (&running.identity, &running.app)
-            && !meets_requirement(&staged, &developer_requirement(app, team))
-        {
-            return Err("The update is not signed by KChess's developer".into());
+        signed_as_running(package, &install, &staged)?;
+    }
+    Ok(staged)
+}
+
+/// Whether `staged`, an update for `install` of `package`'s kind, is signed as the running app.
+fn signed_as_running(package: Package, install: &Install, staged: &Path) -> Result<(), String> {
+    let running = running_signer(install);
+    signed_alike(&running, &signer(package, staged))?;
+    if package == Package::MacZip
+        && let (Some(team), Some(app)) = (&running.identity, &running.app)
+        && !meets_requirement(staged, &developer_requirement(app, team))
+    {
+        return Err("The update is not signed by KChess's developer".into());
+    }
+    Ok(())
+}
+
+/// The update patch from this installation's version `current` to `release`, when the release
+/// has one for the package this app updates from and it is the smaller download.
+fn patch_asset(release: &Release, package: Package, current: &str) -> Option<Asset> {
+    let version = release.tag_name.trim_start_matches('v');
+    let name = asset_name(version, package)?;
+    let whole = release.assets.iter().find(|asset| asset.name == name)?;
+    let patch = patch::asset_name(&name, current)?;
+    release
+        .assets
+        .iter()
+        .find(|asset| asset.name == patch && (whole.size == 0 || asset.size < whole.size))
+        .cloned()
+}
+
+/// The update to `release` staged for `install`: by its patch when the release has one for
+/// `current`, by the whole package `asset` when it has none, or when this installation's files
+/// are not the ones the patch starts from (a file deleted or changed since it was installed).
+#[allow(clippy::too_many_arguments)]
+async fn fetch_update(
+    release: Release,
+    asset: Asset,
+    package: Package,
+    install: Option<Install>,
+    current: String,
+    folder: PathBuf,
+    work: PathBuf,
+    progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
+    key: Option<Vec<u8>>,
+) -> Result<PathBuf, String> {
+    let patch = install
+        .clone()
+        .and_then(|install| Some((install, patch_asset(&release, package, &current)?)));
+    if let Some((installed, delta)) = patch {
+        let patched = fetch_patch(
+            release.clone(),
+            delta,
+            package,
+            installed,
+            current,
+            folder.clone(),
+            work.clone(),
+            progress.clone(),
+            key.clone(),
+        )
+        .await;
+        match patched {
+            Ok(staged) => return Ok(staged),
+            Err(cause) => log(&format!(
+                "patch failed: {cause}; downloading the whole package"
+            )),
         }
     }
+    fetch(
+        release, asset, package, install, folder, work, progress, key,
+    )
+    .await
+}
+
+/// `fetch` by the update patch `delta` from `current`: download it into the kept `folder`,
+/// rebuild the new release from the installed files into `work`, and check what it made as a
+/// whole package's download is checked.
+#[allow(clippy::too_many_arguments)]
+async fn fetch_patch(
+    release: Release,
+    delta: Asset,
+    package: Package,
+    install: Install,
+    current: String,
+    folder: PathBuf,
+    work: PathBuf,
+    progress: futures::channel::mpsc::UnboundedSender<(u64, u64)>,
+    key: Option<Vec<u8>>,
+) -> Result<PathBuf, String> {
+    let version = release.tag_name.trim_start_matches('v').to_string();
+    let deb = asset_name(&version, package).unwrap_or_default();
+    let file = download_signed(release, delta, folder, progress, key).await?;
+    let staged = patch::rebuild(
+        &patch::Patch {
+            delta: &file,
+            package,
+            install: &install.path,
+            root: Path::new("/"),
+            current: &current,
+            version: &version,
+            deb: &deb,
+        },
+        &work,
+    )?;
+    signed_as_running(package, &install, &staged)?;
     Ok(staged)
 }
 
@@ -1626,14 +1783,16 @@ impl Updates {
             }
         };
         let (sender, mut heard) = futures::channel::mpsc::unbounded();
-        let done = on_runtime(fetch(
+        let done = on_runtime(fetch_update(
             release,
             asset,
             package,
             self.install.clone(),
+            self.current.clone(),
             folder,
             work,
             sender,
+            update_key(),
         ));
         self.work = Some(cx.spawn(async move |this, cx| {
             while let Some(progress) = heard.next().await {

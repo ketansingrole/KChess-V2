@@ -3,7 +3,9 @@ name: Windows upgrade
 # Installs a published Windows release three ways (per user, in a custom folder, for all users),
 # upgrades it with this commit's installer the way an installed KChess runs it (`--updated /S`,
 # which every Electron release's updater does too) and checks Apps & features, shortcuts, the old
-# copy and user data. A fresh install checks the default folder. CI runs it whenever packaging may
+# copy and user data. A fresh install checks the default folder. The patch mode upgrades by an
+# update patch instead: the update installer writing this commit's files, rebuilt from the
+# published release's (`cargo xtask deltas`), as an installed KChess stages them. CI runs it whenever packaging may
 # have changed since the last release (ci.yml); run it from the Actions tab any time.
 on:
   workflow_call:
@@ -51,6 +53,27 @@ jobs:
           path: apps/gpui/dist/KChess-*-win-x64.exe
           if-no-files-found: error
           retention-days: 3
+      # The patch from the latest published release to this build, staged as the updater stages
+      # it: the rebuilt files and the update installer beside them.
+      - name: Make an update patch from the published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release download --pattern 'KChess-2*-win-x64.exe' --dir old
+          old=$(ls old/KChess-*-win-x64.exe)
+          new=$(ls apps/gpui/dist/KChess-*-win-x64.exe)
+          cargo xtask deltas --from "$old" "$new"
+          from=$(basename "$old" | cut -d- -f2)
+          cargo xtask deltas --apply apps/gpui/dist/KChess-*-win-x64.from-"$from".delta \
+            "target/package/deltas/$from/installed" patch
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-patch
+          path: patch/
+          if-no-files-found: error
+          retention-days: 3
 
   upgrade:
     name: Upgrade (${{ matrix.mode }})
@@ -59,7 +82,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [fresh, default, custom, allusers]
+        mode: [fresh, default, custom, allusers, patch]
         include:
           # Releases from 2026.10.12 install per user even with /allusers, so the all-users copy
           # that the installer must remove comes from the last assisted installer.
@@ -73,7 +96,7 @@ jobs:
           sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: windows-installer
+          name: ${{ matrix.mode == 'patch' && 'windows-patch' || 'windows-installer' }}
           path: new
       - name: Download the published installer
         shell: pwsh

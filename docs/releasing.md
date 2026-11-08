@@ -24,7 +24,7 @@ its version and push only that tag, as the [release checklist](#release-checklis
 tags; it does not guess using a stale local list.
 
 The workflow builds on macOS, Windows and Linux and attaches the installers, the Snap,
-`SHA256SUMS.txt` and the update manifests to a **draft** GitHub Release; review it and press
+the update patches, `SHA256SUMS.txt` and the update manifests to a **draft** GitHub Release; review it and press
 _Publish_. A tag that isn't `vYEAR.MONTH.COUNTER` or doesn't match the workspace version fails
 validation, as does a release commit outside `main` or failing repository checks. Reruns can
 replace assets on an existing draft, but refuse to overwrite a published release
@@ -147,7 +147,21 @@ identifier, a Windows build's the same certificate; an ad hoc Mac build accepts 
 itself, ad hoc or Developer ID). It then replaces the `.app`, runs the NSIS installer silently
 (`--updated /S`), replaces the AppImage, or installs the `.deb` with `pkexec dpkg -i`. A download
 whose connection drops resumes from the bytes it has (`Range`), and downloads are kept from one
-start to the next: a checked package is used again, and one cut short carries on. What each update downloads, and
+start to the next: a checked package is used again, and one cut short carries on. The update
+check and the checksum files are tried three times after a dropped connection or a server error.
+
+Each package also comes as **update patches** (`KChess-<version>-<platform>-<arch>.from-<old>.delta`),
+from each of the three newest published releases before it, written by `cargo xtask deltas` in
+each package job (`crates/kchess-delta`). The release tooling compares the old and new
+releases' files by SHA-256: unchanged ones are taken from the installation, changed ones are
+bsdiff patches, new ones come whole, so a release that replaces Stockfish carries it. A patch that
+saves less than a quarter of the package is left out. The updater uses the patch for its own
+version when there is one, rebuilds the release from the installed files, checks every file, and
+stages it as the whole package's download would be (on Windows, `KChess-…-win-x64-update.exe`
+inside the patch is the installer without its files, which writes the files beside it). An
+installed file that is missing or changed, or any mismatch, downloads the whole package instead
+(`apps/gpui/src/updates/patch.rs`). The patches are signed with everything else through
+`SHA256SUMS.txt`; a failure to write them warns and costs only download size. What each update downloads, and
 the plan to send only the files that changed, is in
 [the updater measurements](benchmarks/2026-11-06-updater.md).
 
@@ -180,8 +194,8 @@ Keep the same app ID and signing identity across releases. Before uploading sign
 the workflow verifies their code signature, signing team, Gatekeeper acceptance and stapled
 notarization ticket. Never put signing credentials or a GitHub token in the app.
 
-Publish the complete release: installers, the manifests, `SHA256SUMS.txt` and
-`SHA256SUMS.txt.sig`. Drafts and
+Publish the complete release: installers, the update patches, the manifests, `SHA256SUMS.txt`
+and `SHA256SUMS.txt.sig`. Drafts and
 prereleases are excluded from the feed. Do not overwrite an already published release to ship a
 fix: advance `YEAR.MONTH.COUNTER`, create a new tag, and publish its draft once all platforms are
 ready. macOS requires the ZIP artifacts as well as DMGs.

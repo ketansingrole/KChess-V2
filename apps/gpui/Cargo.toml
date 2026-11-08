@@ -51,6 +51,10 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # release's SHA-256 sums; both already in Cargo.lock through the core.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "http2", "gzip"] }
 sha2 = { version = "0.11", default-features = false }
+# Small updates: the next release rebuilt from the installed files (`updates/patch.rs`), and a
+# .deb of them for the package manager (tar, already in Cargo.lock through the tooling).
+kchess-delta = { path = "../../crates/kchess-delta" }
+tar = { version = "0.4", default-features = false }
 # Verifying the Ed25519 signature on a release's SHA256SUMS.txt (`updates.rs`); already in
 # Cargo.lock under rustls.
 ring = "0.17"

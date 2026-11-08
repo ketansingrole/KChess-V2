@@ -20,7 +20,7 @@ pub(crate) mod linux;
 mod mac;
 #[cfg(target_os = "macos")]
 mod mas;
-mod windows;
+pub mod windows;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
