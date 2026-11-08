@@ -70,3 +70,7 @@ docs/benchmarks/raw/
 
 # Rust build output
 target/
+
+# cargo-mutants results (`cargo xtask mutants`, docs/mutation-testing.md).
+/mutants.out/
+/mutants.out.old/
