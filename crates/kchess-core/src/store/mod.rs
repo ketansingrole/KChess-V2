@@ -32,11 +32,16 @@ use crate::host::{Config, Host, Level};
 /// Filtered page counts, the library overview and the storage the games take, valid until a call
 /// that can change the stored games runs. The count is a full scan of the filter's index, while
 /// the page rows themselves are a short index range; the storage reads every game's row.
+///
+/// And the library snapshot, which decodes every study and replays every played game: it is kept
+/// with the connection's count of changed rows when it was read, and is stale once any write has
+/// changed a row since (`library_import::cached_library`).
 #[derive(Default)]
 pub struct StoreCache {
     counts: Mutex<HashMap<String, i64>>,
     overview: Mutex<Option<Value>>,
     storage: Mutex<Option<Vec<(String, i64, i64)>>>,
+    library: Mutex<Option<(u64, Value)>>,
 }
 
 impl StoreCache {
@@ -74,7 +79,28 @@ impl StoreCache {
         }
     }
 
+    /// The library snapshot read when the connection had changed `changes` rows, if it is kept.
+    pub fn library(&self, changes: u64) -> Option<Value> {
+        let library = self.library.lock().ok()?;
+        let (read_at, snapshot) = library.as_ref()?;
+        (*read_at == changes).then(|| snapshot.clone())
+    }
+
+    pub fn remember_library(&self, changes: u64, snapshot: &Value) {
+        if let Ok(mut library) = self.library.lock() {
+            *library = Some((changes, snapshot.clone()));
+        }
+    }
+
+    /// A connection opened afresh counts its changes from zero again.
+    pub fn forget_library(&self) {
+        if let Ok(mut library) = self.library.lock() {
+            *library = None;
+        }
+    }
+
     pub fn clear(&self) {
+        self.forget_library();
         if let Ok(mut counts) = self.counts.lock() {
             counts.clear();
         }
@@ -232,6 +258,7 @@ impl Database {
         if db.is_none() {
             let path = self.config.data_dir.join("kchess.db");
             *db = Some(open(&path, self.host.as_ref())?);
+            self.cache.forget_library();
         }
         if invalidates_counts(method) {
             self.cache.clear();
@@ -404,6 +431,45 @@ mod scheduling_tests {
             Arc::new(Quiet),
         ));
         (dir, database)
+    }
+
+    /// A connection opened again counts its changed rows from zero: the library read on the
+    /// one before must not stand for what the file holds now (here, a game another core saved
+    /// while this one had let the file go).
+    #[test]
+    fn a_reopened_connection_reads_the_library_afresh() {
+        let (dir, database) = database();
+        let games = |database: &Database| {
+            database
+                .call("store.library.library", &[serde_json::json!(0)])
+                .expect("library")["games"]
+                .as_array()
+                .expect("games")
+                .len()
+        };
+        assert_eq!(games(&database), 0);
+        // As a failed call leaves it: the connection dropped, the cache not cleared.
+        database.connection.lock().expect("lock").take();
+        let other = Database::new(Config::new(dir.path().to_path_buf()), Arc::new(Quiet));
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        other
+            .call(
+                "store.library.saveArchivedGame",
+                &[serde_json::json!({
+                    "id": "g", "source": "board", "startedAt": 1, "updatedAt": 2, "white": "A",
+                    "black": "B", "result": "*", "reason": "-", "timeControl": "-",
+                    "finished": false, "setup": { "variant": "standard", "fen": start },
+                    "moves": ["e2e4"],
+                })],
+            )
+            .expect("save");
+        other.close();
+        database.call("store.open", &[]).expect("open");
+        assert!(
+            database.cache.library.lock().expect("cache").is_none(),
+            "opening the file forgets the snapshot"
+        );
+        assert_eq!(games(&database), 1);
     }
 
     /// A storage call that panicked with the lock held used to leave it poisoned, so every later
