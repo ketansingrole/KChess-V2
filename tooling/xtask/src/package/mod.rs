@@ -359,7 +359,11 @@ mod tests {
                 .unwrap_err()
                 .contains("development build badge")
         );
-        std::fs::write(&app, b"\0\0kchess-dev-build\0").unwrap();
+        std::fs::write(
+            &app,
+            b"\0\0kchess-dev-build and a release binary's other text\0",
+        )
+        .unwrap();
         assert_eq!(verify_no_dev_build(&app), Ok(()));
     }
 
