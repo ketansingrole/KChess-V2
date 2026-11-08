@@ -10,6 +10,9 @@ use crate::util::{Result, root, say};
 /// Where the diff cargo-mutants reads is written, under the (ignored) target directory.
 const DIFF: &str = "target/mutants-diff.patch";
 
+/// The nextest profile each mutant's tests run under: it stops at the first failure.
+const NEXTEST_PROFILE: &str = "mutants";
+
 /// The base to diff against: `--base <ref>`, else where this branch left `origin/main`.
 fn base_of(repo: &Path, args: &[String]) -> Result<String> {
     match args.iter().position(|arg| arg == "--base") {
@@ -289,6 +292,8 @@ fn run_in(repo: &Path, cargo: &str, args: &[String]) -> Result {
     let status = Command::new(cargo)
         .args(&mutants)
         .current_dir(repo)
+        // The run ends at a mutant's first failing test (`.config/nextest.toml`).
+        .env("NEXTEST_PROFILE", NEXTEST_PROFILE)
         .status()
         .map_err(|cause| format!("Could not run {cargo}: {cause}"))?;
     if status.success() {
@@ -666,9 +671,11 @@ mod tests {
         let version = if installed { 0 } else { 1 };
         let script = format!(
             "#!/bin/sh\ncase \"$2\" in --version) exit {version};; esac\n\
-             echo \"$@\" > \"{calls}\"\ncat \"$3\" > \"{seen}\"\nexit {status}\n",
+             echo \"$@\" > \"{calls}\"\necho \"$NEXTEST_PROFILE\" > \"{profile}\"\n\
+             cat \"$3\" > \"{seen}\"\nexit {status}\n",
             calls = dir.join("calls").display(),
             seen = dir.join("seen.patch").display(),
+            profile = dir.join("profile").display(),
         );
         std::fs::write(&path, script).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -714,6 +721,9 @@ mod tests {
         );
         let seen = std::fs::read_to_string(tools.path().join("seen.patch")).unwrap();
         assert!(seen.contains("+fn new() {}"), "{seen}");
+        // Each mutant's tests stop at their first failure.
+        let profile = std::fs::read_to_string(tools.path().join("profile")).unwrap();
+        assert_eq!(profile.trim(), "mutants");
 
         // A missed mutant (cargo-mutants exits 2) fails the run and says what to do.
         let cargo = fake_cargo(tools.path(), true, 2);
