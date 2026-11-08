@@ -677,6 +677,9 @@ mod tests {
     }
 
     /// A macOS zip is read as the bundle it holds, links and modes kept, sequestered forks left out.
+    /// Unix only: the zip crate writes Unix modes only on Unix, and a release's zip comes from
+    /// `ditto` on macOS, so a zip written on Windows has no modes to read.
+    #[cfg(unix)]
     #[test]
     fn a_mac_zip_is_read_as_its_bundle() {
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
