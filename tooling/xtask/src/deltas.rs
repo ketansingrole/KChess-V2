@@ -447,6 +447,9 @@ pub fn run(args: &[String]) -> Result {
     let dir = args
         .first()
         .map_or_else(|| root().join("apps/gpui/dist"), PathBuf::from);
+    if !dir.is_dir() {
+        return Err(format!("{} is no folder of packages.", dir.display()));
+    }
     let releases: serde_json::Value = serde_json::from_str(&output(
         "gh",
         &["api", "repos/{owner}/{repo}/releases?per_page=30"],
@@ -749,12 +752,13 @@ mod tests {
         assert!(kchess_delta::Delta::open(&delta).is_ok());
         let other = appimage_tree(noise(2));
         let large = dir.join("large.delta");
+        // The whole file is a little over 200 kB: over three quarters of 250 kB, under all of it.
         assert!(
             !write(
                 ("1.0.0", "1.0.1"),
                 (&old, &other),
                 &[],
-                200_000,
+                250_000,
                 &large,
                 true
             )
@@ -966,6 +970,18 @@ mod tests {
             b"MZ update"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Only `--from` with two packages and `--apply` with three paths are the by-hand forms;
+    /// anything else names the folder of a release's packages.
+    #[test]
+    fn other_arguments_name_the_packages_folder() {
+        let missing = |args: &[&str]| {
+            let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+            run(&args).unwrap_err()
+        };
+        assert!(missing(&["/no/such/dist", "a", "b"]).contains("is no folder of packages"));
+        assert!(missing(&["/no/such/dist", "a", "b", "c"]).contains("is no folder of packages"));
     }
 
     /// In release CI, each package gets a patch from each earlier release that shipped one, its

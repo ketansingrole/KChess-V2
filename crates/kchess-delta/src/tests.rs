@@ -88,6 +88,27 @@ fn a_delta_rebuilds_the_new_release_from_the_installed_one() {
     let extras = vec![("control.tar.gz".to_string(), b"control".to_vec())];
     let path = delta_file(&dir, &release.old, &release.new, &extras);
 
+    let mut out = Vec::new();
+    let stats = build(
+        "1.0.0",
+        "1.0.1",
+        &release.old,
+        &release.new,
+        &extras,
+        &mut out,
+    )
+    .unwrap();
+    let files: u64 = release
+        .new
+        .iter()
+        .map(|(_, node)| match node {
+            Node::File { data, .. } => data.len() as u64,
+            _ => 0,
+        })
+        .sum();
+    assert_eq!(stats.files_size, files);
+    assert_eq!(stats.copied, 1, "the moved engine");
+
     let mut delta = Delta::open(&path).unwrap();
     assert_eq!(
         (delta.header.from.as_str(), delta.header.to.as_str()),
