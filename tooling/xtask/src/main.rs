@@ -14,6 +14,9 @@ mod icons;
 mod licenses;
 mod mutants;
 mod package;
+// The pins it checks live with the Linux packaging, compiled on Unix.
+#[cfg(unix)]
+mod pins;
 mod release;
 mod update_key;
 mod util;
@@ -72,6 +75,10 @@ const HELP: &str = "cargo xtask <command>
   deltas --apply <patch> <installed folder> <out>
                         Stage a Windows patch as the updater does: <out>/files and
                         <out>/KChess-update.exe (the Windows upgrade test)
+  pins --check [--report <file>]
+                        Fail when appimagetool or the AppImage runtime has a newer release than
+                        its pin (package/linux.rs), naming both; the weekly Pins workflow
+                        runs it (Unix)
 ";
 
 fn main() -> ExitCode {
@@ -116,6 +123,8 @@ fn main() -> ExitCode {
         Some("fairy-stockfish") => fairy::build().map(|_| ()),
         Some("package") => package::run(rest),
         Some("deltas") => deltas::run(rest),
+        #[cfg(unix)]
+        Some("pins") => pins::run(rest),
         None | Some("help" | "--help" | "-h") => {
             print!("{HELP}");
             Ok(())
