@@ -153,6 +153,8 @@ pub fn download(url: &str, path: &Path) -> Result {
 /// Makes `path` hold the file pinned by `sha256`: a cached copy that matches is kept, anything
 /// else is fetched from `url` with `fetch` (`download`) and checked. A fetched file that does not
 /// match is removed and refused, so a tampered or changed upstream file never gets used.
+// Its callers, the Linux packaging's tools, are compiled on Unix.
+#[cfg(unix)]
 pub fn pinned(
     what: &str,
     url: &str,
@@ -187,8 +189,10 @@ pub fn sha256_file(path: &Path) -> Result<String> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     const HELLO_SHA256: &str = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
 
+    #[cfg(unix)]
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("xtask-pinned-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -196,10 +200,12 @@ mod tests {
         dir.join("file")
     }
 
+    #[cfg(unix)]
     fn writes(bytes: &'static [u8]) -> impl FnOnce(&str, &Path) -> Result {
         move |_, path| std::fs::write(path, bytes).map_err(|cause| cause.to_string())
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_cached_file_that_matches_its_pin_is_kept_without_a_download() {
         let path = scratch("kept");
@@ -217,6 +223,7 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"hello");
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_missing_or_tampered_cached_file_is_fetched_again() {
         for cached in [None, Some(&b"tampered"[..])] {
@@ -242,6 +249,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_download_that_does_not_match_its_pin_is_removed_and_refused() {
         let path = scratch("refused");
@@ -262,6 +270,7 @@ mod tests {
         assert!(error.contains(&format!("not the pinned {HELLO_SHA256}")));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_failed_download_is_reported() {
         let path = scratch("failed");
