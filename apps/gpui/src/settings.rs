@@ -7,6 +7,7 @@ use std::time::Duration;
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Entity, EventEmitter, Global, Task, WeakEntity};
+use kchess_contracts::calls::{CustomThemes, DesktopSettings, SaveDesktopSettings};
 use kchess_contracts::types::{AppTheme, CustomThemeReport, Settings};
 use kchess_contracts::{CoreError, Level};
 use serde_json::Value;
@@ -70,15 +71,11 @@ fn defaults() -> Settings {
 pub fn init(cx: &mut App) {
     let bridge = std::sync::Arc::clone(&cx.global::<AppCore>().bridge);
     let settings = bridge
-        .call_now("desktopSettings", Vec::new())
-        .ok()
-        .and_then(|settings| serde_json::from_value::<Settings>(settings).ok())
-        .unwrap_or_else(defaults);
+        .request_now(DesktopSettings {})
+        .unwrap_or_else(|_| defaults());
     let report = bridge
-        .call_now("customThemes", Vec::new())
-        .ok()
-        .and_then(|report| serde_json::from_value::<CustomThemeReport>(report).ok())
-        .unwrap_or_else(|| CustomThemeReport {
+        .request_now(CustomThemes {})
+        .unwrap_or_else(|_| CustomThemeReport {
             themes: Vec::new(),
             dir: String::new(),
             problems: Vec::new(),
@@ -127,8 +124,8 @@ pub fn reload(entity: &Entity<AppSettings>, cx: &mut App) {
         let (settings, themes) = cx.update(|cx| {
             let core = cx.global::<AppCore>().clone();
             (
-                core.call("desktopSettings", Vec::new()),
-                core.call("customThemes", Vec::new()),
+                core.request(DesktopSettings {}),
+                core.request(CustomThemes {}),
             )
         });
         let settings = settings.await;
@@ -139,9 +136,9 @@ pub fn reload(entity: &Entity<AppSettings>, cx: &mut App) {
                 Answer::Again => return reload(&cx.entity(), cx),
                 Answer::Superseded => return,
             }
-            match settings.map(serde_json::from_value::<Settings>) {
+            match settings {
                 // Edits not yet stored stay; every other setting shows what is stored.
-                Ok(Ok(settings)) => {
+                Ok(settings) => {
                     this.settings = if this.dirty {
                         adopt(&this.settings, &this.stored, &settings)
                     } else {
@@ -149,28 +146,18 @@ pub fn reload(entity: &Entity<AppSettings>, cx: &mut App) {
                     };
                     this.stored = settings;
                 }
-                Ok(Err(cause)) => crate::log::write(
-                    Level::Warn,
-                    "settings",
-                    &format!("The saved settings could not be read: {cause}"),
-                ),
                 Err(cause) => crate::log::write(
                     Level::Warn,
                     "settings",
                     &format!("Loading settings failed: {}", cause.message),
                 ),
             }
-            match themes.map(serde_json::from_value::<CustomThemeReport>) {
-                Ok(Ok(report)) => {
+            match themes {
+                Ok(report) => {
                     this.custom_themes = report.themes;
                     this.themes_dir = report.dir;
                     this.theme_problems = report.problems;
                 }
-                Ok(Err(cause)) => crate::log::write(
-                    Level::Warn,
-                    "themes",
-                    &format!("The custom themes could not be read: {cause}"),
-                ),
                 Err(cause) => crate::log::write(
                     Level::Warn,
                     "themes",
@@ -193,7 +180,7 @@ fn write_in_order(
     cx: &mut App,
 ) {
     let core = cx.global::<AppCore>().clone();
-    let (stored, mut results) = mpsc::unbounded::<(Settings, Result<Value, CoreError>)>();
+    let (stored, mut results) = mpsc::unbounded::<(Settings, Result<Settings, CoreError>)>();
     cx.background_executor()
         .spawn(async move {
             // The last save, if it failed: with the settings it was based on, and why.
@@ -204,10 +191,10 @@ fn write_in_order(
                         let (sent, base) = *save;
                         let base = rebased(base, failed.as_ref());
                         let saved = core
-                            .call(
-                                "saveDesktopSettings",
-                                vec![serde_json::json!(sent), serde_json::json!(base)],
-                            )
+                            .request(SaveDesktopSettings {
+                                settings: sent.clone(),
+                                base: base.clone(),
+                            })
                             .await;
                         failed = saved
                             .as_ref()
@@ -233,8 +220,8 @@ fn write_in_order(
                 this.pending = this.pending.saturating_sub(1);
                 let unchanged = this.settings == sent;
                 this.failed = saved.is_err();
-                match saved.map(serde_json::from_value::<Settings>) {
-                    Ok(Ok(stored)) => {
+                match saved {
+                    Ok(stored) => {
                         if unchanged {
                             this.dirty = this.save_soon.is_some() || this.pending > 0;
                             this.settings = stored.clone();
@@ -246,11 +233,6 @@ fn write_in_order(
                         }
                         this.stored = stored;
                     }
-                    Ok(Err(cause)) => crate::log::write(
-                        Level::Warn,
-                        "settings",
-                        &format!("The saved settings could not be read: {cause}"),
-                    ),
                     Err(cause) => {
                         crate::log::write(
                             Level::Warn,

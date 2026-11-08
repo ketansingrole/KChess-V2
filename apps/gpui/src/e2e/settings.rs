@@ -247,3 +247,26 @@ fn the_core_downloads_the_voice_model_from_offline_downloads(cx: &mut gpui_kit::
     app.find("offline-voice-error");
     assert!(app.enabled("offline-voice-download"));
 }
+
+/// A setting saved elsewhere (another window, the command line) is shown here at once: the
+/// core's `settings:saved` reads the settings again.
+#[gpui_kit::test]
+fn a_setting_saved_elsewhere_is_shown(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Sound");
+    assert_eq!(app.find("sound").checked(), Some(true));
+    let base = app.saved_settings();
+    let mut edited = base.clone();
+    edited["soundEnabled"] = json!(false);
+    let core = app
+        .cx
+        .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
+    core.call_now("saveDesktopSettings", vec![edited, base])
+        .expect("another window saves");
+    app.wait_for("the saved setting", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find(gpui_kit::ElementId::from("sound"))
+            .is_some_and(|sound| sound.checked() == Some(false))
+    });
+}

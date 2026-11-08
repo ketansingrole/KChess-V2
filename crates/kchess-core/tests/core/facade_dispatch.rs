@@ -245,3 +245,24 @@ async fn review_get_takes_an_optional_variant() {
     assert!(refused.is_err());
     core.close().await;
 }
+
+/// Every typed call (`kchess_contracts::calls`) names a method the facade answers, with as many
+/// arguments as its contract takes: an extra method takes what its arm reads.
+#[test]
+fn typed_calls_name_facade_methods_with_their_arity() {
+    let contracts = arities(Scope::Core);
+    for (method, sent) in kchess_contracts::calls::CALLS {
+        assert!(
+            listed().contains(method),
+            "the typed call {method} names no facade method"
+        );
+        if let Some((_, required, most)) = contracts.iter().find(|(name, ..)| name == method) {
+            assert!(
+                (*required..=*most).contains(sent),
+                "{method} takes {required} to {most} arguments; its typed call sends {sent}"
+            );
+        } else {
+            assert!(EXTRAS.contains(method), "{method} has no contract");
+        }
+    }
+}

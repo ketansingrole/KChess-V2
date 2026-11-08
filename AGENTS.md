@@ -133,6 +133,9 @@ and in the App Store. Its readers play chess; they are not developers.
   shared core service (`crates/kchess-service`, `docs/shared-core.md`); host capabilities they
   answer go through `host:request`. A new method belongs in `kchess-contracts` (`core_api.rs`),
   the facade and its validator (`kchess-domain/src/misc/contracts.rs`).
+- Call the core with a typed call (`kchess_contracts::calls`, `AppCore::request`) when its answer
+  has a contract type: one line in `calls!` names the method, its arguments and its answer, and
+  the core's tests check it against the facade. Move a `call("…")` to one when you edit it.
 - Frontends import `CoreError`, `ErrorKind` and `Level` from `kchess-contracts`. Only the files
   that start, configure or host the core name `kchess_core`: xtask's `boundaries` test holds the
   list (`tooling/xtask/src/boundaries.rs`, run by CI). Add to it only for host wiring, never to
