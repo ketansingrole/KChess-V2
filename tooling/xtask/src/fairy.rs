@@ -135,7 +135,8 @@ fn git_bash() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("bash"))
 }
 
-#[cfg(test)]
+// The Windows build runs Git's Bash and MinGW's make.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -143,8 +144,6 @@ mod tests {
     /// `src` and stages the program with its license and a stamp of the commit; once staged, it
     /// is kept without unpacking or building again. A stand-in archive's Makefile "builds" a
     /// program naming the `ARCH` it was given.
-    // The Windows build runs Git's Bash and MinGW's make.
-    #[cfg(unix)]
     #[test]
     fn the_pinned_source_is_fetched_built_and_staged_once() {
         use sha2::Digest;
