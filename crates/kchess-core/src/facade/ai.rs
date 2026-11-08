@@ -11,6 +11,7 @@ use super::args::{arg, normal};
 use crate::ai::{
     Attempt, CALLBACK_PATH, FIRST_PORT, Model, Problem, Refusal, Tokens, new_host_id, valid_host_id,
 };
+use crate::clock;
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::host::Level;
@@ -69,12 +70,6 @@ struct Request {
     mate_after: Option<f64>,
 }
 
-fn now_ms() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0)
-}
-
 fn problem(refusal: Problem) -> Value {
     json!({ "problem": refusal })
 }
@@ -125,7 +120,7 @@ impl Core {
             .await
             .map_err(|_| unavailable("locked"))?;
         let tokens: Tokens = serde_json::from_str(&text).map_err(|_| unavailable("tokens"))?;
-        let now = now_ms();
+        let now = clock::now_ms() as f64;
         if tokens.fresh(now) {
             return Ok(tokens.access);
         }
@@ -237,7 +232,7 @@ impl Core {
                 &redirect,
                 &client_id,
                 &nonce,
-                now_ms(),
+                clock::now_ms() as f64,
             )
             .await?;
         let sealed = self.seal_tokens(&signed.tokens).await?;

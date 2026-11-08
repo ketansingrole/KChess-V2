@@ -6,7 +6,8 @@ use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
 use super::StoreContext;
-use super::library::{db_err, now_ms, transaction};
+use super::library::{db_err, transaction};
+use crate::clock::now_ms;
 use crate::error::Result;
 
 /// This module's storage methods; None when the method is not one of them.
@@ -28,7 +29,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
 fn flush_usage(db: &Connection, rows: &Value) -> Result<Value> {
     let rows = rows.as_array().cloned().unwrap_or_default();
     transaction(db, || {
-        let now = now_ms()? as i64;
+        let now = now_ms();
         for row in &rows {
             db.execute(
                 "INSERT INTO usage (account, kind, requests, bytesIn, since) VALUES (?1, ?2, ?3, ?4, ?5)

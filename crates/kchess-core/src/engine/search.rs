@@ -27,7 +27,8 @@ use super::status::{
 use super::uci::{
     UciController, error_summary, lock, search_cancelled, signal_aborted, truncate_for_log,
 };
-use super::{EngineContext, after, clear_timer, now_ms, random_unit, replace_timer};
+use super::{EngineContext, after, clear_timer, random_unit, replace_timer};
+use crate::clock::now_ms;
 use crate::error::{CoreError, Result};
 use crate::host::Level;
 use kchess_domain::js;

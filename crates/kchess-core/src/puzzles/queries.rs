@@ -6,7 +6,6 @@
 //! seeded one). No SQL `RANDOM()` is used, so the indexed plans stay the same.
 
 use std::collections::HashSet;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension, Statement, ToSql, params};
 use serde::{Deserialize, Serialize, Serializer};
@@ -174,14 +173,6 @@ pub fn read_status(db: &Connection, busy: bool) -> Result<PuzzleDbStatus, String
     })
 }
 
-pub(crate) fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
-        })
-}
-
 /// Replace the stored puzzles with `rows` in one transaction; a failure keeps the old ones.
 pub fn store_sample(
     db: &Connection,
@@ -253,7 +244,11 @@ fn write_sample(
     }
     db.execute(
         "INSERT OR REPLACE INTO puzzle_meta (id, importedAt, count, bytes) VALUES (1, ?, ?, ?)",
-        params![now_ms(), i64::try_from(count).unwrap_or(i64::MAX), bytes],
+        params![
+            crate::clock::now_ms(),
+            i64::try_from(count).unwrap_or(i64::MAX),
+            bytes
+        ],
     )
     .map_err(sql_error)?;
     db.execute_batch("COMMIT").map_err(sql_error)?;

@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,6 +24,7 @@ use tokio_util::sync::CancellationToken;
 use super::client::{Failure, LichessClient, Ndjson, TokenSource, authorize};
 use super::reviews::review_from_lichess;
 use crate::capabilities::Capabilities;
+use crate::clock::now_ms;
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::{Host, Level};
 use crate::store::games::EXPORTED_GAME_CACHE;
@@ -289,14 +290,6 @@ pub fn normalize_game(raw: &GameJson, account: &str) -> LichessGame {
         moves: raw.moves.clone().unwrap_or_default(),
         pgn: raw.pgn.clone(),
     }
-}
-
-/// `Date.now()`.
-pub fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 /// Percent-encodes one path segment (a username), as openapi-fetch does for `{username}`.

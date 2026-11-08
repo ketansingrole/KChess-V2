@@ -6,12 +6,13 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::super::accounts::{Lichess, now_ms};
+use super::super::accounts::Lichess;
 use super::super::challenges::ChallengeInbox;
 use super::super::client::{
     Failure, LichessError, TokenSource, authorize, lichess_error, read_with_deadline,
 };
 use super::super::stream::{LineOptions, read_lines};
+use crate::clock::now_ms;
 use crate::error::{CoreError, ErrorKind};
 use crate::host::Level;
 

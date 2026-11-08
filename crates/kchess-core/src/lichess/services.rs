@@ -117,7 +117,7 @@ impl Services {
             http,
             endpoints,
             Arc::new(DbLookups::new(Arc::clone(&database))),
-            Arc::new(super::accounts::now_ms),
+            Arc::new(crate::clock::now_ms),
         )
         .with_lifetime(lifetime.clone())
         .with_login(Arc::new(DbExplorerLogin::new(

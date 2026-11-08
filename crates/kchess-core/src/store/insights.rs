@@ -7,7 +7,8 @@ use rusqlite::{Connection, params_from_iter, types::Value as Sql};
 use serde_json::{Map, Value, json};
 
 use super::StoreContext;
-use super::library::{db_err, now_ms};
+use super::library::db_err;
+use crate::clock::now_ms;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::js;
@@ -49,7 +50,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
     let result = match method {
         "store.insights.insights" => {
             let query = args.first().unwrap_or(&Value::Null);
-            now_ms().and_then(|now| insights(host, db, query, now))
+            insights(host, db, query, now_ms() as f64)
         }
         _ => return None,
     };

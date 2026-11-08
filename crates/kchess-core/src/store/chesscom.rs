@@ -11,9 +11,10 @@ use serde_json::Value;
 
 use super::StoreContext;
 use super::games::{
-    GAME_KEYS, MAX_GAMES, StorageResult, arg, as_json, current, now_ms, optional_arg,
-    purge_account_data, to_sql, transaction, upsert_sql,
+    GAME_KEYS, MAX_GAMES, StorageResult, arg, as_json, current, optional_arg, purge_account_data,
+    to_sql, transaction, upsert_sql,
 };
+use crate::clock::now_ms;
 use crate::error::{CoreError, Result};
 use crate::host::Host;
 use kchess_domain::chesscom::account_of;

@@ -10,9 +10,9 @@
 use getrandom::fill;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::StoreContext;
+use crate::clock;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::js;
@@ -46,20 +46,8 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
     let db = ctx.db;
     let host = ctx.host;
     let result = match method {
-        "store.library.library" => now_arg(args, 0).and_then(|now| cached_library(ctx, now)),
-        "store.library.studyCommand" => now_arg(args, 1).and_then(|now| {
-            let mut command = args.first().cloned().unwrap_or(Value::Null);
-            if let Some(based_on) = args.get(3).and_then(Value::as_str) {
-                let name = check_based_on(db, &command, based_on)?;
-                // A content save changes the chapter's moves only, never the study's name.
-                if let (Some(name), Some(fields)) = (name, command.as_object_mut())
-                    && fields.get("op").and_then(Value::as_str) == Some("save")
-                {
-                    fields.insert("name".into(), Value::String(name));
-                }
-            }
-            study_command(db, &command, now, args.get(2) == Some(&Value::Bool(true)))
-        }),
+        "store.library.library" => cached_library(ctx, now_arg(args, 0)),
+        "store.library.studyCommand" => study_command_call(db, args),
         "store.library.saveArchivedGame" => {
             write_game(db, args.first().unwrap_or(&Value::Null)).map(|()| Value::Null)
         }
@@ -70,11 +58,11 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         }),
         "store.library.addMistakes" => str_arg(args, 0, "reviewKey").and_then(|key| {
             let color = opt_str(args, 1);
-            now_arg(args, 2).and_then(|now| add_mistakes(host, db, key, color, now))
+            add_mistakes(host, db, key, color, now_arg(args, 2))
         }),
         "store.library.answerMistake" => str_arg(args, 0, "id").and_then(|id| {
             let solved = js::truthy(args.get(1));
-            now_arg(args, 2).and_then(|now| answer_mistake(db, id, solved, now))
+            answer_mistake(db, id, solved, now_arg(args, 2))
         }),
         "store.library.mistakeGames" => mistake_games(host, db),
         "store.library.saveSession" => str_arg(args, 0, "kind").and_then(|kind| {
@@ -87,12 +75,10 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
                 "This session is too large to save automatically. Export a PGN copy.",
             )
         }),
-        "store.library.joinedTournaments" => {
-            now_arg(args, 0).and_then(|now| joined_tournaments(host, db, now))
-        }
+        "store.library.joinedTournaments" => joined_tournaments(host, db, now_arg(args, 0)),
         "store.library.rememberTournament" => {
             let entry = args.first().cloned().unwrap_or(Value::Null);
-            now_arg(args, 1).and_then(|now| remember_tournament(host, db, &entry, now))
+            remember_tournament(host, db, &entry, now_arg(args, 1))
         }
         "store.library.forgetTournament" => str_arg(args, 0, "system").and_then(|system| {
             str_arg(args, 1, "id")
@@ -111,32 +97,37 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         "store.library.reviewRepertoireLine" => str_arg(args, 0, "key").and_then(|key| {
             let line = str_arg(args, 1, "line")?;
             let correct = js::truthy(args.get(2));
-            now_arg(args, 3)
-                .and_then(|now| review_repertoire_line(host, db, key, line, correct, now))
+            review_repertoire_line(host, db, key, line, correct, now_arg(args, 3))
         }),
         _ => return None,
     };
     Some(result)
 }
 
-/* ── Shared helpers (also used by the other storage modules) ── */
-
-/// `Date.now()`, as whole milliseconds.
-pub fn now_ms() -> Result<f64> {
-    let elapsed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| CoreError::new(e.to_string()))?;
-    Ok(elapsed.as_millis() as f64)
+fn study_command_call(db: &Connection, args: &[Value]) -> Result<Value> {
+    let mut command = args.first().cloned().unwrap_or(Value::Null);
+    if let Some(based_on) = args.get(3).and_then(Value::as_str) {
+        let name = check_based_on(db, &command, based_on)?;
+        // A content save changes the chapter's moves only, never the study's name.
+        if let (Some(name), Some(fields)) = (name, command.as_object_mut())
+            && fields.get("op").and_then(Value::as_str) == Some("save")
+        {
+            fields.insert("name".into(), Value::String(name));
+        }
+    }
+    study_command(
+        db,
+        &command,
+        now_arg(args, 1),
+        args.get(2) == Some(&Value::Bool(true)),
+    )
 }
 
 /* ── Shared helpers (also used by the other storage modules) ── */
 
 /// An optional `now` argument: absent or null means `Date.now()`.
-pub fn now_arg(args: &[Value], i: usize) -> Result<f64> {
-    match opt_number(args, i) {
-        Some(now) => Ok(now),
-        None => now_ms(),
-    }
+pub fn now_arg(args: &[Value], i: usize) -> f64 {
+    opt_number(args, i).unwrap_or_else(|| clock::now_ms() as f64)
 }
 
 /// A rusqlite error as the core's message.

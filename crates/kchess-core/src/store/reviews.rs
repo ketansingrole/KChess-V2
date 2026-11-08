@@ -5,7 +5,8 @@ use rusqlite::{Connection, OptionalExtension, params, types::Value as Sql};
 use serde_json::{Map, Value, json};
 
 use super::StoreContext;
-use super::library::{db_err, now_arg, now_ms, str_arg, string_list, transaction};
+use super::library::{db_err, now_arg, str_arg, string_list, transaction};
+use crate::clock::now_ms;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::js;
@@ -32,8 +33,9 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         "store.reviewStore.hasAccount" => str_arg(args, 0, "username")
             .and_then(|name| has_account(db, name))
             .map(Value::Bool),
-        "store.reviewStore.markChecked" => now_arg(args, 1)
-            .and_then(|at| mark_checked(db, &string_list(args.first()), at).map(|()| Value::Null)),
+        "store.reviewStore.markChecked" => {
+            mark_checked(db, &string_list(args.first()), now_arg(args, 1)).map(|()| Value::Null)
+        }
         "store.reviewStore.gamesToReview" => {
             let since = args.get(1).and_then(Value::as_f64).unwrap_or(0.0);
             let limit = args
@@ -221,7 +223,7 @@ pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<V
         .cloned();
     let game_id = coalesce(input.get("gameId"), existing_game.as_ref());
     let mut merged = with_game_id(input, game_id.clone())?;
-    merged.insert("updatedAt".into(), js::number_to_json(now_ms()?));
+    merged.insert("updatedAt".into(), js::number_to_json(now_ms() as f64));
     let merged = Value::Object(merged);
     let summary = summarize_stored(&merged)?;
     let data = js::stringify(&merged);

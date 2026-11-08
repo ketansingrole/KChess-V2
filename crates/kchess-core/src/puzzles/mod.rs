@@ -293,7 +293,7 @@ impl PuzzleService {
         let result = self
             .inner
             .with_db(move |db| {
-                attempts::record(db, &attempt, queries::now_ms())?;
+                attempts::record(db, &attempt, crate::clock::now_ms())?;
                 let query = attempts::ProgressQuery {
                     today: attempt.day,
                     limit: attempts::RECENT,

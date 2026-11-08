@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 use super::StoreContext;
+use crate::clock::now_ms;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::calendar::civil_from_days;
@@ -449,14 +450,6 @@ pub(super) fn optional_arg<T: DeserializeOwned>(
 /// `stillCurrent`, as the boolean the caller evaluated: absent means still current.
 pub(super) fn current(args: &[Value], index: usize) -> bool {
     !matches!(args.get(index), Some(Value::Bool(false)))
-}
-
-pub(super) fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
-        })
 }
 
 /// A validator or domain rule from `kchess-domain`, by its TypeScript name.

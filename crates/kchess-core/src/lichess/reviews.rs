@@ -9,9 +9,10 @@ use serde::Deserialize;
 use serde_json::{Map, Number, Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::accounts::{Lichess, now_ms};
+use super::accounts::Lichess;
 use super::client::{Failure, LichessClient, Ndjson};
 use super::decode::{Loose, read};
+use crate::clock::now_ms;
 use crate::error::{CoreError, Result as CoreResult};
 use kchess_domain::{js, records, replay, review as domain_review};
 

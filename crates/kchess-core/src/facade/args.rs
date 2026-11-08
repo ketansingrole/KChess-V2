@@ -2,14 +2,6 @@ use serde_json::Value;
 
 use crate::error::{CoreError, Result};
 
-/// `Date.now()`.
-pub(crate) fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as i64)
-        .unwrap_or(0)
-}
-
 pub(crate) fn arg(args: &[Value], index: usize) -> Value {
     args.get(index).cloned().unwrap_or(Value::Null)
 }
