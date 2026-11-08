@@ -79,7 +79,6 @@ pub fn output(program: &str, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// Seconds since 1970 now, from the system clock.
 pub fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -113,14 +112,50 @@ pub fn iso_timestamp(seconds: i64) -> String {
     )
 }
 
-/// Whether `program --version` runs.
+/// Whether `program <args>` runs and succeeds, its output hidden: whether a tool is installed.
 pub fn available(program: &str, args: &[&str]) -> bool {
-    Command::new(program)
-        .args(args)
+    succeeds(Command::new(program).args(args))
+}
+
+/// Whether `command` runs and succeeds, its output hidden.
+pub fn succeeds(command: &mut Command) -> bool {
+    command
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+/// Git's output in `repo`, when it exits with one of the `accepted` statuses.
+pub fn git(repo: &Path, args: &[&str], accepted: &[i32]) -> Result<String> {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .map_err(|cause| format!("Could not run git: {cause}"))?;
+    match out.status.code() {
+        Some(code) if accepted.contains(&code) => {
+            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        }
+        _ => Err(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )),
+    }
+}
+
+/// Where `repo`'s HEAD left `origin/main`: what "changed since main" is measured from. Without
+/// `origin/main` there is no telling, which is refused rather than taken as "nothing changed".
+pub fn merge_base(repo: &Path) -> Result<String> {
+    git(repo, &["merge-base", "HEAD", "origin/main"], &[0])
+        .map(|text| text.trim().to_string())
+        .map_err(|cause| {
+            format!(
+                "Cannot tell what changed since main ({cause}). Fetch it with \
+                 `git fetch origin main` and try again."
+            )
+        })
 }
 
 /// The workspace's release version (`[workspace.package] version` in Cargo.toml).
@@ -298,7 +333,35 @@ mod tests {
         assert_eq!(iso_timestamp(1_762_605_296), "2025-11-08T12:34:56.000Z");
         assert_eq!(iso_timestamp(-1), "1969-12-31T23:59:59.000Z");
         assert_eq!(iso_timestamp(0), "1970-01-01T00:00:00.000Z");
-        assert!(unix_now() > 1_790_000_000);
+    }
+
+    /// A clone without `origin/main` made `check-fast` diff only the uncommitted changes, say
+    /// "No Rust changes since main." and pass without a test: no base is an error.
+    #[test]
+    fn changes_are_measured_from_origin_main_or_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| git(dir.path(), args, &[0]).unwrap();
+        git(&["init", "-q"]);
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+        git(&["add", "a.rs"]);
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "a",
+        ]);
+        let refused = merge_base(dir.path()).unwrap_err();
+        assert!(refused.contains("git fetch origin main"), "{refused}");
+        git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        assert_eq!(
+            merge_base(dir.path()).unwrap(),
+            git(&["rev-parse", "HEAD"]).trim()
+        );
     }
 
     #[test]

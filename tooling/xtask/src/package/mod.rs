@@ -145,21 +145,19 @@ pub fn copy_voice(built: &Built, dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(code)
 }
 
-/// Names only the development builds' sidebar badge carries (`shell.rs`).
-const DEV_BUILD_MARKERS: [&str; 2] = ["data-dev-build", "kchess-dev-build-badge"];
+/// The element id only the development builds' sidebar badge carries (`apps/gpui/src/shell.rs`).
+const DEV_BUILD_MARKER: &str = "kchess-dev-build-badge";
 
 fn verify_no_dev_build(path: &Path) -> Result {
     let bytes = std::fs::read(path).map_err(|cause| cause.to_string())?;
-    for marker in DEV_BUILD_MARKERS {
-        if bytes
-            .windows(marker.len())
-            .any(|window| window == marker.as_bytes())
-        {
-            return Err(format!(
-                "{} contains the development build badge ({marker}).",
-                path.display()
-            ));
-        }
+    if bytes
+        .windows(DEV_BUILD_MARKER.len())
+        .any(|window| window == DEV_BUILD_MARKER.as_bytes())
+    {
+        return Err(format!(
+            "{} contains the development build badge ({DEV_BUILD_MARKER}).",
+            path.display()
+        ));
     }
     Ok(())
 }

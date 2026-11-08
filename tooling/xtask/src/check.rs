@@ -23,8 +23,12 @@ fn step(name: &str, work: impl FnOnce() -> Result) -> Result {
     work().map_err(|cause| format!("{name}: {cause}"))
 }
 
-fn lints() -> Result {
-    run("cargo", &["fmt", "--all", "--check"])?;
+fn format() -> Result {
+    run("cargo", &["fmt", "--all", "--check"])
+}
+
+/// Clippy over every target of the workspace, its warnings denied.
+fn clippy_workspace() -> Result {
     run(
         "cargo",
         &[
@@ -36,7 +40,12 @@ fn lints() -> Result {
             "-D",
             "warnings",
         ],
-    )?;
+    )
+}
+
+fn lints() -> Result {
+    format()?;
+    clippy_workspace()?;
     run(
         "cargo",
         &[
@@ -84,6 +93,10 @@ fn nextest() -> bool {
 /// 60 s under `cargo test`, 74 s under nextest).
 const APP: &str = "kchess-gpui";
 
+/// The packages outside the coverage totals: the app's views are checked by its end-to-end
+/// suite, and this tooling by running it. Their tests still run.
+const NOT_COVERED: [&str; 2] = [APP, "xtask"];
+
 /// The commands that run the tests of these packages, or of the whole workspace when there are
 /// none: the app's under `cargo test`, the others under nextest when it is installed.
 fn test_commands(packages: &[String], nextest: bool) -> Vec<Vec<String>> {
@@ -112,7 +125,6 @@ fn test_commands(packages: &[String], nextest: bool) -> Vec<Vec<String>> {
     commands
 }
 
-/// Run the tests of these packages, or of the whole workspace when there are none.
 fn run_tests(packages: &[String]) -> Result {
     let nextest = nextest();
     if !nextest {
@@ -131,8 +143,7 @@ fn run_tests(packages: &[String]) -> Result {
 fn tests() -> Result {
     if available("cargo", &["llvm-cov", "--version"]) {
         coverage()?;
-        // Outside the totals: the app's views are checked by its end-to-end suite.
-        run_tests(&["kchess-gpui".into(), "xtask".into()])?;
+        run_tests(&NOT_COVERED.map(String::from))?;
     } else {
         say(
             "cargo-llvm-cov is not installed: running the tests without the coverage gate (CI runs it).",
@@ -148,12 +159,11 @@ fn coverage_args(nextest: bool, report: &str) -> Vec<&str> {
     if nextest {
         args.push("nextest");
     }
+    args.push("--workspace");
+    for package in NOT_COVERED {
+        args.extend(["--exclude", package]);
+    }
     args.extend([
-        "--workspace",
-        "--exclude",
-        "kchess-gpui",
-        "--exclude",
-        "xtask",
         "--locked",
         // A test process killed while writing its profile leaves a corrupt one, and llvm-profdata
         // then refuses to merge any: CI's check failed twice with every test passed ("file header
@@ -252,9 +262,7 @@ fn touches_dependencies(files: &[String]) -> bool {
 /// `check-fast`: format, lints, the notices when dependencies changed, and the tests of the packages changed since main (committed or
 /// not). Never a substitute for `check` before a push to main.
 pub fn fast() -> Result {
-    let base = output("git", &["merge-base", "HEAD", "origin/main"])
-        .map(|text| text.trim().to_string())
-        .unwrap_or_else(|_| "HEAD".into());
+    let base = crate::util::merge_base(&root())?;
     let mut files: Vec<String> = output("git", &["diff", "--name-only", &base])?
         .lines()
         .map(str::to_string)
@@ -275,21 +283,8 @@ pub fn fast() -> Result {
         say("No Rust changes since main.");
         return Ok(());
     }
-    step("format", || run("cargo", &["fmt", "--all", "--check"]))?;
-    step("lints", || {
-        run(
-            "cargo",
-            &[
-                "clippy",
-                "--workspace",
-                "--all-targets",
-                "--locked",
-                "--",
-                "-D",
-                "warnings",
-            ],
-        )
-    })?;
+    step("format", format)?;
+    step("lints", clippy_workspace)?;
     let mut changed: Vec<String> = files.iter().filter_map(|file| package_of(file)).collect();
     if workflows {
         changed.push("xtask".into());

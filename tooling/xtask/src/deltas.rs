@@ -207,7 +207,6 @@ fn windows_extras(version: &str) -> Result<Extras> {
     Ok(vec![(WINDOWS_INSTALLER.to_string(), data)])
 }
 
-/// What `write` says of the patch `name`.
 fn report(name: &str, stats: &kchess_delta::Stats, package_size: u64, worth: bool) -> String {
     let mb = |bytes: u64| bytes as f64 / 1e6;
     format!(
@@ -221,8 +220,8 @@ fn report(name: &str, stats: &kchess_delta::Stats, package_size: u64, worth: boo
     )
 }
 
-/// Write the patch from `old` (release `from`) to `new` (`to`) as `delta`, with `only_worth` only when
-/// it is worth publishing; whether it is.
+/// Write the patch from `old` (release `from`) to `new` (`to`) as `delta`: only if it is worth
+/// publishing, unless `only_worth` is false; whether it is worth it.
 fn write(
     (from, to): (&str, &str),
     (old, new): (&Tree, &Tree),
