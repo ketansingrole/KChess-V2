@@ -679,7 +679,7 @@ impl AppCore {
 /// Opens the core for `data_dir` and delivers its events to `CoreEvents` on the UI thread.
 pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
     let config = Config {
-        legacy_database_path: crate::profile::legacy_database(&data_dir),
+        legacy_database_path: crate::profile::legacy_database(),
         managed_engine_dir: Some(crate::profile::managed_engine_dir()),
         bundled_engine_path: crate::profile::bundled_engine(),
         variant_engine_path: crate::profile::variant_engine(),

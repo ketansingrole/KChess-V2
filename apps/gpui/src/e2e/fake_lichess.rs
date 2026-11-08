@@ -693,7 +693,6 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             session.lock().writes.push(format!("POST {p}"));
             reply(&mut out, &json!({ "ok": true }))
         }
-        ("GET", "/api/timeline") => reply(&mut out, &json!({ "entries": [], "users": {} })),
         ("GET", p) if p.ends_with("/chat") || p.starts_with("/api/team/of/") => {
             reply(&mut out, &json!([]))
         }

@@ -239,9 +239,6 @@ fn serve(
         ("GET", p) if p.ends_with("/chat") || p.starts_with("/api/team/of/") => {
             json_reply(&mut out, 200, &json!([]))
         }
-        ("GET", "/api/timeline") => {
-            json_reply(&mut out, 200, &json!({ "entries": [], "users": {} }))
-        }
         ("GET", "/api/tournament") => json_reply(
             &mut out,
             200,
@@ -527,7 +524,6 @@ mod tests {
             ("/api/puzzle/batch/mix", json!({ "puzzles": [] })),
             ("/api/game/abc/chat", json!([])),
             ("/api/team/of/bench", json!([])),
-            ("/api/timeline", json!({ "entries": [], "users": {} })),
             (
                 "/api/tournament",
                 json!({ "created": [], "started": [], "finished": [] }),

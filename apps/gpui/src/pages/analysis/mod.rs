@@ -628,8 +628,6 @@ impl AnalysisPage {
         self.threat_position()
     }
 
-    /// Play a move from the position shown; false when it is not kept (not legal there, or a
-    /// wrong answer while practising).
     /// The delayed save of the open study's chapter, run now.
     #[cfg(test)]
     pub(crate) fn autosave_for_test(&mut self, cx: &mut Context<Self>) {
@@ -642,6 +640,8 @@ impl AnalysisPage {
         self.play(uci, cx)
     }
 
+    /// Play a move from the position shown; false when it is not kept (not legal there, or a
+    /// wrong answer while practising).
     fn play(&mut self, uci: &str, cx: &mut Context<Self>) -> bool {
         if let Some(kept) = self.practice_attempt(uci, cx) {
             return kept;
