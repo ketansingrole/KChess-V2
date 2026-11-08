@@ -150,6 +150,34 @@ pub fn download(url: &str, path: &Path) -> Result {
     run("curl", &["-fsSL", "--retry", "3", "-o", &target, url])
 }
 
+/// Makes `path` hold the file pinned by `sha256`: a cached copy that matches is kept, anything
+/// else is fetched from `url` with `fetch` (`download`) and checked. A fetched file that does not
+/// match is removed and refused, so a tampered or changed upstream file never gets used.
+// Its callers, the Linux packaging's tools, are compiled on Unix.
+#[cfg(unix)]
+pub fn pinned(
+    what: &str,
+    url: &str,
+    sha256: &str,
+    path: &Path,
+    fetch: impl FnOnce(&str, &Path) -> Result,
+) -> Result {
+    if path.exists() && sha256_file(path)? == sha256 {
+        return Ok(());
+    }
+    say(&format!("Downloading {what}…"));
+    fetch(url, path)?;
+    let found = sha256_file(path)?;
+    if found == sha256 {
+        return Ok(());
+    }
+    let _ = std::fs::remove_file(path);
+    Err(format!(
+        "{what} from {url} has SHA-256 {found}, not the pinned {sha256}, so it was removed. \
+         If upstream changed the file, re-check it and update the pin."
+    ))
+}
+
 pub fn sha256_file(path: &Path) -> Result<String> {
     use sha2::Digest;
     let bytes =
@@ -160,6 +188,102 @@ pub fn sha256_file(path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    const HELLO_SHA256: &str = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+
+    #[cfg(unix)]
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("xtask-pinned-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("file")
+    }
+
+    #[cfg(unix)]
+    fn writes(bytes: &'static [u8]) -> impl FnOnce(&str, &Path) -> Result {
+        move |_, path| std::fs::write(path, bytes).map_err(|cause| cause.to_string())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cached_file_that_matches_its_pin_is_kept_without_a_download() {
+        let path = scratch("kept");
+        std::fs::write(&path, b"hello").unwrap();
+        let fetch =
+            |_: &str, _: &Path| -> Result { panic!("a matching file was downloaded again") };
+        pinned(
+            "the file",
+            "https://example.test/file",
+            HELLO_SHA256,
+            &path,
+            fetch,
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"hello");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_or_tampered_cached_file_is_fetched_again() {
+        for cached in [None, Some(&b"tampered"[..])] {
+            let path = scratch("refetched");
+            if let Some(bytes) = cached {
+                std::fs::write(&path, bytes).unwrap();
+            }
+            let fetched = std::cell::Cell::new(None);
+            let fetch = |url: &str, to: &Path| -> Result {
+                fetched.set(Some(url.to_string()));
+                writes(b"hello")(url, to)
+            };
+            pinned(
+                "the file",
+                "https://example.test/file",
+                HELLO_SHA256,
+                &path,
+                fetch,
+            )
+            .unwrap();
+            assert_eq!(fetched.take().as_deref(), Some("https://example.test/file"));
+            assert_eq!(std::fs::read(&path).unwrap(), b"hello");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_download_that_does_not_match_its_pin_is_removed_and_refused() {
+        let path = scratch("refused");
+        std::fs::write(&path, b"tampered").unwrap();
+        let error = pinned(
+            "the AppImage runtime",
+            "https://example.test/runtime",
+            HELLO_SHA256,
+            &path,
+            writes(b"changed upstream"),
+        )
+        .unwrap_err();
+        assert!(!path.exists(), "the mismatching download was kept");
+        assert!(
+            error
+                .starts_with("the AppImage runtime from https://example.test/runtime has SHA-256 ")
+        );
+        assert!(error.contains(&format!("not the pinned {HELLO_SHA256}")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_download_is_reported() {
+        let path = scratch("failed");
+        let fetch = |_: &str, _: &Path| -> Result { Err("HTTP 504".into()) };
+        let error = pinned(
+            "the file",
+            "https://example.test/file",
+            HELLO_SHA256,
+            &path,
+            fetch,
+        );
+        assert_eq!(error, Err("HTTP 504".to_string()));
+    }
 
     #[test]
     fn dates_fall_on_the_right_day_across_leap_rules() {

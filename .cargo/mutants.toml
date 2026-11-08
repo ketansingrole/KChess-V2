@@ -21,6 +21,10 @@ exclude_re = [
     # A uniform draw picks White half the time whether below or above 0.5 counts, and exactly
     # 0.5 has no weight.
     'apps/cli/src/play\.rs:.*: replace < with (>|<=) in Session<.*>::choose_color',
+    # `appimage` only binds the real pins, cache and download to `appimage_with`, which its test
+    # runs whole with a stand-in appimagetool; the binding itself downloads from GitHub and runs
+    # the real tool, so it is seen only by `cargo xtask package` on Linux (CI's package job).
+    'tooling/xtask/src/package/linux\.rs:.*: replace appimage -> Result<PathBuf> with ',
 ]
 
 # Compiled only for WebAssembly, where no test runs.

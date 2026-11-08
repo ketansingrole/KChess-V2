@@ -11,12 +11,21 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::{Built, Identity, copy_program, copy_voice};
-use crate::util::{Result, root, run_with, say, sha256_file};
+use crate::util::{Result, download, pinned, root, run_with, say};
 
-const APPIMAGETOOL: &str =
+// The pins below change only in a reviewed pull request, which CI packages and tests. The
+// weekly Pins workflow (`cargo xtask pins --check`) opens an issue when either has a newer release.
+pub const APPIMAGETOOL: &str =
     "https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage";
-const APPIMAGETOOL_SHA256: &str =
+pub const APPIMAGETOOL_SHA256: &str =
     "46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1";
+/// The runtime appimagetool puts at the front of every AppImage: the launcher that mounts the
+/// app and starts it. Without `--runtime-file`, appimagetool would fetch the moving `continuous`
+/// release on every build, unverified.
+pub const APPIMAGE_RUNTIME: &str =
+    "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64";
+pub const APPIMAGE_RUNTIME_SHA256: &str =
+    "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d";
 
 /// What the app needs from the system (GPUI on X11 or Wayland with Vulkan, ALSA for sound).
 const DEPENDS: &str = "libc6 (>= 2.35), libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, \
@@ -48,16 +57,37 @@ fn stage_folder(identity: &Identity, built: &Built, folder: &Path) -> Result {
 }
 
 fn appimage(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<PathBuf> {
-    let tool = root().join("target/package/appimagetool-1.9.0");
-    if !tool.exists() || sha256_file(&tool)? != APPIMAGETOOL_SHA256 {
-        say("Downloading appimagetool…");
-        crate::util::download(APPIMAGETOOL, &tool)?;
-        if sha256_file(&tool)? != APPIMAGETOOL_SHA256 {
-            let _ = std::fs::remove_file(&tool);
-            return Err("appimagetool's checksum does not match.".into());
-        }
-        super::executable(&tool)?;
-    }
+    let tools = AppImageTools {
+        cache: root().join("target/package"),
+        appimagetool: (APPIMAGETOOL, APPIMAGETOOL_SHA256),
+        runtime: (APPIMAGE_RUNTIME, APPIMAGE_RUNTIME_SHA256),
+        fetch: download,
+    };
+    appimage_with(identity, built, stage, out, &tools)
+}
+
+/// Where the AppImage step keeps its pinned tools, each as (URL, SHA-256), and how it fetches them.
+struct AppImageTools<F> {
+    cache: PathBuf,
+    appimagetool: (&'static str, &'static str),
+    runtime: (&'static str, &'static str),
+    fetch: F,
+}
+
+fn appimage_with(
+    identity: &Identity,
+    built: &Built,
+    stage: &Path,
+    out: &Path,
+    tools: &AppImageTools<impl Fn(&str, &Path) -> Result>,
+) -> Result<PathBuf> {
+    let tool = tools.cache.join("appimagetool-x86_64.AppImage");
+    let (url, sha256) = tools.appimagetool;
+    pinned("appimagetool", url, sha256, &tool, &tools.fetch)?;
+    super::executable(&tool)?;
+    let runtime = tools.cache.join("appimage-runtime-x86_64");
+    let (url, sha256) = tools.runtime;
+    pinned("the AppImage runtime", url, sha256, &runtime, &tools.fetch)?;
     let dir = stage.join("AppDir");
     stage_folder(identity, built, &dir)?;
     let icon = format!("{}.png", identity.linux_exe);
@@ -85,16 +115,23 @@ fn appimage(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Res
         identity.version
     ));
     say("Making the AppImage…");
-    run_with(
-        Command::new(&tool)
-            .arg("--no-appstream")
-            .arg(&dir)
-            .arg(&image)
-            .env("ARCH", "x86_64")
-            // Runners have no FUSE: the tool runs from its own extracted files.
-            .env("APPIMAGE_EXTRACT_AND_RUN", "1"),
-    )?;
+    run_with(&mut appimagetool(&tool, &runtime, &dir, &image))?;
     Ok(image)
+}
+
+/// appimagetool making `image` from `dir` around the pinned `runtime`, so it downloads nothing.
+fn appimagetool(tool: &Path, runtime: &Path, dir: &Path, image: &Path) -> Command {
+    let mut command = Command::new(tool);
+    command
+        .arg("--no-appstream")
+        .arg("--runtime-file")
+        .arg(runtime)
+        .arg(dir)
+        .arg(image)
+        .env("ARCH", "x86_64")
+        // Runners have no FUSE: the tool runs from its own extracted files.
+        .env("APPIMAGE_EXTRACT_AND_RUN", "1");
+    command
 }
 
 /// A tar.gz of `entries` (path in the archive → contents and mode), with root ownership.
@@ -392,6 +429,124 @@ pub fn package_snap(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn digest(bytes: &[u8]) -> &'static str {
+        use sha2::Digest;
+        crate::util::hex(&sha2::Sha256::digest(bytes)).leak()
+    }
+
+    /// The AppImage step fetches both pinned tools into its cache and runs appimagetool on the
+    /// staged app with the pinned runtime: a stand-in appimagetool records its arguments and
+    /// makes the "image" from the runtime it was handed.
+    #[test]
+    fn the_appimage_is_made_around_the_pinned_runtime() {
+        let scratch = std::env::temp_dir().join(format!("xtask-appimage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let built_dir = scratch.join("built");
+        std::fs::create_dir_all(built_dir.join("voice")).unwrap();
+        let file = |name: &str| {
+            let path = built_dir.join(name);
+            std::fs::write(&path, name).unwrap();
+            path
+        };
+        let built = Built {
+            app: file("app"),
+            service: file("service"),
+            cli: file("cli"),
+            stockfish: file("stockfish"),
+            fairy: file("fairy"),
+            voice: built_dir.join("voice"),
+            licenses: file("licenses"),
+        };
+        let tool = b"#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$5.args\"\ncp \"$3\" \"$5\"\n";
+        let runtime = b"the pinned runtime";
+        let tools = AppImageTools {
+            cache: scratch.join("cache"),
+            appimagetool: ("https://example.test/appimagetool", digest(tool)),
+            runtime: ("https://example.test/runtime", digest(runtime)),
+            fetch: |url: &str, to: &Path| -> Result {
+                std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+                let bytes: &[u8] = if url.ends_with("/runtime") {
+                    runtime
+                } else {
+                    tool
+                };
+                std::fs::write(to, bytes).map_err(|cause| cause.to_string())
+            },
+        };
+        let identity = Identity::new("2026.11.9".into());
+        let (stage, out) = (scratch.join("stage"), scratch.join("out"));
+        std::fs::create_dir_all(&out).unwrap();
+        let image = appimage_with(&identity, &built, &stage, &out, &tools).unwrap();
+
+        assert_eq!(image, out.join("KChess-2026.11.9-linux-x86_64.AppImage"));
+        assert_eq!(std::fs::read(&image).unwrap(), runtime);
+        let args = std::fs::read_to_string(image.with_extension("AppImage.args")).unwrap();
+        let cached = tools.cache.join("appimage-runtime-x86_64");
+        let app_dir = stage.join("AppDir");
+        assert_eq!(
+            args,
+            format!(
+                "--no-appstream\n--runtime-file\n{}\n{}\n{}\n",
+                cached.display(),
+                app_dir.display(),
+                image.display()
+            )
+        );
+        for name in [
+            "AppRun",
+            "kchess",
+            "kchess.desktop",
+            "kchess.png",
+            "stockfish",
+        ] {
+            assert!(
+                app_dir.join(name).exists(),
+                "{name} is missing from the AppDir"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn appimagetool_embeds_the_pinned_runtime() {
+        let command = appimagetool(
+            Path::new("/tools/appimagetool"),
+            Path::new("/cache/runtime"),
+            Path::new("/stage/AppDir"),
+            Path::new("/out/KChess.AppImage"),
+        );
+        assert_eq!(command.get_program(), "/tools/appimagetool");
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(
+            args,
+            [
+                "--no-appstream",
+                "--runtime-file",
+                "/cache/runtime",
+                "/stage/AppDir",
+                "/out/KChess.AppImage"
+            ]
+        );
+        let envs: Vec<_> = command.get_envs().collect();
+        assert!(envs.contains(&("ARCH".as_ref(), Some("x86_64".as_ref()))));
+        assert!(envs.contains(&("APPIMAGE_EXTRACT_AND_RUN".as_ref(), Some("1".as_ref()))));
+    }
+
+    #[test]
+    fn the_appimage_pins_name_fixed_releases() {
+        for url in [APPIMAGETOOL, APPIMAGE_RUNTIME] {
+            assert!(!url.contains("/continuous/"), "{url} is a moving release");
+        }
+        for digest in [APPIMAGETOOL_SHA256, APPIMAGE_RUNTIME_SHA256] {
+            assert_eq!(digest.len(), 64);
+            assert!(
+                digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            );
+        }
+    }
 
     #[test]
     fn the_snap_keeps_the_electron_snaps_name_and_plugs() {

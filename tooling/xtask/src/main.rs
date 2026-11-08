@@ -13,6 +13,9 @@ mod icons;
 mod licenses;
 mod mutants;
 mod package;
+// The pins it checks live with the Linux packaging, compiled on Unix.
+#[cfg(unix)]
+mod pins;
 mod release;
 mod update_key;
 mod util;
@@ -64,6 +67,10 @@ const HELP: &str = "cargo xtask <command>
                         Package the app for this machine (apps/gpui/dist): .dmg and .zip,
                         the NSIS installer, or the AppImage and .deb; --snap makes the Snap,
                         --mas the Mac App Store's .pkg (apps/gpui/dist/mas)
+  pins --check [--report <file>]
+                        Fail when appimagetool or the AppImage runtime has a newer release than
+                        its pin (package/linux.rs), naming both; the weekly Pins workflow
+                        runs it (Unix)
 ";
 
 fn main() -> ExitCode {
@@ -107,6 +114,8 @@ fn main() -> ExitCode {
         }
         Some("fairy-stockfish") => fairy::build().map(|_| ()),
         Some("package") => package::run(rest),
+        #[cfg(unix)]
+        Some("pins") => pins::run(rest),
         None | Some("help" | "--help" | "-h") => {
             print!("{HELP}");
             Ok(())

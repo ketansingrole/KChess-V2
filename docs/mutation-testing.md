@@ -83,3 +83,8 @@ These stay in the reports on purpose; each is listed with the reason.
 - **The CLI's `close` and `open_browser`**: the process exits right after `close`, with the
   core's writes already on disk; `open_browser` starts the desktop's opener, which a test must
   not do.
+- **The AppImage step's binding** (`package/linux.rs`, `appimage`): it hands the real pins, the
+  `target/package` cache and `download` to `appimage_with`, which its test runs whole with a
+  stand-in appimagetool. The binding downloads from GitHub and runs the real tool, so only
+  `cargo xtask package` on Linux (CI's package job) sees it; it is excluded in
+  `.cargo/mutants.toml`.

@@ -15,7 +15,7 @@
 
 // The scripts and archives are written the same everywhere; only the platform tools differ.
 #[cfg(unix)]
-mod linux;
+pub(crate) mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
