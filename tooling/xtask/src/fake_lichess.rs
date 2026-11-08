@@ -626,28 +626,24 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         let (mut server, _) = listener.accept().unwrap();
-        let stop = Arc::new(AtomicBool::new(false));
-        let stopper = {
-            let stop = Arc::clone(&stop);
-            thread::spawn(move || {
-                thread::sleep(Duration::from_millis(300));
-                stop.store(true, Ordering::SeqCst);
-            })
-        };
+        // Stopped after the fifth ask, not after a time: a loaded runner asked only twice in
+        // 300 ms, and the test indexed past what it had.
+        let stop = AtomicBool::new(false);
         let mut asked = Vec::new();
         stream(
             &mut server,
             &stop,
             |sent| {
                 asked.push(sent);
+                if asked.len() == 5 {
+                    stop.store(true, Ordering::SeqCst);
+                }
                 (asked.len() <= 2).then(|| json!({ "n": sent }))
             },
             vec![json!({ "first": 1 }), json!({ "first": 2 })],
         )
         .unwrap();
-        stopper.join().unwrap();
-        assert_eq!(asked[..3], [2, 3, 4]);
-        assert!(asked[3..].iter().all(|&sent| sent == 4));
+        assert_eq!(asked, [2, 3, 4, 4, 4]);
         let mut text = String::new();
         BufReader::new(client).read_to_string(&mut text).unwrap();
         assert!(text.contains("c\r\n{\"first\":1}\n\r\n"), "{text}");
