@@ -25,6 +25,12 @@ exclude_re = [
     # runs whole with a stand-in appimagetool; the binding itself downloads from GitHub and runs
     # the real tool, so it is seen only by `cargo xtask package` on Linux (CI's package job).
     'tooling/xtask/src/package/linux\.rs:.*: replace appimage -> Result<PathBuf> with ',
+    # `fairy::build` and `voice::stage` only bind the real pins, `target` folders and download to
+    # `build_with` and `stage_with`, which their tests run whole with stand-in archives; the
+    # bindings themselves download from GitHub (and `build` compiles Fairy-Stockfish), so they
+    # are seen only by `cargo xtask fairy-stockfish`, `voice-runtime` and `package`.
+    'tooling/xtask/src/fairy\.rs:.*: replace build -> Result<PathBuf> with ',
+    'tooling/xtask/src/voice\.rs:.*: replace stage -> Result<PathBuf> with ',
 ]
 
 # Compiled only for WebAssembly, where no test runs.
