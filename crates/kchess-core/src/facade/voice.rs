@@ -1,6 +1,9 @@
 //! The facade's offline speech recognition (`voiceStart`, `voiceAccept`, `voiceFinish`,
-//! `voiceStop`), answered by the `kchess-voice` helper (`crate::voice::recognizer`). The
-//! arguments were checked against `CORE_CONTRACTS` before these run.
+//! `voiceStop`), answered by the `kchess-voice` helper (`crate::voice::recognizer`), and the
+//! speech model it loads (`voiceModelStatus`, `voiceModelInstall`, reporting
+//! `voicemodel:progress`). The arguments were checked against `CORE_CONTRACTS` before these run.
+
+use std::sync::Arc;
 
 use serde_json::Value;
 
@@ -81,6 +84,18 @@ impl Core {
                     *owner = None;
                     self.voice.stop().await;
                 }
+                Ok(Value::Null)
+            }
+            "voiceModelStatus" => serde_json::to_value(self.voice_model.status().await)
+                .map_err(|cause| CoreError::wrap("voice model status", cause)),
+            "voiceModelInstall" => {
+                let host = Arc::clone(&self.host);
+                let progress: crate::voice::Listener = Arc::new(move |progress| {
+                    if let Ok(payload) = serde_json::to_value(progress) {
+                        host.emit("voicemodel:progress", payload);
+                    }
+                });
+                self.voice_model.ensure(Some(progress)).await?;
                 Ok(Value::Null)
             }
             _ => Err(CoreError::new(format!("Unknown core method {method}."))),

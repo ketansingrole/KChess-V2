@@ -288,15 +288,6 @@ impl CoreBridge {
         }
     }
 
-    /// Run other work on the core's runtime (the voice model's download uses its HTTP client).
-    pub fn spawn<T: Send + 'static, W: Future<Output = T> + Send + 'static>(
-        &self,
-        work: W,
-    ) -> impl Future<Output = Option<T>> + 'static + use<T, W> {
-        let task = self.runtime.spawn(work);
-        async move { task.await.ok() }
-    }
-
     /// Run a core method and wait for it: only before the window opens, as the app needs
     /// its library and preferences before it draws.
     pub fn call_now(&self, method: &str, args: Vec<Value>) -> Result<Value, CoreError> {

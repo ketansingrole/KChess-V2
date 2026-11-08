@@ -234,3 +234,16 @@ fn updates_links_to_the_website_source_and_issues(cx: &mut gpui_kit::TestAppCont
         assert_eq!(link.role(), Some(gpui_kit::Role::Link));
     }
 }
+
+#[gpui_kit::test]
+fn the_core_downloads_the_voice_model_from_offline_downloads(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.online();
+    app.open_settings("Offline downloads");
+    // The core reports no model in the profile, so the card offers to download one.
+    assert!(app.enabled("offline-voice-download"));
+    app.click("offline-voice-download");
+    // The tests' model cannot be had: the core's error is shown, and the download offered again.
+    app.find("offline-voice-error");
+    assert!(app.enabled("offline-voice-download"));
+}

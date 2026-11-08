@@ -4,8 +4,9 @@
 //! The app and the CLI talk to the core by `CoreApi` method name, and read its errors and log
 //! levels from `kchess-contracts`. Both can also embed a core, so they depend on `kchess-core`,
 //! and the compiler alone cannot keep the rest of their code from reaching into it. This test
-//! does: only the files that start, configure or host the core name `kchess_core`. Tests (the
-//! app's `e2e`, `tests.rs` files and inline test modules) may name anything.
+//! does: only the files that start, configure or host the core name `kchess_core`, and only the
+//! updater and the picture loader make HTTP requests of their own (`reqwest`). Tests (the app's
+//! `e2e`, `tests.rs` files and inline test modules) may name anything.
 
 use std::path::Path;
 
@@ -28,35 +29,48 @@ struct Rule {
 /// The frontends' sources, searched from the repository root.
 const FRONTENDS: [&str; 2] = ["apps/gpui/src", "apps/cli/src"];
 
-const RULES: [Rule; 1] = [Rule {
-    needle: "kchess_core",
-    tolerated: &[
-        "kchess_core::Level",
-        "kchess_core::CoreError",
-        "kchess_core::ErrorKind",
-        "kchess_core::USER_AGENT",
-    ],
-    why: "frontends call the core by `CoreApi` method name and read `CoreError` and `Level` from \
+const RULES: [Rule; 2] = [
+    Rule {
+        needle: "kchess_core",
+        tolerated: &[
+            "kchess_core::Level",
+            "kchess_core::CoreError",
+            "kchess_core::ErrorKind",
+            "kchess_core::USER_AGENT",
+        ],
+        why: "frontends call the core by `CoreApi` method name and read `CoreError` and `Level` from \
           `kchess_contracts`; only the files that start, configure or host the core name \
           `kchess_core` (tooling/xtask/src/boundaries.rs)",
-    allowed: &[
-        // Starting the core (embedded or through the service) and answering its host requests.
-        "apps/gpui/src/core.rs",
-        "apps/cli/src/core.rs",
-        // The programs and switches the core is configured with.
-        "apps/gpui/src/profile.rs",
-        // Log lines are redacted as the core's are.
-        "apps/gpui/src/log.rs",
-        // The App Store build: no updater, and no Stockfish download in the engine settings.
-        "apps/gpui/src/updates.rs",
-        "apps/gpui/src/pages/settings/engine.rs",
-        // Voice input: the offline model and the test audio switch.
-        "apps/gpui/src/voice/mod.rs",
-        "apps/gpui/src/voice/capture.rs",
-        "apps/gpui/src/pages/settings/mod.rs",
-        "apps/gpui/src/pages/settings/offline.rs",
-    ],
-}];
+        allowed: &[
+            // Starting the core (embedded or through the service) and answering its host requests.
+            "apps/gpui/src/core.rs",
+            "apps/cli/src/core.rs",
+            // The programs and switches the core is configured with.
+            "apps/gpui/src/profile.rs",
+            // Log lines are redacted as the core's are.
+            "apps/gpui/src/log.rs",
+            // The App Store build: no updater, and no Stockfish download in the engine settings.
+            "apps/gpui/src/updates.rs",
+            "apps/gpui/src/pages/settings/engine.rs",
+            // Voice input's test audio, behind the core's test switch.
+            "apps/gpui/src/voice/capture.rs",
+        ],
+    },
+    Rule {
+        needle: "reqwest",
+        tolerated: &[],
+        why: "the core owns networking: a frontend asks it by `CoreApi` method, and only the \
+          updater and Lichess's pictures make their own requests (tooling/xtask/src/boundaries.rs)",
+        allowed: &[
+            // The update feed and installers: the app replaces itself, which a core it may be
+            // sharing with other windows cannot do for it. No login is sent.
+            "apps/gpui/src/updates.rs",
+            // Pictures Lichess serves (broadcast covers), from its image hosts only, drawn by the
+            // app straight from the bytes. No login is sent.
+            "apps/gpui/src/remote_image.rs",
+        ],
+    },
+];
 
 /// Whether `path` holds only tests, which may name anything.
 fn is_test_file(path: &str) -> bool {
