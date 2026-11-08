@@ -48,15 +48,9 @@ pub struct PlayedHandle(pub Entity<PlayedGames>);
 
 impl Global for PlayedHandle {}
 
-/// Read the games before the first page opens, and start the writer.
-pub fn init(cx: &mut App) {
-    let games = cx
-        .global::<AppCore>()
-        .bridge
-        .call_now("library", Vec::new())
-        .ok()
-        .and_then(|library| library["games"].as_array().cloned())
-        .unwrap_or_default();
+/// Start from the games of the library read before the first page opens, and start the writer.
+pub fn init(library: &Value, cx: &mut App) {
+    let games = library["games"].as_array().cloned().unwrap_or_default();
     let (writes, queue) = mpsc::unbounded();
     let entity = cx.new(|_| PlayedGames {
         games,

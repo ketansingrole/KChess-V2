@@ -128,13 +128,14 @@ fn main() {
     });
 }
 
-/// The models, from the profile the core has read, then the window.
-fn start_models(cx: &mut App) {
+/// The models, from the profile the core has read (its library read once for them), then the
+/// window.
+fn start_models(library: &serde_json::Value, cx: &mut App) {
     settings::init(cx);
     interface_zoom::init(profile::data_dir().unwrap_or_default(), cx);
     prefs::init(cx);
-    played::init(cx);
-    studies::init(cx);
+    played::init(library, cx);
+    studies::init(library, cx);
     reviews::init(cx);
     accounts::init(cx);
     ai::init(cx);
