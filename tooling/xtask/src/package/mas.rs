@@ -11,6 +11,10 @@
 //! Mac App Store provisioning profile, and `APPLE_TEAM_ID`): the app with an Apple Distribution
 //! identity and the profile embedded, the package with a Mac Installer Distribution one. Without
 //! them the bundle is signed ad hoc with the same sandbox, to try it here, and no package is made.
+//!
+//! Compiled for the tests on every Unix too (see `mac`).
+
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
 

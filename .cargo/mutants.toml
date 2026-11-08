@@ -45,6 +45,41 @@ exclude_re = [
     # are seen only by `cargo xtask fairy-stockfish`, `voice-runtime` and `package`.
     'tooling/xtask/src/fairy\.rs:.*: replace build -> Result<PathBuf> with ',
     'tooling/xtask/src/voice\.rs:.*: replace stage -> Result<PathBuf> with ',
+    # Likewise bindings of the real environment, tools and repository to what their tests run
+    # whole: `stage_if_outdated` to `outdated` and `stage`; `engines::run` to `run_with` with
+    # `stockfish` (which runs kchess-core's fetch_stockfish, downloading from GitHub) and
+    # `fairy::build`; the app's `engine` to that `stockfish`; `update_key::sign` to `sign_with`
+    # with the release job's secret; `release::verify` to `metadata` with the repository's files
+    # and `tag_build` (GITHUB_REF, unset or a branch where tests run). Each is seen only when its
+    # command runs: `cargo xtask app`, `engines` (CI's check and mutants jobs), `sign-sums` and
+    # `release-verify` (the Release workflow), `check` (CI's check job).
+    'tooling/xtask/src/voice\.rs:.*: replace stage_if_outdated -> Result<\(\)> with ',
+    'tooling/xtask/src/engines\.rs:.*: replace (stockfish -> Result<PathBuf>|run -> Result) with ',
+    'tooling/xtask/src/app\.rs:.*: replace engine -> Result<PathBuf> with ',
+    'tooling/xtask/src/update_key\.rs:.*: replace sign -> Result with ',
+    'tooling/xtask/src/release\.rs:.*: replace (verify -> Result|tag_build -> Option<String>) with ',
+    # Stops the profile's running core service by its process ID; which one is outdated is
+    # `outdated_service`, tested. Seen by `cargo xtask app`.
+    'tooling/xtask/src/app\.rs:.*: replace stop_outdated_service -> Result with ',
+    # Run cargo fmt, clippy and the test suites over the whole workspace, so a test of them
+    # would run `check` inside `check`; what they decide is tested (`test_commands`,
+    # `coverage_args`, `with_dependents`, `builds_into_a_package`, `merge_base`). CI's check job
+    # runs them and its log shows each step.
+    'tooling/xtask/src/check\.rs:.*: replace (format|clippy_workspace|lints|tests|fast) -> Result with ',
+    # Talk to GitHub through gh: the Electron step's download and manifests, the release check of
+    # a commit's CI, the draft upload and the Snap download. What they decide is tested
+    # (`check_step`, `check_sums`, `matches`, `manifest_text`, `ci_verdict`, `needs_ci`,
+    # `pushed_tag`, `verify_snap`); the Release and Snap publish workflows run them.
+    'tooling/xtask/src/electron_step\.rs:.*: replace (download -> Result<Vec<u8>>|write -> Result) with ',
+    'tooling/xtask/src/release\.rs:.*: replace (verify_release|attach_draft|download_snap) -> Result with ',
+    # Package with platform tools absent where mutants run: snapcraft (the Snap build workflow),
+    # codesign, ditto, hdiutil, notarytool and productbuild (macOS), and the whole `package`
+    # command over a release build. The scripts, plists, bundle layout and checks they use are
+    # tested; CI's package, Snap and Windows upgrade jobs run them.
+    'tooling/xtask/src/package/linux\.rs:.*: replace snap -> Result<PathBuf> with ',
+    'tooling/xtask/src/package/mac\.rs:.*: replace sign -> Result with ',
+    'tooling/xtask/src/package/(mac|mas)\.rs:.*: replace package -> Result<Vec<PathBuf>> with ',
+    'tooling/xtask/src/package/mod\.rs:.*: replace run -> Result with ',
 ]
 
 # Compiled only for WebAssembly, where no test runs.

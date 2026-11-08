@@ -2,6 +2,11 @@
 //! notarization), as a `.zip` (what the updater installs) and a `.dmg` (what people download).
 //! Electron installations never install this zip: they step through the frozen release
 //! (`electron_step`), whose zip carries the bridge for `com.kchess.electron`.
+//!
+//! Compiled for the tests on every Unix too, so the plists, the zip check and the bundle's layout
+//! are tested where mutants run; only macOS packages with it.
+
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
 
@@ -399,6 +404,51 @@ mod tests {
 
         let older = zip_of(&Identity::new("2026.11.0".into()));
         assert!(check_zip(&identity, |name| older.get(name).cloned()).is_err());
+    }
+
+    #[test]
+    fn mac_packages_are_made_on_apple_silicon_only() {
+        assert_eq!(apple_silicon().is_ok(), std::env::consts::ARCH == "aarch64");
+    }
+
+    /// The bundle holds the programs in MacOS, the voice runtime, icon and notices in Resources,
+    /// and its Info.plist; what is signed before the app is every program and library but the
+    /// app. The App Store's leaves the command line out.
+    #[test]
+    fn the_bundle_holds_the_programs_beside_the_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let built = super::super::stand_in(&dir.path().join("built"));
+        let identity = Identity::new("2026.12.0".into());
+        for store in [false, true] {
+            let app = dir.path().join(format!("{store}/KChess.app"));
+            let nested = assemble(&identity, &built, &app, store).unwrap();
+            let contents = app.join("Contents");
+            let macos = contents.join("MacOS");
+            assert_eq!(std::fs::read(macos.join("kchess")).unwrap(), b"app");
+            assert_eq!(
+                std::fs::read(macos.join("stockfish")).unwrap(),
+                b"stockfish"
+            );
+            assert_eq!(macos.join("kchess-cli").exists(), !store);
+            let resources = contents.join("Resources");
+            for file in ["voice/NOTICE.txt", "icon.icns", "THIRD_PARTY_LICENSES.txt"] {
+                assert!(resources.join(file).exists(), "{file}");
+            }
+            assert_eq!(
+                std::fs::read_to_string(contents.join("Info.plist")).unwrap(),
+                info_plist(&identity, store)
+            );
+            let mut signed: Vec<PathBuf> = vec![
+                resources.join("voice/libvosk.so"),
+                macos.join("stockfish"),
+                macos.join("fairy-stockfish"),
+                macos.join("kchess-service"),
+            ];
+            if !store {
+                signed.push(macos.join("kchess-cli"));
+            }
+            assert_eq!(nested, signed);
+        }
     }
 
     /// The bundle's Info.plist and the Developer ID entitlements, as every KChess has had them.

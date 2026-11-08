@@ -50,18 +50,33 @@ fn variables(stockfish: &Path, fairy: &Path) -> String {
 /// Fairy-Stockfish, then print the variables that name them, or with `--github-env` add them to
 /// the file `GITHUB_ENV` names, so the job's later steps have them.
 pub fn run(args: &[String]) -> Result {
-    let github_env = args.iter().any(|arg| arg == "--github-env");
+    let fetch = |dir: &Path| Ok((stockfish(dir, false)?, crate::fairy::build()?));
+    if let Some(text) = run_with(args, fetch, std::env::var_os("GITHUB_ENV"))? {
+        print!("{text}");
+    }
+    Ok(())
+}
+
+/// `run` with `fetch` making the engines for a Stockfish folder and `github_env` the job's
+/// environment file; the text to print, when it goes to no file.
+fn run_with(
+    args: &[String],
+    fetch: impl FnOnce(&Path) -> Result<(PathBuf, PathBuf)>,
+    github_env: Option<std::ffi::OsString>,
+) -> Result<Option<String>> {
+    let to_file = args.iter().any(|arg| arg == "--github-env");
     let dir = args
         .iter()
         .find(|arg| !arg.starts_with("--"))
         .ok_or("engines needs the folder to fetch Stockfish into.")?;
-    let text = variables(&stockfish(Path::new(dir), false)?, &crate::fairy::build()?);
-    if !github_env {
-        print!("{text}");
-        return Ok(());
+    let (stockfish, fairy) = fetch(Path::new(dir))?;
+    let text = variables(&stockfish, &fairy);
+    if !to_file {
+        return Ok(Some(text));
     }
-    let file = std::env::var_os("GITHUB_ENV").ok_or("--github-env needs GITHUB_ENV (CI).")?;
-    append(Path::new(&file), &text)
+    let file = github_env.ok_or("--github-env needs GITHUB_ENV (CI).")?;
+    append(Path::new(&file), &text)?;
+    Ok(None)
 }
 
 fn append(file: &Path, text: &str) -> Result {
@@ -94,5 +109,39 @@ mod tests {
             "EARLIER=1\nKCHESS_ENGINE_PATH=/sf/stockfish\nKCHESS_VARIANT_ENGINE_PATH=/fsf/fairy-stockfish\n"
         );
         assert!(run(&[]).unwrap_err().contains("folder"));
+    }
+
+    /// The engines are made for the folder named, whatever the flag's place, and their
+    /// variables are printed, or with `--github-env` added to the job's file only.
+    #[test]
+    fn the_engines_go_to_the_terminal_or_the_jobs_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("env");
+        let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        let fetch = |folder: &Path| {
+            assert_eq!(folder, Path::new("sf"));
+            Ok((PathBuf::from("sf/stockfish"), PathBuf::from("fsf")))
+        };
+        let expected = "KCHESS_ENGINE_PATH=sf/stockfish\nKCHESS_VARIANT_ENGINE_PATH=fsf\n";
+        assert_eq!(
+            run_with(&args(&["sf"]), fetch, Some(file.clone().into())).unwrap(),
+            Some(expected.to_string())
+        );
+        assert!(!file.exists());
+        assert_eq!(
+            run_with(
+                &args(&["--github-env", "sf"]),
+                fetch,
+                Some(file.clone().into())
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), expected);
+        assert!(
+            run_with(&args(&["sf", "--github-env"]), fetch, None)
+                .unwrap_err()
+                .contains("GITHUB_ENV")
+        );
     }
 }

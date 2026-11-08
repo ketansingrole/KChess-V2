@@ -75,6 +75,12 @@ mod tests {
         let empty = kchess_delta::digest(b"");
         assert_eq!(sums, format!("{empty}  a.exe\n{HELLO}  b.deb\n"));
         assert_eq!(write(dir.path()).unwrap(), sums);
+        std::fs::remove_file(dir.path().join(FILE)).unwrap();
+        run(dir.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(FILE)).unwrap(),
+            sums
+        );
         assert_eq!(
             std::fs::read_to_string(dir.path().join(FILE)).unwrap(),
             sums

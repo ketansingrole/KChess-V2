@@ -370,6 +370,16 @@ fn every_package_keeps_the_name_installations_ask_for() {
 }
 
 #[test]
+fn packages_are_made_for_this_machine() {
+    let expected = match std::env::consts::ARCH {
+        "aarch64" => Some(Arch::Arm64),
+        "x86_64" => Some(Arch::X64),
+        _ => None,
+    };
+    assert_eq!(Arch::current(), expected);
+}
+
+#[test]
 fn a_package_is_known_by_its_name() {
     for asset in Asset::ALL {
         for arch in [Arch::Arm64, Arch::X64] {

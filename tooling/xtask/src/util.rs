@@ -19,8 +19,11 @@ pub const REPOSITORY: &str = "ketansingrole/KChess-V2";
 /// The repository the release tooling works on: `GH_REPO` (CI sets it to the one it runs in, so
 /// `gh` and these agree), else KChess's.
 pub fn repository() -> String {
-    std::env::var("GH_REPO")
-        .ok()
+    repository_from(std::env::var("GH_REPO").ok())
+}
+
+fn repository_from(gh_repo: Option<String>) -> String {
+    gh_repo
         .filter(|repo| !repo.is_empty())
         .unwrap_or_else(|| REPOSITORY.to_string())
 }
@@ -374,6 +377,43 @@ mod tests {
             merge_base(dir.path()).unwrap(),
             git(&["rev-parse", "HEAD"]).trim()
         );
+    }
+
+    #[test]
+    fn the_repository_is_gh_repo_else_kchess() {
+        assert_eq!(repository_from(Some("fork/KChess".into())), "fork/KChess");
+        assert_eq!(repository_from(Some(String::new())), REPOSITORY);
+        assert_eq!(repository_from(None), "ketansingrole/KChess-V2");
+        assert_eq!(repository(), repository_from(std::env::var("GH_REPO").ok()));
+    }
+
+    #[test]
+    fn programs_are_named_for_this_platform() {
+        let expected = if cfg!(windows) {
+            "kchess-cli.exe"
+        } else {
+            "kchess-cli"
+        };
+        assert_eq!(exe("kchess-cli"), expected);
+    }
+
+    #[test]
+    fn a_files_time_is_read_only_while_it_is_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file");
+        assert_eq!(modified(&file), None);
+        std::fs::write(&file, "x").unwrap();
+        assert_eq!(
+            modified(&file),
+            std::fs::metadata(&file).unwrap().modified().ok()
+        );
+    }
+
+    #[test]
+    fn a_command_succeeds_only_when_it_exits_zero() {
+        assert!(available("git", &["--version"]));
+        assert!(!available("git", &["no-such-git-command"]));
+        assert!(!available("no-such-program-xtask", &[]));
     }
 
     #[test]

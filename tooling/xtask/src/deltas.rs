@@ -856,6 +856,16 @@ mod tests {
         };
         assert!(missing(&["/no/such/dist", "a", "b"]).contains("is no folder of packages"));
         assert!(missing(&["/no/such/dist", "a", "b", "c"]).contains("is no folder of packages"));
+        // `--stage` only after `--from` and two packages.
+        for args in [
+            ["--from", "a", "b", "--into", "c"],
+            ["/no/such/dist", "a", "b", "--stage", "c"],
+        ] {
+            assert!(
+                missing(&args).contains("is no folder of packages"),
+                "{args:?}"
+            );
+        }
     }
 
     /// In release CI, each package gets a patch from each earlier release that shipped one, its

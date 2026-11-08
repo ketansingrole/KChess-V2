@@ -345,6 +345,19 @@ mod tests {
         manifest.files = Box::leak(files.into_boxed_slice());
         assert!(check_step(&manifest).is_err());
 
+        for (sha256, size) in [("ab", 3), (step().files[0].sha256, 0)] {
+            let mut incomplete = step();
+            let mut files = incomplete.files.to_vec();
+            files[0].sha256 = sha256;
+            files[0].size = size;
+            incomplete.files = Box::leak(files.into_boxed_slice());
+            assert!(
+                check_step(&incomplete)
+                    .unwrap_err()
+                    .contains("pinned incompletely")
+            );
+        }
+
         let mut missing = step();
         missing.files = &missing.files[..1];
         assert!(check_step(&missing).unwrap_err().contains("latest.yml"));

@@ -16,9 +16,9 @@
 // The scripts and archives are written the same everywhere; only the platform tools differ.
 #[cfg(unix)]
 pub(crate) mod linux;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 mod mac;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 mod mas;
 pub mod windows;
 
@@ -49,10 +49,10 @@ pub const GUID: &str = "6bb66f38-a1a5-5ec8-b24f-c899466885ca";
 /// change. Each platform has only the fields it reads.
 pub struct Identity {
     pub name: &'static str,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", all(test, unix)))]
     pub app_id: &'static str,
     /// The program inside the Mac bundle (`Contents/MacOS`).
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", all(test, unix)))]
     pub mac_exe: &'static str,
     /// The Windows executable, without `.exe`.
     pub windows_exe: &'static str,
@@ -70,9 +70,9 @@ impl Identity {
     pub fn new(version: String) -> Identity {
         Identity {
             name: NAME,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", all(test, unix)))]
             app_id: "com.kchess.app",
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", all(test, unix)))]
             mac_exe: "kchess",
             windows_exe: "KChess",
             #[cfg(unix)]
@@ -320,9 +320,48 @@ pub fn run(args: &[String]) -> Result {
     Ok(())
 }
 
+/// Stand-ins for what packaging builds, in `dir`: each program holds its own name, and the voice
+/// runtime a library and its notice.
+#[cfg(all(test, unix))]
+pub fn stand_in(dir: &Path) -> Built {
+    let voice = dir.join("voice");
+    std::fs::create_dir_all(&voice).unwrap();
+    std::fs::write(voice.join("libvosk.so"), b"vosk").unwrap();
+    std::fs::write(voice.join("NOTICE.txt"), b"notice").unwrap();
+    let file = |name: &str| {
+        let path = dir.join(name);
+        std::fs::write(&path, name).unwrap();
+        path
+    };
+    Built {
+        app: file("app"),
+        service: file("service"),
+        cli: file("cli"),
+        stockfish: file("stockfish"),
+        fairy: file("fairy"),
+        voice,
+        licenses: file("licenses"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A release binary carrying the development badge's id is refused.
+    #[test]
+    fn a_development_build_is_never_packaged() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("KChess");
+        std::fs::write(&app, b"\0\0kchess-dev-build-badge\0").unwrap();
+        assert!(
+            verify_no_dev_build(&app)
+                .unwrap_err()
+                .contains("development build badge")
+        );
+        std::fs::write(&app, b"\0\0kchess-dev-build\0").unwrap();
+        assert_eq!(verify_no_dev_build(&app), Ok(()));
+    }
 
     /// A platform's packaging fails without any package it releases, or with an empty one.
     #[test]

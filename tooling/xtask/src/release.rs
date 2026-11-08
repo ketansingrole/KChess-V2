@@ -183,36 +183,57 @@ fn lock_names_version(lock: &str, version: &str) -> bool {
 /// `release-verify`: the version is a release version, and a tag build's tag names it exactly.
 pub fn verify() -> Result {
     let version = version()?;
-    parse(&version)?;
     let lock =
         std::fs::read_to_string(root().join("Cargo.lock")).map_err(|cause| cause.to_string())?;
-    if !lock_names_version(&lock, &version) {
+    let notes = std::fs::read_to_string(root().join(NOTES)).map_err(|cause| cause.to_string())?;
+    metadata(&version, &lock, &notes, tag_build().as_deref())?;
+    say(&format!("Release metadata verified: v{version}"));
+    Ok(())
+}
+
+/// Whether release `version` has its Cargo.lock, its notes and, on a tag build, its tag.
+fn metadata(version: &str, lock: &str, notes: &str, tag: Option<&str>) -> Result {
+    parse(version)?;
+    if !lock_names_version(lock, version) {
         return Err(
             "Cargo.lock does not match the workspace version. Run `cargo update --workspace`."
                 .into(),
         );
     }
-    let notes = std::fs::read_to_string(root().join(NOTES)).map_err(|cause| cause.to_string())?;
-    if !has_notes(&notes, &version) {
+    if !has_notes(notes, version) {
         return Err(format!(
             "{NOTES} has no `## {version} (date)` section, so the app would show this release \
              with no notes. `cargo xtask release-version` writes it from `{UNRELEASED}`."
         ));
     }
-    if let Some(tag) = tag_build()
+    if let Some(tag) = tag
         && tag != format!("v{version}")
     {
         return Err(format!("Tag {tag} must be exactly v{version}."));
     }
-    say(&format!("Release metadata verified: v{version}"));
     Ok(())
 }
 
 /// The tag a GitHub Actions run builds (`GITHUB_REF` is `refs/tags/<tag>`); none for a branch,
 /// a pull request or a run outside Actions.
 fn tag_build() -> Option<String> {
-    let reference = std::env::var("GITHUB_REF").ok()?;
-    reference.strip_prefix("refs/tags/").map(str::to_string)
+    tag_of(&std::env::var("GITHUB_REF").ok()?).map(str::to_string)
+}
+
+/// The tag a Git reference names (`refs/tags/<tag>`).
+fn tag_of(reference: &str) -> Option<&str> {
+    reference.strip_prefix("refs/tags/")
+}
+
+/// Whether `release-verify` needs the commit's CI: run by hand, or by a tag build, not by a manual
+/// Release build of a branch in Actions (downloads only).
+fn needs_ci(in_actions: bool, tag: Option<&str>) -> bool {
+    !in_actions || tag.is_some()
+}
+
+/// The tag a tag-push run builds, from the event's name and `GITHUB_REF`: none for any other run.
+fn pushed_tag<'a>(event: Option<&str>, reference: Option<&'a str>) -> Option<&'a str> {
+    reference.and_then(tag_of).filter(|_| event == Some("push"))
 }
 
 /// The version a release tag names (`v2026.11.5` → `2026.11.5`), refused unless it is one.
@@ -230,7 +251,10 @@ pub fn tag_version(tag: &str) -> Result<&str> {
 /// each of them first failed after a tag. A manual Release build (downloads only) skips this.
 pub fn verify_release() -> Result {
     verify()?;
-    if std::env::var_os("GITHUB_ACTIONS").is_some() && tag_build().is_none() {
+    if !needs_ci(
+        std::env::var_os("GITHUB_ACTIONS").is_some(),
+        tag_build().as_deref(),
+    ) {
         say("Not a tag: CI is not required for a manual Release build.");
         return Ok(());
     }
@@ -318,9 +342,9 @@ pub fn ci_verdict(commit: &str, run: &str, jobs: &str) -> Result {
 /// draft release, creating it as a draft. A published release is never changed: its assets are
 /// permanent, so a fix ships as the next version.
 pub fn attach_draft(dir: &std::path::Path) -> Result {
-    let Some(tag) =
-        tag_build().filter(|_| std::env::var("GITHUB_EVENT_NAME").as_deref() == Ok("push"))
-    else {
+    let event = std::env::var("GITHUB_EVENT_NAME").ok();
+    let reference = std::env::var("GITHUB_REF").ok();
+    let Some(tag) = pushed_tag(event.as_deref(), reference.as_deref()).map(str::to_string) else {
         return Err(
             "Draft releases may only be attached by a tag-push workflow, never a manual build."
                 .into(),
@@ -560,6 +584,54 @@ mod tests {
         ] {
             assert!(!store_only(asset), "{asset}");
         }
+    }
+
+    #[test]
+    fn a_release_needs_its_lock_notes_and_tag() {
+        let lock = "name = \"kchess-gpui\"\nversion = \"2026.11.5\"\n";
+        let notes = "## Unreleased\n\n## 2026.11.5 (2026-11-08)\n\n- **New**: a thing.\n";
+        assert_eq!(metadata("2026.11.5", lock, notes, None), Ok(()));
+        assert_eq!(
+            metadata("2026.11.5", lock, notes, Some("v2026.11.5")),
+            Ok(())
+        );
+        assert!(
+            metadata("2026.11.5", lock, notes, Some("v2026.11.4"))
+                .unwrap_err()
+                .contains("must be exactly v2026.11.5")
+        );
+        assert!(
+            metadata("2026.11.5", &lock.replace(".5", ".4"), notes, None)
+                .unwrap_err()
+                .contains("Cargo.lock")
+        );
+        assert!(
+            metadata("2026.11.5", lock, "## Unreleased\n", None)
+                .unwrap_err()
+                .contains("no `## 2026.11.5 (date)` section")
+        );
+        assert!(metadata("1.2.3", lock, notes, None).is_err());
+    }
+
+    /// Run by hand or for a tag, the release check needs CI; a manual Release build of a branch
+    /// does not. Only a tag push attaches a draft.
+    #[test]
+    fn ci_and_drafts_are_for_tag_builds() {
+        assert!(needs_ci(false, None));
+        assert!(needs_ci(true, Some("v2026.11.5")));
+        assert!(!needs_ci(true, None));
+        let tag = Some("refs/tags/v2026.11.5");
+        assert_eq!(pushed_tag(Some("push"), tag), Some("v2026.11.5"));
+        assert_eq!(pushed_tag(Some("workflow_dispatch"), tag), None);
+        assert_eq!(pushed_tag(Some("push"), Some("refs/heads/main")), None);
+        assert_eq!(pushed_tag(None, tag), None);
+    }
+
+    #[test]
+    fn only_a_tag_reference_is_a_tag_build() {
+        assert_eq!(tag_of("refs/tags/v2026.11.5"), Some("v2026.11.5"));
+        assert_eq!(tag_of("refs/heads/main"), None);
+        assert_eq!(tag_of("refs/pull/7/merge"), None);
     }
 
     #[test]

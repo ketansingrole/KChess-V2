@@ -361,28 +361,6 @@ mod tests {
         kchess_delta::digest(bytes).leak()
     }
 
-    /// Stand-ins for what packaging builds, in `dir`: each program holds its own name.
-    fn built(dir: &Path) -> Built {
-        let voice = dir.join("voice");
-        std::fs::create_dir_all(&voice).unwrap();
-        std::fs::write(voice.join("libvosk.so"), b"vosk").unwrap();
-        std::fs::write(voice.join("NOTICE.txt"), b"notice").unwrap();
-        let file = |name: &str| {
-            let path = dir.join(name);
-            std::fs::write(&path, name).unwrap();
-            path
-        };
-        Built {
-            app: file("app"),
-            service: file("service"),
-            cli: file("cli"),
-            stockfish: file("stockfish"),
-            fairy: file("fairy"),
-            voice,
-            licenses: file("licenses"),
-        }
-    }
-
     /// The AppImage step fetches both pinned tools into its cache and runs appimagetool on the
     /// staged app with the pinned runtime, from its own extracted files (runners have no FUSE):
     /// a stand-in appimagetool records its environment and arguments and makes the "image" from
@@ -391,7 +369,7 @@ mod tests {
     fn the_appimage_is_made_around_the_pinned_runtime() {
         let scratch = tempfile::tempdir().unwrap();
         let scratch = scratch.path();
-        let built = built(&scratch.join("built"));
+        let built = super::super::stand_in(&scratch.join("built"));
         let tool = b"#!/bin/sh\nprintf '%s\\n' \"$ARCH\" \"$APPIMAGE_EXTRACT_AND_RUN\" \"$@\" > \"$5.args\"\ncp \"$3\" \"$5\"\n";
         let runtime = b"the pinned runtime";
         let tools = AppImageTools {
@@ -481,7 +459,7 @@ mod tests {
     fn the_deb_installs_the_app_in_opt() {
         let dir = tempfile::tempdir().unwrap();
         let dir = dir.path();
-        let built = built(dir);
+        let built = super::super::stand_in(dir);
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
         let identity = Identity::new("2026.11.9".into());

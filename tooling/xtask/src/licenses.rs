@@ -293,7 +293,51 @@ pub fn write(path: &Path) -> Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{names, offers};
+    use super::{MIT, license_text, names, offers};
+
+    /// A crate's own license files come first; without them, the text of a license it offers.
+    #[test]
+    fn a_crate_is_attributed_with_its_own_files_or_its_licenses_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let package = |license: &str, authors: &[&str]| {
+            serde_json::json!({
+                "name": "demo",
+                "version": "1.0.0",
+                "license": license,
+                "authors": authors,
+                "manifest_path": dir.path().join("Cargo.toml"),
+            })
+        };
+        assert_eq!(
+            license_text(&package("MIT OR Apache-2.0", &["Ada"])).unwrap(),
+            format!("--- MIT ---\nCopyright (c) Ada\n\n{MIT}\n")
+        );
+        assert!(
+            license_text(&package("MIT", &[]))
+                .unwrap()
+                .contains("Copyright (c) the demo authors\n")
+        );
+        assert!(
+            license_text(&package("Apache-2.0", &[]))
+                .unwrap()
+                .starts_with("--- Apache-2.0 ---\n")
+        );
+        assert!(
+            license_text(&package("GPL-3.0-or-later", &[]))
+                .unwrap()
+                .starts_with("--- GPL-3.0 (the same license as KChess) ---\n")
+        );
+        assert!(
+            license_text(&package("LicenseRef-Unknown", &[]))
+                .unwrap_err()
+                .contains("ships no license file")
+        );
+        std::fs::write(dir.path().join("LICENSE-MIT"), "  the crate's own  \n").unwrap();
+        assert_eq!(
+            license_text(&package("MIT", &[])).unwrap(),
+            "--- LICENSE-MIT ---\nthe crate's own\n\n"
+        );
+    }
 
     #[test]
     fn a_license_is_offered_by_any_choice_of_its_expression() {
