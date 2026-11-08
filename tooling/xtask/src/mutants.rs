@@ -55,10 +55,44 @@ fn git(repo: &Path, args: &[&str], accepted: &[i32]) -> Result<String> {
     }
 }
 
+/// Git colours a moved block's lines with these, and no other line: `-c` settings that override
+/// whatever colours the user's configuration picks.
+const MOVED_COLOURS: [&str; 12] = [
+    "-c",
+    "color.diff.new=green",
+    "-c",
+    "color.diff.old=red",
+    "-c",
+    "color.diff.newMoved=cyan",
+    "-c",
+    "color.diff.oldMoved=magenta",
+    "-c",
+    "color.diff.newMovedAlternative=cyan",
+    "-c",
+    "color.diff.oldMovedAlternative=magenta",
+];
+/// How a line moved to here, and a line moved away, start in the coloured diff.
+const MOVED_IN: &str = "\x1b[36m+";
+const MOVED_OUT: &str = "\x1b[35m-";
+
 /// The Rust changes of `repo`'s working tree since `base`: committed, staged and unstaged alike,
-/// and the new files Git does not track yet, which `git diff` leaves out.
+/// and the new files Git does not track yet, which `git diff` leaves out. Code that only moved
+/// (`without_moves`) is not a change.
 fn diff_since(repo: &Path, base: &str) -> Result<String> {
-    let mut diff = git(repo, &["diff", "--no-ext-diff", base, "--", "*.rs"], &[0])?;
+    let plain = git(repo, &["diff", "--no-ext-diff", base, "--", "*.rs"], &[0])?;
+    let mut coloured_args = MOVED_COLOURS.to_vec();
+    coloured_args.extend([
+        "diff",
+        "--no-ext-diff",
+        "--color=always",
+        "--color-moved=blocks",
+        "--color-moved-ws=allow-indentation-change",
+        base,
+        "--",
+        "*.rs",
+    ]);
+    let coloured = git(repo, &coloured_args, &[0])?;
+    let mut diff = without_moves(&plain, &coloured);
     let untracked = git(
         repo,
         &["ls-files", "--others", "--exclude-standard", "--", "*.rs"],
@@ -77,6 +111,85 @@ fn diff_since(repo: &Path, base: &str) -> Result<String> {
         diff.push_str(&git(repo, &args, &[0, 1])?);
     }
     Ok(diff)
+}
+
+/// `plain` without the code that only moved, as `coloured` (the same diff, coloured with
+/// `MOVED_COLOURS` and `--color-moved`) marks it: a moved block's new lines become context, its
+/// old lines go, and each hunk's counts follow. Git marks a block as moved when it holds at least
+/// 20 letters and digits, whatever its indentation, so a split file or a function moved into a
+/// module is no change, while an edited line in it, or a new one, still is. Moved code was tested
+/// where it was, and its mutants that were missed there are the weekly run's.
+fn without_moves(plain: &str, coloured: &str) -> String {
+    let marks: Vec<&str> = coloured.lines().collect();
+    let lines: Vec<&str> = plain.lines().collect();
+    if marks.len() != lines.len() {
+        // The two diffs disagree: keep every change rather than guess.
+        return plain.to_string();
+    }
+    let mut kept: Vec<String> = Vec::with_capacity(lines.len());
+    for (line, mark) in lines.iter().zip(&marks) {
+        if mark.starts_with(MOVED_OUT) {
+            continue;
+        }
+        match line.strip_prefix('+') {
+            Some(moved) if mark.starts_with(MOVED_IN) => kept.push(format!(" {moved}")),
+            _ => kept.push((*line).to_string()),
+        }
+    }
+    let mut diff = recounted(&kept).join("\n");
+    if plain.ends_with('\n') {
+        diff.push('\n');
+    }
+    diff
+}
+
+/// `lines` with each hunk's header counting the lines that follow it: the old side's context
+/// and removed lines, the new side's context and added lines.
+fn recounted(lines: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    // The hunk being counted: its header's place in `out`, its starts and the rest of its
+    // header, and its old and new counts so far.
+    let mut hunk: Option<(usize, usize, usize, String, usize, usize)> = None;
+    for line in lines {
+        if let Some((old_start, new_start, rest)) = hunk_header(line) {
+            close(&mut out, hunk.take());
+            hunk = Some((out.len(), old_start, new_start, rest.to_string(), 0, 0));
+            out.push(line.clone());
+            continue;
+        }
+        match (hunk.as_mut(), line.as_bytes().first()) {
+            (Some((.., old, new)), Some(b' ')) => {
+                *old += 1;
+                *new += 1;
+            }
+            (Some((.., old, _)), Some(b'-')) => *old += 1,
+            (Some((.., new)), Some(b'+')) => *new += 1,
+            (Some(_), Some(b'\\')) => {}
+            _ => close(&mut out, hunk.take()),
+        }
+        out.push(line.clone());
+    }
+    close(&mut out, hunk);
+    out
+}
+
+/// Writes a counted hunk's header in place.
+fn close(out: &mut [String], hunk: Option<(usize, usize, usize, String, usize, usize)>) {
+    let Some((at, old_start, new_start, rest, old, new)) = hunk else {
+        return;
+    };
+    // A new file's hunk starts at line 0 of nothing; once it has context it starts at 1.
+    let old_start = if old > 0 { old_start.max(1) } else { old_start };
+    out[at] = format!("@@ -{old_start},{old} +{new_start},{new} @@{rest}");
+}
+
+/// A hunk header's old and new start lines and what follows its closing `@@`.
+fn hunk_header(line: &str) -> Option<(usize, usize, &str)> {
+    let ranges = line.strip_prefix("@@ -")?;
+    let (ranges, rest) = ranges.split_once(" @@")?;
+    let (old, new) = ranges.split_once(" +")?;
+    let start = |range: &str| range.split(',').next()?.parse::<usize>().ok();
+    Some((start(old)?, start(new)?, rest))
 }
 
 /// cargo-mutants' arguments: only mutants on the diff's lines, each tested with the tests of its
@@ -243,6 +356,131 @@ mod tests {
         assert!(diff.contains("+fn new() {}"), "{diff}");
         assert!(!diff.contains("notes"), "{diff}");
         assert!(diff_since(dir.path(), "no-such-commit").is_err());
+    }
+
+    /// `repo`'s working tree as a commit, so `diff_since` sees committed changes as CI does.
+    fn commit(dir: &Path) {
+        let git = |args: &[&str]| git(dir, args, &[0]).unwrap();
+        git(&["add", "-A"]);
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "change",
+        ]);
+    }
+
+    const MOVED_FN: &str = "fn moved(value: u32) -> u32 {\n    \
+                            let doubled = value.saturating_mul(2);\n    \
+                            doubled.saturating_add(value_offset())\n}\n";
+
+    #[test]
+    fn code_that_only_moved_is_no_change() {
+        let (dir, base) = repo();
+        std::fs::write(
+            dir.path().join("a.rs"),
+            format!("fn a() {{}}\n\n{MOVED_FN}"),
+        )
+        .unwrap();
+        commit(dir.path());
+        let base = {
+            let _ = base;
+            git(dir.path(), &["rev-parse", "HEAD"], &[0])
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        // The function moves to b.rs, indented into a module, beside a new one.
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+        let indented: String = MOVED_FN
+            .lines()
+            .map(|line| format!("    {line}\n"))
+            .collect();
+        std::fs::write(
+            dir.path().join("b.rs"),
+            format!("mod inner {{\n{indented}}}\n\nfn brand_new() -> u32 {{\n    7\n}}\n"),
+        )
+        .unwrap();
+        commit(dir.path());
+        let diff = diff_since(dir.path(), &base).unwrap();
+        assert!(!diff.contains("-fn moved"), "{diff}");
+        assert!(!diff.contains("+    fn moved"), "{diff}");
+        assert!(
+            diff.contains("\n     fn moved(value: u32) -> u32 {\n"),
+            "{diff}"
+        );
+        assert!(diff.contains("+fn brand_new() -> u32 {"), "{diff}");
+        assert!(diff.contains("+mod inner {"), "{diff}");
+        // The new file's hunk counts its moved lines as context on both sides.
+        assert!(diff.contains("@@ -1,4 +1,10 @@"), "{diff}");
+    }
+
+    #[test]
+    fn an_edit_inside_moved_code_is_a_change() {
+        let (dir, _) = repo();
+        std::fs::write(
+            dir.path().join("a.rs"),
+            format!("fn a() {{}}\n\n{MOVED_FN}"),
+        )
+        .unwrap();
+        commit(dir.path());
+        let base = git(dir.path(), &["rev-parse", "HEAD"], &[0])
+            .unwrap()
+            .trim()
+            .to_string();
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
+        std::fs::write(
+            dir.path().join("b.rs"),
+            MOVED_FN.replace("saturating_mul(2)", "saturating_mul(3)"),
+        )
+        .unwrap();
+        commit(dir.path());
+        let diff = diff_since(dir.path(), &base).unwrap();
+        assert!(
+            diff.contains("+    let doubled = value.saturating_mul(3);"),
+            "{diff}"
+        );
+    }
+
+    #[test]
+    fn a_hunk_counts_the_lines_it_keeps() {
+        let plain =
+            "--- a/x.rs\n+++ b/x.rs\n@@ -0,0 +1,2 @@ fn x\n+a\n+b\n\\ No newline at end of file\n";
+        let coloured = "\x1b[1m--- a/x.rs\x1b[m\n\x1b[1m+++ b/x.rs\x1b[m\n\x1b[36m@@ -0,0 +1,2 @@\x1b[m fn x\n\x1b[36m+a\x1b[m\n\x1b[32m+b\x1b[m\n\\ No newline at end of file\n";
+        assert_eq!(
+            without_moves(plain, coloured),
+            "--- a/x.rs\n+++ b/x.rs\n@@ -1,1 +1,2 @@ fn x\n a\n+b\n\\ No newline at end of file\n"
+        );
+        // A new file with nothing moved keeps its empty old side.
+        let added = "@@ -0,0 +1,1 @@\n+a\n";
+        assert_eq!(
+            without_moves(added, "\x1b[36m@@ -0,0 +1,1 @@\x1b[m\n\x1b[32m+a\x1b[m\n"),
+            added
+        );
+        // Counting goes on past a missing final newline of the old side, to the next file.
+        let newline =
+            "@@ -1,2 +1,2 @@\n x\n-a\n\\ No newline at end of file\n+b\ndiff --git a/y.rs b/y.rs\n";
+        let marked = "\x1b[36m@@ -1,2 +1,2 @@\x1b[m\n x\n\x1b[31m-a\x1b[m\n\\ No newline at end of file\n\x1b[36m+b\x1b[m\n\x1b[1mdiff --git a/y.rs b/y.rs\x1b[m\n";
+        assert_eq!(
+            without_moves(newline, marked),
+            "@@ -1,3 +1,2 @@\n x\n-a\n\\ No newline at end of file\n b\ndiff --git a/y.rs b/y.rs\n"
+        );
+        let moved_away = "@@ -3,2 +3,0 @@\n-gone\n-also\n";
+        let marked = "\x1b[36m@@ -3,2 +3,0 @@\x1b[m\n\x1b[35m-gone\x1b[m\n\x1b[31m-also\x1b[m\n";
+        assert_eq!(
+            without_moves(moved_away, marked),
+            "@@ -3,1 +3,0 @@\n-also\n"
+        );
+        // Diffs that disagree keep every change.
+        assert_eq!(without_moves("+a\n", ""), "+a\n");
+        assert_eq!(hunk_header("@@ -12 +13,4 @@ fn f"), Some((12, 13, " fn f")));
+        assert_eq!(hunk_header("@@ broken"), None);
+        assert_eq!(hunk_header("+@@ -1 +1 @@"), None);
     }
 
     /// A stand-in cargo in `dir`: it answers `--version` when `installed`, records any other
