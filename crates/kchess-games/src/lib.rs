@@ -6,6 +6,7 @@
 pub mod archive;
 pub mod computer;
 pub mod local;
+pub mod puzzle;
 
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};

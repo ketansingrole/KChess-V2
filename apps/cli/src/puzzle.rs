@@ -1,20 +1,20 @@
 //! `puzzle [id|link]`: solve Lichess's daily puzzle, or the one named, by typing moves, as on the
 //! Puzzles page.
 
-use kchess_domain::position::{Played, play_san, play_uci};
+use kchess_domain::position::{play_san, play_uci};
 use kchess_domain::rules::setup_start;
+use kchess_games::puzzle::OnBoard;
 use serde_json::{Value, json};
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::core::{CoreClient, Event};
 
-/// A puzzle being solved: its position, its solution (UCI, the solver's moves first) and the moves
-/// found so far, the opponent's replies included.
+/// A puzzle being solved, on the board as the Puzzles page plays it
+/// (`kchess_games::puzzle::OnBoard`): the rules decide whether a move is the solution's (any
+/// checkmate is), and play the opponent's replies.
 pub struct Solving {
-    fen: String,
-    solution: Vec<String>,
-    played: Vec<String>,
+    board: OnBoard,
 }
 
 /// What a typed move did.
@@ -33,59 +33,37 @@ pub enum Answer {
 }
 
 impl Solving {
+    /// The puzzle, unless the rules cannot set it up or it has no solution.
     pub fn new(puzzle: &Value) -> Option<Solving> {
-        let fen = puzzle["fen"].as_str()?.to_string();
-        let solution: Vec<String> = puzzle["solution"]
-            .as_array()?
-            .iter()
-            .filter_map(|uci| uci.as_str().map(str::to_string))
-            .collect();
-        setup_start("standard", &fen)?;
-        (!solution.is_empty()).then_some(Solving {
-            fen,
-            solution,
-            played: Vec::new(),
-        })
+        let board = OnBoard::start(puzzle);
+        (!board.fen().is_empty() && board.player_moves() > 0).then_some(Solving { board })
     }
 
     pub fn solved(&self) -> bool {
-        self.played.len() >= self.solution.len()
+        self.board.status() == "solved"
     }
 
     /// The position now, as FEN.
     pub fn fen(&self) -> String {
-        self.after(&self.played)
-            .map_or_else(|| self.fen.clone(), |played| played.position.fen)
+        self.board.fen().to_string()
     }
 
     /// The side the solver plays.
     pub fn solver(&self) -> &'static str {
-        if self.fen.split(' ').nth(1) == Some("b") {
-            "black"
-        } else {
+        if self.board.player_color().is_white() {
             "white"
+        } else {
+            "black"
         }
-    }
-
-    /// The last of `moves` played from the start, or `None` before the first.
-    fn after(&self, moves: &[String]) -> Option<Played> {
-        let mut position = setup_start("standard", &self.fen)?;
-        let mut last = None;
-        for uci in moves {
-            let played = play_uci(&position, uci)?;
-            position = setup_start("standard", &played.position.fen)?;
-            last = Some(played);
-        }
-        last
     }
 
     /// Play `text` (SAN or UCI). As on Lichess, any checkmate solves the puzzle, not only the
     /// one in its solution.
     pub fn answer(&mut self, text: &str) -> Answer {
-        if self.solved() {
+        if self.board.status() != "playing" {
             return Answer::Illegal;
         }
-        let Some(position) = setup_start("standard", &self.fen()) else {
+        let Some(position) = setup_start(self.board.variant(), self.board.fen()) else {
             return Answer::Illegal;
         };
         let Some(played) =
@@ -93,28 +71,14 @@ impl Solving {
         else {
             return Answer::Illegal;
         };
-        let expected = &self.solution[self.played.len()];
-        if played.uci != *expected && !played.position.checkmate {
+        let (correct, reply) = self.board.player_move(&played.uci);
+        if !correct {
             return Answer::Wrong { san: played.san };
         }
-        if played.position.checkmate {
-            self.played = self.solution.clone();
-            return Answer::Right {
-                san: played.san,
-                reply: None,
-                solved: true,
-            };
-        }
-        self.played.push(expected.clone());
-        let reply = self
-            .solution
-            .get(self.played.len())
-            .cloned()
-            .and_then(|uci| {
-                let reply = play_uci(&setup_start("standard", &played.position.fen)?, &uci)?;
-                self.played.push(uci);
-                Some(reply.san)
-            });
+        let reply = reply.map(|uci| {
+            self.board.opponent_reply(&uci);
+            self.board.last_san()
+        });
         Answer::Right {
             san: played.san,
             reply,
@@ -124,21 +88,28 @@ impl Solving {
 
     /// The square of the piece to move next, as the Puzzles page's hint shows it.
     pub fn hint(&self) -> Option<String> {
-        let next = self.solution.get(self.played.len())?;
-        next.get(..2).map(str::to_string)
+        if self.solved() {
+            return None;
+        }
+        self.board.next_squares().map(|(from, _)| from.to_string())
     }
 
     /// The moves left, in SAN; the puzzle ends shown.
     pub fn give_up(&mut self) -> Vec<String> {
         let mut shown = Vec::new();
-        while !self.solved() {
-            let Some(played) = setup_start("standard", &self.fen())
-                .and_then(|position| play_uci(&position, &self.solution[self.played.len()]))
-            else {
+        while self.board.status() == "playing" {
+            let Some(uci) = self.board.solution(self.board.index()) else {
                 break;
             };
-            shown.push(played.san);
-            self.played.push(self.solution[self.played.len()].clone());
+            let (correct, reply) = self.board.player_move(&uci);
+            if !correct {
+                break;
+            }
+            shown.push(self.board.last_san());
+            if let Some(reply) = reply {
+                self.board.opponent_reply(&reply);
+                shown.push(self.board.last_san());
+            }
         }
         shown
     }
@@ -236,6 +207,8 @@ mod tests {
     fn the_solution_is_typed_in_san_or_uci_and_the_replies_are_played() {
         let mut solving = daily();
         assert_eq!(solving.solver(), "white");
+        let start = "r1b4r/ppqpkpb1/2nNpnp1/7p/5P1P/4BNP1/PPP5/R2QKB1R w KQ - 1 1";
+        assert_eq!(solving.fen(), start);
         assert_eq!(
             solving.answer("Bc5"),
             Answer::Right {
@@ -243,6 +216,11 @@ mod tests {
                 reply: Some("Qa5+".into()),
                 solved: false,
             }
+        );
+        // The bishop moved and the queen answered.
+        assert_eq!(
+            solving.fen(),
+            "r1b4r/pp1pkpb1/2nNpnp1/q1B4p/5P1P/5NP1/PPP5/R2QKB1R w KQ - 3 2"
         );
         assert_eq!(solving.answer("Bc5"), Answer::Illegal);
         assert_eq!(solving.answer("Qd2"), Answer::Wrong { san: "Qd2".into() });
