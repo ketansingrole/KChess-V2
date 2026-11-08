@@ -32,6 +32,11 @@ arguments after `--` go to cargo-mutants (`-- -j 4`, `-- -p kchess-domain`). Mut
 already missed in untouched code are the weekly run's, so a change never has to pay off the
 whole backlog at once.
 
+Code that only moved is not a change: a block Git's `--color-moved` marks as moved (at least
+20 letters and digits, whatever its indentation) goes to cargo-mutants as context, so splitting
+a file or moving a function into a module tests nothing again, while an edited line inside the
+moved code still is a change. Commit a move first: an untracked file is compared with nothing.
+
 ## What to do with a missed mutant
 
 1. Write the test it shows is missing, at the level that observes the behaviour: a unit test, a
