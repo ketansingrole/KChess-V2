@@ -386,7 +386,7 @@ enum Answer {
 }
 
 /// `request` until it answers, at most `TRIES` times, waiting as a resumed download does
-/// (`RESUME_AFTER`, doubled each time) between tries.
+/// (`backoff`) between tries.
 async fn retried<T, F: Future<Output = Result<T, Answer>>>(
     what: &str,
     mut request: impl FnMut() -> F,
@@ -398,7 +398,7 @@ async fn retried<T, F: Future<Output = Result<T, Answer>>>(
             Err(Answer::Fail(cause)) => return Err(cause),
             Err(Answer::Retry(cause)) if tries < TRIES => {
                 log(&format!("{what}: {cause}, trying again ({tries}/{TRIES})"));
-                tokio::time::sleep(RESUME_AFTER * 2u32.pow(tries - 1)).await;
+                tokio::time::sleep(backoff(tries)).await;
                 tries += 1;
             }
             Err(Answer::Retry(cause)) => return Err(cause),
@@ -456,6 +456,11 @@ const RESUME_AFTER: Duration = if cfg!(test) {
 } else {
     Duration::from_secs(2)
 };
+
+/// The wait before try (or resume) `attempt`, counting from 1: `RESUME_AFTER`, doubled each time.
+fn backoff(attempt: u32) -> Duration {
+    RESUME_AFTER * 2u32.pow(attempt.saturating_sub(1))
+}
 
 /// How often a download reports its progress: every this many bytes, and at its end. One report
 /// for every chunk the server sent was thousands of redraws of the window for one update.
@@ -651,7 +656,7 @@ async fn receive_all(
                     "{cause} at {} of {} bytes, resuming ({resumes}/{RESUMES})",
                     part.received, part.total
                 ));
-                tokio::time::sleep(RESUME_AFTER * 2u32.pow(resumes - 1)).await;
+                tokio::time::sleep(backoff(resumes)).await;
             }
             Err(Stop::Dropped(cause)) => return Err(cause),
         }

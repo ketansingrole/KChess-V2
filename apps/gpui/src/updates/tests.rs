@@ -1594,3 +1594,43 @@ fn a_patch_is_staged_as_its_package_installs() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Each try or resume waits twice as long as the one before.
+#[test]
+fn tries_wait_twice_as_long_each_time() {
+    use super::{RESUME_AFTER, backoff};
+    assert_eq!(backoff(1), RESUME_AFTER);
+    assert_eq!(backoff(2), RESUME_AFTER * 2);
+    assert_eq!(backoff(3), RESUME_AFTER * 4);
+    assert_eq!(backoff(0), RESUME_AFTER);
+}
+
+/// **Download** on an offered update starts it: here, a build with no download folder says so
+/// rather than leaving the button doing nothing.
+#[gpui_kit::test]
+fn download_starts_the_offered_update(cx: &mut gpui_kit::TestAppContext) {
+    use super::{Phase, UpdatesHandle};
+    let mut app = crate::e2e::Harness::start(cx);
+    let package = Package::for_platform().unwrap();
+    let name = asset_name("2026.11.9", package).unwrap();
+    let release: Release = serde_json::from_value(serde_json::json!({
+        "tag_name": "v2026.11.9",
+        "assets": [{ "name": name, "browser_download_url": "http://127.0.0.1:9/pkg", "size": 1 }],
+    }))
+    .unwrap();
+    let (phase, error) = app.with_window(|_, cx| {
+        let updates = cx.global::<UpdatesHandle>().0.clone();
+        updates.update(cx, |updates, cx| {
+            updates.workspace = None;
+            updates.release = Some(release);
+            updates.phase = Phase::Available;
+            updates.download(cx);
+            (updates.phase, updates.error.clone())
+        })
+    });
+    assert_eq!(phase, Phase::Error);
+    assert_eq!(
+        error.as_deref(),
+        Some("KChess has no private folder to download the update to")
+    );
+}
