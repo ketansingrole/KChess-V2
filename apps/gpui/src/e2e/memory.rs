@@ -43,7 +43,7 @@ fn a_closed_board_page_releases_its_turned_faces(cx: &mut gpui_kit::TestAppConte
     let mut app = clock(cx);
     let shown = faces(&mut app);
     assert_eq!(shown.len(), 2, "both faces are pictures");
-    app.with_window(|window, cx| crate::shell::restart_pages(window, cx));
+    app.with_window(crate::shell::restart_pages);
     app.settle();
     app.with_window(|window, _| {
         for face in &shown {

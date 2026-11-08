@@ -124,7 +124,7 @@ fn openings_that_leave_recent_let_their_preview_go(cx: &mut gpui_kit::TestAppCon
             moves: line.split(' ').map(str::to_string).collect(),
         };
         app.cx
-            .update(|cx| crate::prefs::set(cx, "kchess:recent-openings", &vec![choice]));
+            .update(|cx| crate::prefs::set(cx, "kchess:recent-openings", vec![choice]));
         app.find(format!("recent-{line}"));
     }
     let kept = app.cx.update(|cx| {
