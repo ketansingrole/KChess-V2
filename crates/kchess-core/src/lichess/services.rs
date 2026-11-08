@@ -704,10 +704,6 @@ impl Services {
                 }
                 Err(cause) => Err(cause),
             },
-            "cloudEval.clear" => {
-                self.cloud.clear();
-                Ok(Value::Null)
-            }
             _ => return None,
         };
         Some(result)

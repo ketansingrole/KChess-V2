@@ -108,6 +108,11 @@ async fn online_methods_check_their_arguments_and_reach_lichess() {
             .message,
         "@Alice's Lichess login is unavailable. Reconnect it in Settings."
     );
+    // A fresh profile's reviews have nothing waiting.
+    assert_eq!(
+        core.call("reviewStatus", vec![]).await.unwrap(),
+        json!({ "waiting": 0 })
+    );
     // Cancelling a review no one asked for reaches the reviews and is nothing to them.
     assert_eq!(
         core.call("reviewCancel", vec![json!("0123456789abcdef")])

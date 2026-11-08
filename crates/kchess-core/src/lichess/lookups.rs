@@ -119,7 +119,7 @@ impl CloudCache {
         );
     }
 
-    /// `clearCloudEval`.
+    /// Forgets every cached evaluation (`lichess.reset`, when the core closes).
     pub fn clear(&self) {
         lock(&self.entries).clear();
     }
