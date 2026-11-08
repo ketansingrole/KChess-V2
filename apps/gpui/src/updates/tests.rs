@@ -1434,10 +1434,13 @@ fn a_patch_is_used_only_when_it_is_the_smaller_download() {
         .unwrap()
     };
     let found = super::patch_asset(&release(100, "2026.11.0"), Package::Deb, "2026.11.0");
+    // The package's name carries this machine's architecture (arm64 on Apple Silicon).
+    let package = asset_name("2026.11.1", Package::Deb).unwrap();
     assert_eq!(
         found.map(|asset| asset.name),
-        Some("KChess-2026.11.1-linux-amd64.from-2026.11.0.delta".to_string())
+        super::patch::asset_name(&package, "2026.11.0")
     );
+    assert!(package.starts_with("KChess-2026.11.1-linux-"));
     assert!(super::patch_asset(&release(1000, "2026.11.0"), Package::Deb, "2026.11.0").is_none());
     assert!(super::patch_asset(&release(100, "2026.10.9"), Package::Deb, "2026.11.0").is_none());
     assert!(
