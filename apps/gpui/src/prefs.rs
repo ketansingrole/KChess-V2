@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, Global};
-use kchess_core::Level;
+use kchess_contracts::Level;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};

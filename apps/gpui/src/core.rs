@@ -10,7 +10,8 @@ use std::sync::Arc;
 use futures::StreamExt as _;
 use futures::channel::mpsc;
 use gpui_kit::{App, AppContext as _, Entity, EventEmitter, Global, PromptLevel};
-use kchess_core::{Config, Core, CoreError, Host, Level};
+use kchess_contracts::{CoreError, Level};
+use kchess_core::{Config, Core, Host};
 use serde_json::{Value, json};
 
 /// A core event, by its `CoreEvents` name.

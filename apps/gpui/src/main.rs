@@ -70,7 +70,7 @@ mod window_state;
 mod windows_shortcuts;
 
 use gpui_kit::*;
-use kchess_core::Level;
+use kchess_contracts::Level;
 
 fn main() {
     let data_dir = match profile::data_dir() {

@@ -9,7 +9,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_core::Level;
+use kchess_contracts::Level;
 use serde_json::{Value, json};
 use shakmaty::Color;
 

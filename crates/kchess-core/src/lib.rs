@@ -1,9 +1,7 @@
 //! The KChess headless core's services (see `RUST_MIGRATION.md`). Hosts drive it through
 //! `Core`.
 
-/// How KChess names itself to the services it calls (Lichess refuses a request that names no
-/// program with a 403 page; GitHub asks every API caller for one).
-pub const USER_AGENT: &str = "KChess";
+pub use kchess_contracts::USER_AGENT;
 
 /// Whether this is the Mac App Store's KChess. Only that build runs in the App Sandbox, which
 /// sets `APP_SANDBOX_CONTAINER_ID` for the app and every program it starts. The App Store updates

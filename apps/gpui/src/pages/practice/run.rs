@@ -8,7 +8,7 @@ use gpui_kit::component::h_flex;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_core::Level;
+use kchess_contracts::Level;
 use serde_json::{Value, json};
 
 use crate::assets::icon;

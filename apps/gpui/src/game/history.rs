@@ -2,7 +2,7 @@
 //! (`archive.rs`) and the played games (`played.rs`) keep what they decide.
 
 use gpui_kit::App;
-use kchess_core::Level;
+use kchess_contracts::Level;
 use serde_json::Value;
 
 use super::archive::{Effect, GameArchive, Host};

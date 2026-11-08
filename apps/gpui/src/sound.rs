@@ -7,7 +7,7 @@ use std::io::Cursor;
 use std::sync::mpsc;
 
 use gpui_kit::{App, Global};
-use kchess_core::Level;
+use kchess_contracts::Level;
 use rodio::buffer::SamplesBuffer;
 use rodio::{Decoder, MixerDeviceSink, Source as _};
 

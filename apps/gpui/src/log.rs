@@ -8,7 +8,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use kchess_core::Level;
+use kchess_contracts::Level;
 
 /// Each file's bound; two older files are kept beside it.
 const MAX_BYTES: u64 = 512 * 1024;

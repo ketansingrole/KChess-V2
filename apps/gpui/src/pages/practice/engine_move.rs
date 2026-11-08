@@ -3,7 +3,7 @@
 //! stops the search this helper started and drops its move.
 
 use gpui_kit::*;
-use kchess_core::Level;
+use kchess_contracts::Level;
 use serde_json::{Value, json};
 
 use crate::core::AppCore;

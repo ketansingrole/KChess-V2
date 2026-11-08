@@ -5,7 +5,7 @@
 use std::collections::VecDeque;
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Subscription};
-use kchess_core::Level;
+use kchess_contracts::Level;
 use serde_json::{Value, json};
 
 use crate::core::{AppCore, CoreEvent};

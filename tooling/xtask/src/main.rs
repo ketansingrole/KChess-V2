@@ -3,6 +3,8 @@
 mod app;
 mod app_icon;
 mod bench;
+#[cfg(test)]
+mod boundaries;
 mod check;
 mod electron_step;
 mod fairy;

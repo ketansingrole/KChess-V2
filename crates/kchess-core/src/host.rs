@@ -4,24 +4,7 @@
 use serde_json::Value;
 use std::path::PathBuf;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Level {
-    Debug,
-    Info,
-    Warn,
-    Error,
-}
-
-impl Level {
-    pub fn name(self) -> &'static str {
-        match self {
-            Level::Debug => "debug",
-            Level::Info => "info",
-            Level::Warn => "warn",
-            Level::Error => "error",
-        }
-    }
-}
+pub use kchess_contracts::error::Level;
 
 /// Host callbacks. They must not block: the core calls them from its worker threads.
 pub trait Host: Send + Sync + 'static {
