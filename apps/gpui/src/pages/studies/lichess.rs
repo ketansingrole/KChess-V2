@@ -14,8 +14,9 @@ use serde_json::{Value, json};
 
 use super::{CARD_GAP, CARD_MIN, StudiesPage, summary};
 use crate::assets::icon;
+use crate::clock::epoch_ms;
 use crate::core::AppCore;
-use crate::studies::{StudyHandle, now, time_ago};
+use crate::studies::{StudyHandle, time_ago};
 use crate::theme::Palette;
 use crate::widgets::{self, Choice};
 
@@ -103,7 +104,7 @@ impl StudiesPage {
         }
         let key = account.to_lowercase();
         let entry = self.lichess.entries.entry(key.clone()).or_default();
-        let at = now();
+        let at = epoch_ms();
         if entry.loading
             || (!force
                 && (entry.needs_reconnect
@@ -130,7 +131,7 @@ impl StudiesPage {
                     Ok(result) if needs_reconnect(&result) => entry.needs_reconnect = true,
                     Ok(result) => {
                         entry.items = Some(result.as_array().cloned().unwrap_or_default());
-                        entry.fetched_at = now();
+                        entry.fetched_at = epoch_ms();
                         entry.needs_reconnect = false;
                     }
                     Err(cause) => entry.error = cause.message,
@@ -489,7 +490,7 @@ impl StudiesPage {
             );
         let items = entry.items.unwrap_or_default();
         let (count, card_width) = widgets::columns(width, CARD_MIN, CARD_GAP);
-        let at = now();
+        let at = epoch_ms();
         let busy = self.lichess.busy;
         let cards: Vec<AnyElement> = items
             .iter()

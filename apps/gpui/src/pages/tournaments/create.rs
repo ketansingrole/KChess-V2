@@ -221,7 +221,7 @@ impl CreateArena {
         if !self.later(cx) {
             return None;
         }
-        let soon = chrono::Utc::now().timestamp_millis() as f64 + 60_000.;
+        let soon = crate::clock::epoch_ms() + 60_000.;
         match parse_start(&self.start_at.read(cx).value()) {
             Some(at) if at >= soon => None,
             _ => Some("Pick a start time in the future"),

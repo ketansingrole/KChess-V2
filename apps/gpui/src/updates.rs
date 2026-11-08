@@ -1701,7 +1701,7 @@ impl Updates {
                 .await
                 .unwrap_or_else(|_| Err("The check stopped".into()));
             let _ = this.update(cx, |this, cx| {
-                this.checked_at = Some(chrono::Utc::now().timestamp_millis());
+                this.checked_at = Some(crate::clock::epoch_ms() as i64);
                 match answer {
                     Ok(release) => this.found(release, automatic, cx),
                     Err(cause) => {

@@ -15,12 +15,6 @@ pub struct HistoryPlace {
     saved_identity: Value,
 }
 
-fn now_ms() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0., |elapsed| elapsed.as_millis() as f64)
-}
-
 /// The games in history, as the rules read them.
 fn games(cx: &App) -> Vec<Value> {
     cx.global::<PlayedHandle>().0.read(cx).games().to_vec()
@@ -48,7 +42,7 @@ impl HistoryPlace {
             source,
             has_play,
             games: &games,
-            now: now_ms(),
+            now: crate::clock::epoch_ms(),
         };
         match GameArchive::new((!identity.is_null()).then_some(&identity), resume, &host) {
             Ok((archive, effects)) => {
@@ -94,7 +88,7 @@ impl HistoryPlace {
             source,
             has_play,
             games: &games,
-            now: now_ms(),
+            now: crate::clock::epoch_ms(),
         };
         let effects = step(&mut archive, &host);
         self.archive = Some(archive);

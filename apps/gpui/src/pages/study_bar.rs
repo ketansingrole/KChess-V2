@@ -17,8 +17,9 @@ use serde_json::{Value, json};
 use super::Page;
 use super::analysis::AnalysisPage;
 use crate::assets::icon;
+use crate::clock::epoch_ms;
 use crate::name_dialog::NameDialog;
-use crate::studies::{MAX_CHAPTERS, StudyHandle, chapter_items, now, time_ago};
+use crate::studies::{MAX_CHAPTERS, StudyHandle, chapter_items, time_ago};
 use crate::theme::Palette;
 use crate::widgets::Choice;
 
@@ -830,141 +831,140 @@ impl Render for StudyBar {
                         .on_click(action(StudyBar::remove)),
                     )
             });
-        let left =
-            match &open {
-                Some((study, _)) => {
-                    let count = study["chapters"].as_array().map_or(0, Vec::len);
-                    let chapter_bar = bar.clone();
-                    let (before, after) = self.neighbours(cx);
-                    let movable = (before.is_some(), after.is_some());
-                    let chapter_menu = Button::new("chapter-actions")
-                        .ghost()
-                        .small()
-                        .icon(icon("ellipsis"))
-                        .accessibility_label("Chapter actions")
-                        .dropdown_menu(move |menu, _, _| {
-                            let action =
-                                |run: fn(&mut StudyBar, &mut Window, &mut Context<StudyBar>)| {
-                                    let bar = chapter_bar.clone();
-                                    move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                        let _ = bar.update(cx, |bar, cx| run(bar, window, cx));
-                                    }
-                                };
-                            menu.item(
-                                PopupMenuItem::new("Add chapter")
-                                    .icon(icon("plus"))
-                                    .disabled(count >= MAX_CHAPTERS)
-                                    .on_click(action(StudyBar::add_chapter)),
-                            )
-                            .item(
-                                PopupMenuItem::new("Rename chapter")
-                                    .icon(icon("pencil"))
-                                    .on_click(action(StudyBar::rename_chapter)),
-                            )
-                            .item(
-                                PopupMenuItem::new("Duplicate chapter")
-                                    .icon(icon("copy"))
-                                    .disabled(count >= MAX_CHAPTERS)
-                                    .on_click(action(StudyBar::duplicate_chapter)),
-                            )
-                            .item(
-                                PopupMenuItem::new("Move up")
-                                    .icon(icon("chevron-up"))
-                                    .disabled(!movable.0)
-                                    .on_click(action(|bar, window, cx| {
-                                        bar.move_chapter(-1, window, cx)
-                                    })),
-                            )
-                            .item(
-                                PopupMenuItem::new("Move down")
-                                    .icon(icon("chevron-down"))
-                                    .disabled(!movable.1)
-                                    .on_click(action(|bar, window, cx| {
-                                        bar.move_chapter(1, window, cx)
-                                    })),
-                            )
-                            .separator()
-                            .item(
-                                PopupMenuItem::new("Delete chapter")
-                                    .icon(icon("trash-2"))
-                                    .disabled(count <= 1)
-                                    .on_click(action(StudyBar::remove_chapter)),
-                            )
-                        });
-                    let saved = study["updatedAt"].as_f64().unwrap_or(0.);
-                    h_flex()
-                        .gap(px(8.))
-                        .flex_wrap()
-                        .child(
-                            div()
-                                .w(px(280.))
-                                .text_size(px(14.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(palette.highlighted)
-                                .child(
-                                    Input::new(&self.name)
-                                        .appearance(false)
-                                        .small()
-                                        .aria_label("Study name"),
-                                ),
+        let left = match &open {
+            Some((study, _)) => {
+                let count = study["chapters"].as_array().map_or(0, Vec::len);
+                let chapter_bar = bar.clone();
+                let (before, after) = self.neighbours(cx);
+                let movable = (before.is_some(), after.is_some());
+                let chapter_menu = Button::new("chapter-actions")
+                    .ghost()
+                    .small()
+                    .icon(icon("ellipsis"))
+                    .accessibility_label("Chapter actions")
+                    .dropdown_menu(move |menu, _, _| {
+                        let action =
+                            |run: fn(&mut StudyBar, &mut Window, &mut Context<StudyBar>)| {
+                                let bar = chapter_bar.clone();
+                                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                    let _ = bar.update(cx, |bar, cx| run(bar, window, cx));
+                                }
+                            };
+                        menu.item(
+                            PopupMenuItem::new("Add chapter")
+                                .icon(icon("plus"))
+                                .disabled(count >= MAX_CHAPTERS)
+                                .on_click(action(StudyBar::add_chapter)),
                         )
-                        .child(
-                            h_flex()
-                                .w(px(260.))
-                                .gap(px(4.))
-                                .child(
-                                    div().flex_1().min_w_0().child(
-                                        Select::new(&self.chapters)
-                                            .small()
-                                            .accessibility_label("Study chapter"),
-                                    ),
-                                )
-                                .child(chapter_menu),
+                        .item(
+                            PopupMenuItem::new("Rename chapter")
+                                .icon(icon("pencil"))
+                                .on_click(action(StudyBar::rename_chapter)),
                         )
-                        .child(
-                            h_flex()
-                                .gap(px(4.))
-                                .text_size(px(12.))
-                                .text_color(if error.is_some() {
-                                    palette.error
-                                } else {
-                                    palette.dimmed
-                                })
-                                .child(
-                                    if error.is_some() {
-                                        icon("triangle-alert")
-                                    } else {
-                                        icon("check")
-                                    }
-                                    .size(px(14.)),
-                                )
-                                .child(error.clone().unwrap_or_else(|| {
-                                    format!("Saved {}", time_ago(saved, now()))
+                        .item(
+                            PopupMenuItem::new("Duplicate chapter")
+                                .icon(icon("copy"))
+                                .disabled(count >= MAX_CHAPTERS)
+                                .on_click(action(StudyBar::duplicate_chapter)),
+                        )
+                        .item(
+                            PopupMenuItem::new("Move up")
+                                .icon(icon("chevron-up"))
+                                .disabled(!movable.0)
+                                .on_click(action(|bar, window, cx| {
+                                    bar.move_chapter(-1, window, cx)
                                 })),
                         )
-                        .into_any_element()
-                }
-                None => h_flex()
+                        .item(
+                            PopupMenuItem::new("Move down")
+                                .icon(icon("chevron-down"))
+                                .disabled(!movable.1)
+                                .on_click(action(|bar, window, cx| {
+                                    bar.move_chapter(1, window, cx)
+                                })),
+                        )
+                        .separator()
+                        .item(
+                            PopupMenuItem::new("Delete chapter")
+                                .icon(icon("trash-2"))
+                                .disabled(count <= 1)
+                                .on_click(action(StudyBar::remove_chapter)),
+                        )
+                    });
+                let saved = study["updatedAt"].as_f64().unwrap_or(0.);
+                h_flex()
                     .gap(px(8.))
+                    .flex_wrap()
                     .child(
                         div()
-                            .min_w_0()
-                            .truncate()
+                            .w(px(280.))
                             .text_size(px(14.))
-                            .text_color(palette.text_muted)
-                            .child("Unsaved analysis"),
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(palette.highlighted)
+                            .child(
+                                Input::new(&self.name)
+                                    .appearance(false)
+                                    .small()
+                                    .aria_label("Study name"),
+                            ),
                     )
                     .child(
-                        Button::new("save-as-study")
-                            .flex_none()
-                            .ghost()
-                            .small()
-                            .icon(icon("book-plus"))
-                            .label("Save as study")
-                            .on_click(cx.listener(|this, _, window, cx| this.save_new(window, cx))),
+                        h_flex()
+                            .w(px(260.))
+                            .gap(px(4.))
+                            .child(
+                                div().flex_1().min_w_0().child(
+                                    Select::new(&self.chapters)
+                                        .small()
+                                        .accessibility_label("Study chapter"),
+                                ),
+                            )
+                            .child(chapter_menu),
                     )
-                    .into_any_element(),
-            };
+                    .child(
+                        h_flex()
+                            .gap(px(4.))
+                            .text_size(px(12.))
+                            .text_color(if error.is_some() {
+                                palette.error
+                            } else {
+                                palette.dimmed
+                            })
+                            .child(
+                                if error.is_some() {
+                                    icon("triangle-alert")
+                                } else {
+                                    icon("check")
+                                }
+                                .size(px(14.)),
+                            )
+                            .child(error.clone().unwrap_or_else(|| {
+                                format!("Saved {}", time_ago(saved, epoch_ms()))
+                            })),
+                    )
+                    .into_any_element()
+            }
+            None => h_flex()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(14.))
+                        .text_color(palette.text_muted)
+                        .child("Unsaved analysis"),
+                )
+                .child(
+                    Button::new("save-as-study")
+                        .flex_none()
+                        .ghost()
+                        .small()
+                        .icon(icon("book-plus"))
+                        .label("Save as study")
+                        .on_click(cx.listener(|this, _, window, cx| this.save_new(window, cx))),
+                )
+                .into_any_element(),
+        };
         v_flex()
             .h(STUDY_BAR)
             .child(

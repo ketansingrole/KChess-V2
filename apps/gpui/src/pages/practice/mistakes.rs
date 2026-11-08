@@ -2,7 +2,7 @@
 //! solved again on a schedule the core keeps (a right answer doubles the wait, a wrong one brings
 //! it back in ten minutes), and the games they come from.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
@@ -26,12 +26,6 @@ const LEARNED_STREAK: f64 = 3.;
 const GAMES_SHOWN: usize = 8;
 /// What counts as due is looked at again every minute.
 const CLOCK: Duration = Duration::from_secs(60);
-
-fn now() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0., |since| since.as_millis() as f64)
-}
 
 fn due_at(item: &Value) -> f64 {
     item["dueAt"].as_f64().unwrap_or(0.)
@@ -142,7 +136,7 @@ impl Mistakes {
                 cx.background_executor().timer(CLOCK).await;
                 if this
                     .update(cx, |this, cx| {
-                        this.now = now();
+                        this.now = crate::clock::epoch_ms();
                         cx.notify();
                     })
                     .is_err()
@@ -160,7 +154,7 @@ impl Mistakes {
             current: None,
             done: false,
             show_all: false,
-            now: now(),
+            now: crate::clock::epoch_ms(),
             puzzle,
             layout: PlayLayout::default(),
             _clock: clock,
@@ -175,7 +169,7 @@ impl Mistakes {
         self.current = None;
         self.done = false;
         self.show_all = false;
-        self.now = now();
+        self.now = crate::clock::epoch_ms();
         self.loading = true;
         let core = cx.global::<AppCore>().clone();
         let (library, games, data) = (

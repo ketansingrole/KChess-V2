@@ -72,7 +72,7 @@ fn bytes(count: u64) -> String {
 
 /// `timeAgo` for a check: "just now", "5 minutes ago", "3 hours ago".
 fn ago(millis: i64) -> String {
-    let minutes = (chrono::Utc::now().timestamp_millis() - millis).max(0) / 60_000;
+    let minutes = (crate::clock::epoch_ms() as i64 - millis).max(0) / 60_000;
     match minutes {
         0 => "just now".into(),
         1 => "1 minute ago".into(),

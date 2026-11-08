@@ -790,7 +790,7 @@ impl OnlinePage {
                 String::new(),
             ))
         };
-        let now = crate::online::now();
+        let now = crate::clock::monotonic_ms();
         let seconds_until = |key: &str| {
             model[key]
                 .as_f64()
