@@ -268,7 +268,10 @@ async fn a_request_given_up_on_does_not_shift_the_answers() {
         voice.accept(&pcm(&[0; 160])).await.is_err(),
         "no answer from the abandoned request"
     );
-    voice.start(&grammar(), 16_000.0).await.expect("a new helper");
+    voice
+        .start(&grammar(), 16_000.0)
+        .await
+        .expect("a new helper");
     assert_eq!(
         voice.accept(&pcm(&[0; 160])).await.expect("silence"),
         Heard {

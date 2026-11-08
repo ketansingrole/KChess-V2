@@ -367,6 +367,12 @@ impl OpeningsPage {
         }
     }
 
+    /// The positions with a preview board kept.
+    #[cfg(test)]
+    pub(crate) fn preview_count(&self) -> usize {
+        self.previews.len()
+    }
+
     /// A small board picturing a position, made once per position.
     fn preview(&mut self, fen: &str, cx: &mut Context<Self>) -> Entity<ChessBoard> {
         self.previews
@@ -839,6 +845,12 @@ impl OpeningsPage {
             .iter()
             .filter_map(|choice| entry(&choice.moves, Some(&choice.name)))
             .collect();
+        // Pictures of openings that left Recent are let go; the popular ones are always shown.
+        let catalog = self.catalog.clone();
+        self.previews.retain(|fen, _| {
+            recent.iter().any(|item| &item.fen == fen)
+                || catalog.popular.iter().any(|item| &item.fen == fen)
+        });
         if !recent.is_empty() {
             let (count, item) = widgets::columns(width, px(220.), px(8.));
             let mut rows = Vec::new();
@@ -900,7 +912,6 @@ impl OpeningsPage {
             );
         }
         let (count, card_width) = widgets::columns(width, CARD_MIN, CARD_GAP);
-        let catalog = self.catalog.clone();
         let cards: Vec<AnyElement> = catalog
             .popular
             .iter()

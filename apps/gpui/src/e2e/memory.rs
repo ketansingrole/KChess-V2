@@ -36,6 +36,25 @@ fn faces(app: &mut Harness) -> Vec<std::sync::Arc<gpui_kit::RenderImage>> {
     })
 }
 
+/// Regression: the faces shown when the pages are made afresh (after a sign-out) kept their
+/// textures until the window closed, some 3.5 MiB each.
+#[gpui_kit::test]
+fn a_closed_board_page_releases_its_turned_faces(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = clock(cx);
+    let shown = faces(&mut app);
+    assert_eq!(shown.len(), 2, "both faces are pictures");
+    app.with_window(|window, cx| crate::shell::restart_pages(window, cx));
+    app.settle();
+    app.with_window(|window, _| {
+        for face in &shown {
+            assert!(
+                !window.has_image_atlas_entry(face),
+                "a face of the closed page is released"
+            );
+        }
+    });
+}
+
 /// Regression: each new face of a turned clock (every second while it runs, every tenth in the
 /// last ten seconds) was a PNG that GPUI decoded and kept for the session, with its texture: some
 /// 3.5 MiB a face, 689 MiB for 200 faces in `turned_clock_faces_counting_down`.
