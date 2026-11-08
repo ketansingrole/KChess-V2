@@ -4290,6 +4290,7 @@ dependencies = [
  "kchess-domain",
  "serde",
  "serde_json",
+ "shakmaty",
 ]
 
 [[package]]
