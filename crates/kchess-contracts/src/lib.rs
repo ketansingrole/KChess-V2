@@ -2,6 +2,7 @@
 //! and the errors and log levels that cross between them (`error`).
 
 pub mod arity;
+pub mod calls;
 pub mod core_api;
 pub mod defaults;
 pub mod error;
