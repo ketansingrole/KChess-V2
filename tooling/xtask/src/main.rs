@@ -6,6 +6,7 @@ mod bench;
 #[cfg(test)]
 mod boundaries;
 mod check;
+mod deb;
 mod deltas;
 mod electron_step;
 mod fairy;

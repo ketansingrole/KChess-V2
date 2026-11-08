@@ -76,92 +76,6 @@ fn previous(
         .collect()
 }
 
-/// The members of an `ar` archive (a `.deb`), by name.
-fn ar_members(bytes: &[u8]) -> Result<Vec<(String, &[u8])>> {
-    let mut rest = bytes
-        .strip_prefix(b"!<arch>\n")
-        .ok_or("The .deb is not an ar archive.")?;
-    let mut members = Vec::new();
-    while rest.len() >= 60 {
-        let (header, body) = rest.split_at(60);
-        let name = String::from_utf8_lossy(&header[..16])
-            .trim()
-            .trim_end_matches('/')
-            .to_string();
-        let size: usize = String::from_utf8_lossy(&header[48..58])
-            .trim()
-            .parse()
-            .map_err(|_| "The .deb has a member of no size.")?;
-        let data = body.get(..size).ok_or("The .deb is cut short.")?;
-        members.push((name, data));
-        rest = body.get(size + size % 2..).unwrap_or_default();
-    }
-    Ok(members)
-}
-
-/// The files a `.deb` installs (paths from `/`), and its control archive: what the updater
-/// needs to make a `.deb` of the rebuilt files.
-pub(crate) fn deb_tree(bytes: &[u8]) -> Result<(Tree, (String, Vec<u8>))> {
-    let members = ar_members(bytes)?;
-    let (control, control_data) = members
-        .iter()
-        .find(|(name, _)| name.starts_with("control.tar"))
-        .ok_or("The .deb has no control archive.")?;
-    let (data_name, data) = members
-        .iter()
-        .find(|(name, _)| name.starts_with("data.tar"))
-        .ok_or("The .deb has no data archive.")?;
-    let mut tar = Vec::new();
-    match data_name.as_str() {
-        "data.tar.gz" => flate2::read::GzDecoder::new(*data).read_to_end(&mut tar),
-        "data.tar.xz" => lzma_rust2::XzReader::new(*data, true).read_to_end(&mut tar),
-        "data.tar" => {
-            tar.extend_from_slice(data);
-            Ok(0)
-        }
-        other => return Err(format!("The .deb's {other} is not one this reads.")),
-    }
-    .map_err(|cause| format!("The .deb's {data_name} could not be read: {cause}"))?;
-    let mut tree = Tree::new();
-    let mut archive = tar::Archive::new(tar.as_slice());
-    for entry in archive.entries().map_err(|cause| cause.to_string())? {
-        let mut entry = entry.map_err(|cause| cause.to_string())?;
-        let path = entry
-            .path()
-            .map_err(|cause| cause.to_string())?
-            .to_string_lossy()
-            .trim_start_matches("./")
-            .trim_end_matches('/')
-            .to_string();
-        if path.is_empty() {
-            continue;
-        }
-        let header = entry.header().clone();
-        match header.entry_type() {
-            tar::EntryType::Regular => {
-                let mut data = Vec::new();
-                entry
-                    .read_to_end(&mut data)
-                    .map_err(|cause| cause.to_string())?;
-                let executable = header.mode().is_ok_and(|mode| mode & 0o111 != 0);
-                tree.insert(path, Node::File { data, executable });
-            }
-            tar::EntryType::Symlink => {
-                let target = header
-                    .link_name()
-                    .ok()
-                    .flatten()
-                    .map(|target| target.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                tree.insert(path, Node::Link(target));
-            }
-            // Folders come with the files in them; the updater writes each file's parents.
-            _ => {}
-        }
-    }
-    Ok((tree, (control.clone(), control_data.to_vec())))
-}
-
 /// The bundle a macOS zip holds, its paths from inside `KChess.app`.
 fn zip_tree(bytes: &[u8]) -> Result<Tree> {
     let mut archive =
@@ -270,7 +184,7 @@ fn files(kind: Asset, path: &Path, work: &Path) -> Result<(Tree, Extras)> {
     let read = || std::fs::read(path).map_err(|cause| format!("{}: {cause}", path.display()));
     match kind {
         Asset::Deb => {
-            let (tree, control) = deb_tree(&read()?)?;
+            let (tree, control) = crate::deb::read(&read()?)?;
             Ok((tree, vec![control]))
         }
         Asset::AppImage => Ok((appimage_tree(read()?), Vec::new())),
@@ -612,108 +526,6 @@ mod tests {
         assert_eq!(previous("2026.11.6", &releases, 1).len(), 1);
     }
 
-    fn tar_of(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
-        let mut archive = tar::Builder::new(Vec::new());
-        let mut dir = tar::Header::new_gnu();
-        dir.set_path("./opt/").unwrap();
-        dir.set_entry_type(tar::EntryType::Directory);
-        dir.set_mode(0o755);
-        dir.set_size(0);
-        dir.set_cksum();
-        archive.append(&dir, std::io::empty()).unwrap();
-        for (path, data, mode) in entries {
-            let mut header = tar::Header::new_gnu();
-            header.set_path(path).unwrap();
-            header.set_size(data.len() as u64);
-            header.set_mode(*mode);
-            header.set_cksum();
-            archive.append(&header, *data).unwrap();
-        }
-        let mut link = tar::Header::new_gnu();
-        link.set_path("./usr/bin/kchess").unwrap();
-        link.set_entry_type(tar::EntryType::Symlink);
-        link.set_link_name("/opt/KChess/kchess").unwrap();
-        link.set_size(0);
-        link.set_cksum();
-        archive.append(&link, std::io::empty()).unwrap();
-        archive.into_inner().unwrap()
-    }
-
-    fn ar_of(members: &[(&str, &[u8])]) -> Vec<u8> {
-        let mut out = b"!<arch>\n".to_vec();
-        for (name, data) in members {
-            out.extend(
-                format!(
-                    "{name:<16}{:<12}{:<6}{:<6}{:<8}{:<10}`\n",
-                    0,
-                    0,
-                    0,
-                    "100644",
-                    data.len()
-                )
-                .bytes(),
-            );
-            out.extend_from_slice(data);
-            if data.len() % 2 == 1 {
-                out.push(b'\n');
-            }
-        }
-        out
-    }
-
-    /// A `.deb`'s files are what dpkg installs, whichever way its data is compressed.
-    #[test]
-    fn a_deb_is_read_as_the_files_it_installs() {
-        let tar = tar_of(&[
-            ("./opt/KChess/kchess", b"app", 0o755),
-            ("./opt/KChess/notes.txt", b"odd", 0o644),
-        ]);
-        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-        std::io::Write::write_all(&mut gz, &tar).unwrap();
-        let gz = gz.finish().unwrap();
-        let mut xz =
-            lzma_rust2::XzWriter::new(Vec::new(), lzma_rust2::XzOptions::with_preset(1)).unwrap();
-        std::io::Write::write_all(&mut xz, &tar).unwrap();
-        let xz = xz.finish().unwrap();
-        for (member, data) in [
-            ("data.tar.gz", gz.as_slice()),
-            ("data.tar.xz", xz.as_slice()),
-            ("data.tar", tar.as_slice()),
-        ] {
-            let deb = ar_of(&[
-                ("debian-binary", b"2.0\n"),
-                ("control.tar.gz", b"ctl"),
-                (member, data),
-            ]);
-            let (tree, control) = deb_tree(&deb).unwrap();
-            assert_eq!(control, ("control.tar.gz".to_string(), b"ctl".to_vec()));
-            assert_eq!(
-                tree.get("opt/KChess/kchess"),
-                Some(&Node::File {
-                    data: b"app".to_vec(),
-                    executable: true
-                })
-            );
-            assert_eq!(
-                tree.get("opt/KChess/notes.txt"),
-                Some(&Node::File {
-                    data: b"odd".to_vec(),
-                    executable: false
-                })
-            );
-            assert_eq!(
-                tree.get("usr/bin/kchess"),
-                Some(&Node::Link("/opt/KChess/kchess".into()))
-            );
-            assert_eq!(tree.len(), 3, "folders come with their files");
-        }
-        assert!(deb_tree(b"not an archive").is_err());
-        assert!(deb_tree(&ar_of(&[("debian-binary", b"2.0\n")])).is_err());
-        assert!(deb_tree(&ar_of(&[("control.tar.gz", b"c"), ("data.tar.zst", b"d")])).is_err());
-        let whole = ar_of(&[("control.tar.gz", b"c"), ("data.tar", &tar)]);
-        assert!(deb_tree(&whole[..whole.len() - 100]).is_err(), "cut short");
-    }
-
     /// A macOS zip is read as the bundle it holds, links and modes kept, sequestered forks left out.
     /// Unix only: the zip crate writes Unix modes only on Unix, and a release's zip comes from
     /// `ditto` on macOS, so a zip written on Windows has no modes to read.
@@ -897,11 +709,12 @@ mod tests {
         );
         assert!(extras.is_empty());
 
-        let tar = tar_of(&[("./opt/KChess/kchess", b"app", 0o755)]);
+        let tar = crate::deb::tarball(&[("opt/KChess/kchess".into(), b"app".to_vec(), 0o755)], &[])
+            .unwrap();
         let deb = dir.join("KChess-1.0.0-linux-amd64.deb");
         std::fs::write(
             &deb,
-            ar_of(&[
+            crate::deb::ar(&[
                 ("debian-binary", b"2.0\n"),
                 ("control.tar.gz", b"ctl"),
                 ("data.tar", &tar),
