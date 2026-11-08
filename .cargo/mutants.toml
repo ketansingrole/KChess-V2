@@ -21,6 +21,12 @@ exclude_re = [
     # A uniform draw picks White half the time whether below or above 0.5 counts, and exactly
     # 0.5 has no weight.
     'apps/cli/src/play\.rs:.*: replace < with (>|<=) in Session<.*>::choose_color',
+    # A patch exactly as long as the file whole: either makes the same file, and no input makes
+    # bsdiff's compressed patch and bzip2's whole file the same length to test it.
+    'kchess-delta/src/lib\.rs:.*: replace < with <= in build',
+    # Makes the installers with makensis, which only the Windows package jobs have (the Windows
+    # upgrade workflow installs and checks what it makes); the scripts it runs are tested.
+    'xtask/src/package/windows\.rs:.*: (replace package -> Result<Vec<PathBuf>> with .*|replace / with [%*] in package)$',
 ]
 
 # Compiled only for WebAssembly, where no test runs.

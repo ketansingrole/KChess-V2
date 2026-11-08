@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use super::{Delta, Entry, Node, Source, Tree, build, digest, file_digest, name};
+use super::{
+    Delta, Entry, Error, MAX_HEADER, Node, Source, Tree, build, digest, file_digest, name,
+};
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("kchess-delta-{name}-{}", std::process::id()));
@@ -308,4 +310,71 @@ fn a_delta_is_named_after_its_package_and_base() {
         Some("KChess-2026.11.5-win-x64.from-2026.11.4.delta")
     );
     assert_eq!(name("KChess-2026.11.5-mac-arm64.dmg", "2026.11.4"), None);
+}
+
+/// A file replaced by unrelated bytes comes whole: its patch would be no smaller.
+#[test]
+fn a_file_no_patch_helps_comes_whole() {
+    let mut old = Tree::new();
+    old.insert("bin/app", file(&program(11, 60_000), true));
+    let mut new = Tree::new();
+    new.insert("bin/app", file(&program(12, 60_000), true));
+    let mut out = Vec::new();
+    let stats = build("1.0.0", "1.0.1", &old, &new, &[], &mut out).unwrap();
+    assert_eq!((stats.copied, stats.patched, stats.whole), (0, 0, 1));
+    let dir = scratch("whole");
+    std::fs::write(dir.join("d"), &out).unwrap();
+    let delta = Delta::open(&dir.join("d")).unwrap();
+    assert!(
+        delta.bases().is_empty(),
+        "a whole file needs nothing installed"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn errors_read_as_their_message() {
+    assert_eq!(
+        Error("bin/app is missing".into()).to_string(),
+        "bin/app is missing"
+    );
+    let io: Error = std::io::Error::other("disk full").into();
+    assert_eq!(io.to_string(), "disk full");
+}
+
+/// A header of exactly the longest length is read (and here found cut short), not refused.
+#[test]
+fn the_longest_header_is_allowed() {
+    let dir = scratch("longest");
+    let path = dir.join("d");
+    let write = |length: u64| {
+        let mut bytes = super::MAGIC.to_vec();
+        bytes.extend_from_slice(&length.to_le_bytes());
+        bytes.extend_from_slice(b"{}");
+        std::fs::write(&path, bytes).unwrap();
+        Delta::open(&path).err().unwrap().0
+    };
+    assert_eq!(
+        write(MAX_HEADER + 1),
+        "The update patch's header is too long"
+    );
+    assert_ne!(write(MAX_HEADER), "The update patch's header is too long");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An installed file a patch copies is checked before anything is written, like one it patches.
+#[test]
+fn a_changed_file_to_copy_is_refused() {
+    let dir = scratch("copy-base");
+    let release = releases();
+    let path = delta_file(&dir, &release.old, &release.new, &[]);
+    let installed = dir.join("installed");
+    install(&release.old, &installed);
+    std::fs::write(installed.join("bin/engine"), b"quarantined").unwrap();
+    let delta = Delta::open(&path).unwrap();
+    assert_eq!(
+        delta.check_bases(|path| installed.join(path)),
+        Err(Error("bin/engine was changed".into()))
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

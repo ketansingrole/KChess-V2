@@ -41,9 +41,6 @@ pub const MAGIC: &[u8; 13] = b"KCHESS-DELTA\n";
 pub const FORMAT: u32 = 1;
 /// The longest header a delta may have: a release's file list is a few kilobytes.
 const MAX_HEADER: u64 = 16 << 20;
-/// A patch is used only while it is smaller than this share of the file it makes; past it, the
-/// whole file compresses as well and costs no base.
-const PATCH_SHARE: f64 = 0.9;
 
 /// The installed AppImage's one file, as its deltas name it: an AppImage is patched whole.
 pub const APPIMAGE: &str = "KChess.AppImage";
@@ -214,7 +211,8 @@ fn apply(old: &[u8], patch: &[u8]) -> Result<Vec<u8>> {
 
 /// Write the delta that makes `new` from `old` (the release `from`'s files, as installed) to
 /// `out`, with `extras` beside it. Each file is copied when `old` has one with its content,
-/// patched from the file at its own path while that is smaller, and whole otherwise.
+/// patched from the file at its own path when the patch is smaller than the file whole, and
+/// whole otherwise.
 pub fn build(
     from: &str,
     to: &str,
@@ -258,9 +256,8 @@ pub fn build(
                     let patched = same_place
                         .map(|base| Ok::<_, Error>((base, patch(base, data)?)))
                         .transpose()?
-                        .filter(|(_, patched)| {
-                            (patched.len() as f64) < PATCH_SHARE * whole.len() as f64
-                        });
+                        // A patch no smaller than the file whole costs a base for nothing.
+                        .filter(|(_, patched)| patched.len() < whole.len());
                     match patched {
                         Some((base, patched)) => {
                             stats.patched += 1;
@@ -501,32 +498,38 @@ impl Delta {
     }
 }
 
-#[cfg(unix)]
+/// A link at `at` to `target`, where the system has them.
 fn symlink(target: &str, at: &Path) -> Result<()> {
-    Ok(std::os::unix::fs::symlink(target, at)?)
+    #[cfg(unix)]
+    {
+        Ok(std::os::unix::fs::symlink(target, at)?)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = target;
+        fail(format!(
+            "{} is a link, which this system cannot make",
+            at.display()
+        ))
+    }
 }
 
-#[cfg(not(unix))]
-fn symlink(_: &str, at: &Path) -> Result<()> {
-    fail(format!(
-        "{} is a link, which this system cannot make",
-        at.display()
-    ))
-}
-
-#[cfg(unix)]
+/// Give `path` the mode its entry names, where files have one.
 fn set_executable(path: &Path, executable: bool) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = if executable { 0o755 } else { 0o644 };
-    Ok(std::fs::set_permissions(
-        path,
-        std::fs::Permissions::from_mode(mode),
-    )?)
-}
-
-#[cfg(not(unix))]
-fn set_executable(_: &Path, _: bool) -> Result<()> {
-    Ok(())
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if executable { 0o755 } else { 0o644 };
+        Ok(std::fs::set_permissions(
+            path,
+            std::fs::Permissions::from_mode(mode),
+        )?)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, executable);
+        Ok(())
+    }
 }
 
 #[cfg(test)]

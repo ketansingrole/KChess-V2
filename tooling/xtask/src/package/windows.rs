@@ -227,6 +227,28 @@ fn makensis() -> PathBuf {
     }
 }
 
+/// The scripts of the installer (`installer`, with the staged `folder` inside) and of the
+/// update installer (`update_installer`), for `size_kb` of program files.
+fn scripts(
+    identity: &Identity,
+    folder: &Path,
+    installer: &Path,
+    size_kb: u64,
+) -> Vec<(PathBuf, String)> {
+    let icon = root().join("apps/gpui/build/icon.ico");
+    let update = update_installer(identity);
+    vec![
+        (
+            installer.to_path_buf(),
+            script(identity, Payload::Inside(folder), &icon, installer, size_kb),
+        ),
+        (
+            update.clone(),
+            script(identity, Payload::Beside, &icon, &update, size_kb),
+        ),
+    ]
+}
+
 pub fn package(
     identity: &Identity,
     built: &Built,
@@ -251,18 +273,11 @@ pub fn package(
         identity.version
     ));
     let script_path = stage.join("installer.nsi");
-    let icon = root().join("apps/gpui/build/icon.ico");
-    let size_kb = folder_size(&folder) / 1024;
-    let update = update_installer(identity);
-    for (payload, file, what) in [
-        (Payload::Inside(&folder), &installer, "the installer"),
-        (Payload::Beside, &update, "the update installer"),
-    ] {
-        let text = script(identity, payload, &icon, file, size_kb);
+    for (file, text) in scripts(identity, &folder, &installer, folder_size(&folder) / 1024) {
         // makensis reads the script as UTF-8 with a byte order mark.
         std::fs::write(&script_path, format!("\u{feff}{text}"))
             .map_err(|cause| cause.to_string())?;
-        say(&format!("Making {what}…"));
+        say(&format!("Making {}…", file.display()));
         run_with(Command::new(makensis()).arg("/V2").arg(&script_path))?;
     }
     Ok(vec![installer])
@@ -296,6 +311,32 @@ mod tests {
         assert!(!text.contains("{{"), "no unexpanded braces");
         // A 32-bit installer reads the 64-bit registry view, where earlier installers wrote.
         assert_eq!(text.matches("SetRegView 64").count(), 2);
+    }
+
+    /// Packaging makes both installers, each told the program files' size.
+    #[test]
+    fn packaging_makes_the_installer_and_the_update_installer() {
+        let identity = Identity::new("2026.11.7".into());
+        let made = scripts(
+            &identity,
+            Path::new("/stage/KChess"),
+            Path::new("/out/KChess-2026.11.7-win-x64.exe"),
+            4321,
+        );
+        assert_eq!(made.len(), 2);
+        assert_eq!(made[0].0, Path::new("/out/KChess-2026.11.7-win-x64.exe"));
+        assert!(
+            made[0].1.contains("File /r")
+                && made[0]
+                    .1
+                    .contains("OutFile \"/out/KChess-2026.11.7-win-x64.exe\"")
+        );
+        assert_eq!(made[1].0, update_installer(&identity));
+        assert!(!made[1].1.contains("File /r"));
+        assert!(
+            made.iter()
+                .all(|(_, text)| text.contains("EstimatedSize 4321"))
+        );
     }
 
     /// The update installer is the installer without its files: the same keys, uninstaller and

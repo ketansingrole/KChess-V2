@@ -452,6 +452,65 @@ mod tests {
     }
 
     #[test]
+    fn the_control_archive_is_gzip() {
+        let packed = gzip(b"Package: kchess\n").unwrap();
+        assert!(packed.starts_with(&[0x1f, 0x8b]));
+        let mut text = String::new();
+        std::io::Read::read_to_string(
+            &mut flate2::read::GzDecoder::new(packed.as_slice()),
+            &mut text,
+        )
+        .unwrap();
+        assert_eq!(text, "Package: kchess\n");
+    }
+
+    /// The .deb holds the staged programs under /opt/KChess, with the launcher and icon, as dpkg
+    /// installs them (read back as the update patches read a release's .deb).
+    #[test]
+    fn the_deb_installs_the_app_in_opt() {
+        let dir = std::env::temp_dir().join(format!("xtask-deb-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let voice = dir.join("voice");
+        std::fs::create_dir_all(&voice).unwrap();
+        let file = |name: &str, data: &[u8]| {
+            let path = dir.join(name);
+            std::fs::write(&path, data).unwrap();
+            path
+        };
+        std::fs::write(voice.join("libvosk.so"), b"vosk").unwrap();
+        std::fs::write(voice.join("NOTICE.txt"), b"notice").unwrap();
+        let built = Built {
+            app: file("app", b"app"),
+            service: file("service", b"service"),
+            cli: file("cli", b"cli"),
+            stockfish: file("stockfish", b"engine"),
+            fairy: file("fairy", b"fairy"),
+            voice,
+            licenses: file("licenses", b"licences"),
+        };
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let identity = Identity::new("2026.11.9".into());
+        let package = deb(&identity, &built, &dir.join("stage"), &out).unwrap();
+        assert!(package.ends_with("KChess-2026.11.9-linux-amd64.deb"));
+        let (tree, (control, _)) =
+            crate::deltas::deb_tree(&std::fs::read(&package).unwrap()).unwrap();
+        assert_eq!(control, "control.tar.gz");
+        let file_of = |path: &str| match tree.get(path) {
+            Some(kchess_delta::Node::File { data, executable }) => (data.clone(), *executable),
+            other => panic!("{path}: {other:?}"),
+        };
+        assert_eq!(file_of("opt/KChess/kchess"), (b"app".to_vec(), true));
+        assert_eq!(file_of("opt/KChess/stockfish"), (b"engine".to_vec(), true));
+        assert_eq!(
+            file_of("opt/KChess/voice/NOTICE.txt"),
+            (b"notice".to_vec(), false)
+        );
+        assert!(tree.get("usr/share/applications/kchess.desktop").is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn the_final_deb_replaces_the_electron_package() {
         let text = control(&Identity::new("2026.10.16".into()), 100);
         assert!(text.starts_with("Package: kchess\nVersion: 2026.10.16\nArchitecture: amd64\n"));
