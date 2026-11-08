@@ -6,6 +6,7 @@ mod bench;
 #[cfg(test)]
 mod boundaries;
 mod check;
+mod deltas;
 mod electron_step;
 mod fairy;
 mod fake_lichess;
@@ -64,6 +65,10 @@ const HELP: &str = "cargo xtask <command>
                         Package the app for this machine (apps/gpui/dist): .dmg and .zip,
                         the NSIS installer, or the AppImage and .deb; --snap makes the Snap,
                         --mas the Mac App Store's .pkg (apps/gpui/dist/mas)
+  deltas [dir]          Write the update patches to this release's packages in [dir]
+                        (apps/gpui/dist) from the latest published releases (release CI)
+  deltas --from <old package> <new package>
+                        Write the one patch between two packages, beside the new one
 ";
 
 fn main() -> ExitCode {
@@ -107,6 +112,7 @@ fn main() -> ExitCode {
         }
         Some("fairy-stockfish") => fairy::build().map(|_| ()),
         Some("package") => package::run(rest),
+        Some("deltas") => deltas::run(rest),
         None | Some("help" | "--help" | "-h") => {
             print!("{HELP}");
             Ok(())

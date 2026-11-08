@@ -33,10 +33,31 @@ fn folder_size(path: &Path) -> u64 {
         .sum()
 }
 
-/// The installer script for the staged folder `files`.
+/// Where an installer takes the program files from.
+#[derive(Clone, Copy)]
+pub enum Payload<'a> {
+    /// Compressed into the installer from this staged folder: the installer people download.
+    Inside(&'a Path),
+    /// From the `files` folder beside the installer: the update installer, which the updater
+    /// runs over the files it rebuilt from an update patch (`crates/kchess-delta`), so the
+    /// installation is written, registered and given its uninstaller exactly as by the full one.
+    Beside,
+}
+
+/// Where packaging leaves the update installer for `cargo xtask deltas`, which puts it in
+/// each Windows patch.
+pub fn update_installer(identity: &Identity) -> PathBuf {
+    root().join(format!(
+        "target/package/{}-{}-win-x64-update.exe",
+        identity.prefix(),
+        identity.version
+    ))
+}
+
+/// The installer script for the program files of `payload`.
 pub fn script(
     identity: &Identity,
-    files: &Path,
+    payload: Payload,
     icon: &Path,
     out_file: &Path,
     size_kb: u64,
@@ -45,7 +66,16 @@ pub fn script(
     let exe = identity.windows_exe;
     let version = &identity.version;
     let guid = identity.guid;
-    let files = files.display();
+    let files = match payload {
+        Payload::Inside(files) => format!(r#"File /r "{}\*.*""#, files.display()),
+        // A copy that fails leaves no half-written installation reported as done.
+        Payload::Beside => r#"ClearErrors
+  CopyFiles /SILENT "$EXEDIR\files\*.*" "$INSTDIR"
+  ${If} ${Errors}
+    Abort "The update's files could not be copied."
+  ${EndIf}"#
+            .to_string(),
+    };
     let icon = icon.display();
     let out_file = out_file.display();
     let copyright = super::COPYRIGHT;
@@ -131,7 +161,7 @@ Section "Install"
     DetailPrint "Removed the all-users installation in $R0 (exit code $R1)."
   ${{EndIf}}
   SetOutPath "$INSTDIR"
-  File /r "{files}\*.*"
+  {files}
   WriteUninstaller "$INSTDIR\${{UNINSTALLER}}"
 
   WriteRegStr HKCU "${{INSTALL_KEY}}" InstallLocation "$INSTDIR"
@@ -221,17 +251,20 @@ pub fn package(
         identity.version
     ));
     let script_path = stage.join("installer.nsi");
-    let text = script(
-        identity,
-        &folder,
-        &root().join("apps/gpui/build/icon.ico"),
-        &installer,
-        folder_size(&folder) / 1024,
-    );
-    // makensis reads the script as UTF-8 with a byte order mark.
-    std::fs::write(&script_path, format!("\u{feff}{text}")).map_err(|cause| cause.to_string())?;
-    say("Making the installer…");
-    run_with(Command::new(makensis()).arg("/V2").arg(&script_path))?;
+    let icon = root().join("apps/gpui/build/icon.ico");
+    let size_kb = folder_size(&folder) / 1024;
+    let update = update_installer(identity);
+    for (payload, file, what) in [
+        (Payload::Inside(&folder), &installer, "the installer"),
+        (Payload::Beside, &update, "the update installer"),
+    ] {
+        let text = script(identity, payload, &icon, file, size_kb);
+        // makensis reads the script as UTF-8 with a byte order mark.
+        std::fs::write(&script_path, format!("\u{feff}{text}"))
+            .map_err(|cause| cause.to_string())?;
+        say(&format!("Making {what}…"));
+        run_with(Command::new(makensis()).arg("/V2").arg(&script_path))?;
+    }
     Ok(vec![installer])
 }
 
@@ -244,11 +277,13 @@ mod tests {
         let identity = Identity::new("2026.10.16".into());
         let text = script(
             &identity,
-            Path::new("C:/stage/KChess"),
+            Payload::Inside(Path::new("C:/stage/KChess")),
             Path::new("C:/icon.ico"),
             Path::new("C:/out.exe"),
             1234,
         );
+        assert!(text.contains(r#"File /r "C:/stage/KChess\*.*""#));
+        assert!(!text.contains("CopyFiles /SILENT \"$EXEDIR"));
         assert!(text.contains(r#"!define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\6bb66f38-a1a5-5ec8-b24f-c899466885ca""#));
         assert!(
             text.contains(r#"!define INSTALL_KEY "Software\6bb66f38-a1a5-5ec8-b24f-c899466885ca""#)
@@ -261,5 +296,49 @@ mod tests {
         assert!(!text.contains("{{"), "no unexpanded braces");
         // A 32-bit installer reads the 64-bit registry view, where earlier installers wrote.
         assert_eq!(text.matches("SetRegView 64").count(), 2);
+    }
+
+    /// The update installer is the installer without its files: the same keys, uninstaller and
+    /// shortcuts, written over the files beside it, after the earlier installation's uninstaller.
+    #[test]
+    fn the_update_installer_takes_the_files_beside_it() {
+        let identity = Identity::new("2026.11.6".into());
+        let full = script(
+            &identity,
+            Payload::Inside(Path::new("C:/stage/KChess")),
+            Path::new("C:/icon.ico"),
+            Path::new("C:/out.exe"),
+            99,
+        );
+        let update = script(
+            &identity,
+            Payload::Beside,
+            Path::new("C:/icon.ico"),
+            Path::new("C:/out.exe"),
+            99,
+        );
+        assert!(!update.contains("File /r"));
+        let copy = update
+            .find(r#"CopyFiles /SILENT "$EXEDIR\files\*.*" "$INSTDIR""#)
+            .unwrap();
+        assert!(update.find("old-uninstaller.exe").unwrap() < copy);
+        assert!(copy < update.find("WriteUninstaller").unwrap());
+        assert!(update.contains(r#"Abort "The update's files could not be copied.""#));
+        let without = |text: &str| -> String {
+            text.lines()
+                .filter(|line| {
+                    !line.contains("File /r")
+                        && !line.contains("Errors")
+                        && !line.contains("CopyFiles /SILENT \"$EXEDIR")
+                        && !line.contains("Abort")
+                        && !line.contains("EndIf")
+                })
+                .collect()
+        };
+        assert_eq!(without(&full), without(&update));
+        assert!(
+            update_installer(&identity)
+                .ends_with("target/package/KChess-2026.11.6-win-x64-update.exe")
+        );
     }
 }

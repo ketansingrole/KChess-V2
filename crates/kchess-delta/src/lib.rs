@@ -45,6 +45,25 @@ const MAX_HEADER: u64 = 16 << 20;
 /// whole file compresses as well and costs no base.
 const PATCH_SHARE: f64 = 0.9;
 
+/// The installed AppImage's one file, as its deltas name it: an AppImage is patched whole.
+pub const APPIMAGE: &str = "KChess.AppImage";
+/// The update installer a Windows delta carries (the installer without its files, which writes
+/// the files beside it).
+pub const WINDOWS_INSTALLER: &str = "installer.exe";
+
+/// The package kinds a delta is made for, by the extension of their release asset.
+const PACKAGES: [&str; 4] = [".deb", ".AppImage", ".zip", ".exe"];
+
+/// The release asset of the delta that makes `package` (a release asset,
+/// `KChess-2026.11.5-linux-amd64.deb`) from release `from`'s installed files:
+/// `KChess-2026.11.5-linux-amd64.from-2026.11.4.delta`.
+pub fn name(package: &str, from: &str) -> Option<String> {
+    let stem = PACKAGES
+        .iter()
+        .find_map(|extension| package.strip_suffix(extension))?;
+    Some(format!("{stem}.from-{from}.delta"))
+}
+
 /// Why a delta could not be written, read or used.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error(pub String);

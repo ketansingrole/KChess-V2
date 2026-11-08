@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::{Delta, Entry, Node, Source, Tree, build, digest, file_digest};
+use super::{Delta, Entry, Node, Source, Tree, build, digest, file_digest, name};
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("kchess-delta-{name}-{}", std::process::id()));
@@ -287,4 +287,25 @@ fn a_tree_reads_a_folder_as_installed() {
     );
     assert!(file_digest(&dir.join("missing")).is_err());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_delta_is_named_after_its_package_and_base() {
+    assert_eq!(
+        name("KChess-2026.11.5-linux-amd64.deb", "2026.11.4").as_deref(),
+        Some("KChess-2026.11.5-linux-amd64.from-2026.11.4.delta")
+    );
+    assert_eq!(
+        name("KChess-2026.11.5-linux-x86_64.AppImage", "2026.11.3").as_deref(),
+        Some("KChess-2026.11.5-linux-x86_64.from-2026.11.3.delta")
+    );
+    assert_eq!(
+        name("KChess-2026.11.5-mac-arm64.zip", "2026.11.4").as_deref(),
+        Some("KChess-2026.11.5-mac-arm64.from-2026.11.4.delta")
+    );
+    assert_eq!(
+        name("KChess-2026.11.5-win-x64.exe", "2026.11.4").as_deref(),
+        Some("KChess-2026.11.5-win-x64.from-2026.11.4.delta")
+    );
+    assert_eq!(name("KChess-2026.11.5-mac-arm64.dmg", "2026.11.4"), None);
 }

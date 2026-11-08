@@ -130,6 +130,17 @@ jobs:
             spctl --assess --type execute --verbose=2 "$mac_app"
             xcrun stapler validate "$mac_app"
           done
+      # Small updates: each package's patch from the newest published releases' files
+      # (`cargo xtask deltas`, crates/kchess-delta). An installation with no patch for its version
+      # downloads the whole package, so a failure here costs size, never an update: it warns.
+      - name: Write the update patches
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: cargo xtask deltas apps/gpui/dist || { echo "::warning::No update patches for $RUNNER_OS: installations download the whole package."; exit 1; }
       - name: Verify every supported package exists
         shell: bash
         run: |

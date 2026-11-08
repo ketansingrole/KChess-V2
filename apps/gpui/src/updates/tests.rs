@@ -1295,3 +1295,302 @@ fn rand_name() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
 }
+
+/// Bytes that compress no more than a program's.
+fn noise(seed: u32, len: usize) -> Vec<u8> {
+    let mut state = seed.max(1);
+    (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        })
+        .collect()
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The patch from `old` to `new` (release 2026.11.0 to 2026.11.1), with `extras`.
+fn patch_between(
+    old: &kchess_delta::Tree,
+    new: &kchess_delta::Tree,
+    extras: &[(String, Vec<u8>)],
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    kchess_delta::build("2026.11.0", "2026.11.1", old, new, extras, &mut out).unwrap();
+    out
+}
+
+fn file_node(data: &[u8], executable: bool) -> kchess_delta::Node {
+    kchess_delta::Node::File {
+        data: data.to_vec(),
+        executable,
+    }
+}
+
+/// An update downloaded the whole 120 MB package even when one program in it changed; it now
+/// downloads the release's patch from this version and rebuilds the rest from the installed
+/// files. When those are not the files the patch starts from (someone deleted one), or there is
+/// no installation to start from, the whole package is downloaded as before.
+#[test]
+fn an_update_comes_by_its_patch_and_else_whole() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let root = scratch("patched-update");
+    let old = noise(5, 300_000);
+    let mut new = old.clone();
+    new[150_000..150_020].copy_from_slice(b"twenty changed bytes");
+    let tree = |data: &[u8]| {
+        let mut tree = kchess_delta::Tree::new();
+        tree.insert(kchess_delta::APPIMAGE, file_node(data, true));
+        tree
+    };
+    let delta = patch_between(&tree(&old), &tree(&new), &[]);
+    assert!(delta.len() < new.len() / 10, "{} bytes", delta.len());
+
+    let name = asset_name("2026.11.1", Package::AppImage).unwrap();
+    let patch_name = super::patch::asset_name(&name, "2026.11.0").unwrap();
+    let sums = format!(
+        "{}  {name}\n{}  {patch_name}\n",
+        hex_digest(&new),
+        hex_digest(&delta)
+    );
+    let files = serve(vec![
+        ("/SHA256SUMS.txt".into(), sums.into_bytes()),
+        ("/patch".into(), delta.clone()),
+    ]);
+    let (whole, asked) = answers(vec![("200 OK", new.clone())]);
+    let release: Release = serde_json::from_value(serde_json::json!({
+        "tag_name": "v2026.11.1",
+        "assets": [
+            { "name": name, "browser_download_url": format!("{whole}/pkg"), "size": new.len() },
+            { "name": patch_name, "browser_download_url": format!("{files}/patch"), "size": delta.len() },
+            { "name": "SHA256SUMS.txt", "browser_download_url": format!("{files}/SHA256SUMS.txt") },
+        ],
+    }))
+    .unwrap();
+    let installed = root.join("KChess.AppImage");
+    std::fs::write(&installed, &old).unwrap();
+    let install = Install {
+        package: Package::AppImage,
+        path: installed.clone(),
+    };
+    let update = |install: Option<Install>, run: &str| {
+        let (progress, _heard) = futures::channel::mpsc::unbounded();
+        let asset = release.assets[0].clone();
+        block_on(super::fetch_update(
+            release.clone(),
+            asset,
+            Package::AppImage,
+            install,
+            "2026.11.0".into(),
+            root.join(run).join("kept"),
+            root.join(run).join("work"),
+            progress,
+            None,
+        ))
+    };
+
+    let staged = update(Some(install.clone()), "patched").unwrap();
+    assert_eq!(std::fs::read(&staged).unwrap(), new);
+    assert_eq!(
+        asked.load(SeqCst),
+        0,
+        "the whole package was not downloaded"
+    );
+
+    // The installed AppImage changed since it was installed: the patch cannot start from it.
+    std::fs::write(&installed, b"not the release's AppImage").unwrap();
+    let staged = update(Some(install), "changed").unwrap();
+    assert_eq!(std::fs::read(&staged).unwrap(), new);
+    assert_eq!(asked.load(SeqCst), 1, "the whole package instead");
+
+    // A build that is not installed has no files to start from.
+    let staged = update(None, "uninstalled").unwrap();
+    assert_eq!(std::fs::read(&staged).unwrap(), new);
+    assert_eq!(asked.load(SeqCst), 2);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A patch is offered only for the package this app updates from, from its own version, and
+/// only while it is the smaller download.
+#[test]
+fn a_patch_is_used_only_when_it_is_the_smaller_download() {
+    let release = |patch_size: u64, from: &str| -> Release {
+        let name = asset_name("2026.11.1", Package::Deb).unwrap();
+        let patch = super::patch::asset_name(&name, from).unwrap();
+        serde_json::from_value(serde_json::json!({
+            "tag_name": "v2026.11.1",
+            "assets": [
+                { "name": name, "browser_download_url": "x", "size": 1000 },
+                { "name": patch, "browser_download_url": "y", "size": patch_size },
+            ],
+        }))
+        .unwrap()
+    };
+    let found = super::patch_asset(&release(100, "2026.11.0"), Package::Deb, "2026.11.0");
+    assert_eq!(
+        found.map(|asset| asset.name),
+        Some("KChess-2026.11.1-linux-amd64.from-2026.11.0.delta".to_string())
+    );
+    assert!(super::patch_asset(&release(1000, "2026.11.0"), Package::Deb, "2026.11.0").is_none());
+    assert!(super::patch_asset(&release(100, "2026.10.9"), Package::Deb, "2026.11.0").is_none());
+    assert!(
+        super::patch_asset(&release(100, "2026.11.0"), Package::AppImage, "2026.11.0").is_none()
+    );
+}
+
+/// What a patch makes is staged as the whole package's download is, for each kind of package.
+#[test]
+fn a_patch_is_staged_as_its_package_installs() {
+    use super::patch::{Patch, UPDATE_EXE, rebuild};
+    let root = scratch("patch-kinds");
+    let app = noise(7, 50_000);
+    let mut app_next = app.clone();
+    app_next[100..105].copy_from_slice(b"newer");
+    let mut old = kchess_delta::Tree::new();
+    old.insert("bin/app", file_node(&app, true));
+    old.insert("engine", file_node(&noise(8, 40_000), true));
+    let mut new = old.clone();
+    new.insert("bin/app", file_node(&app_next, true));
+    new.insert("notes.txt", file_node(b"odd", false));
+    let installed = root.join("installed");
+    for (path, node) in old.iter() {
+        if let kchess_delta::Node::File { data, .. } = node {
+            std::fs::create_dir_all(installed.join(path).parent().unwrap()).unwrap();
+            std::fs::write(installed.join(path), data).unwrap();
+        }
+    }
+    let extras = vec![
+        (
+            "control.tar.gz".to_string(),
+            b"the control archive".to_vec(),
+        ),
+        (
+            kchess_delta::WINDOWS_INSTALLER.to_string(),
+            b"MZ installer".to_vec(),
+        ),
+    ];
+    let delta = root.join("update.delta");
+    std::fs::write(&delta, patch_between(&old, &new, &extras)).unwrap();
+    let staged = |package: Package, work: &str| {
+        rebuild(
+            &Patch {
+                delta: &delta,
+                package,
+                install: &installed,
+                root: &installed,
+                current: "2026.11.0",
+                version: "2026.11.1",
+                deb: "KChess-2026.11.1-linux-amd64.deb",
+            },
+            &root.join(work),
+        )
+    };
+
+    let bundle = staged(Package::MacZip, "mac").unwrap();
+    assert!(bundle.ends_with("patched/KChess.app"));
+    assert_eq!(std::fs::read(bundle.join("bin/app")).unwrap(), app_next);
+
+    let installer = staged(Package::WindowsInstaller, "windows").unwrap();
+    assert_eq!(installer.file_name().unwrap(), UPDATE_EXE);
+    assert_eq!(std::fs::read(&installer).unwrap(), b"MZ installer");
+    let beside = installer.with_file_name("files");
+    assert_eq!(std::fs::read(beside.join("notes.txt")).unwrap(), b"odd");
+    assert_eq!(
+        std::fs::read(beside.join("engine")).unwrap(),
+        noise(8, 40_000)
+    );
+
+    // The .deb: dpkg's three members, the release's control archive, the files with their modes.
+    let deb = staged(Package::Deb, "deb").unwrap();
+    assert!(deb.ends_with("KChess-2026.11.1-linux-amd64.deb"));
+    let bytes = std::fs::read(&deb).unwrap();
+    assert!(bytes.starts_with(
+        b"!<arch>\ndebian-binary   0           0     0     100644  4         `\n2.0\n"
+    ));
+    let control_at = bytes
+        .windows(14)
+        .position(|w| w == b"control.tar.gz")
+        .unwrap();
+    assert!(bytes[control_at..].starts_with(
+        b"control.tar.gz  0           0     0     100644  19        `\nthe control archive\n"
+    ));
+    let data_at = bytes.windows(8).position(|w| w == b"data.tar").unwrap() + 60;
+    let mut archive = tar::Archive::new(&bytes[data_at..]);
+    let listed: Vec<(String, u32, Vec<u8>)> = archive
+        .entries()
+        .unwrap()
+        .map(|entry| {
+            let mut entry = entry.unwrap();
+            let path = entry.path().unwrap().to_string_lossy().to_string();
+            let mode = entry.header().mode().unwrap();
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data).unwrap();
+            (path, mode, data)
+        })
+        .collect();
+    let names: Vec<(&str, u32)> = listed
+        .iter()
+        .map(|(path, mode, _)| (path.as_str(), *mode))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("bin/", 0o755),
+            ("bin/app", 0o755),
+            ("engine", 0o755),
+            ("notes.txt", 0o644)
+        ]
+    );
+    assert_eq!(listed[1].2, app_next);
+    assert!(
+        !deb.with_extension("data.tar").exists(),
+        "the data archive is in the .deb"
+    );
+
+    let appimage = root.join("appimage.delta");
+    let mut one = kchess_delta::Tree::new();
+    one.insert(kchess_delta::APPIMAGE, file_node(&app, true));
+    let mut next = kchess_delta::Tree::new();
+    next.insert(kchess_delta::APPIMAGE, file_node(&app_next, true));
+    std::fs::write(&appimage, patch_between(&one, &next, &[])).unwrap();
+    let image = rebuild(
+        &Patch {
+            delta: &appimage,
+            package: Package::AppImage,
+            install: &installed.join("bin/app"),
+            root: Path::new("/"),
+            current: "2026.11.0",
+            version: "2026.11.1",
+            deb: "",
+        },
+        &root.join("appimage"),
+    )
+    .unwrap();
+    assert_eq!(std::fs::read(&image).unwrap(), app_next);
+
+    // A patch for another pair of versions is not used.
+    let refused = rebuild(
+        &Patch {
+            delta: &delta,
+            package: Package::MacZip,
+            install: &installed,
+            root: &installed,
+            current: "2026.10.9",
+            version: "2026.11.1",
+            deb: "",
+        },
+        &root.join("other"),
+    );
+    assert_eq!(
+        refused,
+        Err("The update patch is from 2026.11.0 to 2026.11.1, not 2026.10.9 to 2026.11.1".into())
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
