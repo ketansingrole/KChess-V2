@@ -17,6 +17,21 @@ The results land in `mutants.out/` (`missed.txt`, `caught.txt`, `timeout.txt`,
 `unviable.txt`). After writing tests, `--iterate` tests only the mutants that were missed last
 time and those in changed code.
 
+## Every pull request
+
+New code arrives with its mutants killed. CI's `mutants` job runs
+
+```bash
+cargo xtask mutants
+```
+
+on each pull request: cargo-mutants mutates only the lines changed since `main` (`--in-diff`,
+committed or not), tests each mutant with the tests of its own package, and fails when one
+survives or times out. Run it before pushing; `--base <ref>` diffs against another commit, and
+arguments after `--` go to cargo-mutants (`-- -j 4`, `-- -p kchess-domain`). Mutants that were
+already missed in untouched code are the weekly run's, so a change never has to pay off the
+whole backlog at once.
+
 ## What to do with a missed mutant
 
 1. Write the test it shows is missing, at the level that observes the behaviour: a unit test, a

@@ -253,31 +253,21 @@ pub fn write(packages: &Path) -> Result {
 }
 
 fn now_iso() -> String {
-    let seconds = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs()) as i64;
-    let (days, rest) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.000Z",
-        rest / 3600,
-        rest % 3600 / 60,
-        rest % 60
-    )
+    crate::util::iso_timestamp(crate::util::unix_now())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use ring::signature::KeyPair as _;
+
+    #[test]
+    fn manifests_are_dated_now() {
+        let date = now_iso();
+        let (year, ..) = crate::util::civil_date(crate::util::unix_now());
+        assert!(date.starts_with(&format!("{year}-")), "{date}");
+        assert!(date.ends_with(".000Z") && date.len() == 24, "{date}");
+    }
 
     fn pinned(manifest: &'static str, name: &'static str, bytes: &[u8]) -> Pinned {
         Pinned {

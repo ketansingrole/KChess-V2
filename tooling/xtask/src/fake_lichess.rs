@@ -443,3 +443,271 @@ fn tv_move(sent: usize, since: Instant) -> Option<Value> {
         })
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One HTTP request to `lichess`: the status line and the body, read until it hangs up.
+    fn request(lichess: &FakeLichess, method: &str, path: &str, body: &str) -> (String, String) {
+        let mut socket = TcpStream::connect(lichess.base.trim_start_matches("http://")).unwrap();
+        write!(
+            socket,
+            "{method} {path}?x=1 HTTP/1.1\r\nHost: lichess\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        let mut reply = String::new();
+        socket.read_to_string(&mut reply).unwrap();
+        let (head, body) = reply.split_once("\r\n\r\n").unwrap();
+        (head.lines().next().unwrap().to_string(), body.to_string())
+    }
+
+    fn get_json(lichess: &FakeLichess, path: &str) -> Value {
+        let (status, body) = request(lichess, "GET", path, "");
+        assert_eq!(status, "HTTP/1.1 200 OK", "{path}");
+        serde_json::from_str(&body).unwrap()
+    }
+
+    /// A stream from `lichess`: its first `lines` non-empty ndjson lines.
+    fn stream_lines(lichess: &FakeLichess, path: &str, lines: usize) -> Vec<Value> {
+        let mut socket = TcpStream::connect(lichess.base.trim_start_matches("http://")).unwrap();
+        write!(socket, "GET {path} HTTP/1.1\r\n\r\n").unwrap();
+        let mut reader = BufReader::new(socket);
+        let mut found = Vec::new();
+        while found.len() < lines {
+            let mut line = String::new();
+            assert!(reader.read_line(&mut line).unwrap() > 0, "{path} ended");
+            if line.trim_start().starts_with('{') {
+                found.push(serde_json::from_str(line.trim()).unwrap());
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn only_the_lichess_scenarios_have_a_stand_in() {
+        assert!(FakeLichess::start("analysis").unwrap().is_none());
+        for scenario in ["lichess-idle", "pages-tour", "lichess-game", "lichess-tv"] {
+            assert!(
+                FakeLichess::start(scenario).unwrap().is_some(),
+                "{scenario}"
+            );
+        }
+    }
+
+    #[test]
+    fn it_answers_what_the_app_asks_and_lists_the_rest() {
+        let lichess = FakeLichess::start("lichess-idle").unwrap().unwrap();
+        let (status, token) = request(&lichess, "POST", "/api/token", "code=abc&verifier=x");
+        assert_eq!(status, "HTTP/1.1 200 OK");
+        let token: Value = serde_json::from_str(&token).unwrap();
+        assert_eq!(token["access_token"], "lip_bench");
+        assert_eq!(token["token_type"], "Bearer");
+
+        let account = get_json(&lichess, "/api/account");
+        assert_eq!(account["username"], USERNAME);
+        assert_eq!(account["id"], "bench");
+        assert!(account["seenAt"].as_u64().unwrap() > 1_700_000_000_000);
+        assert_eq!(account["perfs"]["blitz"]["rating"], 1650);
+        assert_eq!(get_json(&lichess, "/api/user/Bench")["username"], USERNAME);
+        assert_eq!(
+            get_json(&lichess, "/api/account/playing")["nowPlaying"],
+            json!([])
+        );
+        let channels = get_json(&lichess, "/api/tv/channels");
+        assert_eq!(channels["blitz"]["gameId"], TV_GAME);
+        assert_eq!(channels["blitz"]["user"]["name"], "Featured");
+
+        for (path, answer) in [
+            ("/api/user/Bench/rating-history", json!([])),
+            ("/api/users/status", json!([])),
+            ("/api/challenge", json!({ "in": [], "out": [] })),
+            ("/api/player/top/10/blitz", json!({ "users": [] })),
+            ("/api/puzzle/batch/mix", json!({ "puzzles": [] })),
+            ("/api/game/abc/chat", json!([])),
+            ("/api/team/of/bench", json!([])),
+            ("/api/timeline", json!({ "entries": [], "users": {} })),
+            (
+                "/api/tournament",
+                json!({ "created": [], "started": [], "finished": [] }),
+            ),
+            ("/api/crosstable/a/b", json!({ "users": {}, "nbGames": 0 })),
+        ] {
+            assert_eq!(get_json(&lichess, path), answer, "{path}");
+        }
+        assert_eq!(
+            get_json(&lichess, "/api/broadcast/top")["past"]["nbPages"],
+            1
+        );
+        for (method, path) in [
+            ("GET", "/api/games/user/Bench"),
+            ("POST", "/api/games/export/_ids"),
+        ] {
+            let (status, body) = request(&lichess, method, path, "a,b");
+            assert_eq!(status, "HTTP/1.1 200 OK", "{path}");
+            assert_eq!(body, "", "{path}");
+        }
+
+        for path in [
+            "/api/tv/blitz",
+            "/api/other/feed",
+            "/api/board/game/stream/Other",
+        ] {
+            let (status, body) = request(&lichess, "GET", path, "");
+            assert_eq!(status, "HTTP/1.1 404 Not Found", "{path}");
+            assert_eq!(body, r#"{"error":"Not found"}"#);
+        }
+        assert_eq!(
+            lichess.unknown(),
+            [
+                "GET /api/board/game/stream/Other",
+                "GET /api/other/feed",
+                "GET /api/tv/blitz"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_game_scenario_starts_bench_s_game() {
+        let lichess = FakeLichess::start("lichess-game").unwrap().unwrap();
+        let playing = get_json(&lichess, "/api/account/playing");
+        assert_eq!(playing["nowPlaying"][0]["gameId"], GAME);
+        assert_eq!(playing["nowPlaying"][0]["opponent"]["username"], "Opponent");
+        assert_eq!(playing["nowPlaying"][0]["fullId"], "BenchGameabcd");
+        let start = stream_lines(&lichess, "/api/stream/event", 1);
+        assert_eq!(start[0]["type"], "gameStart");
+        assert_eq!(start[0]["game"]["gameId"], GAME);
+        let full = stream_lines(&lichess, &format!("/api/board/game/stream/{GAME}"), 1);
+        assert_eq!(full[0]["type"], "gameFull");
+        assert_eq!(full[0]["id"], GAME);
+        assert_eq!(full[0]["white"]["name"], USERNAME);
+        assert_eq!(full[0]["state"]["moves"], "");
+        assert!(full[0]["createdAt"].as_u64().unwrap() > 1_700_000_000_000);
+        let tv = stream_lines(&lichess, "/api/tv/blitz/feed", 1);
+        assert_eq!(tv[0]["t"], "featured");
+        assert_eq!(tv[0]["d"]["id"], TV_GAME);
+        assert_eq!(tv[0]["d"]["players"][1]["user"]["name"], "Challenger");
+    }
+
+    #[test]
+    fn an_idle_event_stream_stays_quiet_and_ends_with_the_stand_in() {
+        let lichess = FakeLichess::start("lichess-idle").unwrap().unwrap();
+        let mut socket = TcpStream::connect(lichess.base.trim_start_matches("http://")).unwrap();
+        write!(socket, "GET /api/stream/event HTTP/1.1\r\n\r\n").unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_millis(400)))
+            .unwrap();
+        let mut reader = BufReader::new(socket.try_clone().unwrap());
+        let mut head = String::new();
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            head.push_str(&line);
+            if line == "\r\n" {
+                break;
+            }
+        }
+        assert!(head.contains("Transfer-Encoding: chunked"), "{head}");
+        // No game, and no keep-alive before KEEP_ALIVE has passed.
+        let mut more = [0u8; 16];
+        assert!(reader.read(&mut more).is_err());
+        // Stopping the stand-in ends its streams.
+        drop(lichess);
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut rest = Vec::new();
+        assert!(reader.read_to_end(&mut rest).is_ok());
+    }
+
+    #[test]
+    fn a_stream_counts_its_lines_until_stopped() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopper = {
+            let stop = Arc::clone(&stop);
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(300));
+                stop.store(true, Ordering::SeqCst);
+            })
+        };
+        let mut asked = Vec::new();
+        stream(
+            &mut server,
+            &stop,
+            |sent| {
+                asked.push(sent);
+                (asked.len() <= 2).then(|| json!({ "n": sent }))
+            },
+            vec![json!({ "first": 1 }), json!({ "first": 2 })],
+        )
+        .unwrap();
+        stopper.join().unwrap();
+        assert_eq!(asked[..3], [2, 3, 4]);
+        assert!(asked[3..].iter().all(|&sent| sent == 4));
+        let mut text = String::new();
+        BufReader::new(client).read_to_string(&mut text).unwrap();
+        assert!(text.contains("c\r\n{\"first\":1}\n\r\n"), "{text}");
+        assert!(
+            text.contains("{\"n\":2}\n") && text.contains("{\"n\":3}\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn each_side_s_clock_runs_for_its_own_moves() {
+        let start = state_after(0, Duration::ZERO);
+        assert_eq!(start["moves"], "");
+        assert_eq!(
+            (start["wtime"].as_u64(), start["btime"].as_u64()),
+            (Some(300_000), Some(300_000))
+        );
+        // Three plies: White has moved twice and Black once, each gaining the increment.
+        let later = state_after(3, Duration::from_secs(10));
+        assert_eq!(later["moves"], "e2e4 e7e5 g1f3");
+        assert_eq!(later["wtime"], 300_000 - 3_000 + 6_000);
+        assert_eq!(later["btime"], 300_000 - 1_500 + 3_000);
+        assert_eq!(later["status"], "started");
+        // A clock never runs for longer than the game has.
+        let early = state_after(3, Duration::from_secs(2));
+        assert_eq!(early["wtime"], 300_000 - 2_000 + 6_000);
+        let four = state_after(4, Duration::from_secs(60));
+        assert_eq!(four["btime"], 300_000 - 3_000 + 6_000);
+    }
+
+    fn ago(seconds: f64) -> Instant {
+        Instant::now() - Duration::from_secs_f64(seconds)
+    }
+
+    #[test]
+    fn the_game_moves_once_its_time_has_come() {
+        let first = game_state(1, ago(2.0)).unwrap();
+        assert_eq!(first["moves"], "e2e4");
+        assert!(game_state(2, ago(2.0)).is_none());
+        assert_eq!(game_state(24, ago(40.0)).unwrap()["moves"], LINE.join(" "));
+        assert!(game_state(25, ago(100.0)).is_none());
+    }
+
+    #[test]
+    fn the_tv_game_moves_once_its_time_has_come() {
+        let first = tv_move(1, ago(2.0)).unwrap();
+        assert_eq!(first["t"], "fen");
+        assert_eq!(first["d"]["fen"], FENS[0]);
+        assert_eq!(first["d"]["lm"], "e2e4");
+        assert_eq!(
+            (first["d"]["wc"].as_u64(), first["d"]["bc"].as_u64()),
+            (Some(179), Some(180))
+        );
+        let fourth = tv_move(4, ago(10.0)).unwrap();
+        assert_eq!(
+            (fourth["d"]["wc"].as_u64(), fourth["d"]["bc"].as_u64()),
+            (Some(178), Some(178))
+        );
+        assert!(tv_move(2, ago(2.0)).is_none());
+        assert_eq!(tv_move(24, ago(40.0)).unwrap()["d"]["lm"], "c5d4");
+        assert!(tv_move(25, ago(100.0)).is_none());
+    }
+}
