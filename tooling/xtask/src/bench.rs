@@ -143,20 +143,19 @@ fn measure(binary: &Path, scenario: &str, seconds: u64, engine: &Path) -> Result
         }
         command
             .env("KCHESS_USER_DATA_DIR", profile.path().join("profile"))
+            .env("KCHESS_ENGINE_PATH", engine)
             .env("KCHESS_BENCH", bench);
         command
     };
     if lichess.is_some() {
         // Signed in by an earlier launch, as someone who plays on Lichess is.
         app("lichess-login")
-            .env("KCHESS_ENGINE_PATH", engine)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
             .map_err(|e| format!("Could not start {}: {e}", binary.display()))?;
     }
     let status = app(scenario)
-        .env("KCHESS_ENGINE_PATH", engine)
         .env("KCHESS_BENCH_SECONDS", seconds.to_string())
         .env("KCHESS_BENCH_OUT", &out)
         .stdout(Stdio::null())
@@ -210,19 +209,7 @@ fn summary(options: &Options, results: &[Value]) -> String {
                 })
                 .collect();
             text.push_str(&format!("  {metric:<27}"));
-            for ((label, _), value) in options.builds.iter().zip(&medians) {
-                match value {
-                    Some(value) => text.push_str(&format!("  {label}={value:>9.3}")),
-                    None => text.push_str(&format!("  {label}=        -")),
-                }
-            }
-            if let (Some(Some(first)), Some(Some(last))) = (medians.first(), medians.last())
-                && medians.len() > 1
-                && *last != 0.
-            {
-                text.push_str(&format!("  ×{:.2}", first / last));
-            }
-            text.push('\n');
+            text.push_str(&row(options, &medians));
         }
         page_opens(
             &mut text,
@@ -286,18 +273,86 @@ fn page_opens(
                 )
             })
             .collect();
-        for ((label, _), value) in options.builds.iter().zip(&medians) {
-            match value {
-                Some(value) => text.push_str(&format!("  {label}={value:>9.3}")),
-                None => text.push_str(&format!("  {label}=        -")),
-            }
+        text.push_str(&row(options, &medians));
+    }
+}
+
+/// One figure's medians, a column per build, then the first build's over the last's, and the
+/// line's end.
+fn row(options: &Options, medians: &[Option<f64>]) -> String {
+    let mut text = String::new();
+    for ((label, _), value) in options.builds.iter().zip(medians) {
+        match value {
+            Some(value) => text.push_str(&format!("  {label}={value:>9.3}")),
+            None => text.push_str(&format!("  {label}=        -")),
         }
-        if let (Some(Some(first)), Some(Some(last))) = (medians.first(), medians.last())
-            && medians.len() > 1
-            && *last != 0.
-        {
-            text.push_str(&format!("  ×{:.2}", first / last));
-        }
-        text.push('\n');
+    }
+    if let (Some(Some(first)), Some(Some(last))) = (medians.first(), medians.last())
+        && medians.len() > 1
+        && *last != 0.
+    {
+        text.push_str(&format!("  ×{:.2}", first / last));
+    }
+    text.push('\n');
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_median_is_the_middle_run_or_the_mean_of_the_two() {
+        assert_eq!(median(vec![]), None);
+        assert_eq!(median(vec![3., 1., 2.]), Some(2.));
+        assert_eq!(median(vec![4., 1., 3., 2.]), Some(2.5));
+    }
+
+    /// Each scenario's figures are the medians of its runs, by build, with the first build's
+    /// over the last's; a figure a build never reported shows as a dash.
+    #[test]
+    fn the_summary_compares_the_builds_medians() {
+        let options = Options {
+            builds: vec![("new".into(), "a".into()), ("old".into(), "b".into())],
+            runs: 3,
+            seconds: 1,
+            scenarios: vec!["home-idle".into()],
+            out: None,
+        };
+        let run = |build: &str, draws: f64| {
+            json!({
+                "build": build,
+                "report": {"scenario": "home-idle", "draws_per_s": draws, "page_open_ms": {"play": draws}}
+            })
+        };
+        let results = [
+            run("new", 60.),
+            run("new", 30.),
+            run("new", 50.),
+            run("old", 25.),
+        ];
+        let text = summary(&options, &results);
+        assert!(text.starts_with("\nhome-idle\n"), "{text}");
+        assert!(
+            text.contains(&format!(
+                "  {:<27}  new=   50.000  old=   25.000  ×2.00\n",
+                "draws_per_s"
+            )),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!(
+                "  {:<27}  new=        -  old=        -\n",
+                "latency_ms_p50"
+            )),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!(
+                "  open {:<22}  new=   50.000  old=   25.000  ×2.00\n",
+                "play"
+            )),
+            "{text}"
+        );
     }
 }
