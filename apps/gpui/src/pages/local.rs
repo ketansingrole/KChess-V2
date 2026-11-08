@@ -132,6 +132,17 @@ impl Focusable for LocalPage {
 impl LocalPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> LocalPage {
         let started = Instant::now();
+        // The pages are made afresh after a sign-out: the faces shown last release their
+        // textures with this one, deferred as the window being drawn is out of the app's list.
+        cx.on_release(|this: &mut LocalPage, cx| {
+            let faces: Vec<_> = this.turned.drain().map(|(_, (_, image))| image).collect();
+            cx.defer(move |cx| {
+                for image in faces {
+                    cx.drop_image(image, None);
+                }
+            });
+        })
+        .detach();
         // The library was read before the window opened; the board game resumes from it.
         let library = cx
             .global::<AppCore>()

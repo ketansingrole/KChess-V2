@@ -159,14 +159,20 @@ async fn a_client_reaches_only_the_core_api() {
     let service = spawn_service(profile.path(), Duration::from_secs(30));
     let (gpui, _events) = connect(profile.path(), "gpui").await;
 
+    // Every call is answered in time: a service that stopped answering fails here at once
+    // rather than leaving the test waiting.
+    let answered = |call| async move {
+        tokio::time::timeout(WAIT, call)
+            .await
+            .expect("the call is answered")
+    };
     // Internal methods skip the facade's validation and its live-game assistance checks.
     for method in [
         "engine.bestMove",
         "analysis.start",
         "store.voiceLog.voiceHistoryDocument",
     ] {
-        let refused = gpui
-            .call(method, vec![])
+        let refused = answered(gpui.call(method, vec![]))
             .await
             .expect_err("an internal method");
         assert!(
@@ -174,10 +180,10 @@ async fn a_client_reaches_only_the_core_api() {
             "{method}: {refused}"
         );
     }
-    gpui.call("library", vec![])
+    answered(gpui.call("library", vec![]))
         .await
         .expect("a CoreApi method");
-    gpui.call("host.reply", vec![json!(0), Value::Null])
+    answered(gpui.call("host.reply", vec![json!(0), Value::Null]))
         .await
         .expect("host replies still arrive");
 

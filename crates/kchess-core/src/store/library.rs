@@ -46,7 +46,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
     let db = ctx.db;
     let host = ctx.host;
     let result = match method {
-        "store.library.library" => now_arg(args, 0).and_then(|now| library(host, db, now)),
+        "store.library.library" => now_arg(args, 0).and_then(|now| cached_library(ctx, now)),
         "store.library.studyCommand" => now_arg(args, 1).and_then(|now| {
             let mut command = args.first().cloned().unwrap_or(Value::Null);
             if let Some(based_on) = args.get(3).and_then(Value::as_str) {
@@ -240,7 +240,7 @@ module now; their bodies moved unchanged. The re-exports keep every
 pub use super::documents::read_document;
 pub(crate) use super::documents::{assert_replaceable, write_document};
 pub use super::json_codec::{clean_name, js_json, js_slice, utf16_len};
-pub use super::library_import::library;
+pub use super::library_import::{cached_library, library};
 pub(crate) use super::library_import::{
     read_joined, read_misses, read_mistakes, read_schedule_lines, until_after,
 };
@@ -1584,5 +1584,109 @@ mod tests {
         assert!(run(&db, "store.library.reviewRepertoireLine", &[]).is_err());
         let after = run(&db, "store.library.library", &[json!(now)]).expect("library");
         assert_eq!(after["repertoireSchedule"], schedule);
+    }
+
+    fn played(id: &str) -> Value {
+        json!({
+            "id": id, "source": "board", "startedAt": 1, "updatedAt": 2, "white": "A",
+            "black": "B", "result": "1-0", "reason": "Checkmate", "timeControl": "-",
+            "finished": true, "setup": { "variant": "standard", "fen": START }, "moves": BLUNDER,
+        })
+    }
+
+    fn game_ids(library: &Value) -> Vec<&str> {
+        library["games"]
+            .as_array()
+            .expect("games")
+            .iter()
+            .map(|game| game["id"].as_str().expect("id"))
+            .collect()
+    }
+
+    /// Reading the library replays every played game, and the app read it three times to start:
+    /// a read again is the snapshot kept from the last, until any write changes a row, whichever
+    /// storage method (or none, as here) writes it.
+    #[test]
+    fn a_library_read_again_is_kept_until_any_row_changes() {
+        let db = drills_db();
+        let config = crate::host::Config::new(std::path::PathBuf::new());
+        let cache = crate::store::StoreCache::default();
+        let ctx = crate::store::StoreContext {
+            db: &db,
+            host: &Quiet,
+            config: &config,
+            cache: &cache,
+        };
+        let call = |method: &str, args: &[Value]| crate::store::call(&ctx, method, args);
+        let read = || call("store.library.library", &[json!(0)]).expect("library");
+        call("store.library.saveArchivedGame", &[played("one")]).expect("save");
+        assert_eq!(game_ids(&read()), ["one"]);
+        let changes = db.total_changes();
+        assert!(cache.library(changes).is_some(), "the read is kept");
+        assert!(
+            cache.library(changes + 1).is_none(),
+            "and stale after a write"
+        );
+        assert_eq!(game_ids(&read()), ["one"]);
+
+        call("store.library.saveArchivedGame", &[played("two")]).expect("save");
+        assert_eq!(game_ids(&read()), ["two", "one"]);
+        call(
+            "store.library.saveSession",
+            &[json!("local"), json!({ "x": 1 })],
+        )
+        .ok();
+        db.execute("DELETE FROM archived_games WHERE id = 'two'", [])
+            .expect("delete");
+        assert_eq!(game_ids(&read()), ["one"]);
+        // A stored game that no longer replays is left out, as on a first read.
+        db.execute(
+            "UPDATE archived_games SET body = replace(body, 'h5f7', 'h5h8')",
+            [],
+        )
+        .expect("damage");
+        assert!(game_ids(&read()).is_empty());
+
+        cache.remember_library(db.total_changes(), &json!({ "games": [] }));
+        cache.forget_library();
+        assert!(cache.library(db.total_changes()).is_none());
+        cache.remember_library(db.total_changes(), &json!({ "games": [] }));
+        cache.clear();
+        assert!(cache.library(db.total_changes()).is_none());
+    }
+
+    /// The kept snapshot holds every joined tournament: each read leaves out those ended by its
+    /// own `now`, so a tournament ends on time without a write.
+    #[test]
+    fn a_kept_library_still_leaves_out_tournaments_ended_since() {
+        let db = drills_db();
+        let config = crate::host::Config::new(std::path::PathBuf::new());
+        let cache = crate::store::StoreCache::default();
+        let ctx = crate::store::StoreContext {
+            db: &db,
+            host: &Quiet,
+            config: &config,
+            cache: &cache,
+        };
+        let now = 1_700_000_000_000.0;
+        crate::store::call(
+            &ctx,
+            "store.library.rememberTournament",
+            &[
+                json!({ "system": "arena", "id": "live", "account": "Alice", "name": "Live", "until": now + 60_000.0 }),
+                json!(now),
+            ],
+        )
+        .expect("remember");
+        let joined = |at: f64| {
+            crate::store::call(&ctx, "store.library.library", &[json!(at)]).expect("library")
+                ["joinedTournaments"]
+                .as_array()
+                .expect("joined")
+                .len()
+        };
+        assert_eq!(joined(now), 1);
+        assert_eq!(joined(now + 120_000.0), 0, "ended by then");
+        assert_eq!(joined(now), 1, "the kept snapshot still has it");
     }
 }

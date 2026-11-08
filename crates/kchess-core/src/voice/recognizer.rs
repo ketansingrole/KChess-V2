@@ -214,28 +214,34 @@ impl VoiceRecognizer {
     /// an unreadable answer ends the helper; the next `start` launches a new one.
     async fn exchange(&self, tag: u8, payload: &[u8], deadline: Duration) -> Result<Answer> {
         let mut slot = self.helper.lock().await;
-        let helper = slot
-            .as_mut()
+        // Out of its slot until its answer is read: a call cancelled after sending would leave
+        // the answer in the pipe, and every later request would read the one before it. Dropped
+        // instead, the helper ends, and the next `start` launches a new one.
+        let mut helper = slot
+            .take()
             .ok_or_else(|| CoreError::new("Voice input isn’t listening."))?;
         match tokio::time::timeout(deadline, helper.request(tag, payload)).await {
             Ok(Ok(Answer {
                 error: Some(message),
                 ..
             })) => {
+                *slot = Some(helper);
                 self.log(
                     Level::Warn,
                     &format!("Speech recognition failed: {message}"),
                 );
                 Err(CoreError::new(STOPPED))
             }
-            Ok(Ok(answer)) => Ok(answer),
+            Ok(Ok(answer)) => {
+                *slot = Some(helper);
+                Ok(answer)
+            }
             outcome => {
                 let cause = match outcome {
                     Ok(Err(cause)) => cause.to_string(),
                     _ => "no answer in time".into(),
                 };
                 self.log(Level::Warn, &format!("Voice helper stopped: {cause}"));
-                *slot = None;
                 Err(CoreError::new(STOPPED))
             }
         }

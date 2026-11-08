@@ -23,6 +23,7 @@ mod memory;
 mod online;
 mod openings;
 mod palette;
+mod perf;
 mod practice;
 mod puzzles;
 mod review;

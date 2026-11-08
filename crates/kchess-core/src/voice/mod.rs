@@ -252,6 +252,13 @@ impl VoiceModelCache {
             }
             (id, state.pending.clone(), replay)
         };
+        // Also when the call is cancelled or abandoned mid-preparation: its task is dropped at the
+        // await, and a listener left behind would repeat every later progress to every window.
+        let _forget = crate::tasks::on_drop(|| {
+            self.lock()
+                .listeners
+                .retain(|(listener, _)| *listener != id);
+        });
         if let (Some(listener), Some(progress)) = (&listener, replay) {
             listener(&progress);
         }
@@ -259,9 +266,6 @@ impl VoiceModelCache {
             Some(pending) => pending.await,
             None => Err(STOPPED_MESSAGE.to_string()),
         };
-        self.lock()
-            .listeners
-            .retain(|(listener, _)| *listener != id);
         outcome.map_err(CoreError::new)
     }
 
@@ -828,6 +832,47 @@ mod tests {
         (TEST_NAME_VAR, "test-model"),
         (TEST_SHA256_VAR, "abc123"),
     ];
+
+    struct Silent;
+
+    impl Host for Silent {
+        fn log(&self, _: Level, _: &str, _: &str) {}
+        fn emit(&self, _: &str, _: serde_json::Value) {}
+    }
+
+    /// A call cancelled while the model is being prepared stops listening: before, its listener
+    /// stayed for good and every later progress went to every window once more for each one.
+    #[tokio::test]
+    async fn a_cancelled_install_leaves_no_listener_behind() {
+        // A server that accepts the connection and never answers keeps the preparation running.
+        let server = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+        let url = format!("http://{}/model.zip", server.local_addr().expect("address"));
+        let directory = std::env::temp_dir().join(format!(
+            "kchess-voice-cancel-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let cache = VoiceModelCache::new(
+            Arc::new(Silent),
+            directory.clone(),
+            Archive::Url(url),
+            VoiceModel::official(),
+        );
+        for _ in 0..3 {
+            let listener: Listener = Arc::new(|_: &Progress| {});
+            let mut install = Box::pin(cache.ensure(Some(listener)));
+            tokio::select! {
+                biased;
+                _ = &mut install => panic!("the preparation cannot finish"),
+                () = tokio::task::yield_now() => {}
+            }
+            assert_eq!(cache.lock().listeners.len(), 1, "listening while it runs");
+            drop(install);
+            assert!(cache.lock().listeners.is_empty(), "the listener is gone");
+        }
+        drop(server);
+        let _ = std::fs::remove_dir_all(directory);
+    }
 
     #[test]
     fn the_override_is_refused_without_the_test_switch() {

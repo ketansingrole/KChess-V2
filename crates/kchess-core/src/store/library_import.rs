@@ -5,6 +5,7 @@
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
+use super::StoreContext;
 use super::documents::{
     DAMAGED_STUDIES, decode_archived_game_text, decode_mistakes_text, parse_text, read_document,
     read_document_text, stored_studies, write_document,
@@ -144,6 +145,27 @@ pub(crate) fn read_games(host: &dyn Host, db: &Connection) -> Result<Vec<Value>>
         }
     }
     Ok(games)
+}
+
+/// `library(now)` as the store answers it: the snapshot read last, when no row has changed since,
+/// else read afresh. Every frontend reads the whole library to start, and pages read it again to
+/// resume their sessions; reading it decodes every study and replays every played game.
+pub fn cached_library(ctx: &StoreContext, now: f64) -> Result<Value> {
+    let changes = ctx.db.total_changes();
+    let mut snapshot = match ctx.cache.library(changes) {
+        Some(snapshot) => snapshot,
+        None => {
+            let snapshot = library(ctx.host, ctx.db, f64::NEG_INFINITY)?;
+            // Reading may migrate an earlier release's studies: kept as of after that write.
+            ctx.cache
+                .remember_library(ctx.db.total_changes(), &snapshot);
+            snapshot
+        }
+    };
+    if let Some(Value::Array(joined)) = snapshot.get_mut("joinedTournaments") {
+        joined.retain(|entry| until_after(entry, now));
+    }
+    Ok(snapshot)
 }
 
 /// `library(now)`: the whole snapshot.
