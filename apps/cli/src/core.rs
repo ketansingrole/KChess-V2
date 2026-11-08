@@ -5,7 +5,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use kchess_core::{Config, Core, Host, Level};
+use kchess_contracts::Level;
+use kchess_core::{Config, Core, Host};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 

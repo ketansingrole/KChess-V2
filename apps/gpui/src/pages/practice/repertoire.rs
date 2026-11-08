@@ -17,7 +17,7 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_core::Level;
+use kchess_contracts::Level;
 use kchess_domain::training::repetition;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
-use kchess_core::Level;
+use kchess_contracts::Level;
 use serde_json::{Map, Value, json};
 
 use crate::core::{Answer, AppCore, BoxedSave, Reads};

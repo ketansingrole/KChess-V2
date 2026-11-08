@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use futures::StreamExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
-use kchess_core::Level;
+use kchess_contracts::Level;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 

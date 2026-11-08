@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use gpui_kit::*;
-use kchess_core::Level;
+use kchess_contracts::Level;
 use serde_json::{Value, json};
 
 use crate::core::AppCore;

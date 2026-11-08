@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_core::Level;
+use kchess_contracts::Level;
 use serde::Deserialize;
 use serde_json::{Value, json};
 

@@ -1,0 +1,248 @@
+//! The architecture boundaries of the frontends' shipped code, checked as a test (CI runs it in
+//! `check` and in every `gpui` job; `cargo nextest run -p xtask boundaries` runs it alone).
+//!
+//! The app and the CLI talk to the core by `CoreApi` method name, and read its errors and log
+//! levels from `kchess-contracts`. Both can also embed a core, so they depend on `kchess-core`,
+//! and the compiler alone cannot keep the rest of their code from reaching into it. This test
+//! does: only the files that start, configure or host the core name `kchess_core`. Tests (the
+//! app's `e2e`, `tests.rs` files and inline test modules) may name anything.
+
+use std::path::Path;
+
+use crate::util::{Result, root};
+
+/// What only some files of the frontends may name.
+struct Rule {
+    /// The text that marks a use.
+    needle: &'static str,
+    /// Names that contain the needle but are not uses: the contracts' types the core re-exports,
+    /// which older code still spells through the core (`kchess_core::Level::Warn`). New code
+    /// imports them from `kchess_contracts`.
+    tolerated: &'static [&'static str],
+    /// Why, as the failure says it.
+    why: &'static str,
+    /// The files, from the repository root, that may name it.
+    allowed: &'static [&'static str],
+}
+
+/// The frontends' sources, searched from the repository root.
+const FRONTENDS: [&str; 2] = ["apps/gpui/src", "apps/cli/src"];
+
+const RULES: [Rule; 1] = [Rule {
+    needle: "kchess_core",
+    tolerated: &[
+        "kchess_core::Level",
+        "kchess_core::CoreError",
+        "kchess_core::ErrorKind",
+        "kchess_core::USER_AGENT",
+    ],
+    why: "frontends call the core by `CoreApi` method name and read `CoreError` and `Level` from \
+          `kchess_contracts`; only the files that start, configure or host the core name \
+          `kchess_core` (tooling/xtask/src/boundaries.rs)",
+    allowed: &[
+        // Starting the core (embedded or through the service) and answering its host requests.
+        "apps/gpui/src/core.rs",
+        "apps/cli/src/core.rs",
+        // The programs and switches the core is configured with.
+        "apps/gpui/src/profile.rs",
+        // Log lines are redacted as the core's are.
+        "apps/gpui/src/log.rs",
+        // The App Store build: no updater, and no Stockfish download in the engine settings.
+        "apps/gpui/src/updates.rs",
+        "apps/gpui/src/pages/settings/engine.rs",
+        // Voice input: the offline model and the test audio switch.
+        "apps/gpui/src/voice/mod.rs",
+        "apps/gpui/src/voice/capture.rs",
+        "apps/gpui/src/pages/settings/mod.rs",
+        "apps/gpui/src/pages/settings/offline.rs",
+    ],
+}];
+
+/// Whether `path` holds only tests, which may name anything.
+fn is_test_file(path: &str) -> bool {
+    path.contains("/e2e/") || path.contains("/tests/") || path.ends_with("/tests.rs")
+}
+
+/// The shipped part of a source file: what comes before its inline test module.
+fn shipped(text: &str) -> &str {
+    text.find("#[cfg(test)]\nmod tests")
+        .map_or(text, |at| &text[..at])
+}
+
+/// Whether `line` uses the rule's needle other than through a tolerated name.
+fn uses(rule: &Rule, line: &str) -> bool {
+    let mut rest = line.to_string();
+    for name in rule.tolerated {
+        rest = rest.replace(name, "");
+    }
+    rest.contains(rule.needle)
+}
+
+/// Each use of a rule's needle outside its allowed files, as `path:line: why`.
+fn offences(rule: &Rule, files: &[(String, String)]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (path, text) in files {
+        if is_test_file(path) || rule.allowed.contains(&path.as_str()) {
+            continue;
+        }
+        for (index, line) in shipped(text).lines().enumerate() {
+            if uses(rule, line) {
+                found.push(format!(
+                    "{path}:{}: names `{}`: {}",
+                    index + 1,
+                    rule.needle,
+                    rule.why
+                ));
+            }
+        }
+    }
+    found
+}
+
+/// The Rust sources under `dir` of `repo`, as (path from `repo`, text), in path order.
+fn sources_under(repo: &Path, dir: &str, into: &mut Vec<(String, String)>) -> Result {
+    let full = repo.join(dir);
+    let entries =
+        std::fs::read_dir(&full).map_err(|cause| format!("{}: {cause}", full.display()))?;
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    for name in names {
+        let path = format!("{dir}/{name}");
+        let full = repo.join(&path);
+        if full.is_dir() {
+            sources_under(repo, &path, into)?;
+        } else if name.ends_with(".rs") {
+            let text = std::fs::read_to_string(&full)
+                .map_err(|cause| format!("{}: {cause}", full.display()))?;
+            into.push((path, text));
+        }
+    }
+    Ok(())
+}
+
+/// Every rule's offences in `repo`'s frontends.
+fn check_in(repo: &Path) -> Result {
+    let mut files = Vec::new();
+    for dir in FRONTENDS {
+        sources_under(repo, dir, &mut files)?;
+    }
+    let found: Vec<String> = RULES
+        .iter()
+        .flat_map(|rule| offences(rule, &files))
+        .collect();
+    if found.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} use(s) across an architecture boundary:\n{}",
+            found.len(),
+            found.join("\n")
+        ))
+    }
+}
+
+const RULE: Rule = Rule {
+    needle: "kchess_core",
+    tolerated: &["kchess_core::Level"],
+    why: "a reason",
+    allowed: &["apps/gpui/src/core.rs"],
+};
+
+fn file(path: &str, text: &str) -> (String, String) {
+    (path.to_string(), text.to_string())
+}
+
+#[test]
+fn the_frontends_keep_their_boundaries() {
+    if let Err(failure) = check_in(&root()) {
+        panic!("{failure}");
+    }
+}
+
+#[test]
+fn a_use_outside_the_allowed_files_is_named_with_its_line() {
+    let files = [
+        file("apps/gpui/src/core.rs", "use kchess_core::Core;\n"),
+        file(
+            "apps/gpui/src/page.rs",
+            "use x;\nlet a = kchess_core::app_store();\n",
+        ),
+    ];
+    assert_eq!(
+        offences(&RULE, &files),
+        ["apps/gpui/src/page.rs:2: names `kchess_core`: a reason"]
+    );
+}
+
+#[test]
+fn the_contracts_types_spelled_through_the_core_are_tolerated() {
+    assert!(!uses(&RULE, "    kchess_core::Level::Warn,"));
+    assert!(uses(
+        &RULE,
+        "kchess_core::Level::Warn, kchess_core::env::var(\"X\")"
+    ));
+    assert!(uses(&RULE, "use kchess_core::{Level, env};"));
+    assert!(!uses(&RULE, "use kchess_contracts::Level;"));
+}
+
+#[test]
+fn tests_may_name_anything() {
+    let files = [
+        file("apps/gpui/src/e2e/puzzles.rs", "kchess_core::puzzles\n"),
+        file("apps/gpui/src/updates/tests.rs", "kchess_core::loopback\n"),
+        file("apps/cli/src/tests/play.rs", "kchess_core::env\n"),
+        file(
+            "apps/gpui/src/page.rs",
+            "fn shown() {}\n#[cfg(test)]\nmod tests {\n    use kchess_core::env;\n}\n",
+        ),
+    ];
+    assert!(offences(&RULE, &files).is_empty());
+    assert!(!is_test_file("apps/gpui/src/e2e.rs"));
+    assert!(!is_test_file("apps/gpui/src/latests.rs"));
+}
+
+#[test]
+fn only_code_before_the_test_module_ships() {
+    assert_eq!(shipped("a\n#[cfg(test)]\nmod tests {}\n"), "a\n");
+    let helper = "a\n#[cfg(test)]\nfn helper() {}\n";
+    assert_eq!(shipped(helper), helper);
+}
+
+#[test]
+fn a_repository_that_crosses_a_boundary_fails() {
+    let repo = std::env::temp_dir().join(format!("kchess-boundaries-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&repo);
+    for dir in FRONTENDS {
+        std::fs::create_dir_all(repo.join(dir).join("pages")).unwrap();
+    }
+    std::fs::write(
+        repo.join("apps/gpui/src/core.rs"),
+        "use kchess_core::Core;\n",
+    )
+    .unwrap();
+    std::fs::write(repo.join("apps/gpui/src/notes.txt"), "kchess_core\n").unwrap();
+    assert_eq!(check_in(&repo), Ok(()));
+
+    std::fs::write(
+        repo.join("apps/gpui/src/pages/home.rs"),
+        "kchess_core::env::var(\"X\");\n",
+    )
+    .unwrap();
+    let failure = check_in(&repo).unwrap_err();
+    assert!(
+        failure.starts_with("1 use(s) across an architecture boundary"),
+        "{failure}"
+    );
+    assert!(
+        failure.contains("apps/gpui/src/pages/home.rs:1: names `kchess_core`"),
+        "{failure}"
+    );
+    std::fs::remove_dir_all(&repo).unwrap();
+
+    let missing =
+        std::env::temp_dir().join(format!("kchess-boundaries-none-{}", std::process::id()));
+    assert!(check_in(&missing).is_err());
+}

@@ -36,7 +36,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_core::Level;
+use kchess_contracts::Level;
 use serde_json::{Value, json};
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Color, Position as _, Square};

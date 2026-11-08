@@ -7,6 +7,9 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# The errors and log levels the core shares with its frontends, and the method table the facade
+# is checked against (tests/facade_dispatch.rs).
+kchess-contracts = { path = "../kchess-contracts" }
 kchess-domain = { path = "../kchess-domain" }
 serde.workspace = true
 serde_json.workspace = true
@@ -63,8 +66,6 @@ packaged = []
 [dev-dependencies]
 # Random legal games for the compression benchmark (`examples/http_compression.rs`).
 shakmaty.workspace = true
-# The method table the facade's dispatch is checked against (tests/facade_dispatch.rs).
-kchess-contracts = { path = "../kchess-contracts" }
 
 # A scripted UCI engine for the engine tests (see tests/support/fake_uci.rs).
 [[bin]]

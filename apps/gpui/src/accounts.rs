@@ -5,7 +5,7 @@
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, SharedString, Window};
-use kchess_core::Level;
+use kchess_contracts::Level;
 use serde_json::{Value, json};
 
 use crate::core::{Answer, AppCore, Reads};

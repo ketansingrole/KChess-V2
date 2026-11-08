@@ -8,7 +8,7 @@ use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Entity, EventEmitter, Global, Task, WeakEntity};
 use kchess_contracts::types::{AppTheme, CustomThemeReport, Settings};
-use kchess_core::{CoreError, Level};
+use kchess_contracts::{CoreError, Level};
 use serde_json::Value;
 
 use crate::core::{Answer, AppCore, BoxedSave, CoreEvent, Reads};

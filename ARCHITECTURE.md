@@ -25,6 +25,9 @@ The core never depends on a frontend. Frontends call it by `CoreApi` method name
 arguments and subscribe to its events; the profile's core service (`docs/shared-core.md`) lets
 several of them share one core, and either can embed a core instead. Host capabilities a frontend
 answers (opening the browser, focusing its window, battery state) reach it as `host:request`.
+Their errors and log levels are the contracts' (`kchess_contracts::{CoreError, Level}`), and only
+the few files that start or host a core name `kchess_core` (xtask's `boundaries` test,
+`tooling/xtask/src/boundaries.rs`).
 
 The chess and document rules are one Rust implementation (`crates/kchess-domain`), exposed through
 `api.rs` as `call(method, argsJson)` and as plain functions; the core and the app use them
