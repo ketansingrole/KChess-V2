@@ -26,4 +26,5 @@ pub mod time_use;
 pub mod trainer;
 pub mod training;
 pub mod tree;
+pub mod variant;
 pub mod voice;

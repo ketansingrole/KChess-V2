@@ -137,17 +137,7 @@ pub const EXPLORER_RATINGS: &[f64] = &[
     400.0, 1000.0, 1200.0, 1400.0, 1600.0, 1800.0, 2000.0, 2200.0, 2500.0,
 ];
 /// Lichess variant keys KChess can play: the one list every crate checks a variant against.
-pub const VARIANTS: &[&str] = &[
-    "standard",
-    "chess960",
-    "kingOfTheHill",
-    "threeCheck",
-    "antichess",
-    "atomic",
-    "horde",
-    "racingKings",
-    "crazyhouse",
-];
+pub const VARIANTS: &[&str] = &crate::variant::KEYS;
 /// The settings the core keeps, in its order.
 pub const CORE_SETTINGS_KEYS: &[&str] = &[
     "enginePath",

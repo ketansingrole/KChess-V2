@@ -38,7 +38,7 @@ const INCREMENTS: [f64; 7] = [0., 1., 2., 3., 5., 10., 20.];
 /// `CORRESPONDENCE_DAYS`.
 const DAYS: [f64; 7] = [1., 2., 3., 5., 7., 10., 14.];
 
-/// `data/variants.json`: each variant's key, name and what sets it apart.
+/// A domain time-control rule's answer, or null when it has none.
 fn time_rule(name: &str, minutes: f64, increment: f64, extra: Option<bool>) -> Value {
     let mut args = vec![json!(minutes), json!(increment)];
     args.extend(extra.map(|value| json!(value)));
@@ -128,7 +128,7 @@ impl OnlinePage {
             SelectState::new(
                 crate::game::variants()
                     .iter()
-                    .map(|text| Choice::new(text.key.clone(), text.label.clone()))
+                    .map(|text| Choice::new(text.key, text.label))
                     .collect(),
                 None,
                 window,
@@ -451,7 +451,7 @@ impl OnlinePage {
         let (variant_label, variant_hint) = crate::game::variants()
             .iter()
             .find(|text| text.key == form.variant)
-            .map(|text| (text.label.clone(), text.hint.clone()))
+            .map(|text| (text.label, text.hint))
             .unwrap_or_default();
         let estimated = time_rule("totalSeconds", form.minutes, form.increment, None)
             .as_f64()
@@ -597,7 +597,7 @@ impl OnlinePage {
             ))
             .child(field(
                 "Variant",
-                Some(variant_hint),
+                Some(variant_hint.to_string()),
                 Select::new(&self.variant_select)
                     .accessibility_label("Variant")
                     .into_any_element(),
@@ -695,7 +695,7 @@ impl OnlinePage {
             card = card.child(widgets::StatusBanner::new(widgets::Tone::Plain, icon("info"), "A public correspondence seek stays open on Lichess".into()).detail("Lichess has no way for apps to withdraw it; it closes when someone joins. Add a username to send a challenge you can withdraw instead.".into()));
         }
         let downloaded = crate::accounts::handle(cx).read(cx).downloaded(&active);
-        let summary_line = summary(&form, Some(variant_label.as_str()));
+        let summary_line = summary(&form, Some(variant_label));
         card.child(
             h_flex()
                 .justify_between()
@@ -760,7 +760,7 @@ impl OnlinePage {
         let label = crate::game::variants()
             .iter()
             .find(|text| text.key == online.form.variant)
-            .map(|text| text.label.clone());
+            .map(|text| text.label);
         h_flex().flex_1().items_center().justify_center().child(
             widgets::card(palette)
                 .w(px(420.))
@@ -768,10 +768,7 @@ impl OnlinePage {
                 .gap(px(12.))
                 .child(widgets::spinner(px(28.)).color(palette.primary))
                 .child(widgets::heading(status, palette))
-                .child(widgets::hint(
-                    summary(&online.form, label.as_deref()),
-                    palette,
-                ))
+                .child(widgets::hint(summary(&online.form, label), palette))
                 .child(
                     Button::new("online-cancel")
                         .outline()

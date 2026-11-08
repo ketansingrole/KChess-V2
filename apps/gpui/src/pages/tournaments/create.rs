@@ -28,17 +28,6 @@ const DURATIONS: [f64; 28] = [
     240., 270., 300., 330., 360., 420., 480., 540., 600., 720.,
 ];
 const WAITS: [f64; 10] = [1., 2., 3., 5., 10., 15., 20., 30., 45., 60.];
-const VARIANTS: [(&str, &str); 9] = [
-    ("standard", "Standard"),
-    ("chess960", "Chess960"),
-    ("kingOfTheHill", "King of the Hill"),
-    ("threeCheck", "Three-check"),
-    ("antichess", "Antichess"),
-    ("atomic", "Atomic"),
-    ("horde", "Horde"),
-    ("racingKings", "Racing Kings"),
-    ("crazyhouse", "Crazyhouse"),
-];
 const LATER: &str = "later";
 
 fn minutes_label(minutes: f64) -> String {
@@ -145,9 +134,9 @@ impl CreateArena {
             key(60.),
         );
         let variant = select(
-            VARIANTS
+            crate::game::variants()
                 .iter()
-                .map(|(value, label)| Choice::new(*value, *label))
+                .map(|variant| Choice::new(variant.key, variant.label))
                 .collect(),
             "standard".into(),
         );

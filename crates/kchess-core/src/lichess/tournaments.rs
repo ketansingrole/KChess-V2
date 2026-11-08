@@ -532,7 +532,7 @@ fn board_rule(method: &str, minutes: f64, increment: f64) -> bool {
 
 /// `compatibility(clock, variant)`: whether KChess can play the games through the Board API.
 fn compatibility(clock: &Clock, variant: &str) -> (bool, Option<String>) {
-    if kchess_domain::online_game::variant_from_lichess(Some(variant)).is_none() {
+    if kchess_domain::variant::from_lichess(Some(variant)).is_none() {
         return (
             false,
             Some(format!("KChess cannot show {variant} games yet.")),

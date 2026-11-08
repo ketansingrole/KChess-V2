@@ -36,3 +36,28 @@ pub struct GameSetup {
     /// FEN before the first move; for standard games, the usual start.
     pub fen: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_enum_names_the_domain_variants_in_order() {
+        let all = [
+            Variant::Standard,
+            Variant::Chess960,
+            Variant::KingOfTheHill,
+            Variant::ThreeCheck,
+            Variant::Antichess,
+            Variant::Atomic,
+            Variant::Horde,
+            Variant::RacingKings,
+            Variant::Crazyhouse,
+        ];
+        let keys: Vec<serde_json::Value> = all
+            .iter()
+            .map(|variant| serde_json::to_value(variant).expect("a key"))
+            .collect();
+        assert_eq!(keys, VARIANTS);
+    }
+}

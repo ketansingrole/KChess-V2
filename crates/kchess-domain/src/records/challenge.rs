@@ -280,7 +280,7 @@ pub fn read_challenge_event(account: &str, raw: &Value, now: i64) -> Option<Chal
         .as_deref()
         .unwrap_or(&variant_key)
         .to_owned();
-    let playable_variant = crate::online_game::variant_from_lichess(Some(variant_key.as_str()));
+    let playable_variant = crate::variant::from_lichess(Some(variant_key.as_str()));
     let problem = if playable_variant.is_none() {
         Some(format!("KChess cannot play {variant_name}."))
     } else if !board_ok {

@@ -21,7 +21,7 @@ mod spectator;
 
 pub use feed::{
     GameDetails, GameSetup, TvGame, align_tv_moves, broadcast_game, display_fen,
-    parse_game_details, parse_tv_game, variant_from_lichess,
+    parse_game_details, parse_tv_game,
 };
 pub use listings::{broadcast_round, broadcast_summaries, broadcast_tour, broadcasts, tv_channels};
 pub use spectator::Spectator;
@@ -46,7 +46,6 @@ pub const TV_CHANNELS: [(&str, &str); 16] = [
     ("computer", "Computer"),
 ];
 
-pub(crate) use kchess_domain::misc::constants::VARIANTS;
 /// How many earlier games a TV channel keeps for the session.
 const PAST_GAMES: usize = 6;
 /// The longest broadcast PGN read, in UTF-16 units (`pgn.slice(0, 200_000)`).

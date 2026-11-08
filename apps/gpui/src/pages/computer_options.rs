@@ -40,7 +40,7 @@ enum Start {
 fn fairy_variants() -> impl Iterator<Item = &'static crate::game::VariantText> {
     variants()
         .iter()
-        .filter(|text| !crate::game::standard_rules(&text.key))
+        .filter(|text| !crate::game::standard_rules(text.key))
 }
 
 /// What the dialog starts: the setup, the clock, the player's side and Stockfish's level.
@@ -106,7 +106,7 @@ impl GameOptions {
         let variant_select = cx.new(|cx| {
             SelectState::new(
                 fairy_variants()
-                    .map(|text| SharedString::from(text.label.clone()))
+                    .map(|text| SharedString::from(text.label))
                     .collect(),
                 Some(IndexPath::new(variant_row)),
                 window,
@@ -134,7 +134,7 @@ impl GameOptions {
         let variant_fen = cx.new(|cx| {
             let label = fairy_variants()
                 .nth(variant_row)
-                .map_or("Variant", |text| text.label.as_str());
+                .map_or("Variant", |text| text.label);
             let mut input = InputState::new(window, cx).placeholder(format!("{label} start"));
             if start == Start::Variant && default_fen.as_deref() != Some(fen.as_str()) {
                 input.set_value(fen.clone(), window, cx);
@@ -205,7 +205,7 @@ impl GameOptions {
                     // A position the new variant refuses is the old variant's: it goes.
                     let refused = match (this.variant_text(cx), this.variant_fen(cx)) {
                         (Some(text), Some(fen)) => {
-                            kchess_domain::rules::setup_start(&text.key, &fen).is_none()
+                            kchess_domain::rules::setup_start(text.key, &fen).is_none()
                         }
                         _ => false,
                     };
@@ -288,7 +288,7 @@ impl GameOptions {
         if self.start == Start::Variant {
             let variant = self.variant_text(cx)?;
             let fen = self.variant_fen(cx)?;
-            return kchess_domain::rules::setup_start(&variant.key, &fen)
+            return kchess_domain::rules::setup_start(variant.key, &fen)
                 .is_none()
                 .then(|| "That FEN is not a legal position".into());
         }
@@ -320,9 +320,7 @@ impl GameOptions {
                 "fen": chess960(self.number960(cx).unwrap_or(518)),
             }),
             Start::Variant => {
-                let variant = self
-                    .variant_text(cx)
-                    .map_or("crazyhouse", |text| text.key.as_str());
+                let variant = self.variant_text(cx).map_or("crazyhouse", |text| text.key);
                 let fen = self.variant_fen(cx).unwrap_or_else(|| {
                     crate::game::rules("defaultFen", &[json!(variant)])
                         .ok()
@@ -406,7 +404,7 @@ impl Render for GameOptions {
             Start::Variant => 2,
             Start::Fen => 3,
         };
-        let hint = self.variant_text(cx).map(|text| text.hint.clone());
+        let hint = self.variant_text(cx).map(|text| text.hint);
         v_flex()
             .gap(px(16.))
             .child(widgets::field(

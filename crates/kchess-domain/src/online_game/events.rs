@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::model::{
     ClockConfig, Effect, FinishedGame, Run, at, default_fen, is_running, nullish, number_or_zero,
-    string_or, turn_of, variant_from_lichess,
+    string_or, turn_of,
 };
 use crate::js;
 use crate::rules::GameSetup;
@@ -396,7 +396,7 @@ impl Run {
             nullish(event.get("daysPerTurn")).map(|v| js::to_number(Some(v)));
         self.m.online_tournament = string_or(event.get("tournamentId"), "");
         let key = js::string(at(event.get("variant"), "key"));
-        let variant = variant_from_lichess(key);
+        let variant = crate::variant::from_lichess(key);
         self.m.online_unsupported = if variant.is_some() {
             String::new()
         } else {

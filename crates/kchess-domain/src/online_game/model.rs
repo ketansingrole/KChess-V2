@@ -10,7 +10,6 @@ use crate::records;
 use crate::replay::replay_setup;
 use crate::rules::{default_position, lichess_variant, make_fen};
 
-use crate::misc::constants::VARIANTS;
 use crate::rules::{GameSetup, STANDARD_FEN};
 
 /// `{ initial, increment }` in seconds.
@@ -352,14 +351,6 @@ pub fn turn_of(fen: &str) -> &'static str {
         "black"
     } else {
         "white"
-    }
-}
-
-/// `variantFromLichess`: the playable variant for a Lichess key; `fromPosition` is standard rules.
-pub fn variant_from_lichess(key: Option<&str>) -> Option<&'static str> {
-    match key {
-        None | Some("") | Some("fromPosition") => Some("standard"),
-        Some(key) => VARIANTS.iter().copied().find(|variant| *variant == key),
     }
 }
 

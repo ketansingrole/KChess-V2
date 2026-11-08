@@ -12,9 +12,6 @@ use serde_json::{Value, json};
 use crate::js;
 use model::{Call, Ctx, Model, Run, at, string_or};
 
-/// `variantFromLichess`, for the Lichess service's challenge reader (`kchess-core`).
-pub use model::variant_from_lichess;
-
 type Out = Result<Value, String>;
 
 /// The state of a board with no game (`onlineGameState()` and the class's private fields), for

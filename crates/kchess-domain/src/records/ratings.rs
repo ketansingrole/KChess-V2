@@ -243,6 +243,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn variant_ratings_use_the_variant_names() {
+        for variant in &crate::variant::VARIANTS[1..] {
+            let names = DISPLAY_NAMES.iter().find(|(key, _)| *key == variant.key);
+            assert_eq!(names.map(|(_, name)| *name), Some(variant.label));
+        }
+    }
+
+    #[test]
     fn keys_normalize_like_lichess_names() {
         let name = |s: &str| json!(s);
         assert_eq!(normalize(Some(&name("King of the Hill"))), "kingOfTheHill");
