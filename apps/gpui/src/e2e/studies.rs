@@ -411,6 +411,33 @@ fn the_chosen_chapter_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
     app.find("tree-d2d4");
 }
 
+/// Closing a study saved it, then emptied the board whatever it held by then: a position opened
+/// while the study saved was wiped.
+#[gpui_kit::test]
+fn a_position_opened_while_a_study_closes_stays_on_the_board(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::analysis::AnalysisPage;
+    let mut app = Harness::start(cx);
+    import_study(&mut app, "Pawn openings", TWO_CHAPTERS);
+    app.click("open-imported");
+    app.find("tree-e2e4");
+    let opened = app.with_window(|_, cx| {
+        let page = crate::shell::view_of::<AnalysisPage>(crate::pages::Page::Analysis, cx)
+            .expect("the analysis board");
+        page.update(cx, |page, cx| {
+            page.close_study(cx).detach();
+            page.load(Some("8/8/8/4k3/8/8/4K3/8 w - - 0 1"), cx);
+            page.shown_fen()
+        })
+    });
+    let shown = app.with_window(|_, cx| {
+        crate::shell::view_of::<AnalysisPage>(crate::pages::Page::Analysis, cx)
+            .expect("the analysis board")
+            .read(cx)
+            .shown_fen()
+    });
+    assert_eq!(shown, opened);
+}
+
 #[gpui_kit::test]
 fn a_study_closed_from_the_board_leaves_an_unsaved_analysis(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
