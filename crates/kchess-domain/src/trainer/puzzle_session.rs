@@ -804,6 +804,28 @@ mod tests {
         assert_eq!(shown["internal"]["attempt"]["retry"], json!(false));
     }
 
+    /// The local database answering with no puzzle (`[null]`) is out of puzzles, not one to show.
+    #[test]
+    fn an_offline_load_without_a_puzzle_is_exhausted() {
+        let start = call("puzzleSessionInitial", &[]).unwrap().unwrap();
+        let loading = step(
+            "puzzleSessionLoadBegin",
+            &start,
+            json!({ "selection": selection(), "online": true }),
+        );
+        let settled = step(
+            "puzzleSessionLoadSettled",
+            &loading,
+            json!({
+                "resume": loading["call"]["resume"],
+                "selection": selection(),
+                "outcome": { "ok": [null] },
+            }),
+        );
+        assert_eq!(settled["state"]["phase"], json!("exhausted"));
+        assert!(settled["state"]["current"].is_null());
+    }
+
     /// A load still on its way replaced the puzzle chosen while it loaded.
     #[test]
     fn a_shown_puzzle_is_not_replaced_by_an_earlier_load() {
