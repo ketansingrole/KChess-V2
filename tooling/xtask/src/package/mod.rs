@@ -25,6 +25,8 @@ pub mod windows;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use kchess_delta::Asset;
+
 use crate::util::{Result, hex, root, run_with, say};
 
 // Each platform's packages use some of these; the others are for the other platforms.
@@ -68,9 +70,9 @@ impl Identity {
         }
     }
 
-    /// The packages' file name prefix (`KChess-2026.10.16-mac-arm64.zip`).
-    pub fn prefix(&self) -> String {
-        self.name.replace(' ', "-")
+    /// This version's package of kind `asset`, as the release names it.
+    pub fn asset(&self, asset: Asset) -> String {
+        asset.released(&self.version)
     }
 }
 
@@ -214,6 +216,30 @@ fn build(skip: bool) -> Result<Built> {
     Ok(built)
 }
 
+/// The packages this machine releases: the Snap alone with `--snap`.
+fn released(snap: bool) -> &'static [Asset] {
+    if snap {
+        &[Asset::Snap]
+    } else if cfg!(target_os = "macos") {
+        &[Asset::MacZip, Asset::MacDmg]
+    } else if cfg!(windows) {
+        &[Asset::WindowsInstaller]
+    } else {
+        &[Asset::AppImage, Asset::Deb]
+    }
+}
+
+/// Every package of `kinds` is in `out` and holds something: a release never goes out without one.
+fn check_released(out: &Path, identity: &Identity, kinds: &[Asset]) -> Result {
+    for kind in kinds {
+        let path = out.join(identity.asset(*kind));
+        if std::fs::metadata(&path).map_or(true, |file| file.len() == 0) {
+            return Err(format!("Packaging made no {}.", path.display()));
+        }
+    }
+    Ok(())
+}
+
 fn sha256(path: &Path) -> Result<String> {
     use sha2::Digest;
     let bytes = std::fs::read(path).map_err(|cause| cause.to_string())?;
@@ -268,10 +294,10 @@ pub fn run(args: &[String]) -> Result {
     if snap {
         return Err("The Snap is built on Linux.".into());
     }
-    // The release adds the Electron manifests, which name the frozen step (`electron_step`).
     for package in &packages {
         say(&format!("Packaged {}", package.display()));
     }
+    check_released(&out, &identity, released(snap))?;
     let mut files: Vec<PathBuf> = std::fs::read_dir(&out)
         .map_err(|cause| cause.to_string())?
         .flatten()
@@ -292,4 +318,32 @@ pub fn run(args: &[String]) -> Result {
     say(&format!("Done: {}", out.display()));
     eprint!("{sums}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A platform's packaging fails without any package it releases, or with an empty one.
+    #[test]
+    fn packaging_fails_without_every_package_it_releases() {
+        let out = tempfile::tempdir().unwrap();
+        let identity = Identity::new("2026.11.9".into());
+        let kinds = [Asset::AppImage, Asset::Deb];
+        std::fs::write(
+            out.path().join("KChess-2026.11.9-linux-x86_64.AppImage"),
+            b"x",
+        )
+        .unwrap();
+        let missing = check_released(out.path(), &identity, &kinds).unwrap_err();
+        assert!(
+            missing.contains("KChess-2026.11.9-linux-amd64.deb"),
+            "{missing}"
+        );
+        std::fs::write(out.path().join("KChess-2026.11.9-linux-amd64.deb"), b"").unwrap();
+        assert!(check_released(out.path(), &identity, &kinds).is_err());
+        std::fs::write(out.path().join("KChess-2026.11.9-linux-amd64.deb"), b"x").unwrap();
+        assert_eq!(check_released(out.path(), &identity, &kinds), Ok(()));
+        assert_eq!(released(true), [Asset::Snap]);
+    }
 }

@@ -14,6 +14,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use kchess_delta::Asset;
+
 use super::{Built, Identity, copy_program, copy_voice};
 use crate::util::{Result, root, run_with, say};
 
@@ -47,11 +49,9 @@ pub enum Payload<'a> {
 /// Where packaging leaves the update installer for `cargo xtask deltas`, which puts it in
 /// each Windows patch.
 pub fn update_installer(identity: &Identity) -> PathBuf {
-    root().join(format!(
-        "target/package/{}-{}-win-x64-update.exe",
-        identity.prefix(),
-        identity.version
-    ))
+    root()
+        .join("target/package")
+        .join(identity.asset(Asset::WindowsUpdateInstaller))
 }
 
 /// The installer script for the program files of `payload`.
@@ -267,11 +267,7 @@ pub fn package(
     copy_voice(built, &folder)?;
     std::fs::copy(&built.licenses, folder.join("THIRD_PARTY_LICENSES.txt"))
         .map_err(|cause| cause.to_string())?;
-    let installer = out.join(format!(
-        "{}-{}-win-x64.exe",
-        identity.prefix(),
-        identity.version
-    ));
+    let installer = out.join(identity.asset(Asset::WindowsInstaller));
     let script_path = stage.join("installer.nsi");
     for (file, text) in scripts(identity, &folder, &installer, folder_size(&folder) / 1024) {
         // makensis reads the script as UTF-8 with a byte order mark.

@@ -130,14 +130,11 @@ pub fn check_step(step: &Step) -> Result {
     }
     for file in step.files {
         // The step's own installers, never a later release's: the updater of B takes it on.
-        if !file.name.starts_with(&format!("KChess-{version}-")) {
+        if kchess_delta::Asset::parse(file.name).is_none_or(|(_, of, _)| of != version) {
             return Err(format!(
                 "{} is not one of {}'s installers.",
                 file.name, step.tag
             ));
-        }
-        if file.name.ends_with(".yml") || file.name.starts_with("SHA256SUMS") {
-            return Err(format!("{} is not an installer.", file.name));
         }
         if file.sha256.len() != 64 || file.size == 0 {
             return Err(format!("{} is pinned incompletely.", file.name));

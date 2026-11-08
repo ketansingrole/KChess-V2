@@ -5,6 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
+use kchess_delta::Asset;
+
 use super::{Built, Identity, copy_program, copy_voice};
 use crate::util::{Result, root, run, run_redacted, say};
 
@@ -224,8 +226,7 @@ pub fn package(
         ],
     )?;
 
-    let base = format!("{}-{}-mac-arm64", identity.prefix(), identity.version);
-    let zip = out.join(format!("{base}.zip"));
+    let zip = out.join(identity.asset(Asset::MacZip));
     say("Making the zip…");
     // ditto keeps the bundles' symlinks, permissions and signatures, as Squirrel.Mac expects.
     run(
@@ -244,7 +245,7 @@ pub fn package(
     )?;
     std::os::unix::fs::symlink("/Applications", image.join("Applications"))
         .map_err(|cause| cause.to_string())?;
-    let dmg = out.join(format!("{base}.dmg"));
+    let dmg = out.join(identity.asset(Asset::MacDmg));
     // hdiutil sometimes finds the disk-image driver busy ("Resource busy") on a runner that just
     // made the zip; it succeeds when tried again.
     retrying(3, std::time::Duration::from_secs(10), || {

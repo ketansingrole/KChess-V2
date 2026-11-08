@@ -70,11 +70,13 @@ const HELP: &str = "cargo xtask <command>
                         --mas the Mac App Store's .pkg (apps/gpui/dist/mas)
   deltas [dir]          Write the update patches to this release's packages in [dir]
                         (apps/gpui/dist) from the latest published releases (release CI)
-  deltas --from <old package> <new package>
-                        Write the one patch between two packages, beside the new one
+  deltas --from <old package> <new package> [--stage <out>]
+                        Write the one patch between two packages, beside the new one;
+                        --stage then stages a Windows patch over the old installer's files
+                        as --apply does (the Windows upgrade test)
   deltas --apply <patch> <installed folder> <out>
                         Stage a Windows patch as the updater does: <out>/files and
-                        <out>/KChess-update.exe (the Windows upgrade test)
+                        <out>/KChess-update.exe
   pins --check [--report <file>]
                         Fail when appimagetool or the AppImage runtime has a newer release than
                         its pin (package/linux.rs), naming both; the weekly Pins workflow

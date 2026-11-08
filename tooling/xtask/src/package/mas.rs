@@ -215,11 +215,7 @@ pub fn package(
     say(&format!("Signing as {} in the App Sandbox…", signing.app));
     sign(&app, &nested, &signing.app, &app_entitlements, stage)?;
     verify(&app, &nested)?;
-    let pkg = out.join(format!(
-        "{}-{}-mac-arm64.pkg",
-        identity.prefix(),
-        identity.version
-    ));
+    let pkg = out.join(identity.asset(kchess_delta::Asset::MasPkg));
     say("Making the installer package…");
     run(
         "productbuild",

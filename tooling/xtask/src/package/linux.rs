@@ -10,6 +10,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use kchess_delta::Asset;
+
 use super::{Built, Identity, copy_program, copy_voice};
 use crate::util::{Result, download, pinned, root, run_with, say};
 
@@ -109,11 +111,7 @@ fn appimage_with(
     )
     .map_err(|cause| cause.to_string())?;
     super::executable(&app_run)?;
-    let image = out.join(format!(
-        "{}-{}-linux-x86_64.AppImage",
-        identity.prefix(),
-        identity.version
-    ));
+    let image = out.join(identity.asset(Asset::AppImage));
     say("Making the AppImage…");
     run_with(&mut appimagetool(&tool, &runtime, &dir, &image))?;
     Ok(image)
@@ -288,11 +286,7 @@ fn deb(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<P
         ],
         &[],
     )?)?;
-    let package = out.join(format!(
-        "{}-{}-linux-amd64.deb",
-        identity.prefix(),
-        identity.version
-    ));
+    let package = out.join(identity.asset(Asset::Deb));
     say("Making the .deb…");
     let mut file = std::fs::File::create(&package).map_err(|cause| cause.to_string())?;
     file.write_all(&ar(&[
@@ -408,7 +402,7 @@ fn snap(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<
         snapcraft_yaml(&identity.version),
     )
     .map_err(|cause| cause.to_string())?;
-    let package = out.join(format!("KChess-{}-linux-amd64.snap", identity.version));
+    let package = out.join(identity.asset(Asset::Snap));
     say("Making the Snap…");
     // snapcraft writes only inside its project folder; the package is moved out afterwards.
     let packed = project.join("kchess.snap");

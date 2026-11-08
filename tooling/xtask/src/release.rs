@@ -2,6 +2,8 @@
 //! 2026.11.0), without zero padding, so the version stays valid semver for Cargo and the update
 //! manifests. The workspace version in Cargo.toml is the release.
 
+use kchess_delta::Asset;
+
 use crate::util::{Result, output, root, run, say, version, workspace_version};
 
 /// `(year, month, counter)` of a release version.
@@ -403,7 +405,8 @@ pub fn attach_draft(dir: &std::path::Path) -> Result {
     }
 }
 
-/// The Mac App Store installer package, which only installs from the store.
+/// The Mac App Store installer package, which only installs from the store: any `.pkg`, however
+/// it is named.
 fn store_only(file: &str) -> bool {
     file.ends_with(".pkg")
 }
@@ -411,7 +414,7 @@ fn store_only(file: &str) -> bool {
 /// The release's Snap, named for its tag, as SHA256SUMS.txt lists it exactly once.
 pub fn verify_snap(tag: &str, checksums: &str, digest: &str) -> Result<String> {
     parse(tag.strip_prefix('v').ok_or("Missing release tag.")?)?;
-    let name = format!("KChess-{}-linux-amd64.snap", &tag[1..]);
+    let name = Asset::Snap.released(&tag[1..]);
     let entries: Vec<&str> = checksums
         .lines()
         .filter(|line| line.ends_with(&format!("  {name}")))
@@ -436,7 +439,7 @@ pub fn download_snap() -> Result {
     if latest["tag_name"] != tag.as_str() {
         return Err("Refusing to publish an older release over latest/stable.".into());
     }
-    let name = format!("KChess-{}-linux-amd64.snap", &tag[1..]);
+    let name = Asset::Snap.released(&tag[1..]);
     run(
         "gh",
         &[
