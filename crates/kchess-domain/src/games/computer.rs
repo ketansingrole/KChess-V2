@@ -6,9 +6,10 @@ use serde_json::{Value, json};
 
 use super::{
     Clock, Clocked, Done, Flow, Reads, Session, Setup, Times, arg, board_result, engine_level,
-    number_text, opponent, optional_arg, outcome_winner, pgn_result, position_info, timeout_winner,
-    to_value, transition, with_move,
+    opponent, optional_arg, outcome_winner, pgn_result, position_info, timeout_winner, to_value,
+    transition, with_move,
 };
+use crate::js;
 
 /// `ComputerState`: the session document and the engine turn's bookkeeping.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -497,8 +498,8 @@ impl Game {
         let time_control = match self.state.clock {
             Some(clock) => format!(
                 "{}+{}",
-                number_text(clock.minutes * 60.0),
-                number_text(clock.increment)
+                js::number_to_string(clock.minutes * 60.0),
+                js::number_to_string(clock.increment)
             ),
             None => "-".to_string(),
         };

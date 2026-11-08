@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{Connection, OptionalExtension, Statement, ToSql, params};
 use serde::{Deserialize, Serialize, Serializer};
 
-use kchess_domain::{position, rules};
+use kchess_domain::{js, position, rules};
 
 /// A row of the puzzle table as the importer hands it over.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -93,16 +93,7 @@ pub struct LocalLadderQuery {
 
 /// JavaScript prints whole numbers without a fraction; match that in the JSON.
 fn serialize_js_number<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
-    const MAX_SAFE: f64 = 9_007_199_254_740_991.0;
-    if value.is_finite() && value.fract() == 0.0 && value.abs() <= MAX_SAFE {
-        if *value < 0.0 {
-            serializer.serialize_i64(*value as i64)
-        } else {
-            serializer.serialize_u64(*value as u64)
-        }
-    } else {
-        serializer.serialize_f64(*value)
-    }
+    js::number_to_json(*value).serialize(serializer)
 }
 
 fn serialize_js_number_opt<S: Serializer>(
@@ -510,11 +501,6 @@ pub fn query_puzzles(
     Ok(to_puzzles(&picked))
 }
 
-/// JavaScript's `Math.round`: halves round up, also for negative numbers.
-fn js_round(value: f64) -> f64 {
-    (value + 0.5).floor()
-}
-
 /// One random puzzle near each step from `from` up to `to`: an easy-to-hard run.
 pub fn query_ladder(
     db: &Connection,
@@ -527,7 +513,7 @@ pub fn query_ladder(
     let mut step = 0.0_f64;
     while step < query.count {
         let target =
-            js_round(query.from + ((query.to - query.from) * step) / (query.count - 1.0).max(1.0));
+            js::round(query.from + ((query.to - query.from) * step) / (query.count - 1.0).max(1.0));
         // Widen the window until something unused turns up (the sample is thin at the extremes).
         for reach in [30.0, 80.0, 200.0, 500.0] {
             let pick = pick_window(db, target - reach, target + reach, &used, random)?
@@ -759,6 +745,33 @@ mod tests {
         assert_eq!(ids.len(), 6);
         let ratings: Vec<f64> = ladder.iter().map(|p| p.rating).collect();
         assert!(ratings[0] < ratings[ratings.len() - 1]);
+    }
+
+    #[test]
+    fn a_ladder_step_rounds_as_javascript_does() {
+        // `Math.round(0.49999999999999994)` is 0; `(x + 0.5).floor()` made it 1, which put the
+        // first window (±30) over the puzzle at 31 instead of the one at -30.
+        let db = Connection::open_in_memory().expect("in-memory database");
+        create_schema(&db).expect("schema");
+        store_sample(
+            &db,
+            &[row("low", -30.0, "fork"), row("high", 31.0, "fork")],
+            &|| false,
+        )
+        .expect("store sample");
+        let near = 0.499_999_999_999_999_94;
+        let ladder = query_ladder(
+            &db,
+            &LocalLadderQuery {
+                from: near,
+                to: near,
+                count: 1.0,
+            },
+            &mut seeded(5),
+        )
+        .expect("ladder");
+        let ids: Vec<&str> = ladder.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["low"]);
     }
 
     #[test]

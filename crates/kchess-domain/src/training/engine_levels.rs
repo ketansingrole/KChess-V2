@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::data::data;
-use super::{Out, text_arg, text_of, to_value, value_arg};
+use super::{Out, text_arg, to_value, value_arg};
+use crate::js;
 
 /// One rung of the ladder (`EngineLevelInfo`), from `data/training.json`.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -35,7 +36,7 @@ fn find(id: &str) -> Result<Option<&'static EngineLevelInfo>, String> {
 fn label(id: &str) -> Result<String, String> {
     let entry = find(id)?.ok_or_else(|| format!("unknown engine level {id}"))?;
     let strength = match entry.elo {
-        Some(elo) if elo != 0.0 => format!("~{}", text_of(elo)),
+        Some(elo) if elo != 0.0 => format!("~{}", js::number_to_string(elo)),
         _ => "Full strength".into(),
     };
     Ok(format!("{} · {strength}", entry.label))

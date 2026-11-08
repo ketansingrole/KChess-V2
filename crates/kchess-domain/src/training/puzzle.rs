@@ -46,10 +46,6 @@ struct PlayerMove {
     reply: Option<String>,
 }
 
-fn string_of(value: Option<&Value>) -> Option<&str> {
-    value.and_then(Value::as_str)
-}
-
 fn strings_of(value: Option<&Value>) -> Vec<String> {
     value
         .and_then(Value::as_array)
@@ -84,11 +80,11 @@ fn expected_at<S: AsRef<str>>(solution: &[S], index: f64) -> Option<&str> {
 fn from_api(raw: &Value) -> Option<Value> {
     let puzzle = raw.get("puzzle")?;
     let game = raw.get("game");
-    let mut fen = string_of(puzzle.get("fen")).map(str::to_string);
-    let mut last_move = string_of(puzzle.get("lastMove")).map(str::to_string);
+    let mut fen = js::string(puzzle.get("fen")).map(str::to_string);
+    let mut last_move = js::string(puzzle.get("lastMove")).map(str::to_string);
     if fen.as_deref().is_none_or(str::is_empty) || last_move.as_deref().is_none_or(str::is_empty) {
         let start = rules::standard_from_fen(INITIAL_FEN)?;
-        let pgn = game.and_then(|g| string_of(g.get("pgn"))).unwrap_or("");
+        let pgn = game.and_then(|g| js::string(g.get("pgn"))).unwrap_or("");
         let sans: Vec<&str> = pgn
             .split(js::is_space)
             .filter(|token| !token.is_empty() && !is_move_number(token))
@@ -137,15 +133,15 @@ fn from_api(raw: &Value) -> Option<Value> {
 
 /// `puzzleFromDb`: a row of Lichess's puzzle database, whose first move is the opponent's.
 fn from_db(row: &Value) -> Option<Value> {
-    let moves = string_of(row.get("moves"))?;
+    let moves = js::string(row.get("moves"))?;
     let tokens: Vec<&str> = moves.split(' ').filter(|token| !token.is_empty()).collect();
     let (first, solution) = tokens.split_first()?;
-    let pos = rules::standard_from_fen(string_of(row.get("fen"))?)?;
+    let pos = rules::standard_from_fen(js::string(row.get("fen"))?)?;
     let opening = position::play_uci(&pos, first)?;
     if solution.is_empty() {
         return None;
     }
-    let themes: Vec<&str> = string_of(row.get("themes"))?
+    let themes: Vec<&str> = js::string(row.get("themes"))?
         .split(' ')
         .filter(|theme| !theme.is_empty())
         .collect();
@@ -242,11 +238,11 @@ fn move_squares(fen: &str, uci: &str) -> Option<Vec<String>> {
 
 /// `startPuzzle`
 fn start_puzzle(puzzle: &Value) -> PuzzleState {
-    let fen = string_of(puzzle.get("fen")).unwrap_or("").to_string();
-    let last_move = string_of(puzzle.get("lastMove"))
+    let fen = js::string(puzzle.get("fen")).unwrap_or("").to_string();
+    let last_move = js::string(puzzle.get("lastMove"))
         .filter(|uci| !uci.is_empty())
         .and_then(|uci| move_squares(&fen, uci));
-    let variant = string_of(puzzle.get("variant"))
+    let variant = js::string(puzzle.get("variant"))
         .filter(|variant| *variant != "standard" && rules::lichess_variant(variant).is_some())
         .unwrap_or_default()
         .to_string();
@@ -341,7 +337,7 @@ fn opponent_reply(state: PuzzleState, uci: &str) -> PuzzleState {
 
 /// `playerColor`
 fn player_color(puzzle: &Value) -> &'static str {
-    if string_of(puzzle.get("fen")).and_then(|fen| fen.split(' ').nth(1)) == Some("b") {
+    if js::string(puzzle.get("fen")).and_then(|fen| fen.split(' ').nth(1)) == Some("b") {
         "black"
     } else {
         "white"

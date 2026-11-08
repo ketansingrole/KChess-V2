@@ -5,10 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::data::data;
-use super::{
-    Out, js_max, js_min, js_round, num_out, number_arg, pad2, text_arg, text_of, to_value,
-    value_arg,
-};
+use super::{Out, num_out, number_arg, pad2, text_arg, to_value, value_arg};
+use crate::js;
 
 /// `[combo at which the bonus is earned, bonus in milliseconds]`
 const COMBO_LEVELS: [(u32, f64); 4] = [(5, 3000.0), (12, 5000.0), (20, 7000.0), (30, 10_000.0)];
@@ -100,19 +98,19 @@ pub fn combo_progress(combo: f64) -> f64 {
     } else {
         previous.unwrap_or(0.0)
     };
-    js_min(1.0, (combo - base) / (next - base))
+    js::min(1.0, (combo - base) / (next - base))
 }
 
 /// `formatRunClock`: `m:ss`, or `0:ss.t` under ten seconds, where tenths matter.
 pub fn format_run_clock(ms: f64) -> String {
-    let clamped = js_max(0.0, ms);
+    let clamped = js::max(0.0, ms);
     let total_seconds = (clamped / 1000.0).floor();
     let minutes = (total_seconds / 60.0).floor();
     let seconds = pad2(total_seconds % 60.0);
     if clamped < 10_000.0 && clamped > 0.0 {
         format!("0:{seconds}.{}", ((clamped % 1000.0) / 100.0).floor())
     } else {
-        format!("{}:{seconds}", text_of(minutes))
+        format!("{}:{seconds}", js::number_to_string(minutes))
     }
 }
 
@@ -144,7 +142,7 @@ impl RushState {
         }
         self.moves += 1.0;
         self.combo += 1.0;
-        self.max_combo = js_max(self.max_combo, self.combo);
+        self.max_combo = js::max(self.max_combo, self.combo);
         let bonus = if config.combo {
             combo_bonus_ms(self.combo)
         } else {
@@ -165,7 +163,7 @@ impl RushState {
             return;
         }
         self.score += 1.0;
-        self.highest = js_max(self.highest, rating);
+        self.highest = js::max(self.highest, rating);
     }
 
     /// `mistake`: a wrong move breaks the combo and costs time or a strike.
@@ -221,7 +219,7 @@ impl RushState {
         }
         self.over = Some(reason.to_string());
         if let Some(left) = self.time_left_ms {
-            self.time_left_ms = Some(js_max(0.0, left));
+            self.time_left_ms = Some(js::max(0.0, left));
         }
     }
 
@@ -229,7 +227,7 @@ impl RushState {
     pub fn accuracy(&self) -> f64 {
         let total = self.moves + self.mistakes;
         if truthy(total) {
-            js_round(self.moves / total * 100.0)
+            js::round(self.moves / total * 100.0)
         } else {
             0.0
         }

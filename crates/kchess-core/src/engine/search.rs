@@ -27,9 +27,10 @@ use super::status::{
 use super::uci::{
     UciController, error_summary, lock, search_cancelled, signal_aborted, truncate_for_log,
 };
-use super::{EngineContext, after, clear_timer, js_number, now_ms, random_unit, replace_timer};
+use super::{EngineContext, after, clear_timer, now_ms, random_unit, replace_timer};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use kchess_domain::js;
 
 /// The message a superseded search rejects with (`SUPERSEDED`).
 pub const SUPERSEDED: &str = "Engine search superseded.";
@@ -498,8 +499,11 @@ async fn search_under_lease(
     let threads = shared.ctx.scheduler.search_threads().to_string();
     let elo = profile.uci_elo.filter(|elo| *elo != 0.0);
     let strength = match elo {
-        Some(elo) => ("UCI_Elo", js_number(elo)),
-        None => ("Skill Level", js_number(profile.skill.unwrap_or(20.0))),
+        Some(elo) => ("UCI_Elo", js::number_to_string(elo)),
+        None => (
+            "Skill Level",
+            js::number_to_string(profile.skill.unwrap_or(20.0)),
+        ),
     };
     let chess960 = request.chess960.to_string();
     let limit = elo.is_some().to_string();
@@ -533,7 +537,7 @@ async fn search_under_lease(
     let command = if random {
         "go perft 1".to_string()
     } else {
-        format!("go movetime {}", js_number(movetime))
+        format!("go movetime {}", js::number_to_string(movetime))
     };
     let timeout = Duration::from_millis(15_000f64.max(movetime + 10_000.0) as u64);
     let response = target

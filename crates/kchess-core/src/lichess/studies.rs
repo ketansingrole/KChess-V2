@@ -181,21 +181,6 @@ fn tag_value(pgn: &str, name: &str) -> Option<String> {
     }
 }
 
-/// The first `units` UTF-16 units of `text` (JavaScript's `slice(0, units)`).
-fn take_utf16(text: &str, units: usize) -> String {
-    let mut used = 0;
-    let mut out = String::new();
-    for c in text.chars() {
-        let width = c.len_utf16();
-        if used + width > units {
-            break;
-        }
-        used += width;
-        out.push(c);
-    }
-    out
-}
-
 /// `lichessStudyChapters(account, id)`: every chapter of a study, with variations, comments and
 /// NAGs, ready for the analysis board.
 pub async fn lichess_study_chapters(
@@ -237,7 +222,7 @@ pub async fn lichess_study_chapters(
                         .or_else(|| tag_value(&pgn, "Event"))
                         .unwrap_or_else(|| format!("Chapter {}", index + 1));
                     LichessStudyChapter {
-                        name: take_utf16(&name, 120),
+                        name: js::slice_utf16(&name, 120).to_string(),
                         pgn,
                     }
                 })
@@ -297,7 +282,7 @@ pub async fn public_study_chapter(
         .or_else(|| tag_value(&pgn, "Event"))
         .unwrap_or_else(|| "Chapter 1".into());
     Ok(LichessStudyChapter {
-        name: take_utf16(&name, 120),
+        name: js::slice_utf16(&name, 120).to_string(),
         pgn,
     })
 }

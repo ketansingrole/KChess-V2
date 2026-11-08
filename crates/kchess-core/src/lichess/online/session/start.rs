@@ -13,8 +13,9 @@ use crate::lichess::client::authorize;
 use crate::lichess::online::events::{perf_for, rule_bool};
 use crate::lichess::online::requests::{Emitter, StreamRequest, game_body, refs};
 use crate::lichess::online::state::{
-    Handle, Lane, OnlineOptions, OnlineSession, Res, StartResult, aborted, core, js_number,
+    Handle, Lane, OnlineOptions, OnlineSession, Res, StartResult, aborted, core,
 };
+use kchess_domain::js;
 
 impl OnlineSession {
     /// `start(options)`: a challenge to a player, a public seek, or a correspondence game.
@@ -34,8 +35,8 @@ impl OnlineSession {
         let perf = perf_for(options.minutes, options.increment);
         let label = format!(
             "{}+{}",
-            js_number(options.minutes),
-            js_number(options.increment)
+            js::number_to_string(options.minutes),
+            js::number_to_string(options.increment)
         );
         // Validate before any stream opens, so a rejected request leaves nothing running.
         let has_fen = options.fen.as_deref().is_some_and(|fen| !fen.is_empty());
@@ -167,8 +168,8 @@ impl OnlineSession {
         self.start_event_stream(token.clone(), handle.clone());
         if !target.is_empty() {
             let mut form: Vec<(&'static str, String)> = vec![
-                ("clock.limit", js_number(options.minutes * 60.0)),
-                ("clock.increment", js_number(options.increment)),
+                ("clock.limit", js::number_to_string(options.minutes * 60.0)),
+                ("clock.increment", js::number_to_string(options.increment)),
             ];
             form.extend(game_body(options));
             let path = format!("/api/challenge/{}", path_segment(target));
@@ -217,8 +218,8 @@ impl OnlineSession {
             seek
         };
         let mut form: Vec<(&'static str, String)> = vec![
-            ("time", js_number(options.minutes)),
-            ("increment", js_number(options.increment)),
+            ("time", js::number_to_string(options.minutes)),
+            ("increment", js::number_to_string(options.increment)),
         ];
         form.extend(game_body(options));
         let request = StreamRequest {
@@ -253,8 +254,10 @@ impl OnlineSession {
         cancel: &CancellationToken,
         target: &str,
     ) -> Res<StartResult> {
-        let mut form: Vec<(&'static str, String)> =
-            vec![("days", js_number(options.days.unwrap_or_default()))];
+        let mut form: Vec<(&'static str, String)> = vec![(
+            "days",
+            js::number_to_string(options.days.unwrap_or_default()),
+        )];
         form.extend(game_body(options));
         let path = if target.is_empty() {
             "/api/board/seek".to_string()

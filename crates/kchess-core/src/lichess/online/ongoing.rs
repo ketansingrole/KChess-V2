@@ -1,3 +1,4 @@
+use kchess_domain::js;
 use serde_json::Value;
 
 use super::super::challenges::PlayerRef;
@@ -27,7 +28,7 @@ pub(crate) fn ongoing_game(game: &Value, account: &str) -> OngoingGame {
         .filter(|level| *level != 0.0)
         .is_some();
     let name = if ai {
-        format!("Stockfish level {}", js_value_text(&opponent["ai"]))
+        format!("Stockfish level {}", js::to_string(Some(&opponent["ai"])))
     } else {
         opponent["username"]
             .as_str()
@@ -67,11 +68,4 @@ pub(crate) fn ongoing_game(game: &Value, account: &str) -> OngoingGame {
 /// some games started on another device or app; an absent flag is taken as playable.
 pub(crate) fn board_playable(game: &Value) -> bool {
     game["compat"]["board"] != Value::Bool(false)
-}
-
-pub(crate) fn js_value_text(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
-    }
 }

@@ -6,8 +6,9 @@ use rusqlite::{Connection, OptionalExtension, params, types::Value as Sql};
 use serde_json::Value;
 
 use super::StoreContext;
-use super::library::{db_err, js_json, str_arg, utf16_len};
+use super::library::{db_err, str_arg};
 use crate::error::Result;
+use kchess_domain::js;
 
 /// Stored entries beyond this size are not read back (`row.data.length > 512_000`).
 const MAX_READ_LENGTH: usize = 512_000;
@@ -39,7 +40,7 @@ fn read(db: &Connection, key: &str) -> Result<Value> {
         .optional()
         .map_err(db_err)?;
     Ok(match data {
-        Some(data) if utf16_len(&data) <= MAX_READ_LENGTH => Value::String(data),
+        Some(data) if js::utf16_len(&data) <= MAX_READ_LENGTH => Value::String(data),
         _ => Value::Null,
     })
 }
@@ -68,7 +69,7 @@ fn write(db: &Connection, key: &str, value: &Value) -> Result<Value> {
     };
     db.execute(
         "INSERT OR REPLACE INTO position_lookups (key, data, fetchedAt) VALUES (?1, ?2, ?3)",
-        params![key, js_json(value), fetched_at],
+        params![key, js::stringify(value), fetched_at],
     )
     .map_err(db_err)?;
     db.execute(

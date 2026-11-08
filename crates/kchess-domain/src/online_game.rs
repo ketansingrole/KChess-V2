@@ -10,7 +10,7 @@ mod model;
 use serde_json::{Value, json};
 
 use crate::js;
-use model::{Call, Ctx, Model, Run, at, js_round, string_or, text_of, truthy};
+use model::{Call, Ctx, Model, Run, at, string_or};
 
 /// `variantFromLichess`, for the Lichess service's challenge reader (`kchess-core`).
 pub use model::variant_from_lichess;
@@ -100,8 +100,8 @@ fn finish(args: &[Value]) -> Out {
     let mut run = run(args, 2)?;
     let input = argument(args, 1);
     let reason = js::to_string(input.get("reason"));
-    let notify = truthy(input.get("notify"));
-    run.finish(text_of(input.get("winner")), &reason, notify);
+    let notify = js::truthy(input.get("notify"));
+    run.finish(js::string(input.get("winner")), &reason, notify);
     run.done(None, None, None, false)
 }
 
@@ -110,7 +110,7 @@ fn finish(args: &[Value]) -> Out {
 fn begin(args: &[Value]) -> Out {
     let run = run(args, 3)?;
     let input = argument(args, 2);
-    match text_of(Some(argument(args, 1))).unwrap_or("") {
+    match js::string(Some(argument(args, 1))).unwrap_or("") {
         "start" => start(run, input),
         "stop" => stop(run),
         "reconnect" => reconnect(run),
@@ -190,8 +190,8 @@ fn reconnect(mut run: Run) -> Out {
 /// `open(account, id)`: open one of the account's games on the board.
 fn open(mut run: Run, input: &Value) -> Out {
     let generation = run.next_generation();
-    let account = text_of(input.get("account")).unwrap_or("").to_string();
-    let id = text_of(input.get("id")).unwrap_or("").to_string();
+    let account = js::string(input.get("account")).unwrap_or("").to_string();
+    let id = js::string(input.get("id")).unwrap_or("").to_string();
     run.done(
         None,
         Some(Call::new(
@@ -209,7 +209,7 @@ fn move_uci(run: Run, input: &Value) -> Out {
         return run.done(None, None, None, false);
     }
     let id = run.m.online_id.clone();
-    let uci = text_of(Some(input)).unwrap_or("").to_string();
+    let uci = js::string(Some(input)).unwrap_or("").to_string();
     let pending = json!({
         "op": "move",
         "generation": run.m.generation,
@@ -231,7 +231,7 @@ fn action(run: Run, input: &Value) -> Out {
         return run.done(None, None, None, false);
     }
     let id = run.m.online_id.clone();
-    let action = text_of(Some(input)).unwrap_or("").to_string();
+    let action = js::string(Some(input)).unwrap_or("").to_string();
     let pending = json!({
         "op": "action",
         "generation": run.m.generation,
@@ -252,7 +252,7 @@ fn chat(run: Run, input: &Value) -> Out {
     if !run.ctx.chat_enabled {
         return run.done(None, None, None, false);
     }
-    let id = text_of(Some(input)).unwrap_or("").to_string();
+    let id = js::string(Some(input)).unwrap_or("").to_string();
     let pending = json!({ "op": "chat", "id": id });
     run.done(
         None,
@@ -271,7 +271,7 @@ fn settle(args: &[Value]) -> Out {
     let ok = outcome.get("ok").and_then(Value::as_bool).unwrap_or(false);
     let value = outcome.get("value");
     let current = pending.get("generation").and_then(Value::as_f64) == Some(run.m.generation);
-    match text_of(pending.get("op")).unwrap_or("") {
+    match js::string(pending.get("op")).unwrap_or("") {
         "start" => settle_start(run, pending, ok, value, current),
         "stop" => {
             if !ok {
@@ -294,7 +294,7 @@ fn settle(args: &[Value]) -> Out {
 fn same_request(run: &Run, pending: &Value, current: bool) -> bool {
     current
         && run.m.online_phase != "finished"
-        && text_of(pending.get("id")) == Some(run.m.online_id.as_str())
+        && js::string(pending.get("id")) == Some(run.m.online_id.as_str())
         && pending.get("epoch").and_then(Value::as_f64) == Some(run.m.state_epoch)
 }
 
@@ -316,7 +316,7 @@ fn settle_start(
         }
         if !correspondence && run.m.online_phase == "seeking" {
             let left = pending.get("left").filter(|left| left.is_object());
-            run.m.online_phase = match text_of(pending.get("previous")) {
+            run.m.online_phase = match js::string(pending.get("previous")) {
                 // Back to the correspondence game the seek left, which went on meanwhile.
                 Some("playing") if left.is_some() => "playing",
                 Some("finished") => "finished",
@@ -324,8 +324,8 @@ fn settle_start(
             }
             .into();
             if let Some(left) = left {
-                run.m.online_id = text_of(left.get("id")).unwrap_or("").to_string();
-                run.m.online_account = text_of(left.get("account")).unwrap_or("").to_string();
+                run.m.online_id = js::string(left.get("id")).unwrap_or("").to_string();
+                run.m.online_account = js::string(left.get("account")).unwrap_or("").to_string();
             }
             run.m.online_status.clear();
         }
@@ -335,7 +335,7 @@ fn settle_start(
         return run.done(Some(json!(false)), None, None, false);
     }
     if !correspondence && run.m.online_phase == "seeking" {
-        run.m.online_status = if truthy(at(value, "url")) {
+        run.m.online_status = if js::truthy(at(value, "url")) {
             "Challenge sent. Waiting for acceptance…"
         } else {
             "Looking for an opponent…"
@@ -350,7 +350,7 @@ fn settle_reconnect(mut run: Run, ok: bool, value: Option<&Value>, current: bool
         return run.done(None, None, None, true);
     }
     if current {
-        match value.filter(|resumed| truthy(Some(*resumed))) {
+        match value.filter(|resumed| js::truthy(Some(*resumed))) {
             Some(resumed) => {
                 run.m.online_account = js::to_string(resumed.get("account"));
                 run.m.online_id = js::to_string(resumed.get("id"));
@@ -371,12 +371,12 @@ fn settle_open(mut run: Run, pending: &Value, ok: bool, current: bool) -> Out {
         return run.done(None, None, None, true);
     }
     if current {
-        let id = text_of(pending.get("id")).unwrap_or("").to_string();
+        let id = js::string(pending.get("id")).unwrap_or("").to_string();
         if run.m.shown_game != id {
             run.reset_game();
         }
         run.m.shown_game.clear();
-        run.m.online_account = text_of(pending.get("account")).unwrap_or("").to_string();
+        run.m.online_account = js::string(pending.get("account")).unwrap_or("").to_string();
         run.m.online_id = id;
         run.m.online_status = "Opening game…".into();
         if run.m.online_phase != "playing" {
@@ -391,7 +391,7 @@ fn settle_move(mut run: Run, pending: &Value, ok: bool, current: bool) -> Out {
     if ok {
         if current {
             let sent = pending.get("sent").and_then(Value::as_f64).unwrap_or(0.0);
-            let ms = js_round(run.ctx.now - sent);
+            let ms = js::round(run.ctx.now - sent);
             run.effect(model::Effect::MoveAcknowledged { ms });
         }
         return run.done(None, None, None, false);
@@ -416,7 +416,7 @@ fn settle_action(mut run: Run, pending: &Value, ok: bool, current: bool) -> Out 
         return run.done(None, None, None, false);
     }
     if same_request(&run, pending, current) {
-        match text_of(pending.get("action")).unwrap_or("") {
+        match js::string(pending.get("action")).unwrap_or("") {
             "offerDraw" => run.m.draw_offer = "mine".into(),
             "declineDraw" | "acceptDraw" => run.m.draw_offer = "none".into(),
             "takeback" => {
@@ -440,7 +440,7 @@ fn settle_chat(mut run: Run, pending: &Value, ok: bool, value: Option<&Value>) -
         run.warn("[onlineGame] request failed:");
         return run.done(None, None, None, false);
     }
-    let id = text_of(pending.get("id")).unwrap_or("");
+    let id = js::string(pending.get("id")).unwrap_or("");
     if run.m.online_id == id {
         let mut chat: Vec<Value> = value.and_then(Value::as_array).cloned().unwrap_or_default();
         chat.extend(

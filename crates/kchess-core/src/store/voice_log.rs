@@ -5,9 +5,10 @@ use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
 use super::StoreContext;
-use super::library::{db_err, js_json, now_ms, object};
+use super::library::{db_err, now_ms, object};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_domain::js;
 
 /// Oldest entries beyond this are dropped; enough to study, small enough to never matter on disk.
 const MAX_ENTRIES: i64 = 5000;
@@ -79,7 +80,7 @@ fn save_voice_attempt(db: &Connection, attempt: &Value) -> Result<i64> {
             source,
             heard,
             confidence,
-            js_json(&text("words")),
+            js::stringify(&text("words")),
             outcome,
             optional("parsed"),
             optional("expected"),
@@ -227,7 +228,7 @@ fn write_pretty(value: &Value, depth: usize, out: &mut String) {
             indent(out, depth);
             out.push('}');
         }
-        other => out.push_str(&js_json(other)),
+        other => out.push_str(&js::stringify(other)),
     }
 }
 

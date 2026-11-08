@@ -5,11 +5,11 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
-use super::json_codec::{js_json, utf16_len};
 use super::library::{db_err, now_ms};
 use super::studies::id_of;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_domain::js;
 use kchess_domain::misc::MAX_DOCUMENT;
 
 /* ── Documents: one bounded JSON value per key ── */
@@ -49,8 +49,8 @@ pub(crate) fn write_document(
     value: &Value,
     too_large: &str,
 ) -> Result<Value> {
-    let body = js_json(value);
-    if utf16_len(&body) > MAX_DOCUMENT {
+    let body = js::stringify(value);
+    if js::utf16_len(&body) > MAX_DOCUMENT {
         return Err(CoreError::new(too_large));
     }
     let now = now_ms()?;
@@ -111,7 +111,7 @@ pub(crate) const DAMAGED_STUDIES: &str = "The saved study library is damaged. It
 
 /// Stored documents must not silently discard invalid or excess studies on the next mutation.
 pub(crate) fn stored_studies(text: &str) -> Result<Vec<Value>> {
-    if utf16_len(text) > MAX_DOCUMENT {
+    if js::utf16_len(text) > MAX_DOCUMENT {
         return Err(CoreError::new(DAMAGED_STUDIES));
     }
     let raw = parse_text(text).ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;

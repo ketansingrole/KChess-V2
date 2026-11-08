@@ -52,23 +52,6 @@ fn ms(v: Option<&J>) -> f64 {
     finite_of(v).map_or(0.0, |n| n.max(0.0))
 }
 
-/// The JavaScript `Math.min` and `Math.max` for numbers, which propagate NaN.
-fn js_min(a: f64, b: f64) -> f64 {
-    if a.is_nan() || b.is_nan() {
-        f64::NAN
-    } else {
-        a.min(b)
-    }
-}
-
-fn js_max(a: f64, b: f64) -> f64 {
-    if a.is_nan() || b.is_nan() {
-        f64::NAN
-    } else {
-        a.max(b)
-    }
-}
-
 fn variant_of(setup: Option<&J>) -> Option<&str> {
     let variant = setup?.get("variant")?.str()?;
     VARIANTS.contains(&variant).then_some(variant)
@@ -300,7 +283,7 @@ fn decode_computer(raw: &J) -> Option<J> {
     }
     let clock = clock_side(raw.get("clock"));
     let ply = match raw.get("ply") {
-        Some(J::Num(p)) => js_max(0.0, js_min(moves.len() as f64, p.floor())),
+        Some(J::Num(p)) => js::max(0.0, js::min(moves.len() as f64, p.floor())),
         _ => moves.len() as f64,
     };
     let flagged = match raw.get("flagged").and_then(J::str) {
@@ -332,8 +315,6 @@ fn js_string(v: &J) -> String {
         J::Undef => "undefined".into(),
         J::Null => "null".into(),
         J::Bool(b) => b.to_string(),
-        J::Num(n) if n.is_nan() => "NaN".into(),
-        J::Num(n) if n.is_infinite() => if *n > 0.0 { "Infinity" } else { "-Infinity" }.into(),
         J::Num(n) => js::number_to_string(*n),
         J::Str(s) => s.clone(),
         J::Arr(items) => items

@@ -5,10 +5,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
 
 use super::documents::{DAMAGED_STUDIES, parse_text, read_document_text, write_document};
-use super::json_codec::{clean_name, js_json, js_slice, utf16_len};
-use super::library::{
-    STUDIES, STUDY_LIBRARY_MAX_TEXT, db_err, num, object, random_uuid, transaction, truthy,
-};
+use super::json_codec::clean_name;
+use super::library::{STUDIES, STUDY_LIBRARY_MAX_TEXT, db_err, object, random_uuid, transaction};
 use super::library_import::{migrate_studies, read_studies};
 use crate::error::{CoreError, Result};
 use kchess_domain::js;
@@ -50,7 +48,7 @@ impl Studies {
                             .copied()
                             .unwrap_or(0)
                     } else {
-                        utf16_len(&js_json(study))
+                        js::utf16_len(&js::stringify(study))
                     }
                 })
                 .sum::<usize>()
@@ -126,7 +124,7 @@ impl Studies {
             let chapter_name = chapter
                 .get("name")
                 .and_then(Value::as_str)
-                .map(|n| js_slice(n, 120))
+                .map(|n| js::slice_utf16(n, 120))
                 .unwrap_or_default();
             let pgn = chapter.get("pgn").cloned().unwrap_or(Value::Null);
             saved.push(json!({ "id": chapter_id, "name": chapter_name, "pgn": pgn }));
@@ -145,11 +143,11 @@ impl Studies {
         candidate.insert("name".into(), json!(name));
         candidate.insert("pgn".into(), first_pgn);
         candidate.insert("chapters".into(), Value::Array(saved));
-        candidate.insert("updatedAt".into(), num(self.now));
+        candidate.insert("updatedAt".into(), js::number_to_json(self.now));
         if let Some(cloud) = old
             .as_ref()
             .and_then(|s| s.get("cloud"))
-            .filter(|c| truthy(Some(c)))
+            .filter(|c| js::truthy(Some(c)))
         {
             candidate.insert("cloud".into(), cloud.clone());
         }
@@ -394,7 +392,7 @@ pub(crate) fn study_command(
                     ("name", json!(name)),
                     ("chapters", Value::Array(updated_chapters)),
                     ("pgn", first),
-                    ("updatedAt", num(now)),
+                    ("updatedAt", js::number_to_json(now)),
                 ],
             );
             let id = studies.commit(candidate)?;
@@ -464,7 +462,7 @@ pub(crate) fn study_command(
                     &study,
                     vec![
                         ("chapters", Value::Array(chapters)),
-                        ("updatedAt", num(now)),
+                        ("updatedAt", js::number_to_json(now)),
                     ],
                 ))?;
             }
@@ -498,14 +496,14 @@ pub(crate) fn study_command(
             copy.insert("id".into(), json!(copy_id));
             copy.insert(
                 "name".into(),
-                json!(format!("{} (copy)", js_slice(original_name, 113))),
+                json!(format!("{} (copy)", js::slice_utf16(original_name, 113))),
             );
             chapters.push(Value::Object(copy));
             studies.commit(spread(
                 &study,
                 vec![
                     ("chapters", Value::Array(chapters)),
-                    ("updatedAt", num(now)),
+                    ("updatedAt", js::number_to_json(now)),
                 ],
             ))?;
             result.insert("id".into(), json!(copy_id));
@@ -545,9 +543,9 @@ pub(crate) fn study_command(
             let mut updates = vec![
                 ("chapters", Value::Array(chapters.clone())),
                 ("pgn", first),
-                ("updatedAt", num(now)),
+                ("updatedAt", js::number_to_json(now)),
             ];
-            if let Some(cloud) = study.get("cloud").filter(|c| truthy(Some(c))) {
+            if let Some(cloud) = study.get("cloud").filter(|c| js::truthy(Some(c))) {
                 let mut changed = object(cloud, "cloud")?.clone();
                 changed.insert("structureChanged".into(), Value::Bool(true));
                 updates.push(("cloud", Value::Object(changed)));
@@ -589,9 +587,9 @@ pub(crate) fn study_command(
                 let mut updates = vec![
                     ("chapters", Value::Array(chapters)),
                     ("pgn", first),
-                    ("updatedAt", num(now)),
+                    ("updatedAt", js::number_to_json(now)),
                 ];
-                if let Some(cloud) = study.get("cloud").filter(|c| truthy(Some(c))) {
+                if let Some(cloud) = study.get("cloud").filter(|c| js::truthy(Some(c))) {
                     let mut changed = object(cloud, "cloud")?.clone();
                     changed.insert("structureChanged".into(), Value::Bool(true));
                     updates.push(("cloud", Value::Object(changed)));
@@ -624,9 +622,9 @@ pub(crate) fn study_command(
                 let mut updates = vec![
                     ("chapters", Value::Array(chapters)),
                     ("pgn", first),
-                    ("updatedAt", num(now)),
+                    ("updatedAt", js::number_to_json(now)),
                 ];
-                if let Some(cloud) = study.get("cloud").filter(|c| truthy(Some(c))) {
+                if let Some(cloud) = study.get("cloud").filter(|c| js::truthy(Some(c))) {
                     let mut changed = object(cloud, "cloud")?.clone();
                     changed.insert("structureChanged".into(), Value::Bool(true));
                     updates.push(("cloud", Value::Object(changed)));
@@ -685,7 +683,7 @@ pub(crate) fn study_command(
                         &study,
                         vec![
                             ("name", json!(clean_name(&raw_name))),
-                            ("updatedAt", num(now)),
+                            ("updatedAt", js::number_to_json(now)),
                         ],
                     );
                     studies.commit(candidate)?;
@@ -700,7 +698,7 @@ pub(crate) fn study_command(
                     .unwrap_or_default();
                 let chapters = study.get("chapters").cloned().unwrap_or(Value::Null);
                 let id = studies.save_chapters(
-                    &format!("{} (copy)", js_slice(study_name, 113)),
+                    &format!("{} (copy)", js::slice_utf16(study_name, 113)),
                     &chapters,
                     None,
                 )?;
@@ -859,8 +857,8 @@ fn finish_studies(
         if study.as_object().is_some_and(|item| item.len() != 1)
             && let Some(id) = id_of(study)
         {
-            let body = js_json(study);
-            let units = utf16_len(&body) as i64;
+            let body = js::stringify(study);
+            let units = js::utf16_len(&body) as i64;
             encoded.insert(id.to_string(), (body, units));
         }
     }
@@ -876,10 +874,10 @@ fn finish_studies(
             text_units += *units as usize;
         } else {
             // No id (or unexpectedly unencoded): measure directly rather than undercount.
-            text_units += utf16_len(&js_json(study));
+            text_units += js::utf16_len(&js::stringify(study));
         }
     }
-    let overhead = utf16_len("{\"version\":2,\"items\":}");
+    let overhead = js::utf16_len("{\"version\":2,\"items\":}");
     if overhead + text_units > MAX_DOCUMENT {
         return Err(CoreError::new(
             "This study is too large to save automatically. Export a PGN copy.",
@@ -903,8 +901,8 @@ fn finish_studies(
                     .and_then(|id| encoded.get(id))
                     .cloned()
                     .unwrap_or_else(|| {
-                        let body = js_json(study);
-                        let units = utf16_len(&body) as i64;
+                        let body = js::stringify(study);
+                        let units = js::utf16_len(&body) as i64;
                         (body, units)
                     });
                 db.execute("INSERT INTO studies (id, body, position, textUnits) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(id) DO UPDATE SET body = excluded.body, position = excluded.position, textUnits = excluded.textUnits",

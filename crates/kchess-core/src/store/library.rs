@@ -73,7 +73,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
             now_arg(args, 2).and_then(|now| add_mistakes(host, db, key, color, now))
         }),
         "store.library.answerMistake" => str_arg(args, 0, "id").and_then(|id| {
-            let solved = truthy(args.get(1));
+            let solved = js::truthy(args.get(1));
             now_arg(args, 2).and_then(|now| answer_mistake(db, id, solved, now))
         }),
         "store.library.mistakeGames" => mistake_games(host, db),
@@ -110,7 +110,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         }),
         "store.library.reviewRepertoireLine" => str_arg(args, 0, "key").and_then(|key| {
             let line = str_arg(args, 1, "line")?;
-            let correct = truthy(args.get(2));
+            let correct = js::truthy(args.get(2));
             now_arg(args, 3)
                 .and_then(|now| review_repertoire_line(host, db, key, line, correct, now))
         }),
@@ -129,6 +129,8 @@ pub fn now_ms() -> Result<f64> {
     Ok(elapsed.as_millis() as f64)
 }
 
+/* ── Shared helpers (also used by the other storage modules) ── */
+
 /// An optional `now` argument: absent or null means `Date.now()`.
 pub fn now_arg(args: &[Value], i: usize) -> Result<f64> {
     match opt_number(args, i) {
@@ -140,15 +142,6 @@ pub fn now_arg(args: &[Value], i: usize) -> Result<f64> {
 /// A rusqlite error as the core's message.
 pub fn db_err(error: rusqlite::Error) -> CoreError {
     CoreError::new(error.to_string())
-}
-
-/// A JSON number: whole numbers without a fraction, as `JSON.stringify` writes them.
-pub fn num(n: f64) -> Value {
-    if n.fract() == 0.0 && n.abs() < 9.0e15 {
-        json!(n as i64)
-    } else {
-        serde_json::Number::from_f64(n).map_or(Value::Null, Value::Number)
-    }
 }
 
 /// `crypto.randomUUID()`: a version 4 UUID.
@@ -187,11 +180,6 @@ pub fn opt_str(args: &[Value], i: usize) -> Option<&str> {
 /// A required string argument.
 pub fn str_arg<'a>(args: &'a [Value], i: usize, name: &str) -> Result<&'a str> {
     opt_str(args, i).ok_or_else(|| CoreError::new(format!("{name} must be a string")))
-}
-
-/// `Boolean(v)` for an optional JSON value; absent is false.
-pub fn truthy(value: Option<&Value>) -> bool {
-    !js::falsy(value)
 }
 
 /// `array.slice(-n)`: the last `n` items.
@@ -239,7 +227,7 @@ module now; their bodies moved unchanged. The re-exports keep every
 
 pub use super::documents::read_document;
 pub(crate) use super::documents::{assert_replaceable, write_document};
-pub use super::json_codec::{clean_name, js_json, js_slice, utf16_len};
+pub use super::json_codec::clean_name;
 pub use super::library_import::{cached_library, library};
 pub(crate) use super::library_import::{
     read_joined, read_misses, read_mistakes, read_schedule_lines, until_after,
@@ -250,13 +238,13 @@ pub(crate) use super::studies::{check_based_on, id_of, spread, study_command};
 
 /// The size the archive had as one document, so its limit stays what it was.
 fn archive_overhead() -> i64 {
-    utf16_len(&js_json(&json!({ "version": 1, "games": [] }))) as i64
+    js::utf16_len(&js::stringify(&json!({ "version": 1, "games": [] }))) as i64
 }
 
 /// Add or replace a game; it becomes the most recent.
 pub(crate) fn write_game(db: &Connection, game: &Value) -> Result<()> {
     let id = game.get("id").and_then(Value::as_str).unwrap_or_default();
-    let body = js_json(game);
+    let body = js::stringify(game);
     let (count, bytes): (i64, i64) = db
         .query_row(
             "SELECT COUNT(*) AS count, COALESCE(SUM(length(body)), 0) AS bytes
@@ -266,7 +254,7 @@ pub(crate) fn write_game(db: &Connection, game: &Value) -> Result<()> {
         )
         .map_err(db_err)?;
     // Never silently discard older games to make room for a new one.
-    let size = archive_overhead() + bytes + count + utf16_len(&body) as i64;
+    let size = archive_overhead() + bytes + count + js::utf16_len(&body) as i64;
     if count + 1 > MAX_ARCHIVED_GAMES as i64 || size > MAX_DOCUMENT as i64 {
         return Err(CoreError::new(GAMES_FULL));
     }
@@ -309,7 +297,7 @@ fn add_mistakes(
 ) -> Result<Value> {
     let mut items = read_mistakes(db)?;
     let review = match super::reviews::read_review(host, db, review_key)? {
-        Some(review) if truthy(review.get("complete")) => review,
+        Some(review) if js::truthy(review.get("complete")) => review,
         _ => return Ok(json!({ "added": 0, "items": items })),
     };
     // A variant game's drills are played by its rules (Fairy-Stockfish reviewed it).
@@ -399,7 +387,7 @@ fn add_mistakes(
             "fen": position,
             "solution": solution,
             "judgment": judgment,
-            "dueAt": num(now),
+            "dueAt": js::number_to_json(now),
             "streak": 0,
             "attempts": 0,
         });
@@ -525,7 +513,7 @@ fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Value> {
             }
             at = js::to_number(game.get("startedAt"));
         }
-        entry.insert("playedAt".into(), num(at));
+        entry.insert("playedAt".into(), js::number_to_json(at));
         games.push((at, Value::Object(entry)));
     }
     games.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -562,9 +550,9 @@ fn answer_mistake(db: &Connection, id: &str, solved: bool, now: f64) -> Result<V
     items[index] = Value::Object(spread(
         &item,
         vec![
-            ("attempts", num(attempts)),
-            ("streak", num(streak)),
-            ("dueAt", num(now + wait)),
+            ("attempts", js::number_to_json(attempts)),
+            ("streak", js::number_to_json(streak)),
+            ("dueAt", js::number_to_json(now + wait)),
         ],
     ));
     write_mistakes(db, items.clone())?;
@@ -692,7 +680,7 @@ fn record_repertoire_miss(host: &dyn Host, db: &Connection, key: &str, fen: &str
         .as_object_mut()
         .ok_or_else(|| CoreError::new("repertoire table must be an object"))?;
     let count = table.get(fen).and_then(Value::as_f64).unwrap_or(0.0) + 1.0;
-    table.insert(fen.to_string(), num(count));
+    table.insert(fen.to_string(), js::number_to_json(count));
     let misses = Value::Object(misses);
     write_misses(db, &misses)?;
     Ok(misses)
@@ -728,7 +716,7 @@ fn restore_repertoire_misses(
             .filter(|count| count.is_finite() && *count > 0.0)
             .ok_or_else(|| CoreError::new("a miss count must be a positive number"))?;
         let now = table.get(fen).and_then(Value::as_f64).unwrap_or(0.0);
-        table.insert(fen.clone(), num(now + count));
+        table.insert(fen.clone(), js::number_to_json(now + count));
     }
     let misses = Value::Object(misses);
     write_misses(db, &misses)?;
@@ -782,22 +770,7 @@ mod tests {
     }
 
     #[test]
-    fn stored_text_matches_javascript_stringify() {
-        let value = json!({ "b": 1.0, "a": [0.5, null, true, "é\n"], "n": -2 });
-        assert_eq!(
-            js_json(&value),
-            r#"{"b":1,"a":[0.5,null,true,"é\n"],"n":-2}"#
-        );
-        assert_eq!(num(3.0), json!(3));
-        assert_eq!(num(0.25), json!(0.25));
-    }
-
-    #[test]
-    fn lengths_and_slices_count_utf16_units() {
-        assert_eq!(utf16_len("a😀"), 3);
-        // The emoji takes two units, so a cut at three keeps only the letters before it.
-        assert_eq!(js_slice("ab😀cd", 3), "ab");
-        assert_eq!(js_slice("ab😀cd", 4), "ab😀");
+    fn study_names_are_trimmed_and_cut() {
         assert_eq!(clean_name("  Name  "), "Name");
         assert_eq!(clean_name(&"x".repeat(200)).len(), 120);
     }
@@ -979,7 +952,7 @@ mod tests {
     #[test]
     fn study_migration_preserves_chapters_and_rolls_back_failed_inserts() {
         let db = study_db();
-        let body = js_json(
+        let body = js::stringify(
             &json!({"version":2,"items":[{"id":"s","name":"Study","pgn":"1. e4 *","updatedAt":1,
             "chapters":[{"id":"c","name":"Chapter","pgn":"1. e4 {Keep} e5 (1... c5 $1) *"}]}]}),
         );
@@ -1156,7 +1129,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            js_json(&Value::Object(merged)),
+            js::stringify(&Value::Object(merged)),
             r#"{"id":"s","name":"new","pgn":"q","updatedAt":1}"#
         );
     }

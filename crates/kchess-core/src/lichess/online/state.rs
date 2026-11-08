@@ -260,12 +260,3 @@ pub(crate) fn aborted(message: &str) -> Failure {
 pub(crate) fn core(message: impl Into<String>) -> Failure {
     Failure::Core(CoreError::new(message))
 }
-
-/// `Number(x)` as JavaScript writes it into a URL or form: integers without a fraction.
-pub fn js_number(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 1e15 {
-        format!("{}", value as i64)
-    } else {
-        format!("{value}")
-    }
-}

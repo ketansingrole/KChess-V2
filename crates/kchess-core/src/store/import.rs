@@ -388,15 +388,9 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
         }),
     );
     stored.insert("soundEnabled".into(), json!(sound_enabled));
-    // `Math.min(1, x)`: NaN stays NaN (Rust's `min` would drop it).
-    let volume = volume / 100.0;
     stored.insert(
         "soundVolume".into(),
-        number_json(if volume.is_nan() {
-            volume
-        } else {
-            volume.min(1.0)
-        }),
+        js::number_to_json(js::min(1.0, volume / 100.0)),
     );
     stored.insert("enginePath".into(), json!(engine_path));
     let settings = match normalize_settings(&stored) {
@@ -486,7 +480,7 @@ fn legacy_game(row: &[SqlValue]) -> Value {
     let value = |index: usize| sql_json(row[index].clone());
     let optional_number = |index: usize| match &row[index] {
         SqlValue::Null => Value::Null,
-        other => number_json(js::to_number(Some(&sql_json(other.clone())))),
+        other => js::number_to_json(js::to_number(Some(&sql_json(other.clone())))),
     };
     let optional_text = |index: usize| match &row[index] {
         SqlValue::Null => Value::Null,
@@ -500,8 +494,8 @@ fn legacy_game(row: &[SqlValue]) -> Value {
     json!({
         "id": text(0),
         "account": text(1),
-        "createdAt": number_json(js::to_number(Some(&value(2)))),
-        "lastMoveAt": number_json(js::to_number(Some(&value(2)))),
+        "createdAt": js::number_to_json(js::to_number(Some(&value(2)))),
+        "lastMoveAt": js::number_to_json(js::to_number(Some(&value(2)))),
         "rated": json!(!js::falsy(Some(&value(3)))),
         "speed": text(4),
         "perf": text(5),
@@ -642,7 +636,10 @@ pub fn normalize_settings(stored: &Map<String, Value>) -> Result<Map<String, Val
     if let Some(volume) = settings.get("soundVolume").and_then(Value::as_f64)
         && volume > 1.0
     {
-        settings.insert("soundVolume".into(), number_json((volume / 100.0).min(1.0)));
+        settings.insert(
+            "soundVolume".into(),
+            js::number_to_json((volume / 100.0).min(1.0)),
+        );
     }
     Ok(settings)
 }
@@ -671,13 +668,8 @@ fn sql_json(value: SqlValue) -> Value {
     match value {
         SqlValue::Null => Value::Null,
         SqlValue::Integer(number) => json!(number),
-        SqlValue::Real(number) => number_json(number),
+        SqlValue::Real(number) => js::number_to_json(number),
         SqlValue::Text(text) => json!(text),
         SqlValue::Blob(_) => Value::Null,
     }
-}
-
-/// A number as JSON; NaN and infinities become null, as `JSON.stringify` writes them.
-fn number_json(number: f64) -> Value {
-    serde_json::Number::from_f64(number).map_or(Value::Null, Value::Number)
 }
