@@ -1,0 +1,66 @@
+--- tooling/xtask/src/package/linux.rs
++++ replace appimage -> Result<PathBuf> with Ok(Default::default())
+@@ -52,62 +52,17 @@
+     copy_program(&built.cli, &folder.join("kchess-cli"))?;
+     copy_voice(built, folder)?;
+     std::fs::copy(&built.licenses, folder.join("THIRD_PARTY_LICENSES.txt"))
+         .map_err(|cause| cause.to_string())?;
+     Ok(())
+ }
+ 
+ fn appimage(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<PathBuf> {
+-    let tool = root().join("target/package/appimagetool-x86_64.AppImage");
+-    pinned(
+-        "appimagetool",
+-        APPIMAGETOOL,
+-        APPIMAGETOOL_SHA256,
+-        &tool,
+-        download,
+-    )?;
+-    super::executable(&tool)?;
+-    let runtime = root().join("target/package/appimage-runtime-x86_64");
+-    pinned(
+-        "the AppImage runtime",
+-        APPIMAGE_RUNTIME,
+-        APPIMAGE_RUNTIME_SHA256,
+-        &runtime,
+-        download,
+-    )?;
+-    let dir = stage.join("AppDir");
+-    stage_folder(identity, built, &dir)?;
+-    let icon = format!("{}.png", identity.linux_exe);
+-    std::fs::copy(root().join("apps/gpui/build/icon.png"), dir.join(&icon))
+-        .map_err(|cause| cause.to_string())?;
+-    std::os::unix::fs::symlink(&icon, dir.join(".DirIcon")).map_err(|cause| cause.to_string())?;
+-    std::fs::write(
+-        dir.join(format!("{}.desktop", identity.linux_exe)),
+-        desktop_entry(identity, identity.linux_exe),
+-    )
+-    .map_err(|cause| cause.to_string())?;
+-    let app_run = dir.join("AppRun");
+-    std::fs::write(
+-        &app_run,
+-        format!(
+-            "#!/bin/sh\nHERE=\"$(dirname \"$(readlink -f \"$0\")\")\"\nexec \"$HERE/{}\" \"$@\"\n",
+-            identity.linux_exe
+-        ),
+-    )
+-    .map_err(|cause| cause.to_string())?;
+-    super::executable(&app_run)?;
+-    let image = out.join(format!(
+-        "{}-{}-linux-x86_64.AppImage",
+-        identity.prefix(),
+-        identity.version
+-    ));
+-    say("Making the AppImage…");
+-    run_with(&mut appimagetool(&tool, &runtime, &dir, &image))?;
+-    Ok(image)
++    Ok(Default::default()) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// appimagetool making `image` from `dir` around the pinned `runtime`, so it downloads nothing.
+ fn appimagetool(tool: &Path, runtime: &Path, dir: &Path, image: &Path) -> Command {
+     let mut command = Command::new(tool);
+     command
+         .arg("--no-appstream")
+         .arg("--runtime-file")

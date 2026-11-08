@@ -144,17 +144,22 @@ fn check(releases: impl Fn(&str) -> Result<String>) -> Result<Option<String>> {
     Ok((!behind.is_empty()).then(|| report(&behind)))
 }
 
-pub fn run(args: &[String]) -> Result {
+/// The file `--report` names, once `--check` is given.
+fn report_file(args: &[String]) -> Result<Option<&String>> {
     if !args.iter().any(|arg| arg == "--check") {
         return Err("pins needs --check.".into());
     }
-    let report_file = match args.iter().position(|arg| arg == "--report") {
-        Some(at) => Some(
-            args.get(at + 1)
-                .ok_or_else(|| "--report needs the file to write.".to_string())?,
-        ),
-        None => None,
-    };
+    match args.iter().position(|arg| arg == "--report") {
+        Some(at) => args
+            .get(at + 1)
+            .map(Some)
+            .ok_or_else(|| "--report needs the file to write.".to_string()),
+        None => Ok(None),
+    }
+}
+
+pub fn run(args: &[String]) -> Result {
+    let report_file = report_file(args)?;
     let releases = |repo: &str| {
         output(
             "gh",
@@ -207,6 +212,8 @@ mod tests {
         assert_eq!(version("continuous"), None);
         assert_eq!(version("1.9-beta"), None);
         assert_eq!(version("1..9"), None);
+        // `+1` parses as a number but is no release tag.
+        assert_eq!(version("1.+9"), None);
         assert!(version("1.10.0") > version("1.9.1"));
     }
 
@@ -317,9 +324,19 @@ mod tests {
     }
 
     #[test]
-    fn the_command_needs_check() {
+    fn the_command_needs_check_and_takes_a_report_file() {
+        let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
         assert_eq!(run(&[]), Err("pins needs --check.".into()));
-        let args = ["--check".to_string(), "--report".to_string()];
-        assert_eq!(run(&args), Err("--report needs the file to write.".into()));
+        assert_eq!(
+            report_file(&args(&["--report", "pins.md"])),
+            Err("pins needs --check.".into())
+        );
+        assert_eq!(report_file(&args(&["--check"])), Ok(None));
+        let given = args(&["--check", "--report", "pins.md"]);
+        assert_eq!(report_file(&given), Ok(Some(&"pins.md".to_string())));
+        assert_eq!(
+            report_file(&args(&["--check", "--report"])),
+            Err("--report needs the file to write.".into())
+        );
     }
 }

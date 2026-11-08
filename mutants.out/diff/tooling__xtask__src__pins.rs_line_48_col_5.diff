@@ -1,0 +1,23 @@
+--- tooling/xtask/src/pins.rs
++++ replace release_tag -> Option<&str> with None
+@@ -40,19 +40,17 @@
+ struct Release {
+     tag: String,
+     page: String,
+     digest: Option<String>,
+ }
+ 
+ /// The release tag in a GitHub download URL (`…/releases/download/<tag>/<file>`).
+ fn release_tag(url: &str) -> Option<&str> {
+-    let (_, rest) = url.split_once("/releases/download/")?;
+-    let (tag, file) = rest.split_once('/')?;
+-    (!tag.is_empty() && !file.is_empty()).then_some(tag)
++    None /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// The file name a download URL ends with.
+ fn file_name(url: &str) -> &str {
+     url.rsplit('/').next().unwrap_or(url)
+ }
+ 
+ /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags

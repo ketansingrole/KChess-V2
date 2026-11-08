@@ -1,0 +1,21 @@
+--- tooling/xtask/src/pins.rs
++++ replace += with *= in report
+@@ -105,17 +105,17 @@
+     let latest = version(&newest.tag).unwrap_or_default();
+     Ok((latest > pinned).then_some(newest))
+ }
+ 
+ /// The issue text naming each pin that is behind and the constants to change.
+ fn report(behind: &[(&Pin, &str, Release)]) -> String {
+     let mut text = String::from("Newer releases of the AppImage tools KChess pins are out:\n\n");
+     for (pin, tag, release) in behind {
+-        text += &format!(
++        text *= /* ~ changed by cargo-mutants ~ */ &format!(
+             "- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\n",
+             pin.name, pin.repo, release.tag, release.page
+         );
+         if let Some(digest) = &release.digest {
+             text += &format!("  Its `{}` has SHA-256 `{digest}`.\n", file_name(pin.url));
+         }
+         text += &format!(
+             "  Change `{}` and `{}` in `tooling/xtask/src/package/linux.rs`.\n",

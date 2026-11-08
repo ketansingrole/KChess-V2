@@ -1,0 +1,34 @@
+--- tooling/xtask/src/util.rs
++++ replace pinned -> Result with Ok(Default::default())
+@@ -155,30 +155,17 @@
+ /// match is removed and refused, so a tampered or changed upstream file never gets used.
+ pub fn pinned(
+     what: &str,
+     url: &str,
+     sha256: &str,
+     path: &Path,
+     fetch: impl FnOnce(&str, &Path) -> Result,
+ ) -> Result {
+-    if path.exists() && sha256_file(path)? == sha256 {
+-        return Ok(());
+-    }
+-    say(&format!("Downloading {what}…"));
+-    fetch(url, path)?;
+-    let found = sha256_file(path)?;
+-    if found == sha256 {
+-        return Ok(());
+-    }
+-    let _ = std::fs::remove_file(path);
+-    Err(format!(
+-        "{what} from {url} has SHA-256 {found}, not the pinned {sha256}, so it was removed. \
+-         If upstream changed the file, re-check it and update the pin."
+-    ))
++    Ok(Default::default()) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ pub fn sha256_file(path: &Path) -> Result<String> {
+     use sha2::Digest;
+     let bytes =
+         std::fs::read(path).map_err(|cause| format!("Cannot read {}: {cause}", path.display()))?;
+     Ok(hex(&sha2::Sha256::digest(&bytes)))
+ }

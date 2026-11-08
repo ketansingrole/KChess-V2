@@ -1,0 +1,21 @@
+--- tooling/xtask/src/pins.rs
++++ delete ! in run
+@@ -140,17 +140,17 @@
+             Some(release) => behind.push((pin, tag, release)),
+             None => say(&format!("{} is at the newest release, {tag}.", pin.name)),
+         }
+     }
+     Ok((!behind.is_empty()).then(|| report(&behind)))
+ }
+ 
+ pub fn run(args: &[String]) -> Result {
+-    if !args.iter().any(|arg| arg == "--check") {
++    if  /* ~ changed by cargo-mutants ~ */args.iter().any(|arg| arg == "--check") {
+         return Err("pins needs --check.".into());
+     }
+     let report_file = match args.iter().position(|arg| arg == "--report") {
+         Some(at) => Some(
+             args.get(at + 1)
+                 .ok_or_else(|| "--report needs the file to write.".to_string())?,
+         ),
+         None => None,

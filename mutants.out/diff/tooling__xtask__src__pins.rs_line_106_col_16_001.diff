@@ -1,0 +1,21 @@
+--- tooling/xtask/src/pins.rs
++++ replace > with < in newer
+@@ -98,17 +98,17 @@
+         })
+         .ok_or_else(|| unreadable("it names no versioned release"))
+ }
+ 
+ /// The newer release when `newest` is ahead of the pinned `tag`.
+ fn newer(tag: &str, newest: Release) -> Result<Option<Release>> {
+     let pinned = version(tag).ok_or_else(|| format!("The pinned release {tag} is no version."))?;
+     let latest = version(&newest.tag).unwrap_or_default();
+-    Ok((latest > pinned).then_some(newest))
++    Ok((latest < /* ~ changed by cargo-mutants ~ */ pinned).then_some(newest))
+ }
+ 
+ /// The issue text naming each pin that is behind and the constants to change.
+ fn report(behind: &[(&Pin, &str, Release)]) -> String {
+     let mut text = String::from("Newer releases of the AppImage tools KChess pins are out:\n\n");
+     for (pin, tag, release) in behind {
+         text += &format!(
+             "- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\n",

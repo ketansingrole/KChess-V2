@@ -57,23 +57,37 @@ fn stage_folder(identity: &Identity, built: &Built, folder: &Path) -> Result {
 }
 
 fn appimage(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<PathBuf> {
-    let tool = root().join("target/package/appimagetool-x86_64.AppImage");
-    pinned(
-        "appimagetool",
-        APPIMAGETOOL,
-        APPIMAGETOOL_SHA256,
-        &tool,
-        download,
-    )?;
+    let tools = AppImageTools {
+        cache: root().join("target/package"),
+        appimagetool: (APPIMAGETOOL, APPIMAGETOOL_SHA256),
+        runtime: (APPIMAGE_RUNTIME, APPIMAGE_RUNTIME_SHA256),
+        fetch: download,
+    };
+    appimage_with(identity, built, stage, out, &tools)
+}
+
+/// Where the AppImage step keeps its pinned tools, each as (URL, SHA-256), and how it fetches them.
+struct AppImageTools<F> {
+    cache: PathBuf,
+    appimagetool: (&'static str, &'static str),
+    runtime: (&'static str, &'static str),
+    fetch: F,
+}
+
+fn appimage_with(
+    identity: &Identity,
+    built: &Built,
+    stage: &Path,
+    out: &Path,
+    tools: &AppImageTools<impl Fn(&str, &Path) -> Result>,
+) -> Result<PathBuf> {
+    let tool = tools.cache.join("appimagetool-x86_64.AppImage");
+    let (url, sha256) = tools.appimagetool;
+    pinned("appimagetool", url, sha256, &tool, &tools.fetch)?;
     super::executable(&tool)?;
-    let runtime = root().join("target/package/appimage-runtime-x86_64");
-    pinned(
-        "the AppImage runtime",
-        APPIMAGE_RUNTIME,
-        APPIMAGE_RUNTIME_SHA256,
-        &runtime,
-        download,
-    )?;
+    let runtime = tools.cache.join("appimage-runtime-x86_64");
+    let (url, sha256) = tools.runtime;
+    pinned("the AppImage runtime", url, sha256, &runtime, &tools.fetch)?;
     let dir = stage.join("AppDir");
     stage_folder(identity, built, &dir)?;
     let icon = format!("{}.png", identity.linux_exe);
@@ -415,6 +429,84 @@ pub fn package_snap(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn digest(bytes: &[u8]) -> &'static str {
+        use sha2::Digest;
+        crate::util::hex(&sha2::Sha256::digest(bytes)).leak()
+    }
+
+    /// The AppImage step fetches both pinned tools into its cache and runs appimagetool on the
+    /// staged app with the pinned runtime: a stand-in appimagetool records its arguments and
+    /// makes the "image" from the runtime it was handed.
+    #[test]
+    fn the_appimage_is_made_around_the_pinned_runtime() {
+        let scratch = std::env::temp_dir().join(format!("xtask-appimage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let built_dir = scratch.join("built");
+        std::fs::create_dir_all(built_dir.join("voice")).unwrap();
+        let file = |name: &str| {
+            let path = built_dir.join(name);
+            std::fs::write(&path, name).unwrap();
+            path
+        };
+        let built = Built {
+            app: file("app"),
+            service: file("service"),
+            cli: file("cli"),
+            stockfish: file("stockfish"),
+            fairy: file("fairy"),
+            voice: built_dir.join("voice"),
+            licenses: file("licenses"),
+        };
+        let tool = b"#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$5.args\"\ncp \"$3\" \"$5\"\n";
+        let runtime = b"the pinned runtime";
+        let tools = AppImageTools {
+            cache: scratch.join("cache"),
+            appimagetool: ("https://example.test/appimagetool", digest(tool)),
+            runtime: ("https://example.test/runtime", digest(runtime)),
+            fetch: |url: &str, to: &Path| -> Result {
+                std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+                let bytes: &[u8] = if url.ends_with("/runtime") {
+                    runtime
+                } else {
+                    tool
+                };
+                std::fs::write(to, bytes).map_err(|cause| cause.to_string())
+            },
+        };
+        let identity = Identity::new("2026.11.9".into());
+        let (stage, out) = (scratch.join("stage"), scratch.join("out"));
+        std::fs::create_dir_all(&out).unwrap();
+        let image = appimage_with(&identity, &built, &stage, &out, &tools).unwrap();
+
+        assert_eq!(image, out.join("KChess-2026.11.9-linux-x86_64.AppImage"));
+        assert_eq!(std::fs::read(&image).unwrap(), runtime);
+        let args = std::fs::read_to_string(image.with_extension("AppImage.args")).unwrap();
+        let cached = tools.cache.join("appimage-runtime-x86_64");
+        let app_dir = stage.join("AppDir");
+        assert_eq!(
+            args,
+            format!(
+                "--no-appstream\n--runtime-file\n{}\n{}\n{}\n",
+                cached.display(),
+                app_dir.display(),
+                image.display()
+            )
+        );
+        for name in [
+            "AppRun",
+            "kchess",
+            "kchess.desktop",
+            "kchess.png",
+            "stockfish",
+        ] {
+            assert!(
+                app_dir.join(name).exists(),
+                "{name} is missing from the AppDir"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
 
     #[test]
     fn appimagetool_embeds_the_pinned_runtime() {

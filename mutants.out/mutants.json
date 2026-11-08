@@ -1,0 +1,1634 @@
+[
+  {
+    "diff": "--- tooling/xtask/src/main.rs\n+++ replace main -> ExitCode with Default::default()\n@@ -69,64 +69,10 @@\n                         --mas the Mac App Store's .pkg (apps/gpui/dist/mas)\n   pins --check [--report <file>]\n                         Fail when appimagetool or the AppImage runtime has a newer release than\n                         its pin (package/linux.rs), naming both; the weekly Pins workflow\n                         runs it (Unix)\n \";\n \n fn main() -> ExitCode {\n-    let args: Vec<String> = std::env::args().skip(1).collect();\n-    let rest = args.get(1..).unwrap_or_default();\n-    let result = match args.first().map(String::as_str) {\n-        Some(\"app\") => app::run(rest),\n-        Some(\"bench\") => bench::run(rest),\n-        Some(\"check\") => check::full(),\n-        Some(\"check-fast\") => check::fast(),\n-        Some(\"mutants\") => mutants::run(rest),\n-        Some(\"pre-push\") => check::pre_push(),\n-        Some(\"install-hooks\") => check::install_hooks(),\n-        Some(\"release-version\") => release::next(),\n-        Some(\"release-verify\") => release::verify_release(),\n-        Some(\"attach-draft-release\") => release::attach_draft(std::path::Path::new(\n-            rest.first().map_or(\"packages\", String::as_str),\n-        )),\n-        Some(\"update-key\") => match rest.first() {\n-            Some(path) => update_key::generate(std::path::Path::new(path)),\n-            None => Err(\"update-key needs the file to write the secret key to.\".into()),\n-        },\n-        Some(\"sign-sums\") => match rest.first() {\n-            Some(path) => update_key::sign(std::path::Path::new(path)),\n-            None => Err(\"sign-sums needs the checksums file.\".into()),\n-        },\n-        Some(\"download-release-snap\") => release::download_snap(),\n-        Some(\"electron-step\") => electron_step::write(std::path::Path::new(\n-            rest.first().map_or(\"packages\", String::as_str),\n-        )),\n-        Some(\"notices\") => licenses::check_notices(),\n-        Some(\"app-icon\") => app_icon::write(),\n-        Some(\"icons\") if rest.iter().any(|arg| arg == \"--check\") => icons::check(),\n-        Some(\"icons\") => icons::write(),\n-        Some(\"licenses\") => match rest.first() {\n-            Some(path) => licenses::write(std::path::Path::new(path)),\n-            None => Err(\"licenses needs the file to write.\".into()),\n-        },\n-        Some(\"voice-runtime\") => {\n-            voice::stage(rest.first().map_or(\"release\", String::as_str)).map(|_| ())\n-        }\n-        Some(\"fairy-stockfish\") => fairy::build().map(|_| ()),\n-        Some(\"package\") => package::run(rest),\n-        #[cfg(unix)]\n-        Some(\"pins\") => pins::run(rest),\n-        None | Some(\"help\" | \"--help\" | \"-h\") => {\n-            print!(\"{HELP}\");\n-            Ok(())\n-        }\n-        Some(other) => Err(format!(\"Unknown command {other}. Run `cargo xtask help`.\")),\n-    };\n-    match result {\n-        Ok(()) => ExitCode::SUCCESS,\n-        Err(cause) => {\n-            eprintln!(\"[xtask] {cause}\");\n-            ExitCode::FAILURE\n-        }\n-    }\n+    Default::default() /* ~ changed by cargo-mutants ~ */\n }\n",
+    "file": "tooling/xtask/src/main.rs",
+    "function": {
+      "function_name": "main",
+      "return_type": "-> ExitCode",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 132
+        },
+        "start": {
+          "column": 1,
+          "line": 76
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/main.rs:77:5: replace main -> ExitCode with Default::default()",
+    "package": "xtask",
+    "replacement": "Default::default()",
+    "span": {
+      "end": {
+        "column": 6,
+        "line": 131
+      },
+      "start": {
+        "column": 5,
+        "line": 77
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace release_tag -> Option<&str> with None\n@@ -40,19 +40,17 @@\n struct Release {\n     tag: String,\n     page: String,\n     digest: Option<String>,\n }\n \n /// The release tag in a GitHub download URL (`…/releases/download/<tag>/<file>`).\n fn release_tag(url: &str) -> Option<&str> {\n-    let (_, rest) = url.split_once(\"/releases/download/\")?;\n-    let (tag, file) = rest.split_once('/')?;\n-    (!tag.is_empty() && !file.is_empty()).then_some(tag)\n+    None /* ~ changed by cargo-mutants ~ */\n }\n \n /// The file name a download URL ends with.\n fn file_name(url: &str) -> &str {\n     url.rsplit('/').next().unwrap_or(url)\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "release_tag",
+      "return_type": "-> Option<&str>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 51
+        },
+        "start": {
+          "column": 1,
+          "line": 46
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:48:5: replace release_tag -> Option<&str> with None",
+    "package": "xtask",
+    "replacement": "None",
+    "span": {
+      "end": {
+        "column": 57,
+        "line": 50
+      },
+      "start": {
+        "column": 5,
+        "line": 48
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace release_tag -> Option<&str> with Some(\"\")\n@@ -40,19 +40,17 @@\n struct Release {\n     tag: String,\n     page: String,\n     digest: Option<String>,\n }\n \n /// The release tag in a GitHub download URL (`…/releases/download/<tag>/<file>`).\n fn release_tag(url: &str) -> Option<&str> {\n-    let (_, rest) = url.split_once(\"/releases/download/\")?;\n-    let (tag, file) = rest.split_once('/')?;\n-    (!tag.is_empty() && !file.is_empty()).then_some(tag)\n+    Some(\"\") /* ~ changed by cargo-mutants ~ */\n }\n \n /// The file name a download URL ends with.\n fn file_name(url: &str) -> &str {\n     url.rsplit('/').next().unwrap_or(url)\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "release_tag",
+      "return_type": "-> Option<&str>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 51
+        },
+        "start": {
+          "column": 1,
+          "line": 46
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:48:5: replace release_tag -> Option<&str> with Some(\"\")",
+    "package": "xtask",
+    "replacement": "Some(\"\")",
+    "span": {
+      "end": {
+        "column": 57,
+        "line": 50
+      },
+      "start": {
+        "column": 5,
+        "line": 48
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace release_tag -> Option<&str> with Some(\"xyzzy\")\n@@ -40,19 +40,17 @@\n struct Release {\n     tag: String,\n     page: String,\n     digest: Option<String>,\n }\n \n /// The release tag in a GitHub download URL (`…/releases/download/<tag>/<file>`).\n fn release_tag(url: &str) -> Option<&str> {\n-    let (_, rest) = url.split_once(\"/releases/download/\")?;\n-    let (tag, file) = rest.split_once('/')?;\n-    (!tag.is_empty() && !file.is_empty()).then_some(tag)\n+    Some(\"xyzzy\") /* ~ changed by cargo-mutants ~ */\n }\n \n /// The file name a download URL ends with.\n fn file_name(url: &str) -> &str {\n     url.rsplit('/').next().unwrap_or(url)\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "release_tag",
+      "return_type": "-> Option<&str>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 51
+        },
+        "start": {
+          "column": 1,
+          "line": 46
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:48:5: replace release_tag -> Option<&str> with Some(\"xyzzy\")",
+    "package": "xtask",
+    "replacement": "Some(\"xyzzy\")",
+    "span": {
+      "end": {
+        "column": 57,
+        "line": 50
+      },
+      "start": {
+        "column": 5,
+        "line": 48
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace && with || in release_tag\n@@ -42,17 +42,17 @@\n     page: String,\n     digest: Option<String>,\n }\n \n /// The release tag in a GitHub download URL (`…/releases/download/<tag>/<file>`).\n fn release_tag(url: &str) -> Option<&str> {\n     let (_, rest) = url.split_once(\"/releases/download/\")?;\n     let (tag, file) = rest.split_once('/')?;\n-    (!tag.is_empty() && !file.is_empty()).then_some(tag)\n+    (!tag.is_empty() || /* ~ changed by cargo-mutants ~ */ !file.is_empty()).then_some(tag)\n }\n \n /// The file name a download URL ends with.\n fn file_name(url: &str) -> &str {\n     url.rsplit('/').next().unwrap_or(url)\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "release_tag",
+      "return_type": "-> Option<&str>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 51
+        },
+        "start": {
+          "column": 1,
+          "line": 46
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:50:22: replace && with || in release_tag",
+    "package": "xtask",
+    "replacement": "||",
+    "span": {
+      "end": {
+        "column": 24,
+        "line": 50
+      },
+      "start": {
+        "column": 22,
+        "line": 50
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ delete ! in release_tag\n@@ -42,17 +42,17 @@\n     page: String,\n     digest: Option<String>,\n }\n \n /// The release tag in a GitHub download URL (`…/releases/download/<tag>/<file>`).\n fn release_tag(url: &str) -> Option<&str> {\n     let (_, rest) = url.split_once(\"/releases/download/\")?;\n     let (tag, file) = rest.split_once('/')?;\n-    (!tag.is_empty() && !file.is_empty()).then_some(tag)\n+    ( /* ~ changed by cargo-mutants ~ */tag.is_empty() && !file.is_empty()).then_some(tag)\n }\n \n /// The file name a download URL ends with.\n fn file_name(url: &str) -> &str {\n     url.rsplit('/').next().unwrap_or(url)\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "release_tag",
+      "return_type": "-> Option<&str>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 51
+        },
+        "start": {
+          "column": 1,
+          "line": 46
+        }
+      }
+    },
+    "genre": "UnaryOperator",
+    "name": "tooling/xtask/src/pins.rs:50:6: delete ! in release_tag",
+    "package": "xtask",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 7,
+        "line": 50
+      },
+      "start": {
+        "column": 6,
+        "line": 50
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ delete ! in release_tag\n@@ -42,17 +42,17 @@\n     page: String,\n     digest: Option<String>,\n }\n \n /// The release tag in a GitHub download URL (`…/releases/download/<tag>/<file>`).\n fn release_tag(url: &str) -> Option<&str> {\n     let (_, rest) = url.split_once(\"/releases/download/\")?;\n     let (tag, file) = rest.split_once('/')?;\n-    (!tag.is_empty() && !file.is_empty()).then_some(tag)\n+    (!tag.is_empty() &&  /* ~ changed by cargo-mutants ~ */file.is_empty()).then_some(tag)\n }\n \n /// The file name a download URL ends with.\n fn file_name(url: &str) -> &str {\n     url.rsplit('/').next().unwrap_or(url)\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "release_tag",
+      "return_type": "-> Option<&str>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 51
+        },
+        "start": {
+          "column": 1,
+          "line": 46
+        }
+      }
+    },
+    "genre": "UnaryOperator",
+    "name": "tooling/xtask/src/pins.rs:50:25: delete ! in release_tag",
+    "package": "xtask",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 26,
+        "line": 50
+      },
+      "start": {
+        "column": 25,
+        "line": 50
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace file_name -> &str with \"\"\n@@ -47,17 +47,17 @@\n fn release_tag(url: &str) -> Option<&str> {\n     let (_, rest) = url.split_once(\"/releases/download/\")?;\n     let (tag, file) = rest.split_once('/')?;\n     (!tag.is_empty() && !file.is_empty()).then_some(tag)\n }\n \n /// The file name a download URL ends with.\n fn file_name(url: &str) -> &str {\n-    url.rsplit('/').next().unwrap_or(url)\n+    \"\" /* ~ changed by cargo-mutants ~ */\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n /// (`continuous`, `old`) are not versions.\n fn version(tag: &str) -> Option<Vec<u64>> {\n     let tag = tag.strip_prefix('v').unwrap_or(tag);\n     tag.split('.')\n         .map(|part| {\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "file_name",
+      "return_type": "-> &str",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 56
+        },
+        "start": {
+          "column": 1,
+          "line": 53
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:55:5: replace file_name -> &str with \"\"",
+    "package": "xtask",
+    "replacement": "\"\"",
+    "span": {
+      "end": {
+        "column": 42,
+        "line": 55
+      },
+      "start": {
+        "column": 5,
+        "line": 55
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace file_name -> &str with \"xyzzy\"\n@@ -47,17 +47,17 @@\n fn release_tag(url: &str) -> Option<&str> {\n     let (_, rest) = url.split_once(\"/releases/download/\")?;\n     let (tag, file) = rest.split_once('/')?;\n     (!tag.is_empty() && !file.is_empty()).then_some(tag)\n }\n \n /// The file name a download URL ends with.\n fn file_name(url: &str) -> &str {\n-    url.rsplit('/').next().unwrap_or(url)\n+    \"xyzzy\" /* ~ changed by cargo-mutants ~ */\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n /// (`continuous`, `old`) are not versions.\n fn version(tag: &str) -> Option<Vec<u64>> {\n     let tag = tag.strip_prefix('v').unwrap_or(tag);\n     tag.split('.')\n         .map(|part| {\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "file_name",
+      "return_type": "-> &str",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 56
+        },
+        "start": {
+          "column": 1,
+          "line": 53
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:55:5: replace file_name -> &str with \"xyzzy\"",
+    "package": "xtask",
+    "replacement": "\"xyzzy\"",
+    "span": {
+      "end": {
+        "column": 42,
+        "line": 55
+      },
+      "start": {
+        "column": 5,
+        "line": 55
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace version -> Option<Vec<u64>> with None\n@@ -53,24 +53,17 @@\n /// The file name a download URL ends with.\n fn file_name(url: &str) -> &str {\n     url.rsplit('/').next().unwrap_or(url)\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n /// (`continuous`, `old`) are not versions.\n fn version(tag: &str) -> Option<Vec<u64>> {\n-    let tag = tag.strip_prefix('v').unwrap_or(tag);\n-    tag.split('.')\n-        .map(|part| {\n-            (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))\n-                .then(|| part.parse().ok())\n-                .flatten()\n-        })\n-        .collect()\n+    None /* ~ changed by cargo-mutants ~ */\n }\n \n /// The newest published, versioned release in GitHub's answer to `repos/<repo>/releases`.\n fn newest(answer: &str, file: &str) -> Result<Release> {\n     let unreadable = |why: &str| format!(\"GitHub's list of releases is unreadable: {why}.\");\n     let releases: serde_json::Value =\n         serde_json::from_str(answer).map_err(|cause| unreadable(&cause.to_string()))?;\n     let releases = releases\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "version",
+      "return_type": "-> Option<Vec<u64>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 69
+        },
+        "start": {
+          "column": 1,
+          "line": 58
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:61:5: replace version -> Option<Vec<u64>> with None",
+    "package": "xtask",
+    "replacement": "None",
+    "span": {
+      "end": {
+        "column": 19,
+        "line": 68
+      },
+      "start": {
+        "column": 5,
+        "line": 61
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace version -> Option<Vec<u64>> with Some(vec![])\n@@ -53,24 +53,17 @@\n /// The file name a download URL ends with.\n fn file_name(url: &str) -> &str {\n     url.rsplit('/').next().unwrap_or(url)\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n /// (`continuous`, `old`) are not versions.\n fn version(tag: &str) -> Option<Vec<u64>> {\n-    let tag = tag.strip_prefix('v').unwrap_or(tag);\n-    tag.split('.')\n-        .map(|part| {\n-            (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))\n-                .then(|| part.parse().ok())\n-                .flatten()\n-        })\n-        .collect()\n+    Some(vec![]) /* ~ changed by cargo-mutants ~ */\n }\n \n /// The newest published, versioned release in GitHub's answer to `repos/<repo>/releases`.\n fn newest(answer: &str, file: &str) -> Result<Release> {\n     let unreadable = |why: &str| format!(\"GitHub's list of releases is unreadable: {why}.\");\n     let releases: serde_json::Value =\n         serde_json::from_str(answer).map_err(|cause| unreadable(&cause.to_string()))?;\n     let releases = releases\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "version",
+      "return_type": "-> Option<Vec<u64>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 69
+        },
+        "start": {
+          "column": 1,
+          "line": 58
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:61:5: replace version -> Option<Vec<u64>> with Some(vec![])",
+    "package": "xtask",
+    "replacement": "Some(vec![])",
+    "span": {
+      "end": {
+        "column": 19,
+        "line": 68
+      },
+      "start": {
+        "column": 5,
+        "line": 61
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace version -> Option<Vec<u64>> with Some(vec![0])\n@@ -53,24 +53,17 @@\n /// The file name a download URL ends with.\n fn file_name(url: &str) -> &str {\n     url.rsplit('/').next().unwrap_or(url)\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n /// (`continuous`, `old`) are not versions.\n fn version(tag: &str) -> Option<Vec<u64>> {\n-    let tag = tag.strip_prefix('v').unwrap_or(tag);\n-    tag.split('.')\n-        .map(|part| {\n-            (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))\n-                .then(|| part.parse().ok())\n-                .flatten()\n-        })\n-        .collect()\n+    Some(vec![0]) /* ~ changed by cargo-mutants ~ */\n }\n \n /// The newest published, versioned release in GitHub's answer to `repos/<repo>/releases`.\n fn newest(answer: &str, file: &str) -> Result<Release> {\n     let unreadable = |why: &str| format!(\"GitHub's list of releases is unreadable: {why}.\");\n     let releases: serde_json::Value =\n         serde_json::from_str(answer).map_err(|cause| unreadable(&cause.to_string()))?;\n     let releases = releases\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "version",
+      "return_type": "-> Option<Vec<u64>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 69
+        },
+        "start": {
+          "column": 1,
+          "line": 58
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:61:5: replace version -> Option<Vec<u64>> with Some(vec![0])",
+    "package": "xtask",
+    "replacement": "Some(vec![0])",
+    "span": {
+      "end": {
+        "column": 19,
+        "line": 68
+      },
+      "start": {
+        "column": 5,
+        "line": 61
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace version -> Option<Vec<u64>> with Some(vec![1])\n@@ -53,24 +53,17 @@\n /// The file name a download URL ends with.\n fn file_name(url: &str) -> &str {\n     url.rsplit('/').next().unwrap_or(url)\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n /// (`continuous`, `old`) are not versions.\n fn version(tag: &str) -> Option<Vec<u64>> {\n-    let tag = tag.strip_prefix('v').unwrap_or(tag);\n-    tag.split('.')\n-        .map(|part| {\n-            (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))\n-                .then(|| part.parse().ok())\n-                .flatten()\n-        })\n-        .collect()\n+    Some(vec![1]) /* ~ changed by cargo-mutants ~ */\n }\n \n /// The newest published, versioned release in GitHub's answer to `repos/<repo>/releases`.\n fn newest(answer: &str, file: &str) -> Result<Release> {\n     let unreadable = |why: &str| format!(\"GitHub's list of releases is unreadable: {why}.\");\n     let releases: serde_json::Value =\n         serde_json::from_str(answer).map_err(|cause| unreadable(&cause.to_string()))?;\n     let releases = releases\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "version",
+      "return_type": "-> Option<Vec<u64>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 69
+        },
+        "start": {
+          "column": 1,
+          "line": 58
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:61:5: replace version -> Option<Vec<u64>> with Some(vec![1])",
+    "package": "xtask",
+    "replacement": "Some(vec![1])",
+    "span": {
+      "end": {
+        "column": 19,
+        "line": 68
+      },
+      "start": {
+        "column": 5,
+        "line": 61
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace && with || in version\n@@ -56,17 +56,17 @@\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n /// (`continuous`, `old`) are not versions.\n fn version(tag: &str) -> Option<Vec<u64>> {\n     let tag = tag.strip_prefix('v').unwrap_or(tag);\n     tag.split('.')\n         .map(|part| {\n-            (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))\n+            (!part.is_empty() || /* ~ changed by cargo-mutants ~ */ part.bytes().all(|byte| byte.is_ascii_digit()))\n                 .then(|| part.parse().ok())\n                 .flatten()\n         })\n         .collect()\n }\n \n /// The newest published, versioned release in GitHub's answer to `repos/<repo>/releases`.\n fn newest(answer: &str, file: &str) -> Result<Release> {\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "version",
+      "return_type": "-> Option<Vec<u64>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 69
+        },
+        "start": {
+          "column": 1,
+          "line": 58
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:64:31: replace && with || in version",
+    "package": "xtask",
+    "replacement": "||",
+    "span": {
+      "end": {
+        "column": 33,
+        "line": 64
+      },
+      "start": {
+        "column": 31,
+        "line": 64
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ delete ! in version\n@@ -56,17 +56,17 @@\n }\n \n /// A release tag as numbers to compare (`1.9.1`, `v1.9.1`, `20251108`); moving or named tags\n /// (`continuous`, `old`) are not versions.\n fn version(tag: &str) -> Option<Vec<u64>> {\n     let tag = tag.strip_prefix('v').unwrap_or(tag);\n     tag.split('.')\n         .map(|part| {\n-            (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))\n+            ( /* ~ changed by cargo-mutants ~ */part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))\n                 .then(|| part.parse().ok())\n                 .flatten()\n         })\n         .collect()\n }\n \n /// The newest published, versioned release in GitHub's answer to `repos/<repo>/releases`.\n fn newest(answer: &str, file: &str) -> Result<Release> {\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "version",
+      "return_type": "-> Option<Vec<u64>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 69
+        },
+        "start": {
+          "column": 1,
+          "line": 58
+        }
+      }
+    },
+    "genre": "UnaryOperator",
+    "name": "tooling/xtask/src/pins.rs:64:14: delete ! in version",
+    "package": "xtask",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 15,
+        "line": 64
+      },
+      "start": {
+        "column": 14,
+        "line": 64
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace newest -> Result<Release> with Ok(Default::default())\n@@ -65,43 +65,17 @@\n                 .then(|| part.parse().ok())\n                 .flatten()\n         })\n         .collect()\n }\n \n /// The newest published, versioned release in GitHub's answer to `repos/<repo>/releases`.\n fn newest(answer: &str, file: &str) -> Result<Release> {\n-    let unreadable = |why: &str| format!(\"GitHub's list of releases is unreadable: {why}.\");\n-    let releases: serde_json::Value =\n-        serde_json::from_str(answer).map_err(|cause| unreadable(&cause.to_string()))?;\n-    let releases = releases\n-        .as_array()\n-        .ok_or_else(|| unreadable(\"it is not a list\"))?;\n-    let flag = |release: &serde_json::Value, key: &str| release[key].as_bool().unwrap_or(false);\n-    releases\n-        .iter()\n-        .filter(|release| !flag(release, \"draft\") && !flag(release, \"prerelease\"))\n-        .filter_map(|release| {\n-            let tag = release[\"tag_name\"].as_str()?;\n-            Some((version(tag)?, tag, release))\n-        })\n-        .max_by(|(a, ..), (b, ..)| a.cmp(b))\n-        .map(|(_, tag, release)| Release {\n-            tag: tag.to_string(),\n-            page: release[\"html_url\"].as_str().unwrap_or_default().to_string(),\n-            digest: release[\"assets\"].as_array().and_then(|assets| {\n-                assets\n-                    .iter()\n-                    .find(|asset| asset[\"name\"].as_str() == Some(file))\n-                    .and_then(|asset| asset[\"digest\"].as_str())\n-                    .map(|digest| digest.trim_start_matches(\"sha256:\").to_string())\n-            }),\n-        })\n-        .ok_or_else(|| unreadable(\"it names no versioned release\"))\n+    Ok(Default::default()) /* ~ changed by cargo-mutants ~ */\n }\n \n /// The newer release when `newest` is ahead of the pinned `tag`.\n fn newer(tag: &str, newest: Release) -> Result<Option<Release>> {\n     let pinned = version(tag).ok_or_else(|| format!(\"The pinned release {tag} is no version.\"))?;\n     let latest = version(&newest.tag).unwrap_or_default();\n     Ok((latest > pinned).then_some(newest))\n }\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "newest",
+      "return_type": "-> Result<Release>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 71
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:73:5: replace newest -> Result<Release> with Ok(Default::default())",
+    "package": "xtask",
+    "replacement": "Ok(Default::default())",
+    "span": {
+      "end": {
+        "column": 68,
+        "line": 99
+      },
+      "start": {
+        "column": 5,
+        "line": 73
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace && with || in newest\n@@ -74,17 +74,17 @@\n     let releases: serde_json::Value =\n         serde_json::from_str(answer).map_err(|cause| unreadable(&cause.to_string()))?;\n     let releases = releases\n         .as_array()\n         .ok_or_else(|| unreadable(\"it is not a list\"))?;\n     let flag = |release: &serde_json::Value, key: &str| release[key].as_bool().unwrap_or(false);\n     releases\n         .iter()\n-        .filter(|release| !flag(release, \"draft\") && !flag(release, \"prerelease\"))\n+        .filter(|release| !flag(release, \"draft\") || /* ~ changed by cargo-mutants ~ */ !flag(release, \"prerelease\"))\n         .filter_map(|release| {\n             let tag = release[\"tag_name\"].as_str()?;\n             Some((version(tag)?, tag, release))\n         })\n         .max_by(|(a, ..), (b, ..)| a.cmp(b))\n         .map(|(_, tag, release)| Release {\n             tag: tag.to_string(),\n             page: release[\"html_url\"].as_str().unwrap_or_default().to_string(),\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "newest",
+      "return_type": "-> Result<Release>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 71
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:82:51: replace && with || in newest",
+    "package": "xtask",
+    "replacement": "||",
+    "span": {
+      "end": {
+        "column": 53,
+        "line": 82
+      },
+      "start": {
+        "column": 51,
+        "line": 82
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ delete ! in newest\n@@ -74,17 +74,17 @@\n     let releases: serde_json::Value =\n         serde_json::from_str(answer).map_err(|cause| unreadable(&cause.to_string()))?;\n     let releases = releases\n         .as_array()\n         .ok_or_else(|| unreadable(\"it is not a list\"))?;\n     let flag = |release: &serde_json::Value, key: &str| release[key].as_bool().unwrap_or(false);\n     releases\n         .iter()\n-        .filter(|release| !flag(release, \"draft\") && !flag(release, \"prerelease\"))\n+        .filter(|release|  /* ~ changed by cargo-mutants ~ */flag(release, \"draft\") && !flag(release, \"prerelease\"))\n         .filter_map(|release| {\n             let tag = release[\"tag_name\"].as_str()?;\n             Some((version(tag)?, tag, release))\n         })\n         .max_by(|(a, ..), (b, ..)| a.cmp(b))\n         .map(|(_, tag, release)| Release {\n             tag: tag.to_string(),\n             page: release[\"html_url\"].as_str().unwrap_or_default().to_string(),\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "newest",
+      "return_type": "-> Result<Release>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 71
+        }
+      }
+    },
+    "genre": "UnaryOperator",
+    "name": "tooling/xtask/src/pins.rs:82:27: delete ! in newest",
+    "package": "xtask",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 28,
+        "line": 82
+      },
+      "start": {
+        "column": 27,
+        "line": 82
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ delete ! in newest\n@@ -74,17 +74,17 @@\n     let releases: serde_json::Value =\n         serde_json::from_str(answer).map_err(|cause| unreadable(&cause.to_string()))?;\n     let releases = releases\n         .as_array()\n         .ok_or_else(|| unreadable(\"it is not a list\"))?;\n     let flag = |release: &serde_json::Value, key: &str| release[key].as_bool().unwrap_or(false);\n     releases\n         .iter()\n-        .filter(|release| !flag(release, \"draft\") && !flag(release, \"prerelease\"))\n+        .filter(|release| !flag(release, \"draft\") &&  /* ~ changed by cargo-mutants ~ */flag(release, \"prerelease\"))\n         .filter_map(|release| {\n             let tag = release[\"tag_name\"].as_str()?;\n             Some((version(tag)?, tag, release))\n         })\n         .max_by(|(a, ..), (b, ..)| a.cmp(b))\n         .map(|(_, tag, release)| Release {\n             tag: tag.to_string(),\n             page: release[\"html_url\"].as_str().unwrap_or_default().to_string(),\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "newest",
+      "return_type": "-> Result<Release>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 71
+        }
+      }
+    },
+    "genre": "UnaryOperator",
+    "name": "tooling/xtask/src/pins.rs:82:54: delete ! in newest",
+    "package": "xtask",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 55,
+        "line": 82
+      },
+      "start": {
+        "column": 54,
+        "line": 82
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace == with != in newest\n@@ -86,17 +86,17 @@\n         })\n         .max_by(|(a, ..), (b, ..)| a.cmp(b))\n         .map(|(_, tag, release)| Release {\n             tag: tag.to_string(),\n             page: release[\"html_url\"].as_str().unwrap_or_default().to_string(),\n             digest: release[\"assets\"].as_array().and_then(|assets| {\n                 assets\n                     .iter()\n-                    .find(|asset| asset[\"name\"].as_str() == Some(file))\n+                    .find(|asset| asset[\"name\"].as_str() != /* ~ changed by cargo-mutants ~ */ Some(file))\n                     .and_then(|asset| asset[\"digest\"].as_str())\n                     .map(|digest| digest.trim_start_matches(\"sha256:\").to_string())\n             }),\n         })\n         .ok_or_else(|| unreadable(\"it names no versioned release\"))\n }\n \n /// The newer release when `newest` is ahead of the pinned `tag`.\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "newest",
+      "return_type": "-> Result<Release>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 71
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:94:58: replace == with != in newest",
+    "package": "xtask",
+    "replacement": "!=",
+    "span": {
+      "end": {
+        "column": 60,
+        "line": 94
+      },
+      "start": {
+        "column": 58,
+        "line": 94
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace newer -> Result<Option<Release>> with Ok(None)\n@@ -96,19 +96,17 @@\n                     .map(|digest| digest.trim_start_matches(\"sha256:\").to_string())\n             }),\n         })\n         .ok_or_else(|| unreadable(\"it names no versioned release\"))\n }\n \n /// The newer release when `newest` is ahead of the pinned `tag`.\n fn newer(tag: &str, newest: Release) -> Result<Option<Release>> {\n-    let pinned = version(tag).ok_or_else(|| format!(\"The pinned release {tag} is no version.\"))?;\n-    let latest = version(&newest.tag).unwrap_or_default();\n-    Ok((latest > pinned).then_some(newest))\n+    Ok(None) /* ~ changed by cargo-mutants ~ */\n }\n \n /// The issue text naming each pin that is behind and the constants to change.\n fn report(behind: &[(&Pin, &str, Release)]) -> String {\n     let mut text = String::from(\"Newer releases of the AppImage tools KChess pins are out:\\n\\n\");\n     for (pin, tag, release) in behind {\n         text += &format!(\n             \"- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\\n\",\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "newer",
+      "return_type": "-> Result<Option<Release>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 107
+        },
+        "start": {
+          "column": 1,
+          "line": 102
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:104:5: replace newer -> Result<Option<Release>> with Ok(None)",
+    "package": "xtask",
+    "replacement": "Ok(None)",
+    "span": {
+      "end": {
+        "column": 44,
+        "line": 106
+      },
+      "start": {
+        "column": 5,
+        "line": 104
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace newer -> Result<Option<Release>> with Ok(Some(Default::default()))\n@@ -96,19 +96,17 @@\n                     .map(|digest| digest.trim_start_matches(\"sha256:\").to_string())\n             }),\n         })\n         .ok_or_else(|| unreadable(\"it names no versioned release\"))\n }\n \n /// The newer release when `newest` is ahead of the pinned `tag`.\n fn newer(tag: &str, newest: Release) -> Result<Option<Release>> {\n-    let pinned = version(tag).ok_or_else(|| format!(\"The pinned release {tag} is no version.\"))?;\n-    let latest = version(&newest.tag).unwrap_or_default();\n-    Ok((latest > pinned).then_some(newest))\n+    Ok(Some(Default::default())) /* ~ changed by cargo-mutants ~ */\n }\n \n /// The issue text naming each pin that is behind and the constants to change.\n fn report(behind: &[(&Pin, &str, Release)]) -> String {\n     let mut text = String::from(\"Newer releases of the AppImage tools KChess pins are out:\\n\\n\");\n     for (pin, tag, release) in behind {\n         text += &format!(\n             \"- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\\n\",\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "newer",
+      "return_type": "-> Result<Option<Release>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 107
+        },
+        "start": {
+          "column": 1,
+          "line": 102
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:104:5: replace newer -> Result<Option<Release>> with Ok(Some(Default::default()))",
+    "package": "xtask",
+    "replacement": "Ok(Some(Default::default()))",
+    "span": {
+      "end": {
+        "column": 44,
+        "line": 106
+      },
+      "start": {
+        "column": 5,
+        "line": 104
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace > with == in newer\n@@ -98,17 +98,17 @@\n         })\n         .ok_or_else(|| unreadable(\"it names no versioned release\"))\n }\n \n /// The newer release when `newest` is ahead of the pinned `tag`.\n fn newer(tag: &str, newest: Release) -> Result<Option<Release>> {\n     let pinned = version(tag).ok_or_else(|| format!(\"The pinned release {tag} is no version.\"))?;\n     let latest = version(&newest.tag).unwrap_or_default();\n-    Ok((latest > pinned).then_some(newest))\n+    Ok((latest == /* ~ changed by cargo-mutants ~ */ pinned).then_some(newest))\n }\n \n /// The issue text naming each pin that is behind and the constants to change.\n fn report(behind: &[(&Pin, &str, Release)]) -> String {\n     let mut text = String::from(\"Newer releases of the AppImage tools KChess pins are out:\\n\\n\");\n     for (pin, tag, release) in behind {\n         text += &format!(\n             \"- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\\n\",\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "newer",
+      "return_type": "-> Result<Option<Release>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 107
+        },
+        "start": {
+          "column": 1,
+          "line": 102
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:106:16: replace > with == in newer",
+    "package": "xtask",
+    "replacement": "==",
+    "span": {
+      "end": {
+        "column": 17,
+        "line": 106
+      },
+      "start": {
+        "column": 16,
+        "line": 106
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace > with < in newer\n@@ -98,17 +98,17 @@\n         })\n         .ok_or_else(|| unreadable(\"it names no versioned release\"))\n }\n \n /// The newer release when `newest` is ahead of the pinned `tag`.\n fn newer(tag: &str, newest: Release) -> Result<Option<Release>> {\n     let pinned = version(tag).ok_or_else(|| format!(\"The pinned release {tag} is no version.\"))?;\n     let latest = version(&newest.tag).unwrap_or_default();\n-    Ok((latest > pinned).then_some(newest))\n+    Ok((latest < /* ~ changed by cargo-mutants ~ */ pinned).then_some(newest))\n }\n \n /// The issue text naming each pin that is behind and the constants to change.\n fn report(behind: &[(&Pin, &str, Release)]) -> String {\n     let mut text = String::from(\"Newer releases of the AppImage tools KChess pins are out:\\n\\n\");\n     for (pin, tag, release) in behind {\n         text += &format!(\n             \"- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\\n\",\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "newer",
+      "return_type": "-> Result<Option<Release>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 107
+        },
+        "start": {
+          "column": 1,
+          "line": 102
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:106:16: replace > with < in newer",
+    "package": "xtask",
+    "replacement": "<",
+    "span": {
+      "end": {
+        "column": 17,
+        "line": 106
+      },
+      "start": {
+        "column": 16,
+        "line": 106
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace > with >= in newer\n@@ -98,17 +98,17 @@\n         })\n         .ok_or_else(|| unreadable(\"it names no versioned release\"))\n }\n \n /// The newer release when `newest` is ahead of the pinned `tag`.\n fn newer(tag: &str, newest: Release) -> Result<Option<Release>> {\n     let pinned = version(tag).ok_or_else(|| format!(\"The pinned release {tag} is no version.\"))?;\n     let latest = version(&newest.tag).unwrap_or_default();\n-    Ok((latest > pinned).then_some(newest))\n+    Ok((latest >= /* ~ changed by cargo-mutants ~ */ pinned).then_some(newest))\n }\n \n /// The issue text naming each pin that is behind and the constants to change.\n fn report(behind: &[(&Pin, &str, Release)]) -> String {\n     let mut text = String::from(\"Newer releases of the AppImage tools KChess pins are out:\\n\\n\");\n     for (pin, tag, release) in behind {\n         text += &format!(\n             \"- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\\n\",\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "newer",
+      "return_type": "-> Result<Option<Release>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 107
+        },
+        "start": {
+          "column": 1,
+          "line": 102
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:106:16: replace > with >= in newer",
+    "package": "xtask",
+    "replacement": ">=",
+    "span": {
+      "end": {
+        "column": 17,
+        "line": 106
+      },
+      "start": {
+        "column": 16,
+        "line": 106
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace report -> String with String::new()\n@@ -103,34 +103,17 @@\n fn newer(tag: &str, newest: Release) -> Result<Option<Release>> {\n     let pinned = version(tag).ok_or_else(|| format!(\"The pinned release {tag} is no version.\"))?;\n     let latest = version(&newest.tag).unwrap_or_default();\n     Ok((latest > pinned).then_some(newest))\n }\n \n /// The issue text naming each pin that is behind and the constants to change.\n fn report(behind: &[(&Pin, &str, Release)]) -> String {\n-    let mut text = String::from(\"Newer releases of the AppImage tools KChess pins are out:\\n\\n\");\n-    for (pin, tag, release) in behind {\n-        text += &format!(\n-            \"- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\\n\",\n-            pin.name, pin.repo, release.tag, release.page\n-        );\n-        if let Some(digest) = &release.digest {\n-            text += &format!(\"  Its `{}` has SHA-256 `{digest}`.\\n\", file_name(pin.url));\n-        }\n-        text += &format!(\n-            \"  Change `{}` and `{}` in `tooling/xtask/src/package/linux.rs`.\\n\",\n-            pin.url_constant, pin.digest_constant\n-        );\n-    }\n-    text += \"\\nUpdate a pin in a pull request, checking the downloaded file against its digest: \\\n-             CI then packages and tests the AppImage with it. `cargo xtask pins --check` \\\n-             answers whether the pins are current.\\n\";\n-    text\n+    String::new() /* ~ changed by cargo-mutants ~ */\n }\n \n /// The report when a pin is behind, asking `releases` for each repository's releases.\n fn check(releases: impl Fn(&str) -> Result<String>) -> Result<Option<String>> {\n     let mut behind = Vec::new();\n     for pin in &PINS {\n         let tag = release_tag(pin.url)\n             .ok_or_else(|| format!(\"{} names no release: {}\", pin.url_constant, pin.url))?;\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "report",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 129
+        },
+        "start": {
+          "column": 1,
+          "line": 109
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:111:5: replace report -> String with String::new()",
+    "package": "xtask",
+    "replacement": "String::new()",
+    "span": {
+      "end": {
+        "column": 9,
+        "line": 128
+      },
+      "start": {
+        "column": 5,
+        "line": 111
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace report -> String with \"xyzzy\".into()\n@@ -103,34 +103,17 @@\n fn newer(tag: &str, newest: Release) -> Result<Option<Release>> {\n     let pinned = version(tag).ok_or_else(|| format!(\"The pinned release {tag} is no version.\"))?;\n     let latest = version(&newest.tag).unwrap_or_default();\n     Ok((latest > pinned).then_some(newest))\n }\n \n /// The issue text naming each pin that is behind and the constants to change.\n fn report(behind: &[(&Pin, &str, Release)]) -> String {\n-    let mut text = String::from(\"Newer releases of the AppImage tools KChess pins are out:\\n\\n\");\n-    for (pin, tag, release) in behind {\n-        text += &format!(\n-            \"- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\\n\",\n-            pin.name, pin.repo, release.tag, release.page\n-        );\n-        if let Some(digest) = &release.digest {\n-            text += &format!(\"  Its `{}` has SHA-256 `{digest}`.\\n\", file_name(pin.url));\n-        }\n-        text += &format!(\n-            \"  Change `{}` and `{}` in `tooling/xtask/src/package/linux.rs`.\\n\",\n-            pin.url_constant, pin.digest_constant\n-        );\n-    }\n-    text += \"\\nUpdate a pin in a pull request, checking the downloaded file against its digest: \\\n-             CI then packages and tests the AppImage with it. `cargo xtask pins --check` \\\n-             answers whether the pins are current.\\n\";\n-    text\n+    \"xyzzy\".into() /* ~ changed by cargo-mutants ~ */\n }\n \n /// The report when a pin is behind, asking `releases` for each repository's releases.\n fn check(releases: impl Fn(&str) -> Result<String>) -> Result<Option<String>> {\n     let mut behind = Vec::new();\n     for pin in &PINS {\n         let tag = release_tag(pin.url)\n             .ok_or_else(|| format!(\"{} names no release: {}\", pin.url_constant, pin.url))?;\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "report",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 129
+        },
+        "start": {
+          "column": 1,
+          "line": 109
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:111:5: replace report -> String with \"xyzzy\".into()",
+    "package": "xtask",
+    "replacement": "\"xyzzy\".into()",
+    "span": {
+      "end": {
+        "column": 9,
+        "line": 128
+      },
+      "start": {
+        "column": 5,
+        "line": 111
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace += with -= in report\n@@ -105,17 +105,17 @@\n     let latest = version(&newest.tag).unwrap_or_default();\n     Ok((latest > pinned).then_some(newest))\n }\n \n /// The issue text naming each pin that is behind and the constants to change.\n fn report(behind: &[(&Pin, &str, Release)]) -> String {\n     let mut text = String::from(\"Newer releases of the AppImage tools KChess pins are out:\\n\\n\");\n     for (pin, tag, release) in behind {\n-        text += &format!(\n+        text -= /* ~ changed by cargo-mutants ~ */ &format!(\n             \"- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\\n\",\n             pin.name, pin.repo, release.tag, release.page\n         );\n         if let Some(digest) = &release.digest {\n             text += &format!(\"  Its `{}` has SHA-256 `{digest}`.\\n\", file_name(pin.url));\n         }\n         text += &format!(\n             \"  Change `{}` and `{}` in `tooling/xtask/src/package/linux.rs`.\\n\",\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "report",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 129
+        },
+        "start": {
+          "column": 1,
+          "line": 109
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:113:14: replace += with -= in report",
+    "package": "xtask",
+    "replacement": "-=",
+    "span": {
+      "end": {
+        "column": 16,
+        "line": 113
+      },
+      "start": {
+        "column": 14,
+        "line": 113
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace += with *= in report\n@@ -105,17 +105,17 @@\n     let latest = version(&newest.tag).unwrap_or_default();\n     Ok((latest > pinned).then_some(newest))\n }\n \n /// The issue text naming each pin that is behind and the constants to change.\n fn report(behind: &[(&Pin, &str, Release)]) -> String {\n     let mut text = String::from(\"Newer releases of the AppImage tools KChess pins are out:\\n\\n\");\n     for (pin, tag, release) in behind {\n-        text += &format!(\n+        text *= /* ~ changed by cargo-mutants ~ */ &format!(\n             \"- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\\n\",\n             pin.name, pin.repo, release.tag, release.page\n         );\n         if let Some(digest) = &release.digest {\n             text += &format!(\"  Its `{}` has SHA-256 `{digest}`.\\n\", file_name(pin.url));\n         }\n         text += &format!(\n             \"  Change `{}` and `{}` in `tooling/xtask/src/package/linux.rs`.\\n\",\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "report",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 129
+        },
+        "start": {
+          "column": 1,
+          "line": 109
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:113:14: replace += with *= in report",
+    "package": "xtask",
+    "replacement": "*=",
+    "span": {
+      "end": {
+        "column": 16,
+        "line": 113
+      },
+      "start": {
+        "column": 14,
+        "line": 113
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace += with -= in report\n@@ -110,17 +110,17 @@\n fn report(behind: &[(&Pin, &str, Release)]) -> String {\n     let mut text = String::from(\"Newer releases of the AppImage tools KChess pins are out:\\n\\n\");\n     for (pin, tag, release) in behind {\n         text += &format!(\n             \"- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\\n\",\n             pin.name, pin.repo, release.tag, release.page\n         );\n         if let Some(digest) = &release.digest {\n-            text += &format!(\"  Its `{}` has SHA-256 `{digest}`.\\n\", file_name(pin.url));\n+            text -= /* ~ changed by cargo-mutants ~ */ &format!(\"  Its `{}` has SHA-256 `{digest}`.\\n\", file_name(pin.url));\n         }\n         text += &format!(\n             \"  Change `{}` and `{}` in `tooling/xtask/src/package/linux.rs`.\\n\",\n             pin.url_constant, pin.digest_constant\n         );\n     }\n     text += \"\\nUpdate a pin in a pull request, checking the downloaded file against its digest: \\\n              CI then packages and tests the AppImage with it. `cargo xtask pins --check` \\\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "report",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 129
+        },
+        "start": {
+          "column": 1,
+          "line": 109
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:118:18: replace += with -= in report",
+    "package": "xtask",
+    "replacement": "-=",
+    "span": {
+      "end": {
+        "column": 20,
+        "line": 118
+      },
+      "start": {
+        "column": 18,
+        "line": 118
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace += with *= in report\n@@ -110,17 +110,17 @@\n fn report(behind: &[(&Pin, &str, Release)]) -> String {\n     let mut text = String::from(\"Newer releases of the AppImage tools KChess pins are out:\\n\\n\");\n     for (pin, tag, release) in behind {\n         text += &format!(\n             \"- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\\n\",\n             pin.name, pin.repo, release.tag, release.page\n         );\n         if let Some(digest) = &release.digest {\n-            text += &format!(\"  Its `{}` has SHA-256 `{digest}`.\\n\", file_name(pin.url));\n+            text *= /* ~ changed by cargo-mutants ~ */ &format!(\"  Its `{}` has SHA-256 `{digest}`.\\n\", file_name(pin.url));\n         }\n         text += &format!(\n             \"  Change `{}` and `{}` in `tooling/xtask/src/package/linux.rs`.\\n\",\n             pin.url_constant, pin.digest_constant\n         );\n     }\n     text += \"\\nUpdate a pin in a pull request, checking the downloaded file against its digest: \\\n              CI then packages and tests the AppImage with it. `cargo xtask pins --check` \\\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "report",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 129
+        },
+        "start": {
+          "column": 1,
+          "line": 109
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:118:18: replace += with *= in report",
+    "package": "xtask",
+    "replacement": "*=",
+    "span": {
+      "end": {
+        "column": 20,
+        "line": 118
+      },
+      "start": {
+        "column": 18,
+        "line": 118
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace += with -= in report\n@@ -112,17 +112,17 @@\n     for (pin, tag, release) in behind {\n         text += &format!(\n             \"- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\\n\",\n             pin.name, pin.repo, release.tag, release.page\n         );\n         if let Some(digest) = &release.digest {\n             text += &format!(\"  Its `{}` has SHA-256 `{digest}`.\\n\", file_name(pin.url));\n         }\n-        text += &format!(\n+        text -= /* ~ changed by cargo-mutants ~ */ &format!(\n             \"  Change `{}` and `{}` in `tooling/xtask/src/package/linux.rs`.\\n\",\n             pin.url_constant, pin.digest_constant\n         );\n     }\n     text += \"\\nUpdate a pin in a pull request, checking the downloaded file against its digest: \\\n              CI then packages and tests the AppImage with it. `cargo xtask pins --check` \\\n              answers whether the pins are current.\\n\";\n     text\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "report",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 129
+        },
+        "start": {
+          "column": 1,
+          "line": 109
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:120:14: replace += with -= in report",
+    "package": "xtask",
+    "replacement": "-=",
+    "span": {
+      "end": {
+        "column": 16,
+        "line": 120
+      },
+      "start": {
+        "column": 14,
+        "line": 120
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace += with *= in report\n@@ -112,17 +112,17 @@\n     for (pin, tag, release) in behind {\n         text += &format!(\n             \"- **{}** (`{}`): pinned `{tag}`, newest [`{}`]({}).\\n\",\n             pin.name, pin.repo, release.tag, release.page\n         );\n         if let Some(digest) = &release.digest {\n             text += &format!(\"  Its `{}` has SHA-256 `{digest}`.\\n\", file_name(pin.url));\n         }\n-        text += &format!(\n+        text *= /* ~ changed by cargo-mutants ~ */ &format!(\n             \"  Change `{}` and `{}` in `tooling/xtask/src/package/linux.rs`.\\n\",\n             pin.url_constant, pin.digest_constant\n         );\n     }\n     text += \"\\nUpdate a pin in a pull request, checking the downloaded file against its digest: \\\n              CI then packages and tests the AppImage with it. `cargo xtask pins --check` \\\n              answers whether the pins are current.\\n\";\n     text\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "report",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 129
+        },
+        "start": {
+          "column": 1,
+          "line": 109
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:120:14: replace += with *= in report",
+    "package": "xtask",
+    "replacement": "*=",
+    "span": {
+      "end": {
+        "column": 16,
+        "line": 120
+      },
+      "start": {
+        "column": 14,
+        "line": 120
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace += with -= in report\n@@ -117,17 +117,17 @@\n         if let Some(digest) = &release.digest {\n             text += &format!(\"  Its `{}` has SHA-256 `{digest}`.\\n\", file_name(pin.url));\n         }\n         text += &format!(\n             \"  Change `{}` and `{}` in `tooling/xtask/src/package/linux.rs`.\\n\",\n             pin.url_constant, pin.digest_constant\n         );\n     }\n-    text += \"\\nUpdate a pin in a pull request, checking the downloaded file against its digest: \\\n+    text -= /* ~ changed by cargo-mutants ~ */ \"\\nUpdate a pin in a pull request, checking the downloaded file against its digest: \\\n              CI then packages and tests the AppImage with it. `cargo xtask pins --check` \\\n              answers whether the pins are current.\\n\";\n     text\n }\n \n /// The report when a pin is behind, asking `releases` for each repository's releases.\n fn check(releases: impl Fn(&str) -> Result<String>) -> Result<Option<String>> {\n     let mut behind = Vec::new();\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "report",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 129
+        },
+        "start": {
+          "column": 1,
+          "line": 109
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:125:10: replace += with -= in report",
+    "package": "xtask",
+    "replacement": "-=",
+    "span": {
+      "end": {
+        "column": 12,
+        "line": 125
+      },
+      "start": {
+        "column": 10,
+        "line": 125
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace += with *= in report\n@@ -117,17 +117,17 @@\n         if let Some(digest) = &release.digest {\n             text += &format!(\"  Its `{}` has SHA-256 `{digest}`.\\n\", file_name(pin.url));\n         }\n         text += &format!(\n             \"  Change `{}` and `{}` in `tooling/xtask/src/package/linux.rs`.\\n\",\n             pin.url_constant, pin.digest_constant\n         );\n     }\n-    text += \"\\nUpdate a pin in a pull request, checking the downloaded file against its digest: \\\n+    text *= /* ~ changed by cargo-mutants ~ */ \"\\nUpdate a pin in a pull request, checking the downloaded file against its digest: \\\n              CI then packages and tests the AppImage with it. `cargo xtask pins --check` \\\n              answers whether the pins are current.\\n\";\n     text\n }\n \n /// The report when a pin is behind, asking `releases` for each repository's releases.\n fn check(releases: impl Fn(&str) -> Result<String>) -> Result<Option<String>> {\n     let mut behind = Vec::new();\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "report",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 129
+        },
+        "start": {
+          "column": 1,
+          "line": 109
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:125:10: replace += with *= in report",
+    "package": "xtask",
+    "replacement": "*=",
+    "span": {
+      "end": {
+        "column": 12,
+        "line": 125
+      },
+      "start": {
+        "column": 10,
+        "line": 125
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace check -> Result<Option<String>> with Ok(None)\n@@ -125,28 +125,17 @@\n     text += \"\\nUpdate a pin in a pull request, checking the downloaded file against its digest: \\\n              CI then packages and tests the AppImage with it. `cargo xtask pins --check` \\\n              answers whether the pins are current.\\n\";\n     text\n }\n \n /// The report when a pin is behind, asking `releases` for each repository's releases.\n fn check(releases: impl Fn(&str) -> Result<String>) -> Result<Option<String>> {\n-    let mut behind = Vec::new();\n-    for pin in &PINS {\n-        let tag = release_tag(pin.url)\n-            .ok_or_else(|| format!(\"{} names no release: {}\", pin.url_constant, pin.url))?;\n-        let latest = newest(&releases(pin.repo)?, file_name(pin.url))\n-            .map_err(|cause| format!(\"{} ({}): {cause}\", pin.name, pin.repo))?;\n-        match newer(tag, latest)? {\n-            Some(release) => behind.push((pin, tag, release)),\n-            None => say(&format!(\"{} is at the newest release, {tag}.\", pin.name)),\n-        }\n-    }\n-    Ok((!behind.is_empty()).then(|| report(&behind)))\n+    Ok(None) /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn run(args: &[String]) -> Result {\n     if !args.iter().any(|arg| arg == \"--check\") {\n         return Err(\"pins needs --check.\".into());\n     }\n     let report_file = match args.iter().position(|arg| arg == \"--report\") {\n         Some(at) => Some(\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "check",
+      "return_type": "-> Result<Option<String>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 145
+        },
+        "start": {
+          "column": 1,
+          "line": 131
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:133:5: replace check -> Result<Option<String>> with Ok(None)",
+    "package": "xtask",
+    "replacement": "Ok(None)",
+    "span": {
+      "end": {
+        "column": 54,
+        "line": 144
+      },
+      "start": {
+        "column": 5,
+        "line": 133
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace check -> Result<Option<String>> with Ok(Some(String::new()))\n@@ -125,28 +125,17 @@\n     text += \"\\nUpdate a pin in a pull request, checking the downloaded file against its digest: \\\n              CI then packages and tests the AppImage with it. `cargo xtask pins --check` \\\n              answers whether the pins are current.\\n\";\n     text\n }\n \n /// The report when a pin is behind, asking `releases` for each repository's releases.\n fn check(releases: impl Fn(&str) -> Result<String>) -> Result<Option<String>> {\n-    let mut behind = Vec::new();\n-    for pin in &PINS {\n-        let tag = release_tag(pin.url)\n-            .ok_or_else(|| format!(\"{} names no release: {}\", pin.url_constant, pin.url))?;\n-        let latest = newest(&releases(pin.repo)?, file_name(pin.url))\n-            .map_err(|cause| format!(\"{} ({}): {cause}\", pin.name, pin.repo))?;\n-        match newer(tag, latest)? {\n-            Some(release) => behind.push((pin, tag, release)),\n-            None => say(&format!(\"{} is at the newest release, {tag}.\", pin.name)),\n-        }\n-    }\n-    Ok((!behind.is_empty()).then(|| report(&behind)))\n+    Ok(Some(String::new())) /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn run(args: &[String]) -> Result {\n     if !args.iter().any(|arg| arg == \"--check\") {\n         return Err(\"pins needs --check.\".into());\n     }\n     let report_file = match args.iter().position(|arg| arg == \"--report\") {\n         Some(at) => Some(\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "check",
+      "return_type": "-> Result<Option<String>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 145
+        },
+        "start": {
+          "column": 1,
+          "line": 131
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:133:5: replace check -> Result<Option<String>> with Ok(Some(String::new()))",
+    "package": "xtask",
+    "replacement": "Ok(Some(String::new()))",
+    "span": {
+      "end": {
+        "column": 54,
+        "line": 144
+      },
+      "start": {
+        "column": 5,
+        "line": 133
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace check -> Result<Option<String>> with Ok(Some(\"xyzzy\".into()))\n@@ -125,28 +125,17 @@\n     text += \"\\nUpdate a pin in a pull request, checking the downloaded file against its digest: \\\n              CI then packages and tests the AppImage with it. `cargo xtask pins --check` \\\n              answers whether the pins are current.\\n\";\n     text\n }\n \n /// The report when a pin is behind, asking `releases` for each repository's releases.\n fn check(releases: impl Fn(&str) -> Result<String>) -> Result<Option<String>> {\n-    let mut behind = Vec::new();\n-    for pin in &PINS {\n-        let tag = release_tag(pin.url)\n-            .ok_or_else(|| format!(\"{} names no release: {}\", pin.url_constant, pin.url))?;\n-        let latest = newest(&releases(pin.repo)?, file_name(pin.url))\n-            .map_err(|cause| format!(\"{} ({}): {cause}\", pin.name, pin.repo))?;\n-        match newer(tag, latest)? {\n-            Some(release) => behind.push((pin, tag, release)),\n-            None => say(&format!(\"{} is at the newest release, {tag}.\", pin.name)),\n-        }\n-    }\n-    Ok((!behind.is_empty()).then(|| report(&behind)))\n+    Ok(Some(\"xyzzy\".into())) /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn run(args: &[String]) -> Result {\n     if !args.iter().any(|arg| arg == \"--check\") {\n         return Err(\"pins needs --check.\".into());\n     }\n     let report_file = match args.iter().position(|arg| arg == \"--report\") {\n         Some(at) => Some(\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "check",
+      "return_type": "-> Result<Option<String>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 145
+        },
+        "start": {
+          "column": 1,
+          "line": 131
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:133:5: replace check -> Result<Option<String>> with Ok(Some(\"xyzzy\".into()))",
+    "package": "xtask",
+    "replacement": "Ok(Some(\"xyzzy\".into()))",
+    "span": {
+      "end": {
+        "column": 54,
+        "line": 144
+      },
+      "start": {
+        "column": 5,
+        "line": 133
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ delete ! in check\n@@ -136,17 +136,17 @@\n             .ok_or_else(|| format!(\"{} names no release: {}\", pin.url_constant, pin.url))?;\n         let latest = newest(&releases(pin.repo)?, file_name(pin.url))\n             .map_err(|cause| format!(\"{} ({}): {cause}\", pin.name, pin.repo))?;\n         match newer(tag, latest)? {\n             Some(release) => behind.push((pin, tag, release)),\n             None => say(&format!(\"{} is at the newest release, {tag}.\", pin.name)),\n         }\n     }\n-    Ok((!behind.is_empty()).then(|| report(&behind)))\n+    Ok(( /* ~ changed by cargo-mutants ~ */behind.is_empty()).then(|| report(&behind)))\n }\n \n pub fn run(args: &[String]) -> Result {\n     if !args.iter().any(|arg| arg == \"--check\") {\n         return Err(\"pins needs --check.\".into());\n     }\n     let report_file = match args.iter().position(|arg| arg == \"--report\") {\n         Some(at) => Some(\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "check",
+      "return_type": "-> Result<Option<String>>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 145
+        },
+        "start": {
+          "column": 1,
+          "line": 131
+        }
+      }
+    },
+    "genre": "UnaryOperator",
+    "name": "tooling/xtask/src/pins.rs:144:9: delete ! in check",
+    "package": "xtask",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 144
+      },
+      "start": {
+        "column": 9,
+        "line": 144
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace run -> Result with Ok(Default::default())\n@@ -140,41 +140,17 @@\n             Some(release) => behind.push((pin, tag, release)),\n             None => say(&format!(\"{} is at the newest release, {tag}.\", pin.name)),\n         }\n     }\n     Ok((!behind.is_empty()).then(|| report(&behind)))\n }\n \n pub fn run(args: &[String]) -> Result {\n-    if !args.iter().any(|arg| arg == \"--check\") {\n-        return Err(\"pins needs --check.\".into());\n-    }\n-    let report_file = match args.iter().position(|arg| arg == \"--report\") {\n-        Some(at) => Some(\n-            args.get(at + 1)\n-                .ok_or_else(|| \"--report needs the file to write.\".to_string())?,\n-        ),\n-        None => None,\n-    };\n-    let releases = |repo: &str| {\n-        output(\n-            \"gh\",\n-            &[\"api\", &format!(\"repos/{repo}/releases?per_page=100\")],\n-        )\n-    };\n-    let Some(text) = check(releases)? else {\n-        return Ok(());\n-    };\n-    print!(\"{text}\");\n-    if let Some(path) = report_file {\n-        std::fs::write(Path::new(path), &text)\n-            .map_err(|cause| format!(\"Cannot write {path}: {cause}\"))?;\n-    }\n-    Err(\"A pinned AppImage tool is behind its newest release.\".into())\n+    Ok(Default::default()) /* ~ changed by cargo-mutants ~ */\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     fn release(tag: &str) -> serde_json::Value {\n         serde_json::json!({\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "run",
+      "return_type": "-> Result",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 173
+        },
+        "start": {
+          "column": 1,
+          "line": 147
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/pins.rs:148:5: replace run -> Result with Ok(Default::default())",
+    "package": "xtask",
+    "replacement": "Ok(Default::default())",
+    "span": {
+      "end": {
+        "column": 71,
+        "line": 172
+      },
+      "start": {
+        "column": 5,
+        "line": 148
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ delete ! in run\n@@ -140,17 +140,17 @@\n             Some(release) => behind.push((pin, tag, release)),\n             None => say(&format!(\"{} is at the newest release, {tag}.\", pin.name)),\n         }\n     }\n     Ok((!behind.is_empty()).then(|| report(&behind)))\n }\n \n pub fn run(args: &[String]) -> Result {\n-    if !args.iter().any(|arg| arg == \"--check\") {\n+    if  /* ~ changed by cargo-mutants ~ */args.iter().any(|arg| arg == \"--check\") {\n         return Err(\"pins needs --check.\".into());\n     }\n     let report_file = match args.iter().position(|arg| arg == \"--report\") {\n         Some(at) => Some(\n             args.get(at + 1)\n                 .ok_or_else(|| \"--report needs the file to write.\".to_string())?,\n         ),\n         None => None,\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "run",
+      "return_type": "-> Result",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 173
+        },
+        "start": {
+          "column": 1,
+          "line": 147
+        }
+      }
+    },
+    "genre": "UnaryOperator",
+    "name": "tooling/xtask/src/pins.rs:148:8: delete ! in run",
+    "package": "xtask",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 9,
+        "line": 148
+      },
+      "start": {
+        "column": 8,
+        "line": 148
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace == with != in run\n@@ -140,17 +140,17 @@\n             Some(release) => behind.push((pin, tag, release)),\n             None => say(&format!(\"{} is at the newest release, {tag}.\", pin.name)),\n         }\n     }\n     Ok((!behind.is_empty()).then(|| report(&behind)))\n }\n \n pub fn run(args: &[String]) -> Result {\n-    if !args.iter().any(|arg| arg == \"--check\") {\n+    if !args.iter().any(|arg| arg != /* ~ changed by cargo-mutants ~ */ \"--check\") {\n         return Err(\"pins needs --check.\".into());\n     }\n     let report_file = match args.iter().position(|arg| arg == \"--report\") {\n         Some(at) => Some(\n             args.get(at + 1)\n                 .ok_or_else(|| \"--report needs the file to write.\".to_string())?,\n         ),\n         None => None,\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "run",
+      "return_type": "-> Result",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 173
+        },
+        "start": {
+          "column": 1,
+          "line": 147
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:148:35: replace == with != in run",
+    "package": "xtask",
+    "replacement": "!=",
+    "span": {
+      "end": {
+        "column": 37,
+        "line": 148
+      },
+      "start": {
+        "column": 35,
+        "line": 148
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace == with != in run\n@@ -143,17 +143,17 @@\n     }\n     Ok((!behind.is_empty()).then(|| report(&behind)))\n }\n \n pub fn run(args: &[String]) -> Result {\n     if !args.iter().any(|arg| arg == \"--check\") {\n         return Err(\"pins needs --check.\".into());\n     }\n-    let report_file = match args.iter().position(|arg| arg == \"--report\") {\n+    let report_file = match args.iter().position(|arg| arg != /* ~ changed by cargo-mutants ~ */ \"--report\") {\n         Some(at) => Some(\n             args.get(at + 1)\n                 .ok_or_else(|| \"--report needs the file to write.\".to_string())?,\n         ),\n         None => None,\n     };\n     let releases = |repo: &str| {\n         output(\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "run",
+      "return_type": "-> Result",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 173
+        },
+        "start": {
+          "column": 1,
+          "line": 147
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:151:60: replace == with != in run",
+    "package": "xtask",
+    "replacement": "!=",
+    "span": {
+      "end": {
+        "column": 62,
+        "line": 151
+      },
+      "start": {
+        "column": 60,
+        "line": 151
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace + with - in run\n@@ -145,17 +145,17 @@\n }\n \n pub fn run(args: &[String]) -> Result {\n     if !args.iter().any(|arg| arg == \"--check\") {\n         return Err(\"pins needs --check.\".into());\n     }\n     let report_file = match args.iter().position(|arg| arg == \"--report\") {\n         Some(at) => Some(\n-            args.get(at + 1)\n+            args.get(at - /* ~ changed by cargo-mutants ~ */ 1)\n                 .ok_or_else(|| \"--report needs the file to write.\".to_string())?,\n         ),\n         None => None,\n     };\n     let releases = |repo: &str| {\n         output(\n             \"gh\",\n             &[\"api\", &format!(\"repos/{repo}/releases?per_page=100\")],\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "run",
+      "return_type": "-> Result",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 173
+        },
+        "start": {
+          "column": 1,
+          "line": 147
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:153:25: replace + with - in run",
+    "package": "xtask",
+    "replacement": "-",
+    "span": {
+      "end": {
+        "column": 26,
+        "line": 153
+      },
+      "start": {
+        "column": 25,
+        "line": 153
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/pins.rs\n+++ replace + with * in run\n@@ -145,17 +145,17 @@\n }\n \n pub fn run(args: &[String]) -> Result {\n     if !args.iter().any(|arg| arg == \"--check\") {\n         return Err(\"pins needs --check.\".into());\n     }\n     let report_file = match args.iter().position(|arg| arg == \"--report\") {\n         Some(at) => Some(\n-            args.get(at + 1)\n+            args.get(at * /* ~ changed by cargo-mutants ~ */ 1)\n                 .ok_or_else(|| \"--report needs the file to write.\".to_string())?,\n         ),\n         None => None,\n     };\n     let releases = |repo: &str| {\n         output(\n             \"gh\",\n             &[\"api\", &format!(\"repos/{repo}/releases?per_page=100\")],\n",
+    "file": "tooling/xtask/src/pins.rs",
+    "function": {
+      "function_name": "run",
+      "return_type": "-> Result",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 173
+        },
+        "start": {
+          "column": 1,
+          "line": 147
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/pins.rs:153:25: replace + with * in run",
+    "package": "xtask",
+    "replacement": "*",
+    "span": {
+      "end": {
+        "column": 26,
+        "line": 153
+      },
+      "start": {
+        "column": 25,
+        "line": 153
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/util.rs\n+++ replace pinned -> Result with Ok(Default::default())\n@@ -155,30 +155,17 @@\n /// match is removed and refused, so a tampered or changed upstream file never gets used.\n pub fn pinned(\n     what: &str,\n     url: &str,\n     sha256: &str,\n     path: &Path,\n     fetch: impl FnOnce(&str, &Path) -> Result,\n ) -> Result {\n-    if path.exists() && sha256_file(path)? == sha256 {\n-        return Ok(());\n-    }\n-    say(&format!(\"Downloading {what}…\"));\n-    fetch(url, path)?;\n-    let found = sha256_file(path)?;\n-    if found == sha256 {\n-        return Ok(());\n-    }\n-    let _ = std::fs::remove_file(path);\n-    Err(format!(\n-        \"{what} from {url} has SHA-256 {found}, not the pinned {sha256}, so it was removed. \\\n-         If upstream changed the file, re-check it and update the pin.\"\n-    ))\n+    Ok(Default::default()) /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn sha256_file(path: &Path) -> Result<String> {\n     use sha2::Digest;\n     let bytes =\n         std::fs::read(path).map_err(|cause| format!(\"Cannot read {}: {cause}\", path.display()))?;\n     Ok(hex(&sha2::Sha256::digest(&bytes)))\n }\n",
+    "file": "tooling/xtask/src/util.rs",
+    "function": {
+      "function_name": "pinned",
+      "return_type": "-> Result",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 177
+        },
+        "start": {
+          "column": 1,
+          "line": 153
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/util.rs:163:5: replace pinned -> Result with Ok(Default::default())",
+    "package": "xtask",
+    "replacement": "Ok(Default::default())",
+    "span": {
+      "end": {
+        "column": 7,
+        "line": 176
+      },
+      "start": {
+        "column": 5,
+        "line": 163
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/util.rs\n+++ replace && with || in pinned\n@@ -155,17 +155,17 @@\n /// match is removed and refused, so a tampered or changed upstream file never gets used.\n pub fn pinned(\n     what: &str,\n     url: &str,\n     sha256: &str,\n     path: &Path,\n     fetch: impl FnOnce(&str, &Path) -> Result,\n ) -> Result {\n-    if path.exists() && sha256_file(path)? == sha256 {\n+    if path.exists() || /* ~ changed by cargo-mutants ~ */ sha256_file(path)? == sha256 {\n         return Ok(());\n     }\n     say(&format!(\"Downloading {what}…\"));\n     fetch(url, path)?;\n     let found = sha256_file(path)?;\n     if found == sha256 {\n         return Ok(());\n     }\n",
+    "file": "tooling/xtask/src/util.rs",
+    "function": {
+      "function_name": "pinned",
+      "return_type": "-> Result",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 177
+        },
+        "start": {
+          "column": 1,
+          "line": 153
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/util.rs:163:22: replace && with || in pinned",
+    "package": "xtask",
+    "replacement": "||",
+    "span": {
+      "end": {
+        "column": 24,
+        "line": 163
+      },
+      "start": {
+        "column": 22,
+        "line": 163
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/util.rs\n+++ replace == with != in pinned\n@@ -155,17 +155,17 @@\n /// match is removed and refused, so a tampered or changed upstream file never gets used.\n pub fn pinned(\n     what: &str,\n     url: &str,\n     sha256: &str,\n     path: &Path,\n     fetch: impl FnOnce(&str, &Path) -> Result,\n ) -> Result {\n-    if path.exists() && sha256_file(path)? == sha256 {\n+    if path.exists() && sha256_file(path)? != /* ~ changed by cargo-mutants ~ */ sha256 {\n         return Ok(());\n     }\n     say(&format!(\"Downloading {what}…\"));\n     fetch(url, path)?;\n     let found = sha256_file(path)?;\n     if found == sha256 {\n         return Ok(());\n     }\n",
+    "file": "tooling/xtask/src/util.rs",
+    "function": {
+      "function_name": "pinned",
+      "return_type": "-> Result",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 177
+        },
+        "start": {
+          "column": 1,
+          "line": 153
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/util.rs:163:44: replace == with != in pinned",
+    "package": "xtask",
+    "replacement": "!=",
+    "span": {
+      "end": {
+        "column": 46,
+        "line": 163
+      },
+      "start": {
+        "column": 44,
+        "line": 163
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/util.rs\n+++ replace == with != in pinned\n@@ -161,17 +161,17 @@\n     fetch: impl FnOnce(&str, &Path) -> Result,\n ) -> Result {\n     if path.exists() && sha256_file(path)? == sha256 {\n         return Ok(());\n     }\n     say(&format!(\"Downloading {what}…\"));\n     fetch(url, path)?;\n     let found = sha256_file(path)?;\n-    if found == sha256 {\n+    if found != /* ~ changed by cargo-mutants ~ */ sha256 {\n         return Ok(());\n     }\n     let _ = std::fs::remove_file(path);\n     Err(format!(\n         \"{what} from {url} has SHA-256 {found}, not the pinned {sha256}, so it was removed. \\\n          If upstream changed the file, re-check it and update the pin.\"\n     ))\n }\n",
+    "file": "tooling/xtask/src/util.rs",
+    "function": {
+      "function_name": "pinned",
+      "return_type": "-> Result",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 177
+        },
+        "start": {
+          "column": 1,
+          "line": 153
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "tooling/xtask/src/util.rs:169:14: replace == with != in pinned",
+    "package": "xtask",
+    "replacement": "!=",
+    "span": {
+      "end": {
+        "column": 16,
+        "line": 169
+      },
+      "start": {
+        "column": 14,
+        "line": 169
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/package/linux.rs\n+++ replace appimage -> Result<PathBuf> with Ok(Default::default())\n@@ -52,62 +52,17 @@\n     copy_program(&built.cli, &folder.join(\"kchess-cli\"))?;\n     copy_voice(built, folder)?;\n     std::fs::copy(&built.licenses, folder.join(\"THIRD_PARTY_LICENSES.txt\"))\n         .map_err(|cause| cause.to_string())?;\n     Ok(())\n }\n \n fn appimage(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<PathBuf> {\n-    let tool = root().join(\"target/package/appimagetool-x86_64.AppImage\");\n-    pinned(\n-        \"appimagetool\",\n-        APPIMAGETOOL,\n-        APPIMAGETOOL_SHA256,\n-        &tool,\n-        download,\n-    )?;\n-    super::executable(&tool)?;\n-    let runtime = root().join(\"target/package/appimage-runtime-x86_64\");\n-    pinned(\n-        \"the AppImage runtime\",\n-        APPIMAGE_RUNTIME,\n-        APPIMAGE_RUNTIME_SHA256,\n-        &runtime,\n-        download,\n-    )?;\n-    let dir = stage.join(\"AppDir\");\n-    stage_folder(identity, built, &dir)?;\n-    let icon = format!(\"{}.png\", identity.linux_exe);\n-    std::fs::copy(root().join(\"apps/gpui/build/icon.png\"), dir.join(&icon))\n-        .map_err(|cause| cause.to_string())?;\n-    std::os::unix::fs::symlink(&icon, dir.join(\".DirIcon\")).map_err(|cause| cause.to_string())?;\n-    std::fs::write(\n-        dir.join(format!(\"{}.desktop\", identity.linux_exe)),\n-        desktop_entry(identity, identity.linux_exe),\n-    )\n-    .map_err(|cause| cause.to_string())?;\n-    let app_run = dir.join(\"AppRun\");\n-    std::fs::write(\n-        &app_run,\n-        format!(\n-            \"#!/bin/sh\\nHERE=\\\"$(dirname \\\"$(readlink -f \\\"$0\\\")\\\")\\\"\\nexec \\\"$HERE/{}\\\" \\\"$@\\\"\\n\",\n-            identity.linux_exe\n-        ),\n-    )\n-    .map_err(|cause| cause.to_string())?;\n-    super::executable(&app_run)?;\n-    let image = out.join(format!(\n-        \"{}-{}-linux-x86_64.AppImage\",\n-        identity.prefix(),\n-        identity.version\n-    ));\n-    say(\"Making the AppImage…\");\n-    run_with(&mut appimagetool(&tool, &runtime, &dir, &image))?;\n-    Ok(image)\n+    Ok(Default::default()) /* ~ changed by cargo-mutants ~ */\n }\n \n /// appimagetool making `image` from `dir` around the pinned `runtime`, so it downloads nothing.\n fn appimagetool(tool: &Path, runtime: &Path, dir: &Path, image: &Path) -> Command {\n     let mut command = Command::new(tool);\n     command\n         .arg(\"--no-appstream\")\n         .arg(\"--runtime-file\")\n",
+    "file": "tooling/xtask/src/package/linux.rs",
+    "function": {
+      "function_name": "appimage",
+      "return_type": "-> Result<PathBuf>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 106
+        },
+        "start": {
+          "column": 1,
+          "line": 59
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/package/linux.rs:60:5: replace appimage -> Result<PathBuf> with Ok(Default::default())",
+    "package": "xtask",
+    "replacement": "Ok(Default::default())",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 105
+      },
+      "start": {
+        "column": 5,
+        "line": 60
+      }
+    }
+  },
+  {
+    "diff": "--- tooling/xtask/src/package/linux.rs\n+++ replace appimagetool -> Command with Default::default()\n@@ -102,27 +102,17 @@\n     ));\n     say(\"Making the AppImage…\");\n     run_with(&mut appimagetool(&tool, &runtime, &dir, &image))?;\n     Ok(image)\n }\n \n /// appimagetool making `image` from `dir` around the pinned `runtime`, so it downloads nothing.\n fn appimagetool(tool: &Path, runtime: &Path, dir: &Path, image: &Path) -> Command {\n-    let mut command = Command::new(tool);\n-    command\n-        .arg(\"--no-appstream\")\n-        .arg(\"--runtime-file\")\n-        .arg(runtime)\n-        .arg(dir)\n-        .arg(image)\n-        .env(\"ARCH\", \"x86_64\")\n-        // Runners have no FUSE: the tool runs from its own extracted files.\n-        .env(\"APPIMAGE_EXTRACT_AND_RUN\", \"1\");\n-    command\n+    Default::default() /* ~ changed by cargo-mutants ~ */\n }\n \n /// A tar.gz of `entries` (path in the archive → contents and mode), with root ownership.\n fn tarball(entries: &[(String, Vec<u8>, u32)], dirs: &[String]) -> Result<Vec<u8>> {\n     let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());\n     let mut archive = tar::Builder::new(encoder);\n     let header = |path: &str, size: u64, mode: u32, kind: tar::EntryType| -> Result<tar::Header> {\n         let mut header = tar::Header::new_gnu();\n",
+    "file": "tooling/xtask/src/package/linux.rs",
+    "function": {
+      "function_name": "appimagetool",
+      "return_type": "-> Command",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 121
+        },
+        "start": {
+          "column": 1,
+          "line": 108
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "tooling/xtask/src/package/linux.rs:110:5: replace appimagetool -> Command with Default::default()",
+    "package": "xtask",
+    "replacement": "Default::default()",
+    "span": {
+      "end": {
+        "column": 12,
+        "line": 120
+      },
+      "start": {
+        "column": 5,
+        "line": 110
+      }
+    }
+  }
+]

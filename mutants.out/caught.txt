@@ -1,0 +1,37 @@
+tooling/xtask/src/main.rs:77:5: replace main -> ExitCode with Default::default()
+tooling/xtask/src/pins.rs:48:5: replace release_tag -> Option<&str> with None
+tooling/xtask/src/pins.rs:48:5: replace release_tag -> Option<&str> with Some("")
+tooling/xtask/src/pins.rs:48:5: replace release_tag -> Option<&str> with Some("xyzzy")
+tooling/xtask/src/pins.rs:50:22: replace && with || in release_tag
+tooling/xtask/src/pins.rs:50:6: delete ! in release_tag
+tooling/xtask/src/pins.rs:50:25: delete ! in release_tag
+tooling/xtask/src/pins.rs:55:5: replace file_name -> &str with ""
+tooling/xtask/src/pins.rs:55:5: replace file_name -> &str with "xyzzy"
+tooling/xtask/src/pins.rs:61:5: replace version -> Option<Vec<u64>> with None
+tooling/xtask/src/pins.rs:61:5: replace version -> Option<Vec<u64>> with Some(vec![])
+tooling/xtask/src/pins.rs:61:5: replace version -> Option<Vec<u64>> with Some(vec![0])
+tooling/xtask/src/pins.rs:61:5: replace version -> Option<Vec<u64>> with Some(vec![1])
+tooling/xtask/src/pins.rs:64:14: delete ! in version
+tooling/xtask/src/pins.rs:82:51: replace && with || in newest
+tooling/xtask/src/pins.rs:82:27: delete ! in newest
+tooling/xtask/src/pins.rs:82:54: delete ! in newest
+tooling/xtask/src/pins.rs:94:58: replace == with != in newest
+tooling/xtask/src/pins.rs:104:5: replace newer -> Result<Option<Release>> with Ok(None)
+tooling/xtask/src/pins.rs:106:16: replace > with == in newer
+tooling/xtask/src/pins.rs:106:16: replace > with < in newer
+tooling/xtask/src/pins.rs:106:16: replace > with >= in newer
+tooling/xtask/src/pins.rs:111:5: replace report -> String with String::new()
+tooling/xtask/src/pins.rs:111:5: replace report -> String with "xyzzy".into()
+tooling/xtask/src/pins.rs:133:5: replace check -> Result<Option<String>> with Ok(None)
+tooling/xtask/src/pins.rs:133:5: replace check -> Result<Option<String>> with Ok(Some(String::new()))
+tooling/xtask/src/pins.rs:133:5: replace check -> Result<Option<String>> with Ok(Some("xyzzy".into()))
+tooling/xtask/src/pins.rs:144:9: delete ! in check
+tooling/xtask/src/pins.rs:148:5: replace run -> Result with Ok(Default::default())
+tooling/xtask/src/pins.rs:148:8: delete ! in run
+tooling/xtask/src/pins.rs:151:60: replace == with != in run
+tooling/xtask/src/pins.rs:153:25: replace + with - in run
+tooling/xtask/src/pins.rs:153:25: replace + with * in run
+tooling/xtask/src/util.rs:163:5: replace pinned -> Result with Ok(Default::default())
+tooling/xtask/src/util.rs:163:22: replace && with || in pinned
+tooling/xtask/src/util.rs:163:44: replace == with != in pinned
+tooling/xtask/src/util.rs:169:14: replace == with != in pinned
