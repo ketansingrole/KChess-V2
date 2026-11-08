@@ -1,3 +1,0 @@
-tooling/xtask/src/pins.rs:64:31: replace && with || in version
-tooling/xtask/src/pins.rs:148:35: replace == with != in run
-tooling/xtask/src/package/linux.rs:60:5: replace appimage -> Result<PathBuf> with Ok(Default::default())
