@@ -36,6 +36,9 @@ struct Inner {
 #[derive(Default)]
 pub struct MemoryStore {
     inner: Mutex<Inner>,
+    /// Review reads so far, and the one that panics (`panic_on_read`).
+    reads: std::sync::atomic::AtomicUsize,
+    panics_at: Mutex<Option<usize>>,
 }
 
 fn rank(review: &StoredReview) -> u8 {
@@ -65,6 +68,12 @@ impl MemoryStore {
 
     pub fn add_game(&self, game: GameRow) {
         self.inner.lock().expect("store").games.push(game);
+    }
+
+    /// The `nth` review read from now (1 is the next) panics, as a broken store would.
+    pub fn panic_on_read(&self, nth: usize) {
+        let reads = self.reads.load(std::sync::atomic::Ordering::SeqCst);
+        *self.panics_at.lock().expect("store") = Some(reads + nth);
     }
 
     pub fn review(&self, key: &str) -> Option<StoredReview> {
@@ -106,7 +115,13 @@ impl ReviewStorage for MemoryStore {
         &'a self,
         key: &'a str,
     ) -> futures_util::future::BoxFuture<'a, Result<Option<StoredReview>>> {
-        Box::pin(async move { Ok(self.review(key)) })
+        Box::pin(async move {
+            let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            if *self.panics_at.lock().expect("store") == Some(read) {
+                panic!("the review store failed reading {key}");
+            }
+            Ok(self.review(key))
+        })
     }
 
     fn write_review<'a>(
