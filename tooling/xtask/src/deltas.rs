@@ -234,7 +234,9 @@ fn appimage_tree(bytes: Vec<u8>) -> Tree {
 /// of its own, so they are exactly what an installation holds. Its uninstaller, which every
 /// installer writes for itself, is not one of them.
 fn installed_tree(installer: &Path, work: &Path) -> Result<Tree> {
-    let folder = work.join("installed");
+    // In the system's own separators: `root()` joins `target/package/…` with `/`, which a
+    // Windows installer does not take in `/D=`, so it installed somewhere else.
+    let folder: PathBuf = work.join("installed").components().collect();
     let _ = std::fs::remove_dir_all(&folder);
     // `/D=` is the last argument, unquoted, as NSIS reads it.
     run_with(
@@ -242,10 +244,20 @@ fn installed_tree(installer: &Path, work: &Path) -> Result<Tree> {
             .arg("/S")
             .arg(format!("/D={}", folder.display())),
     )?;
+    let nothing = || {
+        format!(
+            "{} installed nothing in {}.",
+            installer.display(),
+            folder.display()
+        )
+    };
+    if !folder.is_dir() {
+        return Err(nothing());
+    }
     let tree = Tree::read(&folder, |path| path.starts_with("Uninstall "))
-        .map_err(|cause| cause.to_string())?;
+        .map_err(|cause| format!("{}: {cause}", folder.display()))?;
     if tree.is_empty() {
-        return Err(format!("{} installed nothing.", installer.display()));
+        return Err(nothing());
     }
     Ok(tree)
 }
@@ -830,6 +842,13 @@ mod tests {
                 .unwrap_err()
                 .contains("installed nothing")
         );
+        // An installer that put its files elsewhere names the folder it was given.
+        let elsewhere = dir.join("elsewhere.exe");
+        std::fs::write(&elsewhere, "#!/bin/sh\n").unwrap();
+        crate::package::executable(&elsewhere).unwrap();
+        let refused = installed_tree(&elsewhere, &dir.join("none")).unwrap_err();
+        assert!(refused.contains("installed nothing in"), "{refused}");
+        assert!(refused.contains("installed"), "{refused}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
