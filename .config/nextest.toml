@@ -12,6 +12,13 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 status-level = "slow"
 final-status-level = "slow"
 
+# The service's tests each take seconds. A service that stopped answering left a dozen of them
+# waiting on calls until the five-minute limit, in turns, longer than cargo-mutants' timeout, so
+# a mutant they all notice read as a timeout rather than caught: a minute ends them.
+[[profile.default.overrides]]
+filter = "package(kchess-service)"
+slow-timeout = { period = "30s", terminate-after = 2 }
+
 # CI (`NEXTEST_PROFILE=ci`): every failure of the run, not only the first.
 [profile.ci]
 fail-fast = false
