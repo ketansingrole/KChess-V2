@@ -18,6 +18,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::archive::hex;
 use crate::error::{CoreError, Result};
 
 /// What every sealed credential starts with.
@@ -156,10 +157,6 @@ impl Credentials {
 
 fn cipher(key: &[u8; 32]) -> Aes256Gcm {
     Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn unhex(text: &str) -> Option<[u8; 32]> {

@@ -534,25 +534,7 @@ impl Part {
     /// The SHA-256 of everything written, once it is on disk.
     fn finish(&mut self) -> std::io::Result<String> {
         std::io::Write::flush(&mut self.file)?;
-        Ok(hex(&self.hasher.clone().finalize()))
-    }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// The SHA-256 of the file at `path`, if it can be read.
-fn file_digest(path: &Path) -> Option<String> {
-    use std::io::Read as _;
-    let mut file = std::fs::File::open(path).ok()?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 1 << 20];
-    loop {
-        match file.read(&mut buffer).ok()? {
-            0 => return Some(hex(&hasher.finalize())),
-            read => hasher.update(&buffer[..read]),
-        }
+        Ok(kchess_delta::hex(&self.hasher.clone().finalize()))
     }
 }
 
@@ -767,7 +749,7 @@ async fn download_signed(
         .map_err(fail)?;
     lock.lock().map_err(fail)?;
     let file_path = folder.join(&asset.name);
-    if file_digest(&file_path).is_some_and(|digest| digest == expected) {
+    if kchess_delta::file_digest(&file_path).is_ok_and(|digest| digest == expected) {
         log(&format!("{} was already downloaded", asset.name));
         let size = std::fs::metadata(&file_path).map_or(asset.size, |meta| meta.len());
         let _ = progress.unbounded_send((size, size));
@@ -1337,11 +1319,10 @@ impl InstallLock {
     fn path(root: &Path, installed: &Path) -> PathBuf {
         let installed = std::fs::canonicalize(installed).unwrap_or_else(|_| installed.into());
         let digest = Sha256::digest(installed.as_os_str().as_encoded_bytes());
-        let name: String = digest[..8]
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        root.join(format!("{INSTALLING}{name}.lock"))
+        root.join(format!(
+            "{INSTALLING}{}.lock",
+            kchess_delta::hex(&digest[..8])
+        ))
     }
 
     /// Take the installation, or say another KChess is installing into it.

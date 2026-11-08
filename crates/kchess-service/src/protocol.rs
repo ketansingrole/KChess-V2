@@ -3,6 +3,7 @@
 //! service answers `welcome` or `refuse`. After that, calls, results, cancellations, events and
 //! focus reports flow until either side closes.
 
+use kchess_core::archive::hex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -123,10 +124,6 @@ pub fn protocol() -> String {
         hash.update(contract.as_bytes());
     }
     hex(&hash.finalize()[..8])
-}
-
-pub(crate) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Reads one frame; `None` when the other side closed between frames.

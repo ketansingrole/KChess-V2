@@ -11,6 +11,7 @@ use super::args::{arg, normal};
 use crate::ai::{
     Attempt, CALLBACK_PATH, FIRST_PORT, Model, Problem, Refusal, Tokens, new_host_id, valid_host_id,
 };
+use crate::archive::hex;
 use crate::clock;
 use crate::core::Core;
 use crate::error::{CoreError, Result};
@@ -482,8 +483,4 @@ impl Core {
             _ => Err(CoreError::new(format!("Unknown core method {method}."))),
         }
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

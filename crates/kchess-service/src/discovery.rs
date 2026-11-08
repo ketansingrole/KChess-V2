@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::protocol::hex;
+use kchess_core::archive::hex;
 
 /// The file in the profile that names the running core.
 pub const INFO_FILE: &str = "core.json";

@@ -98,7 +98,7 @@ pub fn session_id() -> &'static str {
             let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
             bytes[..8].copy_from_slice(&now.to_le_bytes());
         }
-        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+        kchess_delta::hex(&bytes)
     })
 }
 

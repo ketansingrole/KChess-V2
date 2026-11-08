@@ -164,10 +164,7 @@ fn zip_of(entries: &[(&str, &[u8])], stored: bool) -> Vec<u8> {
 }
 
 fn sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    kchess_core::archive::hex(&Sha256::digest(bytes))
 }
 
 fn model_for(base: &str, zip: &[u8]) -> VoiceModel {
