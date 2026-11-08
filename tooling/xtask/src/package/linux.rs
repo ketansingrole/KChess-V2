@@ -97,10 +97,9 @@ fn appimage(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Res
     Ok(image)
 }
 
-/// A tar.gz of `entries` (path in the archive → contents and mode), with root ownership.
+/// A tar of `entries` (path in the archive → contents and mode), with root ownership.
 fn tarball(entries: &[(String, Vec<u8>, u32)], dirs: &[String]) -> Result<Vec<u8>> {
-    let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
-    let mut archive = tar::Builder::new(encoder);
+    let mut archive = tar::Builder::new(Vec::new());
     let header = |path: &str, size: u64, mode: u32, kind: tar::EntryType| -> Result<tar::Header> {
         let mut header = tar::Header::new_gnu();
         header.set_path(path).map_err(|cause| cause.to_string())?;
@@ -130,10 +129,26 @@ fn tarball(entries: &[(String, Vec<u8>, u32)], dirs: &[String]) -> Result<Vec<u8
             .append(&header, data.as_slice())
             .map_err(|cause| cause.to_string())?;
     }
-    archive
-        .into_inner()
-        .and_then(|encoder| encoder.finish())
-        .map_err(|cause| cause.to_string())
+    archive.into_inner().map_err(|cause| cause.to_string())
+}
+
+/// `data`, gzipped (the control archive: a few hundred bytes).
+fn gzip(data: &[u8]) -> Result<Vec<u8>> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    encoder.write_all(data).map_err(|cause| cause.to_string())?;
+    encoder.finish().map_err(|cause| cause.to_string())
+}
+
+/// `data` as xz (the program files: a quarter smaller than gzip, which dpkg has read since
+/// 1.15.6). Blocks of 64 MiB are compressed on every core, as `xz -9 -T0` does.
+pub fn xz(data: &[u8]) -> Result<Vec<u8>> {
+    let mut options = lzma_rust2::XzOptions::with_preset(9);
+    options.block_size = std::num::NonZeroU64::new(64 << 20);
+    let workers = std::thread::available_parallelism().map_or(1, |cores| cores.get() as u32);
+    let mut writer = lzma_rust2::XzWriterMt::new(Vec::new(), options, workers)
+        .map_err(|cause| cause.to_string())?;
+    writer.write_all(data).map_err(|cause| cause.to_string())?;
+    writer.finish().map_err(|cause| cause.to_string())
 }
 
 /// An `ar` archive, as dpkg reads it.
@@ -223,8 +238,8 @@ fn deb(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<P
         "#!/bin/sh\nset -e\nif [ \"$1\" = remove ] || [ \"$1\" = purge ]; then\n  if type update-alternatives >/dev/null 2>&1; then\n    update-alternatives --remove '{exe}' '{exec}' || true\n    update-alternatives --remove '{cli_link}' '{cli}' || true\n  fi\n  rm -f '/usr/bin/{exe}' '/usr/bin/{cli_link}'\nfi\n",
         exe = identity.linux_exe
     );
-    let data = tarball(&entries, &dirs)?;
-    let control = tarball(
+    let data = xz(&tarball(&entries, &dirs)?)?;
+    let control = gzip(&tarball(
         &[
             (
                 "control".into(),
@@ -235,7 +250,7 @@ fn deb(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<P
             ("postrm".into(), postrm.into_bytes(), 0o755),
         ],
         &[],
-    )?;
+    )?)?;
     let package = out.join(format!(
         "{}-{}-linux-amd64.deb",
         identity.prefix(),
@@ -246,7 +261,7 @@ fn deb(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<P
     file.write_all(&ar(&[
         ("debian-binary", b"2.0\n"),
         ("control.tar.gz", &control),
-        ("data.tar.gz", &data),
+        ("data.tar.xz", &data),
     ]))
     .map_err(|cause| cause.to_string())?;
     Ok(package)
@@ -410,6 +425,30 @@ mod tests {
             b"!<arch>\ndebian-binary   0           0     0     100644  4         `\n2.0\n"
         ));
         assert!(archive.ends_with(b"abc\n"));
+    }
+
+    /// The program files go in as xz, which dpkg reads; the archive holds them as they were.
+    #[test]
+    fn the_debs_program_files_are_xz() {
+        let entries = vec![("opt/KChess/kchess".to_string(), vec![7u8; 300_000], 0o755)];
+        let tar = tarball(&entries, &["opt".into(), "opt/KChess".into()]).unwrap();
+        let packed = xz(&tar).unwrap();
+        assert!(packed.starts_with(b"\xfd7zXZ\0"));
+        assert!(packed.len() < tar.len() / 10);
+        let mut unpacked = Vec::new();
+        std::io::Read::read_to_end(
+            &mut lzma_rust2::XzReader::new(packed.as_slice(), false),
+            &mut unpacked,
+        )
+        .unwrap();
+        assert_eq!(unpacked, tar);
+        let mut archive = tar::Archive::new(unpacked.as_slice());
+        let names: Vec<String> = archive
+            .entries()
+            .unwrap()
+            .map(|entry| entry.unwrap().path().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, ["opt/", "opt/KChess/", "opt/KChess/kchess"]);
     }
 
     #[test]

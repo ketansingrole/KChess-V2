@@ -1167,3 +1167,131 @@ fn an_update_is_found_downloaded_and_checked_from_a_feed() {
     );
     let _ = std::fs::remove_dir_all(&folder);
 }
+
+/// A server whose `n`th request is answered with `answers[n]` (the last one from then on):
+/// its base URL, and how many requests it heard.
+fn answers(
+    answers: Vec<(&'static str, Vec<u8>)>,
+) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let heard = std::sync::Arc::clone(&asked);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut request = Vec::new();
+            let mut byte = [0u8; 1];
+            while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                request.push(byte[0]);
+            }
+            let count = heard.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let (status, body) = &answers[count.min(answers.len() - 1)];
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(body);
+            let _ = stream.set_read_timeout(Some(kchess_core::loopback::HANG_UP_WAIT));
+            let _ = std::io::copy(&mut stream, &mut std::io::sink());
+        }
+    });
+    (base, asked)
+}
+
+/// A check that met a busy server showed an error until the next check six hours later; it
+/// now asks again at once, and gives up straight away only on an answer that will not change.
+#[test]
+fn a_check_tries_again_after_a_server_error() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let release = serde_json::json!({ "tag_name": "v2026.11.0", "assets": [] })
+        .to_string()
+        .into_bytes();
+    let busy = ("503 Service Unavailable", Vec::new());
+
+    let (feed, asked) = answers(vec![busy.clone(), ("200 OK", release.clone())]);
+    let found = block_on(latest(feed)).map(|release| release.tag_name);
+    assert_eq!(found, Ok("v2026.11.0".to_string()));
+    assert_eq!(asked.load(SeqCst), 2);
+
+    let (feed, asked) = answers(vec![busy.clone()]);
+    assert_eq!(
+        block_on(latest(feed)).err(),
+        Some("The update server answered 503 Service Unavailable.".to_string())
+    );
+    assert_eq!(asked.load(SeqCst), super::TRIES as usize);
+
+    let (feed, asked) = answers(vec![
+        ("429 Too Many Requests", Vec::new()),
+        ("200 OK", release),
+    ]);
+    assert!(block_on(latest(feed)).is_ok());
+    assert_eq!(asked.load(SeqCst), 2);
+
+    let (feed, asked) = answers(vec![("404 Not Found", Vec::new())]);
+    assert_eq!(
+        block_on(latest(feed)).err(),
+        Some("The update server answered 404 Not Found.".to_string())
+    );
+    assert_eq!(asked.load(SeqCst), 1);
+
+    // An answer cut short is tried again too.
+    let (feed, asked) = answers(vec![("200 OK", b"{\"tag".to_vec()), busy]);
+    assert_eq!(
+        block_on(latest(feed)).err(),
+        Some("The update server answered 503 Service Unavailable.".to_string())
+    );
+    assert_eq!(asked.load(SeqCst), super::TRIES as usize);
+}
+
+/// The checksums are a few hundred bytes; one dropped request for them failed the whole update.
+#[test]
+fn the_checksums_are_asked_for_again() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let folder = scratch("sums-again");
+    let package = b"the package".to_vec();
+    let name = asset_name("2026.11.0", Package::AppImage).unwrap();
+    let digest: String = Sha256::digest(&package)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let files = serve(vec![("/pkg".into(), package.clone())]);
+    let attempt = |sums: String| {
+        let release: Release = serde_json::from_value(serde_json::json!({
+            "tag_name": "v2026.11.0",
+            "assets": [
+                { "name": name, "browser_download_url": format!("{files}/pkg"), "size": package.len() },
+                { "name": "SHA256SUMS.txt", "browser_download_url": sums },
+            ],
+        }))
+        .unwrap();
+        let asset = release.assets[0].clone();
+        let (progress, _heard) = futures::channel::mpsc::unbounded();
+        let target = folder.join(format!("{}", rand_name()));
+        block_on(unsigned_download(release, asset, target, progress))
+    };
+    let listed = format!("{digest}  {name}\n").into_bytes();
+    let (sums, asked) = answers(vec![
+        ("500 Internal Server Error", Vec::new()),
+        ("502 Bad Gateway", Vec::new()),
+        ("200 OK", listed.clone()),
+    ]);
+    let file = attempt(sums).unwrap();
+    assert_eq!(std::fs::read(file).unwrap(), package);
+    assert_eq!(asked.load(SeqCst), 3);
+
+    let (sums, asked) = answers(vec![("403 Forbidden", Vec::new()), ("200 OK", listed)]);
+    assert_eq!(
+        attempt(sums),
+        Err("Could not download the checksums".into())
+    );
+    assert_eq!(asked.load(SeqCst), 1);
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// A name no other attempt in this test uses.
+fn rand_name() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+}

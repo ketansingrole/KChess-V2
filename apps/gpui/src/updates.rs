@@ -372,22 +372,78 @@ fn http() -> Result<reqwest::Client, String> {
         .map_err(|cause| cause.to_string())
 }
 
+/// How many times a small request (the check, the checksums, their signature) is made before
+/// it fails: a dropped connection or a busy server answers the next try, not six hours later.
+const TRIES: u32 = 3;
+
+/// One small request's answer, or why it failed: `Retry` for what a later try may not meet
+/// (no connection, a timeout, a server error, too many requests), `Fail` for the rest.
+enum Answer {
+    Fail(String),
+    Retry(String),
+}
+
+/// `request` until it answers, at most `TRIES` times, waiting as a resumed download does
+/// (`RESUME_AFTER`, doubled each time) between tries.
+async fn retried<T, F: Future<Output = Result<T, Answer>>>(
+    what: &str,
+    mut request: impl FnMut() -> F,
+) -> Result<T, String> {
+    let mut tries = 1;
+    loop {
+        match request().await {
+            Ok(answer) => return Ok(answer),
+            Err(Answer::Fail(cause)) => return Err(cause),
+            Err(Answer::Retry(cause)) if tries < TRIES => {
+                log(&format!("{what}: {cause}, trying again ({tries}/{TRIES})"));
+                tokio::time::sleep(RESUME_AFTER * 2u32.pow(tries - 1)).await;
+                tries += 1;
+            }
+            Err(Answer::Retry(cause)) => return Err(cause),
+        }
+    }
+}
+
+/// The answer to a small request as `Answer`: `failure` when there was none, `refused` for a
+/// failing status. A server error or `429` may pass; any other failing status will not.
+fn answered(
+    response: Result<reqwest::Response, reqwest::Error>,
+    failure: &'static str,
+    refused: impl FnOnce(reqwest::StatusCode) -> String,
+) -> Result<reqwest::Response, Answer> {
+    let response = response.map_err(failed(failure)).map_err(Answer::Retry)?;
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
+    }
+    log(&format!("{failure}: the server answered {status}"));
+    let cause = refused(status);
+    if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        Err(Answer::Retry(cause))
+    } else {
+        Err(Answer::Fail(cause))
+    }
+}
+
 async fn latest(feed: String) -> Result<Release, String> {
     let url = format!("{feed}/repos/{REPOSITORY}/releases/latest");
-    let response = http()?
-        .get(url)
-        .header("Accept", "application/vnd.github+json")
-        .timeout(Duration::from_secs(30))
-        .send()
-        .await
-        .map_err(failed("Could not reach the update server"))?;
-    if !response.status().is_success() {
-        return Err(format!("The update server answered {}.", response.status()));
-    }
-    response
+    let client = http()?;
+    retried("check", || async {
+        let response = client
+            .get(&url)
+            .header("Accept", "application/vnd.github+json")
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await;
+        answered(response, "Could not reach the update server", |status| {
+            format!("The update server answered {status}.")
+        })?
         .json::<Release>()
         .await
         .map_err(failed("The update server's answer could not be read"))
+        .map_err(Answer::Retry)
+    })
+    .await
 }
 
 /// How many times a download that stops part way picks up again before it fails.
@@ -658,16 +714,19 @@ async fn small_file(
         .iter()
         .find(|entry| entry.name == name)
         .ok_or(missing)?;
-    client
-        .get(&entry.browser_download_url)
-        .timeout(Duration::from_secs(60))
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(failed(failure))?
-        .text()
-        .await
-        .map_err(failed(failure))
+    retried(name, || async {
+        let response = client
+            .get(&entry.browser_download_url)
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await;
+        answered(response, failure, |_| failure.to_string())?
+            .text()
+            .await
+            .map_err(failed(failure))
+            .map_err(Answer::Retry)
+    })
+    .await
 }
 
 /// `download`, with the checksums required to be signed by `key` when there is one. The
