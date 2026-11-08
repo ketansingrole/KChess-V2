@@ -5,10 +5,11 @@
 use serde_json::{Value, json};
 
 use super::model::{
-    ClockConfig, Effect, FinishedGame, Run, Setup, at, default_fen, is_running, nullish,
-    number_or_zero, string_or, turn_of, variant_from_lichess,
+    ClockConfig, Effect, FinishedGame, Run, at, default_fen, is_running, nullish, number_or_zero,
+    string_or, turn_of, variant_from_lichess,
 };
 use crate::js;
+use crate::rules::GameSetup;
 
 /// `CORRESPONDENCE`: the days per move Lichess allows.
 const CORRESPONDENCE: [f64; 7] = [1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 14.0];
@@ -108,7 +109,7 @@ impl Run {
         m.berserked = false;
         m.chat = Vec::new();
         m.online_initial = 0.0;
-        m.online_setup = Setup::standard();
+        m.online_setup = GameSetup::standard();
         m.online_unsupported = String::new();
         m.online_speed = String::new();
         m.online_clock_config = None;
@@ -406,7 +407,7 @@ impl Run {
             None | Some("") | Some("startpos") => default_fen(variant),
             Some(fen) => fen.to_string(),
         };
-        self.m.online_setup = Setup {
+        self.m.online_setup = GameSetup {
             variant: variant.to_string(),
             fen,
         };

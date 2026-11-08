@@ -27,9 +27,7 @@ use crate::api;
 use crate::position::Info;
 use crate::replay;
 use crate::rules;
-
-/// The standard starting position's FEN (`INITIAL_FEN`).
-pub(crate) const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+use crate::rules::{GameSetup, STANDARD_FEN};
 
 /// Why a transition stops early: it needs a host read it does not have yet, or it failed.
 #[derive(Debug)]
@@ -204,7 +202,7 @@ impl<S: Serialize + DeserializeOwned, R: Serialize + DeserializeOwned> Session<S
 /// The clock the board games (local and computer) share: each side's time, charged to the side to
 /// move while the game says its clock runs.
 pub(crate) trait Clocked {
-    fn setup(&self) -> &Setup;
+    fn setup(&self) -> &GameSetup;
     fn moves(&self) -> &[String];
     fn times(&self) -> Option<Times>;
     /// When the side to move started its turn, on the host's clock.
@@ -296,7 +294,7 @@ pub(crate) trait Clocked {
 
 /// The moves once `uci` is played after `moves`, with its SAN; none when it is not legal there.
 pub(crate) fn with_move(
-    setup: &Setup,
+    setup: &GameSetup,
     moves: &[String],
     uci: &str,
 ) -> Option<(Vec<String>, String)> {
@@ -309,24 +307,6 @@ pub(crate) fn with_move(
     }
     let san = replayed.played.last()?.san.clone();
     Some((next, san))
-}
-
-/// A `{ variant, fen }` setup, as the TypeScript `GameSetup` carries it.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Setup {
-    pub variant: String,
-    pub fen: String,
-}
-
-impl Setup {
-    pub(crate) fn json(&self) -> Value {
-        json!({ "variant": self.variant, "fen": self.fen })
-    }
-
-    /// `isStandardStart`: the ordinary game, from the usual start.
-    pub(crate) fn is_standard_start(&self) -> bool {
-        self.variant == "standard" && self.fen == INITIAL_FEN
-    }
 }
 
 /// A clock for one side: minutes and the increment in seconds.
@@ -404,20 +384,20 @@ pub(crate) fn to_value<T: Serialize>(value: &T) -> Result<Value, String> {
 /// The position a setup reaches after `moves` (`setupPositionAfter`): the standard start when
 /// the setup is not a legal position.
 pub(crate) fn position_after<S: AsRef<str>>(
-    setup: &Setup,
+    setup: &GameSetup,
     moves: &[S],
 ) -> Result<VariantPosition, String> {
     let texts: Vec<&str> = moves.iter().map(|m| m.as_ref()).collect();
     replay::replay_setup(&setup.variant, &setup.fen, &texts)
         .and_then(|replayed| rules::setup_start(&setup.variant, &replayed.fen))
-        .or_else(|| rules::setup_start("standard", INITIAL_FEN))
+        .or_else(|| rules::setup_start("standard", STANDARD_FEN))
         .ok_or_else(|| "the standard start is not a position".to_string())
 }
 
 /// Values derived from a setup and its moves, kept for the few games most recently asked about. A
 /// clock ticks several times a second and asks for the turn, the result and the draw each time;
 /// without this, every question replays the whole game. A changed setup or move list is a miss.
-pub(crate) struct Memo<T>(RefCell<VecDeque<(Setup, Vec<String>, T)>>);
+pub(crate) struct Memo<T>(RefCell<VecDeque<(GameSetup, Vec<String>, T)>>);
 
 impl<T: Clone> Memo<T> {
     /// Room for both clocked games (local and computer) and the moves just before a takeback.
@@ -430,7 +410,7 @@ impl<T: Clone> Memo<T> {
     /// The value for this setup and these moves; computed again only when they changed.
     pub(crate) fn get(
         &self,
-        setup: &Setup,
+        setup: &GameSetup,
         moves: &[String],
         compute: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, String> {
@@ -464,7 +444,7 @@ thread_local! {
 }
 
 /// `position::info` of the position a setup and its moves reach.
-pub(crate) fn position_info(setup: &Setup, moves: &[String]) -> Result<Rc<Info>, String> {
+pub(crate) fn position_info(setup: &GameSetup, moves: &[String]) -> Result<Rc<Info>, String> {
     POSITIONS.with(|memo| {
         memo.get(setup, moves, || {
             Ok(Rc::new(crate::position::info(&position_after(
@@ -475,7 +455,7 @@ pub(crate) fn position_info(setup: &Setup, moves: &[String]) -> Result<Rc<Info>,
 }
 
 /// `setupDrawReason` of a setup and its moves.
-pub(crate) fn draw_reason(setup: &Setup, moves: &[String]) -> Result<Option<String>, String> {
+pub(crate) fn draw_reason(setup: &GameSetup, moves: &[String]) -> Result<Option<String>, String> {
     DRAWS.with(|memo| memo.get(setup, moves, || setup_draw_reason(setup, moves)))
 }
 
@@ -488,7 +468,7 @@ fn rule(method: &str, args: &[Value]) -> Result<Value, String> {
 
 /// `setupDrawReason(setup, moves)`: the repetition or fifty-move draw already reached.
 pub(crate) fn setup_draw_reason<S: AsRef<str>>(
-    setup: &Setup,
+    setup: &GameSetup,
     moves: &[S],
 ) -> Result<Option<String>, String> {
     let texts: Vec<&str> = moves.iter().map(|m| m.as_ref()).collect();
@@ -592,23 +572,23 @@ mod tests {
 
     #[test]
     fn a_setup_reaches_the_standard_start_when_illegal() {
-        let illegal = Setup {
+        let illegal = GameSetup {
             variant: "standard".into(),
             fen: "8/8/8/8/8/8/8/8 w - - 0 1".into(),
         };
         let start = position_after(&illegal, &[] as &[String]).expect("the standard start");
-        assert_eq!(rules::make_fen(&start), INITIAL_FEN);
+        assert_eq!(rules::make_fen(&start), STANDARD_FEN);
     }
 
     #[test]
     fn a_memo_is_worked_out_again_when_the_setup_or_moves_change() {
-        let start = Setup {
+        let start = GameSetup {
             variant: "standard".into(),
-            fen: INITIAL_FEN.into(),
+            fen: STANDARD_FEN.into(),
         };
         let memo = Memo::new();
         let computed = std::cell::Cell::new(0);
-        let get = |setup: &Setup, moves: &[String]| {
+        let get = |setup: &GameSetup, moves: &[String]| {
             memo.get(setup, moves, || {
                 computed.set(computed.get() + 1);
                 Ok(moves.len())
@@ -620,7 +600,7 @@ mod tests {
         assert_eq!(computed.get(), 1);
         assert_eq!(get(&start, &[]), Ok(0));
         assert_eq!(get(&start, &["d2d4".to_string()]), Ok(1));
-        let chess960 = Setup {
+        let chess960 = GameSetup {
             variant: "chess960".into(),
             ..start.clone()
         };

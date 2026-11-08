@@ -101,9 +101,6 @@ struct GameRecord {
     bc: Loose<f64>,
 }
 
-/// The standard start, for a game described without a position.
-const STANDARD_START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
 /// What a viewer is told when a feed's task panicked (the panic hook logged it).
 const FEED_PANICKED: &str = "The feed stopped after an internal error. Retry to reconnect.";
 
@@ -138,6 +135,7 @@ struct Inner {
 }
 
 use crate::tasks::lock;
+use kchess_domain::rules::STANDARD_FEN;
 
 /// Watches one game or TV channel, or a broadcast round, at a time.
 #[derive(Clone)]
@@ -770,7 +768,7 @@ impl Inner {
                         // start until the position that follows it.
                         let Some(fen) = fen
                             .or_else(|| display_fen(record.initial_fen.0.as_deref()?))
-                            .or_else(|| display_fen(STANDARD_START))
+                            .or_else(|| display_fen(STANDARD_FEN))
                         else {
                             return Ok(());
                         };

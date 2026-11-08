@@ -10,6 +10,7 @@ use serde_json::{Map, Value, json};
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Bitboard, Color, Move, Position, Rank};
 
+use crate::rules::STANDARD_FEN;
 use crate::{js, replay, rules};
 
 /* ── JavaScript arithmetic ── */
@@ -791,8 +792,6 @@ pub fn san_to_uci<S: AsRef<str>>(fen: &str, sans: &[S]) -> Vec<String> {
     moves
 }
 
-const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
 /// `/\[FEN "([^"]+)"\]/.exec(pgn)?.[1]`
 fn fen_tag(pgn: &str) -> Option<&str> {
     let mut from = 0;
@@ -818,9 +817,9 @@ pub fn lichess_line(
     initial_fen: Option<&str>,
 ) -> (String, Vec<String>) {
     let tagged = pgn.filter(|p| !p.is_empty()).and_then(fen_tag);
-    let start = initial_fen.or(tagged).unwrap_or(INITIAL_FEN);
+    let start = initial_fen.or(tagged).unwrap_or(STANDARD_FEN);
     let fen = rules::parse_fen(start)
-        .map_or_else(|| INITIAL_FEN.to_string(), |s| rules::make_setup_fen(&s));
+        .map_or_else(|| STANDARD_FEN.to_string(), |s| rules::make_setup_fen(&s));
     let sans: Vec<&str> = moves
         .split(crate::js::is_space)
         .filter(|s| !s.is_empty())
@@ -973,7 +972,7 @@ mod tests {
         assert_eq!(fen, "8/8/8/8/8/8/8/8 w - - 0 1");
         assert!(moves.is_empty());
         let (fen, moves) = lichess_line("e4 e5 Nf3", None, None);
-        assert_eq!(fen, INITIAL_FEN);
+        assert_eq!(fen, STANDARD_FEN);
         assert_eq!(moves, ["e2e4", "e7e5", "g1f3"]);
     }
 

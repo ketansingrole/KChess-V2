@@ -9,10 +9,10 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use super::{Out, js_slice_end, to_value, value_arg};
+use crate::rules::STANDARD_FEN;
 use crate::{js, position, rules};
 
 const OPENINGS_JSON: &str = include_str!("../../data/openings.json");
-const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 /// `OpeningName`
 #[derive(Debug, Serialize)]
@@ -53,7 +53,7 @@ fn table() -> &'static HashMap<String, usize> {
     static TABLE: OnceLock<HashMap<String, usize>> = OnceLock::new();
     TABLE.get_or_init(|| {
         let mut table: HashMap<String, usize> = HashMap::new();
-        let Some(start) = rules::setup_start("standard", START) else {
+        let Some(start) = rules::setup_start("standard", STANDARD_FEN) else {
             return table;
         };
         let all = lines();
@@ -253,7 +253,7 @@ pub fn wikibooks_title<S: AsRef<str>>(moves: &[S]) -> Option<String> {
     if moves.is_empty() || moves.len() > WIKIBOOKS_PLIES {
         return None;
     }
-    let start = rules::setup_start("standard", START)?;
+    let start = rules::setup_start("standard", STANDARD_FEN)?;
     let (_, line) = position::line(start, moves, false, false);
     if line.len() != moves.len() {
         return None;
@@ -270,7 +270,7 @@ pub fn wikibooks_title<S: AsRef<str>>(moves: &[S]) -> Option<String> {
 /// The positions (FENs) a line from the starting position reaches, the start first. None when a
 /// move is illegal.
 pub fn line_fens<S: AsRef<str>>(moves: &[S]) -> Option<Vec<String>> {
-    let start = rules::setup_start("standard", START)?;
+    let start = rules::setup_start("standard", STANDARD_FEN)?;
     let first = rules::make_fen(&start);
     let (_, line) = position::line(start, moves, false, false);
     if line.len() != moves.len() {
@@ -401,8 +401,6 @@ fn opening_replies_call(args: &[Value]) -> Out {
 mod tests {
     use super::*;
 
-    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
     #[test]
     fn names_the_last_named_position() {
         let moves: Vec<String> = ["e2e4", "a7a6", "h2h3"]
@@ -410,15 +408,16 @@ mod tests {
             .map(|m| (*m).to_string())
             .collect();
         // After 1.e4 a6 2.h3 the nearest named position is 1.e4 a6 (St. George Defense).
-        let name = opening_at("standard", START, &moves, 3.0).expect("a named opening");
+        let name = opening_at("standard", STANDARD_FEN, &moves, 3.0).expect("a named opening");
         assert_eq!(
             (name.eco.as_str(), name.name.as_str()),
             ("B00", "St. George Defense")
         );
-        let first = opening_at("standard", START, &moves, 1.0).expect("the first move is named");
+        let first =
+            opening_at("standard", STANDARD_FEN, &moves, 1.0).expect("the first move is named");
         assert_eq!(first.name, "King's Pawn Game");
-        assert!(opening_at("chess960", START, &moves, 1.0).is_none());
-        assert!(opening_at("standard", START, &moves, 0.0).is_none());
+        assert!(opening_at("chess960", STANDARD_FEN, &moves, 1.0).is_none());
+        assert!(opening_at("standard", STANDARD_FEN, &moves, 0.0).is_none());
     }
 
     fn find<'a>(nodes: &'a [OpeningNode], label: &str) -> &'a OpeningNode {
@@ -484,7 +483,7 @@ mod tests {
         assert!(wikibooks_title(&["e2e5"]).is_none());
         let fens = line_fens(&["e2e4"]).expect("legal");
         assert_eq!(fens.len(), 2);
-        assert_eq!(fens[0], START);
+        assert_eq!(fens[0], STANDARD_FEN);
         assert!(line_fens(&["e2e4", "e2e4"]).is_none());
     }
 

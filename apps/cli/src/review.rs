@@ -7,8 +7,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::core::{CoreClient, Event};
-
-const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+use kchess_domain::rules::STANDARD_FEN;
 
 /// A game read for review: where it starts, its main line in SAN and in UCI, and the Lichess key
 /// of its variant when Fairy-Stockfish reviews it (not standard chess or Chess960).
@@ -68,7 +67,7 @@ pub fn main_line(pgn: &str) -> Result<Line, String> {
             (fen.to_string(), moves)
         }
         None => {
-            let fen = game.header("FEN").unwrap_or(START).to_string();
+            let fen = game.header("FEN").unwrap_or(STANDARD_FEN).to_string();
             let moves = san_to_uci(&fen, &sans);
             (fen, moves)
         }

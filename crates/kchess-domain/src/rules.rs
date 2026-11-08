@@ -5,6 +5,8 @@
 //! Positions are always built in Chess960 castling mode, as castling is represented generically
 //! as king-takes-rook.
 
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use shakmaty::variant::{Variant, VariantPosition};
 use shakmaty::{
     Bitboard, Board, ByColor, ByRole, CastlingMode, CastlingSide, Color, EnPassantMode, File, Move,
@@ -14,6 +16,35 @@ use std::fmt::Write as _;
 use std::num::NonZeroU32;
 
 use crate::js;
+
+/// The standard start.
+pub const STANDARD_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+/// `GameSetup`: the rules and the position before the first move.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GameSetup {
+    pub variant: String,
+    pub fen: String,
+}
+
+impl GameSetup {
+    /// The ordinary game from the usual start.
+    pub fn standard() -> GameSetup {
+        GameSetup {
+            variant: "standard".into(),
+            fen: STANDARD_FEN.into(),
+        }
+    }
+
+    pub(crate) fn json(&self) -> Value {
+        json!({ "variant": self.variant, "fen": self.fen })
+    }
+
+    /// `isStandardStart`: the ordinary game, from the usual start.
+    pub(crate) fn is_standard_start(&self) -> bool {
+        self.variant == "standard" && self.fen == STANDARD_FEN
+    }
+}
 
 /// The Lichess variant keys KChess can play.
 pub fn lichess_variant(key: &str) -> Option<Variant> {

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    Clock, Clocked, Done, Flow, Reads, Session, Setup, Times, arg, board_result, engine_level,
+    Clock, Clocked, Done, Flow, GameSetup, Reads, Session, Times, arg, board_result, engine_level,
     opponent, optional_arg, outcome_winner, pgn_result, position_info, timeout_winner, to_value,
     transition, with_move,
 };
@@ -20,7 +20,7 @@ pub struct State {
     pub level: String,
     pub color: String,
     pub resigned: bool,
-    pub setup: Setup,
+    pub setup: GameSetup,
     pub clock: Option<Clock>,
     pub times: Option<Times>,
     pub flagged: Option<String>,
@@ -46,7 +46,7 @@ struct Saved {
     level: Option<String>,
     color: Option<String>,
     resigned: Option<bool>,
-    setup: Option<Setup>,
+    setup: Option<GameSetup>,
     clock: Option<Clock>,
     times: Option<Times>,
     flagged: Option<String>,
@@ -75,10 +75,7 @@ pub fn state(args: &[Value]) -> Result<Value, String> {
         level: saved.level.unwrap_or_else(|| "club".into()),
         color: saved.color.unwrap_or_else(|| "white".into()),
         resigned: saved.resigned.unwrap_or(false),
-        setup: saved.setup.unwrap_or_else(|| Setup {
-            variant: "standard".into(),
-            fen: super::INITIAL_FEN.into(),
-        }),
+        setup: saved.setup.unwrap_or_else(GameSetup::standard),
         clock: saved.clock,
         times: saved.times,
         flagged: saved.flagged,
@@ -91,7 +88,7 @@ pub fn state(args: &[Value]) -> Result<Value, String> {
 type Game = Session<State, Runtime>;
 
 impl Clocked for Game {
-    fn setup(&self) -> &Setup {
+    fn setup(&self) -> &GameSetup {
         &self.state.setup
     }
     fn moves(&self) -> &[String] {
@@ -353,7 +350,7 @@ impl Game {
         }
     }
 
-    fn start(&mut self, reads: &mut Reads, setup: Setup, clock: Option<Clock>) -> Flow<()> {
+    fn start(&mut self, reads: &mut Reads, setup: GameSetup, clock: Option<Clock>) -> Flow<()> {
         if self.rt.disposed {
             return Ok(());
         }
@@ -610,7 +607,7 @@ pub fn search_end(args: &[Value]) -> Result<Value, String> {
 
 pub fn start(args: &[Value]) -> Result<Value, String> {
     Game::step(args, |game, inputs, reads| {
-        let setup: Setup = arg(inputs, 2, "setup")?;
+        let setup: GameSetup = arg(inputs, 2, "setup")?;
         let clock = optional_arg::<Clock>(inputs, 3)?
             .map(Clock::checked)
             .transpose()?;

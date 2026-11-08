@@ -15,8 +15,7 @@ use crate::board::{BoardState, ChessBoard};
 use crate::game::{chess960, position_problem, variants};
 use crate::theme::Palette;
 use crate::widgets;
-
-const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+use kchess_domain::rules::STANDARD_FEN;
 
 /// The clocks offered (`CLOCKS`), as minutes and increment.
 const CLOCKS: &[(&str, Option<(f64, f64)>)] = &[
@@ -90,13 +89,13 @@ impl GameOptions {
         let variant = current.setup["variant"].as_str().unwrap_or("standard");
         let fen = current.setup["fen"]
             .as_str()
-            .unwrap_or(INITIAL_FEN)
+            .unwrap_or(STANDARD_FEN)
             .to_string();
         let start = if variant == "chess960" {
             Start::Chess960
         } else if variant != "standard" {
             Start::Variant
-        } else if fen == INITIAL_FEN {
+        } else if fen == STANDARD_FEN {
             Start::Standard
         } else {
             Start::Fen
@@ -315,7 +314,7 @@ impl GameOptions {
 
     fn chosen(&self, cx: &App) -> Chosen {
         let setup = match self.start {
-            Start::Standard => json!({ "variant": "standard", "fen": INITIAL_FEN }),
+            Start::Standard => json!({ "variant": "standard", "fen": STANDARD_FEN }),
             Start::Chess960 => json!({
                 "variant": "chess960",
                 "fen": chess960(self.number960(cx).unwrap_or(518)),
@@ -383,7 +382,7 @@ impl GameOptions {
 
 fn preview_state(fen: &str) -> BoardState {
     let position = kchess_domain::rules::setup_start("chess960", fen)
-        .or_else(|| kchess_domain::rules::setup_start("standard", INITIAL_FEN));
+        .or_else(|| kchess_domain::rules::setup_start("standard", STANDARD_FEN));
     match position {
         Some(position) => BoardState::of(&position, shakmaty::Color::White, None, None),
         None => BoardState::of(

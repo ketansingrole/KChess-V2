@@ -7,9 +7,7 @@ pub mod puzzle;
 pub mod tree;
 pub mod view;
 
-/// The usual starting position.
-pub const STANDARD_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
+pub use kchess_domain::rules::STANDARD_FEN;
 use serde_json::{Value, json};
 
 pub use kchess_domain::links::{
