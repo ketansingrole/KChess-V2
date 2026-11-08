@@ -132,6 +132,29 @@ impl LocalGame {
 mod tests {
     use super::*;
 
+    /// Taking back after a flag fell left that side on 0 ms: it lost on time again as soon as it
+    /// was back on move. As on Lichess, a time-out is final.
+    #[test]
+    fn a_time_out_is_not_taken_back() {
+        let mut game = LocalGame::new(None, 0.).unwrap();
+        let side = json!({ "minutes": 1, "increment": 0 });
+        game.start(
+            json!({
+                "variant": "standard",
+                "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            }),
+            json!({ "white": side, "black": side }),
+            0.,
+        )
+        .unwrap();
+        game.play("e2e4", 1.).unwrap();
+        game.play("e7e5", 2.).unwrap();
+        assert!(game.expire(200_000.).unwrap().0);
+        game.takeback(200_001.).unwrap();
+        assert!(game.over(200_001.));
+        assert_eq!(game.state["moves"], json!(["e2e4", "e7e5"]));
+    }
+
     #[test]
     fn both_sides_move_and_a_resignation_ends_the_game() {
         let mut game = LocalGame::new(None, 0.).unwrap();

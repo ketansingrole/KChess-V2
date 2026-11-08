@@ -435,10 +435,12 @@ impl Voice {
 
     /// A fresh utterance with the current grammar (`resetRecognizer`).
     fn reset(&mut self, cx: &mut Context<Self>) {
-        self.epoch += 1;
+        // Nothing is heard yet while the model or the microphone is still opening: a new epoch
+        // would only drop that opening's answer and leave voice loading for good.
         if !self.ready || self.capture.is_none() {
             return;
         }
+        self.epoch += 1;
         if self.active
             && !self.grammar.is_empty()
             && let Some(requests) = &self.requests
@@ -739,6 +741,24 @@ mod tests {
             })
         });
         assert_eq!(error, Some((message.to_string(), ErrorKind::Model)));
+    }
+
+    /// A core reconnect while the voice model downloaded reset the recognizer before the
+    /// microphone was open: the download's answer was dropped as stale and voice said
+    /// "Preparing voice input…" for good.
+    #[gpui_kit::test]
+    fn a_reconnect_while_voice_opens_keeps_the_opening(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = Harness::start(cx);
+        let (before, after) = app.with_window(|_, cx| {
+            handle(cx).update(cx, |voice, cx| {
+                voice.owner = Some(1);
+                voice.state = super::State::Loading;
+                let before = voice.epoch;
+                voice.reset(cx);
+                (before, voice.epoch)
+            })
+        });
+        assert_eq!(after, before);
     }
 
     #[test]

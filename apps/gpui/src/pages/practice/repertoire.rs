@@ -21,7 +21,7 @@ use kchess_contracts::Level;
 use kchess_domain::training::repetition;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use shakmaty::{Color, Position as _};
+use shakmaty::Color;
 
 use super::run;
 use crate::assets::icon;
@@ -212,6 +212,12 @@ fn schedule_text(summary: &repetition::Summary, now: f64) -> Option<String> {
         (1, _) => Some("1 line due".into()),
         (due, _) => Some(format!("{due} lines due")),
     }
+}
+
+/// Whether `color` has a move to play at `node`: a line's last move leaves nothing to play,
+/// whoever is on move, and the next line follows.
+fn to_play(node: &TreeNode, color: Color) -> bool {
+    !node.children.is_empty() && turn_of(&node.fen) == color
 }
 
 fn turn_of(fen: &str) -> Color {
@@ -597,7 +603,7 @@ impl Repertoire {
 
     fn your_turn(&self, cx: &App) -> bool {
         self.node()
-            .is_some_and(|node| turn_of(&node.fen) == Self::color(cx))
+            .is_some_and(|node| to_play(node, Self::color(cx)))
     }
 
     fn after(
@@ -1059,7 +1065,7 @@ impl Repertoire {
                 .get(0..2)
                 .zip(node.uci.get(2..4))
                 .and_then(|(from, to)| Some((from.parse().ok()?, to.parse().ok()?)));
-            let active = position.turn() == color;
+            let active = to_play(node, color);
             let mut state = BoardState::of(&position, color, active.then_some(color), last);
             state.arrows = self.hint.clone();
             state.blindfold = cx
@@ -1451,10 +1457,11 @@ impl Render for Repertoire {
 mod tests {
     use super::{
         Chapter, TreeNode, due_in, leads_to, leaves, merge, pick_weak, same_castle, schedule_text,
-        study_roots, weakness,
+        study_roots, to_play, weakness,
     };
     use kchess_domain::training::repetition::Summary;
     use serde_json::json;
+    use shakmaty::Color;
 
     fn chapter(pgn: &str) -> Chapter {
         Chapter {
@@ -1462,6 +1469,20 @@ mod tests {
             name: pgn.into(),
             pgn: pgn.into(),
         }
+    }
+
+    /// The opponent's reply that ended a line left the board on the player's turn: a move in
+    /// the pause before the next line counted as wrong ("Expected nothing (line ended)") and
+    /// marked the position as missed.
+    #[test]
+    fn a_finished_line_has_nothing_to_play() {
+        let roots = study_roots(&[chapter("1. e4 e5")]);
+        let e4 = &roots[0].children[0];
+        let e5 = &e4.children[0];
+        assert!(to_play(&roots[0], Color::White));
+        assert!(to_play(e4, Color::Black));
+        assert!(!to_play(e5, Color::White));
+        assert!(!to_play(e5, Color::Black));
     }
 
     #[test]
