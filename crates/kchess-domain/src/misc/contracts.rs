@@ -55,24 +55,7 @@ pub const ASSISTANCE_METHODS: &[&str] = &[
     "aiExplain",
 ];
 /// The channels `assertWatchTarget` accepts (`TV_CHANNEL_KEYS`).
-pub const TV_CHANNEL_KEYS: &[&str] = &[
-    "best",
-    "bullet",
-    "blitz",
-    "rapid",
-    "classical",
-    "ultraBullet",
-    "chess960",
-    "kingOfTheHill",
-    "threeCheck",
-    "antichess",
-    "atomic",
-    "horde",
-    "racingKings",
-    "crazyhouse",
-    "bot",
-    "computer",
-];
+pub const TV_CHANNEL_KEYS: &[&str] = &super::constants::TV_CHANNEL_KEYS;
 
 const CORE: &[Row] = &[
     (

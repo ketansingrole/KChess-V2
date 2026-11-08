@@ -26,26 +26,6 @@ pub use feed::{
 pub use listings::{broadcast_round, broadcast_summaries, broadcast_tour, broadcasts, tv_channels};
 pub use spectator::Spectator;
 
-/// The TV channels: key and label, in display order.
-pub const TV_CHANNELS: [(&str, &str); 16] = [
-    ("best", "Top rated"),
-    ("bullet", "Bullet"),
-    ("blitz", "Blitz"),
-    ("rapid", "Rapid"),
-    ("classical", "Classical"),
-    ("ultraBullet", "UltraBullet"),
-    ("chess960", "Chess960"),
-    ("kingOfTheHill", "King of the Hill"),
-    ("threeCheck", "Three-check"),
-    ("antichess", "Antichess"),
-    ("atomic", "Atomic"),
-    ("horde", "Horde"),
-    ("racingKings", "Racing Kings"),
-    ("crazyhouse", "Crazyhouse"),
-    ("bot", "Bots"),
-    ("computer", "Computer"),
-];
-
 /// How many earlier games a TV channel keeps for the session.
 const PAST_GAMES: usize = 6;
 /// The longest broadcast PGN read, in UTF-16 units (`pgn.slice(0, 200_000)`).

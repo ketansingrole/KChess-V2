@@ -772,13 +772,3 @@ async fn a_stop_for_an_earlier_watch_leaves_the_newer_one_running() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(sink.broadcasts.lock().unwrap().len(), sent);
 }
-
-#[test]
-fn every_listed_tv_channel_is_a_valid_watch_target() {
-    // Atomic, Horde and Racing Kings were listed but refused by the watch validator.
-    let listed: Vec<&str> = kchess_core::lichess::watch::TV_CHANNELS
-        .iter()
-        .map(|(key, _)| *key)
-        .collect();
-    assert_eq!(listed, kchess_domain::misc::TV_CHANNEL_KEYS);
-}

@@ -145,6 +145,15 @@ mod tests {
     }
 
     #[test]
+    fn variant_tv_channels_use_the_variant_names() {
+        for (key, label) in crate::misc::constants::TV_CHANNELS {
+            if let Some(variant) = info(key) {
+                assert_eq!(label, variant.label);
+            }
+        }
+    }
+
+    #[test]
     fn pgn_names_read_back_as_the_same_rules() {
         for variant in &VARIANTS {
             assert_eq!(
