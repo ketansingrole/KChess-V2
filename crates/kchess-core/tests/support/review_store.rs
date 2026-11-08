@@ -55,14 +55,6 @@ impl MemoryStore {
             .push(name.to_string());
     }
 
-    pub fn remove_account(&self, name: &str) {
-        self.inner
-            .lock()
-            .expect("store")
-            .accounts
-            .retain(|account| !account.eq_ignore_ascii_case(name));
-    }
-
     pub fn add_game(&self, game: GameRow) {
         self.inner.lock().expect("store").games.push(game);
     }
@@ -87,10 +79,6 @@ impl MemoryStore {
             .expect("store")
             .reviews
             .insert(review.key.clone(), review);
-    }
-
-    pub fn checked(&self, id: &str) -> bool {
-        self.inner.lock().expect("store").checked.contains(id)
     }
 }
 

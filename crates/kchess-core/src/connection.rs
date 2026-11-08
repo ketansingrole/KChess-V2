@@ -133,12 +133,6 @@ impl Connections {
             .unwrap_or_default()
     }
 
-    pub fn is_connected(&self, id: u64) -> bool {
-        self.clients
-            .lock()
-            .is_ok_and(|clients| clients.contains_key(&id))
-    }
-
     /// What `id` said when it connected.
     pub fn info(&self, id: u64) -> Option<ClientInfo> {
         self.clients
@@ -211,7 +205,7 @@ mod tests {
         let connections = Connections::new();
         assert_eq!(connections.ids(), vec![APP]);
         connections.disconnect(APP);
-        assert!(connections.is_connected(APP));
+        assert_eq!(connections.ids(), vec![APP]);
         connections.without_app();
         assert!(connections.ids().is_empty());
     }

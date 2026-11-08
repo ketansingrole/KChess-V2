@@ -1,6 +1,6 @@
 //! Network accounting in the database: the counters `flushUsage`
-//! writes, `resetUsage` clears and `usageReport` reads. The in-memory batching, the flush timer,
-//! the request contexts and the database file sizes stay in TypeScript.
+//! writes, `resetUsage` clears and `usageReport` reads. The in-memory batching, the flush timer
+//! and the request contexts are `crate::usage`'s.
 
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};

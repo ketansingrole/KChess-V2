@@ -1,5 +1,5 @@
 //! Lichess request admission and the request accounting (`withUsage`, `attributeTo`,
-//! `meteredFetch`, `recordUsage`, `forgetUsage`).
+//! `meteredFetch`, `forgetUsage`).
 //!
 //! Admission: at most two requests are in flight, interactive requests (game moves and their
 //! resign/abort/draw/takeback family) go before the rest, a 429 starts a cooldown that the next
@@ -358,17 +358,6 @@ impl Policy {
             kind: kind.to_string(),
         };
         let _ = USAGE.try_with(|cell| *lock(cell) = Some(context));
-    }
-
-    /// `recordUsage`: count `requests` and `bytes` for `account` now.
-    pub fn record_usage(&self, account: &str, kind: &str, requests: u64, bytes: u64) {
-        let account = account.to_lowercase();
-        let context = UsageContext {
-            epoch: self.epoch(&account),
-            account,
-            kind: kind.to_string(),
-        };
-        self.record(&context, requests, bytes);
     }
 
     fn record(&self, context: &UsageContext, requests: u64, bytes: u64) {
