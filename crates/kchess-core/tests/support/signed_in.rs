@@ -58,17 +58,25 @@ pub struct Profile {
 
 /// Opens the core against the Lichess at `base` with `Alice` connected.
 pub async fn open(base: &str) -> Profile {
-    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
-    kchess_core::env::set("KCHESS_TEST_LICHESS_BASE", base);
+    // The core reads its Lichess from the process's switches when it opens; tests sharing a binary
+    // under `cargo test` set them in turn, so each sets and opens before the next sets.
+    static OPENING: Mutex<()> = Mutex::new(());
     let dir = tempfile::tempdir().unwrap();
     let host = Arc::new(SignedIn::default());
-    let core = Arc::new(
-        Core::open(
-            Config::new(dir.path().to_path_buf()),
-            Arc::clone(&host) as Arc<dyn Host>,
+    let core = {
+        let _opening = OPENING
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
+        kchess_core::env::set("KCHESS_TEST_LICHESS_BASE", base);
+        Arc::new(
+            Core::open(
+                Config::new(dir.path().to_path_buf()),
+                Arc::clone(&host) as Arc<dyn Host>,
+            )
+            .unwrap(),
         )
-        .unwrap(),
-    );
+    };
     host.core.set(Arc::downgrade(&core)).unwrap();
     core.call("store.games.addAccount", vec![json!("Alice"), json!(true)])
         .await

@@ -807,7 +807,6 @@ impl Core {
                 &format!("Lichess reset failed: {}", cause.message),
             );
         }
-        let _ = self.dispatch("cloudEval.clear", vec![]).await;
         self.usage.close();
         self.puzzles.close().await;
         self.database.close_async().await;

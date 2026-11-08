@@ -100,6 +100,26 @@ async fn online_methods_check_their_arguments_and_reach_lichess() {
     }
     assert_eq!(core.call("challenges", vec![]).await.unwrap(), json!([]));
     assert_eq!(core.call("ongoingGames", vec![]).await.unwrap(), json!([]));
+    // Opening a game reaches the online session, which needs the account's login first.
+    assert_eq!(
+        core.call("openGame", vec![json!("Alice"), json!("abcdefgh")])
+            .await
+            .unwrap_err()
+            .message,
+        "@Alice's Lichess login is unavailable. Reconnect it in Settings."
+    );
+    // A fresh profile's reviews have nothing waiting.
+    assert_eq!(
+        core.call("reviewStatus", vec![]).await.unwrap(),
+        json!({ "waiting": 0 })
+    );
+    // Cancelling a review no one asked for reaches the reviews and is nothing to them.
+    assert_eq!(
+        core.call("reviewCancel", vec![json!("0123456789abcdef")])
+            .await
+            .unwrap(),
+        Value::Null
+    );
     assert_eq!(
         core.call("cancelOnline", vec![]).await.unwrap(),
         Value::Null

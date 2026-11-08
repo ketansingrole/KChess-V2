@@ -333,20 +333,8 @@ pub struct TextLine {
     pub opacity: f32,
 }
 
-/// Lines of text, centred and turned `rotation` degrees (a multiple of 90), as a PNG `scale` times
-/// its size.
-#[cfg(test)]
-pub fn rotated_text_png(
-    lines: &[TextLine],
-    color: &str,
-    rotation: u16,
-    scale: f32,
-) -> Result<Vec<u8>, String> {
-    let pixmap = rotated_text(lines, color, rotation, scale)?;
-    pixmap.encode_png().map_err(|cause| cause.to_string())
-}
-
-/// The same, ready to draw: GPUI cannot rotate text, so a turned clock face is shown as a picture
+/// Lines of text, centred and turned `rotation` degrees (a multiple of 90), `scale` times their
+/// size, ready to draw: GPUI cannot rotate text, so a turned clock face is shown as a picture
 /// of it. A picture to draw rather than a PNG: GPUI keeps every PNG it decodes for the rest of the
 /// session, and a running clock makes a new face every second. Whoever replaces one releases its
 /// texture (`App::drop_image`).
@@ -491,7 +479,7 @@ pub fn game_gif(
 mod tests {
     use super::{
         ImageOptions, Pixmap, Rect, TextLine, game_gif, position_png, render_image,
-        rotated_text_png,
+        rotated_text_image,
     };
     use std::sync::atomic::AtomicBool;
 
@@ -504,9 +492,9 @@ mod tests {
             opacity: 1.,
         }];
         let size = |rotation| {
-            let png = rotated_text_png(&lines, "#000000", rotation, 1.).unwrap();
-            let image = image::load_from_memory(&png).unwrap();
-            (image.width(), image.height())
+            let image = rotated_text_image(&lines, "#000000", rotation, 1.).unwrap();
+            let size = image.size(0);
+            (size.width.0, size.height.0)
         };
         assert_eq!(size(180), (560, 120));
         assert_eq!(size(90), (120, 560));

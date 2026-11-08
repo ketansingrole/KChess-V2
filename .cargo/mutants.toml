@@ -46,6 +46,3 @@ exclude_re = [
     'tooling/xtask/src/fairy\.rs:.*: replace build -> Result<PathBuf> with ',
     'tooling/xtask/src/voice\.rs:.*: replace stage -> Result<PathBuf> with ',
 ]
-
-# Compiled only for WebAssembly, where no test runs.
-exclude_globs = ["crates/kchess-domain/src/api/wasm.rs"]

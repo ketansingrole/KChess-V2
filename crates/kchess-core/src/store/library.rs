@@ -47,9 +47,6 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
     let host = ctx.host;
     let result = match method {
         "store.library.library" => now_arg(args, 0).and_then(|now| cached_library(ctx, now)),
-        "store.library.readSession" => {
-            str_arg(args, 0, "kind").and_then(|kind| read_session(host, db, kind))
-        }
         "store.library.studyCommand" => now_arg(args, 1).and_then(|now| {
             let mut command = args.first().cloned().unwrap_or(Value::Null);
             if let Some(based_on) = args.get(3).and_then(Value::as_str) {
@@ -245,7 +242,7 @@ pub(crate) use super::documents::{assert_replaceable, write_document};
 pub use super::json_codec::{clean_name, js_json, js_slice, utf16_len};
 pub use super::library_import::{cached_library, library};
 pub(crate) use super::library_import::{
-    read_joined, read_misses, read_mistakes, read_schedule_lines, read_session, until_after,
+    read_joined, read_misses, read_mistakes, read_schedule_lines, until_after,
 };
 pub(crate) use super::studies::{check_based_on, id_of, spread, study_command};
 

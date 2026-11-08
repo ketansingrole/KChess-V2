@@ -8,14 +8,12 @@
 Thumbs.db
 Desktop.ini
 
-# Logs (an Electron-written LevelDB log is a test fixture)
+# Logs
 *.log
-!crates/kchess-electron-legacy/tests/fixtures/**/*.log
 
 # Env (Lichess tokens etc.)
 .env
 .env.*
-!.env.example
 
 # Local databases (runtime state lives outside the repo; tests use temp dirs)
 *.db

@@ -11,8 +11,7 @@ name = "kchess-voice"
 path = "src/main.rs"
 
 [dependencies]
-# Loads libvosk from beside the executable at run time, so the build never links it (already in
-# Cargo.lock through napi).
+# Loads libvosk from beside the executable at run time, so the build never links it.
 libloading = "0.9"
 serde.workspace = true
 serde_json.workspace = true

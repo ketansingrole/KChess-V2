@@ -186,29 +186,6 @@ pub fn decode_archived_game(raw: &Value) -> Option<Value> {
 
 pub const MAX_ARCHIVED_GAMES: usize = 500;
 
-/// `decodeArchive`: played games as one document (earlier releases); any invalid or duplicated
-/// game rejects the whole document.
-pub fn decode_archive(raw: &Value) -> Option<Vec<Value>> {
-    let doc = object(Some(raw))?;
-    if finite(doc.get("version")) != Some(1.0) {
-        return None;
-    }
-    let Some(Value::Array(games)) = doc.get("games") else {
-        return None;
-    };
-    if games.len() > MAX_ARCHIVED_GAMES {
-        return None;
-    }
-    let mut ids = std::collections::HashSet::new();
-    games
-        .iter()
-        .map(|raw| {
-            let game = decode_archived_game(raw)?;
-            ids.insert(game["id"].as_str()?.to_string()).then_some(game)
-        })
-        .collect()
-}
-
 /* ── Mistake drills ── */
 
 /// `decodeMistakes`

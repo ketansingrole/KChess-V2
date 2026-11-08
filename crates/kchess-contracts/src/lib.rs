@@ -1,13 +1,11 @@
 //! The core's contract types as Rust (serde) shapes, shared by the core, the GPUI app and the CLI,
 //! and the errors and log levels that cross between them (`error`).
 
-pub mod arity;
 pub mod calls;
 pub mod core_api;
 pub mod defaults;
 pub mod error;
 pub mod library;
-pub mod lichess;
 pub mod raw;
 pub mod settings;
 pub mod types;

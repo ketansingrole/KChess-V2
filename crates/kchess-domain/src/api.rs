@@ -24,7 +24,6 @@ const MAX_JSON_DEPTH: usize = 4096;
 /// default) in a debug build.
 const DEEP_JSON: usize = 256;
 const TREE_METHODS: &[&str] = &["treeFromPgn"];
-#[cfg(not(target_arch = "wasm32"))]
 const DEEP_STACK: usize = 32 * 1024 * 1024;
 
 /// How deeply `json` nests arrays and objects, counting no further than one past
@@ -119,7 +118,6 @@ fn call_deep(method: &str, args: &str) -> std::result::Result<String, String> {
 
 /// `work` on a thread whose stack holds `MAX_JSON_DEPTH` levels, whatever thread asked. Callers
 /// that read a deep answer (a game tree) do so here too: parsing, walking and dropping it recurse.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn on_large_stack<T: Send>(
     work: impl FnOnce() -> std::result::Result<T, String> + Send,
 ) -> std::result::Result<T, String> {
@@ -133,11 +131,6 @@ pub fn on_large_stack<T: Send>(
             .map_err(|_| "internal error".to_string())?
     })
 }
-
-#[cfg(target_arch = "wasm32")]
-mod wasm;
-#[cfg(target_arch = "wasm32")]
-pub use wasm::on_large_stack;
 
 fn call_inner(method: &str, args: &str) -> Result<String> {
     // Analysis trees nest deeper than serde_json's default limit of 128 levels; `call` bounds

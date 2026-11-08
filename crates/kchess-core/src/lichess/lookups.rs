@@ -24,8 +24,6 @@ use kchess_domain::{js, misc, position, replay};
 mod opening_info;
 pub use opening_info::{DescriptionBlock, OpeningDescription, PopularityMonth};
 
-/// `POSITION_LOOKUP_KINDS` of the contracts.
-pub const LOOKUP_KINDS: [&str; 4] = ["opening", "masters", "player", "tablebase"];
 /// `EXPLORER_SPEEDS` of the contracts, in their order.
 pub const EXPLORER_SPEEDS: [&str; 6] = [
     "ultraBullet",
@@ -121,7 +119,7 @@ impl CloudCache {
         );
     }
 
-    /// `clearCloudEval`.
+    /// Forgets every cached evaluation (`lichess.reset`, when the core closes).
     pub fn clear(&self) {
         lock(&self.entries).clear();
     }

@@ -15,11 +15,10 @@ pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 const FRAMING: &str = "kchess-frames-1";
 
 /// The contracts both sides are built from: every method and event, with their types.
-const CONTRACTS: [&str; 4] = [
+const CONTRACTS: [&str; 3] = [
     include_str!("../../kchess-contracts/src/core_api.rs"),
     include_str!("../../kchess-contracts/src/types.rs"),
     include_str!("../../kchess-contracts/src/library.rs"),
-    include_str!("../../kchess-contracts/src/lichess.rs"),
 ];
 
 /// What a client can do for the core when it asks (`host:request`), by name.

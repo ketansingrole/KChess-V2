@@ -18,7 +18,6 @@ use super::lookups::{CloudCache, Endpoints, PositionLookups, cloud_eval};
 use super::online::{OnlineAction, OnlineOptions, OnlineSession};
 use super::policy::Policy;
 use super::puzzles::{PuzzleRequest, PuzzleSolveRequest};
-use super::reviews::{fetch_lichess_reviews, review_from_lichess};
 use super::studies::StudySyncRequest;
 use super::tournaments::NewArena;
 use super::watch::{Spectators, WatchTarget};
@@ -187,12 +186,6 @@ impl Services {
             "lichess.ratingHistory" => match text(args, 0) {
                 Ok(name) => self.lichess.rating_history(&name).await,
                 Err(cause) => Err(cause),
-            },
-            "lichess.fetchLichessReviews" => match (text(args, 0), strings(args, 1)) {
-                (Ok(account), Ok(ids)) => {
-                    to_json(fetch_lichess_reviews(&self.lichess, &account, &ids).await)
-                }
-                (Err(cause), _) | (_, Err(cause)) => Err(cause),
             },
             _ => return self.call_profiles(method, args).await,
         };
@@ -386,15 +379,6 @@ impl Services {
                     .map_err(CoreError::from),
                 (Err(cause), _) | (_, Err(cause)) => Err(cause),
             },
-            "online.attach" => match (text(args, 0), text(args, 1)) {
-                (Ok(account), Ok(id)) => self
-                    .online
-                    .attach(&account, &id)
-                    .await
-                    .map(|()| Value::Null)
-                    .map_err(CoreError::from),
-                (Err(cause), _) | (_, Err(cause)) => Err(cause),
-            },
             _ => return self.call_challenges(method, args).await,
         };
         Some(result)
@@ -483,10 +467,6 @@ impl Services {
             },
             "online.cancel" => {
                 self.online.cancel();
-                Ok(Value::Null)
-            }
-            "online.close" => {
-                self.online.close();
                 Ok(Value::Null)
             }
             "online.logout" => {
@@ -683,19 +663,11 @@ impl Services {
     /// starting work. `None` when the method is not one of them.
     pub fn call_sync(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
         let result = match method {
-            "online.playing" => Ok(json!(self.online.playing())),
             "online.assistanceBlocked" => Ok(json!(self.online.assistance_blocked())),
             "challenges.list" => to_json(Ok::<_, CoreError>(self.online.challenges().list())),
             "challenges.get" => match text(args, 0) {
                 Ok(id) => to_json(Ok::<_, CoreError>(self.online.challenges().get(&id))),
                 Err(cause) => Err(cause),
-            },
-            "challenges.ingest" => match (text(args, 0), args.get(1)) {
-                (Ok(account), Some(raw)) => to_json(Ok::<_, CoreError>(
-                    self.online.challenges().ingest(&account, raw),
-                )),
-                (Err(cause), _) => Err(cause),
-                (_, None) => Err(CoreError::new("Invalid challenge event.")),
             },
             "challenges.remove" => match text(args, 0) {
                 Ok(id) => {
@@ -732,30 +704,6 @@ impl Services {
                 }
                 Err(cause) => Err(cause),
             },
-            "cloudEval.clear" => {
-                self.cloud.clear();
-                Ok(Value::Null)
-            }
-            "spectate.stop" => {
-                self.spectator
-                    .stop_mine(args.first().and_then(Value::as_u64));
-                Ok(Value::Null)
-            }
-            "spectate.broadcastGame" => match text(args, 0) {
-                Ok(pgn) => to_json(Ok::<_, CoreError>(super::watch::broadcast_game(&pgn))),
-                Err(cause) => Err(cause),
-            },
-            "studies.splitPgn" => match text(args, 0) {
-                Ok(text) => to_json(Ok::<_, CoreError>(super::studies::split_pgn(&text))),
-                Err(cause) => Err(cause),
-            },
-            "tournaments.arenaExtras" => Ok(json!(super::tournaments::arena_extras(
-                args.first().unwrap_or(&Value::Null)
-            ))),
-            "lichess.reviewFromLichess" => Ok(review_from_lichess(
-                args.first().unwrap_or(&Value::Null),
-            )
-            .unwrap_or(Value::Null)),
             _ => return None,
         };
         Some(result)

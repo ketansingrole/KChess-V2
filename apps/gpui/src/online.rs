@@ -994,7 +994,7 @@ pub fn handle(cx: &App) -> Entity<OnlineState> {
 /// The account Lichess actions use (`activeOnlineAccount`): the one chosen for online play when it
 /// is connected, else the first connected one.
 pub fn active_account(accounts: &[Value], cx: &App) -> Option<String> {
-    let preferred = crate::prefs::get::<String>(cx, "kchess:online-account", String::new());
+    let preferred = crate::prefs::get::<String>(cx, crate::accounts::ONLINE_ACCOUNT, String::new());
     let listed: Vec<Value> = accounts
         .iter()
         .map(
@@ -1011,7 +1011,7 @@ pub fn active_account(accounts: &[Value], cx: &App) -> Option<String> {
 
 /// Which connected account plays (`setOnlineAccount`).
 pub fn set_active_account(account: &str, cx: &mut App) {
-    crate::prefs::set(cx, "kchess:online-account", account.to_string());
+    crate::prefs::set(cx, crate::accounts::ONLINE_ACCOUNT, account.to_string());
 }
 
 pub fn init(cx: &mut App) {
