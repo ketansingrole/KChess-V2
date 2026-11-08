@@ -145,6 +145,9 @@ impl Drop for BulkWait<'_> {
 /// Held for an export body: the bulk lane passes to the next export when this is released.
 pub struct BulkHold {
     inner: Arc<HoldInner>,
+    /// The backstop timer: it ends with the hold, so it never keeps the policy (and through it
+    /// the host, the HTTP client and the usage database) alive for its ten minutes.
+    backstop: tokio::task::AbortHandle,
 }
 
 struct HoldInner {
@@ -168,6 +171,7 @@ impl std::fmt::Debug for BulkHold {
 
 impl Drop for BulkHold {
     fn drop(&mut self) {
+        self.backstop.abort();
         self.inner.release();
     }
 }
@@ -642,12 +646,15 @@ impl Policy {
             policy: Arc::clone(self),
             released: AtomicBool::new(false),
         });
-        let backstop = Arc::clone(&inner);
-        tokio::spawn(async move {
+        let held = Arc::downgrade(&inner);
+        let backstop = tokio::spawn(async move {
             tokio::time::sleep(BULK_HOLD).await;
-            backstop.release();
-        });
-        BulkHold { inner }
+            if let Some(inner) = held.upgrade() {
+                inner.release();
+            }
+        })
+        .abort_handle();
+        BulkHold { inner, backstop }
     }
 
     /// Pass the export lane to the next export that is waiting, or free it.
@@ -846,6 +853,20 @@ mod tests {
         let lanes = lock(&policy.lanes);
         assert!(!lanes.bulk_active, "the lane is free");
         assert!(lanes.bulk_waiting.is_empty());
+    }
+
+    /// A finished export ends its backstop timer: before, the timer held the policy (and a
+    /// closed core's host, HTTP client and usage database with it) for ten minutes.
+    #[tokio::test]
+    async fn a_released_export_lets_the_policy_go() {
+        let policy = quiet_policy();
+        let cancel = CancellationToken::new();
+        let hold = policy.acquire_bulk(&cancel).await.expect("the lane");
+        assert_eq!(Arc::strong_count(&policy), 2, "the hold keeps the policy");
+        drop(hold);
+        tokio::task::yield_now().await;
+        assert_eq!(Arc::strong_count(&policy), 1, "nothing else keeps it");
+        assert!(!lock(&policy.lanes).bulk_active, "the lane is free");
     }
 
     #[test]
