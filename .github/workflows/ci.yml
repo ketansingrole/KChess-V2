@@ -245,13 +245,21 @@ jobs:
 
   # Mutation testing of the lines a pull request changes (`cargo xtask mutants`,
   # docs/mutation-testing.md): every change arrives with its mutants killed, while the weekly
-  # Mutants workflow works through the rest. A push to main passes it at once: its pull request
-  # ran it, and `cargo xtask release-verify` needs every job to succeed.
+  # Mutants workflow works through the rest. A pull request's mutants are split over four
+  # runners, two at a time on each, so a large change takes about as long as the other jobs. The
+  # app's mutants each rebuild the app, so they are the weekly run's (its `gpui` job tests the
+  # week's changes to the app). A push to main passes it at once: its pull request ran it, and
+  # `cargo xtask release-verify` needs every job to succeed.
   mutants:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ github.event_name == 'pull_request' && fromJSON('[0, 1, 2, 3]') || fromJSON('[0]') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # A change whose mutants take longer than this is too large to review in one pull request.
+    timeout-minutes: 60
     steps:
       - if: github.event_name != 'pull_request'
         run: echo "Mutants are tested in the pull request."
@@ -289,11 +297,14 @@ jobs:
         name: Mutants of the changed lines
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
-        run: cargo xtask mutants --base "$(git merge-base "$BASE" HEAD)"
+          SHARD: ${{ matrix.shard }}
+        run: >-
+          cargo xtask mutants --base "$(git merge-base "$BASE" HEAD)"
+          -- --shard "$SHARD/4" -j 2 --exclude 'apps/gpui/**'
       - if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: mutants-diff
+          name: mutants-diff-${{ matrix.shard }}
           path: mutants.out
           if-no-files-found: ignore
           retention-days: 14

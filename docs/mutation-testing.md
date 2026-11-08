@@ -27,10 +27,18 @@ cargo xtask mutants
 
 on each pull request: cargo-mutants mutates only the lines changed since `main` (`--in-diff`,
 committed or not), tests each mutant with the tests of its own package, and fails when one
-survives or times out. Run it before pushing; `--base <ref>` diffs against another commit, and
-arguments after `--` go to cargo-mutants (`-- -j 4`, `-- -p kchess-domain`). Mutants that were
-already missed in untouched code are the weekly run's, so a change never has to pay off the
-whole backlog at once.
+survives or times out. Mutants that were already missed in untouched code are the weekly run's,
+so a change never has to pay off the whole backlog at once.
+
+CI splits a pull request's mutants over four runners (`--shard k/4`), two at a time on each
+(`-j 2`), and gives each runner an hour: a change whose mutants take longer is too large for one
+pull request. The app's mutants (`apps/gpui`) each rebuild the app, so pull requests leave them
+out; the weekly run's `gpui` job tests the mutants of the lines the past week changed in the app.
+
+You need not run it before pushing: CI does. When its `mutants` job fails, the `mutants-diff-<k>`
+artifact's `missed.txt` and `timeout.txt` name the survivors. To work on them locally,
+`--base <ref>` diffs against another commit, and arguments after `--` go to cargo-mutants
+(`-- -j 4`, `-- -p kchess-domain`, `-- --file 'crates/kchess-core/src/engine/**'`).
 
 Code that only moved is not a change: a block Git's `--color-moved` marks as moved (at least
 20 letters and digits, whatever its indentation) goes to cargo-mutants as context, so splitting
@@ -53,7 +61,8 @@ moved code still is a change. Commit a move first: an untracked file is compared
 ## Weekly runs
 
 `.github/workflows/mutants.yml` runs a package in eight shards every Saturday (the rules) and on
-demand for any package. The rules and the core take hours on one machine: about 20 seconds of
+demand for any package. Its `gpui` job, on the same schedule, tests the mutants of the app's
+lines changed in the past week, which pull requests leave out. The rules and the core take hours on one machine: about 20 seconds of
 CPU per mutant for the rules' 7,000, more for the core's 6,300 and the app's 12,000, whose every
 mutant rebuilds the app.
 
