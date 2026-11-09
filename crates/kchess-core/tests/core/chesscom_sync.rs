@@ -246,6 +246,63 @@ async fn removing_a_player_during_their_sync_leaves_nothing_behind() {
     assert_eq!(accounts, json!([]));
 }
 
+/// A player removed and added again while their first sync waits on a month: the first sync's
+/// games never reach the player added since. Adding stores the player before it asks Chess.com
+/// anything, and its own requests wait for the first sync's, so the store has the player back
+/// when the first sync's month arrives.
+#[tokio::test]
+async fn a_sync_from_before_a_removal_writes_nothing_after_the_player_is_added_again() {
+    let (open, gate) = watch::channel(false);
+    let gate = Arc::new(Mutex::new(Some(gate)));
+    let fixture = serve(move |seen: &Seen| match seen.path() {
+        "/pub/player/alice" => Reply::Json(200, profile_body()),
+        "/pub/player/alice/games/archives" => Reply::Json(
+            200,
+            json!({ "archives": [format!("https://api.chess.com/pub/player/alice/games/{PAST}")] })
+                .to_string(),
+        ),
+        path if path.ends_with(PAST) => match gate.lock().unwrap().take() {
+            Some(gate) => Reply::Gated(
+                gate,
+                Box::new(Reply::Json(
+                    200,
+                    month_body(&[game(9, "Alice", "bob", "win", "resigned")]),
+                )),
+            ),
+            None => Reply::Json(200, month_body(&[])),
+        },
+        _ => Reply::Json(404, "{}".into()),
+    })
+    .await;
+    let profile = Arc::new(profile(&fixture));
+    let first = {
+        let profile = Arc::clone(&profile);
+        tokio::spawn(async move { profile.chesscom.add("alice").await })
+    };
+    for _ in 0..200 {
+        if !fixture
+            .to(&format!("/pub/player/alice/games/{PAST}"))
+            .is_empty()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    profile.chesscom.remove("alice").await.expect("removed");
+    profile
+        .database
+        .call_async("store.chesscom.addAccount", &[json!("alice")])
+        .await
+        .expect("added again");
+    open.send(true).unwrap();
+    let outcome = first.await.unwrap();
+    assert!(
+        outcome.is_err(),
+        "the first sync was overtaken: {outcome:?}"
+    );
+    assert!(profile.games("Alice@chess.com").await.is_empty());
+}
+
 /// Regression: a sync whose call was cancelled (a socket client cancelling it or leaving aborts
 /// the call's task) left its entry behind, and every later sync of the player joined that dead
 /// entry and failed at once with "Sync was cancelled." until the player was removed.
