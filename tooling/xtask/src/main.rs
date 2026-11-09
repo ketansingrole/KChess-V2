@@ -44,9 +44,10 @@ const HELP: &str = "cargo xtask <command>
                         metadata and the Rust tests (under the coverage gate when cargo-llvm-cov
                         is installed)
   check-fast            Format, lints and the tests of the packages changed since main
-  mutants [--base <ref>] [-- <cargo-mutants arguments>]
+  mutants [--plan] [--base <ref>] [-- <cargo-mutants arguments>]
                         Mutation testing of the lines changed since main (or <ref>); fails
-                        when a mutant survives (docs/mutation-testing.md)
+                        when a mutant survives (docs/mutation-testing.md); with --plan, only
+                        count them and print CI's shards
   pre-push              The Git pre-push hook (.githooks/pre-push): `check` before a push to
                         main, the new lines' mutants before a branch push
   install-hooks         Point Git at .githooks
