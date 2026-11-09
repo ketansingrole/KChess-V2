@@ -113,6 +113,30 @@ mod tests {
         );
     }
 
+    /// A link's target starts right after its `](`, whatever brackets its text or the rest of
+    /// the line holds.
+    #[test]
+    fn a_link_keeps_its_text_and_the_rest_of_the_line() {
+        assert_eq!(unlink("[(c)](x) tail"), "(c) tail");
+        assert_eq!(unlink("[abcd](x)y) z"), "abcdy) z");
+        assert_eq!(unlink("no link [here"), "no link [here");
+    }
+
+    #[test]
+    fn the_command_writes_the_plain_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("notes.md");
+        let output = dir.path().join("notes.txt");
+        std::fs::write(&input, "- **Settings**: close it with ✕.\n").unwrap();
+        let args = [input, output.clone()].map(|path| path.display().to_string());
+        run(&args).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&output).unwrap(),
+            "- Settings: close it with ×."
+        );
+        assert!(run(&args[..1]).is_err());
+    }
+
     #[test]
     fn markdown_becomes_plain_text() {
         let notes = "## 2026.11.7 (2026-11-09)\n\n- **Fixes**: see [the site](https://example.com) \
