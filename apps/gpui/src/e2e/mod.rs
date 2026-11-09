@@ -691,6 +691,27 @@ fn engine() -> PathBuf {
         "--bin",
         "kchess-fake-uci",
     ]);
+    // Without the variables Cargo set for this package (`CARGO_MANIFEST_DIR`, `OUT_DIR`, `CARGO_PKG_*`…):
+    // build scripts that watch one (ring's) would rebuild for it, and the next outer build
+    // rebuild them back.
+    for (key, _) in std::env::vars_os() {
+        if key.to_str().is_some_and(|key| {
+            key.starts_with("CARGO_PKG_")
+                || key.starts_with("CARGO_BIN_EXE_")
+                || matches!(
+                    key,
+                    "CARGO_MANIFEST_DIR"
+                        | "CARGO_MANIFEST_PATH"
+                        | "CARGO_CRATE_NAME"
+                        | "CARGO_PRIMARY_PACKAGE"
+                        | "CARGO_TARGET_TMPDIR"
+                        | "CARGO_BIN_NAME"
+                        | "OUT_DIR"
+                )
+        }) {
+            build.env_remove(key);
+        }
+    }
     // Into the target folder this test runs from, which `cargo llvm-cov` moves with a flag that
     // a nested build does not inherit.
     build
