@@ -243,7 +243,11 @@ jobs:
             target/**/build/gpui-pre*
           key: vendor-gpui-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}
       # The app's tests under `cargo test`: each starts GPUI, so a process per test (nextest) is slower.
+      # They mostly wait on the app's timers and tasks (2026-11-09, three threads: 57 s of CPU in
+      # 320 s), so more threads than the runners' 3 or 4 cores finish them sooner.
       - run: cargo test -p kchess-gpui --locked
+        env:
+          RUST_TEST_THREADS: 8
       - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
