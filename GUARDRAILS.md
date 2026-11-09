@@ -35,9 +35,11 @@ check is `cargo fmt --check`, clippy over every target with
 warnings denied (and `unwrap`/`expect` denied in libraries and shipped binaries), the notices
 check, the release metadata, and every test, under the coverage gate when `cargo-llvm-cov` is
 installed. Packaging changes also need `cargo xtask package` on the platform they touch. CI runs
-`check`, `cargo deny`, and the app's tests on macOS, Windows and Linux; when packaging may have
-changed since `main` last packaged successfully (a version bump always has), it also packages for
-macOS and Linux, builds the Snap and runs the Windows upgrade workflow, which packages for Windows.
+`check`, `cargo deny`, and the app's tests on macOS, Windows and Linux. It also packages for macOS
+and Linux, builds the Snap and runs the Windows upgrade workflow, which packages for Windows, on a
+pull request that may change packaging, on a release commit, and nightly when packaging may have
+changed since `main` last packaged successfully; a push to `main` otherwise does not, since its
+pull request packaged. Run `CI` by hand (`gh workflow run ci.yml`) to package `main` now.
 Only a release commit's packages use the release profile's fat LTO; the others link without it.
 A change to documents alone (`docs/` and the top-level guides) runs none of it. `cargo xtask release-verify` refuses a commit
 whose CI did not run and pass every job, and every push to `main` runs CI to the end.
