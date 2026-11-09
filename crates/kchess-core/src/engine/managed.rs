@@ -32,78 +32,6 @@ use crate::host::{Host, Level};
 /// The GitHub endpoint for the latest official Stockfish release.
 pub const RELEASE_URL: &str =
     "https://api.github.com/repos/official-stockfish/Stockfish/releases/latest";
-/// Where every official asset downloads from: `<tag>/<asset name>` follows.
-const DOWNLOAD_BASE: &str = "https://github.com/official-stockfish/Stockfish/releases/download/";
-
-/// A release fixed in this source, for what KChess ships: the tag and each platform's asset with
-/// its SHA-256, so a release changed upstream after it was checked is refused instead of being
-/// signed into a KChess package (`fetch_stockfish`, `cargo xtask package`).
-pub struct PinnedRelease {
-    pub tag: &'static str,
-    /// `(platform, arch, asset name, SHA-256)`, as `Target` names them.
-    pub assets: &'static [(&'static str, &'static str, &'static str, &'static str)],
-}
-
-/// The Stockfish KChess packages, checked 2026-11-06 against the files GitHub served. Move it to
-/// a newer release by updating the tag and every digest together.
-pub const SHIPPED: PinnedRelease = PinnedRelease {
-    tag: "sf_19",
-    assets: &[
-        (
-            "darwin",
-            "arm64",
-            "stockfish-macos-universal.tar.gz",
-            "a1f0e3bcc5a6927a11fe6fc8e54a779754645f3c2bae2cf13420fd1957adaa77",
-        ),
-        (
-            "darwin",
-            "x64",
-            "stockfish-macos-universal.tar.gz",
-            "a1f0e3bcc5a6927a11fe6fc8e54a779754645f3c2bae2cf13420fd1957adaa77",
-        ),
-        (
-            "win32",
-            "x64",
-            "stockfish-windows-x86-64-universal.zip",
-            "3c8bf1f9ea66a09350a40df4f632288285ac206d99f33ab5842c408fc30b48a7",
-        ),
-        (
-            "win32",
-            "arm64",
-            "stockfish-windows-arm64-universal.zip",
-            "8372ad3f0d7276deb2c70f801f541ec7db463219fc6d9c7592864e542aa4f401",
-        ),
-        (
-            "linux",
-            "x64",
-            "stockfish-linux-x86-64-universal.tar.gz",
-            "9defc0d4e55d49c65a6d042f3e571a39fcea499ade6dbe741b53b8c65e03611f",
-        ),
-        (
-            "linux",
-            "arm64",
-            "stockfish-linux-arm64-universal.tar.gz",
-            "fe26cfd1d9db4c8af3d21e24d9ff34cacb31c1f940085a7583da11796f2bac01",
-        ),
-    ],
-};
-
-/// Whether `url` may be downloaded for `asset` of release `tag`, found at `release_url`: an
-/// official release's asset comes from the official repository's downloads alone, whatever
-/// address the release metadata named. A test endpoint serves its own.
-fn download_allowed(release_url: &str, tag: &str, asset: &str, url: &str) -> bool {
-    let official = release_url == RELEASE_URL
-        || release_url.starts_with(
-            "https://api.github.com/repos/official-stockfish/Stockfish/releases/tags/",
-        );
-    !official || url == format!("{DOWNLOAD_BASE}{tag}/{asset}")
-}
-
-/// The release endpoint of one tag.
-pub fn tag_url(tag: &str) -> String {
-    format!("https://api.github.com/repos/official-stockfish/Stockfish/releases/tags/{tag}")
-}
-
 /// Larger downloads are refused, both up front and while streaming.
 pub const MAX_DOWNLOAD_BYTES: u64 = 300 * 1024 * 1024;
 /// Total uncompressed size an archive may expand to (zip bombs).
@@ -196,8 +124,6 @@ pub struct ManagedLocation {
     pub cancel: Option<watch::Receiver<bool>>,
     /// How long the handoff may take to stop the owners before the install fails.
     pub exit_deadline: Duration,
-    /// A release fixed in source (`SHIPPED`): only its tag and its digests are accepted.
-    pub pinned: Option<&'static PinnedRelease>,
 }
 
 impl ManagedLocation {
@@ -210,16 +136,6 @@ impl ManagedLocation {
             handoff: None,
             cancel: None,
             exit_deadline: DEFAULT_EXIT_DEADLINE,
-            pinned: None,
-        }
-    }
-
-    /// The release KChess ships (`SHIPPED`), fetched by its tag.
-    pub fn shipped(dir: PathBuf) -> ManagedLocation {
-        ManagedLocation {
-            release_url: tag_url(SHIPPED.tag),
-            pinned: Some(&SHIPPED),
-            ..ManagedLocation::new(dir)
         }
     }
 }
@@ -429,33 +345,11 @@ async fn install(
             updated: false,
         });
     }
-    let pin = match location.pinned {
-        Some(pinned) => {
-            if release.tag != pinned.tag {
-                return Err(CoreError::new(format!(
-                    "GitHub answered Stockfish {} for the pinned {}.",
-                    release.tag, pinned.tag
-                )));
-            }
-            let entry = pinned
-                .assets
-                .iter()
-                .find(|(platform, arch, _, _)| {
-                    *platform == location.target.platform && *arch == location.target.arch
-                })
-                .ok_or_else(|| CoreError::new("No pinned Stockfish download for this platform."))?;
-            Some((entry.2, entry.3))
-        }
-        None => None,
-    };
-    let asset = match pin {
-        Some((name, _)) => release.assets.iter().find(|asset| asset.name == name),
-        None => pick_stockfish_asset(
-            &release.assets,
-            location.target.platform,
-            location.target.arch,
-        ),
-    }
+    let asset = pick_stockfish_asset(
+        &release.assets,
+        location.target.platform,
+        location.target.arch,
+    )
     .ok_or_else(|| CoreError::new("No compatible official Stockfish download was found."))?
     .clone();
     let (Some(url), Some(size)) = (asset.browser_download_url.clone(), asset.size) else {
@@ -464,17 +358,9 @@ async fn install(
     if !size.is_finite() || !is_plain_file_name(&asset.name) {
         return Err(CoreError::new("Invalid Stockfish download metadata."));
     }
-    if !download_allowed(&location.release_url, &release.tag, &asset.name, &url) {
-        return Err(CoreError::new(
-            "The Stockfish download is not from the official release.",
-        ));
-    }
-    let expected = match pin {
-        Some((_, digest)) => digest.to_string(),
-        None => expected_digest(asset.digest.as_deref()).ok_or_else(|| {
-            CoreError::new("The Stockfish release has no SHA-256 digest, so it cannot be verified.")
-        })?,
-    };
+    let expected = expected_digest(asset.digest.as_deref()).ok_or_else(|| {
+        CoreError::new("The Stockfish release has no SHA-256 digest, so it cannot be verified.")
+    })?;
     if size > MAX_DOWNLOAD_BYTES as f64 {
         return Err(CoreError::new("Stockfish download is unexpectedly large."));
     }

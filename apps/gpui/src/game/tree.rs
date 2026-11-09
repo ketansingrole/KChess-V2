@@ -147,7 +147,8 @@ impl TreeNode {
 
     /// One bounded PGN document, or `None` when it cannot be imported without loss.
     pub fn from_pgn(text: &str) -> Option<TreeNode> {
-        kchess_games::rules_as("treeFromPgn", &[json!(text)]).ok()
+        let tree = rules("treeFromPgn", &[json!(text)]).ok()?;
+        serde_json::from_value(tree).ok()
     }
 
     /// The tree as PGN, with its own headers.

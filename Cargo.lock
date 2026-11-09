@@ -4349,9 +4349,9 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-av-foundation",
  "objc2-foundation 0.3.2",
+ "regex",
  "reqwest",
  "resvg 0.49.0",
- "ring",
  "rodio",
  "rust-embed",
  "rustix",
@@ -4378,7 +4378,6 @@ dependencies = [
  "sha2 0.11.1",
  "tempfile",
  "tokio",
- "windows-sys 0.61.2",
 ]
 
 [[package]]

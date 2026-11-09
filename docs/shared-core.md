@@ -82,24 +82,17 @@ The goal is to keep **exactly one core per profile** and let **any number of cli
   paths (`KCHESS_USER_DATA_DIR`, long home directories) can exceed it, so the socket lives in a
   per-user runtime directory (`$XDG_RUNTIME_DIR`, else `$TMPDIR`), named after a hash of the
   profile's canonical path: `kchess-<hash>.sock`.
-- Windows: a named pipe, `\\.\pipe\kchess-core-<hash>` (a hash of the user name and the profile).
+- Windows: a named pipe, `\\.\pipe\kchess-<user-sid>-<hash>`.
 - The service writes `core.json` in the profile: socket path, process id, release, protocol hash
   and start time. Clients read it to find the service; the lock, not the file, decides whether a
   service is alive.
 
 ### Who may connect
 
-- The socket's directory is `0700` and the socket `0600`; every instance of the named pipe is
-  owned by the current user with a protected DACL granting that user alone (`transport.rs`).
-- On Unix the service checks the peer's user id (`getpeereid` / `SO_PEERCRED`) and refuses
-  anyone else; on Windows the pipe's DACL keeps other accounts from opening it, and remote
-  clients are rejected.
-- Pipe names are one namespace for the whole machine, so another account could create the name
-  first. A client refuses a pipe its own user does not own before it sends anything, and the
-  service deletes a dead core's `core.json` and `core.token` before it binds.
-- The `hello` frame is read with a 64 KiB limit and at most 32 connections may be in their
-  handshake at once, so a client that has not proven itself cannot make the service allocate much.
-- A `host:request` sent to one client is answered by that client alone.
+- The socket's directory is `0700` and the socket `0600`; the named pipe's ACL allows only the
+  current user.
+- The service checks the peer's user id (`getpeereid` / `SO_PEERCRED`,
+  `GetNamedPipeClientProcessId` and the owning token) and refuses anyone else.
 - The first frame must carry the token from `core.token` in the profile (32 random bytes, `0600`,
   replaced on every service start). Any process that can read the profile could already read the
   database, so the token adds no new trust; it stops other users' processes and confused local

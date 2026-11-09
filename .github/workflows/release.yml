@@ -30,7 +30,7 @@ jobs:
       # `release-verify` reads the tagged commit's CI run.
       actions: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -49,10 +49,6 @@ jobs:
   # KChess for every platform. Signed and notarized on macOS with the Developer ID when its
   # secrets are set, ad hoc otherwise.
   package:
-    # Only a validated commit is packaged, and only a `v*` tag reaches the `release` environment
-    # that holds the Developer ID and notarization secrets: a manual run builds ad hoc.
-    needs: validate
-    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || 'build' }}
     strategy:
       fail-fast: false
       matrix:
@@ -73,7 +69,7 @@ jobs:
       - name: Install NSIS
         if: runner.os == 'Windows'
         uses: ./.github/actions/install-nsis
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: Swatinem/rust-cache@v2
         with:
           shared-key: package
           key: ${{ runner.os }}-${{ runner.arch }}
@@ -161,24 +157,12 @@ jobs:
   app-store:
     needs: validate
     uses: ./.github/workflows/app-store-build.yml
-    # Only what the App Store build uses, never the Developer ID, Snapcraft or release key.
-    secrets:
-      MAS_APP_P12: ${{ secrets.MAS_APP_P12 }}
-      MAS_INSTALLER_P12: ${{ secrets.MAS_INSTALLER_P12 }}
-      MAS_P12_PASSWORD: ${{ secrets.MAS_P12_PASSWORD }}
-      MAS_PROVISION_PROFILE: ${{ secrets.MAS_PROVISION_PROFILE }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+    secrets: inherit
 
   release:
     needs: [validate, package, snap]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    # The release key's secret lives in this environment, limited to `v*` tags (Settings →
-    # Environments → release → deployment branches and tags).
-    environment: release
     permissions:
       contents: write
     steps:

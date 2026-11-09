@@ -387,7 +387,6 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         // The one-time import from an earlier release, run by the first read (`ensureMigrated`).
         // The plaintext tokens it finds go back to the caller, which encrypts and stores them.
         "legacyImportPending" => super::import::legacy_import_pending(ctx).map(Value::Bool),
-        "scrubLegacyTokens" => super::import::scrub_legacy_tokens(ctx).map(|()| Value::Null),
         "migrate" => optional_arg::<bool>(args, 0, "encryptionAvailable")
             .and_then(|flag| super::import::migrate(ctx, flag.unwrap_or(false)))
             .map(|tokens| {

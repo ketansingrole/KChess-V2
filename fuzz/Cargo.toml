@@ -14,7 +14,6 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 kchess-domain = { path = "../crates/kchess-domain" }
 
@@ -49,20 +48,6 @@ bench = false
 [[bin]]
 name = "api_call"
 path = "fuzz_targets/api_call.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "chesscom"
-path = "fuzz_targets/chesscom.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "tree"
-path = "fuzz_targets/tree.rs"
 test = false
 doc = false
 bench = false

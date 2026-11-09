@@ -49,7 +49,7 @@ struct StderrHost {
 impl Host for StderrHost {
     fn log(&self, level: Level, scope: &str, message: &str) {
         if matches!(level, Level::Warn | Level::Error) {
-            eprintln!("[{scope}] {}", kchess_core::redact::redact(message));
+            eprintln!("[{scope}] {message}");
         }
     }
 
@@ -156,7 +156,7 @@ impl CoreClient {
             .map_err(|cause| format!("The profile folder is unavailable: {cause}"))?;
         let config = config(options);
         let (events, received) = mpsc::unbounded_channel();
-        let service = kchess_core::dev_override("KCHESS_SERVICE_BINARY")
+        let service = std::env::var_os("KCHESS_SERVICE_BINARY")
             .map(PathBuf::from)
             .or_else(|| beside(&executable("kchess-service")));
         let backend = match service {

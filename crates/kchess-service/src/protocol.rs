@@ -131,18 +131,6 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 
 /// Reads one frame; `None` when the other side closed between frames.
 pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<Option<Frame>> {
-    read_frame_within(reader, MAX_FRAME).await
-}
-
-/// The largest `hello`: read before the token is checked, so a client that has not proven itself
-/// can make the service allocate no more than this.
-pub const MAX_HELLO: usize = 64 * 1024;
-
-/// `read_frame`, refusing a frame over `limit` bytes before reading it.
-pub async fn read_frame_within<R: AsyncRead + Unpin>(
-    reader: &mut R,
-    limit: usize,
-) -> std::io::Result<Option<Frame>> {
     let mut length = [0u8; 4];
     match reader.read_exact(&mut length).await {
         Ok(_) => {}
@@ -150,7 +138,7 @@ pub async fn read_frame_within<R: AsyncRead + Unpin>(
         Err(error) => return Err(error),
     }
     let length = u32::from_be_bytes(length) as usize;
-    if length > limit {
+    if length > MAX_FRAME {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("a frame of {length} bytes is over the limit"),

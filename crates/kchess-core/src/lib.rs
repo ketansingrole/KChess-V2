@@ -46,7 +46,6 @@ pub mod loopback;
 mod panics;
 mod process;
 pub mod puzzles;
-pub mod redact;
 pub mod secrets;
 pub mod store;
 mod tasks;

@@ -11,9 +11,7 @@ use sha2::{Digest, Sha256};
 /// A member name as a path inside the archive root. Absolute paths, `..`, drive prefixes and
 /// backslashes (a separator on Windows) are refused (`None`); `.` components are dropped.
 pub fn safe_relative(name: &str) -> Option<PathBuf> {
-    // A backslash is a separator on Windows, and a colon there names a drive or an NTFS
-    // alternate data stream (`kchess.exe:hidden`).
-    if name.contains('\\') || (cfg!(windows) && name.contains(':')) {
+    if name.contains('\\') {
         return None;
     }
     let mut relative = PathBuf::new();

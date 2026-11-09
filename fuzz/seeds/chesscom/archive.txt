@@ -1,1 +1,0 @@
-https://api.chess.com/pub/player/hikaru/games/2026/10

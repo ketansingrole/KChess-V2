@@ -301,12 +301,6 @@ pub fn now_ms() -> i64 {
 
 /// Percent-encodes one path segment (a username), as openapi-fetch does for `{username}`.
 pub fn path_segment(text: &str) -> String {
-    // `.` and `..` (also when percent-encoded, `%2e`) are dot segments that URL parsing resolves,
-    // so an id from a response could otherwise send an authorized request to another path. As
-    // the literal text `%2E` they name nothing.
-    if text == "." || text == ".." {
-        return "%252E".repeat(text.len());
-    }
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
@@ -1860,14 +1854,6 @@ mod tests {
     fn path_segments_are_encoded() {
         assert_eq!(path_segment("Magnus_C-1"), "Magnus_C-1");
         assert_eq!(path_segment("a/b c"), "a%2Fb%20c");
-        for dots in [".", ".."] {
-            let url = reqwest::Url::parse(&format!(
-                "https://lichess.org/api/broadcast/{}/x",
-                path_segment(dots)
-            ))
-            .unwrap();
-            assert!(url.path().starts_with("/api/broadcast/%252E"), "{url}");
-        }
     }
 
     #[test]

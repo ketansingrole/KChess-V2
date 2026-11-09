@@ -749,7 +749,7 @@ fn answer_host(request: &Value, cx: &mut App) {
                     Err(cause) => json!({ "error": cause.to_string() }),
                 }
             }
-            Some(url) if kchess_core::capabilities::opens_in_browser(url) => {
+            Some(url) if url.starts_with("https://") || url.starts_with("http://127.0.0.1") => {
                 cx.open_url(url);
                 json!({ "value": null })
             }
