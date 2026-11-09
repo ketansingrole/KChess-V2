@@ -36,8 +36,15 @@ pub struct Item {
 /// `- **Title**: text` items. The `## Unreleased` section and anything before the first heading
 /// are left out.
 pub fn parse(text: &str) -> Vec<Release> {
+    sections(text)
+        .into_iter()
+        .filter(|release| parse_version(&release.version).is_some())
+        .collect()
+}
+
+/// Every `## ` section of `text` with its items, `Unreleased` among them as a version of that name.
+fn sections(text: &str) -> Vec<Release> {
     let mut releases: Vec<Release> = Vec::new();
-    let mut open = false;
     for line in text.lines() {
         if let Some(heading) = line.strip_prefix("## ") {
             let (version, date) = match heading.trim().split_once(' ') {
@@ -47,17 +54,14 @@ pub fn parse(text: &str) -> Vec<Release> {
                 ),
                 None => (heading.trim(), None),
             };
-            open = parse_version(version).is_some();
-            if open {
-                releases.push(Release {
-                    version: version.to_string(),
-                    date: date.filter(|date| !date.is_empty()),
-                    items: Vec::new(),
-                });
-            }
+            releases.push(Release {
+                version: version.to_string(),
+                date: date.filter(|date| !date.is_empty()),
+                items: Vec::new(),
+            });
             continue;
         }
-        let Some(release) = releases.last_mut().filter(|_| open) else {
+        let Some(release) = releases.last_mut() else {
             continue;
         };
         let trimmed = line.trim();
@@ -251,7 +255,7 @@ fn list(releases: &[Release], palette: &Palette, height: Pixels) -> impl IntoEle
 
 #[cfg(test)]
 mod tests {
-    use super::{Item, NOTES, date_label, parse, parse_version, releases_up_to, to_show};
+    use super::{Item, NOTES, date_label, parse, parse_version, releases_up_to, sections, to_show};
 
     const SAMPLE: &str = "# What's new\n\nIntro text.\n\n## Unreleased\n\n- **Next**: not yet.\n\n\
         ## 2026.11.4 (2026-11-20)\n\n- **Guess the move**: a drill, see [Practice](https://x).\n  \
@@ -320,6 +324,21 @@ mod tests {
     /// titles, versions descend, and the running release has its section.
     #[test]
     fn the_shipped_notes_are_well_formed() {
+        // A player reads a line at a glance: a longer one is skipped, however much it holds.
+        const MAX_ITEM: usize = 280;
+        for release in sections(NOTES) {
+            for item in &release.items {
+                let title = item.title.as_deref().unwrap_or_default();
+                let length = title.chars().count() + item.text.chars().count();
+                assert!(
+                    length <= MAX_ITEM,
+                    "{} has a {length}-character line, over {MAX_ITEM}: keep the few points a \
+                     player notices most. {title}: {}",
+                    release.version,
+                    item.text
+                );
+            }
+        }
         let all = parse(NOTES);
         assert!(!all.is_empty());
         for release in &all {

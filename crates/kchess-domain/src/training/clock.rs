@@ -5,7 +5,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{Out, js_max, js_min, num_out, pad2, text_arg, text_of, to_value, value_arg};
+use super::{Out, num_out, pad2, text_arg, to_value, value_arg};
+use crate::js;
 
 /// A value per side.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize, Serialize)]
@@ -61,12 +62,12 @@ pub struct SetData {
 /// lila's low-time threshold: min(60, 12.5% of initial), at least 10s (2s for short games).
 pub fn low_time_threshold(initial: f64) -> f64 {
     1000.0
-        * js_min(
+        * js::min(
             60.0,
             if initial < 60.0 {
-                js_max(2.0, initial * 0.2)
+                js::max(2.0, initial * 0.2)
             } else {
-                js_max(10.0, initial * 0.125)
+                js::max(10.0, initial * 0.125)
             },
         )
 }
@@ -86,8 +87,8 @@ impl ClockState {
     /// `set`
     pub fn set(&mut self, data: &SetData, now: f64) {
         self.times = Sides {
-            white: js_max(0.0, data.white),
-            black: js_max(0.0, data.black),
+            white: js::max(0.0, data.white),
+            black: js::max(0.0, data.black),
         };
         self.ticking = data.ticking.clone();
         self.last_update = now + data.delay_centis.unwrap_or(0.0) * 10.0;
@@ -111,11 +112,11 @@ impl ClockState {
     /// `remaining(color, now)`
     pub fn remaining(&self, color: &str, now: f64) -> f64 {
         let elapsed = if self.ticking.as_deref() == Some(color) {
-            js_max(0.0, now - self.last_update)
+            js::max(0.0, now - self.last_update)
         } else {
             0.0
         };
-        js_max(0.0, self.times.get(color).unwrap_or(f64::NAN) - elapsed)
+        js::max(0.0, self.times.get(color).unwrap_or(f64::NAN) - elapsed)
     }
 
     /// `lowTimeAlert(color, now)`: true once per player, when that clock drops below the threshold.
@@ -132,32 +133,36 @@ impl ClockState {
 /// `formatClock`: tenths under ten seconds, `m:ss` under an hour, `h:mm:ss` past an
 /// hour, and days plus hours for correspondence clocks.
 pub fn format_clock(millis: f64) -> String {
-    let millis = js_max(0.0, millis);
+    let millis = js::max(0.0, millis);
     if millis < 10_000.0 {
         // Sub-second time decides blitz games, so the last ten seconds show tenths.
         let tenths = (millis / 100.0).floor();
         return format!(
             "0:{}.{}",
             pad2((tenths / 10.0).floor()),
-            text_of(tenths % 10.0)
+            js::number_to_string(tenths % 10.0)
         );
     }
     let seconds = (millis / 1000.0).floor();
     if seconds >= 86_400.0 {
         let days = (seconds / 86_400.0).floor();
         let hours = ((seconds % 86_400.0) / 3600.0).floor();
-        format!("{}d {}h", text_of(days), text_of(hours))
+        format!(
+            "{}d {}h",
+            js::number_to_string(days),
+            js::number_to_string(hours)
+        )
     } else if seconds >= 3600.0 {
         format!(
             "{}:{}:{}",
-            text_of((seconds / 3600.0).floor()),
+            js::number_to_string((seconds / 3600.0).floor()),
             pad2(((seconds % 3600.0) / 60.0).floor()),
             pad2(seconds % 60.0)
         )
     } else {
         format!(
             "{}:{}",
-            text_of((seconds / 60.0).floor()),
+            js::number_to_string((seconds / 60.0).floor()),
             pad2(seconds % 60.0)
         )
     }

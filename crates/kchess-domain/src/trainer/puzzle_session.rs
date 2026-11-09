@@ -14,6 +14,7 @@ use serde_json::{Map, Value, json};
 
 use super::Out;
 use super::puzzle_progress::{Outcome, Verdict, classify, moves};
+use crate::js;
 
 const OFFLINE_TEXT: &str = "You’re offline. Choose Downloaded to use puzzles on this device, or reconnect for online puzzles.";
 const REJECTED_TEXT: &str = "Lichess did not accept the result: reconnect your account.";
@@ -217,12 +218,6 @@ fn offset(difficulty: &str) -> f64 {
     }
 }
 
-/// `Math.round`: halves go up, towards positive infinity.
-fn js_round(x: f64) -> f64 {
-    let floor = x.floor();
-    if x - floor >= 0.5 { floor + 1.0 } else { floor }
-}
-
 /// `isReconnect`: a non-array object with a `needsReconnect` property.
 pub(super) fn is_reconnect(value: &Value) -> bool {
     value
@@ -406,7 +401,7 @@ impl Session {
                     .and_then(|glicko| glicko.get("rating"))
                     .and_then(Value::as_f64)
                 {
-                    self.state.rating = Some(js_round(rating));
+                    self.state.rating = Some(js::round(rating));
                 }
                 match value.get("puzzle").filter(|puzzle| !puzzle.is_null()) {
                     Some(puzzle) => self.show(puzzle.clone(), &selection, false),

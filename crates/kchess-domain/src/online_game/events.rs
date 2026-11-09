@@ -5,8 +5,8 @@
 use serde_json::{Value, json};
 
 use super::model::{
-    ClockConfig, Effect, FinishedGame, Run, Setup, at, default_fen, is_running, js_max, js_round,
-    nullish, number_or_zero, string_or, text_of, truthy, turn_of, variant_from_lichess,
+    ClockConfig, Effect, FinishedGame, Run, Setup, at, default_fen, is_running, nullish,
+    number_or_zero, string_or, turn_of, variant_from_lichess,
 };
 use crate::js;
 
@@ -31,7 +31,7 @@ impl Run {
     /// `readOnlineEvent`: one server event. Events for other games, and types that carry no
     /// game state, are ignored.
     pub fn read_event(&mut self, event: &Value) {
-        match text_of(event.get("type")) {
+        match js::string(event.get("type")) {
             Some("gameStart") => self.game_start(event),
             Some("gameFinish") => self.game_finish(event),
             Some("opponentGone") => self.opponent_gone(event),
@@ -52,23 +52,23 @@ impl Run {
             self.effect(Effect::ConnectionChanged);
         }
         self.m.online_connection = Some(connection.clone());
-        if truthy(connection.get("account")) {
+        if js::truthy(connection.get("account")) {
             self.m.online_account = js::to_string(connection.get("account"));
         }
-        if truthy(connection.get("gameId")) {
+        if js::truthy(connection.get("gameId")) {
             self.m.online_id = js::to_string(connection.get("gameId"));
         }
-        let lane = text_of(connection.get("lane"));
+        let lane = js::string(connection.get("lane"));
         if lane == Some("events") && !self.m.online_id.is_empty() {
             return;
         }
-        if lane == Some("game") && text_of(connection.get("phase")) == Some("idle") {
+        if lane == Some("game") && js::string(connection.get("phase")) == Some("idle") {
             self.m.online_phase = "idle".into();
             self.m.online_id.clear();
             self.m.online_status = "No game in progress.".into();
             self.clock_pause();
         }
-        let phase = text_of(connection.get("phase"));
+        let phase = js::string(connection.get("phase"));
         if phase.is_some_and(|phase| UNREACHABLE.contains(&phase)) {
             self.m.online_phase = "disconnected".into();
             self.m.online_status = string_or(
@@ -154,7 +154,7 @@ impl Run {
                 setup: self.m.online_setup.clone(),
                 minutes: config
                     .as_ref()
-                    .map(|c| js_max(1.0, js_round(c.initial / 60.0))),
+                    .map(|c| js::max(1.0, js::round(c.initial / 60.0))),
                 increment: config.as_ref().map(|c| c.increment),
                 days: self
                     .m
@@ -179,8 +179,8 @@ impl Run {
 
     fn game_start(&mut self, event: &Value) {
         let game = event.get("game");
-        let game_id = text_of(at(game, "gameId"));
-        if text_of(at(game, "speed")) == Some("correspondence")
+        let game_id = js::string(at(game, "gameId"));
+        if js::string(at(game, "speed")) == Some("correspondence")
             && game_id != Some(self.m.online_id.as_str())
         {
             return;
@@ -198,7 +198,7 @@ impl Run {
         self.m.opponent_id = string_or(at(opponent, "id"), "");
         self.m.online_phase = "playing".into();
         self.m.online_status = "Game in progress".into();
-        if text_of(at(game, "speed")) != Some("correspondence") {
+        if js::string(at(game, "speed")) != Some("correspondence") {
             let body = format!(
                 "You are playing {} as {}.",
                 self.m.online_opponent, self.m.online_color
@@ -209,23 +209,24 @@ impl Run {
 
     fn game_finish(&mut self, event: &Value) {
         let game = event.get("game");
-        if text_of(at(game, "gameId")) != Some(self.m.online_id.as_str()) {
+        if js::string(at(game, "gameId")) != Some(self.m.online_id.as_str()) {
             return;
         }
-        let winner = text_of(at(game, "winner"));
+        let winner = js::string(at(game, "winner"));
         let reason = string_or(at(at(game, "status"), "name"), "finished");
         self.finish(winner, &reason, true);
     }
 
     fn opponent_gone(&mut self, event: &Value) {
-        if event.get("id").is_some() && text_of(event.get("id")) != Some(self.m.online_id.as_str())
+        if event.get("id").is_some()
+            && js::string(event.get("id")) != Some(self.m.online_id.as_str())
         {
             return;
         }
         if self.m.online_phase != "playing" {
             return;
         }
-        let gone = truthy(event.get("gone"));
+        let gone = js::truthy(event.get("gone"));
         self.m.opponent_gone = gone;
         let claim = (gone && event.get("claimWinInSeconds").is_some())
             .then(|| self.ctx.now + js::to_number(event.get("claimWinInSeconds")) * 1000.0);
@@ -238,14 +239,15 @@ impl Run {
     }
 
     fn chat_line(&mut self, event: &Value) {
-        if event.get("id").is_some() && text_of(event.get("id")) != Some(self.m.online_id.as_str())
+        if event.get("id").is_some()
+            && js::string(event.get("id")) != Some(self.m.online_id.as_str())
         {
             return;
         }
         if !self.ctx.chat_enabled {
             return;
         }
-        let room = if text_of(event.get("room")) == Some("spectator") {
+        let room = if js::string(event.get("room")) == Some("spectator") {
             "spectator"
         } else {
             "player"
@@ -263,7 +265,7 @@ impl Run {
     fn game_state(&mut self, event: &Value, full: bool) {
         if event.get("id").is_some()
             && !self.m.online_id.is_empty()
-            && text_of(event.get("id")) != Some(self.m.online_id.as_str())
+            && js::string(event.get("id")) != Some(self.m.online_id.as_str())
         {
             return;
         }
@@ -295,7 +297,7 @@ impl Run {
         } else {
             ("w", "b")
         };
-        let flag = |key: String| truthy(at(state, &key));
+        let flag = |key: String| js::truthy(at(state, &key));
         let their_draw = flag(format!("{theirs}draw"));
         let my_draw = flag(format!("{mine}draw"));
         if their_draw && self.m.draw_offer != "theirs" && !full {
@@ -319,7 +321,7 @@ impl Run {
         }
         .into();
         let expiration = at(state, "expiration");
-        self.m.first_move_by = truthy(expiration).then(|| {
+        self.m.first_move_by = js::truthy(expiration).then(|| {
             let wait = js::to_number(at(expiration, "millisToMove"))
                 - js::to_number(at(expiration, "idleMillis"));
             // Math.max(0, wait): NaN stays NaN.
@@ -363,7 +365,7 @@ impl Run {
                 self.m.online_status = "Game in progress".into();
             }
         } else {
-            let winner = text_of(at(state, "winner"));
+            let winner = js::string(at(state, "winner"));
             let reason = js::to_string(at(state, "status"));
             self.finish(winner, &reason, true);
         }
@@ -371,7 +373,7 @@ impl Run {
 
     /// The fields only a full game carries, and the board they set up.
     fn read_full(&mut self, event: &Value) {
-        let id = text_of(event.get("id")).unwrap_or("").to_string();
+        let id = js::string(event.get("id")).unwrap_or("").to_string();
         if self.m.shown_game != id {
             self.reset_game();
             self.m.shown_game = id.clone();
@@ -392,7 +394,7 @@ impl Run {
         self.m.online_days_per_turn =
             nullish(event.get("daysPerTurn")).map(|v| js::to_number(Some(v)));
         self.m.online_tournament = string_or(event.get("tournamentId"), "");
-        let key = text_of(at(event.get("variant"), "key"));
+        let key = js::string(at(event.get("variant"), "key"));
         let variant = variant_from_lichess(key);
         self.m.online_unsupported = if variant.is_some() {
             String::new()
@@ -400,7 +402,7 @@ impl Run {
             key.unwrap_or("unknown").to_string()
         };
         let variant = variant.unwrap_or("standard");
-        let fen = match text_of(event.get("initialFen")) {
+        let fen = match js::string(event.get("initialFen")) {
             None | Some("") | Some("startpos") => default_fen(variant),
             Some(fen) => fen.to_string(),
         };
@@ -416,7 +418,7 @@ impl Run {
         }
         .to_lowercase();
         let is_ours = |player: Option<&Value>| {
-            text_of(at(player, "id")).is_some_and(|id| id.to_lowercase() == ours)
+            js::string(at(player, "id")).is_some_and(|id| id.to_lowercase() == ours)
         };
         if is_ours(event.get("white")) {
             self.m.online_color = "white".into();
@@ -438,7 +440,7 @@ impl Run {
             Some(name) => js::to_string(Some(name)),
             None => {
                 let ai = at(opponent, "aiLevel");
-                if truthy(ai) {
+                if js::truthy(ai) {
                     format!("Stockfish level {}", js::to_string(ai))
                 } else {
                     "Opponent".into()

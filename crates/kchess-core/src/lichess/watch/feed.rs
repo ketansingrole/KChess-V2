@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::{BroadcastGame, MAX_BROADCAST_PGN, VARIANTS, WatchClock, WatchPlayer};
 use crate::lichess::decode::{Text, present, read};
 use crate::lichess::reviews::split_whitespace;
-use kchess_domain::{api, js, position, review};
+use kchess_domain::{api, js, position};
 
 /* ── Feed decoding (pure) ── */
 
@@ -406,7 +406,7 @@ pub fn broadcast_game(pgn: &str) -> Option<BroadcastGame> {
         let Some(clock) = entry.get("clock").and_then(Value::as_f64) else {
             continue;
         };
-        let rounded = Some(review::js_round(clock));
+        let rounded = Some(js::round(clock));
         if entry.get("mover").and_then(Value::as_str) == Some("white") {
             white_clock = rounded;
         } else {

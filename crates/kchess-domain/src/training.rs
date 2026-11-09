@@ -76,68 +76,23 @@ pub(super) fn to_value<T: Serialize>(value: T) -> Out {
     serde_json::to_value(value).map_err(|e| e.to_string())
 }
 
-/// A JavaScript number as the text `String(n)` gives it.
-pub(super) fn text_of(n: f64) -> String {
-    if n.is_nan() {
-        "NaN".into()
-    } else if n == f64::INFINITY {
-        "Infinity".into()
-    } else if n == f64::NEG_INFINITY {
-        "-Infinity".into()
-    } else {
-        js::number_to_string(n)
-    }
-}
-
 /// A number result. JSON has no NaN or infinity, so those go out as their text (`"NaN"`,
 /// `"Infinity"`).
 pub(super) fn num_out(n: f64) -> Value {
     if n.is_finite() {
         Value::from(n)
     } else {
-        Value::String(text_of(n))
+        Value::String(js::number_to_string(n))
     }
 }
 
 /// `String(n).padStart(2, '0')`
 pub(super) fn pad2(n: f64) -> String {
-    let text = text_of(n);
+    let text = js::number_to_string(n);
     if text.len() < 2 {
         format!("0{text}")
     } else {
         text
-    }
-}
-
-/// `Math.max(a, b)`: NaN wins, and the two zeros compare equal.
-pub(super) fn js_max(a: f64, b: f64) -> f64 {
-    if a.is_nan() || b.is_nan() {
-        f64::NAN
-    } else if b > a {
-        b
-    } else {
-        a
-    }
-}
-
-/// `Math.min(a, b)`
-pub(super) fn js_min(a: f64, b: f64) -> f64 {
-    if a.is_nan() || b.is_nan() {
-        f64::NAN
-    } else if b < a {
-        b
-    } else {
-        a
-    }
-}
-
-/// `Math.round(x)`: halves round toward positive infinity, unlike Rust's `round`.
-pub(super) fn js_round(x: f64) -> f64 {
-    let rounded = x.round();
-    if rounded - x == -0.5 {
-        rounded + 1.0
-    } else {
-        rounded
     }
 }
 
@@ -180,14 +135,14 @@ mod tests {
 
     #[test]
     fn javascript_rounding_and_slicing() {
-        assert_eq!(js_round(2.5), 3.0);
-        assert_eq!(js_round(-2.5), -2.0);
-        assert_eq!(js_round(0.49999999999999994), 0.0);
+        assert_eq!(js::round(2.5), 3.0);
+        assert_eq!(js::round(-2.5), -2.0);
+        assert_eq!(js::round(0.49999999999999994), 0.0);
         assert_eq!(js_slice_end(4, 2.7), 2);
         assert_eq!(js_slice_end(4, -1.0), 3);
         assert_eq!(js_slice_end(4, f64::NAN), 0);
         assert_eq!(js_slice_end(4, f64::INFINITY), 4);
-        assert_eq!(text_of(f64::NAN), "NaN");
+        assert_eq!(js::number_to_string(f64::NAN), "NaN");
         assert_eq!(pad2(9.0), "09");
         assert_eq!(number_arg(&[json!("Infinity")], 0), f64::INFINITY);
     }
