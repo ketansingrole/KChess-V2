@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use kchess_contracts::types::OnlinePhase;
 use serde_json::{Value, json};
 
 use crate::lichess::accounts::path_segment;
@@ -13,11 +14,10 @@ use crate::lichess::challenges::is_game_id;
 use crate::lichess::client::authorize;
 
 use crate::lichess::online::events::{game_in_progress, truncate};
-use crate::lichess::online::ongoing::finished_check;
 use crate::lichess::online::requests::{Emitter, Listen, StreamRequest};
 use crate::lichess::online::state::{
-    ChatLine, Lane, OnlineAction, OnlineSession, PRESENCE_MAX, PRESENCE_TTL, PresenceReport, Res,
-    UserPresence, core,
+    ChatLine, Lane, LiveGame, OnlineAction, OnlineSession, PRESENCE_MAX, PRESENCE_TTL,
+    PresenceReport, Res, UserPresence, core,
 };
 
 /// The one move being sent; released when its answer arrives or the call is dropped.
@@ -53,8 +53,10 @@ impl OnlineSession {
             }
             let handle = self.next_handle(&mut st);
             st.game_controller = Some(handle.clone());
-            st.live_game = id.to_string();
-            st.live_correspondence = false;
+            st.live = Some(LiveGame {
+                id: id.to_string(),
+                correspondence: false,
+            });
             st.protected_game = id.to_string();
             st.protected_account = st.current_account.clone();
             (handle, st.current_account.clone(), st.epoch)
@@ -94,13 +96,8 @@ impl OnlineSession {
                 .await;
             // `.finally`: the live game ends when its stream ended for a finished game, and this
             // stream is still the game's controller.
-            let mut st = this.st();
-            if finished.load(Ordering::SeqCst)
-                && finished_check(&st, handle_id)
-                && st.live_game == game_id
-            {
-                st.live_game.clear();
-            }
+            this.st()
+                .stream_ended(&game_id, handle_id, finished.load(Ordering::SeqCst));
         });
     }
 
@@ -111,8 +108,8 @@ impl OnlineSession {
             let correspondence = event["speed"].as_str() == Some("correspondence");
             let mut st = self.st();
             // A replaced game's last event must not describe the game opened since.
-            if st.live_game == game_id {
-                st.live_correspondence = correspondence;
+            if let Some(game) = st.live.as_mut().filter(|game| game.id == game_id) {
+                game.correspondence = correspondence;
             }
         }
         let status = match kind.as_str() {
@@ -125,9 +122,7 @@ impl OnlineSession {
             finished.store(true, Ordering::SeqCst);
             {
                 let mut st = self.st();
-                if st.live_game == game_id {
-                    st.live_game.clear();
-                }
+                st.end_live(game_id);
                 if st.protected_game == game_id {
                     st.protected_game.clear();
                 }
@@ -170,20 +165,20 @@ impl OnlineSession {
     /// Whether a game is being played: the board, or a protected game not yet verified gone.
     pub fn playing(&self) -> bool {
         let st = self.st();
-        !st.live_game.is_empty() || !st.protected_game.is_empty()
+        st.live.is_some() || !st.protected_game.is_empty()
     }
 
     /// Unknown startup or recovery state also blocks assistance, even before a game id is known.
     pub fn assistance_blocked(&self) -> bool {
         let st = self.st();
-        st.recovery_unverified || !st.live_game.is_empty() || !st.protected_game.is_empty()
+        st.recovery_unverified || st.live.is_some() || !st.protected_game.is_empty()
     }
 
     /// The token and account of the live game (`liveToken`).
     async fn live_token(&self, id: &str, what: &str) -> Res<(String, String)> {
         let account = {
             let st = self.st();
-            if id != st.live_game {
+            if !st.is_live(id) {
                 return Err(core(format!("Reconnect to this game before {what}.")));
             }
             st.current_account.clone()
@@ -500,7 +495,7 @@ impl OnlineSession {
             st.recovery_unverified = false;
             st.epoch
         };
-        self.emit_state(session, "", "", Lane::Game, "idle", None);
+        self.emit_state(session, "", "", Lane::Game, OnlinePhase::Idle, None);
     }
 
     /// Stop everything for good (the app is quitting).

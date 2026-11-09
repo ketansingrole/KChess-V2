@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use kchess_contracts::types::OnlinePhase;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -77,7 +78,7 @@ impl OnlineSession {
         let Some(token) = token else {
             self.lobby_state(
                 &account,
-                "auth-required",
+                OnlinePhase::AuthRequired,
                 Some("Its Lichess login is unavailable. Reconnect it in Settings."),
             );
             return;
@@ -85,7 +86,7 @@ impl OnlineSession {
         self.run_lobby(account, token, cancel).await;
     }
 
-    fn lobby_state(&self, account: &str, phase: &str, message: Option<&str>) {
+    fn lobby_state(&self, account: &str, phase: OnlinePhase, message: Option<&str>) {
         let mut payload = json!({ "account": account, "phase": phase });
         if let Some(message) = message {
             payload["message"] = json!(message);

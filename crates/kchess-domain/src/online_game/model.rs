@@ -400,11 +400,6 @@ pub fn nullish(v: Option<&Value>) -> Option<&Value> {
     v.filter(|v| !v.is_null())
 }
 
-/// A value that is a string, as the TypeScript types say.
-pub fn text_of(v: Option<&Value>) -> Option<&str> {
-    v.and_then(Value::as_str)
-}
-
 /// `String(x ?? fallback)` for a string the TypeScript keeps as text.
 pub fn string_or(v: Option<&Value>, fallback: &str) -> String {
     match nullish(v) {
@@ -421,11 +416,6 @@ pub fn number_or_zero(v: Option<&Value>) -> f64 {
     }
 }
 
-/// `!!x`
-pub fn truthy(v: Option<&Value>) -> bool {
-    !js::falsy(v)
-}
-
 /// `isGameInProgress(status ?? null)`: the records rule, reused.
 pub fn is_running(status: Option<&Value>) -> bool {
     let status = nullish(status).cloned().unwrap_or(Value::Null);
@@ -433,21 +423,4 @@ pub fn is_running(status: Option<&Value>) -> bool {
         records::call("isGameInProgress", &[status]),
         Some(Ok(Value::Bool(true)))
     )
-}
-
-/// JavaScript's `Math.round` (halves round up).
-pub fn js_round(x: f64) -> f64 {
-    let floor = x.floor();
-    if x - floor >= 0.5 { floor + 1.0 } else { floor }
-}
-
-/// JavaScript's `Math.max` for two numbers, where NaN wins.
-pub fn js_max(a: f64, b: f64) -> f64 {
-    if a.is_nan() || b.is_nan() {
-        f64::NAN
-    } else if b > a {
-        b
-    } else {
-        a
-    }
 }

@@ -328,6 +328,129 @@ async fn aborts_an_outstanding_challenge_and_sends_no_more_once_cancelled() {
     online.close();
 }
 
+/// Leaving a correspondence game on the board lets go of its protection: unlike a real-time
+/// game, nothing is lost by stepping away from it, so it keeps nothing else off the board.
+#[tokio::test]
+async fn leaving_a_correspondence_game_lets_go_of_its_protection() {
+    let game: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
+        Arc::new(Mutex::new(None));
+    let slot = Arc::clone(&game);
+    let fixture = serve(move |seen| match seen.path() {
+        "/api/board/game/stream/Corr1234" => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            *slot.lock().unwrap() = Some(tx);
+            Reply::Stream(rx)
+        }
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online
+        .open("Alice", "Corr1234")
+        .await
+        .expect("the game opens");
+    wait_requests(&fixture, "/api/board/game/stream/Corr1234", 1).await;
+    let sender = game.lock().unwrap().clone().unwrap();
+    let full = json!({
+        "type": "gameFull",
+        "id": "Corr1234",
+        "white": {},
+        "black": {},
+        "speed": "correspondence",
+        "state": { "type": "gameState", "moves": "", "status": "started" },
+    });
+    sender.send(format!("{full}\n")).unwrap();
+    until("the game to reach the window", || {
+        emitted(&host, "online:event")
+            .iter()
+            .any(|event| event["type"] == "gameFull")
+    })
+    .await;
+    assert!(online.playing());
+    online.cancel();
+    assert!(!online.playing());
+    online.close();
+}
+
+/// Each cancel moves the session on: a state reported after it says so, and a stream from before
+/// it is rejected as stale.
+#[tokio::test]
+async fn each_cancel_moves_the_session_on() {
+    let fixture = serve(|_| Reply::Hang).await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    // Recovery is unverified at first, so each cancel reports the session it leaves behind.
+    online.cancel();
+    online.cancel();
+    let sessions: Vec<Value> = states(&host)
+        .iter()
+        .map(|state| state["session"].clone())
+        .collect();
+    assert!(sessions.len() >= 2, "{sessions:?}");
+    assert_ne!(sessions[sessions.len() - 1], sessions[sessions.len() - 2]);
+    online.close();
+}
+
+/// A challenge Lichess answered is the session's: cancelling the session withdraws it, and
+/// withdrawing another challenge leaves it the session's.
+#[tokio::test]
+async fn an_answered_challenge_is_withdrawn_with_the_session_but_not_with_another() {
+    let fixture = serve(|seen| match (seen.method.as_str(), seen.path()) {
+        ("POST", "/api/challenge/Bob") => Reply::Json(
+            200,
+            json!({ "id": "AbCd1234", "url": "https://lichess.org/AbCd1234" }).to_string(),
+        ),
+        ("POST", _) => Reply::Json(200, json!({ "ok": true }).to_string()),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online
+        .start(&seek_options(Some("Bob")))
+        .await
+        .expect("the challenge is sent");
+    online
+        .withdraw_challenge(&incoming(json!({ "id": "Other999" })))
+        .await
+        .expect("another challenge is withdrawn");
+    online.cancel();
+    wait_requests(&fixture, "/api/challenge/AbCd1234/cancel", 1).await;
+    online.close();
+}
+
+/// A real-time game on the board, or one left protected by a dropped connection, keeps any other
+/// game from starting or opening until it is verified over; the protected game itself opens.
+#[tokio::test]
+async fn a_protected_game_keeps_other_games_out_but_opens_itself() {
+    const LIMIT: Duration = Duration::from_secs(5);
+    const REFUSED: &str = "Reconnect to your current game";
+    let (_host, _fixture, online) = playing(|_| None).await;
+    let started = tokio::time::timeout(LIMIT, online.start(&seek_options(None)))
+        .await
+        .expect("refused at once");
+    assert!(started.is_err_and(|cause| cause.message().contains(REFUSED)));
+    // The connection drops: the board is empty, the game stays protected.
+    online.cancel();
+    assert!(online.playing());
+    let started = tokio::time::timeout(LIMIT, online.start(&seek_options(None)))
+        .await
+        .expect("refused at once");
+    assert!(started.is_err_and(|cause| cause.message().contains(REFUSED)));
+    let other = tokio::time::timeout(LIMIT, online.open("Alice", "Other123"))
+        .await
+        .expect("refused at once");
+    assert!(other.is_err_and(|cause| cause.message().contains(REFUSED)));
+    // The protected game itself is not refused: it attaches (here, to a stream that never answers).
+    if let Ok(itself) =
+        tokio::time::timeout(Duration::from_millis(300), online.open("Alice", "AbCd1234")).await
+    {
+        assert!(itself.is_ok() || itself.is_err_and(|cause| !cause.message().contains(REFUSED)));
+    }
+    online.close();
+}
+
 #[tokio::test]
 async fn a_refused_start_leaves_the_pending_challenge_running() {
     // Validation ran after the running challenge was cancelled, so a bad request ended it.

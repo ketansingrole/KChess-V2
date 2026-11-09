@@ -69,9 +69,28 @@ pub(crate) fn board_playable(game: &Value) -> bool {
     game["compat"]["board"] != Value::Bool(false)
 }
 
+/// Whether a game Lichess describes is a correspondence game: one that opens on the board only
+/// when asked for.
+pub(crate) fn correspondence(game: &Value) -> bool {
+    game["speed"].as_str() == Some("correspondence")
+}
+
 pub(crate) fn js_value_text(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::correspondence;
+    use serde_json::json;
+
+    #[test]
+    fn only_a_correspondence_speed_is_correspondence() {
+        assert!(correspondence(&json!({ "speed": "correspondence" })));
+        assert!(!correspondence(&json!({ "speed": "rapid" })));
+        assert!(!correspondence(&json!({})));
     }
 }
