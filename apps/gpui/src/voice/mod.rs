@@ -514,7 +514,7 @@ impl Voice {
     fn answered(
         &mut self,
         epoch: u64,
-        answer: Result<Value, kchess_core::CoreError>,
+        answer: Result<Value, kchess_contracts::CoreError>,
         cx: &mut Context<Self>,
     ) {
         if epoch != self.epoch || self.owner.is_none() {
@@ -661,7 +661,7 @@ pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
                 Ok(id) => id.as_i64(),
                 Err(cause) => {
                     crate::log::write(
-                        kchess_core::Level::Warn,
+                        kchess_contracts::Level::Warn,
                         "voice-log",
                         &format!("saving a voice attempt failed: {}", cause.message),
                     );
@@ -688,7 +688,7 @@ pub fn amend(entry: Entry, update: Value, cx: &App) {
                 .await
             {
                 crate::log::write(
-                    kchess_core::Level::Warn,
+                    kchess_contracts::Level::Warn,
                     "voice-log",
                     &format!("updating a voice attempt failed: {}", cause.message),
                 );
@@ -722,7 +722,7 @@ pub fn grammar(name: &str) -> Vec<String> {
 mod tests {
     use super::{ErrorKind, grammar, handle, heard_of, model, progress_of};
     use crate::e2e::Harness;
-    use kchess_core::CoreError;
+    use kchess_contracts::CoreError;
     use serde_json::{Value, json};
 
     /// A build without the speech helper said "The offline voice model couldn’t load. Voice input

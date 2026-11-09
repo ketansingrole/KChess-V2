@@ -459,7 +459,7 @@ fn alert(
                 }
                 if let Err(cause) = notification.show() {
                     crate::log::write(
-                        kchess_core::Level::Warn,
+                        kchess_contracts::Level::Warn,
                         "notify",
                         &format!("Notification failed: {cause}"),
                     );

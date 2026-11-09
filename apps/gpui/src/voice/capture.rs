@@ -105,7 +105,7 @@ pub fn start() -> Result<(Capture, mpsc::UnboundedReceiver<Chunk>), CaptureError
         };
         let failed = |cause: cpal::Error| {
             crate::log::write(
-                kchess_core::Level::Warn,
+                kchess_contracts::Level::Warn,
                 "voice",
                 &format!("Microphone: {cause}"),
             );

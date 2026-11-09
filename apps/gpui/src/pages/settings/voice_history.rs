@@ -225,7 +225,7 @@ impl VoiceHistory {
                     Ok(list) => this.entries = serde_json::from_value(list).unwrap_or_default(),
                     Err(cause) => {
                         crate::log::write(
-                            kchess_core::Level::Warn,
+                            kchess_contracts::Level::Warn,
                             "voice-history",
                             &format!("Could not read voice history: {}", cause.message),
                         );
@@ -294,7 +294,7 @@ impl VoiceHistory {
                 Ok(_) => this.load(cx),
                 Err(cause) => {
                     crate::log::write(
-                        kchess_core::Level::Warn,
+                        kchess_contracts::Level::Warn,
                         "voice-history",
                         &format!("Clearing voice history failed: {}", cause.message),
                     );

@@ -1085,7 +1085,7 @@ pub(super) fn stop_watching(session: Option<f64>, cx: &mut App) {
     cx.background_spawn(async move {
         if let Err(cause) = stopping.await {
             crate::log::write(
-                kchess_core::Level::Warn,
+                kchess_contracts::Level::Warn,
                 "watch",
                 &format!("stopping watch failed: {}", cause.message),
             );

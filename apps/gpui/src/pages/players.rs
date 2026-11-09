@@ -212,7 +212,7 @@ pub(crate) fn remember(username: &str, cx: &mut App) {
     crate::prefs::set(cx, RECENT_KEY, recent);
 }
 
-fn message_of(cause: &kchess_core::CoreError) -> SharedString {
+fn message_of(cause: &kchess_contracts::CoreError) -> SharedString {
     cause.message.clone().into()
 }
 
@@ -566,7 +566,7 @@ impl PlayersPage {
                     Ok(found) => this.found(found, window, cx),
                     Err(cause) => {
                         crate::log::write(
-                            kchess_core::Level::Warn,
+                            kchess_contracts::Level::Warn,
                             "players",
                             &format!("Profile lookup failed: {}", cause.message),
                         );

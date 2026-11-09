@@ -88,7 +88,7 @@ impl SettingsPage {
                 };
                 if let Some(cause) = failed {
                     crate::log::write(
-                        kchess_core::Level::Warn,
+                        kchess_contracts::Level::Warn,
                         "offline-downloads",
                         &format!("Could not download the voice model: {cause}"),
                     );

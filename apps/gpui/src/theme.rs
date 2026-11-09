@@ -250,7 +250,7 @@ pub fn apply(window: &mut Window, cx: &mut App) {
             window.refresh();
         }
         Err(error) => crate::log::write(
-            kchess_core::Level::Error,
+            kchess_contracts::Level::Error,
             "theme",
             &format!("GPUI Kit refused the theme: {error}"),
         ),

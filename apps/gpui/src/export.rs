@@ -248,7 +248,7 @@ impl Exporter {
                     game["url"]
                         .as_str()
                         .map(str::to_string)
-                        .ok_or_else(|| kchess_core::CoreError::new("Lichess sent no link"))
+                        .ok_or_else(|| kchess_contracts::CoreError::new("Lichess sent no link"))
                 }),
             };
             let _ = this.update_in(cx, |this, window, cx| {
