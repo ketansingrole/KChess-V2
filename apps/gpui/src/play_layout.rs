@@ -51,7 +51,7 @@ fn whole_squares(side: Pixels, scale: f32) -> Pixels {
 }
 
 /// An area measured as it is laid out, so the next frame can size what goes in it.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Measured {
     bounds: Rc<Cell<Bounds<Pixels>>>,
 }

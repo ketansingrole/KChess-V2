@@ -216,6 +216,7 @@ mod setting_rows;
 mod status;
 #[cfg(test)]
 mod tests;
+mod windowed;
 
 pub use badges::*;
 pub use cards::*;
@@ -226,3 +227,4 @@ pub use pills::*;
 pub use players::*;
 pub use setting_rows::*;
 pub use status::*;
+pub use windowed::Windowed;

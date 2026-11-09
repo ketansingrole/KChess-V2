@@ -50,6 +50,63 @@ fn wait_for_status(app: &mut Harness, title: &str) {
     });
 }
 
+/// Only All openings' families in view are made (laying out every family of a first move was
+/// most of drawing the page): scrolled to the end of the list, its last family is made, and the
+/// list is as tall as all its rows, made or not.
+#[gpui_kit::test]
+fn only_the_families_in_view_are_made(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::openings::OpeningsPage;
+    let mut app = openings(cx);
+    let rows = |app: &mut Harness| {
+        app.with_window(|_, cx| {
+            crate::shell::view_of::<OpeningsPage>(Page::Openings, cx)
+                .expect("the page")
+                .read(cx)
+                .family_rows()
+        })
+    };
+    app.settle();
+    let (heights, _) = rows(&mut app);
+    let made = heights
+        .iter()
+        .filter(|height| **height > gpui_kit::px(0.))
+        .count();
+    assert!(heights.len() > 40, "1.e4's families: {}", heights.len());
+    assert!(made < heights.len(), "only some are made: {made}");
+    for _ in 0..80 {
+        app.with_window(|window, cx| {
+            use gpui_kit::test::TestWindowExt as _;
+            let by = gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-300.));
+            window.scroll("openings", gpui_kit::ScrollDelta::Pixels(by), cx);
+        });
+    }
+    app.settle();
+    let (heights, height) = rows(&mut app);
+    assert!(
+        heights.last().is_some_and(|last| *last > gpui_kit::px(0.)),
+        "the last family is made at the end"
+    );
+    let measured = heights
+        .iter()
+        .copied()
+        .find(|height| *height > gpui_kit::px(0.))
+        .expect("a row");
+    let whole: gpui_kit::Pixels = heights
+        .iter()
+        .map(|height| {
+            if *height > gpui_kit::px(0.) {
+                *height
+            } else {
+                measured
+            }
+        })
+        .fold(gpui_kit::px(0.), |sum, height| sum + height);
+    assert!(
+        (height - whole).abs() < gpui_kit::px(1.),
+        "{height:?} for {whole:?}"
+    );
+}
+
 #[gpui_kit::test]
 fn the_families_are_listed_under_their_first_move(cx: &mut gpui_kit::TestAppContext) {
     let mut app = openings(cx);
