@@ -125,9 +125,15 @@ fn timed_start(cx: TestAppContext, profile: tempfile::TempDir) -> (Harness, [f64
     (app, [ms(core), ms(models), ms(frame)])
 }
 
-/// Time `shell::open` of `page` and the frame that shows it.
+/// Time `shell::open` of `page` and the frame that shows it, once the page before has settled.
 fn open(app: &mut Harness, page: Page) -> f64 {
     app.settle();
+    opening(app, page)
+}
+
+/// The opening alone: never inlined, so a profile can pick out its samples.
+#[inline(never)]
+fn opening(app: &mut Harness, page: Page) -> f64 {
     let started = Instant::now();
     app.cx
         .update_window(app.window, |_, window, cx| {
