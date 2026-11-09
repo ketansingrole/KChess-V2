@@ -43,6 +43,15 @@ jobs:
           test -n "$ASC_APP_ID" || { echo "::error::Set the ASC_APP_ID repository variable."; exit 1; }
           test "$HAS_KEY" = true || { echo "::error::Add the ASC_KEY_ID, ASC_ISSUER_ID and ASC_PRIVATE_KEY secrets."; exit 1; }
           brew install asc
+      # The release's notes as the plain text App Store Connect takes (no Markdown, no symbols
+      # it refuses) for What to Test and What's New; no App Store key reaches this step.
+      - name: Write the store's notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release view "$RELEASE_TAG" --json body --jq .body > "$RUNNER_TEMP/notes.md"
+          cargo xtask store-notes "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/notes.txt"
       # A version already with Apple (waiting, in review, approved but unreleased) is never
       # replaced: its review would start again. Submit the newest tag by hand once it is out
       # (Run workflow with that tag).
@@ -89,24 +98,12 @@ jobs:
       # whatever App Review is doing: beta review is separate and never restarts it.
       - name: Send to the public TestFlight beta
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           BUILD_ID: ${{ steps.build.outputs.id }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: |
-          gh release view "$RELEASE_TAG" --json body --jq .body > "$RUNNER_TEMP/beta-notes.md"
-          # Not inside `$(...)`: bash ends a command substitution at the heredoc's backtick.
-          python3 - "$RUNNER_TEMP/beta-notes.md" "$RUNNER_TEMP/beta-notes.txt" <<'PY'
-          import re, sys
-          notes = open(sys.argv[1]).read()
-          notes = re.sub(r"^#+\s*", "", notes, flags=re.M)
-          notes = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", notes)
-          notes = notes.replace("**", "").replace("`", "").strip()
-          open(sys.argv[2], "w").write((notes or "Improvements and fixes.")[:4000])
-          PY
-          notes="$(cat "$RUNNER_TEMP/beta-notes.txt")"
+          notes="$(cat "$RUNNER_TEMP/notes.txt")"
           asc publish testflight --app "$ASC_APP_ID" --platform MAC_OS --build-id "$BUILD_ID" \
             --group "Public Beta" --test-notes "$notes" --locale en-US \
             --submit --confirm --notify --output table
@@ -115,8 +112,6 @@ jobs:
       - name: Write this version's listing
         if: steps.review.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           VERSION: ${{ steps.build.outputs.version }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -126,20 +121,14 @@ jobs:
           mkdir -p "$metadata/version/$VERSION"
           cp -R app-store/app-info "$metadata/"
           asc versions list --app "$ASC_APP_ID" --platform MAC_OS --paginate --output json > "$RUNNER_TEMP/versions.json"
-          gh release view "$RELEASE_TAG" --json body --jq .body > "$RUNNER_TEMP/notes.md"
           python3 - "$metadata/version/$VERSION/en-US.json" <<'PY'
-          import json, os, re, sys
+          import json, os, sys
           temp = os.environ["RUNNER_TEMP"]
           listing = json.load(open("app-store/listing/en-US.json"))
           versions = json.load(open(f"{temp}/versions.json")).get("data", [])
           live = any(v["attributes"].get("appStoreState") == "READY_FOR_SALE" for v in versions)
-          notes = open(f"{temp}/notes.md").read()
-          # Plain text: no Markdown headings, emphasis or links' targets.
-          notes = re.sub(r"^#+\s*", "", notes, flags=re.M)
-          notes = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", notes)
-          notes = notes.replace("**", "").replace("`", "").strip()
           if live:
-              listing["whatsNew"] = (notes or "Improvements and fixes.")[:4000]
+              listing["whatsNew"] = open(f"{temp}/notes.txt").read()
           json.dump(listing, open(sys.argv[1], "w"), ensure_ascii=False, indent=2)
           PY
           echo "METADATA_DIR=$metadata" >> "$GITHUB_ENV"

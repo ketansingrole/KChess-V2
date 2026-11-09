@@ -206,6 +206,8 @@ fn metadata(version: &str, lock: &str, notes: &str, tag: Option<&str>) -> Result
              with no notes. `cargo xtask release-version` writes it from `{UNRELEASED}`."
         ));
     }
+    // The App Store takes the same notes: one it would refuse is rewritten before the tag.
+    crate::store_notes::plain(&release_notes(notes, version).unwrap_or_default())?;
     if let Some(tag) = tag
         && tag != format!("v{version}")
     {
@@ -611,6 +613,12 @@ mod tests {
                 .contains("no `## 2026.11.5 (date)` section")
         );
         assert!(metadata("1.2.3", lock, notes, None).is_err());
+        // Notes App Store Connect would refuse are caught before the tag.
+        assert!(
+            metadata("2026.11.5", lock, &notes.replace("thing", "thing 🎉"), None)
+                .unwrap_err()
+                .contains("App Store Connect refuses")
+        );
     }
 
     /// Run by hand or for a tag, the release check needs CI; a manual Release build of a branch
