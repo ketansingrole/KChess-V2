@@ -382,8 +382,12 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         return match reply_to {
             Showcase::Profile(name) => reply(&mut out, &showcase_account(&name)),
             Showcase::History => reply(&mut out, &showcase_history()),
-            Showcase::Games(name, session) => {
-                hold_games(&session);
+            Showcase::Games(name) => {
+                // The download's own login holds it: tests share the server, and several sign in
+                // as the showcase player at once, each with its own `hold_games`.
+                if let Some(session) = &session {
+                    hold_games(session);
+                }
                 ndjson_lines(&mut out, &showcase_games(&name))
             }
         };
@@ -1239,8 +1243,7 @@ fn showcase_games(username: &str) -> Vec<Value> {
 enum Showcase {
     Profile(String),
     History,
-    /// The account's games, and its session, which may hold them back.
-    Games(String, Handle),
+    Games(String),
 }
 
 /// What a public request asks of a showcase account, if it names one.
@@ -1260,15 +1263,14 @@ fn showcase_public(path: &str) -> Option<Showcase> {
         .sessions
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    let (username, session) = sessions.values().find_map(|handle| {
-        let session = handle.lock();
+    let username = sessions.values().find_map(|session| {
+        let session = session.lock();
         (session.showcase && session.username.to_lowercase() == name)
-            .then(|| (session.username.clone(), handle.clone()))
+            .then(|| session.username.clone())
     })?;
-    drop(sessions);
     Some(match kind {
         0 => Showcase::Profile(username),
         1 => Showcase::History,
-        _ => Showcase::Games(username, session),
+        _ => Showcase::Games(username),
     })
 }
