@@ -94,18 +94,12 @@ impl OnlineSession {
                 .await;
             // `.finally`: the live game ends when its stream ended for a finished game, and this
             // stream is still the game's controller.
-            let ended = {
-                let mut st = this.st();
-                let ended = finished.load(Ordering::SeqCst)
-                    && finished_check(&st, handle_id)
-                    && st.live_game == game_id;
-                if ended {
-                    st.live_game.clear();
-                }
-                ended
-            };
-            if ended {
-                this.refresh_assistance();
+            let mut st = this.st();
+            if finished.load(Ordering::SeqCst)
+                && finished_check(&st, handle_id)
+                && st.live_game == game_id
+            {
+                st.live_game.clear();
             }
         });
     }
