@@ -184,9 +184,6 @@ fn group_of(node: &OpeningNode) -> &'static str {
         .map_or("other", |(key, _, _)| key)
 }
 
-/// A family's row in All openings before it is laid out (`render_node`'s `min_h`).
-const FAMILY_ROW: Pixels = px(28.);
-
 /// The named openings, shortest line first, with their folded search text.
 fn named(tree: &[OpeningNode]) -> Vec<(String, String, Vec<String>, String)> {
     fn walk(nodes: &[OpeningNode], out: &mut Vec<(String, String, Vec<String>, String)>) {
@@ -262,11 +259,6 @@ pub struct OpeningsPage {
     expanded: HashSet<String>,
     previews: HashMap<String, Entity<ChessBoard>>,
     area: Measured,
-    /// The page's scrolling, and All openings' families, of which only those in view are made
-    /// (`widgets::Windowed`): laying out every family of a first move was most of drawing the
-    /// page, each frame it was scrolled.
-    scroll: ScrollHandle,
-    families: widgets::Windowed,
     /// The opening shown, when one is: its moves from the starting position.
     line: Option<Vec<String>>,
     board: Entity<ChessBoard>,
@@ -358,8 +350,6 @@ impl OpeningsPage {
             expanded: HashSet::new(),
             previews: HashMap::new(),
             area: Measured::default(),
-            scroll: ScrollHandle::new(),
-            families: widgets::Windowed::default(),
             line: None,
             board,
             layout: PlayLayout::default(),
@@ -376,13 +366,6 @@ impl OpeningsPage {
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
-    }
-
-    /// All openings' family rows as measured (`ZERO` for a row not yet made), and the list's
-    /// height.
-    #[cfg(test)]
-    pub(crate) fn family_rows(&self) -> (Vec<gpui_kit::Pixels>, gpui_kit::Pixels) {
-        self.families.layout()
     }
 
     /// The preview boards kept, by position.
@@ -691,7 +674,7 @@ impl OpeningsPage {
         };
         let row = h_flex()
             .gap(px(8.))
-            .min_h(FAMILY_ROW)
+            .min_h(px(28.))
             .when(!node.children.is_empty(), |row| {
                 row.child(
                     Button::new(SharedString::from(format!("toggle-{name}")))
@@ -954,22 +937,12 @@ impl OpeningsPage {
                 .child(v_flex().gap(CARD_GAP).children(rows)),
         );
         let group = crate::prefs::get::<String>(cx, GROUP, "e4".into());
-        let nodes: Vec<&OpeningNode> = catalog
+        let families: Vec<AnyElement> = catalog
             .tree
             .iter()
             .filter(|node| group_of(node) == group)
+            .map(|node| self.render_node(node, cx, palette))
             .collect();
-        let (windowed, scroll) = (self.families.clone(), self.scroll.clone());
-        let families = windowed.render(
-            nodes.len(),
-            width,
-            FAMILY_ROW,
-            px(0.),
-            &scroll,
-            window,
-            cx,
-            |row, cx| self.render_node(nodes[row], cx, palette),
-        );
         body = body.child(
             v_flex()
                 .child(section("All openings"))
@@ -997,7 +970,7 @@ impl OpeningsPage {
                         palette,
                     )),
                 )
-                .child(widgets::card(palette).child(families)),
+                .child(widgets::card(palette).children(families)),
         );
         body.into_any_element()
     }
@@ -1315,7 +1288,6 @@ impl Render for OpeningsPage {
             .test_support()
             .size_full()
             .track_focus(&self.focus)
-            .track_scroll(&self.scroll)
             .overflow_y_scroll()
             .child(
                 h_flex()

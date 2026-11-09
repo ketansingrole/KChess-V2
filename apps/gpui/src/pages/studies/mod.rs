@@ -49,9 +49,104 @@ fn summary(pgn: &str) -> Value {
     crate::game::rules("summarizeStudy", &[json!(pgn)]).unwrap_or(Value::Null)
 }
 
+/// The rows' heights as laid out at one width of card: at another, a card's text wraps
+/// otherwise, so a row measured before (one made at the first frame's width, then scrolled out of
+/// view) no longer stands for its height.
+#[derive(Default)]
+struct RowHeights {
+    card_width: Pixels,
+    heights: Vec<Pixels>,
+}
+
+impl RowHeights {
+    /// `rows` rows of cards `card_width` wide: measurements at another width are let go.
+    fn fit(&mut self, card_width: Pixels, rows: usize) {
+        if self.card_width != card_width {
+            self.card_width = card_width;
+            self.heights.clear();
+        }
+        self.heights.resize(rows, Pixels::ZERO);
+    }
+
+    /// A row laid out at `height`; whether that is new.
+    fn record(&mut self, row: usize, height: Pixels) -> bool {
+        match self.heights.get_mut(row) {
+            Some(kept) if *kept != height => {
+                *kept = height;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 /// A row of cards' height before any is laid out: the square picture and the text under it.
 pub(crate) fn estimated_row(card_width: Pixels) -> Pixels {
     card_width + px(150.)
+}
+
+/// Each row's height as measured, or as tall as the first measured row for one not yet laid out
+/// (`ZERO`); `estimate` before any is.
+fn resolved_heights(measured: &[Pixels], estimate: Pixels) -> Vec<Pixels> {
+    let usual = measured
+        .iter()
+        .copied()
+        .find(|height| *height > Pixels::ZERO)
+        .unwrap_or(estimate);
+    measured
+        .iter()
+        .map(|height| {
+            if *height > Pixels::ZERO {
+                *height
+            } else {
+                usual
+            }
+        })
+        .collect()
+}
+
+/// What of the grid to make, from its top: what the page's viewport shows of it and as much again
+/// (at least 200 px) above and below, so a scroll finds its cards made. Before the first layout,
+/// the window's height from the top.
+fn view_span(viewport: Bounds<Pixels>, grid: Bounds<Pixels>, window: Pixels) -> (Pixels, Pixels) {
+    let (top, bottom) = if viewport.size.height > Pixels::ZERO && grid.size.height > Pixels::ZERO {
+        (viewport.top() - grid.top(), viewport.bottom() - grid.top())
+    } else {
+        (Pixels::ZERO, window)
+    };
+    let margin = (bottom - top).max(px(200.));
+    (top - margin, bottom + margin)
+}
+
+/// The rows of a grid to make: those reaching into `top..bottom` (from the grid's top), with the
+/// heights the rows left out take above and below them. Rows are `gap` apart.
+fn rows_in_view(
+    heights: &[Pixels],
+    gap: Pixels,
+    top: Pixels,
+    bottom: Pixels,
+) -> (std::ops::Range<usize>, Pixels, Pixels) {
+    let (mut first, mut last) = (heights.len(), 0);
+    let (mut above, mut below) = (Pixels::ZERO, Pixels::ZERO);
+    let mut y = Pixels::ZERO;
+    for (row, height) in heights.iter().enumerate() {
+        let space = if row > 0 { gap } else { Pixels::ZERO };
+        let (start, end) = (y + space, y + space + *height);
+        if end < top {
+            above = end;
+        } else if start <= bottom {
+            first = first.min(row);
+            last = row + 1;
+        } else {
+            below += space + *height;
+        }
+        y = end;
+    }
+    if first >= last {
+        // Nothing reaches into view (an empty grid): every row is space above.
+        return (0..0, y, Pixels::ZERO);
+    }
+    (first..last, above, below)
 }
 
 /// `localeCompare` with numbers read as numbers ("Study 2" before "Study 10"), ignoring case.
@@ -158,7 +253,10 @@ pub struct StudiesPage {
     /// (and a margin around it) are made, laid out and drawn. Fifty cards, the library's limit,
     /// were most of opening the page.
     scroll: ScrollHandle,
-    cards: widgets::Windowed,
+    grid: Measured,
+    /// Each row of cards' height as it was last laid out, and the cards' width then; a row not yet
+    /// made is taken to be as tall as the first measured.
+    row_heights: std::rc::Rc<std::cell::RefCell<RowHeights>>,
     /// Each listed study's summary by its PGN: reading it parses the study and plays it out, and
     /// every frame of the page asks for each study's twice.
     summaries: std::cell::RefCell<HashMap<String, Value>>,
@@ -235,7 +333,8 @@ impl StudiesPage {
             uploading: None,
             previews: HashMap::new(),
             scroll: ScrollHandle::new(),
-            cards: widgets::Windowed::default(),
+            grid: Measured::default(),
+            row_heights: Default::default(),
             summaries: Default::default(),
             area: Measured::default(),
             focus: cx.focus_handle(),
@@ -741,7 +840,10 @@ impl StudiesPage {
     /// The rows' heights as measured (`ZERO` for a row not yet made), and the grid's height.
     #[cfg(test)]
     pub(crate) fn grid_layout(&self) -> (Vec<Pixels>, Pixels) {
-        self.cards.layout()
+        (
+            self.row_heights.borrow().heights.clone(),
+            self.grid.bounds().size.height,
+        )
     }
 
     /// Scroll the page as only the page itself would, with no new frame asked for (a scroll by
@@ -791,105 +893,134 @@ impl StudiesPage {
             .collect();
         self.previews.retain(|fen, _| listed.contains(fen));
         let rows = studies.len().div_ceil(count);
-        let cards = self.cards.clone();
-        let scroll = self.scroll.clone();
-        cards.render(
-            rows,
-            card_width,
-            estimated_row(card_width),
-            CARD_GAP,
-            &scroll,
-            window,
-            cx,
-            |row, cx| {
-                let cards: Vec<AnyElement> = studies
-                    .iter()
-                    .skip(row * count)
-                    .take(count)
-                    .map(|study| {
-                        let id = study["id"].as_str().unwrap_or_default().to_string();
-                        let name = study["name"].as_str().unwrap_or_default().to_string();
-                        let summary = self.summary(study["pgn"].as_str().unwrap_or_default());
-                        let board = summary["fen"]
-                            .as_str()
-                            .map(|fen| self.preview(fen, cx).into());
-                        let event = summary["event"].as_str().filter(|event| *event != name);
-                        let description = [summary["players"].as_str(), event]
-                            .into_iter()
-                            .flatten()
-                            .filter(|part| !part.is_empty())
-                            .collect::<Vec<_>>()
-                            .join(" · ");
-                        let chapters = study["chapters"].as_array().map_or(0, Vec::len);
-                        let cloud = &study["cloud"];
-                        let location = format!(
-                            "{}{}",
-                            if cloud.is_null() {
-                                "On this device"
-                            } else {
-                                "Offline · Lichess"
-                            },
-                            if chapters > 0 {
-                                format!(
-                                    " · {chapters} {}",
-                                    if chapters == 1 { "chapter" } else { "chapters" }
-                                )
-                            } else {
-                                String::new()
-                            }
-                        );
-                        let upload_label = if cloud["structureChanged"] == json!(true) {
-                            "Upload as new cloud study"
-                        } else if cloud.is_null() {
-                            "Upload to Lichess"
+        let heights = {
+            let mut measured = self.row_heights.borrow_mut();
+            measured.fit(card_width, rows);
+            resolved_heights(&measured.heights, estimated_row(card_width))
+        };
+        let (top, bottom) = view_span(
+            self.scroll.bounds(),
+            self.grid.bounds(),
+            window.viewport_size().height,
+        );
+        let (shown, above, below) = rows_in_view(&heights, CARD_GAP, top, bottom);
+        let mut grid_rows: Vec<AnyElement> = Vec::new();
+        for row in shown.clone() {
+            let cards: Vec<AnyElement> = studies
+                .iter()
+                .skip(row * count)
+                .take(count)
+                .map(|study| {
+                    let id = study["id"].as_str().unwrap_or_default().to_string();
+                    let name = study["name"].as_str().unwrap_or_default().to_string();
+                    let summary = self.summary(study["pgn"].as_str().unwrap_or_default());
+                    let board = summary["fen"]
+                        .as_str()
+                        .map(|fen| self.preview(fen, cx).into());
+                    let event = summary["event"].as_str().filter(|event| *event != name);
+                    let description = [summary["players"].as_str(), event]
+                        .into_iter()
+                        .flatten()
+                        .filter(|part| !part.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                    let chapters = study["chapters"].as_array().map_or(0, Vec::len);
+                    let cloud = &study["cloud"];
+                    let location = format!(
+                        "{}{}",
+                        if cloud.is_null() {
+                            "On this device"
                         } else {
-                            "Upload changes"
-                        };
-                        let uploading = self.uploading.as_deref() == Some(id.as_str());
-                        let page = cx.entity().downgrade();
-                        let upload_id = id.clone();
-                        let open_id = id.clone();
-                        widgets::StudyCard {
-                            id: id.clone(),
-                            name,
-                            board,
-                            location,
-                            description: (!description.is_empty()).then_some(description),
-                            edited: study["updatedAt"]
-                                .as_f64()
-                                .filter(|at| *at > 0.)
-                                .map(|at| format!("Edited {}", time_ago(at, now))),
-                            rows: 3,
-                            menu: Some(self.menu(study).into_any_element()),
-                            action: Button::new(SharedString::from(format!("upload-{id}")))
-                                .outline()
-                                .xsmall()
-                                .w_full()
-                                .icon(icon("cloud-upload"))
-                                .label(upload_label)
-                                .loading(uploading)
-                                .disabled(self.uploading.is_some())
-                                .on_click(move |_, window, cx| {
-                                    let _ = page.update(cx, |page, cx| {
-                                        page.upload(upload_id.clone(), false, window, cx)
-                                    });
-                                })
-                                .into_any_element(),
-                            width: card_width,
-                            on_open: std::rc::Rc::new(move |window, cx| {
-                                Self::open(open_id.clone(), window, cx)
-                            }),
+                            "Offline · Lichess"
+                        },
+                        if chapters > 0 {
+                            format!(
+                                " · {chapters} {}",
+                                if chapters == 1 { "chapter" } else { "chapters" }
+                            )
+                        } else {
+                            String::new()
                         }
-                        .into_any_element()
-                    })
-                    .collect();
+                    );
+                    let upload_label = if cloud["structureChanged"] == json!(true) {
+                        "Upload as new cloud study"
+                    } else if cloud.is_null() {
+                        "Upload to Lichess"
+                    } else {
+                        "Upload changes"
+                    };
+                    let uploading = self.uploading.as_deref() == Some(id.as_str());
+                    let page = cx.entity().downgrade();
+                    let upload_id = id.clone();
+                    let open_id = id.clone();
+                    widgets::StudyCard {
+                        id: id.clone(),
+                        name,
+                        board,
+                        location,
+                        description: (!description.is_empty()).then_some(description),
+                        edited: study["updatedAt"]
+                            .as_f64()
+                            .filter(|at| *at > 0.)
+                            .map(|at| format!("Edited {}", time_ago(at, now))),
+                        rows: 3,
+                        menu: Some(self.menu(study).into_any_element()),
+                        action: Button::new(SharedString::from(format!("upload-{id}")))
+                            .outline()
+                            .xsmall()
+                            .w_full()
+                            .icon(icon("cloud-upload"))
+                            .label(upload_label)
+                            .loading(uploading)
+                            .disabled(self.uploading.is_some())
+                            .on_click(move |_, window, cx| {
+                                let _ = page.update(cx, |page, cx| {
+                                    page.upload(upload_id.clone(), false, window, cx)
+                                });
+                            })
+                            .into_any_element(),
+                        width: card_width,
+                        on_open: std::rc::Rc::new(move |window, cx| {
+                            Self::open(open_id.clone(), window, cx)
+                        }),
+                    }
+                    .into_any_element()
+                })
+                .collect();
+            let heights = std::rc::Rc::clone(&self.row_heights);
+            let entity = cx.entity().downgrade();
+            // The row's height as laid out, for the rows' spacing while it is out of view.
+            let probe = canvas(
+                move |area, window, _| {
+                    if heights.borrow_mut().record(row, area.size.height) {
+                        let entity = entity.clone();
+                        window.on_next_frame(move |_, cx| {
+                            let _ = entity.update(cx, |_, cx| cx.notify());
+                        });
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full();
+            grid_rows.push(
                 h_flex()
+                    .relative()
                     .items_stretch()
                     .gap(CARD_GAP)
+                    .when(row > 0, |line| line.mt(CARD_GAP))
+                    .child(probe)
                     .children(cards)
-                    .into_any_element()
-            },
-        )
+                    .into_any_element(),
+            );
+        }
+        v_flex()
+            .relative()
+            .child(self.grid.probe(cx))
+            .child(div().h(above))
+            .children(grid_rows)
+            .child(div().h(below))
+            .into_any_element()
     }
 
     fn render_device(
@@ -1243,15 +1374,104 @@ impl Render for ImportStudy {
 
 #[cfg(test)]
 mod tests {
-    use super::{import_chapters, import_name, natural_cmp};
-    use gpui_kit::px;
+    use super::{
+        import_chapters, import_name, natural_cmp, resolved_heights, rows_in_view, view_span,
+    };
+    use gpui_kit::{Bounds, point, px, size};
     use std::cmp::Ordering;
 
-    /// A row of cards' estimated height is near what one measures (a 210 px card: 361 px).
+    /// Only the rows reaching into view are made; the spaces left above and below keep the grid
+    /// as tall as it is, row gaps included, so scrolling lands where it did.
     #[test]
-    fn a_card_rows_estimate_is_near_its_height() {
+    fn only_the_rows_in_view_are_made() {
+        let heights = [px(100.); 10];
+        let gap = px(10.);
+        // Rows start at 0, 110, 220, … and end 100 later; the grid is 1090 tall.
+        let (rows, above, below) = rows_in_view(&heights, gap, px(0.), px(250.));
+        assert_eq!((rows, above, below), (0..3, px(0.), px(770.)));
+        // A row starting where the view ends is in it.
+        assert_eq!(rows_in_view(&heights, gap, px(0.), px(330.)).0, 0..4);
+        let (rows, above, below) = rows_in_view(&heights, gap, px(300.), px(500.));
+        assert_eq!((rows, above, below), (2..5, px(210.), px(550.)));
+        // Above + made rows (with their gaps) + below is the whole grid.
+        let made = px(100.) * 3. + gap * 3.;
+        assert_eq!(above + made + below, px(1090.));
+        // A row ending where the view starts is still in it.
+        let (rows, above, below) = rows_in_view(&heights, gap, px(980.), px(2000.));
+        assert_eq!((rows, above, below), (8..10, px(870.), px(0.)));
+        // Scrolled past the grid, and an empty grid.
+        let (rows, above, _) = rows_in_view(&heights, gap, px(5000.), px(6000.));
+        assert_eq!((rows, above), (0..0, px(1090.)));
+        assert_eq!(rows_in_view(&[], gap, px(0.), px(100.)).0, 0..0);
+        // A row taller than the others counts as tall as it is.
+        let mixed = [px(100.), px(300.), px(100.)];
+        assert_eq!(
+            rows_in_view(&mixed, gap, px(450.), px(600.)),
+            (2..3, px(410.), px(0.))
+        );
+    }
+
+    /// Rows measured at one card width are let go at another: a row made at the first frame's
+    /// width and then scrolled out of view kept that height, and the grid came out 18.5 px short.
+    #[test]
+    fn row_heights_are_kept_for_one_card_width() {
+        let mut rows = super::RowHeights::default();
+        rows.fit(px(210.), 3);
+        assert!(rows.record(1, px(387.)));
+        assert!(!rows.record(1, px(387.)), "the same height is nothing new");
+        assert!(!rows.record(5, px(10.)), "no such row");
+        rows.fit(px(210.), 4);
+        assert_eq!(rows.heights, [px(0.), px(387.), px(0.), px(0.)]);
+        rows.fit(px(240.), 4);
+        assert_eq!(rows.heights, [px(0.); 4]);
+    }
+
+    /// A row not yet laid out is taken to be as tall as the first one measured, and every row as
+    /// tall as the estimate before any is.
+    #[test]
+    fn rows_not_laid_out_take_the_measured_height() {
+        let zero = px(0.);
+        assert_eq!(
+            resolved_heights(&[zero, px(320.), px(330.), zero], px(100.)),
+            [px(320.), px(320.), px(330.), px(320.)]
+        );
+        assert_eq!(
+            resolved_heights(&[zero, zero], px(100.)),
+            [px(100.), px(100.)]
+        );
+        // A card's estimated row is near what one measures (a 210 px card: 361 px).
         let estimate = super::estimated_row(px(210.));
         assert!(estimate > px(330.) && estimate < px(400.), "{estimate:?}");
+    }
+
+    /// The span to make is what the viewport shows of the grid, measured from the grid's top, and
+    /// as much again above and below (at least 200 px); before the first layout, the window.
+    #[test]
+    fn the_span_made_is_the_view_and_a_margin() {
+        let at = |top: f32, height: f32| Bounds {
+            origin: point(px(0.), px(top)),
+            size: size(px(800.), px(height)),
+        };
+        // The viewport shows 100..700 of the window; the grid starts 1000 above it (scrolled).
+        assert_eq!(
+            view_span(at(100., 600.), at(-900., 5000.), px(800.)),
+            (px(400.), px(2200.))
+        );
+        // A short viewport keeps a 200 px margin.
+        assert_eq!(
+            view_span(at(0., 50.), at(0., 5000.), px(800.)),
+            (px(-200.), px(250.))
+        );
+        // Not laid out yet: the window from the top, and as much again.
+        let none = Bounds::default();
+        assert_eq!(
+            view_span(none, at(0., 100.), px(800.)),
+            (px(-800.), px(1600.))
+        );
+        assert_eq!(
+            view_span(at(0., 600.), none, px(800.)),
+            (px(-800.), px(1600.))
+        );
     }
 
     #[test]
