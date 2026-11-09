@@ -259,6 +259,8 @@ pub struct InsightsPage {
     error: Option<SharedString>,
     loading: bool,
     epoch: u64,
+    /// A game sync ran when the accounts last changed: its end brings new games.
+    syncing: bool,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -306,9 +308,18 @@ impl InsightsPage {
                 }
             },
         ));
-        subscriptions.push(cx.observe_in(&accounts, window, |this, _, window, cx| {
-            this.sync_accounts(window, cx)
-        }));
+        subscriptions.push(
+            cx.observe_in(&accounts, window, |this, accounts, window, cx| {
+                // A sync's end brings the games a report read before it lacked: the page opened
+                // while a new account's first sync ran showed no games until a filter changed.
+                let syncing = accounts.read(cx).syncing();
+                let ended = std::mem::replace(&mut this.syncing, syncing) && !syncing;
+                this.sync_accounts(window, cx);
+                if ended {
+                    this.load(cx);
+                }
+            }),
+        );
         let mut page = InsightsPage {
             area: Measured::default(),
             account: String::new(),
@@ -322,6 +333,7 @@ impl InsightsPage {
             error: None,
             loading: false,
             epoch: 0,
+            syncing: accounts.read(cx).syncing(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         };
@@ -472,6 +484,12 @@ impl InsightsPage {
     #[cfg(test)]
     pub(crate) fn loaded(&self) -> bool {
         self.report.is_some() && !self.loading
+    }
+
+    /// How many reports the page has asked for.
+    #[cfg(test)]
+    pub(crate) fn requests(&self) -> u64 {
+        self.epoch
     }
 
     /// How many games the last report counted.

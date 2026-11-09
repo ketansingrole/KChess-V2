@@ -409,6 +409,55 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
     }
 }
 
+/// Insights opened while a new account's first sync still runs show its games once the sync ends,
+/// and ask again only then, not on every change to the accounts. Windows CI once opened the page
+/// before the showcase games landed, and its report stayed at no games
+/// (`insights_show_time_use_once_games_have_clocks` timed out waiting for the first report).
+#[gpui_kit::test]
+fn insights_read_again_when_a_sync_ends(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::{Page, insights::InsightsPage};
+    let mut app = Harness::start(cx);
+    let lichess = app.connect_with("Showcase", false, |session| {
+        session.showcase = true;
+        session.hold_games = true;
+    });
+    app.open("Insights");
+    let page = |app: &mut Harness| {
+        app.cx
+            .update(|cx| crate::shell::view_of::<InsightsPage>(Page::Insights, cx))
+            .expect("the Insights page")
+    };
+    app.wait_for("the report before the games", |_, cx| {
+        crate::shell::view_of::<InsightsPage>(Page::Insights, cx)
+            .is_some_and(|page| page.read(cx).loaded())
+    });
+    let insights = page(&mut app);
+    assert!(
+        app.cx
+            .update(|cx| crate::accounts::handle(cx).read(cx).syncing())
+    );
+    assert_eq!(
+        app.cx.update(|cx| insights.read(cx).report_total()),
+        Some(0.),
+        "no games while the sync runs"
+    );
+
+    // The accounts change while the sync still runs: nothing new to report.
+    let asked = app.cx.update(|cx| insights.read(cx).requests());
+    app.cx
+        .update(|cx| crate::accounts::handle(cx).update(cx, |_, cx| cx.notify()));
+    app.cx.run_until_parked();
+    assert_eq!(app.cx.update(|cx| insights.read(cx).requests()), asked);
+
+    lichess.lock().hold_games = false;
+    app.wait_for("the synced games' report", |_, cx| {
+        insights
+            .read(cx)
+            .report_total()
+            .is_some_and(|total| total > 0.)
+    });
+}
+
 /// Insights show time use only for games with clocks: the results short of time, the clock
 /// against the opponent's, blunders short of time and time by phase.
 #[gpui_kit::test]

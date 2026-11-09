@@ -382,7 +382,14 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         return match reply_to {
             Showcase::Profile(name) => reply(&mut out, &showcase_account(&name)),
             Showcase::History => reply(&mut out, &showcase_history()),
-            Showcase::Games(name) => ndjson_lines(&mut out, &showcase_games(&name)),
+            Showcase::Games(name) => {
+                // The download's own login holds it: tests share the server, and several sign in
+                // as the showcase player at once, each with its own `hold_games`.
+                if let Some(session) = &session {
+                    hold_games(session);
+                }
+                ndjson_lines(&mut out, &showcase_games(&name))
+            }
         };
     }
     // The same game behind a slow link: its answer waits until a test lets it go.
@@ -700,9 +707,7 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             reply(&mut out, &json!({ "users": {}, "nbGames": 0 }))
         }
         ("GET", p) if p.starts_with("/api/games/user/") => {
-            while session.lock().hold_games {
-                std::thread::sleep(Duration::from_millis(5));
-            }
+            hold_games(&session);
             ndjson(&mut out)
         }
         ("POST", "/api/games/export/_ids") => ndjson(&mut out),
@@ -711,6 +716,13 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
 }
 
 /// The app acted in the game: Lichess records it, and Black answers a move.
+/// The account's game download waits while `hold_games` is set: a sync still running.
+fn hold_games(session: &Handle) {
+    while session.lock().hold_games {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 fn write_game(session: &Handle, path: &str) {
     let mut session = session.lock();
     session.writes.push(format!("POST {path}"));
