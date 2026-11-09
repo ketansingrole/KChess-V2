@@ -432,7 +432,10 @@ fn insights_read_again_when_a_sync_ends(cx: &mut gpui_kit::TestAppContext) {
             .is_some_and(|page| page.read(cx).loaded())
     });
     let insights = page(&mut app);
-    assert!(app.cx.update(|cx| crate::accounts::handle(cx).read(cx).syncing()));
+    assert!(
+        app.cx
+            .update(|cx| crate::accounts::handle(cx).read(cx).syncing())
+    );
     assert_eq!(
         app.cx.update(|cx| insights.read(cx).report_total()),
         Some(0.),

@@ -308,16 +308,18 @@ impl InsightsPage {
                 }
             },
         ));
-        subscriptions.push(cx.observe_in(&accounts, window, |this, accounts, window, cx| {
-            // A sync's end brings the games a report read before it lacked: the page opened while
-            // a new account's first sync ran showed no games until a filter changed.
-            let syncing = accounts.read(cx).syncing();
-            let ended = std::mem::replace(&mut this.syncing, syncing) && !syncing;
-            this.sync_accounts(window, cx);
-            if ended {
-                this.load(cx);
-            }
-        }));
+        subscriptions.push(
+            cx.observe_in(&accounts, window, |this, accounts, window, cx| {
+                // A sync's end brings the games a report read before it lacked: the page opened
+                // while a new account's first sync ran showed no games until a filter changed.
+                let syncing = accounts.read(cx).syncing();
+                let ended = std::mem::replace(&mut this.syncing, syncing) && !syncing;
+                this.sync_accounts(window, cx);
+                if ended {
+                    this.load(cx);
+                }
+            }),
+        );
         let mut page = InsightsPage {
             area: Measured::default(),
             account: String::new(),
