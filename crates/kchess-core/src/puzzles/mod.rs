@@ -718,6 +718,46 @@ mod tests {
         )
     }
 
+    /// An attempt is kept as of when it was made, and the answer is the progress it leaves.
+    #[tokio::test]
+    async fn a_recorded_attempt_answers_the_progress_it_leaves() {
+        let dir = tempfile::tempdir().unwrap();
+        let (puzzles, _host) = service(dir.path());
+        let attempt: attempts::AttemptInput = serde_json::from_value(json!({
+            "puzzle": {
+                "id": "abc12",
+                "fen": "6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1",
+                "solution": ["d1d8"],
+                "rating": 1500,
+                "themes": ["mateIn1"],
+            },
+            "mode": "practice",
+            "retry": false,
+            "win": true,
+            "revealed": false,
+            "hinted": false,
+            "found": 1,
+            "wrong": 0,
+            "total": 1,
+            "day": "2026-11-09",
+        }))
+        .unwrap();
+        let before = crate::clock::now_ms();
+        let progress = puzzles.record_attempt(attempt).await.unwrap();
+        let after = crate::clock::now_ms();
+        assert_eq!(progress["today"]["attempts"], 1);
+        assert_eq!(progress["dayStreak"], 1);
+        let recent = progress["recent"].as_array().unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0]["puzzle"]["id"], "abc12");
+        let at = recent[0]["at"].as_i64().unwrap();
+        assert!(
+            (before..=after).contains(&at),
+            "{before} <= {at} <= {after}"
+        );
+        puzzles.close().await;
+    }
+
     #[tokio::test]
     async fn installs_a_download_then_answers_queries_until_deleted() {
         let dir = tempfile::tempdir().unwrap();
