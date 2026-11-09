@@ -2,6 +2,7 @@
 //! `rules()`): timed and survival runs over a ladder of puzzles from the database on this computer,
 //! scored and kept here; Lichess's own Storm and Streak results beside the menu.
 
+use kchess_contracts::calls;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -172,7 +173,7 @@ impl PuzzleRush {
     fn load_summaries(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<AppCore>().clone();
         for mode in ["storm", "streak", "rush"] {
-            let summary = core.call("runSummary", vec![json!(mode)]);
+            let summary = core.request(calls::RunSummary { kind: json!(mode) });
             cx.spawn(async move |this, cx| {
                 if let Ok(summary) = summary.await {
                     let _ = this.update(cx, |this, cx| {
@@ -208,9 +209,9 @@ impl PuzzleRush {
         self.error = None;
         self.stage = Stage::Loading;
         cx.notify();
-        let ladder = cx
-            .global::<AppCore>()
-            .call("localLadder", vec![config["ladder"].clone()]);
+        let ladder = cx.global::<AppCore>().request(calls::LocalLadder {
+            query: config["ladder"].clone(),
+        });
         cx.spawn(async move |this, cx| {
             let ladder = ladder.await;
             let _ = this.update(cx, |this, cx| {
@@ -441,7 +442,7 @@ impl PuzzleRush {
             },
         });
         let mode = config["mode"].as_str().unwrap_or("storm").to_string();
-        let save = cx.global::<AppCore>().call("saveRun", vec![run]);
+        let save = cx.global::<AppCore>().request(calls::SaveRun { run });
         cx.spawn(async move |this, cx| {
             let saved = save.await;
             let _ = this.update(cx, |this, cx| {

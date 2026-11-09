@@ -6,6 +6,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::Value;
 use shakmaty::Color;
 
@@ -245,7 +246,7 @@ impl HomePage {
     /// Read the unfinished computer game and the accounts again (the page was shown).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<AppCore>().clone();
-        let library = core.call("library", Vec::new());
+        let library = core.request(calls::Library {});
         crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.refresh(cx));
         if let Some((account, activity)) = &self.activity {
             let account = account.clone();

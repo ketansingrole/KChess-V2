@@ -2,6 +2,7 @@
 //! phase, and the evaluation chart. Reviews are the core's (`reviewRequest`); the board shows the
 //! review of its main line, or of the game before moves were added to it.
 
+use kchess_contracts::calls;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
@@ -133,9 +134,11 @@ impl AnalysisPage {
             self.review.requested.clear();
             let moves = self.mainline();
             if store.read(cx).get(&key).is_none() && !moves.is_empty() {
-                let mut args = vec![json!(self.root.fen), json!(moves)];
-                args.extend(self.fairy_variant().map(|variant| json!(variant)));
-                let found = cx.global::<AppCore>().call("reviewGet", args);
+                let found = cx.global::<AppCore>().request(calls::ReviewGet {
+                    fen: json!(self.root.fen),
+                    moves: json!(moves),
+                    variant: self.fairy_variant().map(|variant| json!(variant)),
+                });
                 let store = store.clone();
                 cx.spawn(async move |this, cx| match found.await {
                     Ok(review) if !review.is_null() => {
@@ -316,7 +319,9 @@ impl AnalysisPage {
             request["gameId"] = json!(id);
             request["account"] = origin["account"].clone();
         }
-        let asked = cx.global::<AppCore>().call("reviewRequest", vec![request]);
+        let asked = cx
+            .global::<AppCore>()
+            .request(calls::ReviewRequest { request });
         let fallback = self.mainline_key();
         let store = cx.global::<ReviewHandle>().0.clone();
         cx.spawn(async move |this, cx| {
@@ -350,9 +355,9 @@ impl AnalysisPage {
 
     fn cancel_review(&mut self, cx: &mut Context<Self>) {
         self.review.requested.clear();
-        let cancel = cx
-            .global::<AppCore>()
-            .call("reviewCancel", vec![json!(self.mainline_key())]);
+        let cancel = cx.global::<AppCore>().request(calls::ReviewCancel {
+            key: json!(self.mainline_key()),
+        });
         cx.background_executor()
             .spawn(async move {
                 if let Err(cause) = cancel.await {
@@ -388,9 +393,10 @@ impl AnalysisPage {
             return;
         }
         self.review.saved_mistakes = key.clone();
-        let added = cx
-            .global::<AppCore>()
-            .call("addMistakes", vec![json!(key), json!(player)]);
+        let added = cx.global::<AppCore>().request(calls::AddMistakes {
+            review_key: json!(key),
+            color: Some(json!(player)),
+        });
         cx.spawn(async move |this, cx| {
             let added = added.await;
             let _ = this.update(cx, |this, cx| match added {
@@ -481,7 +487,10 @@ impl AnalysisPage {
             let mut failure = None;
             for color in sides {
                 match core
-                    .call("addMistakes", vec![json!(key), json!(color)])
+                    .request(calls::AddMistakes {
+                        review_key: json!(key),
+                        color: Some(json!(color)),
+                    })
                     .await
                 {
                     Ok(result) => {
@@ -611,9 +620,9 @@ impl AnalysisPage {
         uci: String,
         cx: &mut Context<Self>,
     ) {
-        let asked = cx
-            .global::<AppCore>()
-            .call("reviewRequest", vec![json!({ "fen": fen, "moves": [uci] })]);
+        let asked = cx.global::<AppCore>().request(calls::ReviewRequest {
+            request: json!({ "fen": fen, "moves": [uci] }),
+        });
         let store = cx.global::<ReviewHandle>().0.clone();
         cx.spawn(async move |this, cx| {
             let stored = match asked.await {

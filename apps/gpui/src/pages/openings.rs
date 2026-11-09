@@ -3,6 +3,7 @@
 //! on a board to explore, with its moves, its Wikibooks description and
 //! the ways to train it. The names and the tree are the shared rules' (`openingTree`).
 
+use kchess_contracts::calls;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -434,7 +435,7 @@ impl OpeningsPage {
         if !line.is_empty() {
             let description = cx
                 .global::<AppCore>()
-                .call("openingDescription", vec![json!(line)]);
+                .request(calls::OpeningDescription { moves: json!(line) });
             self.description_task = Some(cx.spawn(async move |this, cx| match description.await {
                 Ok(page) => {
                     let _ = this.update(cx, |this, cx| {
@@ -452,7 +453,7 @@ impl OpeningsPage {
         if !line.is_empty() {
             let months = cx
                 .global::<AppCore>()
-                .call("openingPopularity", vec![json!(line)]);
+                .request(calls::OpeningPopularity { moves: json!(line) });
             let san = steps
                 .last()
                 .map(|(_, san, _)| san.clone())

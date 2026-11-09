@@ -8,6 +8,7 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 
 use super::{Theme, theme_name};
@@ -237,10 +238,20 @@ impl PuzzleStats {
         let core = cx.global::<AppCore>().clone();
         let name = json!(who);
         let calls = (
-            core.call("profile", vec![name.clone()]),
-            core.call("ratingHistory", vec![name.clone()]),
-            core.call("puzzleDashboard", vec![name.clone(), json!(days)]),
-            core.call("stormDashboard", vec![name, json!(30)]),
+            core.request(calls::Profile {
+                username: name.clone(),
+            }),
+            core.request(calls::RatingHistory {
+                username: name.clone(),
+            }),
+            core.request(calls::PuzzleDashboard {
+                account: name.clone(),
+                days: json!(days),
+            }),
+            core.request(calls::StormDashboard {
+                username: name,
+                days: json!(30),
+            }),
         );
         cx.spawn(async move |this, cx| {
             let (profile, history, dashboard, storm) =

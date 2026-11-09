@@ -2,6 +2,7 @@
 //! studies on the analysis board, start or import one, and rename, copy, drill, upload or delete
 //! them. Lichess's own studies are a tab of their own when an account is connected.
 
+use kchess_contracts::calls;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -498,15 +499,14 @@ impl StudiesPage {
                         .as_str()
                         .is_some_and(|owner| owner.eq_ignore_ascii_case(&account));
                 let result = if linked {
-                    core.call(
-                        "syncLichessStudy",
-                        vec![json!({
+                    core.request(calls::SyncLichessStudy {
+                        request: json!({
                             "account": account,
                             "studyId": cloud["id"],
                             "baseline": cloud["downloadedPgn"],
                             "pgn": pgn,
-                        })],
-                    )
+                        }),
+                    })
                     .await
                 } else {
                     let name: String = study["name"]
@@ -515,10 +515,12 @@ impl StudiesPage {
                         .chars()
                         .take(100)
                         .collect();
-                    core.call(
-                        "exportToLichessStudy",
-                        vec![json!(account), json!(""), json!(name), json!(pgn)],
-                    )
+                    core.request(calls::ExportToLichessStudy {
+                        account: json!(account),
+                        study_id: json!(""),
+                        name: json!(name),
+                        pgn: json!(pgn),
+                    })
                     .await
                 }
                 .map_err(|cause| cause.message)?;
@@ -533,9 +535,12 @@ impl StudiesPage {
                 let chapters = if result.is_array() {
                     result
                 } else {
-                    core.call("lichessStudyChapters", vec![json!(account), json!(remote)])
-                        .await
-                        .map_err(|cause| cause.message)?
+                    core.request(calls::LichessStudyChapters {
+                        account: json!(account),
+                        id: json!(remote),
+                    })
+                    .await
+                    .map_err(|cause| cause.message)?
                 };
                 if chapters.get("needsReconnect").is_some() {
                     return Err("Uploaded, but study access needs reconnection".into());

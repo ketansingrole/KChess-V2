@@ -2,6 +2,7 @@
 //! online, your record against them, their rating history, their record in a speed, and their
 //! recent games — and follow, challenge, message or watch them.
 
+use kchess_contracts::calls;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -414,9 +415,9 @@ impl PlayersPage {
         self.board = None;
         self.board_error = None;
         cx.notify();
-        let board = cx
-            .global::<AppCore>()
-            .call("leaderboard", vec![json!(self.board_perf)]);
+        let board = cx.global::<AppCore>().request(calls::Leaderboard {
+            perf: json!(self.board_perf),
+        });
         cx.spawn(async move |this, cx| {
             let answer = board.await;
             let _ = this.update(cx, |this, cx| {
@@ -489,7 +490,9 @@ impl PlayersPage {
             if !current {
                 return;
             }
-            let found = core.call("searchPlayers", vec![json!(term)]).await;
+            let found = core
+                .request(calls::SearchPlayers { term: json!(term) })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 if this.search_epoch != epoch {
                     return;
@@ -554,7 +557,9 @@ impl PlayersPage {
             history.set_withheld(None, cx);
         });
         cx.notify();
-        let profile = cx.global::<AppCore>().call("profile", vec![json!(name)]);
+        let profile = cx.global::<AppCore>().request(calls::Profile {
+            username: json!(name),
+        });
         cx.spawn_in(window, async move |this, cx| {
             let found = profile.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -610,9 +615,9 @@ impl PlayersPage {
     /// What the player did lately on Lichess.
     fn load_days(&mut self, username: &str, cx: &mut Context<Self>) {
         let epoch = self.epoch;
-        let days = cx
-            .global::<AppCore>()
-            .call("activity", vec![json!(username)]);
+        let days = cx.global::<AppCore>().request(calls::Activity {
+            username: json!(username),
+        });
         cx.spawn(async move |this, cx| {
             let answer = days.await;
             let _ = this.update(cx, |this, cx| {
@@ -696,7 +701,9 @@ impl PlayersPage {
         let epoch = self.epoch;
         let core = cx.global::<AppCore>().clone();
         self.load_account_extras(username, cx);
-        let presence = core.call("presence", vec![json!([username])]);
+        let presence = core.request(calls::Presence {
+            usernames: json!([username]),
+        });
         let key = username.to_lowercase();
         cx.spawn(async move |this, cx| {
             let answer = presence.await;
@@ -749,7 +756,10 @@ impl PlayersPage {
             return;
         };
         let core = cx.global::<AppCore>().clone();
-        let relation = core.call("relation", vec![json!(me), json!(username)]);
+        let relation = core.request(calls::Relation {
+            account: json!(me),
+            username: json!(username),
+        });
         cx.spawn(async move |this, cx| {
             let answer = relation.await;
             let _ = this.update(cx, |this, cx| {
@@ -763,7 +773,10 @@ impl PlayersPage {
             });
         })
         .detach();
-        let crosstable = core.call("crosstable", vec![json!(me), json!(username)]);
+        let crosstable = core.request(calls::Crosstable {
+            a: json!(me),
+            b: json!(username),
+        });
         cx.spawn(async move |this, cx| {
             let answer = crosstable.await;
             let _ = this.update(cx, |this, cx| {
@@ -790,9 +803,10 @@ impl PlayersPage {
         self.stats = None;
         self.stats_error = None;
         cx.notify();
-        let stats = cx
-            .global::<AppCore>()
-            .call("playerPerf", vec![json!(username), json!(self.perf)]);
+        let stats = cx.global::<AppCore>().request(calls::PlayerPerf {
+            username: json!(username),
+            perf: json!(self.perf),
+        });
         cx.spawn(async move |this, cx| {
             let answer = stats.await;
             let _ = this.update(cx, |this, cx| {
@@ -819,7 +833,10 @@ impl PlayersPage {
         self.games = None;
         self.games_error = false;
         let core = cx.global::<AppCore>().clone();
-        let games = core.call("recentGames", vec![json!(username)]);
+        let games = core.request(calls::RecentGames {
+            username: json!(username),
+            rated: None,
+        });
         cx.spawn(async move |this, cx| {
             let answer = games.await;
             let _ = this.update(cx, |this, cx| {
@@ -835,13 +852,18 @@ impl PlayersPage {
             });
         })
         .detach();
-        let official = core.call("ratingHistory", vec![json!(username)]);
+        let official = core.request(calls::RatingHistory {
+            username: json!(username),
+        });
         cx.spawn(async move |this, cx| {
             let official = official.await.unwrap_or(json!([]));
             let rebuilt = if has_points(&official) {
                 None
             } else {
-                let rated = core.call("recentGames", vec![json!(username), json!(true)]);
+                let rated = core.request(calls::RecentGames {
+                    username: json!(username),
+                    rated: Some(json!(true)),
+                });
                 let rated = rated.await.unwrap_or(json!([]));
                 Some(crate::game::rules("ratingHistoryFromGames", &[rated]).unwrap_or(json!([])))
             };
@@ -1721,7 +1743,9 @@ fn open_exported_at(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let export = cx.global::<AppCore>().call("exportGame", vec![json!(id)]);
+    let export = cx
+        .global::<AppCore>()
+        .request(calls::ExportGame { id: json!(id) });
     let origin = json!({ "white": white, "black": black, "gameId": id });
     let pgn = async move {
         match export.await {
@@ -1736,9 +1760,10 @@ fn open_exported_at(
 /// A public Lichess study's chapter (its first when `chapter` is empty), from the side the study
 /// shows it.
 pub fn open_study(study: &str, chapter: &str, window: &mut Window, cx: &mut App) {
-    let fetch = cx
-        .global::<AppCore>()
-        .call("lichessStudyChapter", vec![json!(study), json!(chapter)]);
+    let fetch = cx.global::<AppCore>().request(calls::LichessStudyChapter {
+        id: json!(study),
+        chapter: json!(chapter),
+    });
     window
         .spawn(cx, async move |cx| {
             let pgn = match fetch.await {
@@ -1950,10 +1975,11 @@ impl MessageDialog {
         self.busy = true;
         self.error = None;
         cx.notify();
-        let send = cx.global::<AppCore>().call(
-            "sendMessage",
-            vec![json!(self.account), json!(self.username), json!(text)],
-        );
+        let send = cx.global::<AppCore>().request(calls::SendMessage {
+            account: json!(self.account),
+            username: json!(self.username),
+            text: json!(text),
+        });
         cx.spawn_in(window, async move |this, cx| {
             let answer = send.await;
             let _ = this.update_in(cx, |this, window, cx| {

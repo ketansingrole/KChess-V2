@@ -7,6 +7,7 @@ use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 
 use crate::assets::icon;
@@ -52,7 +53,7 @@ impl PuzzleDb {
 
     /// Read the database's state again (a page was shown).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let status = cx.global::<AppCore>().call("puzzleDbStatus", Vec::new());
+        let status = cx.global::<AppCore>().request(calls::PuzzleDbStatus {});
         cx.spawn(async move |this, cx| {
             let status = status.await;
             let _ = this.update(cx, |this, cx| {
@@ -70,7 +71,7 @@ impl PuzzleDb {
         self.error = None;
         self.progress = Some(json!({ "phase": "downloading", "received": 0, "kept": 0 }));
         cx.notify();
-        let install = cx.global::<AppCore>().call("puzzleDbInstall", Vec::new());
+        let install = cx.global::<AppCore>().request(calls::PuzzleDbInstall {});
         cx.spawn(async move |this, cx| {
             let result = install.await;
             let _ = this.update(cx, |this, cx| {
@@ -94,7 +95,7 @@ impl PuzzleDb {
     }
 
     fn cancel(&mut self, cx: &mut Context<Self>) {
-        let cancel = cx.global::<AppCore>().call("puzzleDbCancel", Vec::new());
+        let cancel = cx.global::<AppCore>().request(calls::PuzzleDbCancel {});
         cx.background_executor()
             .spawn(async move {
                 let _ = cancel.await;
@@ -124,7 +125,7 @@ impl PuzzleDb {
 
     fn delete(&mut self, cx: &mut Context<Self>) {
         self.error = None;
-        let delete = cx.global::<AppCore>().call("puzzleDbDelete", Vec::new());
+        let delete = cx.global::<AppCore>().request(calls::PuzzleDbDelete {});
         cx.spawn(async move |this, cx| {
             let result = delete.await;
             let _ = this.update(cx, |this, cx| {

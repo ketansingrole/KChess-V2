@@ -138,6 +138,36 @@ fn check_in(repo: &Path) -> Result {
     }
 }
 
+/// The files that call the core by a method's name as text: its plumbing, which sends what a
+/// typed call (`kchess_contracts::calls`) names.
+const NAMED_CALLS: [&str; 2] = ["apps/gpui/src/core.rs", "apps/cli/src/core.rs"];
+
+/// Each shipped frontend call of a core method by its name as text (`.call("library", …)`),
+/// whatever its line breaks, as `path: method`.
+fn named_calls(files: &[(String, String)]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (path, text) in files {
+        if is_test_file(path) || NAMED_CALLS.contains(&path.as_str()) {
+            continue;
+        }
+        let packed: String = shipped(text)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        for call in [".call(\"", ".call_now(\""] {
+            for (at, _) in packed.match_indices(call) {
+                let rest = &packed[at + call.len()..];
+                let method = rest.split('"').next().unwrap_or_default();
+                found.push(format!(
+                    "{path}: calls `{method}` by name; declare it in `calls!` \
+                     (crates/kchess-contracts/src/calls.rs) and send it with `request`"
+                ));
+            }
+        }
+    }
+    found
+}
+
 const RULE: Rule = Rule {
     needle: "kchess_core",
     why: "a reason",
@@ -146,6 +176,38 @@ const RULE: Rule = Rule {
 
 fn file(path: &str, text: &str) -> (String, String) {
     (path.to_string(), text.to_string())
+}
+
+#[test]
+fn the_frontends_call_the_core_with_typed_calls() {
+    let mut files = Vec::new();
+    for dir in FRONTENDS {
+        sources_under(&root(), dir, &mut files).expect("the frontends' sources");
+    }
+    let found = named_calls(&files);
+    assert!(found.is_empty(), "{}", found.join("\n"));
+}
+
+#[test]
+fn a_call_by_name_is_found_across_lines() {
+    let files = [
+        file(
+            "apps/gpui/src/core.rs",
+            "core.call(\"close\", Vec::new())\n",
+        ),
+        file(
+            "apps/gpui/src/page.rs",
+            "let a = core.request(calls::Library {});\nlet b = core\n    .call(\n        \"library\",\n        Vec::new(),\n    );\nbridge.call_now(\"usage\", vec![]);\n",
+        ),
+        file(
+            "apps/gpui/src/e2e/page.rs",
+            "core.call(\"library\", Vec::new())\n",
+        ),
+    ];
+    let found = named_calls(&files);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[0].starts_with("apps/gpui/src/page.rs: calls `library` by name"));
+    assert!(found[1].starts_with("apps/gpui/src/page.rs: calls `usage` by name"));
 }
 
 #[test]

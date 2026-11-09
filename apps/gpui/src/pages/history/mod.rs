@@ -11,6 +11,7 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -534,7 +535,9 @@ impl HistoryPage {
         };
         let games = cx
             .global::<crate::core::AppCore>()
-            .call("bookmarkedGames", vec![json!(account)]);
+            .request(calls::BookmarkedGames {
+                account: json!(account),
+            });
         cx.spawn(async move |this, cx| {
             let answer = games.await;
             let _ = this.update(cx, |this, cx| {

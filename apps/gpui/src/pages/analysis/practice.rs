@@ -7,6 +7,7 @@ use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 use shakmaty::{Color, Square};
 
@@ -248,9 +249,10 @@ impl AnalysisPage {
     }
 
     fn answer_mistake(&mut self, item: &Value, clean: bool, cx: &mut Context<Self>) {
-        let answered = cx
-            .global::<AppCore>()
-            .call("answerMistake", vec![item["id"].clone(), json!(clean)]);
+        let answered = cx.global::<AppCore>().request(calls::AnswerMistake {
+            id: item["id"].clone(),
+            solved: json!(clean),
+        });
         cx.spawn(async move |this, cx| match answered.await {
             Ok(items) => {
                 let _ = this.update(cx, |this, _| {

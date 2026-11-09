@@ -6,6 +6,7 @@ use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 
 use super::{Section, SettingsPage};
@@ -128,7 +129,7 @@ impl SettingsPage {
                 .cancel_text("Cancel")
                 .show_cancel(true)
                 .on_ok(|_, _, cx| {
-                    let reset = cx.global::<AppCore>().call("resetUsage", vec![]);
+                    let reset = cx.global::<AppCore>().request(calls::ResetUsage {});
                     cx.spawn(async move |cx| {
                         if let Err(cause) = reset.await {
                             crate::log::write(
@@ -168,7 +169,9 @@ impl SettingsPage {
 
     fn clear_runs(&mut self, cx: &mut Context<Self>) {
         self.runs_note = None;
-        let clearing = cx.global::<AppCore>().call("clearRuns", vec![]);
+        let clearing = cx
+            .global::<AppCore>()
+            .request(calls::ClearRuns { kind: None });
         cx.spawn(async move |this, cx| {
             let cleared = clearing.await;
             let _ = this.update(cx, |this, cx| {

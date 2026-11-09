@@ -2,6 +2,7 @@
 //! solved again on a schedule the core keeps (a right answer doubles the wait, a wrong one brings
 //! it back in ten minutes), and the games they come from.
 
+use kchess_contracts::calls;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -179,9 +180,9 @@ impl Mistakes {
         self.loading = true;
         let core = cx.global::<AppCore>().clone();
         let (library, games, data) = (
-            core.call("library", Vec::new()),
-            core.call("mistakeGames", Vec::new()),
-            core.call("loadData", Vec::new()),
+            core.request(calls::Library {}),
+            core.request(calls::MistakeGames {}),
+            core.request(calls::LoadData {}),
         );
         cx.spawn(async move |this, cx| {
             let (library, games, data) = (library.await, games.await, data.await);
@@ -293,9 +294,10 @@ impl Mistakes {
 
     /// Schedule the drill again: sooner when it went wrong.
     fn answered(&mut self, id: &str, clean: bool, cx: &mut Context<Self>) {
-        let answer = cx
-            .global::<AppCore>()
-            .call("answerMistake", vec![json!(id), json!(clean)]);
+        let answer = cx.global::<AppCore>().request(calls::AnswerMistake {
+            id: json!(id),
+            solved: json!(clean),
+        });
         cx.spawn(async move |this, cx| {
             let answer = answer.await;
             let _ = this.update(cx, |this, cx| {

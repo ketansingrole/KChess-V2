@@ -7,6 +7,7 @@ use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::{Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 
 use crate::assets::icon;
@@ -60,7 +61,7 @@ impl Ai {
     }
 
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let read = cx.global::<AppCore>().call("aiStatus", Vec::new());
+        let read = cx.global::<AppCore>().request(calls::AiStatus {});
         cx.spawn(async move |this, cx| {
             let Ok(status) = read.await else { return };
             let _ = this.update(cx, |this, cx| this.adopt(status, cx));
@@ -69,7 +70,7 @@ impl Ai {
     }
 
     fn load_models(&mut self, cx: &mut Context<Self>) {
-        let read = cx.global::<AppCore>().call("aiModels", Vec::new());
+        let read = cx.global::<AppCore>().request(calls::AiModels {});
         cx.spawn(async move |this, cx| {
             let Ok(answer) = read.await else { return };
             let models = answer["models"].as_array().cloned().unwrap_or_default();
@@ -96,7 +97,7 @@ impl Ai {
         self.busy = true;
         cx.notify();
         let first = self.status["registered"] != json!(true);
-        let connected = cx.global::<AppCore>().call("aiConnect", Vec::new());
+        let connected = cx.global::<AppCore>().request(calls::AiConnect {});
         cx.spawn_in(window, async move |this, cx| {
             let result = connected.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -117,7 +118,7 @@ impl Ai {
     }
 
     pub fn disconnect(&mut self, cx: &mut Context<Self>) {
-        let done = cx.global::<AppCore>().call("aiDisconnect", Vec::new());
+        let done = cx.global::<AppCore>().request(calls::AiDisconnect {});
         cx.spawn(async move |this, cx| {
             let Ok(status) = done.await else { return };
             let _ = this.update(cx, |this, cx| this.adopt(status, cx));
@@ -127,9 +128,10 @@ impl Ai {
 
     /// The model and effort every AI feature uses.
     pub fn choose(&mut self, model: Option<String>, effort: String, cx: &mut Context<Self>) {
-        let saved = cx
-            .global::<AppCore>()
-            .call("aiSetOptions", vec![json!(model), json!(effort)]);
+        let saved = cx.global::<AppCore>().request(calls::AiSetOptions {
+            model: json!(model),
+            effort: json!(effort),
+        });
         cx.spawn(async move |this, cx| {
             let Ok(status) = saved.await else { return };
             let _ = this.update(cx, |this, cx| {
@@ -188,7 +190,7 @@ impl Explainer {
         self.request = request.clone();
         self.phase = Some(Phase::Asking);
         cx.notify();
-        let answer = cx.global::<AppCore>().call("aiExplain", vec![request]);
+        let answer = cx.global::<AppCore>().request(calls::AiExplain { request });
         cx.spawn(async move |this, cx| {
             let result = answer.await;
             let _ = this.update(cx, |this, cx| {

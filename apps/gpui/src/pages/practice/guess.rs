@@ -4,6 +4,7 @@
 //! where it holds up and against the engine's best where it went wrong
 //! (`kchess_domain::training::guess`); the other side's moves are played for you.
 
+use kchess_contracts::calls;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -228,7 +229,9 @@ impl GuessMoves {
         } else {
             Color::White
         };
-        let status = cx.global::<AppCore>().call("engineStatus", Vec::new());
+        let status = cx
+            .global::<AppCore>()
+            .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
             let ready =
                 matches!(status.await, Ok(status) if status["ready"].as_bool() == Some(true));

@@ -3,6 +3,7 @@
 //! connected accounts have fared against them, and their synced games — with follow, import
 //! from Lichess, sync, clear and remove.
 
+use kchess_contracts::calls;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
@@ -180,7 +181,7 @@ impl FriendsPage {
             self.timeline = None;
             return;
         }
-        let timeline = cx.global::<AppCore>().call("timeline", Vec::new());
+        let timeline = cx.global::<AppCore>().request(calls::Timeline {});
         cx.spawn(async move |this, cx| {
             let answer = timeline.await;
             let _ = this.update(cx, |this, cx| {
@@ -204,7 +205,7 @@ impl FriendsPage {
     fn load_versus(&mut self, cx: &mut Context<Self>) {
         let overview = cx
             .global::<AppCore>()
-            .call("gameLibraryOverview", Vec::new());
+            .request(calls::GameLibraryOverview {});
         cx.spawn(async move |this, cx| {
             if let Ok(overview) = overview.await {
                 let _ = this.update(cx, |this, cx| {
@@ -238,7 +239,11 @@ impl FriendsPage {
         cx.spawn(async move |this, cx| {
             let mut fresh = HashSet::new();
             for name in &names {
-                if let Ok(saved) = core.call("cachedProfile", vec![json!(name)]).await
+                if let Ok(saved) = core
+                    .request(calls::CachedProfile {
+                        username: json!(name),
+                    })
+                    .await
                     && saved["profile"].is_object()
                 {
                     let recent = saved["profileFetchedAt"]
@@ -261,7 +266,12 @@ impl FriendsPage {
                 .cloned()
                 .collect();
             for chunk in stale.chunks(PROFILES_CHUNK) {
-                if let Ok(Value::Array(users)) = core.call("profiles", vec![json!(chunk)]).await {
+                if let Ok(Value::Array(users)) = core
+                    .request(calls::Profiles {
+                        usernames: json!(chunk),
+                    })
+                    .await
+                {
                     let _ = this.update(cx, |this, cx| {
                         for user in users {
                             if let Some(name) = user["username"].as_str() {
@@ -289,7 +299,9 @@ impl FriendsPage {
             .collect();
         let core = cx.global::<AppCore>().clone();
         for chunk in names.chunks(PRESENCE_CHUNK) {
-            let presence = core.call("presence", vec![json!(chunk)]);
+            let presence = core.request(calls::Presence {
+                usernames: json!(chunk),
+            });
             cx.spawn(async move |this, cx| {
                 if let Ok(report) = presence.await
                     && let Some(users) = report["users"].as_object()
@@ -961,7 +973,7 @@ impl ImportDialog {
         self.loading = true;
         self.error = None;
         cx.notify();
-        let following = cx.global::<AppCore>().call("following", Vec::new());
+        let following = cx.global::<AppCore>().request(calls::Following {});
         cx.spawn(async move |this, cx| {
             let result = following.await;
             let _ = this.update(cx, |this, cx| {

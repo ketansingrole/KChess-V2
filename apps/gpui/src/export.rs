@@ -2,6 +2,7 @@
 //! of the game, a PNG of the position shown, a PGN file, or the PGN or position's FEN copied; and
 //! saving an export (`saveExport`), where the person picks the place, starting in Downloads.
 
+use kchess_contracts::calls;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -237,7 +238,10 @@ impl Exporter {
             };
             Err(cx
                 .global::<crate::core::AppCore>()
-                .call("importGame", vec![json!(account), json!(pgn)]))
+                .request(calls::ImportGame {
+                    account: json!(account),
+                    pgn: json!(pgn),
+                }))
         };
         self.uploading = true;
         cx.notify();

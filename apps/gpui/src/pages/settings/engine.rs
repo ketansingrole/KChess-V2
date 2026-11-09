@@ -8,6 +8,7 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::calls;
 use kchess_contracts::types::{EngineStatus, ReviewAuto, Settings};
 use serde_json::{Value, json};
 
@@ -88,7 +89,9 @@ fn review_text(status: &Value, auto: ReviewAuto) -> String {
 impl SettingsPage {
     /// Ask the core which engine it finds (`refreshEngine`).
     pub(super) fn refresh_engine(&mut self, cx: &mut Context<Self>) {
-        let status = cx.global::<AppCore>().call("engineStatus", Vec::new());
+        let status = cx
+            .global::<AppCore>()
+            .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
             let status = status.await;
             let _ = this.update(cx, |this, cx| {
@@ -116,7 +119,8 @@ impl SettingsPage {
             let _ = saved.await;
             let status = this
                 .update(cx, |_, cx| {
-                    cx.global::<AppCore>().call("engineStatus", Vec::new())
+                    cx.global::<AppCore>()
+                        .request(calls::EngineStatus { variant: None })
                 })
                 .ok();
             let Some(status) = status else { return };
@@ -158,7 +162,7 @@ impl SettingsPage {
             let trusted = this
                 .update(cx, |_, cx| {
                     cx.global::<AppCore>()
-                        .call("trustEnginePath", vec![json!(path)])
+                        .request(calls::TrustEnginePath { path: json!(path) })
                 })
                 .ok();
             if let Some(trusted) = trusted {
@@ -183,7 +187,7 @@ impl SettingsPage {
             .is_some_and(|status| status.managed.installed);
         self.engine_busy = true;
         cx.notify();
-        let install = cx.global::<AppCore>().call("installEngine", Vec::new());
+        let install = cx.global::<AppCore>().request(calls::InstallEngine {});
         cx.spawn_in(window, async move |this, cx| {
             let result = install.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -260,7 +264,7 @@ impl SettingsPage {
             .unwrap_or_default();
         self.engine_busy = true;
         cx.notify();
-        let delete = cx.global::<AppCore>().call("deleteEngine", Vec::new());
+        let delete = cx.global::<AppCore>().request(calls::DeleteEngine {});
         cx.spawn_in(window, async move |this, cx| {
             let result = delete.await;
             let _ = this.update_in(cx, |this, window, cx| {
