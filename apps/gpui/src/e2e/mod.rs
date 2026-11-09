@@ -671,7 +671,7 @@ fn environment() {
     });
 }
 
-/// The scripted engine (`kchess-fake-uci`, built when missing), as the copy `engine-search`
+/// The scripted engine (`kchess-fake-uci`, built first), as the copy `engine-search`
 /// beside it, which the engine reads its mode from.
 fn engine() -> PathBuf {
     let target = std::env::current_exe()
@@ -679,24 +679,23 @@ fn engine() -> PathBuf {
         .and_then(|exe| Some(exe.parent()?.parent()?.to_path_buf()))
         .expect("the test executable is in target/<profile>/deps");
     let fake = target.join(format!("kchess-fake-uci{}", std::env::consts::EXE_SUFFIX));
-    if !fake.exists() {
-        let release = target.file_name().is_some_and(|name| name == "release");
-        let mut build = std::process::Command::new(env!("CARGO"));
-        build.args([
-            "build",
-            "-q",
-            "--locked",
-            "-p",
-            "kchess-core",
-            "--bin",
-            "kchess-fake-uci",
-        ]);
-        if release {
-            build.arg("--release");
-        }
-        let status = build.status().expect("cargo runs");
-        assert!(status.success(), "the scripted engine builds");
+    // Built every time: Cargo does nothing when it is fresh, and one left over from before a
+    // change is never run.
+    let mut build = std::process::Command::new(env!("CARGO"));
+    build.args([
+        "build",
+        "-q",
+        "--locked",
+        "-p",
+        "kchess-core",
+        "--bin",
+        "kchess-fake-uci",
+    ]);
+    if target.file_name().is_some_and(|name| name == "release") {
+        build.arg("--release");
     }
+    let status = build.status().expect("cargo runs");
+    assert!(status.success(), "the scripted engine builds");
     let copy = target.join(format!("engine-search{}", std::env::consts::EXE_SUFFIX));
     let same = |a: &Path, b: &Path| {
         std::fs::read(a)
