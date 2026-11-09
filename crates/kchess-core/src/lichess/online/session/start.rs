@@ -21,9 +21,9 @@ impl OnlineSession {
     pub async fn start(&self, options: &OnlineOptions) -> Res<StartResult> {
         {
             let st = self.st();
-            if !st.live_correspondence
-                && (!st.live_game.is_empty() || !st.protected_game.is_empty())
-            {
+            // A correspondence game on the board may be left for a real-time one.
+            let correspondence = st.live.as_ref().is_some_and(|game| game.correspondence);
+            if !correspondence && (st.live.is_some() || !st.protected_game.is_empty()) {
                 return Err(core(
                     "Reconnect to your current game before finding another.",
                 ));
@@ -199,7 +199,7 @@ impl OnlineSession {
                 self.cancel_challenge(&id, &token).await;
                 return Err(aborted("This operation was aborted"));
             }
-            if self.st().live_game.is_empty() {
+            if self.st().live.is_none() {
                 self.st().pending_id = id.clone();
             }
             return Ok(StartResult {
@@ -326,7 +326,7 @@ impl OnlineSession {
         let live = matches!(challenge.time_control, TimeControl::Clock { .. });
         if live {
             let st = self.st();
-            if !st.live_game.is_empty() && !st.live_correspondence {
+            if st.realtime_live() {
                 return Err(core(
                     "Finish the game on the board before accepting another.",
                 ));

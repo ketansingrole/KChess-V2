@@ -488,7 +488,7 @@ impl OnlineSession {
             session: st.epoch,
             account: st.current_account.clone(),
             game_id: if lane == Lane::Game {
-                st.live_game.clone()
+                st.live_id().to_string()
             } else {
                 String::new()
             },
@@ -548,13 +548,13 @@ impl OnlineSession {
                 return;
             }
             let correspondence = event["game"]["speed"].as_str() == Some("correspondence");
-            let (live, live_correspondence) = {
+            let (live, realtime) = {
                 let st = self.st();
-                (st.live_game.clone(), st.live_correspondence)
+                (st.live_id().to_string(), st.realtime_live())
             };
             if game_id != live {
                 // Another game is on the board; correspondence games open only when asked for.
-                if correspondence || (!live.is_empty() && !live_correspondence) {
+                if correspondence || realtime {
                     self.ongoing_changed();
                     return;
                 }
@@ -569,14 +569,12 @@ impl OnlineSession {
             let game_id = event["game"]["gameId"].as_str().unwrap_or("").to_string();
             {
                 let mut st = self.st();
-                if game_id != st.live_game && game_id != st.protected_game {
+                if !st.is_live(&game_id) && game_id != st.protected_game {
                     return;
                 }
                 // Lichess may report the finish here before the game's own stream does, and the
                 // window offers a new game on it: end the game now, as its final state would.
-                if st.live_game == game_id {
-                    st.live_game.clear();
-                }
+                st.end_live(&game_id);
                 if st.protected_game == game_id {
                     st.protected_game.clear();
                 }

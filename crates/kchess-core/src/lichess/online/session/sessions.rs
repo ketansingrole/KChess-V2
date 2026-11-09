@@ -21,17 +21,17 @@ impl OnlineSession {
             let mut st = self.st();
             st.attach_generation += 1;
             st.attaching_account.clear();
-            let leaving_correspondence = st.live_correspondence
-                && !st.live_game.is_empty()
-                && st.protected_game == st.live_game;
+            let leaving_correspondence = st
+                .live
+                .as_ref()
+                .is_some_and(|game| game.correspondence && st.protected_game == game.id);
             if leaving_correspondence {
                 st.protected_game.clear();
             }
             st.resume_attempt += 1;
             st.presence.clear();
             st.epoch += 1;
-            st.live_game.clear();
-            st.live_correspondence = false;
+            st.live = None;
             if let Some((_, token)) = st.lobby.take() {
                 token.cancel();
             }
@@ -110,7 +110,7 @@ impl OnlineSession {
 
     /// Open a known game of `account` on the board: its event stream, then its game stream.
     pub async fn attach(&self, account: &str, id: &str) -> Res<()> {
-        if self.st().live_game == id {
+        if self.st().is_live(id) {
             return Ok(());
         }
         let generation = {
@@ -148,7 +148,7 @@ impl OnlineSession {
             )));
         };
         // Another caller may have attached this game while credentials were loading.
-        if self.st().live_game == id {
+        if self.st().is_live(id) {
             return Ok(());
         }
         self.cancel_inner();
@@ -484,10 +484,10 @@ impl OnlineSession {
     pub async fn open(&self, account: &str, id: &str) -> Res<()> {
         {
             let st = self.st();
-            if st.live_game == id {
+            if st.is_live(id) {
                 return Ok(());
             }
-            if !st.live_game.is_empty() && !st.live_correspondence {
+            if st.realtime_live() {
                 return Err(core(
                     "Finish the live game on the board before opening another.",
                 ));
@@ -496,7 +496,7 @@ impl OnlineSession {
             // over; attaching another would replace its protection with the other game's.
             if !st.protected_game.is_empty()
                 && st.protected_game != id
-                && st.protected_game != st.live_game
+                && st.protected_game != st.live_id()
             {
                 return Err(core(
                     "Reconnect to your current game before opening another.",

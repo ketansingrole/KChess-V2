@@ -171,10 +171,9 @@ pub(crate) struct State {
     pub(crate) controller: Option<Handle>,
     pub(crate) game_controller: Option<Handle>,
     pub(crate) next_handle: u64,
-    /// The game whose stream is open, while it lasts.
-    pub(crate) live_game: String,
-    /// Whether the open game is a correspondence game (another may replace it).
-    pub(crate) live_correspondence: bool,
+    /// The game on the board, while its stream lasts. It stays while a real-time seek streams
+    /// from a correspondence game: the seek holds `game_controller`, the game stays playable.
+    pub(crate) live: Option<LiveGame>,
     /// A move is being sent: another, from any window, is refused until it is answered.
     pub(crate) move_in_flight: bool,
     pub(crate) protected_game: String,
@@ -195,14 +194,42 @@ pub(crate) struct State {
     pub(crate) presence: Vec<(String, Instant, PresenceReport)>,
 }
 
+/// The game on the board.
+pub(crate) struct LiveGame {
+    pub(crate) id: String,
+    /// A correspondence game: another, real-time, may replace it.
+    pub(crate) correspondence: bool,
+}
+
 impl State {
+    /// Whether `id` is the game on the board.
+    pub(crate) fn is_live(&self, id: &str) -> bool {
+        self.live.as_ref().is_some_and(|game| game.id == id)
+    }
+
+    /// The board game's id, or empty with none (as the window's state reports it).
+    pub(crate) fn live_id(&self) -> &str {
+        self.live.as_ref().map_or("", |game| game.id.as_str())
+    }
+
+    /// A real-time game holds the board: nothing else may take it.
+    pub(crate) fn realtime_live(&self) -> bool {
+        self.live.as_ref().is_some_and(|game| !game.correspondence)
+    }
+
+    /// Game `id` left the board (it ended, or another took its place).
+    pub(crate) fn end_live(&mut self, id: &str) {
+        if self.is_live(id) {
+            self.live = None;
+        }
+    }
+
     pub(crate) fn new() -> State {
         State {
             controller: None,
             game_controller: None,
             next_handle: 0,
-            live_game: String::new(),
-            live_correspondence: false,
+            live: None,
             move_in_flight: false,
             protected_game: String::new(),
             protected_account: String::new(),
