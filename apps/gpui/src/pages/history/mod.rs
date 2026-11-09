@@ -107,6 +107,17 @@ pub(crate) fn outcome(game: &Value) -> String {
         .unwrap_or_default()
 }
 
+/// The played game with this id, as it is now.
+fn played_game(id: &str, cx: &App) -> Option<Value> {
+    cx.global::<PlayedHandle>()
+        .0
+        .read(cx)
+        .games()
+        .iter()
+        .find(|game| text(game, "id") == id)
+        .cloned()
+}
+
 fn player_side(game: &Value) -> Option<Color> {
     match rules("archivedPlayerSide", &[result_fields(game)])
         .ok()?
@@ -281,6 +292,9 @@ pub struct HistoryPage {
     search_input: Entity<InputState>,
     /// Each game's opening (`openingAt`), by its id and length, worked out once.
     openings: std::cell::RefCell<std::collections::HashMap<(String, usize), Option<String>>>,
+    /// Each played game's outcome by id, as of a revision of the played games: the list, its
+    /// filters' counts and the pages ask for every game's outcome on every frame.
+    outcomes: std::cell::RefCell<(u64, std::collections::HashMap<String, String>)>,
     /// The Lichess tab: synced games, their filters and the game open.
     lichess: lichess::LichessTab,
     /// The Bookmarks tab: the games, once read, or why they are not.
@@ -347,6 +361,7 @@ impl HistoryPage {
             search: String::new(),
             search_input,
             openings: Default::default(),
+            outcomes: Default::default(),
             lichess,
             bookmarks: None,
             bookmarks_error: None,
@@ -359,6 +374,19 @@ impl HistoryPage {
     }
 
     /// A game's opening, as `C40 King's Knight Opening`, in standard chess; worked out once.
+    /// A played game's outcome (`outcome`), kept until the played games change.
+    fn outcome_of(&self, game: &Value, cx: &App) -> String {
+        let revision = cx.global::<PlayedHandle>().0.read(cx).revision();
+        let mut kept = self.outcomes.borrow_mut();
+        if kept.0 != revision {
+            *kept = (revision, std::collections::HashMap::new());
+        }
+        kept.1
+            .entry(text(game, "id").to_string())
+            .or_insert_with(|| outcome(game))
+            .clone()
+    }
+
     fn opening(&self, game: &Value) -> Option<String> {
         let moves = game["moves"].as_array().map_or(0, Vec::len);
         let key = (text(game, "id").to_string(), moves);
@@ -418,7 +446,8 @@ impl HistoryPage {
         self.games(cx)
             .into_iter()
             .filter(|game| {
-                self.filter == Filter::All || filter_of(&outcome(game)) == Some(self.filter)
+                self.filter == Filter::All
+                    || filter_of(&self.outcome_of(game, cx)) == Some(self.filter)
             })
             .collect()
     }
@@ -850,7 +879,8 @@ impl HistoryPage {
         self.games(cx)
             .into_iter()
             .filter(|game| {
-                self.filter == Filter::All || filter_of(&outcome(game)) == Some(self.filter)
+                self.filter == Filter::All
+                    || filter_of(&self.outcome_of(game, cx)) == Some(self.filter)
             })
             .collect()
     }
@@ -1018,7 +1048,7 @@ impl HistoryPage {
                                 cx.listener(|this, _, window, cx| this.step_game(1, window, cx)),
                             ),
                     )
-                    .child(badge(&outcome(game), None, palette))
+                    .child(badge(&self.outcome_of(game, cx), None, palette))
                     .child(format!(
                         "{} vs {}",
                         text(game, "white"),
@@ -1071,7 +1101,7 @@ impl HistoryPage {
             )
             .into_any_element();
         }
-        let outcomes: Vec<String> = games.iter().map(|game| outcome(game)).collect();
+        let outcomes: Vec<String> = games.iter().map(|game| self.outcome_of(game, cx)).collect();
         let count = |filter: Filter| match filter {
             Filter::All => games.len(),
             filter => outcomes
@@ -1180,8 +1210,10 @@ impl HistoryPage {
             .take(PAGE_SIZE)
             .enumerate()
             .map(|(index, (game, outcome))| {
-                let game = (*game).clone();
-                let id = text(&game, "id").to_string();
+                // Read in place: a row's actions find the game by its id when chosen, so a frame
+                // copies no game (four copies of each listed game's moves were made each frame).
+                let game: &Value = game;
+                let id = text(game, "id").to_string();
                 let clock = text(&game, "source") == "clock";
                 let side = player_side(&game);
                 let variant = game["setup"]["variant"].as_str().unwrap_or("standard");
@@ -1232,8 +1264,7 @@ impl HistoryPage {
                             .text_color(palette.text_muted)
                             .child(kind),
                     );
-                let exported = game.clone();
-                let deleted = game.clone();
+                let (exported, deleted) = (id.clone(), id.clone());
                 let finished = game["finished"] == json!(true);
                 let page = cx.entity().downgrade();
                 let actions = Button::new(SharedString::from(format!("actions-{id}")))
@@ -1256,24 +1287,27 @@ impl HistoryPage {
                                     icon("download")
                                 })
                                 .on_click(move |_, _, cx| {
-                                    let _ = export_page
-                                        .update(cx, |page, cx| page.export(&exported, cx));
+                                    if let Some(game) = played_game(&exported, cx) {
+                                        let _ = export_page
+                                            .update(cx, |page, cx| page.export(&game, cx));
+                                    }
                                 }),
                         )
                         .when(finished, |menu| {
                             menu.separator().item(
                                 PopupMenuItem::new("Delete").icon(icon("trash-2")).on_click(
                                     move |_, window, cx| {
-                                        let deleted = deleted.clone();
-                                        let _ = delete_page.update(cx, |page, cx| {
-                                            page.delete(deleted, window, cx)
-                                        });
+                                        if let Some(game) = played_game(&deleted, cx) {
+                                            let _ = delete_page.update(cx, |page, cx| {
+                                                page.delete(game, window, cx)
+                                            });
+                                        }
                                     },
                                 ),
                             )
                         })
                     });
-                let opened = game.clone();
+                let opened = id.clone();
                 columns(
                     h_flex()
                         .id(("history-row", index))
@@ -1294,7 +1328,9 @@ impl HistoryPage {
                             row.cursor_pointer()
                                 .pressable(palette)
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_game(opened.clone(), window, cx)
+                                    if let Some(game) = played_game(&opened, cx) {
+                                        this.open_game(game, window, cx)
+                                    }
                                 }))
                         }),
                     [
