@@ -404,6 +404,25 @@ mod tests {
     }
 
     #[test]
+    fn a_puzzle_without_its_last_move_starts_from_its_games_moves() {
+        let raw = json!({
+            "puzzle": {
+                "id": "p1",
+                "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+                "initialPly": 1,
+                "solution": ["g1f3"],
+            },
+            "game": { "pgn": "1. e4 e5 2. Nf3" },
+        });
+        let puzzle = from_api(&raw).unwrap();
+        assert_eq!(puzzle["lastMove"], "e7e5");
+        assert_eq!(
+            puzzle["fen"],
+            "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+        );
+    }
+
+    #[test]
     fn a_variant_drill_is_solved_by_its_rules() {
         // Crazyhouse, a pawn in each pocket: the drop is the answer, which standard rules refuse.
         let puzzle = json!({

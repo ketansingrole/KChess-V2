@@ -36,8 +36,8 @@ fn find(id: &str) -> Result<Option<&'static EngineLevelInfo>, String> {
 fn label(id: &str) -> Result<String, String> {
     let entry = find(id)?.ok_or_else(|| format!("unknown engine level {id}"))?;
     let strength = match entry.elo {
-        Some(elo) if elo != 0.0 => format!("~{}", js::number_to_string(elo)),
-        _ => "Full strength".into(),
+        Some(elo) => format!("~{}", js::number_to_string(elo)),
+        None => "Full strength".into(),
     };
     Ok(format!("{} · {strength}", entry.label))
 }
