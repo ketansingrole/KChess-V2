@@ -10,13 +10,13 @@ use super::documents::{
     DAMAGED_STUDIES, decode_archived_game_text, decode_mistakes_text, parse_text, read_document,
     read_document_text, stored_studies, write_document,
 };
+use super::json_codec::{js_json, utf16_len};
 use super::library::{
-    JOINED, MISSES, MISTAKES, SCHEDULE, SESSION_KINDS, STUDIES, db_err, misc, transaction,
+    JOINED, MISSES, MISTAKES, SCHEDULE, SESSION_KINDS, STUDIES, db_err, misc, transaction, truthy,
 };
 use super::studies::id_of;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
-use kchess_domain::js;
 use kchess_domain::library::MAX_STUDIES;
 
 /// Migrate an earlier release's document atomically, retaining it unchanged on any failure.
@@ -46,8 +46,8 @@ pub(crate) fn migrate_studies(db: &Connection) -> Result<()> {
             return Err(CoreError::new(DAMAGED_STUDIES));
         }
         for (position, study) in items.iter().enumerate() {
-            let body = js::stringify(study);
-            let units = js::utf16_len(&body) as i64;
+            let body = js_json(study);
+            let units = utf16_len(&body) as i64;
             db.execute(
                 "INSERT INTO studies (id, body, position, textUnits) VALUES (?1, ?2, ?3, ?4)",
                 params![id_of(study), body, position as i64, units],
@@ -173,7 +173,7 @@ pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
     let mut sessions = Map::new();
     for kind in SESSION_KINDS {
         let value = read_session(host, db, kind)?;
-        if js::truthy(Some(&value)) {
+        if truthy(Some(&value)) {
             sessions.insert(kind.to_string(), value);
         }
     }

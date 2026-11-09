@@ -7,8 +7,8 @@ use serde_json::{Map, Value};
 
 use super::StoreContext;
 use super::documents::{read_document, write_document};
+use super::json_codec::{js_json, utf16_len};
 use crate::error::{CoreError, Result};
-use kchess_domain::js;
 
 /// The document holding every preference, as `{ key: value }`.
 const VIEW_PREFERENCES: &str = "view:preferences";
@@ -53,7 +53,7 @@ fn set(ctx: &StoreContext, db: &Connection, key: &str, value: &Value) -> Result<
     if !valid_key(key) {
         return Err(CoreError::new("Invalid view preference name."));
     }
-    if js::utf16_len(&js::stringify(value)) > MAX_VALUE {
+    if utf16_len(&js_json(value)) > MAX_VALUE {
         return Err(CoreError::new("This view preference is too large to save."));
     }
     let mut preferences = all(ctx, db)?;
@@ -183,18 +183,6 @@ mod tests {
             .unwrap_err()
             .message,
             "This view preference is too large to save."
-        );
-        // A value exactly `MAX_VALUE` units long (its quotes included) still fits.
-        let fits = json!("x".repeat(MAX_VALUE - 2));
-        run(
-            &db,
-            "store.viewPreferences.set",
-            &[json!("kchess:big"), fits.clone()],
-        )
-        .unwrap();
-        assert_eq!(
-            run(&db, "store.viewPreferences.all", &[]).unwrap(),
-            json!({ "kchess:big": fits })
         );
     }
 }

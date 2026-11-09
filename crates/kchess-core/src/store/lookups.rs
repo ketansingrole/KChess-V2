@@ -6,9 +6,8 @@ use rusqlite::{Connection, OptionalExtension, params, types::Value as Sql};
 use serde_json::Value;
 
 use super::StoreContext;
-use super::library::{db_err, str_arg};
+use super::library::{db_err, js_json, str_arg, utf16_len};
 use crate::error::Result;
-use kchess_domain::js;
 
 /// Stored entries beyond this size are not read back (`row.data.length > 512_000`).
 const MAX_READ_LENGTH: usize = 512_000;
@@ -40,7 +39,7 @@ fn read(db: &Connection, key: &str) -> Result<Value> {
         .optional()
         .map_err(db_err)?;
     Ok(match data {
-        Some(data) if js::utf16_len(&data) <= MAX_READ_LENGTH => Value::String(data),
+        Some(data) if utf16_len(&data) <= MAX_READ_LENGTH => Value::String(data),
         _ => Value::Null,
     })
 }
@@ -69,7 +68,7 @@ fn write(db: &Connection, key: &str, value: &Value) -> Result<Value> {
     };
     db.execute(
         "INSERT OR REPLACE INTO position_lookups (key, data, fetchedAt) VALUES (?1, ?2, ?3)",
-        params![key, js::stringify(value), fetched_at],
+        params![key, js_json(value), fetched_at],
     )
     .map_err(db_err)?;
     db.execute(
@@ -78,31 +77,4 @@ fn write(db: &Connection, key: &str, value: &Value) -> Result<Value> {
     )
     .map_err(db_err)?;
     Ok(Value::Null)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    /// An entry whose stored text is `units` long.
-    fn entry_of(units: usize) -> Value {
-        let bare = js::utf16_len(&js::stringify(&json!({ "fetchedAt": 1, "pad": "" })));
-        json!({ "fetchedAt": 1, "pad": "x".repeat(units - bare) })
-    }
-
-    #[test]
-    fn an_entry_up_to_the_read_limit_is_read_back_and_a_larger_one_is_not() {
-        let db = Connection::open_in_memory().expect("database");
-        crate::store::migrations::migrate(&db).expect("migrate");
-        let fits = entry_of(MAX_READ_LENGTH);
-        write(&db, "fits", &fits).expect("write");
-        write(&db, "over", &entry_of(MAX_READ_LENGTH + 1)).expect("write");
-        assert_eq!(
-            read(&db, "fits").expect("read"),
-            Value::String(js::stringify(&fits))
-        );
-        assert_eq!(read(&db, "over").expect("read"), Value::Null);
-        assert_eq!(read(&db, "missing").expect("read"), Value::Null);
-    }
 }

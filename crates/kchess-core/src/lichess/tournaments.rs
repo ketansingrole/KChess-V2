@@ -14,9 +14,9 @@ use tokio_util::sync::CancellationToken;
 use super::accounts::{Lichess, Reply, path_segment};
 use super::client::{Failure, Ndjson, TokenSource, authorize};
 use super::decode::{Millis, Text, present, read};
+use super::online::js_number;
 use crate::error::CoreError;
 use crate::host::Level;
-use kchess_domain::js;
 
 /// `TournamentSystem`: an arena, or a Swiss event.
 pub const ARENA: &str = "arena";
@@ -752,6 +752,28 @@ fn team_problem(cause: &Failure) -> &'static str {
     }
 }
 
+/// JavaScript truthiness of a JSON value (`!!value`).
+fn truthy(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(flag)) => *flag,
+        Some(Value::Number(number)) => number.as_f64().is_some_and(|n| n != 0.0),
+        Some(Value::String(text)) => !text.is_empty(),
+        Some(_) => true,
+    }
+}
+
+/// `String(value)` for a JSON value.
+fn js_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Null => "null".into(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::Number(number) => number.to_string(),
+        other => other.to_string(),
+    }
+}
+
 fn first_chars(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
@@ -981,17 +1003,17 @@ async fn arena_detail(
     let verdicts = object.get("verdicts").and_then(|verdicts| {
         let list = verdicts.get("list")?.as_array()?;
         Some(Verdicts {
-            accepted: js::truthy(verdicts.get("accepted")),
+            accepted: truthy(verdicts.get("accepted")),
             list: list
                 .iter()
                 .take(10)
                 .map(|entry| Verdict {
                     condition: first_chars(
-                        &js::to_string(Some(entry.get("condition").unwrap_or(&Value::Null))),
+                        &js_text(entry.get("condition").unwrap_or(&Value::Null)),
                         200,
                     ),
                     verdict: first_chars(
-                        &js::to_string(Some(entry.get("verdict").unwrap_or(&Value::Null))),
+                        &js_text(entry.get("verdict").unwrap_or(&Value::Null)),
                         200,
                     ),
                 })
@@ -1026,9 +1048,9 @@ fn arena_detail_summary(id: &str, raw: &Value) -> Option<TournamentSummary> {
         Some(Value::String(key)) => key.clone(),
         _ => "standard".to_string(),
     };
-    let status = if js::truthy(object.get("isFinished")) {
+    let status = if truthy(object.get("isFinished")) {
         "finished"
-    } else if js::truthy(object.get("secondsToStart")) {
+    } else if truthy(object.get("secondsToStart")) {
         "created"
     } else {
         "started"
@@ -1041,7 +1063,7 @@ fn arena_detail_summary(id: &str, raw: &Value) -> Option<TournamentSummary> {
             &object
                 .get("fullName")
                 .filter(|name| !name.is_null())
-                .map(|name| js::to_string(Some(name)))
+                .map(js_text)
                 .unwrap_or_else(|| id.to_string()),
             120,
         ),
@@ -1057,7 +1079,7 @@ fn arena_detail_summary(id: &str, raw: &Value) -> Option<TournamentSummary> {
         nb_players: num_at(raw, "nbPlayers").unwrap_or_else(|| Number::from(0)),
         starts_at: object
             .get("startsAt")
-            .map(|value| parse_date(&js::to_string(Some(value))))
+            .map(|value| parse_date(&js_text(value)))
             .unwrap_or(0),
         finishes_at: None,
         team: None,
@@ -1206,23 +1228,17 @@ pub fn arena_form(arena: &NewArena) -> Vec<(&'static str, String)> {
     }
     form.push((
         "clockTime",
-        js::number_to_string(arena.clock_time.as_f64().unwrap_or(0.0)),
+        js_number(arena.clock_time.as_f64().unwrap_or(0.0)),
     ));
     form.push((
         "clockIncrement",
-        js::number_to_string(arena.clock_increment.as_f64().unwrap_or(0.0)),
+        js_number(arena.clock_increment.as_f64().unwrap_or(0.0)),
     ));
-    form.push((
-        "minutes",
-        js::number_to_string(arena.minutes.as_f64().unwrap_or(0.0)),
-    ));
+    form.push(("minutes", js_number(arena.minutes.as_f64().unwrap_or(0.0))));
     // `waitMinutes: startDate ? undefined : waitMinutes`: a non-zero start date is truthy.
     let has_start = arena.start_date.is_some_and(|date| date != 0);
     if let Some(wait) = arena.wait_minutes.as_ref().filter(|_| !has_start) {
-        form.push((
-            "waitMinutes",
-            js::number_to_string(wait.as_f64().unwrap_or(0.0)),
-        ));
+        form.push(("waitMinutes", js_number(wait.as_f64().unwrap_or(0.0))));
     }
     if let Some(date) = arena.start_date {
         form.push(("startDate", date.to_string()));

@@ -5,10 +5,11 @@ use rusqlite::{Connection, OptionalExtension, params, types::Value as Sql};
 use serde_json::{Map, Value, json};
 
 use super::StoreContext;
-use super::library::{db_err, now_arg, now_ms, str_arg, string_list, transaction};
+use super::library::{
+    db_err, js_json, now_arg, now_ms, num, str_arg, string_list, transaction, truthy,
+};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
-use kchess_domain::js;
 
 const GAMES_TO_REVIEW_LIMIT: f64 = 300.0;
 
@@ -85,7 +86,7 @@ fn read_stored(host: &dyn Host, db: &Connection, key: &str) -> Result<Option<Sto
         return Ok(None);
     };
     // A review that is not JSON, or is a falsy value, reads as no review (`!review`).
-    let Some(review) = parse_logged(host, &data).filter(|review| js::truthy(Some(review))) else {
+    let Some(review) = parse_logged(host, &data).filter(|review| truthy(Some(review))) else {
         return Ok(None);
     };
     let summary = parse_logged(host, &summary).filter(|s| !s.is_null());
@@ -99,11 +100,7 @@ pub fn read_review(host: &dyn Host, db: &Connection, key: &str) -> Result<Option
 
 /// Which review to keep: Lichess's own beats ours, a finished one beats one in progress.
 fn rank(review: &Value) -> i64 {
-    let complete = if js::truthy(review.get("complete")) {
-        2
-    } else {
-        0
-    };
+    let complete = if truthy(review.get("complete")) { 2 } else { 0 };
     let lichess = i64::from(review.get("source").and_then(Value::as_str) == Some("lichess"));
     complete + lichess
 }
@@ -193,7 +190,7 @@ pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<V
         .and_then(Value::as_str)
         .ok_or_else(|| CoreError::new("key must be a string"))?
         .to_string();
-    let input_game = input.get("gameId").filter(|v| js::truthy(Some(v))).cloned();
+    let input_game = input.get("gameId").filter(|v| truthy(Some(v))).cloned();
     let link = |db: &Connection| -> Result<()> {
         if let Some(game) = input_game.as_ref().and_then(Value::as_str) {
             db.execute(
@@ -221,11 +218,11 @@ pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<V
         .cloned();
     let game_id = coalesce(input.get("gameId"), existing_game.as_ref());
     let mut merged = with_game_id(input, game_id.clone())?;
-    merged.insert("updatedAt".into(), js::number_to_json(now_ms()?));
+    merged.insert("updatedAt".into(), num(now_ms()?));
     let merged = Value::Object(merged);
     let summary = summarize_stored(&merged)?;
-    let data = js::stringify(&merged);
-    let summary_text = js::stringify(&summary);
+    let data = js_json(&merged);
+    let summary_text = js_json(&summary);
     db.execute(
         "INSERT INTO reviews (key, gameId, source, complete, depth, data, summary, updatedAt)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -239,7 +236,7 @@ pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<V
                 .get("source")
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
-            i64::from(js::truthy(merged.get("complete"))),
+            i64::from(truthy(merged.get("complete"))),
             sql_number(merged.get("depth")),
             data,
             summary_text,
@@ -298,7 +295,7 @@ pub fn review_summaries(host: &dyn Host, db: &Connection, ids: &[String]) -> Res
     let mut result = Map::new();
     for row in rows {
         let (game, summary) = row.map_err(db_err)?;
-        if let Some(summary) = parse_logged(host, &summary).filter(|s| js::truthy(Some(s))) {
+        if let Some(summary) = parse_logged(host, &summary).filter(|s| truthy(Some(s))) {
             result.insert(game, summary);
         }
     }

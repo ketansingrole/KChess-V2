@@ -340,6 +340,15 @@ pub(crate) fn core(message: impl Into<String>) -> Failure {
     Failure::Core(CoreError::new(message))
 }
 
+/// `Number(x)` as JavaScript writes it into a URL or form: integers without a fraction.
+pub fn js_number(value: f64) -> String {
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        format!("{}", value as i64)
+    } else {
+        format!("{value}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Handle, LiveGame, Started, State, reports_live_game};

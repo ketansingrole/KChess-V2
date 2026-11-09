@@ -7,7 +7,6 @@ exclude_re = [
     # The version bits are cleared by the mask first, so `| 0x40` and `^ 0x40` (and `| 0x80` and
     # `^ 0x80`) set the same byte.
     'kchess-games/src/archive\.rs:.*: replace \| with \^ in new_id',
-    'kchess-core/src/ai\.rs:.*: replace \| with \^ in host_id_of',
     # A deadline compared with `<=` instead of `<` differs only at the very instant it passes, and
     # the next attempt's own deadline ends the loop at that instant either way.
     'kchess-service/src/client\.rs:.*: replace < with <= in (connect_or_start|wait_until_gone)',

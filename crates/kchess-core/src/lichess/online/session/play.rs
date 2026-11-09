@@ -13,13 +13,12 @@ use crate::lichess::accounts::path_segment;
 use crate::lichess::challenges::is_game_id;
 use crate::lichess::client::authorize;
 
-use crate::lichess::online::events::game_in_progress;
+use crate::lichess::online::events::{game_in_progress, truncate};
 use crate::lichess::online::requests::{Emitter, Listen, StreamRequest};
 use crate::lichess::online::state::{
     ChatLine, Lane, LiveGame, OnlineAction, OnlineSession, PRESENCE_MAX, PRESENCE_TTL,
     PresenceReport, Res, UserPresence, core,
 };
-use kchess_domain::js;
 
 /// The one move being sent; released when its answer arrives or the call is dropped.
 struct MoveInFlight<'a> {
@@ -311,8 +310,8 @@ impl OnlineSession {
                 let user = line.get("user")?.as_str()?;
                 let text = line.get("text")?.as_str()?;
                 Some(ChatLine {
-                    user: js::slice_utf16(user, 40).to_string(),
-                    text: js::slice_utf16(text, 400).to_string(),
+                    user: truncate(user, 40),
+                    text: truncate(text, 400),
                     room: "player".to_string(),
                 })
             })

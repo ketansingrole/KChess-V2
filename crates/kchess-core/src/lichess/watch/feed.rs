@@ -384,7 +384,7 @@ fn replay_uci(setup: &GameSetup, moves: &[String]) -> Option<(usize, String)> {
 
 /// `broadcastGame(pgn)`: one broadcast board, with the main line replayed and checked.
 pub fn broadcast_game(pgn: &str) -> Option<BroadcastGame> {
-    let text = js::slice_utf16(pgn, MAX_BROADCAST_PGN).to_string();
+    let text = take_utf16(pgn, MAX_BROADCAST_PGN);
     let game = position::pgn_mainline(&text, 1001);
     let start_fen = game.get("start")?.as_str()?.to_string();
     let headers = header_map(game.get("headers"));
@@ -430,20 +430,20 @@ pub fn broadcast_game(pgn: &str) -> Option<BroadcastGame> {
         .unwrap_or(&start_fen)
         .to_string();
     let rating = |value: Option<&str>| -> Option<f64> {
-        let number = js::string_to_number(value.unwrap_or(""));
+        let number = js_number(value.unwrap_or(""));
         (number.is_finite() && number > 0.0).then_some(number)
     };
     Some(BroadcastGame {
-        id: js::slice_utf16(&chapter, 64).to_string(),
-        name: js::slice_utf16(header("Event").unwrap_or(""), 120).to_string(),
+        id: take_utf16(&chapter, 64),
+        name: take_utf16(header("Event").unwrap_or(""), 120),
         white: WatchPlayer {
-            name: js::slice_utf16(header("White").unwrap_or("White"), 60).to_string(),
-            title: header("WhiteTitle").map(|title| js::slice_utf16(title, 8).to_string()),
+            name: take_utf16(header("White").unwrap_or("White"), 60),
+            title: header("WhiteTitle").map(|title| take_utf16(title, 8)),
             rating: rating(header("WhiteElo")),
         },
         black: WatchPlayer {
-            name: js::slice_utf16(header("Black").unwrap_or("Black"), 60).to_string(),
-            title: header("BlackTitle").map(|title| js::slice_utf16(title, 8).to_string()),
+            name: take_utf16(header("Black").unwrap_or("Black"), 60),
+            title: header("BlackTitle").map(|title| take_utf16(title, 8)),
             rating: rating(header("BlackElo")),
         },
         ongoing: result == "*",
@@ -454,7 +454,7 @@ pub fn broadcast_game(pgn: &str) -> Option<BroadcastGame> {
         fen,
         white_clock,
         black_clock,
-        pgn: js::slice_utf16(pgn, MAX_BROADCAST_PGN).to_string(),
+        pgn: take_utf16(pgn, MAX_BROADCAST_PGN),
     })
 }
 
@@ -480,6 +480,30 @@ fn header_map(raw: Option<&Value>) -> Vec<(String, String)> {
 fn last_path_id(url: Option<&str>) -> Option<String> {
     let (_, id) = url?.rsplit_once('/')?;
     (id.len() == 8 && id.bytes().all(|byte| byte.is_ascii_alphanumeric())).then(|| id.to_string())
+}
+
+/// `Number(text)`: JavaScript's conversion (blank is zero, unreadable is NaN).
+fn js_number(text: &str) -> f64 {
+    let trimmed = js::trim(text);
+    if trimmed.is_empty() {
+        return 0.0;
+    }
+    trimmed.parse::<f64>().unwrap_or(f64::NAN)
+}
+
+/// The first `units` UTF-16 units of `text`.
+pub(super) fn take_utf16(text: &str, units: usize) -> String {
+    let mut used = 0;
+    let mut out = String::new();
+    for c in text.chars() {
+        let width = c.len_utf16();
+        if used + width > units {
+            break;
+        }
+        used += width;
+        out.push(c);
+    }
+    out
 }
 
 #[cfg(test)]

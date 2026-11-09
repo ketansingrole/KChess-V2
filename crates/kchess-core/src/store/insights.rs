@@ -7,7 +7,7 @@ use rusqlite::{Connection, params_from_iter, types::Value as Sql};
 use serde_json::{Map, Value, json};
 
 use super::StoreContext;
-use super::library::{db_err, now_ms};
+use super::library::{db_err, now_ms, num, truthy};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::js;
@@ -128,15 +128,15 @@ fn sql_of(value: Option<&Value>) -> Sql {
 fn clauses(query: &Value, prefix: &str, now: f64) -> Result<(Vec<String>, Vec<Sql>)> {
     let mut clauses = vec![format!("{prefix}account = ?")];
     let mut params = vec![sql_of(query.get("account"))];
-    if js::truthy(query.get("speed")) {
+    if truthy(query.get("speed")) {
         clauses.push(format!("{prefix}speed = ?"));
         params.push(sql_of(query.get("speed")));
     }
     if let Some(rated) = query.get("rated") {
         clauses.push(format!("{prefix}rated = ?"));
-        params.push(Sql::Integer(i64::from(js::truthy(Some(rated)))));
+        params.push(Sql::Integer(i64::from(truthy(Some(rated)))));
     }
-    if js::truthy(query.get("days")) {
+    if truthy(query.get("days")) {
         let days = js::to_number(query.get("days"));
         clauses.push(format!("{prefix}createdAt >= ?"));
         params.push(Sql::Real(now - days * DAY_MS));
@@ -464,7 +464,7 @@ fn accuracy_report(
                 "Cannot read properties of null (reading '{color}')"
             )));
         }
-        let Some(side) = summary.get(color.as_str()).filter(|s| js::truthy(Some(s))) else {
+        let Some(side) = summary.get(color.as_str()).filter(|s| truthy(Some(s))) else {
             continue;
         };
         if let Some(accuracy) = side.get("accuracy").and_then(Value::as_f64) {
@@ -485,14 +485,11 @@ fn accuracy_report(
     if accuracy_games > 0 {
         accuracy.insert(
             "average".into(),
-            js::number_to_json(accuracy_sum / f64::from(accuracy_games)),
+            num(accuracy_sum / f64::from(accuracy_games)),
         );
     }
     if acpl_games > 0 {
-        accuracy.insert(
-            "acpl".into(),
-            js::number_to_json(acpl_sum / f64::from(acpl_games)),
-        );
+        accuracy.insert("acpl".into(), num(acpl_sum / f64::from(acpl_games)));
     }
     accuracy.insert(
         "perGame".into(),
@@ -600,12 +597,12 @@ impl Clocks {
                 entry.insert("moves".into(), json!(self.phase_moves[phase]));
                 entry.insert(
                     "seconds".into(),
-                    js::number_to_json(self.phase_seconds[phase] / self.phase_moves[phase] as f64),
+                    num(self.phase_seconds[phase] / self.phase_moves[phase] as f64),
                 );
                 if total > 0.0 {
                     entry.insert(
                         "share".into(),
-                        js::number_to_json(100.0 * self.phase_seconds[phase] / total),
+                        num(100.0 * self.phase_seconds[phase] / total),
                     );
                 }
                 Value::Object(entry)
@@ -619,8 +616,8 @@ impl Clocks {
                 json!({
                     "move": n,
                     "games": games,
-                    "player": js::number_to_json(own / *games as f64),
-                    "opponent": js::number_to_json(other / *games as f64),
+                    "player": num(own / *games as f64),
+                    "opponent": num(other / *games as f64),
                 })
             })
             .collect();

@@ -5,10 +5,9 @@ use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
 use super::StoreContext;
-use super::library::{db_err, now_ms, object, opt_str, str_arg};
+use super::library::{db_err, js_json, now_ms, num, object, opt_str, str_arg};
 use crate::error::Result;
 use crate::host::{Host, Level};
-use kchess_domain::js;
 
 /// The most recent runs a summary lists.
 const RECENT: i64 = 20;
@@ -52,7 +51,7 @@ fn run_summary(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value> {
         let (variant, score, played_at) = row.map_err(db_err)?;
         best.insert(
             variant,
-            json!({ "score": js::number_to_json(score), "playedAt": played_at }),
+            json!({ "score": num(score), "playedAt": played_at }),
         );
     }
 
@@ -90,7 +89,7 @@ fn run_summary(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value> {
             "id": id,
             "kind": kind,
             "variant": variant,
-            "score": js::number_to_json(score),
+            "score": num(score),
             "detail": detail,
             "playedAt": played_at,
         }));
@@ -120,7 +119,7 @@ fn save_run(host: &dyn Host, db: &Connection, run: &Value) -> Result<Value> {
         .and_then(Value::as_str)
         .unwrap_or_default();
     let score = run.get("score").and_then(Value::as_f64).unwrap_or(f64::NAN);
-    let detail = js::stringify(run.get("detail").unwrap_or(&Value::Null));
+    let detail = js_json(run.get("detail").unwrap_or(&Value::Null));
     let previous: Option<f64> = db
         .query_row(
             "SELECT MAX(score) AS score FROM runs WHERE kind = ?1 AND variant = ?2",

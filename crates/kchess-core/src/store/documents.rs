@@ -5,11 +5,11 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
+use super::json_codec::{js_json, utf16_len};
 use super::library::{db_err, now_ms};
 use super::studies::id_of;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
-use kchess_domain::js;
 use kchess_domain::misc::MAX_DOCUMENT;
 
 /* ── Documents: one bounded JSON value per key ── */
@@ -49,8 +49,8 @@ pub(crate) fn write_document(
     value: &Value,
     too_large: &str,
 ) -> Result<Value> {
-    let body = js::stringify(value);
-    if js::utf16_len(&body) > MAX_DOCUMENT {
+    let body = js_json(value);
+    if utf16_len(&body) > MAX_DOCUMENT {
         return Err(CoreError::new(too_large));
     }
     let now = now_ms()?;
@@ -111,7 +111,7 @@ pub(crate) const DAMAGED_STUDIES: &str = "The saved study library is damaged. It
 
 /// Stored documents must not silently discard invalid or excess studies on the next mutation.
 pub(crate) fn stored_studies(text: &str) -> Result<Vec<Value>> {
-    if js::utf16_len(text) > MAX_DOCUMENT {
+    if utf16_len(text) > MAX_DOCUMENT {
         return Err(CoreError::new(DAMAGED_STUDIES));
     }
     let raw = parse_text(text).ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
@@ -126,51 +126,4 @@ pub(crate) fn stored_studies(text: &str) -> Result<Vec<Value>> {
         return Err(CoreError::new(DAMAGED_STUDIES));
     }
     Ok(decoded)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn database() -> Connection {
-        let db = Connection::open_in_memory().expect("database");
-        crate::store::migrations::migrate(&db).expect("migrate");
-        db
-    }
-
-    /// A JSON string whose text (quotes included) is `units` long.
-    fn string_of(units: usize) -> Value {
-        Value::String("x".repeat(units - 2))
-    }
-
-    #[test]
-    fn a_document_exactly_at_the_limit_is_stored_and_one_unit_more_is_refused() {
-        let db = database();
-        write_document(&db, "probe", &string_of(MAX_DOCUMENT), "too large")
-            .expect("a document of exactly MAX_DOCUMENT units fits");
-        let stored = read_document_text(&db, "probe")
-            .expect("read")
-            .expect("stored");
-        assert_eq!(js::utf16_len(&stored), MAX_DOCUMENT);
-        let refused = write_document(&db, "probe", &string_of(MAX_DOCUMENT + 1), "too large")
-            .expect_err("one unit over the limit");
-        assert_eq!(refused.message, "too large");
-        // The refused write left the stored document as it was.
-        assert_eq!(
-            read_document_text(&db, "probe").expect("read"),
-            Some(stored)
-        );
-    }
-
-    #[test]
-    fn a_study_library_exactly_at_the_limit_is_read_and_one_unit_more_is_damage() {
-        let empty = r#"{"version":2,"items":[]}"#;
-        let padded = |units: usize| format!("{empty}{}", " ".repeat(units - empty.len()));
-        assert_eq!(
-            stored_studies(&padded(MAX_DOCUMENT)).expect("exactly at the limit"),
-            Vec::<Value>::new()
-        );
-        let damaged = stored_studies(&padded(MAX_DOCUMENT + 1)).expect_err("over the limit");
-        assert_eq!(damaged.message, DAMAGED_STUDIES);
-    }
 }

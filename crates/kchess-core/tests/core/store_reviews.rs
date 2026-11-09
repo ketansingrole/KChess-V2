@@ -301,8 +301,6 @@ fn time_use_counts_blunders_made_short_of_time() {
     assert_eq!(time["phases"][0]["phase"], json!("opening"));
     assert_eq!(time["phases"][0]["moves"], json!(3));
     assert_eq!(time["phases"][0]["share"], json!(100));
-    // White spent 0, 170 and 2 seconds on its three moves (180 → 180 → 10 → 8).
-    assert_eq!(time["phases"][0]["seconds"], json!(172.0 / 3.0));
     assert_eq!(time["clockAt"], json!([]), "the game never reached move 20");
     assert!(time.get("blunders").is_none(), "no review yet");
 

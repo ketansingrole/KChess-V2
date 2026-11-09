@@ -139,6 +139,11 @@ pub(crate) fn now_ms() -> i64 {
         })
 }
 
+/// `String(n)` for an engine option value: whole numbers carry no fraction.
+pub(crate) fn js_number(value: f64) -> String {
+    format!("{value}")
+}
+
 /// Runs `action` after `ms`, unless the returned handle is aborted first (`setTimeout`). Without
 /// a Tokio runtime nothing is scheduled.
 pub(crate) fn after(ms: u64, action: impl FnOnce() + Send + 'static) -> Option<AbortHandle> {
