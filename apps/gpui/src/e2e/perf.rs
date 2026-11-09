@@ -3,7 +3,8 @@
 //! Headless, so it times the main thread's work (reads, views, layout), not the GPU's.
 //!
 //! Not part of `check`; it prints the figures:
-//! `cargo test --release -p kchess-gpui e2e::perf -- --ignored --nocapture`
+//! `cargo test --release -p kchess-gpui e2e::perf -- --ignored --nocapture`, and
+//! `KCHESS_PERF_PAGES=Studies,…` to open only those pages (to profile them).
 
 use std::time::{Duration, Instant};
 
@@ -148,6 +149,10 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
         .map(|(page, label, _)| (*page, *label))
         .collect();
     pages.push((Page::Settings, "Settings"));
+    // `KCHESS_PERF_PAGES=Studies,Game history`: those pages alone, to profile their openings.
+    if let Ok(only) = std::env::var("KCHESS_PERF_PAGES") {
+        pages.retain(|(_, label)| only.split(',').any(|name| name == *label));
+    }
     let mut first: Vec<Vec<f64>> = vec![Vec::new(); pages.len()];
     let mut again: Vec<Vec<f64>> = vec![Vec::new(); pages.len()];
     for _ in 0..5 {

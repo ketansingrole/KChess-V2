@@ -263,13 +263,16 @@ impl Focusable for AnalysisPage {
 
 impl AnalysisPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> AnalysisPage {
-        let library = cx
-            .global::<AppCore>()
-            .bridge
-            .call_now("library", Vec::new())
+        // Its session and the drills alone: the whole library replays every played game.
+        let bridge = &cx.global::<AppCore>().bridge;
+        let session = bridge
+            .call_now("session", vec![json!("analysis")])
             .unwrap_or(Value::Null);
-        let session = library["sessions"]["analysis"].clone();
-        let mistakes = library["mistakes"].as_array().cloned().unwrap_or_default();
+        let mistakes = bridge
+            .call_now("mistakes", Vec::new())
+            .ok()
+            .and_then(|mistakes| mistakes.as_array().cloned())
+            .unwrap_or_default();
         let root = session["pgn"]
             .as_str()
             .and_then(TreeNode::from_pgn)
