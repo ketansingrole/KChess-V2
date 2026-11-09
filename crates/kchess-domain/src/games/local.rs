@@ -175,8 +175,17 @@ impl Game {
         Ok(Some(san))
     }
 
+    /// A side's clock ran out: a time-out ends the game for good.
+    fn timed_out(&self) -> bool {
+        self.state
+            .times
+            .is_some_and(|times| times.white <= 0.0 || times.black <= 0.0)
+    }
+
+    /// `takeback()`: undo the last move. A time-out is final: undoing it left the flagged side on
+    /// 0 ms, and it lost on time again as soon as it was back on move.
     fn takeback(&mut self, reads: &mut Reads) -> Flow<()> {
-        if self.state.moves.is_empty() {
+        if self.state.moves.is_empty() || self.timed_out() {
             return Ok(());
         }
         self.state.moves.pop();

@@ -25,6 +25,7 @@ mod engine_services_stockfish;
 mod engine_status_variant;
 mod engine_stockfish;
 mod engine_variant_fairy;
+mod facade_challenges;
 mod facade_dispatch;
 mod facade_lichess;
 mod facade_sync_play_time;

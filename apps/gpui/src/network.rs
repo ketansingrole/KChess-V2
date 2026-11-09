@@ -67,12 +67,3 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn this_machine_answers_without_failing() {
-        // A test machine may or may not be on a network; reading it must not fail.
-        let _ = super::connected();
-    }
-}

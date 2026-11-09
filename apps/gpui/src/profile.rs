@@ -80,7 +80,7 @@ pub fn managed_engine_dir() -> PathBuf {
 }
 
 /// The database earlier macOS releases kept outside the profile; an isolated profile never imports it.
-pub fn legacy_database(_data_dir: &std::path::Path) -> Option<PathBuf> {
+pub fn legacy_database() -> Option<PathBuf> {
     (cfg!(target_os = "macos") && !isolated()).then(|| home().join(".kchess/kchess.db"))
 }
 

@@ -58,13 +58,8 @@ pub struct StudyHandle(pub Entity<StudyLibrary>);
 
 impl Global for StudyHandle {}
 
-/// Read the studies before the first page opens, and start the writer.
-pub fn init(cx: &mut App) {
-    let library = cx
-        .global::<AppCore>()
-        .bridge
-        .call_now("library", Vec::new())
-        .unwrap_or(Value::Null);
+/// Start from the studies of the library read before the first page opens, and start the writer.
+pub fn init(library: &Value, cx: &mut App) {
     let items = library["studies"].as_array().cloned().unwrap_or_default();
     let error = library["studyError"].as_str().map(str::to_string);
     let (writes, queue) = mpsc::unbounded();

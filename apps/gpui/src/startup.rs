@@ -4,36 +4,36 @@
 
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
+use serde_json::Value;
 
 use crate::core::AppCore;
-
-/// The reads every model starts from.
-const READS: [&str; 2] = ["desktopSettings", "library"];
 
 /// The models have started from the profile.
 pub struct Started;
 
 impl Global for Started {}
 
-/// Whether the core can read what the models start from, or why not.
-pub fn check(cx: &App) -> Result<(), String> {
+/// The library the models start from, when the core can read what they need, or why not.
+pub fn check(cx: &App) -> Result<Value, String> {
     let bridge = &cx.global::<AppCore>().bridge;
     readable(|method| {
         bridge
             .call_now(method, Vec::new())
-            .map(drop)
             .map_err(|cause| cause.message)
     })
 }
 
-fn readable(read: impl Fn(&str) -> Result<(), String>) -> Result<(), String> {
-    READS.into_iter().try_for_each(read)
+/// The settings must be readable, and the library is read once for every model that starts
+/// from it: each read decodes every study and replays every played game.
+fn readable(read: impl Fn(&str) -> Result<Value, String>) -> Result<Value, String> {
+    read("desktopSettings")?;
+    read("library")
 }
 
 /// Start the models and open the window, or the startup screen when the profile cannot be read.
 pub fn start(cx: &mut App) {
     match check(cx) {
-        Ok(()) => crate::start_models(cx),
+        Ok(library) => crate::start_models(&library, cx),
         Err(message) => show(message, cx),
     }
 }
@@ -67,10 +67,10 @@ struct StartupScreen {
 impl StartupScreen {
     fn retry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match check(cx) {
-            Ok(()) => {
+            Ok(library) => {
                 // The workspace opens in its own window where this one stood.
                 window.remove_window();
-                cx.defer(crate::start_models);
+                cx.defer(move |cx| crate::start_models(&library, cx));
             }
             Err(message) => {
                 self.error = message.into();
@@ -116,17 +116,18 @@ impl Render for StartupScreen {
 #[cfg(test)]
 mod tests {
     use super::readable;
+    use serde_json::{Value, json};
 
     /// Settings the core could not read started as defaults, which the next save wrote over the
     /// profile's: any failed read must keep the models from starting.
     #[test]
     fn a_failed_read_keeps_the_models_from_starting() {
-        assert_eq!(readable(|_| Ok(())), Ok(()));
+        assert_eq!(readable(|method| Ok(json!(method))), Ok(json!("library")));
         let failed = readable(|method| {
             if method == "desktopSettings" {
                 Err("The settings file is locked".into())
             } else {
-                Ok(())
+                Ok(Value::Null)
             }
         });
         assert_eq!(failed, Err("The settings file is locked".into()));
@@ -134,9 +135,21 @@ mod tests {
             readable(|method| if method == "library" {
                 Err("x".into())
             } else {
-                Ok(())
+                Ok(Value::Null)
             })
             .is_err()
         );
+    }
+
+    /// The library is read once to start, not once for each model that starts from it.
+    #[test]
+    fn the_library_is_read_once_to_start() {
+        let reads = std::cell::RefCell::new(Vec::new());
+        readable(|method| {
+            reads.borrow_mut().push(method.to_string());
+            Ok(Value::Null)
+        })
+        .expect("readable");
+        assert_eq!(*reads.borrow(), ["desktopSettings", "library"]);
     }
 }

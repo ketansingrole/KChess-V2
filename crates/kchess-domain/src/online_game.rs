@@ -133,18 +133,25 @@ fn start(mut run: Run, options: &Value) -> Out {
     }
     let generation = run.next_generation();
     let correspondence = options.get("days").is_some();
+    // A real-time seek from a correspondence game being played: the game it leaves, to go back to
+    // if the seek fails.
+    let left = (phase == "playing")
+        .then(|| json!({ "id": run.m.online_id, "account": run.m.online_account }));
     if !correspondence {
         run.m.online_id.clear();
         run.m.online_account = string_or(options.get("account"), &run.ctx.active_account);
         run.m.online_phase = "seeking".into();
         run.m.online_status = "Looking for an opponent…".into();
     }
-    let pending = json!({
+    let mut pending = json!({
         "op": "start",
         "generation": generation,
         "correspondence": correspondence,
         "previous": phase,
     });
+    if let Some(left) = left {
+        pending["left"] = left;
+    }
     run.done(
         None,
         Some(Call::new("startOnline", vec![options.clone()])),
@@ -281,9 +288,12 @@ fn settle(args: &[Value]) -> Out {
     }
 }
 
-/// Whether a reply to a move or action still applies: the same request, game and epoch.
+/// Whether a reply to a move or action still applies: the same request, game and epoch, and the
+/// game not over. A late reply once it finished turned the result back into "The move could not
+/// be confirmed", or showed a draw or takeback offer on a finished game.
 fn same_request(run: &Run, pending: &Value, current: bool) -> bool {
     current
+        && run.m.online_phase != "finished"
         && text_of(pending.get("id")) == Some(run.m.online_id.as_str())
         && pending.get("epoch").and_then(Value::as_f64) == Some(run.m.state_epoch)
 }
@@ -305,12 +315,18 @@ fn settle_start(
             return run.done(Some(json!(false)), None, None, false);
         }
         if !correspondence && run.m.online_phase == "seeking" {
-            run.m.online_phase = if text_of(pending.get("previous")) == Some("finished") {
-                "finished"
-            } else {
-                "idle"
+            let left = pending.get("left").filter(|left| left.is_object());
+            run.m.online_phase = match text_of(pending.get("previous")) {
+                // Back to the correspondence game the seek left, which went on meanwhile.
+                Some("playing") if left.is_some() => "playing",
+                Some("finished") => "finished",
+                _ => "idle",
             }
             .into();
+            if let Some(left) = left {
+                run.m.online_id = text_of(left.get("id")).unwrap_or("").to_string();
+                run.m.online_account = text_of(left.get("account")).unwrap_or("").to_string();
+            }
             run.m.online_status.clear();
         }
         return run.done(None, None, None, true);
@@ -506,6 +522,100 @@ mod tests {
         );
         assert_eq!(late["ret"], json!(false));
         assert_eq!(late["state"]["onlinePhase"], json!("idle"));
+    }
+
+    fn playing() -> Model {
+        let mut model = Model::idle();
+        model.online_phase = "playing".into();
+        model.online_id = "AbCd1234".into();
+        model.online_setup = Setup::standard();
+        model
+    }
+
+    fn finished(state: &Value) -> Value {
+        let mut state = state.clone();
+        state["onlinePhase"] = json!("finished");
+        state
+    }
+
+    /// A draw offer answered after the game ended showed "offered a draw" on the finished game.
+    #[test]
+    fn a_late_offer_reply_leaves_a_finished_game_alone() {
+        let begun = transition(
+            "onlineGameBegin",
+            vec![
+                state_json(&playing()),
+                json!("action"),
+                json!("offerDraw"),
+                ctx(10.0),
+            ],
+        );
+        let late = transition(
+            "onlineGameSettle",
+            vec![
+                finished(&begun["state"]),
+                begun["pending"].clone(),
+                json!({ "ok": true, "value": true }),
+                ctx(20.0),
+            ],
+        );
+        assert_eq!(late["state"]["drawOffer"], json!("none"));
+    }
+
+    /// A move whose reply failed after the game ended turned the result into "The move could not
+    /// be confirmed. Reconnect…".
+    #[test]
+    fn a_late_failed_move_leaves_a_finished_game_alone() {
+        let begun = transition(
+            "onlineGameBegin",
+            vec![
+                state_json(&playing()),
+                json!("move"),
+                json!("e2e4"),
+                ctx(10.0),
+            ],
+        );
+        let late = transition(
+            "onlineGameSettle",
+            vec![
+                finished(&begun["state"]),
+                begun["pending"].clone(),
+                json!({ "ok": false }),
+                ctx(20.0),
+            ],
+        );
+        assert_eq!(late["state"]["onlinePhase"], json!("finished"));
+    }
+
+    /// A real-time seek from a correspondence game cleared that game from the board; when the
+    /// seek failed, the board went idle and the game was gone from it.
+    #[test]
+    fn a_failed_seek_goes_back_to_the_correspondence_game() {
+        let mut model = playing();
+        model.online_days_per_turn = Some(3.0);
+        model.online_account = "Alice".into();
+        let begun = transition(
+            "onlineGameBegin",
+            vec![
+                state_json(&model),
+                json!("start"),
+                json!({ "minutes": 5, "increment": 0, "color": "random", "rated": false }),
+                ctx(0.0),
+            ],
+        );
+        assert_eq!(begun["state"]["onlinePhase"], json!("seeking"));
+        let failed = transition(
+            "onlineGameSettle",
+            vec![
+                begun["state"].clone(),
+                begun["pending"].clone(),
+                json!({ "ok": false }),
+                ctx(1.0),
+            ],
+        );
+        assert_eq!(failed["state"]["onlinePhase"], json!("playing"));
+        assert_eq!(failed["state"]["onlineId"], json!("AbCd1234"));
+        assert_eq!(failed["state"]["onlineAccount"], json!("Alice"));
     }
 
     #[test]

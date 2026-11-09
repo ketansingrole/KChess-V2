@@ -22,7 +22,7 @@ ignore = [
 ]
 
 [licenses]
-# GPL-3.0-or-later is this repo's own license (package.json, workspace crates, shakmaty);
+# GPL-3.0-or-later is this repo's own license (workspace crates, shakmaty);
 # Zlib (foldhash) and CDLA-Permissive-2.0 (webpki-roots) are permissive. Anything else
 # needs an explicit review before it lands in the allow list.
 allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "CDLA-Permissive-2.0", "GPL-3.0-or-later"]
@@ -42,7 +42,6 @@ exceptions = [
   { crate = "arrayref", allow = ["BSD-2-Clause"] },
   { crate = "enum-iterator", allow = ["0BSD"] },
   { crate = "enum-iterator-derive", allow = ["0BSD"] },
-  { crate = "hexf-parse", allow = ["CC0-1.0"] },
   { crate = "notify", allow = ["CC0-1.0"] },
   { crate = "tiny-keccak", allow = ["CC0-1.0"] },
   # bzip2's own BSD-style license, for the Rust port of libbzip2 that compresses update patches

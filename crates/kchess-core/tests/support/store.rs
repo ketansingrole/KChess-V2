@@ -327,8 +327,3 @@ pub fn canonical(value: &Value) -> Value {
         _ => value.clone(),
     }
 }
-
-/// Parses a JSON value the store returned, failing the test when it is not an object.
-pub fn object(value: &Value) -> &Map<String, Value> {
-    value.as_object().expect("an object")
-}

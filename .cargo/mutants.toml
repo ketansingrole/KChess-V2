@@ -85,6 +85,3 @@ exclude_re = [
     'tooling/xtask/src/package/(mac|mas)\.rs:.*: replace package -> Result<Vec<PathBuf>> with ',
     'tooling/xtask/src/package/mod\.rs:.*: replace run -> Result with ',
 ]
-
-# Compiled only for WebAssembly, where no test runs.
-exclude_globs = ["crates/kchess-domain/src/api/wasm.rs"]

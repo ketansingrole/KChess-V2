@@ -15,19 +15,6 @@ use crate::rules;
 
 /* ── JavaScript arithmetic ── */
 
-/// Whether `exp` fuses its multiply-adds. Native builds know their CPU; WebAssembly runs on
-/// either, so its host measures `Math.exp` and sets this (see `set_fused_exp`).
-#[cfg(target_arch = "wasm32")]
-static FUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Make `exp` fuse multiply-adds (WebAssembly only; native builds follow their CPU).
-pub fn set_fused_exp(fused: bool) {
-    #[cfg(target_arch = "wasm32")]
-    FUSED.store(fused, std::sync::atomic::Ordering::Relaxed);
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = fused;
-}
-
 /// `a * b + c` as V8's C++ computes it: clang contracts it into one fused multiply-add on
 /// arm64 builds, while x86-64 builds (no FMA in the baseline instruction set) round twice.
 #[inline]
@@ -36,15 +23,7 @@ fn madd(a: f64, b: f64, c: f64) -> f64 {
     {
         a.mul_add(b, c)
     }
-    #[cfg(target_arch = "wasm32")]
-    {
-        if FUSED.load(std::sync::atomic::Ordering::Relaxed) {
-            a.mul_add(b, c)
-        } else {
-            a * b + c
-        }
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "wasm32")))]
+    #[cfg(not(target_arch = "aarch64"))]
     {
         a * b + c
     }

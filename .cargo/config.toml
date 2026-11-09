@@ -16,6 +16,6 @@ rustflags = ["-C", "link-arg=-Wl,-x"]
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-Wl,--strip-all"]
 
-# Not shipped, but `cargo xtask linux` on Apple Silicon builds with the same flags.
+# Not shipped, but a Linux build on Apple Silicon (`tooling/linux/Dockerfile`) uses the same flags.
 [target.aarch64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-Wl,--strip-all"]

@@ -604,9 +604,8 @@ fn page_commands_unkeyed(cx: &App) -> Vec<Command> {
     }
 }
 
-/// Every command Quick Pick can offer now, by id and label: recent entries are found by id.
-#[cfg(test)]
-pub(crate) fn command_ids(cx: &App) -> Vec<(String, String)> {
+/// Every command Quick Pick can offer now: recent entries are found among them by id.
+fn all_commands(cx: &App) -> Vec<Command> {
     [
         places(cx),
         page_commands(cx),
@@ -616,9 +615,15 @@ pub(crate) fn command_ids(cx: &App) -> Vec<(String, String)> {
         player_commands(cx),
     ]
     .concat()
-    .into_iter()
-    .map(|command| (command.id.clone(), command.label.clone()))
-    .collect()
+}
+
+/// Every command Quick Pick can offer now, by id and label.
+#[cfg(test)]
+pub(crate) fn command_ids(cx: &App) -> Vec<(String, String)> {
+    all_commands(cx)
+        .into_iter()
+        .map(|command| (command.id.clone(), command.label.clone()))
+        .collect()
 }
 
 /// How Quick Pick names a page's action: its id, label, icon and search keywords.
@@ -1579,15 +1584,7 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
         }
         Mode::All if text.is_empty() => {
             let resume = resume(cx);
-            let all: Vec<Command> = [
-                places(cx),
-                page_commands(cx),
-                play_commands(cx),
-                app_commands(cx),
-                settings_commands(cx),
-                player_commands(cx),
-            ]
-            .concat();
+            let all = all_commands(cx);
             let recent: Vec<String> = crate::prefs::get(cx, RECENT_KEY, Vec::new());
             let recent: Vec<Command> = recent
                 .iter()

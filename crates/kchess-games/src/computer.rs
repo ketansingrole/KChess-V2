@@ -277,6 +277,27 @@ mod tests {
         assert_eq!(game.state["thinking"], false);
     }
 
+    /// Taking back after the player's flag fell left their clock at 0 ms: the game went on and
+    /// they lost on time again with their next move. As on Lichess, a time-out is final.
+    #[test]
+    fn a_time_out_is_not_taken_back() {
+        let mut game = ComputerGame::new(None, &host(0.)).unwrap();
+        game.start(
+            None,
+            Some(json!({ "minutes": 1, "increment": 0 })),
+            &host(0.),
+        )
+        .unwrap();
+        game.play("e2e4", &host(1.)).unwrap();
+        let request = game.search_start(&host(2.)).unwrap().expect("a search");
+        game.search_reply(&request, "e7e5", &host(3.)).unwrap();
+        game.expire(&host(200_000.)).unwrap();
+        assert!(!game.state["flagged"].is_null());
+        game.takeback(&host(200_001.)).unwrap();
+        assert!(!game.state["flagged"].is_null());
+        assert_eq!(game.state["moves"], json!(["e2e4", "e7e5"]));
+    }
+
     #[test]
     fn a_reply_to_a_game_taken_back_is_ignored() {
         let mut game = ComputerGame::new(None, &host(0.)).unwrap();
