@@ -13,7 +13,7 @@ use kchess_core::connection::ClientInfo;
 use kchess_core::{Config, Core, Host, Level};
 use serde_json::Value;
 use tokio::sync::{Notify, Semaphore, mpsc};
-use tokio::task::AbortHandle;
+use tokio::task::JoinHandle;
 
 use crate::discovery::{self, CoreInfo};
 use crate::protocol::{
@@ -477,7 +477,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
             })
             .is_ok()
     };
-    let calls: Arc<Mutex<HashMap<u64, AbortHandle>>> = Arc::default();
+    let calls: Arc<Mutex<HashMap<u64, JoinHandle<()>>>> = Arc::default();
     // Why the loop ended: a cut-off client's queue is not flushed, and a writer that failed is done.
     let (mut behind, mut written) = (false, false);
     loop {
@@ -545,7 +545,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                     let _ = sender.send(frame).await;
                 });
                 // A reused id replaces nothing still running: the earlier call is stopped.
-                if let Some(earlier) = registered.insert(id, task.abort_handle()) {
+                if let Some(earlier) = registered.insert(id, task) {
                     earlier.abort();
                 }
                 drop(registered);
@@ -574,11 +574,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         }
     }
 
-    if let Ok(mut running) = calls.lock() {
-        for (_, task) in running.drain() {
-            task.abort();
-        }
-    }
+    stop_calls(&calls).await;
     state.host.remove(connection);
     drop(sender);
     // A client that stopped reading can hold a write open forever: what it started still ends.
@@ -593,6 +589,23 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
     state.core.disconnect(connection);
     state.active.fetch_sub(1, Ordering::SeqCst);
     state.changed.notify_one();
+}
+
+/// Stops a connection's calls and waits until none is running. An abort lands at a call's next
+/// await: one being run on another worker right now could otherwise start this connection's
+/// analysis (or a watch) after `disconnect` forgot it, and nothing would ever stop that engine.
+/// Each ends at its next await, so the wait is short.
+async fn stop_calls(calls: &Mutex<HashMap<u64, JoinHandle<()>>>) {
+    let stopping: Vec<JoinHandle<()>> = calls
+        .lock()
+        .map(|mut running| running.drain().map(|(_, task)| task).collect())
+        .unwrap_or_default();
+    for task in &stopping {
+        task.abort();
+    }
+    for task in stopping {
+        let _ = task.await;
+    }
 }
 
 #[cfg(test)]
@@ -665,5 +678,29 @@ mod tests {
         ));
         assert!(terminal("puzzledb:progress", &json!({ "phase": "failed" })));
         assert!(!terminal("watch:frame", &json!({})));
+    }
+
+    /// A call in the middle of a step when its connection goes finishes that step before the
+    /// connection's state is forgotten, so it cannot recreate it (an engine nothing would stop).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_connection_waits_for_the_call_it_stops() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (started, stepped) = (Arc::new(Notify::new()), Arc::new(AtomicBool::new(false)));
+        let calls: Mutex<HashMap<u64, JoinHandle<()>>> = Mutex::default();
+        let task = tokio::spawn({
+            let (started, stepped) = (Arc::clone(&started), Arc::clone(&stepped));
+            async move {
+                started.notify_one();
+                // A step without an await, as `startAnalysis` opening its engine is.
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                stepped.store(true, Ordering::SeqCst);
+                std::future::pending::<()>().await;
+            }
+        });
+        calls.lock().expect("calls").insert(1, task);
+        started.notified().await;
+        stop_calls(&calls).await;
+        assert!(stepped.load(Ordering::SeqCst), "the step ended first");
+        assert!(calls.lock().expect("calls").is_empty());
     }
 }
