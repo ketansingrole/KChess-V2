@@ -347,7 +347,7 @@ impl Inner {
                 session,
                 phase: "error",
                 message: Some(message.to_string()),
-                kind: Some(kind.as_str()),
+                kind: Some(kind),
             });
         }
     }

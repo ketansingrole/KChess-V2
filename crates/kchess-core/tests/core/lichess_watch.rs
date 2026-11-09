@@ -89,7 +89,7 @@ async fn reports_an_initial_http_failure_after_the_start_call_has_returned() {
         last.message.as_deref(),
         Some("Lichess isn’t working right now. Try again shortly.")
     );
-    assert_eq!(last.kind, Some("unavailable"));
+    assert_eq!(last.kind, Some(kchess_core::ErrorKind::Unavailable));
     spectator.stop();
 }
 

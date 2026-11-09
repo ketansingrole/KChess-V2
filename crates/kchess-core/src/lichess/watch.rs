@@ -62,7 +62,7 @@ pub struct WatchState {
     /// The kind of failure (`ErrorKind`) of an `error` phase, so the viewer is offered a retry
     /// only when one can help.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub kind: Option<&'static str>,
+    pub kind: Option<crate::error::ErrorKind>,
 }
 
 /// A game a TV channel showed before the current one (`TvPastGame`).

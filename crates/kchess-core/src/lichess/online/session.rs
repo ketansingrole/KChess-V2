@@ -129,7 +129,7 @@ impl OnlineSession {
             payload["message"] = json!(message);
         }
         if let Some(kind) = kind {
-            payload["kind"] = json!(kind.as_str());
+            payload["kind"] = json!(kind);
         }
         let live_game = phase == "checking" || (!game_id.is_empty() && phase != "idle");
         self.run_state_hook(live_game, self.assistance_blocked());
