@@ -544,7 +544,7 @@ impl OnlineSession {
                 self.ongoing_changed();
                 return;
             }
-            let correspondence = event["game"]["speed"].as_str() == Some("correspondence");
+            let correspondence = super::ongoing::correspondence(&event["game"]);
             let started = self.st().started(&game_id, correspondence);
             match started {
                 super::state::Started::OnBoard => {}
