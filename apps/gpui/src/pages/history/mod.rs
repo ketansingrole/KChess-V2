@@ -1214,22 +1214,22 @@ impl HistoryPage {
                 // copies no game (four copies of each listed game's moves were made each frame).
                 let game: &Value = game;
                 let id = text(game, "id").to_string();
-                let clock = text(&game, "source") == "clock";
-                let side = player_side(&game);
+                let clock = text(game, "source") == "clock";
+                let side = player_side(game);
                 let variant = game["setup"]["variant"].as_str().unwrap_or("standard");
                 // Why it ended, and the opening it reached, as a Lichess game's line has; in a
                 // narrow list, which leaves the game's column out, its variant first.
                 let details = [
                     (narrow && variant != "standard").then(|| crate::game::variant_label(variant)),
-                    Some(details(&game)),
-                    self.opening(&game).filter(|_| opening_names_shown(cx)),
+                    Some(details(game)),
+                    self.opening(game).filter(|_| opening_names_shown(cx)),
                 ]
                 .into_iter()
                 .flatten()
                 .filter(|part| !part.is_empty())
                 .collect::<Vec<_>>()
                 .join(" · ");
-                let mut kind = time_label(text(&game, "timeControl"));
+                let mut kind = time_label(text(game, "timeControl"));
                 if variant != "standard" {
                     kind.push_str(&format!(" · {}", crate::game::variant_label(variant)));
                 }
@@ -1241,7 +1241,7 @@ impl HistoryPage {
                             .min_w_0()
                             .font_weight(FontWeight::MEDIUM)
                             .children(side.map(widgets::side_dot))
-                            .child(div().min_w_0().truncate().child(opponent(&game))),
+                            .child(div().min_w_0().truncate().child(opponent(game))),
                     )
                     .when(!details.is_empty(), |cell| {
                         cell.child(
@@ -1315,8 +1315,8 @@ impl HistoryPage {
                         .keyboard_focus(palette.primary)
                         .aria_label(format!(
                             "{} vs {}",
-                            text(&game, "white"),
-                            text(&game, "black")
+                            text(game, "white"),
+                            text(game, "black")
                         ))
                         .pl(px(12.))
                         .pr(px(8.))

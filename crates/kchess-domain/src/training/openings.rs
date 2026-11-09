@@ -494,7 +494,11 @@ mod tests {
                 seed ^= seed >> 7;
                 seed ^= seed << 17;
                 // Mostly the first moves listed, so games stay in the book a while.
-                let pick = if seed % 3 == 0 { seed as usize } else { 0 } % legal.len();
+                let pick = if seed.is_multiple_of(3) {
+                    seed as usize
+                } else {
+                    0
+                } % legal.len();
                 let m = legal[pick];
                 moves.push(rules::make_uci(&m));
                 pos.play_unchecked(m);
