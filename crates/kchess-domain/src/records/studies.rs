@@ -137,4 +137,18 @@ mod tests {
         }
         assert!(read >= 10, "most of the documents are studies");
     }
+
+    /// A document at the size limit is read, as the tree reads it, and one a unit longer is not.
+    #[test]
+    fn the_summary_keeps_the_trees_size_limit() {
+        // `{…} *`: a comment fills the document to the limit (2,000,000 UTF-16 units).
+        let at_limit = format!("{{{}}} *", "a".repeat(2_000_000 - 4));
+        assert_eq!(at_limit.len(), 2_000_000);
+        let summary = summarize_study(&at_limit);
+        assert_eq!(summary["comments"], json!(1));
+        assert_eq!(summary, from_tree(&at_limit));
+        let over = format!("{{{}}} *", "a".repeat(2_000_000 - 3));
+        assert_eq!(summarize_study(&over), Value::Null);
+        assert_eq!(from_tree(&over), Value::Null);
+    }
 }
