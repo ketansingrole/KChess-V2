@@ -298,6 +298,9 @@ fn workspace_binary(package: &str, name: &str) -> std::path::PathBuf {
         .expect("the test executable is in target/<profile>/deps");
     let mut build = Command::new(env!("CARGO"));
     build.args(["build", "-q", "--locked", "-p", package, "--bin", name]);
+    for key in cargo_test_vars() {
+        build.env_remove(key);
+    }
     // Into the target folder this test runs from, which `cargo llvm-cov` moves with a flag that
     // a nested build does not inherit.
     build
@@ -311,6 +314,67 @@ fn workspace_binary(package: &str, name: &str) -> std::path::PathBuf {
         "{name} builds"
     );
     target.join(name)
+}
+
+/// The variables Cargo sets for this test's own package (`CARGO_MANIFEST_DIR`, `OUT_DIR`, `CARGO_PKG_*`…),
+/// left out of a nested build: build scripts that watch one (ring's) would rebuild for it, and
+/// the next outer build rebuild them back (2026-11-10: about 7 s for every test that built).
+#[cfg(unix)]
+fn cargo_test_vars() -> Vec<std::ffi::OsString> {
+    std::env::vars_os()
+        .map(|(key, _)| key)
+        .filter(|key| key.to_str().is_some_and(is_cargo_test_var))
+        .collect()
+}
+
+#[cfg(unix)]
+fn is_cargo_test_var(key: &str) -> bool {
+    key.starts_with("CARGO_PKG_")
+        || key.starts_with("CARGO_BIN_EXE_")
+        || matches!(
+            key,
+            "CARGO_MANIFEST_DIR"
+                | "CARGO_MANIFEST_PATH"
+                | "CARGO_CRATE_NAME"
+                | "CARGO_PRIMARY_PACKAGE"
+                | "CARGO_TARGET_TMPDIR"
+                | "CARGO_BIN_NAME"
+                | "OUT_DIR"
+        )
+}
+
+/// A nested build leaves out only what Cargo set for this package: its own configuration
+/// (`CARGO_HOME`, `CARGO_INCREMENTAL`, `CARGO_BUILD_*`) still applies.
+#[cfg(unix)]
+#[test]
+fn a_nested_build_drops_only_this_packages_variables() {
+    for key in [
+        "CARGO_MANIFEST_DIR",
+        "CARGO_MANIFEST_PATH",
+        "CARGO_PKG_NAME",
+        "CARGO_BIN_EXE_kchess-cli",
+        "CARGO_CRATE_NAME",
+        "CARGO_PRIMARY_PACKAGE",
+        "CARGO_TARGET_TMPDIR",
+        "CARGO_BIN_NAME",
+        "OUT_DIR",
+    ] {
+        assert!(is_cargo_test_var(key), "{key}");
+    }
+    for key in [
+        "CARGO",
+        "CARGO_HOME",
+        "CARGO_INCREMENTAL",
+        "CARGO_BUILD_JOBS",
+        "PATH",
+    ] {
+        assert!(!is_cargo_test_var(key), "{key}");
+    }
+    assert!(
+        cargo_test_vars()
+            .iter()
+            .any(|key| key == "CARGO_MANIFEST_DIR")
+    );
 }
 
 /// A stale binary on disk is rebuilt before use, not run as it is (2026-11-09: a service built
@@ -342,14 +406,14 @@ fn a_stale_workspace_binary_is_rebuilt_before_use() {
     );
 }
 
-/// The scripted engine (`kchess-fake-uci`, built first) as the copy `engine-search`,
-/// whose name chooses its streaming `search` mode.
+/// The scripted engine (`kchess-fake-uci`, built first) as the copy `engine-quick`: its
+/// streaming `search` mode, with every timed search cut to a few milliseconds.
 #[cfg(unix)]
 fn scripted_engine() -> std::path::PathBuf {
-    scripted_engine_in("search")
+    scripted_engine_in("quick")
 }
 
-/// The scripted engine in `mode` (`search`, `review`), chosen by its copy's name.
+/// The scripted engine in `mode` (`search`, `quick`, `review`), chosen by its copy's name.
 #[cfg(unix)]
 fn scripted_engine_in(mode: &str) -> std::path::PathBuf {
     let fake = workspace_binary("kchess-core", "kchess-fake-uci");
