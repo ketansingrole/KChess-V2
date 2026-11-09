@@ -153,8 +153,9 @@ fn uncovered(app: bool) -> Vec<String> {
 }
 
 /// The workspace's tests: under the coverage gate when cargo-llvm-cov is installed (CI installs
-/// it), else plainly; then the doctests, which nextest does not run. Without the app's (`app`
-/// false) when another job runs them.
+/// it), else plainly. No doctests: the workspace has none (`boundaries` refuses a doc-comment
+/// code block), and `cargo test --doc` compiled every library again to run nothing. Without the
+/// app's (`app` false) when another job runs them.
 fn tests(app: bool) -> Result {
     if available("cargo", &["llvm-cov", "--version"]) {
         coverage()?;
@@ -174,7 +175,7 @@ fn tests(app: bool) -> Result {
             run_tests(&others)?;
         }
     }
-    run("cargo", &["test", "--doc", "--workspace", "--locked"])
+    Ok(())
 }
 
 /// `cargo llvm-cov`'s arguments: through nextest when it is installed.

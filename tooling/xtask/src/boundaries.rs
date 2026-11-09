@@ -302,3 +302,48 @@ fn a_repository_that_crosses_a_boundary_fails() {
         std::env::temp_dir().join(format!("kchess-boundaries-none-{}", std::process::id()));
     assert!(check_in(&missing).is_err());
 }
+
+/// Each code block in a doc comment of `files`, as `path:line`: a doctest, which `check` does not
+/// run.
+fn doc_code_blocks(files: &[(String, String)]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (path, text) in files {
+        for (index, line) in text.lines().enumerate() {
+            let line = line.trim_start();
+            let doc = line
+                .strip_prefix("///")
+                .or_else(|| line.strip_prefix("//!"));
+            if doc.is_some_and(|doc| doc.trim_start().starts_with("```")) {
+                found.push(format!("{path}:{}", index + 1));
+            }
+        }
+    }
+    found
+}
+
+/// The workspace has no doctests, so `check` runs none: `cargo test --doc` compiled every
+/// library again under rustdoc for nothing (34 s of CI's check job, 2026-11-10). A code block in
+/// a doc comment would be a doctest nobody runs; write the example as a `#[test]` instead.
+#[test]
+fn no_doc_comment_holds_a_doctest() {
+    let repo = root();
+    let mut files = Vec::new();
+    for dir in ["apps", "crates", "tooling"] {
+        sources_under(&repo, dir, &mut files).unwrap();
+    }
+    assert!(files.len() > 100, "only {} sources found", files.len());
+    let found = doc_code_blocks(&files);
+    assert!(
+        found.is_empty(),
+        "doctests that check does not run: {found:?}"
+    );
+}
+
+#[test]
+fn a_fenced_block_in_a_doc_comment_is_found() {
+    let files = [
+        file("a.rs", "/// Text.\n    /// ```\n/// x\n/// ```\n"),
+        file("b.rs", "//! ```rust\n// ```\nlet s = \"```\";\n"),
+    ];
+    assert_eq!(doc_code_blocks(&files), ["a.rs:2", "a.rs:4", "b.rs:1"]);
+}
