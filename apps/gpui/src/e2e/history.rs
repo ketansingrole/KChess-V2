@@ -467,8 +467,28 @@ fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppConte
     let (mut app, _lichess) = Harness::signed_in_showcase(cx);
     app.open("Insights");
     app.wait_for("the first report", |_, cx| {
-        crate::shell::view_of::<InsightsPage>(Page::Insights, cx)
-            .is_some_and(|page| page.read(cx).report_total().is_some_and(|total| total > 0.))
+        crate::shell::view_of::<InsightsPage>(Page::Insights, cx).is_some_and(|page| {
+            let page = page.read(cx);
+            // A failed report is not asked for again: name it rather than wait out the timeout
+            // (Windows CI once timed out here with no word of what the page held).
+            if let Some(error) = page.error() {
+                panic!(
+                    "the report failed after {} requests: {error}",
+                    page.requests()
+                );
+            }
+            let total = page.report_total();
+            // No games with no account action or sync left and no report on its way: nothing will
+            // ask again.
+            if page.loaded() && total == Some(0.) && !crate::accounts::handle(cx).read(cx).working()
+            {
+                panic!(
+                    "a report of no games after the sync ended ({} requests)",
+                    page.requests()
+                );
+            }
+            total.is_some_and(|total| total > 0.)
+        })
     });
     let shown = |app: &mut Harness| {
         app.with_window(|window, _| {
