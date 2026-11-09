@@ -56,7 +56,7 @@ impl PuzzleSession {
             Ok(step) => step,
             Err(cause) => {
                 crate::log::write(
-                    kchess_core::Level::Warn,
+                    kchess_contracts::Level::Warn,
                     "puzzles",
                     &format!("{method} failed: {cause}"),
                 );

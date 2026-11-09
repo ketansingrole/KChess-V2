@@ -3,6 +3,8 @@
 use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
 
 use super::Harness;
+use crate::pages::Page;
+use crate::pages::studies::StudiesPage;
 
 /// Let animations run their course: a dialog that is closing is gone after this.
 fn settle(app: &mut Harness) {
@@ -228,6 +230,71 @@ fn a_study_is_duplicated_and_a_deleted_one_comes_back_with_undo(cx: &mut gpui_ki
     wait_for_listed(&mut app, &["Untitled study"]);
     app.click("undo-delete");
     wait_for_listed(&mut app, &both);
+}
+
+/// The page keeps each study's summary between frames (summarizing every study twice a frame was
+/// most of drawing it): a study saved with other moves is summarized from them, found by its new
+/// event, and the summary of what it held before is let go.
+#[gpui_kit::test]
+fn an_edited_study_is_summarized_again(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    import_study(&mut app, "Alpha", "[Event \"Old event\"]\n\n1. e4 e5 *");
+    app.open("Studies");
+    wait_for_listed(&mut app, &["Alpha"]);
+    let kept = |app: &mut Harness| {
+        app.with_window(|_, cx| {
+            let page = crate::shell::view_of::<StudiesPage>(Page::Studies, cx).expect("the page");
+            let pgns: Vec<String> = cx
+                .global::<crate::studies::StudyHandle>()
+                .0
+                .read(cx)
+                .items()
+                .iter()
+                .filter_map(|study| study["pgn"].as_str().map(str::to_string))
+                .collect();
+            (page.read(cx).kept_summaries(), pgns)
+        })
+    };
+    let (before, listed) = kept(&mut app);
+    assert_eq!(before, listed, "the listed study's summary is kept");
+    let id = app.cx.update(|cx| {
+        cx.global::<crate::studies::StudyHandle>()
+            .0
+            .read(cx)
+            .items()[0]["id"]
+            .as_str()
+            .expect("id")
+            .to_string()
+    });
+    let saved = std::rc::Rc::new(std::cell::Cell::new(false));
+    app.cx.update(|cx| {
+        let save = cx
+            .global::<crate::studies::StudyHandle>()
+            .0
+            .read(cx)
+            .command(serde_json::json!({
+                "op": "save", "id": id, "name": "Alpha",
+                "pgn": "[Event \"New event\"]\n\n1. d4 d5 *",
+            }));
+        let saved = saved.clone();
+        cx.spawn(async move |_| {
+            save.await.expect("the save");
+            saved.set(true);
+        })
+        .detach();
+    });
+    app.wait_for("the save", |_, _| saved.get());
+    app.wait_for("the study's new summary", |window, cx| {
+        window.draw(cx).clear(cx);
+        let Some(page) = crate::shell::view_of::<StudiesPage>(Page::Studies, cx) else {
+            return false;
+        };
+        let kept = page.read(cx).kept_summaries();
+        kept.len() == 1 && kept[0].contains("1. d4")
+    });
+    app.click_label("Search studies");
+    app.type_text("new event");
+    wait_for_listed(&mut app, &["Alpha"]);
 }
 
 #[gpui_kit::test]

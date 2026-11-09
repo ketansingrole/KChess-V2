@@ -997,7 +997,7 @@ impl Repertoire {
 
     fn keep_misses(
         &mut self,
-        saved: impl std::future::Future<Output = Result<Value, kchess_core::CoreError>> + 'static,
+        saved: impl std::future::Future<Output = Result<Value, kchess_contracts::CoreError>> + 'static,
         what: &'static str,
         cx: &mut Context<Self>,
     ) {

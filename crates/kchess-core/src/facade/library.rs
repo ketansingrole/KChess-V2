@@ -71,6 +71,17 @@ impl Core {
                     .call_async("store.library.saveSession", &[kind, value])
                     .await
             }
+            "session" => {
+                let kind = normal("assertSessionKind", &arg(args, 0))?;
+                self.database
+                    .call_async("store.library.session", &[kind])
+                    .await
+            }
+            "mistakes" => {
+                self.database
+                    .call_async("store.library.mistakes", &[])
+                    .await
+            }
             "joinedTournaments" => {
                 self.database
                     .call_async("store.library.joinedTournaments", &[json!(now_ms())])

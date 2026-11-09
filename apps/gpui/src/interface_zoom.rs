@@ -90,7 +90,7 @@ fn read(dir: &Path) -> Setting {
         Err(cause) => {
             if cause.kind() != std::io::ErrorKind::NotFound {
                 crate::log::write(
-                    kchess_core::Level::Warn,
+                    kchess_contracts::Level::Warn,
                     "zoom",
                     &format!("Interface zoom unreadable; using Auto: {cause}"),
                 );
@@ -106,7 +106,7 @@ fn write(dir: &Path, setting: Setting) {
     let text = format!("{}\n", json!({ "zoom": setting.to_json() }));
     if let Err(cause) = std::fs::write(&temp, text).and_then(|_| std::fs::rename(&temp, &target)) {
         crate::log::write(
-            kchess_core::Level::Warn,
+            kchess_contracts::Level::Warn,
             "zoom",
             &format!("Interface zoom not saved: {cause}"),
         );

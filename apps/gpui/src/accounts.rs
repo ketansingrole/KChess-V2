@@ -582,7 +582,7 @@ impl Accounts {
     /// so nothing kept for the account outlives it.
     fn after_sign_out(
         &mut self,
-        call: impl std::future::Future<Output = Result<Value, kchess_core::CoreError>> + 'static,
+        call: impl std::future::Future<Output = Result<Value, kchess_contracts::CoreError>> + 'static,
         note: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,

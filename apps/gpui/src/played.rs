@@ -126,7 +126,7 @@ fn write_in_order(
     .detach();
 }
 
-async fn send(core: &AppCore, write: &Write) -> Result<Value, kchess_core::CoreError> {
+async fn send(core: &AppCore, write: &Write) -> Result<Value, kchess_contracts::CoreError> {
     match write {
         Write::Game(game) => core.call("saveArchivedGame", vec![game.clone()]).await,
         Write::Remove(id) => core.call("removeArchivedGame", vec![json!(id)]).await,
@@ -143,7 +143,7 @@ async fn send(core: &AppCore, write: &Write) -> Result<Value, kchess_core::CoreE
 /// writes are failing now.
 fn settle(
     write: Write,
-    result: Result<Value, kchess_core::CoreError>,
+    result: Result<Value, kchess_contracts::CoreError>,
     failing: bool,
     refused: &mut Vec<(Write, String)>,
     outcomes: &mpsc::UnboundedSender<Option<String>>,

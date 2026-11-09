@@ -143,12 +143,19 @@ impl LocalPage {
             });
         })
         .detach();
-        // The library was read before the window opened; the board game resumes from it.
-        let library = cx
-            .global::<AppCore>()
-            .bridge
-            .call_now("library", Vec::new())
-            .unwrap_or(Value::Null);
+        // The board game and its history places resume from their sessions alone: reading the
+        // whole library replays every played game.
+        let bridge = &cx.global::<AppCore>().bridge;
+        let read = |kind: &str| {
+            bridge
+                .call_now("session", vec![json!(kind)])
+                .unwrap_or(Value::Null)
+        };
+        let library = json!({ "sessions": {
+            "local": read("local"),
+            "archive:board": read("archive:board"),
+            "archive:clock": read("archive:clock"),
+        } });
         let saved = &library["sessions"]["local"];
         let game = LocalGame::new((!saved.is_null()).then_some(saved), 0.)
             .or_else(|_| LocalGame::new(None, 0.));

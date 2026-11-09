@@ -173,6 +173,8 @@ pub const FACADE_METHODS: &[&str] = &[
     "mistakeGames",
     "saveSession",
     "joinedTournaments",
+    "session",
+    "mistakes",
     "recordRepertoireMiss",
     "clearRepertoireMisses",
     "restoreRepertoireMisses",
@@ -718,6 +720,8 @@ impl Core {
             | "mistakeGames"
             | "saveSession"
             | "joinedTournaments"
+            | "session"
+            | "mistakes"
             | "recordRepertoireMiss"
             | "clearRepertoireMisses"
             | "restoreRepertoireMisses"

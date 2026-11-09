@@ -40,7 +40,7 @@ pub fn start(cx: &mut App) {
 
 fn show(message: String, cx: &mut App) {
     crate::log::write(
-        kchess_core::Level::Error,
+        kchess_contracts::Level::Error,
         "app",
         &format!("Loading the library failed: {message}"),
     );
@@ -52,7 +52,7 @@ fn show(message: String, cx: &mut App) {
     });
     if let Err(cause) = opened {
         crate::log::write(
-            kchess_core::Level::Error,
+            kchess_contracts::Level::Error,
             "app",
             &format!("The window could not open: {cause}"),
         );

@@ -43,6 +43,18 @@ fn starting_position(game: &Game) -> Option<VariantPosition> {
     }
 }
 
+/// The tree's root position: `newTree` re-reads the start under standard rules, falling back to
+/// the usual start. A variant's start is its own (a Crazyhouse pocket, Three-check's checks are in
+/// its FEN).
+fn root_position(start: &VariantPosition) -> VariantPosition {
+    if rules::variant_of(start) == shakmaty::variant::Variant::Chess {
+        rules::standard_from_fen(&rules::make_fen(start))
+            .unwrap_or_else(|| rules::default_position(shakmaty::variant::Variant::Chess))
+    } else {
+        start.clone()
+    }
+}
+
 /// `treeFromPgn`: one bounded PGN document, or None when it cannot be imported without loss.
 pub fn tree_from_pgn(text: &str) -> Option<TreeNode> {
     if js::utf16_len(text) > MAX_TEXT {
@@ -54,15 +66,7 @@ pub fn tree_from_pgn(text: &str) -> Option<TreeNode> {
     }
     let game = games.pop()?;
     let start = starting_position(&game)?;
-    // `newTree` re-reads the start under standard rules, falling back to the usual start. A
-    // variant's start is its own (a Crazyhouse pocket, Three-check's checks are in its FEN).
-    let start_fen = rules::make_fen(&start);
-    let root_pos = if rules::variant_of(&start) == shakmaty::variant::Variant::Chess {
-        rules::standard_from_fen(&start_fen)
-            .unwrap_or_else(|| rules::default_position(shakmaty::variant::Variant::Chess))
-    } else {
-        start.clone()
-    };
+    let root_pos = root_position(&start);
     let mut root = TreeNode {
         uci: String::new(),
         san: String::new(),
@@ -141,6 +145,69 @@ pub fn valid_pgn(text: &str) -> bool {
     };
     let mut count = 0;
     check(game, 0, &start, 0, &mut count)
+}
+
+/// What a study's card shows of a document `treeFromPgn` accepts, read without building the tree:
+/// the main line's final position and length, the moves and root with comments, the variations,
+/// and the headers. Building the tree writes SAN, UCI and a FEN for every move, and was most of
+/// opening the Studies page.
+pub struct PgnSummary {
+    pub fen: String,
+    pub plies: u32,
+    pub comments: usize,
+    pub variations: usize,
+    pub headers: Vec<(String, String)>,
+}
+
+pub fn summarize_pgn(text: &str) -> Option<PgnSummary> {
+    if js::utf16_len(text) > MAX_TEXT {
+        return None;
+    }
+    let mut games = parse_pgn(text);
+    if games.len() != 1 {
+        return None;
+    }
+    let game = games.pop()?;
+    let start = starting_position(&game)?;
+    let mut count = 0;
+    if !check(&game, 0, &start, 0, &mut count) {
+        return None;
+    }
+    let commented =
+        |comments: &Option<Vec<String>>| comments.as_ref().is_some_and(|c| !c.is_empty());
+    let mut comments = usize::from(commented(&game.comments));
+    let mut variations = 0usize;
+    let mut stack = vec![0];
+    while let Some(node) = stack.pop() {
+        let children: Vec<usize> = game.children(node).collect();
+        variations += children.len().saturating_sub(1);
+        for child in children {
+            comments += usize::from(commented(&game.nodes[child].comments));
+            stack.push(child);
+        }
+    }
+    // The main line, played from the start as the tree's moves are.
+    let mut position = start.clone();
+    let mut plies = 0u32;
+    let mut node = 0;
+    while let Some(next) = game.children(node).next() {
+        let m = rules::parse_san(&position, game.nodes[next].san.as_str())?;
+        position.play_unchecked(m);
+        plies += 1;
+        node = next;
+    }
+    let fen = if plies == 0 {
+        rules::make_fen(&root_position(&start))
+    } else {
+        rules::make_fen(&position)
+    };
+    Some(PgnSummary {
+        fen,
+        plies,
+        comments,
+        variations,
+        headers: game.headers,
+    })
 }
 
 fn check(game: &Game, from: usize, pos: &VariantPosition, depth: usize, count: &mut usize) -> bool {

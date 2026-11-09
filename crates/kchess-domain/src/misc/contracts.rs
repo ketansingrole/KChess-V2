@@ -378,6 +378,8 @@ const CORE: &[Row] = &[
         &[Valid("assertSessionKind"), Valid("assertSessionObject")],
     ),
     ("joinedTournaments", 0, &[]),
+    ("session", 1, &[Valid("assertSessionKind")]),
+    ("mistakes", 0, &[]),
     (
         "recordRepertoireMiss",
         2,

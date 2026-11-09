@@ -337,6 +337,18 @@ async fn idle_watch(state: Arc<State>, idle: Duration) {
     }
 }
 
+/// Why a client of another protocol is refused: its release, or, when both sides are the same
+/// release, a different build of it (a development build after the contracts changed).
+fn version_refusal(core: &str, client: &str) -> String {
+    if core == client {
+        format!(
+            "Another build of KChess {core} runs this profile's core. Quit it to open this app."
+        )
+    } else {
+        format!("KChess {core} runs this profile's core; this app is {client}.")
+    }
+}
+
 /// One client, from `hello` to its last frame.
 async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
     let Ok(handshake) = state.handshakes.try_acquire() else {
@@ -398,10 +410,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
             &mut writer,
             &Frame::Refuse {
                 reason: RefuseReason::Version,
-                message: format!(
-                    "KChess {} runs this profile's core; this app is {release}.",
-                    state.release
-                ),
+                message: version_refusal(&state.release, &release),
                 sole,
                 clients,
             },
@@ -599,6 +608,19 @@ async fn stop_calls(calls: &Mutex<HashMap<u64, JoinHandle<()>>>) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Two releases are named; one release with two protocols is said to be two builds of it.
+    #[test]
+    fn a_version_refusal_names_what_differs() {
+        assert_eq!(
+            version_refusal("2026.11.5", "2026.11.4"),
+            "KChess 2026.11.5 runs this profile's core; this app is 2026.11.4."
+        );
+        assert_eq!(
+            version_refusal("2026.11.5", "2026.11.5"),
+            "Another build of KChess 2026.11.5 runs this profile's core. Quit it to open this app."
+        );
+    }
 
     /// A log past its limit starts afresh; a smaller one is added to.
     #[test]

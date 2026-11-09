@@ -39,6 +39,56 @@ Before the window opens, the app now spends one 30 ms read where it spent three 
 Opening Over the board or the Analysis board blocks for the 5 ms of a kept read instead of 30 ms
 (unless a game was saved since).
 
+## Follow-up: every page opened, measured and profiled
+
+`e2e::perf` starts the app over the same full profile and opens every page (first, then again),
+headless, so it times the main thread's work, not the GPU's. Each slow opening was profiled
+(`perf record -g`, frame pointers; `KCHESS_PERF_PAGES` opens one page) before it was changed.
+
+The first change made the Analysis board's first opening slower (49 → 59 ms): Over the board saves
+its session as it opens, so the Analysis board after it missed the kept snapshot, and a miss also
+copied the snapshot to keep it. The profiles then showed where the openings went:
+
+| Opening | Where the time went | Fix |
+| ------- | ------------------- | --- |
+| Over the board, first | 57% in the game-history rules, mostly copying every played game: they read the list to find the game's own entry | The rules get only that entry (`game/history.rs`, `entries_of`); they look a game up by its identity's id alone |
+| Analysis board, first | Reading the whole library to resume one session | `session(kind)` and `mistakes()`, new core reads; Over the board reads its three sessions with it |
+| Studies | 83% of drawing the page in `summarizeStudy`, twice per study per frame | Summaries kept by PGN while the study is listed |
+| Game history | Half of drawing the page in copying the 500 games, each frame | The list borrows the played games |
+
+`cargo test --release -p kchess-gpui e2e::perf -- --ignored --nocapture` (no LTO, 16 codegen
+units, both sides alike); `main` at `30627a8` against this change, medians of 3 alternating runs.
+
+| Opening | main | After | Change |
+| ------- | ---: | ----: | -----: |
+| Over the board, first | 97.3 ms | 10.5 ms | **9.3×** |
+| Analysis board, first | 46.6 ms | 12.4 ms | **3.8×** |
+| Studies, again | 34.8 ms | 24.0 ms | 1.45× |
+| Game history, first | 21.5 ms | 17.0 ms | 1.26× |
+| Game history, again | 19.8 ms | 15.2 ms | 1.30× |
+| Studies, first | 37.3 ms | 35.6 ms | — |
+
+Studies' first opening still summarizes every study once. The other pages, and starting the app
+(57–74 ms to the window either way), are unchanged within the runs' spread; Openings' first
+opening moved with the pages opened before it (13–23 ms either way).
+
+### Studies, first opening
+
+`summarizeStudy` built each study's whole tree (SAN, UCI and a FEN for every move) to report
+counts and the main line's last position. `tree::summarize_pgn` reads them from the parsed game
+with the same move checks, writing only that one FEN; `records::studies` tests it against the
+tree's summary, and the rules corpus's 158 recorded answers still hold. Opening Studies alone
+(`KCHESS_PERF_PAGES=Studies,Home`), 5 alternating runs, medians:
+
+| Studies | Before | After |
+| ------- | -----: | ----: |
+| First opening | 34.0 ms | 30.1 ms |
+| Again | 20.8 ms | 21.3 ms |
+
+What is left is drawing the 50 cards (the limit), 21 ms with nothing to summarize: 37% of the
+first opening is laying them out. Drawing only the cards in view would take most of it, but cards
+off screen would then be out of reach of Tab and screen readers until scrolled to.
+
 ## Looked at and left
 
 **Pages of synced games, newest to oldest.** Game history pages with `LIMIT … OFFSET …`, which
