@@ -288,29 +288,61 @@ fn a_generic_call_answers_the_sign_in_page() {
     assert!(page.contains("/oauth"), "{page}");
 }
 
-/// A binary of another workspace package, built when missing.
+/// A binary of another workspace package, built first: Cargo does nothing when it is fresh, and
+/// a binary left over from before a change (a service of another protocol) is never run.
 #[cfg(unix)]
 fn workspace_binary(package: &str, name: &str) -> std::path::PathBuf {
     let target = std::env::current_exe()
         .ok()
         .and_then(|exe| Some(exe.parent()?.parent()?.to_path_buf()))
         .expect("the test executable is in target/<profile>/deps");
-    let binary = target.join(name);
-    if !binary.exists() {
-        let mut build = Command::new(env!("CARGO"));
-        build.args(["build", "-q", "--locked", "-p", package, "--bin", name]);
-        if target.file_name().is_some_and(|name| name == "release") {
-            build.arg("--release");
-        }
-        assert!(
-            build.status().expect("cargo runs").success(),
-            "{name} builds"
-        );
+    let mut build = Command::new(env!("CARGO"));
+    build.args(["build", "-q", "--locked", "-p", package, "--bin", name]);
+    // Into the target folder this test runs from, which `cargo llvm-cov` moves with a flag that
+    // a nested build does not inherit.
+    build
+        .arg("--target-dir")
+        .arg(target.parent().expect("the target folder"));
+    if target.file_name().is_some_and(|name| name == "release") {
+        build.arg("--release");
     }
-    binary
+    assert!(
+        build.status().expect("cargo runs").success(),
+        "{name} builds"
+    );
+    target.join(name)
 }
 
-/// The scripted engine (`kchess-fake-uci`, built when missing) as the copy `engine-search`,
+/// A stale binary on disk is rebuilt before use, not run as it is (2026-11-09: a service built
+/// before a contracts change refused the CLI of the same release).
+#[cfg(unix)]
+#[test]
+fn a_stale_workspace_binary_is_rebuilt_before_use() {
+    let fresh = workspace_binary("kchess-core", "kchess-fake-uci");
+    let built = std::fs::read(&fresh).expect("the scripted engine");
+    // Stale, yet still a working engine for tests running at once: the same program with bytes
+    // after it, put in place under another name first so nobody reads half of it. Renamed over
+    // the file, not written into it, which Cargo may have hard-linked to its own copy.
+    let mut stale = built.clone();
+    stale.extend_from_slice(b"stale");
+    let partial = fresh.with_file_name(format!("kchess-fake-uci-stale-{}", std::process::id()));
+    std::fs::write(&partial, &stale).expect("stale copy");
+    std::fs::set_permissions(
+        &partial,
+        std::fs::metadata(&fresh).expect("mode").permissions(),
+    )
+    .expect("executable");
+    std::fs::rename(&partial, &fresh).expect("stale binary in place");
+
+    let used = workspace_binary("kchess-core", "kchess-fake-uci");
+    assert_eq!(used, fresh);
+    assert!(
+        std::fs::read(&used).expect("the scripted engine") == built,
+        "the stale binary was used as it was"
+    );
+}
+
+/// The scripted engine (`kchess-fake-uci`, built first) as the copy `engine-search`,
 /// whose name chooses its streaming `search` mode.
 #[cfg(unix)]
 fn scripted_engine() -> std::path::PathBuf {
