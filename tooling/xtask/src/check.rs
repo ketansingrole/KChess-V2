@@ -700,6 +700,27 @@ mod tests {
         assert!(checked > 20, "only {checked} steps found");
     }
 
+    /// 2026-11-09: a plain `run:` value with `: ` in it made release.yml invalid YAML, so GitHub
+    /// started no run for the v2026.11.6 tag; `bash_steps` reads lines and never noticed. Every
+    /// workflow parses as one YAML document.
+    #[test]
+    fn every_workflow_is_valid_yaml() {
+        let dir = crate::util::root().join(".github/workflows");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "yml") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let docs = yaml_rust2::YamlLoader::load_from_str(&text)
+                .unwrap_or_else(|error| panic!("{} is not valid YAML: {error}", path.display()));
+            assert_eq!(docs.len(), 1, "{} is not one YAML document", path.display());
+            checked += 1;
+        }
+        assert!(checked > 5, "only {checked} workflows found");
+    }
+
     /// CI packages, builds the Snap and runs the Windows upgrade only when a file matching its
     /// `PACKAGING` pattern changed. A change to the code packaging runs (util.rs, the patches,
     /// kchess-delta) once skipped the jobs that test it: every such file must match.

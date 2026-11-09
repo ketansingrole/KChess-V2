@@ -4234,7 +4234,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-cli"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "kchess-contracts",
  "kchess-core",
@@ -4248,7 +4248,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-contracts"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "kchess-domain",
  "serde",
@@ -4257,7 +4257,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-core"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
@@ -4288,7 +4288,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-delta"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "qbsdiff",
  "serde",
@@ -4298,7 +4298,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-domain"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "flate2",
  "memchr",
@@ -4313,7 +4313,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-games"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "getrandom 0.4.3",
  "kchess-domain",
@@ -4324,7 +4324,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-gpui"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "base64 0.23.1",
  "block2 0.6.2",
@@ -4368,7 +4368,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-service"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "getrandom 0.4.3",
  "kchess-core",
@@ -4383,7 +4383,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-voice"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "libloading 0.9.0",
  "serde",
@@ -9868,7 +9868,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "base64 0.23.1",
  "flate2",
@@ -9881,6 +9881,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tiny-skia 0.12.0",
+ "yaml-rust2",
  "zip",
 ]
 
@@ -9889,6 +9890,16 @@ name = "y4m"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a5a4b21e1a62b67a2970e6831bc091d7b87e119e7f9791aef9702e3bef04448"
+
+[[package]]
+name = "yaml-rust2"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57e5b818a27a4cd30884ea380857a5e56f7ec3ba24a3990a3cc0b95af3238e18"
+dependencies = [
+ "arraydeque",
+ "hashlink",
+]
 
 [[package]]
 name = "yazi"
