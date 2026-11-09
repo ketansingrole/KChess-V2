@@ -8,6 +8,8 @@ refuses to release with nothing there.
 
 ## Unreleased
 
+- **Fixes**: Insights opened while your games are still syncing fill in once the sync finishes, instead of showing no games. Plus many smaller fixes.
+
 ## 2026.11.7 (2026-11-09)
 
 - **Smarter Guess the move**: guess the games of any Lichess player, or a famous game like the Opera Game. When a player went wrong, finding the better move earns full points.
