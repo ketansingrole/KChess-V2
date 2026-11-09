@@ -43,18 +43,6 @@ impl<V: 'static> Part<V> {
         part
     }
 
-    /// A keyed part (`keyed`) drawn across the whole slot it is cached in (`panel`): a sidebar
-    /// group's rows span its width as they did inside the sidebar.
-    pub fn keyed_panel<K: PartialEq + 'static>(
-        render: RenderPart<V>,
-        inputs: fn(&V, &App) -> K,
-        cx: &mut Context<V>,
-    ) -> Entity<Self> {
-        let part = Self::keyed(render, inputs, cx);
-        part.update(cx, |part, _| part.fill = true);
-        part
-    }
-
     /// A part drawn again when its owner is notified only if `inputs`, everything `render`
     /// shows of the owner and the models it reads, changed. A notification that changes none of
     /// them (a model only the page shows, a redraw of the owner for another part) reuses the
