@@ -718,7 +718,7 @@ impl StudiesPage {
                     .update(cx, |text, cx| text.set_value(pgn, window, cx));
             });
         }
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::widgets::open_dialog(window, cx, move |dialog, _, _| {
             dialog
                 .title("Import a study")
                 .w(px(512.))

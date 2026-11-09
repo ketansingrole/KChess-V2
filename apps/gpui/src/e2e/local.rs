@@ -19,20 +19,6 @@ fn type_moves(app: &mut Harness, moves: &[&str]) {
     }
 }
 
-/// Type into the labelled input of the dialog once it has slid into place.
-fn fill_in_dialog(app: &mut Harness, label: &str, text: &str) {
-    use gpui_kit::test::TestQueryExt as _;
-    let mut last = None;
-    app.wait_for(&format!("{label:?} to stop moving"), |window, _| {
-        let bounds = window.try_find_by_label(label).map(|input| input.bounds());
-        let still = bounds.is_some() && bounds == last;
-        last = bounds;
-        still
-    });
-    app.click_label(label);
-    app.type_text(text);
-}
-
 /// A timed game's clock runs beside the board for the side to move, redrawn on its own each
 /// second while the rest of the page keeps its last frame.
 #[gpui_kit::test]
@@ -212,7 +198,7 @@ fn a_new_game_needs_a_valid_start_and_asks_before_replacing_one(cx: &mut gpui_ki
     let mut app = board(cx);
     type_moves(&mut app, &["e4"]);
     app.click("local-new");
-    fill_in_dialog(&mut app, "Start from a FEN (optional)", "not-a-fen");
+    app.fill_in_dialog("Start from a FEN (optional)", "not-a-fen");
     app.wait_for("Start to be refused", |window, _| {
         use gpui_kit::test::TestWindowExt as _;
         window
@@ -224,8 +210,7 @@ fn a_new_game_needs_a_valid_start_and_asks_before_replacing_one(cx: &mut gpui_ki
 
     // Kd2 is legal only from this position, not from the standard start.
     app.click("local-new");
-    fill_in_dialog(
-        &mut app,
+    app.fill_in_dialog(
         "Start from a FEN (optional)",
         "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
     );
@@ -234,8 +219,7 @@ fn a_new_game_needs_a_valid_start_and_asks_before_replacing_one(cx: &mut gpui_ki
     app.wait_for_moves(&["e4"]);
 
     app.click("local-new");
-    fill_in_dialog(
-        &mut app,
+    app.fill_in_dialog(
         "Start from a FEN (optional)",
         "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
     );
@@ -552,8 +536,7 @@ fn a_new_game_starts_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContext
         app.press("down");
     }
     app.press("enter");
-    fill_in_dialog(
-        &mut app,
+    app.fill_in_dialog(
         "Start from a FEN (optional)",
         "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3",
     );
@@ -693,4 +676,44 @@ fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
         cx.global::<Played>().0.contains(&Sound::LowTime)
     });
     assert!(started.elapsed() < std::time::Duration::from_millis(2_900));
+}
+
+/// A dialog a key opened (⌘N here) stands at once, as a command repeated all day should; one a
+/// click opened settles in from just above its place. The entrance runs on the test's clock, so
+/// it holds still until the test moves the clock.
+#[gpui_kit::test]
+fn a_dialog_opened_by_a_key_appears_at_once(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = board(cx);
+    app.cx.update(|cx| cx.set_reduce_motion(false));
+    let settle = |app: &mut Harness| {
+        app.cx
+            .executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        app.cx.run_until_parked();
+    };
+
+    app.press(if cfg!(target_os = "macos") {
+        "cmd-n"
+    } else {
+        "ctrl-n"
+    });
+    let opened = app.find("start-local").bounds();
+    settle(&mut app);
+    assert_eq!(
+        app.find("start-local").bounds(),
+        opened,
+        "at rest when it opened"
+    );
+    app.click("cancel-local");
+    settle(&mut app);
+    app.wait_gone("start-local");
+
+    app.click("local-new");
+    let opened = app.find("start-local").bounds();
+    settle(&mut app);
+    let rest = app.find("start-local").bounds();
+    assert!(
+        rest.origin.y > opened.origin.y && rest.origin.y - opened.origin.y < gpui_kit::px(8.),
+        "settles a few pixels down: {opened:?} to {rest:?}"
+    );
 }

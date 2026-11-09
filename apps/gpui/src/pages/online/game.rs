@@ -5,7 +5,7 @@
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::component::hover_card::HoverCard;
-use gpui_kit::component::{Sizable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -146,7 +146,7 @@ fn flip(cx: &mut App) {
 }
 
 fn ask_resign(window: &mut Window, cx: &mut App) {
-    window.open_alert_dialog(cx, |dialog: AlertDialog, _, _| {
+    crate::widgets::open_alert_dialog(window, cx, |dialog: AlertDialog, _, _| {
         dialog
             .title("Resign this game?")
             .description("Your opponent will be awarded the win")

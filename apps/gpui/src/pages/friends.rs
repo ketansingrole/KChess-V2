@@ -342,7 +342,7 @@ impl FriendsPage {
 
     fn ask_remove(name: String, games: f64, stored: f64, window: &mut Window, cx: &mut App) {
         let account = crate::accounts::handle(cx).read(cx).active(cx);
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let name = name.clone();
             dialog
                 .title("Stop following this player?")
@@ -369,7 +369,7 @@ impl FriendsPage {
     }
 
     fn ask_clear(name: String, games: f64, stored: f64, window: &mut Window, cx: &mut App) {
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let name = name.clone();
             dialog
                 .title("Clear this player's synced data?")
@@ -421,7 +421,7 @@ impl FriendsPage {
     fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let dialog = cx.new(|cx| ImportDialog::new(window, cx));
         self.importer = Some(dialog.clone());
-        window.open_dialog(cx, move |modal, _, _| {
+        crate::widgets::open_dialog(window, cx, move |modal, _, _| {
             modal
                 .title("Import followed players from Lichess")
                 .w(px(560.))

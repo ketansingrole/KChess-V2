@@ -163,6 +163,8 @@ pub fn engine_lines(
                             .rounded(radii::SM)
                             .bg(palette.accented)
                             .font_weight(FontWeight::MEDIUM)
+                            // The score changes as the search deepens; it holds still in its chip.
+                            .font_features(crate::widgets::tabular())
                             .text_center()
                             .cursor_pointer()
                             .pressable_fill(tint(palette.primary, 24.), palette)

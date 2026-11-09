@@ -1047,7 +1047,7 @@ impl ComputerPage {
             ),
         };
         let page = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
+        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
             let page = page.clone();
             dialog
                 .title(title.clone())
