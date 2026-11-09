@@ -37,6 +37,8 @@ impl Write {
 pub struct PlayedGames {
     /// Newest saved first, as the core lists them.
     games: Vec<Value>,
+    /// Counts the changes to `games`, so a page can keep what it works out of them until the next.
+    revision: u64,
     /// Why the last write failed, until one succeeds.
     pub error: Option<String>,
     writes: mpsc::UnboundedSender<Write>,
@@ -55,6 +57,7 @@ pub fn init(library: &Value, cx: &mut App) {
     let (writes, queue) = mpsc::unbounded();
     let entity = cx.new(|_| PlayedGames {
         games,
+        revision: 0,
         error: None,
         writes,
         reads: Reads::default(),
@@ -184,11 +187,22 @@ impl PlayedGames {
         &self.games
     }
 
+    /// Changes with every change to the games.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// The games changed.
+    fn changed(&mut self) {
+        self.revision += 1;
+    }
+
     /// Save a game: it shows at once, ahead of the rest.
     pub fn save(&mut self, game: Value, cx: &mut Context<Self>) {
         let id = game["id"].clone();
         self.games.retain(|entry| entry["id"] != id);
         self.games.insert(0, game.clone());
+        self.changed();
         self.reads.edited();
         let _ = self.writes.unbounded_send(Write::Game(game));
         cx.notify();
@@ -198,6 +212,7 @@ impl PlayedGames {
     pub fn remove(&mut self, id: &str, cx: &mut Context<Self>) -> Option<(usize, Value)> {
         let index = self.games.iter().position(|entry| entry["id"] == id)?;
         let game = self.games.remove(index);
+        self.changed();
         self.reads.edited();
         let _ = self.writes.unbounded_send(Write::Remove(id.to_string()));
         cx.notify();
@@ -209,6 +224,7 @@ impl PlayedGames {
         let id = game["id"].clone();
         self.games.retain(|entry| entry["id"] != id);
         self.games.insert(index.min(self.games.len()), game.clone());
+        self.changed();
         self.reads.edited();
         let _ = self.writes.unbounded_send(Write::Game(game));
         cx.notify();
@@ -253,6 +269,7 @@ impl PlayedGames {
                 let _ = this.update(cx, |this, cx| match this.reads.answer(read) {
                     Answer::Show => {
                         this.games = games;
+                        this.changed();
                         cx.notify();
                     }
                     Answer::Again => this.reload(cx),
