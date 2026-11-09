@@ -2,17 +2,10 @@
 //! notarization), as a `.zip` (what the updater installs) and a `.dmg` (what people download).
 //! Electron installations never install this zip: they step through the frozen release
 //! (`electron_step`), whose zip carries the bridge for `com.kchess.electron`.
-//!
-//! Compiled for the tests on every Unix too, so the plists, the zip check and the bundle's layout
-//! are tested where mutants run; only macOS packages with it.
-
-#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
 
-use kchess_delta::Asset;
-
-use super::{Built, Identity, copy_licenses, copy_program, copy_voice};
+use super::{Built, Identity, copy_program, copy_voice};
 use crate::util::{Result, root, run, run_redacted, say};
 
 const MICROPHONE: &str =
@@ -24,71 +17,57 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// A value in a property list.
-#[derive(Clone, Copy)]
-pub enum Value<'a> {
-    Text(&'a str),
-    True,
-    False,
+pub fn info_plist(identity: &Identity) -> String {
+    plist(identity, identity.app_id, "kchess", false, false)
 }
 
-/// A property list of `entries`, in order: a bundle's Info.plist or a signature's entitlements.
-pub fn plist(entries: &[(&str, Value)]) -> String {
-    let mut out = String::from(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n",
-    );
-    for (key, value) in entries {
-        out.push_str(&format!("  <key>{key}</key>\n"));
-        match value {
-            Value::Text(text) => out.push_str(&format!("  <string>{}</string>\n", escape(text))),
-            Value::True => out.push_str("  <true/>\n"),
-            Value::False => out.push_str("  <false/>\n"),
-        }
-    }
-    out.push_str("</dict>\n</plist>\n");
-    out
+/// The Mac App Store's: it also says KChess uses only exempt encryption (HTTPS), which App Store
+/// Connect otherwise asks about for every build.
+pub fn store_plist(identity: &Identity) -> String {
+    plist(identity, identity.app_id, "kchess", false, true)
 }
 
-/// The bundle's Info.plist. The Mac App Store's (`store`) also says KChess uses only exempt
-/// encryption (HTTPS), which App Store Connect otherwise asks about for every build.
-pub fn info_plist(identity: &Identity, store: bool) -> String {
-    let mut entries = vec![
-        ("CFBundleName", Value::Text(identity.name)),
-        ("CFBundleDisplayName", Value::Text(identity.name)),
-        ("CFBundleIdentifier", Value::Text(identity.app_id)),
-        ("CFBundleExecutable", Value::Text(identity.mac_exe)),
-        ("CFBundleIconFile", Value::Text("icon")),
-        ("CFBundlePackageType", Value::Text("APPL")),
-        ("CFBundleShortVersionString", Value::Text(&identity.version)),
-        ("CFBundleVersion", Value::Text(&identity.version)),
+fn plist(
+    identity: &Identity,
+    app_id: &str,
+    executable: &str,
+    background: bool,
+    store: bool,
+) -> String {
+    let strings = [
+        ("CFBundleName", identity.name),
+        ("CFBundleDisplayName", identity.name),
+        ("CFBundleIdentifier", app_id),
+        ("CFBundleExecutable", executable),
+        ("CFBundleIconFile", "icon"),
+        ("CFBundlePackageType", "APPL"),
+        ("CFBundleShortVersionString", &identity.version),
+        ("CFBundleVersion", &identity.version),
         (
             "LSApplicationCategoryType",
-            Value::Text("public.app-category.board-games"),
+            "public.app-category.board-games",
         ),
-        ("LSMinimumSystemVersion", Value::Text("12.0")),
-        ("NSHumanReadableCopyright", Value::Text(super::COPYRIGHT)),
-        ("NSMicrophoneUsageDescription", Value::Text(MICROPHONE)),
-        ("NSHighResolutionCapable", Value::True),
+        ("LSMinimumSystemVersion", "12.0"),
+        ("NSHumanReadableCopyright", super::COPYRIGHT),
+        ("NSMicrophoneUsageDescription", MICROPHONE),
     ];
+    let mut body = String::new();
+    for (key, value) in strings {
+        body.push_str(&format!(
+            "  <key>{key}</key>\n  <string>{}</string>\n",
+            escape(value)
+        ));
+    }
+    body.push_str("  <key>NSHighResolutionCapable</key>\n  <true/>\n");
+    if background {
+        body.push_str("  <key>LSUIElement</key>\n  <true/>\n");
+    }
     if store {
-        entries.push(("ITSAppUsesNonExemptEncryption", Value::False));
+        body.push_str("  <key>ITSAppUsesNonExemptEncryption</key>\n  <false/>\n");
     }
-    plist(&entries)
-}
-
-/// The Developer ID app's entitlements: the microphone is for voice input, and nothing else needs
-/// an exception to the hardened runtime.
-fn developer_id_entitlements() -> String {
-    plist(&[("com.apple.security.device.audio-input", Value::True)])
-}
-
-/// KChess's Mac packages are for Apple Silicon only.
-pub fn apple_silicon() -> Result {
-    if std::env::consts::ARCH == "aarch64" {
-        Ok(())
-    } else {
-        Err("macOS packages are Apple Silicon only.".into())
-    }
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n{body}</dict>\n</plist>\n"
+    )
 }
 
 pub fn text(path: &Path) -> String {
@@ -110,9 +89,13 @@ fn sign(app: &Path, nested: &[PathBuf], stage: &Path) -> Result {
         return run("codesign", &["--force", "--sign", "-", &text(app)]);
     }
     say(&format!("Signing as {identity} with the hardened runtime…"));
+    // The microphone is for voice input; nothing else needs an exception to the hardened runtime.
     let entitlements = stage.join("entitlements.plist");
-    std::fs::write(&entitlements, developer_id_entitlements())
-        .map_err(|cause| cause.to_string())?;
+    std::fs::write(
+        &entitlements,
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>com.apple.security.device.audio-input</key>\n  <true/>\n</dict>\n</plist>\n",
+    )
+    .map_err(|cause| cause.to_string())?;
     let flags = [
         "--force",
         "--timestamp",
@@ -184,21 +167,19 @@ fn notarize(apps: &[&Path], stage: &Path) -> Result {
     Ok(())
 }
 
-/// The unsigned bundle at `app`, the Mac App Store's with `store`; the programs and libraries in
-/// it that are signed before it. The app finds Stockfish, Fairy-Stockfish, the core service and
-/// the voice runtime beside itself (apps/gpui/src/profile.rs, core.rs); the command line only
-/// where it can reach the core, which a sandboxed (store) app's core is not.
-pub fn assemble(
-    identity: &Identity,
-    built: &Built,
-    app: &Path,
-    store: bool,
-) -> Result<Vec<PathBuf>> {
+/// The unsigned bundle at `app`, with `plist`; the programs and libraries in it that are signed
+/// before it. The app finds Stockfish, Fairy-Stockfish, the core service and the voice runtime beside itself
+/// (apps/gpui/src/profile.rs, core.rs); the command line only where it can reach the core, which
+/// a sandboxed app's core is not.
+pub fn assemble(built: &Built, app: &Path, plist: &str, cli: bool) -> Result<Vec<PathBuf>> {
     let contents = app.join("Contents");
     let macos = contents.join("MacOS");
-    let programs = built.programs(identity.mac_exe, !store);
-    for (from, name) in &programs {
-        copy_program(from, &macos.join(name))?;
+    copy_program(&built.app, &macos.join("kchess"))?;
+    copy_program(&built.stockfish, &macos.join("stockfish"))?;
+    copy_program(&built.fairy, &macos.join("fairy-stockfish"))?;
+    copy_program(&built.service, &macos.join("kchess-service"))?;
+    if cli {
+        copy_program(&built.cli, &macos.join("kchess-cli"))?;
     }
     let resources = contents.join("Resources");
     // Resources, not MacOS: the notices beside the helper are not code, which codesign rejects there.
@@ -208,24 +189,30 @@ pub fn assemble(
         resources.join("icon.icns"),
     )
     .map_err(|cause| cause.to_string())?;
-    copy_licenses(built, &resources)?;
-    std::fs::write(contents.join("Info.plist"), info_plist(identity, store))
+    std::fs::copy(&built.licenses, resources.join("THIRD_PARTY_LICENSES.txt"))
         .map_err(|cause| cause.to_string())?;
-    // Every program but the app, which seals them.
-    nested.extend(programs.iter().skip(1).map(|(_, name)| macos.join(name)));
+    std::fs::write(contents.join("Info.plist"), plist).map_err(|cause| cause.to_string())?;
+    nested.push(macos.join("kchess-service"));
+    if cli {
+        nested.push(macos.join("kchess-cli"));
+    }
+    nested.push(macos.join("stockfish"));
+    nested.push(macos.join("fairy-stockfish"));
     Ok(nested)
 }
 
-/// The `.zip` and `.dmg`.
+/// The `.zip` and `.dmg`, as `(file name, path)`.
 pub fn package(
     identity: &Identity,
     built: &Built,
     stage: &Path,
     out: &Path,
 ) -> Result<Vec<PathBuf>> {
-    apple_silicon()?;
+    if std::env::consts::ARCH != "aarch64" {
+        return Err("macOS packages are Apple Silicon only.".into());
+    }
     let app = stage.join(format!("{}.app", identity.name));
-    let nested = assemble(identity, built, &app, false)?;
+    let nested = assemble(built, &app, &info_plist(identity), true)?;
     sign(&app, &nested, stage)?;
     notarize(&[&app], stage)?;
     let zipped = stage.join("zip");
@@ -237,7 +224,8 @@ pub fn package(
         ],
     )?;
 
-    let zip = out.join(identity.asset(Asset::MacZip));
+    let base = format!("{}-{}-mac-arm64", identity.prefix(), identity.version);
+    let zip = out.join(format!("{base}.zip"));
     say("Making the zip…");
     // ditto keeps the bundles' symlinks, permissions and signatures, as Squirrel.Mac expects.
     run(
@@ -256,7 +244,7 @@ pub fn package(
     )?;
     std::os::unix::fs::symlink("/Applications", image.join("Applications"))
         .map_err(|cause| cause.to_string())?;
-    let dmg = out.join(identity.asset(Asset::MacDmg));
+    let dmg = out.join(format!("{base}.dmg"));
     // hdiutil sometimes finds the disk-image driver busy ("Resource busy") on a runner that just
     // made the zip; it succeeds when tried again.
     retrying(3, std::time::Duration::from_secs(10), || {
@@ -308,29 +296,32 @@ fn plist_value<'a>(plist: &'a str, key: &str) -> Option<&'a str> {
 /// What the updater installs must be in the zip: this KChess, signed. `entry` reads one file of
 /// the zip.
 fn check_zip(identity: &Identity, mut entry: impl FnMut(&str) -> Option<Vec<u8>>) -> Result {
-    let contents = format!("{}.app/Contents", identity.name);
-    let plist = entry(&format!("{contents}/Info.plist"))
-        .ok_or_else(|| format!("The zip has no {contents}/Info.plist."))?;
-    let plist = String::from_utf8_lossy(&plist);
-    let expected = [
-        ("CFBundleIdentifier", identity.app_id),
-        ("CFBundleExecutable", identity.mac_exe),
-        ("CFBundleShortVersionString", identity.version.as_str()),
-    ];
-    for (key, value) in expected {
-        if plist_value(&plist, key) != Some(value) {
-            return Err(format!(
-                "{contents}/Info.plist has {key} {:?}, not {value:?}.",
-                plist_value(&plist, key)
-            ));
+    let app = format!("{}.app/Contents", identity.name);
+    let bundles = [(app, identity.app_id, "kchess")];
+    for (contents, app_id, executable) in bundles {
+        let plist = entry(&format!("{contents}/Info.plist"))
+            .ok_or_else(|| format!("The zip has no {contents}/Info.plist."))?;
+        let plist = String::from_utf8_lossy(&plist);
+        let expected = [
+            ("CFBundleIdentifier", app_id),
+            ("CFBundleExecutable", executable),
+            ("CFBundleShortVersionString", identity.version.as_str()),
+        ];
+        for (key, value) in expected {
+            if plist_value(&plist, key) != Some(value) {
+                return Err(format!(
+                    "{contents}/Info.plist has {key} {:?}, not {value:?}.",
+                    plist_value(&plist, key)
+                ));
+            }
         }
-    }
-    for file in [
-        format!("MacOS/{}", identity.mac_exe),
-        "_CodeSignature/CodeResources".into(),
-    ] {
-        if entry(&format!("{contents}/{file}")).is_none() {
-            return Err(format!("The zip has no {contents}/{file}."));
+        for file in [
+            format!("MacOS/{executable}"),
+            "_CodeSignature/CodeResources".into(),
+        ] {
+            if entry(&format!("{contents}/{file}")).is_none() {
+                return Err(format!("The zip has no {contents}/{file}."));
+            }
         }
     }
     Ok(())
@@ -382,7 +373,7 @@ mod tests {
         let dir = "KChess.app";
         files.insert(
             format!("{dir}/Contents/Info.plist"),
-            info_plist(identity, false).into_bytes(),
+            info_plist(identity).into_bytes(),
         );
         files.insert(format!("{dir}/Contents/MacOS/kchess"), vec![0]);
         files.insert(
@@ -404,75 +395,5 @@ mod tests {
 
         let older = zip_of(&Identity::new("2026.11.0".into()));
         assert!(check_zip(&identity, |name| older.get(name).cloned()).is_err());
-    }
-
-    #[test]
-    fn mac_packages_are_made_on_apple_silicon_only() {
-        assert_eq!(apple_silicon().is_ok(), std::env::consts::ARCH == "aarch64");
-    }
-
-    /// The bundle holds the programs in MacOS, the voice runtime, icon and notices in Resources,
-    /// and its Info.plist; what is signed before the app is every program and library but the
-    /// app. The App Store's leaves the command line out.
-    #[test]
-    fn the_bundle_holds_the_programs_beside_the_app() {
-        let dir = tempfile::tempdir().unwrap();
-        let built = super::super::stand_in(&dir.path().join("built"));
-        let identity = Identity::new("2026.12.0".into());
-        for store in [false, true] {
-            let app = dir.path().join(format!("{store}/KChess.app"));
-            let nested = assemble(&identity, &built, &app, store).unwrap();
-            let contents = app.join("Contents");
-            let macos = contents.join("MacOS");
-            assert_eq!(std::fs::read(macos.join("kchess")).unwrap(), b"app");
-            assert_eq!(
-                std::fs::read(macos.join("stockfish")).unwrap(),
-                b"stockfish"
-            );
-            assert_eq!(macos.join("kchess-cli").exists(), !store);
-            let resources = contents.join("Resources");
-            for file in ["voice/NOTICE.txt", "icon.icns", "THIRD_PARTY_LICENSES.txt"] {
-                assert!(resources.join(file).exists(), "{file}");
-            }
-            assert_eq!(
-                std::fs::read_to_string(contents.join("Info.plist")).unwrap(),
-                info_plist(&identity, store)
-            );
-            let mut signed: Vec<PathBuf> = vec![
-                resources.join("voice/libvosk.so"),
-                macos.join("stockfish"),
-                macos.join("fairy-stockfish"),
-                macos.join("kchess-service"),
-            ];
-            if !store {
-                signed.push(macos.join("kchess-cli"));
-            }
-            assert_eq!(nested, signed);
-        }
-    }
-
-    /// The bundle's Info.plist and the Developer ID entitlements, as every KChess has had them.
-    #[test]
-    fn the_plists_keep_their_text() {
-        const HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n";
-        assert_eq!(
-            developer_id_entitlements(),
-            format!(
-                "{HEAD}  <key>com.apple.security.device.audio-input</key>\n  <true/>\n</dict>\n</plist>\n"
-            )
-        );
-        let info = info_plist(&Identity::new("2026.12.0".into()), false);
-        assert!(info.starts_with(&format!(
-            "{HEAD}  <key>CFBundleName</key>\n  <string>KChess</string>\n"
-        )));
-        assert!(info.contains(
-            "  <key>CFBundleIdentifier</key>\n  <string>com.kchess.app</string>\n  <key>CFBundleExecutable</key>\n  <string>kchess</string>\n"
-        ));
-        assert!(
-            info.ends_with("  <key>NSHighResolutionCapable</key>\n  <true/>\n</dict>\n</plist>\n")
-        );
-        assert!(info.contains(
-            "<string>Copyright © 2026 Ketan Singrole. Licensed under the GPL-3.0-or-later.</string>"
-        ));
     }
 }

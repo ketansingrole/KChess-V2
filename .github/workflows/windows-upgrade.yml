@@ -64,7 +64,10 @@ jobs:
           gh release download --pattern 'KChess-2*-win-x64.exe' --dir old
           old=$(ls old/KChess-*-win-x64.exe)
           new=$(ls apps/gpui/dist/KChess-*-win-x64.exe)
-          cargo xtask deltas --from "$old" "$new" --stage patch
+          cargo xtask deltas --from "$old" "$new"
+          from=$(basename "$old" | cut -d- -f2)
+          cargo xtask deltas --apply apps/gpui/dist/KChess-*-win-x64.from-"$from".delta \
+            "target/package/deltas/$from/installed" patch
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-patch

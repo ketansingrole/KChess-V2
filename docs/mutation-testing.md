@@ -108,8 +108,3 @@ These stay in the reports on purpose; each is listed with the reason.
   which their tests run whole with stand-in archives. The bindings download from GitHub (and
   `build` compiles Fairy-Stockfish), so only `cargo xtask fairy-stockfish`, `voice-runtime` and
   `package` see them; they are excluded in `.cargo/mutants.toml`.
-- **The tooling's other bindings and tool runs** (xtask): the steps of `check` that run cargo
-  over the workspace, what talks to GitHub through `gh`, the platform packagers (snapcraft and
-  the macOS tools), and the bindings of the real environment to the functions their tests run
-  whole (`engines::run_with`, `update_key::sign_with`, `release::metadata`, `voice::outdated`).
-  Each is excluded in `.cargo/mutants.toml`, naming the CI job or command that runs it.

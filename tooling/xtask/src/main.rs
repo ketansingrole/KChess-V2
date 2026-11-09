@@ -6,10 +6,8 @@ mod bench;
 #[cfg(test)]
 mod boundaries;
 mod check;
-mod deb;
 mod deltas;
 mod electron_step;
-mod engines;
 mod fairy;
 mod fake_lichess;
 mod icons;
@@ -74,24 +72,18 @@ const HELP: &str = "cargo xtask <command>
   licenses <file>       Write the license texts of every crate compiled into the app
   voice-runtime [profile]  Stage the speech helper with libvosk (target/voice-runtime)
   fairy-stockfish       Build the pinned Fairy-Stockfish, the variant engine
-                        (target/fairy-stockfish/bin); print its path
-  engines [--github-env] <stockfish folder>
-                        Fetch Stockfish into the folder and build Fairy-Stockfish; print
-                        KCHESS_ENGINE_PATH and KCHESS_VARIANT_ENGINE_PATH, or add them to
-                        $GITHUB_ENV (CI)
+                        (target/fairy-stockfish/bin)
   package [--skip-build] [--snap|--mas]
                         Package the app for this machine (apps/gpui/dist): .dmg and .zip,
                         the NSIS installer, or the AppImage and .deb; --snap makes the Snap,
                         --mas the Mac App Store's .pkg (apps/gpui/dist/mas)
   deltas [dir]          Write the update patches to this release's packages in [dir]
                         (apps/gpui/dist) from the latest published releases (release CI)
-  deltas --from <old package> <new package> [--stage <out>]
-                        Write the one patch between two packages, beside the new one;
-                        --stage then stages a Windows patch over the old installer's files
-                        as --apply does (the Windows upgrade test)
+  deltas --from <old package> <new package>
+                        Write the one patch between two packages, beside the new one
   deltas --apply <patch> <installed folder> <out>
                         Stage a Windows patch as the updater does: <out>/files and
-                        <out>/KChess-update.exe
+                        <out>/KChess-update.exe (the Windows upgrade test)
   pins --check [--report <file>]
                         Fail when appimagetool or the AppImage runtime has a newer release than
                         its pin (package/linux.rs), naming both; the weekly Pins workflow
@@ -142,8 +134,7 @@ fn main() -> ExitCode {
         Some("voice-runtime") => {
             voice::stage(rest.first().map_or("release", String::as_str)).map(|_| ())
         }
-        Some("fairy-stockfish") => fairy::build().map(|path| println!("{}", path.display())),
-        Some("engines") => engines::run(rest),
+        Some("fairy-stockfish") => fairy::build().map(|_| ()),
         Some("package") => package::run(rest),
         Some("deltas") => deltas::run(rest),
         #[cfg(unix)]

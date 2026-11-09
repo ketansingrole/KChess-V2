@@ -503,6 +503,11 @@ jobs:
           echo "KCHESS_ENGINE_PATH=$RUNNER_TEMP/stockfish/stockfish" >> "$GITHUB_ENV"
           echo "KCHESS_VARIANT_ENGINE_PATH=$PWD/target/fairy-stockfish/bin/fairy-stockfish" >> "$GITHUB_ENV"
       - if: github.event_name == 'pull_request'
+        name: Build Fairy-Stockfish
+        run: |
+          cargo xtask fairy-stockfish
+          echo "KCHESS_VARIANT_ENGINE_PATH=$PWD/target/fairy-stockfish/bin/fairy-stockfish" >> "$GITHUB_ENV"
+      - if: github.event_name == 'pull_request'
         name: Mutants of the changed lines
         env:
           BASE: ${{ github.event.pull_request.base.sha }}

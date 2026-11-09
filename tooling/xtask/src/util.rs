@@ -13,35 +13,8 @@ pub fn root() -> PathBuf {
         .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
 }
 
-/// KChess's GitHub repository, whose releases installed apps update from.
-pub const REPOSITORY: &str = "ketansingrole/KChess-V2";
-
-/// The repository the release tooling works on: `GH_REPO` (CI sets it to the one it runs in, so
-/// `gh` and these agree), else KChess's.
-pub fn repository() -> String {
-    repository_from(std::env::var("GH_REPO").ok())
-}
-
-fn repository_from(gh_repo: Option<String>) -> String {
-    gh_repo
-        .filter(|repo| !repo.is_empty())
-        .unwrap_or_else(|| REPOSITORY.to_string())
-}
-
 pub fn say(message: &str) {
     eprintln!("[xtask] {message}");
-}
-
-/// When the file or folder at `path` last changed, if it is there.
-pub fn modified(path: &Path) -> Option<std::time::SystemTime> {
-    std::fs::metadata(path)
-        .and_then(|file| file.modified())
-        .ok()
-}
-
-/// The file name of program `name` on this platform (`.exe` on Windows).
-pub fn exe(name: &str) -> String {
-    format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
 /// Runs `program` in the repository, its output going to this terminal.
@@ -94,6 +67,7 @@ pub fn output(program: &str, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Seconds since 1970 now, from the system clock.
 pub fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -127,50 +101,14 @@ pub fn iso_timestamp(seconds: i64) -> String {
     )
 }
 
-/// Whether `program <args>` runs and succeeds, its output hidden: whether a tool is installed.
+/// Whether `program --version` runs.
 pub fn available(program: &str, args: &[&str]) -> bool {
-    succeeds(Command::new(program).args(args))
-}
-
-/// Whether `command` runs and succeeds, its output hidden.
-pub fn succeeds(command: &mut Command) -> bool {
-    command
+    Command::new(program)
+        .args(args)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
-}
-
-/// Git's output in `repo`, when it exits with one of the `accepted` statuses.
-pub fn git(repo: &Path, args: &[&str], accepted: &[i32]) -> Result<String> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .output()
-        .map_err(|cause| format!("Could not run git: {cause}"))?;
-    match out.status.code() {
-        Some(code) if accepted.contains(&code) => {
-            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-        }
-        _ => Err(format!(
-            "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        )),
-    }
-}
-
-/// Where `repo`'s HEAD left `origin/main`: what "changed since main" is measured from. Without
-/// `origin/main` there is no telling, which is refused rather than taken as "nothing changed".
-pub fn merge_base(repo: &Path) -> Result<String> {
-    git(repo, &["merge-base", "HEAD", "origin/main"], &[0])
-        .map(|text| text.trim().to_string())
-        .map_err(|cause| {
-            format!(
-                "Cannot tell what changed since main ({cause}). Fetch it with \
-                 `git fetch origin main` and try again."
-            )
-        })
 }
 
 /// The workspace's release version (`[workspace.package] version` in Cargo.toml).
@@ -198,6 +136,11 @@ pub fn workspace_version(manifest: &str) -> Option<String> {
     None
 }
 
+/// Lowercase hex.
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// Downloads `url` to `path` with curl (on every CI image and developer machine).
 pub fn download(url: &str, path: &Path) -> Result {
     if let Some(parent) = path.parent() {
@@ -217,12 +160,12 @@ pub fn pinned(
     path: &Path,
     fetch: impl FnOnce(&str, &Path) -> Result,
 ) -> Result {
-    if path.exists() && crate::sums::file(path)? == sha256 {
+    if path.exists() && sha256_file(path)? == sha256 {
         return Ok(());
     }
     say(&format!("Downloading {what}…"));
     fetch(url, path)?;
-    let found = crate::sums::file(path)?;
+    let found = sha256_file(path)?;
     if found == sha256 {
         return Ok(());
     }
@@ -231,6 +174,13 @@ pub fn pinned(
         "{what} from {url} has SHA-256 {found}, not the pinned {sha256}, so it was removed. \
          If upstream changed the file, re-check it and update the pin."
     ))
+}
+
+pub fn sha256_file(path: &Path) -> Result<String> {
+    use sha2::Digest;
+    let bytes =
+        std::fs::read(path).map_err(|cause| format!("Cannot read {}: {cause}", path.display()))?;
+    Ok(hex(&sha2::Sha256::digest(&bytes)))
 }
 
 #[cfg(test)]
@@ -348,72 +298,7 @@ mod tests {
         assert_eq!(iso_timestamp(1_762_605_296), "2025-11-08T12:34:56.000Z");
         assert_eq!(iso_timestamp(-1), "1969-12-31T23:59:59.000Z");
         assert_eq!(iso_timestamp(0), "1970-01-01T00:00:00.000Z");
-    }
-
-    /// A clone without `origin/main` made `check-fast` diff only the uncommitted changes, say
-    /// "No Rust changes since main." and pass without a test: no base is an error.
-    #[test]
-    fn changes_are_measured_from_origin_main_or_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        let git = |args: &[&str]| git(dir.path(), args, &[0]).unwrap();
-        git(&["init", "-q"]);
-        std::fs::write(dir.path().join("a.rs"), "fn a() {}\n").unwrap();
-        git(&["add", "a.rs"]);
-        git(&[
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@t",
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "-qm",
-            "a",
-        ]);
-        let refused = merge_base(dir.path()).unwrap_err();
-        assert!(refused.contains("git fetch origin main"), "{refused}");
-        git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
-        assert_eq!(
-            merge_base(dir.path()).unwrap(),
-            git(&["rev-parse", "HEAD"]).trim()
-        );
-    }
-
-    #[test]
-    fn the_repository_is_gh_repo_else_kchess() {
-        assert_eq!(repository_from(Some("fork/KChess".into())), "fork/KChess");
-        assert_eq!(repository_from(Some(String::new())), REPOSITORY);
-        assert_eq!(repository_from(None), "ketansingrole/KChess-V2");
-        assert_eq!(repository(), repository_from(std::env::var("GH_REPO").ok()));
-    }
-
-    #[test]
-    fn programs_are_named_for_this_platform() {
-        let expected = if cfg!(windows) {
-            "kchess-cli.exe"
-        } else {
-            "kchess-cli"
-        };
-        assert_eq!(exe("kchess-cli"), expected);
-    }
-
-    #[test]
-    fn a_files_time_is_read_only_while_it_is_there() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("file");
-        assert_eq!(modified(&file), None);
-        std::fs::write(&file, "x").unwrap();
-        assert_eq!(
-            modified(&file),
-            std::fs::metadata(&file).unwrap().modified().ok()
-        );
-    }
-
-    #[test]
-    fn a_command_succeeds_only_when_it_exits_zero() {
-        assert!(available("git", &["--version"]));
-        assert!(!available("git", &["no-such-git-command"]));
-        assert!(!available("no-such-program-xtask", &[]));
+        assert!(unix_now() > 1_790_000_000);
     }
 
     #[test]

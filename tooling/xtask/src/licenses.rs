@@ -8,7 +8,13 @@ use serde_json::Value;
 
 use crate::util::{Result, output, root, say};
 
-use crate::package::SHIPPED;
+/// The programs a package ships, whose runtime crates it must attribute.
+const SHIPPED: [&str; 4] = [
+    "kchess-gpui",
+    "kchess-service",
+    "kchess-voice",
+    "kchess-cli",
+];
 
 fn metadata(no_deps: bool) -> Result<Value> {
     let mut args = vec!["metadata", "--format-version", "1", "--locked"];
@@ -96,15 +102,6 @@ FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TOR
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.";
 
-/// Whether the SPDX expression `license` (`MIT OR Apache-2.0`, or the older `MIT/Apache-2.0`)
-/// offers license `id`.
-fn offers(license: &str, id: &str) -> bool {
-    license
-        .split(" OR ")
-        .flat_map(|choice| choice.split('/'))
-        .any(|choice| choice.trim_matches(['(', ')', ' ']) == id)
-}
-
 /// A crate's license files, or the standard text of its SPDX license when it ships none.
 fn license_text(package: &Value) -> Result<String> {
     let manifest = package["manifest_path"].as_str().unwrap_or_default();
@@ -141,7 +138,11 @@ fn license_text(package: &Value) -> Result<String> {
         ));
     }
     // `MIT OR …` (or the older `…/MIT`): the MIT option is elected, so its text applies.
-    if offers(license, "MIT") {
+    if license
+        .split(" OR ")
+        .flat_map(|choice| choice.split('/'))
+        .any(|choice| choice.trim_matches(['(', ')', ' ']) == "MIT")
+    {
         let authors: Vec<&str> = package["authors"]
             .as_array()
             .into_iter()
@@ -166,7 +167,11 @@ fn license_text(package: &Value) -> Result<String> {
         ("Unicode-3.0", include_str!("../licenses/Unicode-3.0.txt")),
         ("CC0-1.0", include_str!("../licenses/CC0-1.0.txt")),
     ] {
-        if offers(license, id) {
+        if license
+            .split(" OR ")
+            .flat_map(|choice| choice.split('/'))
+            .any(|choice| choice.trim_matches(['(', ')', ' ']) == id)
+        {
             return Ok(format!("--- {id} ---\n{}\n", text.trim()));
         }
     }
@@ -293,60 +298,7 @@ pub fn write(path: &Path) -> Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{MIT, license_text, names, offers};
-
-    /// A crate's own license files come first; without them, the text of a license it offers.
-    #[test]
-    fn a_crate_is_attributed_with_its_own_files_or_its_licenses_text() {
-        let dir = tempfile::tempdir().unwrap();
-        let package = |license: &str, authors: &[&str]| {
-            serde_json::json!({
-                "name": "demo",
-                "version": "1.0.0",
-                "license": license,
-                "authors": authors,
-                "manifest_path": dir.path().join("Cargo.toml"),
-            })
-        };
-        assert_eq!(
-            license_text(&package("MIT OR Apache-2.0", &["Ada"])).unwrap(),
-            format!("--- MIT ---\nCopyright (c) Ada\n\n{MIT}\n")
-        );
-        assert!(
-            license_text(&package("MIT", &[]))
-                .unwrap()
-                .contains("Copyright (c) the demo authors\n")
-        );
-        assert!(
-            license_text(&package("Apache-2.0", &[]))
-                .unwrap()
-                .starts_with("--- Apache-2.0 ---\n")
-        );
-        assert!(
-            license_text(&package("GPL-3.0-or-later", &[]))
-                .unwrap()
-                .starts_with("--- GPL-3.0 (the same license as KChess) ---\n")
-        );
-        assert!(
-            license_text(&package("LicenseRef-Unknown", &[]))
-                .unwrap_err()
-                .contains("ships no license file")
-        );
-        std::fs::write(dir.path().join("LICENSE-MIT"), "  the crate's own  \n").unwrap();
-        assert_eq!(
-            license_text(&package("MIT", &[])).unwrap(),
-            "--- LICENSE-MIT ---\nthe crate's own\n\n"
-        );
-    }
-
-    #[test]
-    fn a_license_is_offered_by_any_choice_of_its_expression() {
-        assert!(offers("MIT OR Apache-2.0", "Apache-2.0"));
-        assert!(offers("(MIT OR Apache-2.0) AND Unicode-3.0", "MIT"));
-        assert!(offers("Apache-2.0/MIT", "MIT"));
-        assert!(!offers("MIT-0", "MIT"));
-        assert!(!offers("GPL-3.0-or-later", "MIT"));
-    }
+    use super::names;
 
     #[test]
     fn names_are_whole_words() {

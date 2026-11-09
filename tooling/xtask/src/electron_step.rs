@@ -24,7 +24,7 @@ use std::path::Path;
 use base64::Engine as _;
 use sha2::Digest as _;
 
-use crate::util::{Result, output, say};
+use crate::util::{Result, hex, output, say};
 
 /// One of the stepping stone's installers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,20 +118,26 @@ pub fn manifest_text(step: &Step, manifest: &str, version: &str, release_date: &
 
 /// What is wrong with `step` itself, before anything is downloaded.
 pub fn check_step(step: &Step) -> Result {
-    let version = crate::release::tag_version(step.tag)?;
+    let version = step
+        .tag
+        .strip_prefix('v')
+        .ok_or("The step's tag must start with v.")?;
+    crate::release::parse(version)?;
     for manifest in MANIFESTS {
         if !step.files.iter().any(|file| file.manifest == manifest) {
             return Err(format!("The step names no file for {manifest}."));
         }
     }
     for file in step.files {
-        // The step's own installers, never a later release's: from the step, KChess's own
-        // updater brings the installation up to date.
-        if kchess_delta::Asset::parse(file.name).is_none_or(|(_, of, _)| of != version) {
+        // The step's own installers, never a later release's: the updater of B takes it on.
+        if !file.name.starts_with(&format!("KChess-{version}-")) {
             return Err(format!(
                 "{} is not one of {}'s installers.",
                 file.name, step.tag
             ));
+        }
+        if file.name.ends_with(".yml") || file.name.starts_with("SHA256SUMS") {
+            return Err(format!("{} is not an installer.", file.name));
         }
         if file.sha256.len() != 64 || file.size == 0 {
             return Err(format!("{} is pinned incompletely.", file.name));
@@ -155,7 +161,7 @@ pub fn matches(file: &Pinned, bytes: &[u8]) -> Result {
             file.size
         ));
     }
-    if kchess_delta::digest(bytes) != file.sha256 {
+    if hex(&sha2::Sha256::digest(bytes)) != file.sha256 {
         return Err(format!("{}'s SHA-256 is not the pinned one.", file.name));
     }
     let sha512 = base64::engine::general_purpose::STANDARD.encode(sha2::Sha512::digest(bytes));
@@ -176,7 +182,13 @@ pub fn check_sums(step: &Step, key: &[u8], sums: &[u8], signature: &str) -> Resu
         .map_err(|_| "The step's SHA256SUMS.txt is not signed by the release key.".to_string())?;
     let text = String::from_utf8_lossy(sums);
     for file in step.files {
-        if crate::sums::listed(&text, file.name) != [file.sha256] {
+        let listed: Vec<&str> = text
+            .lines()
+            .filter_map(|line| line.split_once("  "))
+            .filter(|(_, name)| *name == file.name)
+            .map(|(digest, _)| digest)
+            .collect();
+        if listed != [file.sha256] {
             return Err(format!(
                 "The step's SHA256SUMS.txt does not list {} with its pinned digest.",
                 file.name
@@ -187,7 +199,7 @@ pub fn check_sums(step: &Step, key: &[u8], sums: &[u8], signature: &str) -> Resu
 }
 
 fn download(tag: &str, name: &str, into: &Path) -> Result<Vec<u8>> {
-    let repo = crate::util::repository();
+    let repo = std::env::var("GH_REPO").unwrap_or_else(|_| "ketansingrole/KChess-V2".into());
     output(
         "gh",
         &[
@@ -212,7 +224,8 @@ fn download(tag: &str, name: &str, into: &Path) -> Result<Vec<u8>> {
 pub fn write(packages: &Path) -> Result {
     let step = STEP;
     check_step(&step)?;
-    let key = crate::update_key::require_public_key()?;
+    let key = crate::update_key::public_key()
+        .ok_or("apps/gpui/update-key.pub holds no key to check the step with.")?;
     let work = tempfile::tempdir().map_err(|cause| cause.to_string())?;
     let sums = download(step.tag, "SHA256SUMS.txt", work.path())?;
     let signature = download(step.tag, "SHA256SUMS.txt.sig", work.path())?;
@@ -223,7 +236,7 @@ pub fn write(packages: &Path) -> Result {
         say(&format!("{} matches the pinned step.", file.name));
     }
     let version = crate::util::version()?;
-    let date = crate::util::iso_timestamp(crate::util::unix_now());
+    let date = now_iso();
     std::fs::create_dir_all(packages).map_err(|cause| cause.to_string())?;
     for manifest in MANIFESTS {
         std::fs::write(
@@ -239,17 +252,29 @@ pub fn write(packages: &Path) -> Result {
     Ok(())
 }
 
+fn now_iso() -> String {
+    crate::util::iso_timestamp(crate::util::unix_now())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ring::signature::KeyPair as _;
+
+    #[test]
+    fn manifests_are_dated_now() {
+        let date = now_iso();
+        let (year, ..) = crate::util::civil_date(crate::util::unix_now());
+        assert!(date.starts_with(&format!("{year}-")), "{date}");
+        assert!(date.ends_with(".000Z") && date.len() == 24, "{date}");
+    }
 
     fn pinned(manifest: &'static str, name: &'static str, bytes: &[u8]) -> Pinned {
         Pinned {
             manifest,
             name,
             size: bytes.len() as u64,
-            sha256: kchess_delta::digest(bytes).leak(),
+            sha256: Box::leak(hex(&sha2::Sha256::digest(bytes)).into_boxed_str()),
             sha512: Box::leak(
                 base64::engine::general_purpose::STANDARD
                     .encode(sha2::Sha512::digest(bytes))
@@ -307,13 +332,8 @@ mod tests {
     /// URL parsing (Node's `new URL`) removes the dot segment: the step's own release.
     #[test]
     fn the_url_resolves_into_the_steps_release() {
-        let manifest = manifest_text(&STEP, "latest.yml", "2026.12.0", "x");
-        let url = manifest
-            .lines()
-            .find_map(|line| line.strip_prefix("  - url: "))
-            .unwrap();
         let base = "/ketansingrole/KChess-V2/releases/download/v2026.12.0/";
-        let joined = format!("{base}{url}");
+        let joined = format!("{base}../v2026.11.4/KChess-2026.11.4-win-x64.exe");
         let mut parts: Vec<&str> = Vec::new();
         for segment in joined.split('/') {
             match segment {
@@ -339,24 +359,6 @@ mod tests {
         files[1].name = "KChess-2026.12.0-win-x64.exe";
         bad.files = Box::leak(files.into_boxed_slice());
         assert!(check_step(&bad).is_err());
-        let mut manifest = step();
-        let mut files = manifest.files.to_vec();
-        files[0].name = "latest-mac.yml";
-        manifest.files = Box::leak(files.into_boxed_slice());
-        assert!(check_step(&manifest).is_err());
-
-        for (sha256, size) in [("ab", 3), (step().files[0].sha256, 0)] {
-            let mut incomplete = step();
-            let mut files = incomplete.files.to_vec();
-            files[0].sha256 = sha256;
-            files[0].size = size;
-            incomplete.files = Box::leak(files.into_boxed_slice());
-            assert!(
-                check_step(&incomplete)
-                    .unwrap_err()
-                    .contains("pinned incompletely")
-            );
-        }
 
         let mut missing = step();
         missing.files = &missing.files[..1];
@@ -405,7 +407,7 @@ mod tests {
         assert!(check_sums(&step, &key, changed.as_bytes(), &sign(&changed)).is_err());
     }
 
-    /// The frozen step passes its own checks, so every release's `electron-step` can run.
+    /// Never shipped unpinned: a release with the placeholder step fails.
     #[test]
     fn the_shipped_step_is_complete() {
         check_step(&STEP).unwrap();

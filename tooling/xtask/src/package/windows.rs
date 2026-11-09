@@ -14,9 +14,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use kchess_delta::Asset;
-
-use super::{Built, Identity, stage_folder};
+use super::{Built, Identity, copy_program, copy_voice};
 use crate::util::{Result, root, run_with, say};
 
 fn folder_size(path: &Path) -> u64 {
@@ -49,16 +47,11 @@ pub enum Payload<'a> {
 /// Where packaging leaves the update installer for `cargo xtask deltas`, which puts it in
 /// each Windows patch.
 pub fn update_installer(identity: &Identity) -> PathBuf {
-    root()
-        .join("target/package")
-        .join(identity.asset(Asset::WindowsUpdateInstaller))
-}
-
-/// The uninstaller every installer writes beside product `product` (`Uninstall KChess.exe`, as
-/// the Electron app's did): the next installer runs it, and the updater leaves it out of the
-/// installation's files.
-pub fn uninstaller(product: &str) -> String {
-    format!("Uninstall {product}.exe")
+    root().join(format!(
+        "target/package/{}-{}-win-x64-update.exe",
+        identity.prefix(),
+        identity.version
+    ))
 }
 
 /// The installer script for the program files of `payload`.
@@ -73,7 +66,6 @@ pub fn script(
     let exe = identity.windows_exe;
     let version = &identity.version;
     let guid = identity.guid;
-    let uninstaller = uninstaller(product);
     let files = match payload {
         Payload::Inside(files) => format!(r#"File /r "{}\*.*""#, files.display()),
         // A copy that fails leaves no half-written installation reported as done.
@@ -104,7 +96,7 @@ RequestExecutionLevel user
 !define VERSION "{version}"
 !define INSTALL_KEY "Software\{guid}"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\{guid}"
-!define UNINSTALLER "{uninstaller}"
+!define UNINSTALLER "Uninstall {product}.exe"
 
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
@@ -264,8 +256,22 @@ pub fn package(
     out: &Path,
 ) -> Result<Vec<PathBuf>> {
     let folder = stage.join(identity.name);
-    stage_folder(built, &folder, identity.windows_exe)?;
-    let installer = out.join(identity.asset(Asset::WindowsInstaller));
+    copy_program(
+        &built.app,
+        &folder.join(format!("{}.exe", identity.windows_exe)),
+    )?;
+    copy_program(&built.stockfish, &folder.join("stockfish.exe"))?;
+    copy_program(&built.fairy, &folder.join("fairy-stockfish.exe"))?;
+    copy_program(&built.service, &folder.join("kchess-service.exe"))?;
+    copy_program(&built.cli, &folder.join("kchess-cli.exe"))?;
+    copy_voice(built, &folder)?;
+    std::fs::copy(&built.licenses, folder.join("THIRD_PARTY_LICENSES.txt"))
+        .map_err(|cause| cause.to_string())?;
+    let installer = out.join(format!(
+        "{}-{}-win-x64.exe",
+        identity.prefix(),
+        identity.version
+    ));
     let script_path = stage.join("installer.nsi");
     for (file, text) in scripts(identity, &folder, &installer, folder_size(&folder) / 1024) {
         // makensis reads the script as UTF-8 with a byte order mark.

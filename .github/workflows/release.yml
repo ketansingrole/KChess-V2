@@ -120,15 +120,16 @@ jobs:
           unpacked="$RUNNER_TEMP/kchess-zip"
           rm -rf "$unpacked" && mkdir -p "$unpacked"
           ditto -x -k apps/gpui/dist/KChess-*-mac-arm64.zip "$unpacked"
-          mac_app="$unpacked/KChess.app"
-          codesign --verify --deep --strict --verbose=2 "$mac_app"
-          signing_team="$(codesign --display --verbose=4 "$mac_app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
-          if [ "$signing_team" != "$EXPECTED_TEAM_ID" ]; then
-            echo "::error::$mac_app's signing team does not match APPLE_TEAM_ID."
-            exit 1
-          fi
-          spctl --assess --type execute --verbose=2 "$mac_app"
-          xcrun stapler validate "$mac_app"
+          for mac_app in "$unpacked/KChess.app"; do
+            codesign --verify --deep --strict --verbose=2 "$mac_app"
+            signing_team="$(codesign --display --verbose=4 "$mac_app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+            if [ "$signing_team" != "$EXPECTED_TEAM_ID" ]; then
+              echo "::error::$mac_app's signing team does not match APPLE_TEAM_ID."
+              exit 1
+            fi
+            spctl --assess --type execute --verbose=2 "$mac_app"
+            xcrun stapler validate "$mac_app"
+          done
       # Small updates: each package's patch from the newest published releases' files
       # (`cargo xtask deltas`, crates/kchess-delta). An installation with no patch for its version
       # downloads the whole package, so a failure here costs size, never an update: it warns.
@@ -200,7 +201,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: cargo xtask electron-step packages
       - name: Add checksums
-        run: cargo xtask sums packages
+        working-directory: packages
+        run: sha256sum * > SHA256SUMS.txt
       # Installed apps refuse checksums the release key has not signed (apps/gpui/update-key.pub).
       - name: Sign the checksums
         env:

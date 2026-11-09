@@ -414,4 +414,9 @@ mod tests {
         assert_eq!(icon_of("circle-dot@16.svg"), Some("circle-dot"));
         assert_eq!(icon_of("README.md"), None);
     }
+
+    #[test]
+    fn the_apps_icons_are_all_present() {
+        super::check().unwrap();
+    }
 }

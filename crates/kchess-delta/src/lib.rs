@@ -23,7 +23,6 @@
 
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
-mod assets;
 mod tree;
 
 use std::collections::HashMap;
@@ -34,7 +33,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub use assets::{Arch, Asset};
 pub use tree::{Node, Tree};
 
 /// The first bytes of every delta.
@@ -50,12 +48,17 @@ pub const APPIMAGE: &str = "KChess.AppImage";
 /// the files beside it).
 pub const WINDOWS_INSTALLER: &str = "installer.exe";
 
+/// The package kinds a delta is made for, by the extension of their release asset.
+const PACKAGES: [&str; 4] = [".deb", ".AppImage", ".zip", ".exe"];
+
 /// The release asset of the delta that makes `package` (a release asset,
 /// `KChess-2026.11.5-linux-amd64.deb`) from release `from`'s installed files:
-/// `KChess-2026.11.5-linux-amd64.from-2026.11.4.delta` ([`Asset::patch`]).
+/// `KChess-2026.11.5-linux-amd64.from-2026.11.4.delta`.
 pub fn name(package: &str, from: &str) -> Option<String> {
-    let (asset, version, arch) = Asset::parse(package)?;
-    asset.patch(version, arch, from)
+    let stem = PACKAGES
+        .iter()
+        .find_map(|extension| package.strip_suffix(extension))?;
+    Some(format!("{stem}.from-{from}.delta"))
 }
 
 /// Why a delta could not be written, read or used.
