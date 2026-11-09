@@ -47,6 +47,16 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
     let host = ctx.host;
     let result = match method {
         "store.library.library" => now_arg(args, 0).and_then(|now| cached_library(ctx, now)),
+        // A page resuming its session reads that alone: the library replays every played game.
+        "store.library.session" => str_arg(args, 0, "kind").and_then(|kind| {
+            let session = read_session(host, db, kind)?;
+            Ok(if truthy(Some(&session)) {
+                session
+            } else {
+                Value::Null
+            })
+        }),
+        "store.library.mistakes" => read_mistakes(db).map(Value::Array),
         "store.library.studyCommand" => now_arg(args, 1).and_then(|now| {
             let mut command = args.first().cloned().unwrap_or(Value::Null);
             if let Some(based_on) = args.get(3).and_then(Value::as_str) {
@@ -242,7 +252,7 @@ pub(crate) use super::documents::{assert_replaceable, write_document};
 pub use super::json_codec::{clean_name, js_json, js_slice, utf16_len};
 pub use super::library_import::{cached_library, library};
 pub(crate) use super::library_import::{
-    read_joined, read_misses, read_mistakes, read_schedule_lines, until_after,
+    read_joined, read_misses, read_mistakes, read_schedule_lines, read_session, until_after,
 };
 pub(crate) use super::studies::{check_based_on, id_of, spread, study_command};
 
@@ -1688,5 +1698,37 @@ mod tests {
         assert_eq!(joined(now), 1);
         assert_eq!(joined(now + 120_000.0), 0, "ended by then");
         assert_eq!(joined(now), 1, "the kept snapshot still has it");
+    }
+
+    /// The pages that resume a session read it, and the drills, alone: each answer is what the
+    /// whole library holds for it, without replaying every played game.
+    #[test]
+    fn a_session_and_the_drills_read_alone_are_the_librarys() {
+        let db = drills_db();
+        let now = 1_700_000_000_000.0;
+        let library = || run(&db, "store.library.library", &[json!(now)]).expect("library");
+        let session = |kind: &str| run(&db, "store.library.session", &[json!(kind)]).expect(kind);
+        let mistakes = || run(&db, "store.library.mistakes", &[]).expect("mistakes");
+        assert_eq!(session("analysis"), Value::Null, "none kept yet");
+        assert_eq!(mistakes(), json!([]));
+
+        let kept = json!({ "pgn": "1. e4 e5 *", "path": "e2e4", "orientation": "black" });
+        run(&db, "store.library.saveSession", &[json!("analysis"), kept]).expect("save");
+        let key = store_blunder_review(&db, "local", 18);
+        run(
+            &db,
+            "store.library.addMistakes",
+            &[json!(key), Value::Null, json!(1)],
+        )
+        .expect("add");
+        let library = library();
+        assert!(
+            !library["sessions"]["analysis"].is_null(),
+            "the session is kept"
+        );
+        assert_eq!(session("analysis"), library["sessions"]["analysis"]);
+        assert_eq!(session("local"), Value::Null);
+        assert!(mistakes().as_array().is_some_and(|items| !items.is_empty()));
+        assert_eq!(mistakes(), library["mistakes"]);
     }
 }

@@ -148,6 +148,9 @@ pub struct StudiesPage {
     lichess: lichess::LichessTab,
     uploading: Option<String>,
     previews: HashMap<String, Entity<ChessBoard>>,
+    /// Each listed study's summary by its PGN: reading it parses the study and plays it out, and
+    /// every frame of the page asks for each study's twice.
+    summaries: std::cell::RefCell<HashMap<String, Value>>,
     area: Measured,
     focus: FocusHandle,
     _clock: Task<()>,
@@ -220,6 +223,7 @@ impl StudiesPage {
             lichess,
             uploading: None,
             previews: HashMap::new(),
+            summaries: Default::default(),
             area: Measured::default(),
             focus: cx.focus_handle(),
             _clock: clock,
@@ -717,6 +721,26 @@ impl StudiesPage {
             })
     }
 
+    /// The PGNs whose summaries are kept, in order.
+    #[cfg(test)]
+    pub(crate) fn kept_summaries(&self) -> Vec<String> {
+        let mut kept: Vec<String> = self.summaries.borrow().keys().cloned().collect();
+        kept.sort();
+        kept
+    }
+
+    /// A study's summary (`summarizeStudy`), kept while the study is listed.
+    fn summary(&self, pgn: &str) -> Value {
+        if let Some(kept) = self.summaries.borrow().get(pgn) {
+            return kept.clone();
+        }
+        let made = summary(pgn);
+        self.summaries
+            .borrow_mut()
+            .insert(pgn.to_string(), made.clone());
+        made
+    }
+
     fn render_cards(
         &mut self,
         studies: Vec<Value>,
@@ -731,7 +755,7 @@ impl StudiesPage {
             .map(|study| {
                 let id = study["id"].as_str().unwrap_or_default().to_string();
                 let name = study["name"].as_str().unwrap_or_default().to_string();
-                let summary = summary(study["pgn"].as_str().unwrap_or_default());
+                let summary = self.summary(study["pgn"].as_str().unwrap_or_default());
                 let board = summary["fen"].as_str().map(|fen| {
                     shown_fens.insert(fen.to_string());
                     self.preview(fen, cx).into()
@@ -881,10 +905,18 @@ impl StudiesPage {
         let query = self.search.read(cx).value().to_lowercase();
         let words: Vec<&str> = query.split_whitespace().collect();
         let by_name = crate::prefs::get::<String>(cx, SORT, "recent".into()) == "name";
+        // Summaries of studies no longer in the library (edited, removed) are let go.
+        let listed: std::collections::HashSet<&str> = items
+            .iter()
+            .filter_map(|study| study["pgn"].as_str())
+            .collect();
+        self.summaries
+            .borrow_mut()
+            .retain(|pgn, _| listed.contains(pgn.as_str()));
         let mut studies: Vec<Value> = items
             .iter()
             .filter(|study| {
-                let summary = summary(study["pgn"].as_str().unwrap_or_default());
+                let summary = self.summary(study["pgn"].as_str().unwrap_or_default());
                 let text = format!(
                     "{} {} {}",
                     study["name"].as_str().unwrap_or_default(),
