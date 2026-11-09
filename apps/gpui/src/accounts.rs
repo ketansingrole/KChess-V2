@@ -3,9 +3,11 @@
 //! account downloaded and keeps; and the Chess.com players whose games are synced. Pages read it; the sidebar's account menu and Settings → My
 //! accounts act on it.
 
+use futures::FutureExt as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, SharedString, Window};
 use kchess_contracts::Level;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 
 use crate::core::{Answer, AppCore, Reads};
@@ -138,9 +140,9 @@ impl Accounts {
         let read = self.reads.start();
         let core = cx.global::<AppCore>().clone();
         let (data, usage, chesscom) = (
-            core.call("loadData", Vec::new()),
-            core.call("usage", Vec::new()),
-            core.call("chesscomAccounts", Vec::new()),
+            core.request(calls::LoadData {}),
+            core.request(calls::Usage {}),
+            core.request(calls::ChesscomAccounts {}),
         );
         cx.spawn(async move |this, cx| {
             let (data, usage, chesscom) = (data.await, usage.await, chesscom.await);
@@ -184,7 +186,9 @@ impl Accounts {
             .iter()
             .map(|name| name.to_lowercase())
             .collect();
-        let connected = cx.global::<AppCore>().call("connectLichess", Vec::new());
+        let connected = cx
+            .global::<AppCore>()
+            .request(calls::ConnectLichess { look: None });
         cx.spawn_in(window, async move |this, cx| {
             let result = connected.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -235,11 +239,12 @@ impl Accounts {
         cx.notify();
         let core = cx.global::<AppCore>().clone();
         let before: f64 = self.total_downloaded();
-        let args = username.map(|name| vec![json!(name)]).unwrap_or_default();
-        let synced = core.call("syncGames", args);
+        let synced = core.request(calls::SyncGames {
+            username: username.map(|name| json!(name)),
+        });
         cx.spawn_in(window, async move |this, cx| {
             let result = synced.await;
-            let usage = core.call("usage", Vec::new()).await;
+            let usage = core.request(calls::Usage {}).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.syncs -= 1;
                 if let Ok(usage) = usage {
@@ -279,11 +284,13 @@ impl Accounts {
         self.syncs += 1;
         cx.notify();
         let core = cx.global::<AppCore>().clone();
-        let added = core.call("addChesscomAccount", vec![json!(name.trim())]);
+        let added = core.request(calls::AddChesscomAccount {
+            username: json!(name.trim()),
+        });
         cx.spawn_in(window, async move |this, cx| {
             let result = added.await;
-            let players = core.call("chesscomAccounts", Vec::new()).await;
-            let usage = core.call("usage", Vec::new()).await;
+            let players = core.request(calls::ChesscomAccounts {}).await;
+            let usage = core.request(calls::Usage {}).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.syncs -= 1;
                 if let Ok(usage) = usage {
@@ -316,11 +323,12 @@ impl Accounts {
         self.syncs += 1;
         cx.notify();
         let core = cx.global::<AppCore>().clone();
-        let args = username.map(|name| vec![json!(name)]).unwrap_or_default();
-        let synced = core.call("syncChesscomGames", args);
+        let synced = core.request(calls::SyncChesscomGames {
+            username: username.map(|name| json!(name)),
+        });
         cx.spawn_in(window, async move |this, cx| {
             let result = synced.await;
-            let usage = core.call("usage", Vec::new()).await;
+            let usage = core.request(calls::Usage {}).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.syncs -= 1;
                 if let Ok(usage) = usage {
@@ -349,7 +357,9 @@ impl Accounts {
     ) {
         let removed = cx
             .global::<AppCore>()
-            .call("removeChesscomAccount", vec![json!(username)]);
+            .request(calls::RemoveChesscomAccount {
+                username: json!(username),
+            });
         cx.spawn_in(window, async move |this, cx| {
             let result = removed.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -378,7 +388,9 @@ impl Accounts {
         let typed = name.trim().trim_start_matches('@').to_lowercase();
         self.busy = true;
         cx.notify();
-        let added = cx.global::<AppCore>().call("addAccount", vec![json!(name)]);
+        let added = cx.global::<AppCore>().request(calls::AddAccount {
+            username: json!(name),
+        });
         cx.spawn_in(window, async move |this, cx| {
             let result = added.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -432,10 +444,11 @@ impl Accounts {
         let Some(account) = self.active(cx) else {
             return;
         };
-        let call = cx.global::<AppCore>().call(
-            "setRelation",
-            vec![json!(account), json!(username), json!(action)],
-        );
+        let call = cx.global::<AppCore>().request(calls::SetRelation {
+            account: json!(account),
+            username: json!(username),
+            action: json!(action),
+        });
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;
             let _ = this.update_in(cx, |_, window, cx| {
@@ -475,9 +488,9 @@ impl Accounts {
 
     /// `clearSyncedData`: free a followed player's games and profile, still following them.
     pub fn clear_data(&mut self, username: String, window: &mut Window, cx: &mut Context<Self>) {
-        let cleared = cx
-            .global::<AppCore>()
-            .call("clearAccountData", vec![json!(username)]);
+        let cleared = cx.global::<AppCore>().request(calls::ClearAccountData {
+            username: json!(username),
+        });
         cx.spawn_in(window, async move |this, cx| {
             let result = cleared.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -504,9 +517,9 @@ impl Accounts {
         let count = names.len();
         self.busy = true;
         cx.notify();
-        let added = cx
-            .global::<AppCore>()
-            .call("addFriends", vec![json!(names)]);
+        let added = cx.global::<AppCore>().request(calls::AddFriends {
+            usernames: json!(names),
+        });
         cx.spawn_in(window, async move |this, cx| {
             let result = added.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -551,10 +564,14 @@ impl Accounts {
             return;
         }
         let core = cx.global::<AppCore>().clone();
+        // One future type for either call.
         let call = if all {
-            core.call("logoutAll", Vec::new())
+            core.request(calls::LogoutAll {}).boxed_local()
         } else {
-            core.call("logout", vec![json!(account)])
+            core.request(calls::Logout {
+                username: json!(account),
+            })
+            .boxed_local()
         };
         self.after_sign_out(call, None, window, cx);
     }
@@ -565,9 +582,9 @@ impl Accounts {
             .connected()
             .iter()
             .any(|name| name.eq_ignore_ascii_case(&username));
-        let call = cx
-            .global::<AppCore>()
-            .call("removeAccount", vec![json!(username)]);
+        let call = cx.global::<AppCore>().request(calls::RemoveAccount {
+            username: json!(username),
+        });
         let note = (!connected).then(|| {
             format!("@{username} removed. Their stored games were deleted from this device.")
         });

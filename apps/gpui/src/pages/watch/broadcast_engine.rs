@@ -3,6 +3,7 @@
 //! the grid's evaluation bars. One engine serves both, and none of it runs during the player's own
 //! Lichess game.
 
+use kchess_contracts::calls;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -204,7 +205,9 @@ impl Broadcasts {
 impl WatchPage {
     /// Whether the engine can run, read when the page is shown.
     pub(super) fn read_engine_status(&mut self, cx: &mut Context<Self>) {
-        let status = cx.global::<AppCore>().call("engineStatus", Vec::new());
+        let status = cx
+            .global::<AppCore>()
+            .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
             let status = status.await.unwrap_or(Value::Null);
             let _ = this.update(cx, |this, cx| {

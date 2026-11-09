@@ -2,6 +2,7 @@
 //! board, any variant, with or without a clock; or a chess clock for a real board. Both keep their
 //! place in Game history, and the board game resumes in either app.
 
+use kchess_contracts::calls;
 use std::time::{Duration, Instant};
 
 use gpui_kit::base::TestSupportExt as _;
@@ -148,7 +149,7 @@ impl LocalPage {
         let bridge = &cx.global::<AppCore>().bridge;
         let read = |kind: &str| {
             bridge
-                .call_now("session", vec![json!(kind)])
+                .request_now(calls::Session { kind: json!(kind) })
                 .unwrap_or(Value::Null)
         };
         let library = json!({ "sessions": {
@@ -490,9 +491,10 @@ impl LocalPage {
     fn save_now(&mut self, cx: &mut Context<Self>) -> crate::core::BoxedSave {
         self.save = None;
         let snapshot = self.game.snapshot(self.now());
-        let save = cx
-            .global::<AppCore>()
-            .call("saveSession", vec![json!("local"), snapshot]);
+        let save = cx.global::<AppCore>().request(calls::SaveSession {
+            kind: json!("local"),
+            session: snapshot,
+        });
         Box::pin(async move {
             save.await.map(|_| ()).map_err(|cause| {
                 crate::log::write(

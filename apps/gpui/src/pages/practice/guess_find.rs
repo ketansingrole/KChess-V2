@@ -5,6 +5,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -90,7 +91,9 @@ impl GameFinder {
             if !current {
                 return;
             }
-            let found = core.call("searchPlayers", vec![json!(term)]).await;
+            let found = core
+                .request(calls::SearchPlayers { term: json!(term) })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 if this.search_epoch != epoch {
                     return;
@@ -126,9 +129,10 @@ impl GameFinder {
         self.opening = None;
         self.error = None;
         cx.notify();
-        let games = cx
-            .global::<AppCore>()
-            .call("recentGames", vec![json!(name)]);
+        let games = cx.global::<AppCore>().request(calls::RecentGames {
+            username: json!(name),
+            rated: None,
+        });
         cx.spawn(async move |this, cx| {
             let answer = games.await;
             let _ = this.update(cx, |this, cx| {
@@ -182,7 +186,9 @@ impl GameFinder {
         self.opening = Some(index);
         self.error = None;
         cx.notify();
-        let export = cx.global::<AppCore>().call("exportGame", vec![json!(id)]);
+        let export = cx
+            .global::<AppCore>()
+            .request(calls::ExportGame { id: json!(id) });
         cx.spawn(async move |this, cx| {
             let answer = export.await;
             let _ = this.update(cx, |this, cx| {

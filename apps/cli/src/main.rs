@@ -5,6 +5,7 @@ mod play;
 mod puzzle;
 mod review;
 
+use kchess_contracts::calls;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -265,21 +266,24 @@ async fn run(argv: &[String]) -> Result<(), String> {
         if let Some(engine) = engine {
             // An explicit operator path is trusted and kept without a fingerprint prompt, as the
             // app's own "your own Stockfish" setting; the core checks it on use.
-            core.call("trustEnginePath", vec![json!(engine)]).await?;
-            let mut settings = core.call("settings", vec![]).await?;
+            core.request(calls::TrustEnginePath {
+                path: json!(engine),
+            })
+            .await?;
+            let mut settings = core.request(calls::StoredSettings {}).await?;
             settings["enginePath"] = json!(engine);
-            core.call("saveSettings", vec![settings]).await?;
+            core.request(calls::SaveSettings { settings }).await?;
         }
         match command {
-            "library" => print(&core.call("library", vec![]).await?),
+            "library" => print(&core.request(calls::Library {}).await?),
             "status" => {
-                let data = core.call("loadData", vec![]).await?;
-                let engine = core.call("engineStatus", vec![]).await?;
+                let data = core.request(calls::LoadData {}).await?;
+                let engine = core.request(calls::EngineStatus { variant: None }).await?;
                 print(&json!({ "data": data, "engine": engine }));
             }
             "login" => {
                 // The sign-in page is opened (or printed) while the core waits for it.
-                let login = core.call("connectLichess", vec![]);
+                let login = core.request(calls::ConnectLichess { look: None });
                 tokio::pin!(login);
                 let answer = loop {
                     tokio::select! {
@@ -300,7 +304,7 @@ async fn run(argv: &[String]) -> Result<(), String> {
                 }
                 let parameters = arguments(&args[2..]).await?;
                 if kchess_domain::misc::ASSISTANCE_METHODS.contains(&method) {
-                    core.call("resumeOnline", vec![]).await?;
+                    core.request(calls::ResumeOnline {}).await?;
                 }
                 // A method may ask the host meanwhile (a sign-in opens its page), as login does.
                 let call = core.call(method, parameters);
@@ -319,15 +323,15 @@ async fn run(argv: &[String]) -> Result<(), String> {
             }
             "analyze" => {
                 let request = analysis_request(&args[1..])?;
-                core.call("resumeOnline", vec![]).await?;
-                core.call("startAnalysis", vec![request]).await?;
+                core.request(calls::ResumeOnline {}).await?;
+                core.request(calls::StartAnalysis { request }).await?;
                 until_interrupted(&core, &mut events, |event| {
                     if event.name == "engine:analysis" {
                         print(&event.payload);
                     }
                 })
                 .await;
-                let _ = core.call("stopAnalysis", vec![]).await;
+                let _ = core.request(calls::StopAnalysis { kill: None }).await;
             }
             "play" | "local" => {
                 let computer = command == "play";
@@ -353,20 +357,26 @@ async fn run(argv: &[String]) -> Result<(), String> {
             }
             "watch" => {
                 let target = watch_target(&args[1..])?;
-                core.call("resumeOnline", vec![]).await?;
+                core.request(calls::ResumeOnline {}).await?;
                 match target {
-                    Watched::Feed(target) => core.call("watch", vec![target]).await?,
+                    Watched::Feed(target) => core.request(calls::Watch { target }).await?,
                     Watched::Round(round) => {
-                        core.call("watchBroadcast", vec![json!(round)]).await?
+                        core.request(calls::WatchBroadcast {
+                            round_id: json!(round),
+                        })
+                        .await?
                     }
                     Watched::Tour(id) => {
-                        let tour = core.call("broadcastTour", vec![json!(id)]).await?;
+                        let tour = core.request(calls::BroadcastTour { id: json!(id) }).await?;
                         let round = live_round(&tour).ok_or("That broadcast has no rounds yet.")?;
-                        core.call("watchBroadcast", vec![json!(round)]).await?
+                        core.request(calls::WatchBroadcast {
+                            round_id: json!(round),
+                        })
+                        .await?
                     }
                 };
                 let watched = watch_frames(&core, &mut events).await;
-                let _ = core.call("stopWatching", vec![]).await;
+                let _ = core.request(calls::StopWatching { session: None }).await;
                 watched?;
             }
             "explore" => {
@@ -375,10 +385,14 @@ async fn run(argv: &[String]) -> Result<(), String> {
                     Some(variant) => json!({ "variant": variant }),
                     None => json!({}),
                 };
-                core.call("resumeOnline", vec![]).await?;
+                core.request(calls::ResumeOnline {}).await?;
                 print(
                     &core
-                        .call("positionLookup", vec![json!(kind), json!(fen), options])
+                        .request(calls::PositionLookup {
+                            kind: json!(kind),
+                            fen: json!(fen),
+                            options: Some(options),
+                        })
                         .await?,
                 );
             }
@@ -396,10 +410,14 @@ async fn run(argv: &[String]) -> Result<(), String> {
 async fn linked_pgn(core: &CoreClient, link: &str) -> Result<String, String> {
     use kchess_domain::links::{game_link, study_link};
     let pgn = if let Some(game) = game_link(link) {
-        core.call("exportGame", vec![json!(game.id)]).await?
+        core.request(calls::ExportGame { id: json!(game.id) })
+            .await?
     } else if let Some((study, chapter)) = study_link(link) {
-        core.call("lichessStudyChapter", vec![json!(study), json!(chapter)])
-            .await?["pgn"]
+        core.request(calls::LichessStudyChapter {
+            id: json!(study),
+            chapter: json!(chapter),
+        })
+        .await?["pgn"]
             .take()
     } else {
         return Err("pgn takes a lichess.org game or study link.".into());

@@ -2,6 +2,7 @@
 //! timeline, one tournament's details (join, standings, the top game, games in progress and
 //! totals), and creating an arena.
 
+use kchess_contracts::calls;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -212,9 +213,9 @@ impl TournamentsPage {
         self.loading = true;
         self.error = None;
         cx.notify();
-        let call = cx
-            .global::<AppCore>()
-            .call("tournaments", vec![Self::account_arg(cx)]);
+        let call = cx.global::<AppCore>().request(calls::Tournaments {
+            account: Self::account_arg(cx),
+        });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
@@ -230,7 +231,7 @@ impl TournamentsPage {
     }
 
     fn reload_joined(&mut self, cx: &mut Context<Self>) {
-        let call = cx.global::<AppCore>().call("joinedTournaments", Vec::new());
+        let call = cx.global::<AppCore>().request(calls::JoinedTournaments {});
         cx.spawn(async move |this, cx| {
             if let Ok(joined) = call.await {
                 let _ = this.update(cx, |this, cx| {
@@ -331,10 +332,12 @@ impl TournamentsPage {
         open.epoch += 1;
         let epoch = open.epoch;
         let (system, id, page) = (open.system.clone(), open.id.clone(), open.page);
-        let call = cx.global::<AppCore>().call(
-            "tournament",
-            vec![json!(system), json!(id), account, json!(page)],
-        );
+        let call = cx.global::<AppCore>().request(calls::Tournament {
+            system: json!(system),
+            id: json!(id),
+            account,
+            page: Some(json!(page)),
+        });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ =

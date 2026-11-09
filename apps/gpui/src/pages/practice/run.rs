@@ -2,6 +2,7 @@
 //! the length of a run and its clock, a countdown that ends it or a stopwatch for untimed practice,
 //! and the best scores the core keeps for each drill (`runSummary`, `saveRun`).
 
+use kchess_contracts::calls;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::h_flex;
@@ -127,7 +128,9 @@ pub fn load_summary<V: 'static>(
     cx: &mut Context<V>,
     keep: fn(&mut V, Value, &mut Context<V>),
 ) {
-    let summary = cx.global::<AppCore>().call("runSummary", vec![json!(kind)]);
+    let summary = cx
+        .global::<AppCore>()
+        .request(calls::RunSummary { kind: json!(kind) });
     cx.spawn(async move |this, cx| match summary.await {
         Ok(summary) => {
             let _ = this.update(cx, |view, cx| keep(view, summary, cx));
@@ -147,7 +150,7 @@ pub fn save_run<V: 'static>(
     cx: &mut Context<V>,
     keep: fn(&mut V, Value, &mut Context<V>),
 ) {
-    let saved = cx.global::<AppCore>().call("saveRun", vec![run]);
+    let saved = cx.global::<AppCore>().request(calls::SaveRun { run });
     cx.spawn(async move |this, cx| match saved.await {
         Ok(saved) => {
             let _ = this.update(cx, |view, cx| keep(view, saved, cx));

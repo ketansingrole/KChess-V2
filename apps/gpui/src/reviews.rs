@@ -2,6 +2,7 @@
 //! memory, and the review queue's progress. Updates stream in as core events (`review:update`,
 //! `review:status`).
 
+use kchess_contracts::calls;
 use std::collections::VecDeque;
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Subscription};
@@ -94,7 +95,7 @@ impl ReviewStore {
     /// Read the queue's status, unless a status event arrives first.
     fn read_status(&mut self, cx: &mut Context<Self>) {
         let seen = self.status_events;
-        let status = cx.global::<AppCore>().call("reviewStatus", Vec::new());
+        let status = cx.global::<AppCore>().request(calls::ReviewStatus {});
         cx.spawn(async move |this, cx| match status.await {
             Ok(status) => {
                 let _ = this.update(cx, |store, cx| {
@@ -123,10 +124,11 @@ impl ReviewStore {
         if review["complete"].as_bool() == Some(true) {
             return;
         }
-        let found = cx.global::<AppCore>().call(
-            "reviewGet",
-            vec![review["fen"].clone(), review["moves"].clone()],
-        );
+        let found = cx.global::<AppCore>().request(calls::ReviewGet {
+            fen: review["fen"].clone(),
+            moves: review["moves"].clone(),
+            variant: None,
+        });
         cx.spawn(async move |this, cx| match found.await {
             Ok(found) if !found.is_null() => {
                 let _ = this.update(cx, |store, cx| {

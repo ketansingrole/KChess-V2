@@ -2,6 +2,7 @@
 //! against Stockfish. The courses and drills are the shared data the Rust rules check
 //! (`data/lessons.json`, `data/training.json`); finished chapters and drills are runs the core keeps.
 
+use kchess_contracts::calls;
 use std::sync::OnceLock;
 
 use gpui_kit::component::{Icon, h_flex, v_flex};
@@ -173,8 +174,12 @@ impl Endgames {
     fn load(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<AppCore>().clone();
         let (lessons, drills) = (
-            core.call("runSummary", vec![json!("lesson")]),
-            core.call("runSummary", vec![json!("endgame")]),
+            core.request(calls::RunSummary {
+                kind: json!("lesson"),
+            }),
+            core.request(calls::RunSummary {
+                kind: json!("endgame"),
+            }),
         );
         cx.spawn(async move |this, cx| match (lessons.await, drills.await) {
             (Ok(lessons), Ok(drills)) => {
