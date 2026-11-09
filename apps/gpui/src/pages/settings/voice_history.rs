@@ -2,6 +2,7 @@
 //! was read and what the player meant. The point is to find what gets misheard: the weakest
 //! words, and the phrases that stood for another move.
 
+use kchess_contracts::calls;
 use std::collections::HashMap;
 
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
@@ -214,9 +215,9 @@ impl VoiceHistory {
     pub fn load(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
         self.error = None;
-        let read = cx
-            .global::<AppCore>()
-            .call("voiceHistory", vec![json!(LIMIT)]);
+        let read = cx.global::<AppCore>().request(calls::VoiceHistory {
+            limit: json!(LIMIT),
+        });
         cx.spawn(async move |this, cx| {
             let read = read.await;
             let _ = this.update(cx, |this, cx| {
@@ -225,7 +226,7 @@ impl VoiceHistory {
                     Ok(list) => this.entries = serde_json::from_value(list).unwrap_or_default(),
                     Err(cause) => {
                         crate::log::write(
-                            kchess_core::Level::Warn,
+                            kchess_contracts::Level::Warn,
                             "voice-history",
                             &format!("Could not read voice history: {}", cause.message),
                         );
@@ -240,7 +241,9 @@ impl VoiceHistory {
     }
 
     fn export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let document = cx.global::<AppCore>().call("voiceHistoryDocument", vec![]);
+        let document = cx
+            .global::<AppCore>()
+            .request(calls::VoiceHistoryDocument {});
         cx.spawn_in(window, async move |_, cx| {
             let outcome = match document.await {
                 Err(cause) => Some(Err(cause.message)),
@@ -287,14 +290,14 @@ impl VoiceHistory {
     }
 
     fn clear(&mut self, cx: &mut Context<Self>) {
-        let clearing = cx.global::<AppCore>().call("clearVoiceHistory", vec![]);
+        let clearing = cx.global::<AppCore>().request(calls::ClearVoiceHistory {});
         cx.spawn(async move |this, cx| {
             let cleared = clearing.await;
             let _ = this.update(cx, |this, cx| match cleared {
                 Ok(_) => this.load(cx),
                 Err(cause) => {
                     crate::log::write(
-                        kchess_core::Level::Warn,
+                        kchess_contracts::Level::Warn,
                         "voice-history",
                         &format!("Clearing voice history failed: {}", cause.message),
                     );

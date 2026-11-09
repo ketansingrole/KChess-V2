@@ -2,6 +2,7 @@
 //! names, so a page opens as it was left in any app on the profile. Another app's change is taken when it is reported (`profile:changed`), unless
 //! this app changed that preference since.
 
+use kchess_contracts::calls;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -174,7 +175,7 @@ pub fn init(cx: &mut App) {
     let values = match cx
         .global::<AppCore>()
         .bridge
-        .call_now("viewPreferences", Vec::new())
+        .request_now(calls::ViewPreferences {})
     {
         Ok(Value::Object(values)) => values,
         Ok(_) => Map::new(),
@@ -197,7 +198,10 @@ pub fn init(cx: &mut App) {
             Arc::clone(&failed),
             Arc::clone(&sending),
             move |key, value| {
-                let save = core.call("setViewPreference", vec![json!(key), value]);
+                let save = core.request(calls::SetViewPreference {
+                    key: json!(key),
+                    value,
+                });
                 async move {
                     save.await.map(|_| ()).map_err(|cause| {
                         crate::log::write(
@@ -230,7 +234,7 @@ fn reload(cx: &mut App) {
     let prefs = cx.default_global::<ViewPreferences>();
     prefs.reads += 1;
     let (read, since) = (prefs.reads, prefs.changes);
-    let saved = cx.global::<AppCore>().call("viewPreferences", Vec::new());
+    let saved = cx.global::<AppCore>().request(calls::ViewPreferences {});
     cx.spawn(async move |cx| {
         let saved = match saved.await {
             Ok(Value::Object(saved)) => saved,

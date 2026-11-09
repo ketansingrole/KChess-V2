@@ -2,6 +2,7 @@
 //! players are playing, and tournament broadcasts. One feed streams at a time, and only while the
 //! page is shown: leaving it stops the stream.
 
+use kchess_contracts::calls;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -388,7 +389,7 @@ impl WatchPage {
         let epoch = self.epoch;
         let found = cx
             .global::<AppCore>()
-            .call("broadcastRound", vec![json!(round)]);
+            .request(calls::BroadcastRound { id: json!(round) });
         cx.spawn_in(window, async move |this, cx| {
             let answer = found.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -426,7 +427,7 @@ impl WatchPage {
     }
 
     fn load_channels(&mut self, cx: &mut Context<Self>) {
-        let channels = cx.global::<AppCore>().call("tvChannels", Vec::new());
+        let channels = cx.global::<AppCore>().request(calls::TvChannels {});
         cx.spawn(async move |this, cx| {
             let answer = channels.await;
             let _ = this.update(cx, |this, cx| {
@@ -461,7 +462,9 @@ impl WatchPage {
         self.target = Some(target.clone());
         self.pending = Some(Pending::Watch);
         cx.notify();
-        let call = cx.global::<AppCore>().call("watch", vec![target.json()]);
+        let call = cx.global::<AppCore>().request(calls::Watch {
+            target: target.json(),
+        });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
@@ -571,7 +574,9 @@ impl WatchPage {
         let core = cx.global::<AppCore>().clone();
         self.presence_error = None;
         for chunk in names.chunks(50) {
-            let presence = core.call("presence", vec![json!(chunk)]);
+            let presence = core.request(calls::Presence {
+                usernames: json!(chunk),
+            });
             cx.spawn(async move |this, cx| {
                 let answer = presence.await;
                 let _ = this.update(cx, |this, cx| {
@@ -1079,13 +1084,13 @@ pub(super) fn stop_watching(session: Option<f64>, cx: &mut App) {
     let Some(session) = session else {
         return;
     };
-    let stopping = cx
-        .global::<AppCore>()
-        .call("stopWatching", vec![json!(session as u64)]);
+    let stopping = cx.global::<AppCore>().request(calls::StopWatching {
+        session: Some(json!(session as u64)),
+    });
     cx.background_spawn(async move {
         if let Err(cause) = stopping.await {
             crate::log::write(
-                kchess_core::Level::Warn,
+                kchess_contracts::Level::Warn,
                 "watch",
                 &format!("stopping watch failed: {}", cause.message),
             );

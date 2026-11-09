@@ -1,6 +1,7 @@
 //! One endgame course: its chapters, each a few steps to read, follow or
 //! solve, against scripted replies or Stockfish. A finished chapter is saved as a `lesson` run.
 
+use kchess_contracts::calls;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -492,15 +493,14 @@ impl EndgameLesson {
             return;
         }
         self.saved = Some(id.clone());
-        let saved = cx.global::<AppCore>().call(
-            "saveRun",
-            vec![json!({
+        let saved = cx.global::<AppCore>().request(calls::SaveRun {
+            run: json!({
                 "kind": "lesson",
                 "variant": id,
                 "score": 1,
                 "detail": { "course": self.course.id, "steps": self.chapter().steps.len() },
-            })],
-        );
+            }),
+        });
         cx.spawn(async move |this, cx| {
             let saved = saved.await;
             let _ = this.update(cx, |this, cx| match saved {

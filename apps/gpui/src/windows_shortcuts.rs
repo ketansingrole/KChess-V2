@@ -44,7 +44,7 @@ pub fn stamp(id: &'static str) {
         for path in shortcuts() {
             if let Err(cause) = stamp_one(&path, id) {
                 crate::log::write(
-                    kchess_core::Level::Warn,
+                    kchess_contracts::Level::Warn,
                     "shortcuts",
                     &format!("Could not set {}'s app ID: {cause}", path.display()),
                 );

@@ -3,6 +3,7 @@
 //! list on the analysis board or as a grid of boards beside an opening's line. Its settings are
 //! the view preference both apps keep (`kchess:explorer`).
 
+use kchess_contracts::calls;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -348,7 +349,7 @@ impl PositionExplorer {
 
     /// The connected accounts, offered as players; the first is the player when none is set.
     fn load_accounts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let data = cx.global::<AppCore>().call("loadData", Vec::new());
+        let data = cx.global::<AppCore>().request(calls::LoadData {});
         cx.spawn_in(window, async move |this, cx| {
             let Ok(data) = data.await else { return };
             let accounts: Vec<String> = data["accounts"]
@@ -468,10 +469,11 @@ impl PositionExplorer {
         self.epoch += 1;
         let request = self.epoch;
         let prefs = self.shown_prefs(cx);
-        let call = cx.global::<AppCore>().call(
-            "positionLookup",
-            vec![json!(prefs.kind), json!(self.fen), self.options(&prefs)],
-        );
+        let call = cx.global::<AppCore>().request(calls::PositionLookup {
+            kind: json!(prefs.kind),
+            fen: json!(self.fen),
+            options: Some(self.options(&prefs)),
+        });
         self.busy = true;
         self.error.clear();
         cx.notify();
@@ -551,7 +553,9 @@ impl PositionExplorer {
     /// Guess a master game's moves on Practice, as the side that won (White after a draw).
     fn guess_game(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
         let id = game["id"].as_str().unwrap_or_default().to_string();
-        let call = cx.global::<AppCore>().call("mastersGame", vec![json!(id)]);
+        let call = cx
+            .global::<AppCore>()
+            .request(calls::MastersGame { id: json!(id) });
         let side = if game["winner"] == json!("black") {
             Color::Black
         } else {

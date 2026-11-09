@@ -62,6 +62,11 @@ impl Measured {
         self.bounds.get().size
     }
 
+    /// Where the area was at the last layout, in the window; empty before the first.
+    pub fn bounds(&self) -> Bounds<Pixels> {
+        self.bounds.get()
+    }
+
     /// Put this, absolutely positioned to fill it, in the element to measure; a change of size
     /// redraws the view.
     pub fn probe<V: 'static>(&self, cx: &mut Context<V>) -> impl IntoElement + use<V> {

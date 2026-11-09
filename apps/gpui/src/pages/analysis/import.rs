@@ -2,6 +2,7 @@
 //! and studies fetched by link.
 
 use super::*;
+use kchess_contracts::calls;
 
 impl AnalysisPage {
     pub(crate) fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -181,7 +182,7 @@ impl AnalysisPage {
     ) {
         let export = cx
             .global::<AppCore>()
-            .call("exportGame", vec![json!(link.id)]);
+            .request(calls::ExportGame { id: json!(link.id) });
         let pgn = async move {
             match export.await {
                 Ok(Value::String(pgn)) => Ok(Some(pgn)),
@@ -203,9 +204,10 @@ impl AnalysisPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let fetch = cx
-            .global::<AppCore>()
-            .call("lichessStudyChapter", vec![json!(study), json!(chapter)]);
+        let fetch = cx.global::<AppCore>().request(calls::LichessStudyChapter {
+            id: json!(study),
+            chapter: json!(chapter),
+        });
         let pgn = async move {
             match fetch.await {
                 Ok(found) => Ok(found["pgn"].as_str().map(str::to_string)),

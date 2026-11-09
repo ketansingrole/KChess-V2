@@ -7,6 +7,7 @@ use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
 use kchess_contracts::Level;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 
 use crate::core::{Answer, AppCore, BoxedSave, Reads};
@@ -126,13 +127,22 @@ fn write_in_order(
     .detach();
 }
 
-async fn send(core: &AppCore, write: &Write) -> Result<Value, kchess_core::CoreError> {
+async fn send(core: &AppCore, write: &Write) -> Result<Value, kchess_contracts::CoreError> {
     match write {
-        Write::Game(game) => core.call("saveArchivedGame", vec![game.clone()]).await,
-        Write::Remove(id) => core.call("removeArchivedGame", vec![json!(id)]).await,
-        Write::Session(key, value) => {
-            core.call("saveSession", vec![json!(key), value.clone()])
+        Write::Game(game) => {
+            core.request(calls::SaveArchivedGame { game: game.clone() })
                 .await
+        }
+        Write::Remove(id) => {
+            core.request(calls::RemoveArchivedGame { id: json!(id) })
+                .await
+        }
+        Write::Session(key, value) => {
+            core.request(calls::SaveSession {
+                kind: json!(key),
+                session: value.clone(),
+            })
+            .await
         }
         Write::Flushed(..) => Ok(Value::Null),
     }
@@ -143,7 +153,7 @@ async fn send(core: &AppCore, write: &Write) -> Result<Value, kchess_core::CoreE
 /// writes are failing now.
 fn settle(
     write: Write,
-    result: Result<Value, kchess_core::CoreError>,
+    result: Result<Value, kchess_contracts::CoreError>,
     failing: bool,
     refused: &mut Vec<(Write, String)>,
     outcomes: &mpsc::UnboundedSender<Option<String>>,
@@ -232,7 +242,7 @@ impl PlayedGames {
         cx.spawn(async move |this, cx| {
             let _ = written.await;
             let Ok(library) = this.update(cx, |_, cx| {
-                cx.global::<AppCore>().call("library", Vec::new())
+                cx.global::<AppCore>().request(calls::Library {})
             }) else {
                 return;
             };

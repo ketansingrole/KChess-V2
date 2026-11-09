@@ -21,9 +21,24 @@ fn now_ms() -> f64 {
         .map_or(0., |elapsed| elapsed.as_millis() as f64)
 }
 
-/// The games in history, as the rules read them.
-fn games(cx: &App) -> Vec<Value> {
-    cx.global::<PlayedHandle>().0.read(cx).games().to_vec()
+/// The games in history as the rules read them: only the entry of the game with this identity.
+/// The rules look a game up by its identity's id alone (before any new identity), and a copy of
+/// every played game, which they then copy again for each read, made half of opening Over the
+/// board over a full history.
+fn games(identity: &Value, cx: &App) -> Vec<Value> {
+    entries_of(cx.global::<PlayedHandle>().0.read(cx).games(), identity)
+}
+
+fn entries_of(games: &[Value], identity: &Value) -> Vec<Value> {
+    let id = &identity["id"];
+    if id.is_null() {
+        return Vec::new();
+    }
+    games
+        .iter()
+        .filter(|game| game["id"] == *id)
+        .cloned()
+        .collect()
 }
 
 impl HistoryPlace {
@@ -43,7 +58,7 @@ impl HistoryPlace {
             archive: None,
             saved_identity: identity.clone(),
         };
-        let games = games(cx);
+        let games = games(&identity, cx);
         let host = Host {
             source,
             has_play,
@@ -89,7 +104,7 @@ impl HistoryPlace {
         let Some(mut archive) = self.archive.take() else {
             return;
         };
-        let games = games(cx);
+        let games = games(&archive.identity(), cx);
         let host = Host {
             source,
             has_play,
@@ -127,5 +142,27 @@ impl HistoryPlace {
     /// Wait for every write sent so far (before the app quits).
     pub fn flushed(&self, cx: &App) -> BoxedSave {
         cx.global::<PlayedHandle>().0.read(cx).flushed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::entries_of;
+    use serde_json::json;
+
+    /// The rules read only the entry of the game they keep, not a copy of every played game.
+    #[test]
+    fn the_rules_read_only_their_games_entry() {
+        let games = [
+            json!({ "id": "a", "moves": [] }),
+            json!({ "id": "b", "moves": ["e2e4"] }),
+            json!({ "moves": [] }),
+        ];
+        assert_eq!(
+            entries_of(&games, &json!({ "id": "b", "startedAt": 1 })),
+            [games[1].clone()]
+        );
+        assert!(entries_of(&games, &json!({ "id": "c" })).is_empty());
+        assert!(entries_of(&games, &serde_json::Value::Null).is_empty());
     }
 }

@@ -39,7 +39,7 @@ pub fn refresh(cx: &mut App) {
 fn apply(reduce: bool, cx: &mut App) {
     if reduce != cx.reduce_motion() {
         crate::log::write(
-            kchess_core::Level::Debug,
+            kchess_contracts::Level::Debug,
             "motion",
             &format!("Reduced motion {}", if reduce { "on" } else { "off" }),
         );

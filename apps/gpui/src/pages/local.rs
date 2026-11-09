@@ -2,6 +2,7 @@
 //! board, any variant, with or without a clock; or a chess clock for a real board. Both keep their
 //! place in Game history, and the board game resumes in either app.
 
+use kchess_contracts::calls;
 use std::time::{Duration, Instant};
 
 use gpui_kit::base::TestSupportExt as _;
@@ -143,12 +144,19 @@ impl LocalPage {
             });
         })
         .detach();
-        // The library was read before the window opened; the board game resumes from it.
-        let library = cx
-            .global::<AppCore>()
-            .bridge
-            .call_now("library", Vec::new())
-            .unwrap_or(Value::Null);
+        // The board game and its history places resume from their sessions alone: reading the
+        // whole library replays every played game.
+        let bridge = &cx.global::<AppCore>().bridge;
+        let read = |kind: &str| {
+            bridge
+                .request_now(calls::Session { kind: json!(kind) })
+                .unwrap_or(Value::Null)
+        };
+        let library = json!({ "sessions": {
+            "local": read("local"),
+            "archive:board": read("archive:board"),
+            "archive:clock": read("archive:clock"),
+        } });
         let saved = &library["sessions"]["local"];
         let game = LocalGame::new((!saved.is_null()).then_some(saved), 0.)
             .or_else(|_| LocalGame::new(None, 0.));
@@ -483,9 +491,10 @@ impl LocalPage {
     fn save_now(&mut self, cx: &mut Context<Self>) -> crate::core::BoxedSave {
         self.save = None;
         let snapshot = self.game.snapshot(self.now());
-        let save = cx
-            .global::<AppCore>()
-            .call("saveSession", vec![json!("local"), snapshot]);
+        let save = cx.global::<AppCore>().request(calls::SaveSession {
+            kind: json!("local"),
+            session: snapshot,
+        });
         Box::pin(async move {
             save.await.map(|_| ()).map_err(|cause| {
                 crate::log::write(

@@ -11,6 +11,7 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -373,16 +374,17 @@ impl HistoryPage {
     }
 
     /// The games of the source shown, newest first, that the search finds.
-    fn games(&self, cx: &App) -> Vec<Value> {
+    fn games<'a>(&self, cx: &'a App) -> Vec<&'a Value> {
         self.all_games(cx)
             .into_iter()
             .filter(|game| self.found(game))
             .collect()
     }
 
-    /// Every game of the source shown, newest first.
-    fn all_games(&self, cx: &App) -> Vec<Value> {
-        let mut games: Vec<Value> = cx
+    /// Every game of the source shown, newest first: the played games themselves, not copies
+    /// (copying 500 games of history was half of drawing the page).
+    fn all_games<'a>(&self, cx: &'a App) -> Vec<&'a Value> {
+        let mut games: Vec<&Value> = cx
             .global::<PlayedHandle>()
             .0
             .read(cx)
@@ -391,7 +393,6 @@ impl HistoryPage {
             .filter(|game| {
                 (text(game, "source") == "computer") == (self.source == Source::Computer)
             })
-            .cloned()
             .collect();
         games.sort_by(|a, b| {
             let started = |game: &Value| game["startedAt"].as_f64().unwrap_or_default();
@@ -401,7 +402,7 @@ impl HistoryPage {
     }
 
     /// The games the list shows under its filter, newest first.
-    fn listed(&self, cx: &App) -> Vec<Value> {
+    fn listed<'a>(&self, cx: &'a App) -> Vec<&'a Value> {
         self.games(cx)
             .into_iter()
             .filter(|game| {
@@ -421,7 +422,7 @@ impl HistoryPage {
             index += step;
             let game = listed.get(usize::try_from(index).ok()?)?;
             if text(game, "source") != "clock" {
-                return Some((index as usize, game.clone()));
+                return Some((index as usize, (*game).clone()));
             }
         }
     }
@@ -534,7 +535,9 @@ impl HistoryPage {
         };
         let games = cx
             .global::<crate::core::AppCore>()
-            .call("bookmarkedGames", vec![json!(account)]);
+            .request(calls::BookmarkedGames {
+                account: json!(account),
+            });
         cx.spawn(async move |this, cx| {
             let answer = games.await;
             let _ = this.update(cx, |this, cx| {
@@ -790,7 +793,7 @@ impl HistoryPage {
     fn export_shown(&mut self, cx: &mut Context<Self>) {
         let pgns: Vec<String> = self
             .shown_games(cx)
-            .iter()
+            .into_iter()
             .filter(|game| text(game, "source") != "clock")
             .filter_map(pgn)
             .collect();
@@ -831,7 +834,7 @@ impl HistoryPage {
     }
 
     /// The games the list shows across its pages: searched, then filtered by result.
-    fn shown_games(&self, cx: &App) -> Vec<Value> {
+    fn shown_games<'a>(&self, cx: &'a App) -> Vec<&'a Value> {
         self.games(cx)
             .into_iter()
             .filter(|game| {
@@ -1056,7 +1059,7 @@ impl HistoryPage {
             )
             .into_any_element();
         }
-        let outcomes: Vec<String> = games.iter().map(outcome).collect();
+        let outcomes: Vec<String> = games.iter().map(|game| outcome(game)).collect();
         let count = |filter: Filter| match filter {
             Filter::All => games.len(),
             filter => outcomes
@@ -1110,11 +1113,13 @@ impl HistoryPage {
         );
         let shown: Vec<(&Value, &String)> = games
             .iter()
+            .copied()
             .zip(&outcomes)
             .filter(|(_, outcome)| {
                 self.filter == Filter::All || filter_of(outcome) == Some(self.filter)
             })
             .collect();
+        let nothing_shown = shown.is_empty();
         let pages = shown.len().div_ceil(PAGE_SIZE).max(1);
         let current = self.page.min(pages - 1);
         let narrow = self.narrow();
@@ -1300,7 +1305,7 @@ impl HistoryPage {
             .text_size(px(14.))
             .child(header)
             .children(rows)
-            .when(shown.is_empty(), |card| {
+            .when(nothing_shown, |card| {
                 card.child(
                     v_flex()
                         .items_center()
@@ -1352,7 +1357,7 @@ impl HistoryPage {
                             .icon(icon("download"))
                             .label("Export")
                             .tooltip("Save the games listed as one PGN file")
-                            .disabled(shown.is_empty())
+                            .disabled(nothing_shown)
                             .on_click(cx.listener(|this, _, _, cx| this.export_shown(cx))),
                     ),
             )

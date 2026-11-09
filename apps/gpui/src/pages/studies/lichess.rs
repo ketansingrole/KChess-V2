@@ -2,6 +2,7 @@
 //! account, opened (kept offline first) or kept offline to open later, and the analysis board sent
 //! to one of them or to a new private study.
 
+use kchess_contracts::calls;
 use std::collections::HashMap;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -116,9 +117,9 @@ impl StudiesPage {
         entry.error.clear();
         entry.attempted_at = at;
         cx.notify();
-        let studies = cx
-            .global::<AppCore>()
-            .call("lichessStudies", vec![json!(account)]);
+        let studies = cx.global::<AppCore>().request(calls::LichessStudies {
+            account: json!(account),
+        });
         cx.spawn(async move |this, cx| {
             let result = studies.await;
             let _ = this.update(cx, |this, cx| {
@@ -210,9 +211,10 @@ impl StudiesPage {
         fail: impl FnOnce(String, &mut Window, &mut App) + 'static,
     ) {
         let id = item["id"].as_str().unwrap_or_default().to_string();
-        let chapters = cx
-            .global::<AppCore>()
-            .call("lichessStudyChapters", vec![json!(account), json!(id)]);
+        let chapters = cx.global::<AppCore>().request(calls::LichessStudyChapters {
+            account: json!(account),
+            id: json!(id),
+        });
         let library = cx.global::<StudyHandle>().0.clone();
         window
             .spawn(cx, async move |cx| {
@@ -402,15 +404,12 @@ impl StudiesPage {
         self.lichess.busy = true;
         self.lichess.message.clear();
         cx.notify();
-        let sent = cx.global::<AppCore>().call(
-            "exportToLichessStudy",
-            vec![
-                json!(account),
-                json!(target),
-                json!(chapter_name),
-                json!(pgn),
-            ],
-        );
+        let sent = cx.global::<AppCore>().request(calls::ExportToLichessStudy {
+            account: json!(account),
+            study_id: json!(target),
+            name: json!(chapter_name),
+            pgn: json!(pgn),
+        });
         cx.spawn_in(window, async move |this, cx| {
             let result = sent.await;
             let _ = this.update_in(cx, |this, window, cx| {

@@ -6,6 +6,7 @@
 //! The core sends the move (`playCorrespondence`) only while the game is still on the account's
 //! move at the position the reply was typed for, and only once.
 
+use kchess_contracts::calls;
 use std::collections::HashMap;
 
 use gpui_kit::{App, Global};
@@ -100,15 +101,12 @@ pub fn take(tag: &str, cx: &mut App) -> Option<Reply> {
 
 /// Send `reply`; the answer is the core's, an error naming why it was not played.
 pub fn send(reply: &Reply, cx: &mut App) -> gpui_kit::Task<Result<Value, String>> {
-    let call = cx.global::<AppCore>().call(
-        "playCorrespondence",
-        vec![
-            json!(reply.account),
-            json!(reply.id),
-            json!(reply.fen),
-            json!(reply.uci),
-        ],
-    );
+    let call = cx.global::<AppCore>().request(calls::PlayCorrespondence {
+        account: json!(reply.account),
+        id: json!(reply.id),
+        fen: json!(reply.fen),
+        r#move: json!(reply.uci),
+    });
     cx.background_executor()
         .spawn(async move { call.await.map_err(|cause| cause.message) })
 }

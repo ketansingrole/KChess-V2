@@ -543,6 +543,16 @@ pub fn methods() -> Vec<Method> {
             vec![req("kind"), req("session")],
         ),
         method(
+            "session",
+            "The unfinished game or analysis of this kind kept to resume, or null; the library's `sessions` alone.",
+            vec![req("kind")],
+        ),
+        method(
+            "mistakes",
+            "The mistake drills; the library's `mistakes` alone.",
+            vec![],
+        ),
+        method(
             "joinedTournaments",
             "Tournaments joined from KChess that have not ended.",
             vec![],

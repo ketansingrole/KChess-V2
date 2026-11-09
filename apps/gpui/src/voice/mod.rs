@@ -3,6 +3,7 @@
 //! first time, opens the microphone, sends its audio to the core's recognizer (`voiceStart`,
 //! `voiceAccept`, `voiceFinish`, `voiceStop`) in order, and hands each phrase heard to its owner.
 
+use kchess_contracts::calls;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -124,7 +125,7 @@ pub type Listener = Arc<dyn Fn(&model::Progress) + Send + Sync>;
 
 /// Whether the offline model is installed, or being prepared (`voiceModelStatus`).
 pub fn model_status(cx: &App) -> impl Future<Output = Option<model::Status>> + 'static + use<> {
-    let status = cx.global::<AppCore>().call("voiceModelStatus", Vec::new());
+    let status = cx.global::<AppCore>().request(calls::VoiceModelStatus {});
     async move { serde_json::from_value(status.await.ok()?).ok() }
 }
 
@@ -146,7 +147,7 @@ fn install_model(
             listener(&update);
         }
     });
-    let install = cx.global::<AppCore>().call("voiceModelInstall", Vec::new());
+    let install = cx.global::<AppCore>().request(calls::VoiceModelInstall {});
     async move {
         let installed = install.await;
         drop(reports);
@@ -486,16 +487,25 @@ impl Voice {
                         rate,
                         epoch,
                     } => (
-                        core.call("voiceStart", vec![json!(grammar), json!(rate)]),
+                        core.request(calls::VoiceStart {
+                            grammar: json!(grammar),
+                            sample_rate: json!(rate),
+                        })
+                        .boxed_local(),
                         Some(epoch),
                     ),
-                    Request::Accept { audio, epoch } => {
-                        (core.call("voiceAccept", vec![json!(audio)]), Some(epoch))
-                    }
-                    Request::Finish { epoch } => {
-                        (core.call("voiceFinish", Vec::new()), Some(epoch))
-                    }
-                    Request::Stop => (core.call("voiceStop", Vec::new()), None),
+                    Request::Accept { audio, epoch } => (
+                        core.request(calls::VoiceAccept {
+                            audio: json!(audio),
+                        })
+                        .boxed_local(),
+                        Some(epoch),
+                    ),
+                    Request::Finish { epoch } => (
+                        core.request(calls::VoiceFinish {}).boxed_local(),
+                        Some(epoch),
+                    ),
+                    Request::Stop => (core.request(calls::VoiceStop {}).boxed_local(), None),
                 };
                 let answer = call.await;
                 let Some(epoch) = epoch else {
@@ -514,7 +524,7 @@ impl Voice {
     fn answered(
         &mut self,
         epoch: u64,
-        answer: Result<Value, kchess_core::CoreError>,
+        answer: Result<Value, kchess_contracts::CoreError>,
         cx: &mut Context<Self>,
     ) {
         if epoch != self.epoch || self.owner.is_none() {
@@ -657,11 +667,14 @@ pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
                 record["retryOf"] = json!(id);
             }
             // The history is a study aid; a lost entry never disturbs play.
-            match core.call("saveVoiceAttempt", vec![record]).await {
+            match core
+                .request(calls::SaveVoiceAttempt { attempt: record })
+                .await
+            {
                 Ok(id) => id.as_i64(),
                 Err(cause) => {
                     crate::log::write(
-                        kchess_core::Level::Warn,
+                        kchess_contracts::Level::Warn,
                         "voice-log",
                         &format!("saving a voice attempt failed: {}", cause.message),
                     );
@@ -684,11 +697,14 @@ pub fn amend(entry: Entry, update: Value, cx: &App) {
         .spawn(async move {
             let Some(id) = entry.await else { return };
             if let Err(cause) = core
-                .call("updateVoiceAttempt", vec![json!(id), update])
+                .request(calls::UpdateVoiceAttempt {
+                    id: json!(id),
+                    update,
+                })
                 .await
             {
                 crate::log::write(
-                    kchess_core::Level::Warn,
+                    kchess_contracts::Level::Warn,
                     "voice-log",
                     &format!("updating a voice attempt failed: {}", cause.message),
                 );
@@ -722,7 +738,7 @@ pub fn grammar(name: &str) -> Vec<String> {
 mod tests {
     use super::{ErrorKind, grammar, handle, heard_of, model, progress_of};
     use crate::e2e::Harness;
-    use kchess_core::CoreError;
+    use kchess_contracts::CoreError;
     use serde_json::{Value, json};
 
     /// A build without the speech helper said "The offline voice model couldn’t load. Voice input

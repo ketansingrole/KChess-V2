@@ -9,6 +9,7 @@ use gpui_kit::component::button::Button;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 
 use crate::assets::icon;
@@ -133,15 +134,18 @@ impl LichessActivity {
         let epoch = self.epoch;
         let core = cx.global::<AppCore>().clone();
         let name = json!(account);
-        let overview = core.call("gameLibraryOverview", Vec::new());
-        let recent = core.call(
-            "gamePage",
-            vec![json!({ "account": account, "offset": 0, "limit": RECENT })],
-        );
-        let fallback = core.call("gameRatingHistory", vec![name.clone()]);
+        let overview = core.request(calls::GameLibraryOverview {});
+        let recent = core.request(calls::GamePage {
+            query: json!({ "account": account, "offset": 0, "limit": RECENT }),
+        });
+        let fallback = core.request(calls::GameRatingHistory {
+            account: name.clone(),
+        });
         if let Source::Chesscom(_) = self.source {
             // No profile to ask for: each speed's games come from the synced games' report.
-            let speeds = core.call("insights", vec![json!({ "account": account })]);
+            let speeds = core.request(calls::Insights {
+                query: json!({ "account": account }),
+            });
             cx.spawn(async move |this, cx| {
                 let (overview, recent, fallback, speeds) =
                     (overview.await, recent.await, fallback.await, speeds.await);
@@ -159,9 +163,13 @@ impl LichessActivity {
             .detach();
             return;
         }
-        let saved = core.call("cachedProfile", vec![name.clone()]);
-        let profile = core.call("profile", vec![name.clone()]);
-        let history = core.call("ratingHistory", vec![name]);
+        let saved = core.request(calls::CachedProfile {
+            username: name.clone(),
+        });
+        let profile = core.request(calls::Profile {
+            username: name.clone(),
+        });
+        let history = core.request(calls::RatingHistory { username: name });
         cx.spawn(async move |this, cx| {
             // What was saved last time paints first.
             let saved = saved.await;
@@ -192,7 +200,7 @@ impl LichessActivity {
                             .update(cx, |chart, cx| chart.set_official(history, cx));
                     }
                     (Err(cause), _) | (_, Err(cause)) => crate::log::write(
-                        kchess_core::Level::Warn,
+                        kchess_contracts::Level::Warn,
                         "account-profile",
                         &format!("loading profile failed: {}", cause.message),
                     ),

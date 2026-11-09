@@ -16,10 +16,6 @@ use crate::util::{Result, root};
 struct Rule {
     /// The text that marks a use.
     needle: &'static str,
-    /// Names that contain the needle but are not uses: the contracts' types the core re-exports,
-    /// which older code still spells through the core (`kchess_core::Level::Warn`). New code
-    /// imports them from `kchess_contracts`.
-    tolerated: &'static [&'static str],
     /// Why, as the failure says it.
     why: &'static str,
     /// The files, from the repository root, that may name it.
@@ -32,12 +28,6 @@ const FRONTENDS: [&str; 2] = ["apps/gpui/src", "apps/cli/src"];
 const RULES: [Rule; 2] = [
     Rule {
         needle: "kchess_core",
-        tolerated: &[
-            "kchess_core::Level",
-            "kchess_core::CoreError",
-            "kchess_core::ErrorKind",
-            "kchess_core::USER_AGENT",
-        ],
         why: "frontends call the core by `CoreApi` method name and read `CoreError` and `Level` from \
           `kchess_contracts`; only the files that start, configure or host the core name \
           `kchess_core` (tooling/xtask/src/boundaries.rs)",
@@ -58,7 +48,6 @@ const RULES: [Rule; 2] = [
     },
     Rule {
         needle: "reqwest",
-        tolerated: &[],
         why: "the core owns networking: a frontend asks it by `CoreApi` method, and only the \
           updater and Lichess's pictures make their own requests (tooling/xtask/src/boundaries.rs)",
         allowed: &[
@@ -83,15 +72,6 @@ fn shipped(text: &str) -> &str {
         .map_or(text, |at| &text[..at])
 }
 
-/// Whether `line` uses the rule's needle other than through a tolerated name.
-fn uses(rule: &Rule, line: &str) -> bool {
-    let mut rest = line.to_string();
-    for name in rule.tolerated {
-        rest = rest.replace(name, "");
-    }
-    rest.contains(rule.needle)
-}
-
 /// Each use of a rule's needle outside its allowed files, as `path:line: why`.
 fn offences(rule: &Rule, files: &[(String, String)]) -> Vec<String> {
     let mut found = Vec::new();
@@ -100,7 +80,7 @@ fn offences(rule: &Rule, files: &[(String, String)]) -> Vec<String> {
             continue;
         }
         for (index, line) in shipped(text).lines().enumerate() {
-            if uses(rule, line) {
+            if line.contains(rule.needle) {
                 found.push(format!(
                     "{path}:{}: names `{}`: {}",
                     index + 1,
@@ -158,15 +138,76 @@ fn check_in(repo: &Path) -> Result {
     }
 }
 
+/// The files that call the core by a method's name as text: its plumbing, which sends what a
+/// typed call (`kchess_contracts::calls`) names.
+const NAMED_CALLS: [&str; 2] = ["apps/gpui/src/core.rs", "apps/cli/src/core.rs"];
+
+/// Each shipped frontend call of a core method by its name as text (`.call("library", …)`),
+/// whatever its line breaks, as `path: method`.
+fn named_calls(files: &[(String, String)]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (path, text) in files {
+        if is_test_file(path) || NAMED_CALLS.contains(&path.as_str()) {
+            continue;
+        }
+        let packed: String = shipped(text)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        for call in [".call(\"", ".call_now(\""] {
+            for (at, _) in packed.match_indices(call) {
+                let rest = &packed[at + call.len()..];
+                let method = rest.split('"').next().unwrap_or_default();
+                found.push(format!(
+                    "{path}: calls `{method}` by name; declare it in `calls!` \
+                     (crates/kchess-contracts/src/calls.rs) and send it with `request`"
+                ));
+            }
+        }
+    }
+    found
+}
+
 const RULE: Rule = Rule {
     needle: "kchess_core",
-    tolerated: &["kchess_core::Level"],
     why: "a reason",
     allowed: &["apps/gpui/src/core.rs"],
 };
 
 fn file(path: &str, text: &str) -> (String, String) {
     (path.to_string(), text.to_string())
+}
+
+#[test]
+fn the_frontends_call_the_core_with_typed_calls() {
+    let mut files = Vec::new();
+    for dir in FRONTENDS {
+        sources_under(&root(), dir, &mut files).expect("the frontends' sources");
+    }
+    let found = named_calls(&files);
+    assert!(found.is_empty(), "{}", found.join("\n"));
+}
+
+#[test]
+fn a_call_by_name_is_found_across_lines() {
+    let files = [
+        file(
+            "apps/gpui/src/core.rs",
+            "core.call(\"close\", Vec::new())\n",
+        ),
+        file(
+            "apps/gpui/src/page.rs",
+            "let a = core.request(calls::Library {});\nlet b = core\n    .call(\n        \"library\",\n        Vec::new(),\n    );\nbridge.call_now(\"usage\", vec![]);\n",
+        ),
+        file(
+            "apps/gpui/src/e2e/page.rs",
+            "core.call(\"library\", Vec::new())\n",
+        ),
+    ];
+    let found = named_calls(&files);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[0].starts_with("apps/gpui/src/page.rs: calls `library` by name"));
+    assert!(found[1].starts_with("apps/gpui/src/page.rs: calls `usage` by name"));
 }
 
 #[test]
@@ -192,14 +233,15 @@ fn a_use_outside_the_allowed_files_is_named_with_its_line() {
 }
 
 #[test]
-fn the_contracts_types_spelled_through_the_core_are_tolerated() {
-    assert!(!uses(&RULE, "    kchess_core::Level::Warn,"));
-    assert!(uses(
-        &RULE,
-        "kchess_core::Level::Warn, kchess_core::env::var(\"X\")"
-    ));
-    assert!(uses(&RULE, "use kchess_core::{Level, env};"));
-    assert!(!uses(&RULE, "use kchess_contracts::Level;"));
+fn the_contracts_types_are_read_from_the_contracts() {
+    let files = [file(
+        "apps/gpui/src/page.rs",
+        "use kchess_contracts::Level;\nlog(kchess_core::Level::Warn);\n",
+    )];
+    assert_eq!(
+        offences(&RULE, &files),
+        ["apps/gpui/src/page.rs:2: names `kchess_core`: a reason"]
+    );
 }
 
 #[test]

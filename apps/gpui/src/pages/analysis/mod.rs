@@ -12,6 +12,7 @@ mod study;
 mod tree_view;
 
 use engine::{prefs_lines, stop_analysis};
+use kchess_contracts::calls;
 use tree_view::{TreeView, flow};
 
 pub use review::classification_look;
@@ -263,13 +264,18 @@ impl Focusable for AnalysisPage {
 
 impl AnalysisPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> AnalysisPage {
-        let library = cx
-            .global::<AppCore>()
-            .bridge
-            .call_now("library", Vec::new())
+        // Its session and the drills alone: the whole library replays every played game.
+        let bridge = &cx.global::<AppCore>().bridge;
+        let session = bridge
+            .request_now(calls::Session {
+                kind: json!("analysis"),
+            })
             .unwrap_or(Value::Null);
-        let session = library["sessions"]["analysis"].clone();
-        let mistakes = library["mistakes"].as_array().cloned().unwrap_or_default();
+        let mistakes = bridge
+            .request_now(calls::Mistakes {})
+            .ok()
+            .and_then(|mistakes| mistakes.as_array().cloned())
+            .unwrap_or_default();
         let root = session["pgn"]
             .as_str()
             .and_then(TreeNode::from_pgn)
@@ -946,9 +952,10 @@ impl AnalysisPage {
             "study": self.study,
             "chapter": self.chapter,
         });
-        let save = cx
-            .global::<AppCore>()
-            .call("saveSession", vec![json!("analysis"), session]);
+        let save = cx.global::<AppCore>().request(calls::SaveSession {
+            kind: json!("analysis"),
+            session,
+        });
         Box::pin(async move {
             save.await.map(|_| ()).map_err(|cause| {
                 crate::log::write(
