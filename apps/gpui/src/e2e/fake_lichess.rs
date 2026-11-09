@@ -382,7 +382,10 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         return match reply_to {
             Showcase::Profile(name) => reply(&mut out, &showcase_account(&name)),
             Showcase::History => reply(&mut out, &showcase_history()),
-            Showcase::Games(name) => ndjson_lines(&mut out, &showcase_games(&name)),
+            Showcase::Games(name, session) => {
+                hold_games(&session);
+                ndjson_lines(&mut out, &showcase_games(&name))
+            }
         };
     }
     // The same game behind a slow link: its answer waits until a test lets it go.
@@ -700,9 +703,7 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             reply(&mut out, &json!({ "users": {}, "nbGames": 0 }))
         }
         ("GET", p) if p.starts_with("/api/games/user/") => {
-            while session.lock().hold_games {
-                std::thread::sleep(Duration::from_millis(5));
-            }
+            hold_games(&session);
             ndjson(&mut out)
         }
         ("POST", "/api/games/export/_ids") => ndjson(&mut out),
@@ -711,6 +712,13 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
 }
 
 /// The app acted in the game: Lichess records it, and Black answers a move.
+/// The account's game download waits while `hold_games` is set: a sync still running.
+fn hold_games(session: &Handle) {
+    while session.lock().hold_games {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 fn write_game(session: &Handle, path: &str) {
     let mut session = session.lock();
     session.writes.push(format!("POST {path}"));
@@ -1231,7 +1239,8 @@ fn showcase_games(username: &str) -> Vec<Value> {
 enum Showcase {
     Profile(String),
     History,
-    Games(String),
+    /// The account's games, and its session, which may hold them back.
+    Games(String, Handle),
 }
 
 /// What a public request asks of a showcase account, if it names one.
@@ -1251,14 +1260,15 @@ fn showcase_public(path: &str) -> Option<Showcase> {
         .sessions
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    let username = sessions.values().find_map(|session| {
-        let session = session.lock();
+    let (username, session) = sessions.values().find_map(|handle| {
+        let session = handle.lock();
         (session.showcase && session.username.to_lowercase() == name)
-            .then(|| session.username.clone())
+            .then(|| (session.username.clone(), handle.clone()))
     })?;
+    drop(sessions);
     Some(match kind {
         0 => Showcase::Profile(username),
         1 => Showcase::History,
-        _ => Showcase::Games(username),
+        _ => Showcase::Games(username, session),
     })
 }
