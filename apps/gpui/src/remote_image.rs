@@ -1,9 +1,11 @@
 //! Pictures Lichess serves for the app to show, such as a broadcast's cover. Only Lichess's own image hosts are asked
 //! (`lichess.org`, `image.lichess1.org`); each picture is bounded in size,
 //! read once and kept for the session. A picture that cannot be had leaves its placeholder.
+//! Every picture is read on one background runtime through one client, so the covers of a page
+//! share a connection (over HTTP/2, one for all of them) instead of a handshake each.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use gpui_kit::*;
@@ -79,8 +81,37 @@ fn client_builder() -> reqwest::ClientBuilder {
         .timeout(Duration::from_secs(20))
         // A redirect could lead off Lichess's hosts.
         .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .ok()?;
+}
+
+/// The runtime pictures are read on: one thread for the session, started by the first picture.
+/// A client's pooled connections belong to the runtime that opened them, so the client is only
+/// used here.
+fn runtime() -> Option<&'static tokio::runtime::Handle> {
+    static RUNTIME: OnceLock<Option<tokio::runtime::Handle>> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .ok()?;
+            let handle = runtime.handle().clone();
+            std::thread::Builder::new()
+                .name("kchess-images".into())
+                .spawn(move || runtime.block_on(std::future::pending::<()>()))
+                .ok()?;
+            Some(handle)
+        })
+        .as_ref()
+}
+
+fn client() -> Option<&'static reqwest::Client> {
+    static CLIENT: OnceLock<Option<reqwest::Client>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| client_builder().build().ok())
+        .as_ref()
+}
+
+async fn fetch(client: &reqwest::Client, url: String) -> Option<Vec<u8>> {
     let mut response = client.get(url).send().await.ok()?.error_for_status().ok()?;
     if response
         .content_length()
@@ -113,15 +144,16 @@ impl RemoteImages {
         self.images.insert(url.to_string(), State::Loading);
         let (done, answer) = futures::channel::oneshot::channel();
         let address = url.to_string();
-        std::thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build();
-            let bytes = runtime
-                .ok()
-                .and_then(|runtime| runtime.block_on(fetch(address)));
-            let _ = done.send(bytes);
-        });
+        match (runtime(), client()) {
+            (Some(runtime), Some(client)) => {
+                runtime.spawn(async move {
+                    let _ = done.send(fetch(client, address).await);
+                });
+            }
+            _ => {
+                let _ = done.send(None);
+            }
+        }
         let url = url.to_string();
         cx.spawn(async move |this, cx| {
             let bytes = answer.await.ok().flatten();
@@ -140,8 +172,11 @@ impl RemoteImages {
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed, format_of};
+    use super::{allowed, client_builder, fetch, format_of, runtime};
     use gpui_kit::ImageFormat;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn only_lichess_image_hosts_over_https() {
@@ -164,5 +199,61 @@ mod tests {
         );
         assert_eq!(format_of(b"RIFF\0\0\0\0WEBPVP8 "), Some(ImageFormat::Webp));
         assert_eq!(format_of(b"<svg xmlns"), None);
+    }
+
+    /// A page of covers: each one used to open its own connection, with a TLS handshake each.
+    #[test]
+    fn the_pictures_of_a_page_share_one_connection() {
+        let runtime = runtime().expect("runtime");
+        let connections = Arc::new(AtomicUsize::new(0));
+        let accepted = Arc::clone(&connections);
+        let (bound, address) = std::sync::mpsc::channel();
+        runtime.spawn(async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            bound.send(listener.local_addr().unwrap()).unwrap();
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                accepted.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut buffer = [0u8; 4096];
+                    // Keep-alive: one answer per request, on the same connection.
+                    while let Ok(read) = socket.read(&mut buffer).await {
+                        if read == 0 {
+                            return;
+                        }
+                        let body = b"\x89PNG\r\n";
+                        let head = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\n\r\n",
+                            body.len()
+                        );
+                        if socket.write_all(head.as_bytes()).await.is_err()
+                            || socket.write_all(body).await.is_err()
+                        {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        let base = format!("http://{}", address.recv().unwrap());
+        let client: &'static reqwest::Client =
+            Box::leak(Box::new(client_builder().no_proxy().build().unwrap()));
+        for cover in 0..5 {
+            let url = format!("{base}/cover-{cover}.png");
+            let (done, answer) = std::sync::mpsc::channel();
+            runtime.spawn(async move {
+                let _ = done.send(fetch(client, url).await);
+            });
+            let bytes = answer.recv().unwrap().expect("picture");
+            assert_eq!(format_of(&bytes), Some(ImageFormat::Png));
+        }
+        // A client per picture opened one connection each, every time (5). The pool can still
+        // open a second when a request starts before the last answer's connection is back in it
+        // (seen under a loaded test run), so reuse is what is checked, not a count of one.
+        let opened = connections.load(Ordering::SeqCst);
+        assert!(
+            opened < 5,
+            "every picture opened its own connection ({opened})"
+        );
     }
 }

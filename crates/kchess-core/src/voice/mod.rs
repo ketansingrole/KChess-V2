@@ -189,6 +189,8 @@ impl VoiceModelCache {
     ) -> VoiceModelCache {
         let client = reqwest::Client::builder()
             .user_agent(crate::USER_AGENT)
+            // Byte-exact: the archive check and the progress total are of the file as published.
+            .no_gzip()
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         VoiceModelCache {
@@ -534,7 +536,10 @@ impl VoiceModelCache {
             .await
             .map_err(|cause| io_error("Could not stage the voice model", cause))?;
         let mut received = 0_u64;
-        while let Some(chunk) = response
+        // A dropped connection picks up at the byte it reached instead of starting over.
+        let mut body =
+            crate::download::Resumable::new(&self.inner.client, response, Some(deadline));
+        while let Some(chunk) = body
             .chunk()
             .await
             .map_err(|cause| CoreError::new(error_text(&cause)))?
