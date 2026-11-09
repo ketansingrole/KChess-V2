@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches: [main, bench/warm]
   pull_request:
   # Nightly: main's packages, Snap and Windows upgrade, when packaging changed since main last
   # packaged (`changes`); the rest of CI ran on each push. By hand: package main now.
@@ -62,6 +62,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           DOCS: '^(docs/|site/|(AGENTS|ARCHITECTURE|CONTRIBUTING|CORE_FRONTENDS|GUARDRAILS|README|RUST_MIGRATION|SECURITY)\.md$)'
         run: |
+          if [ -f .bench-base ]; then BASE=$(cat .bench-base); fi
           # The nightly and by-hand runs only package: each push to main ran the rest.
           if [ "$EVENT" = schedule ] || [ "$EVENT" = workflow_dispatch ]; then
             code=false
@@ -106,6 +107,7 @@ jobs:
           # checks it names each of xtask's.
           PACKAGING: '^(Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.cargo/|apps/gpui/build\.rs$|apps/gpui/build/|crates/kchess-voice/|crates/kchess-delta/|tooling/xtask/src/(package/|deb\.rs$|deltas\.rs$|engines\.rs$|fairy\.rs$|licenses\.rs$|sums\.rs$|util\.rs$|voice\.rs$)|tooling/windows-upgrade-test\.ps1$|\.github/actions/|\.github/workflows/(ci|release|snap-build|windows-upgrade)\.yml$)'
         run: |
+          if [ -f .bench-base ]; then BASE=$(cat .bench-base); fi
           if [ "$RELEASE" = true ] || [ "$EVENT" = workflow_dispatch ]; then
             packaging=true
             echo "Packaging: a release commit or a run by hand"
@@ -142,7 +144,7 @@ jobs:
         with:
           shared-key: check
           key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bench/warm') }}
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
           tool: cargo-llvm-cov
@@ -216,7 +218,7 @@ jobs:
         with:
           shared-key: gpui
           key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bench/warm') }}
       # The vendored GPUI (`vendor/`) heads the app's longest chain of crates, and was compiled
       # anew on every run (2026-11-09: most of the 5 to 6 minutes the app's test build took):
       # rust-cache keeps only crates from outside the repository, and Cargo rebuilds a path crate
@@ -250,7 +252,7 @@ jobs:
       - run: cargo test -p kchess-gpui --locked
         env:
           RUST_TEST_THREADS: ${{ runner.os == 'Windows' && 4 || 8 }}
-      - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
+      - if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bench/warm') && steps.vendor.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           # Their libraries are named gpui, gpui_apple, gpui_macos and gpui_windows.
@@ -292,7 +294,7 @@ jobs:
         with:
           shared-key: headless
           key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bench/warm') }}
       # The vendored GPUI's lint build, kept as the gpui job keeps its test build.
       - name: Date the vendored sources
         shell: bash
@@ -319,7 +321,7 @@ jobs:
       # rebuilt the dependencies they share.
       - run: cargo clippy -p kchess-gpui ${{ matrix.packages }} --all-targets --locked -- -D warnings
       - run: cargo nextest run ${{ matrix.packages }} --locked
-      - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
+      - if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bench/warm') && steps.vendor.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -360,7 +362,7 @@ jobs:
         with:
           shared-key: ${{ needs.changes.outputs.release == 'true' && 'package' || 'package-fast' }}
           key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bench/warm') }}
       - run: cargo xtask package
         env:
           # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
@@ -422,7 +424,7 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: >-
-          cargo xtask mutants --plan --base "$(git merge-base "$BASE" HEAD)"
+          cargo xtask mutants --plan --base "$(git merge-base "$(cat .bench-base 2>/dev/null || echo "$BASE")" HEAD)"
           -- --exclude 'apps/gpui/**' >> "$GITHUB_OUTPUT"
 
   # Mutation testing of the lines a pull request changes (`cargo xtask mutants`,
@@ -444,7 +446,7 @@ jobs:
     timeout-minutes: 30
     env:
       # A push to main keeps the mutants' dependencies built for the pull requests after it.
-      WARM: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      WARM: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/bench/warm') }}
     steps:
       - if: github.event_name != 'pull_request' && env.WARM != 'true'
         run: echo "Mutants are tested in the pull request."
@@ -511,7 +513,7 @@ jobs:
           # same outcomes). rust-cache turns incremental builds off for the job.
           CARGO_INCREMENTAL: 1
         run: >-
-          cargo xtask mutants --base "$(git merge-base "$BASE" HEAD)"
+          cargo xtask mutants --base "$(git merge-base "$(cat .bench-base 2>/dev/null || echo "$BASE")" HEAD)"
           -- --shard "$SHARD/$SHARDS" --in-place --exclude 'apps/gpui/**'
       - if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
