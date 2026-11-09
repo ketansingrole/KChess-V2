@@ -88,15 +88,27 @@ pub(crate) fn opening_name(game: &Value) -> Option<String> {
     ))
 }
 
+/// What `archivedOutcome` and `archivedPlayerSide` read of a played game: the rules check every
+/// argument in full, and a game's moves made most of that work, for each game, every frame.
+fn result_fields(game: &Value) -> Value {
+    let mut fields = serde_json::Map::new();
+    for key in ["source", "result", "finished", "white", "black"] {
+        if let Some(value) = game.get(key) {
+            fields.insert(key.to_string(), value.clone());
+        }
+    }
+    Value::Object(fields)
+}
+
 pub(crate) fn outcome(game: &Value) -> String {
-    rules("archivedOutcome", std::slice::from_ref(game))
+    rules("archivedOutcome", &[result_fields(game)])
         .ok()
         .and_then(|outcome| outcome.as_str().map(str::to_string))
         .unwrap_or_default()
 }
 
 fn player_side(game: &Value) -> Option<Color> {
-    match rules("archivedPlayerSide", std::slice::from_ref(game))
+    match rules("archivedPlayerSide", &[result_fields(game)])
         .ok()?
         .as_str()?
     {
@@ -1496,7 +1508,62 @@ impl Render for HistoryPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{move_count, time_label};
+    use super::{move_count, outcome, player_side, time_label};
+    use crate::game::rules;
+    use serde_json::json;
+
+    /// The rules read only a game's result fields: given those alone, each outcome and side is
+    /// what the whole game gets, for every kind of result.
+    #[test]
+    fn a_games_outcome_is_read_from_its_result_fields() {
+        let moves: Vec<&str> = ["e2e4", "e7e5"].repeat(40);
+        let game = |source: &str, white: &str, black: &str, result: &str, finished: bool| {
+            json!({
+                "id": "g", "source": source, "white": white, "black": black, "result": result,
+                "finished": finished, "reason": "-", "startedAt": 1, "updatedAt": 2,
+                "timeControl": "-", "moves": moves,
+                "setup": { "variant": "standard", "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
+            })
+        };
+        let games = [
+            game("clock", "A", "B", "*", true),
+            game("computer", "You", "Stockfish", "*", false),
+            game("computer", "You", "Stockfish", "*", true),
+            game("computer", "You", "Stockfish", "1/2-1/2", true),
+            game("computer", "You", "Stockfish", "1-0", true),
+            game("computer", "You", "Stockfish", "0-1", true),
+            game("computer", "Stockfish", "You", "1-0", true),
+            game("computer", "Stockfish", "You", "0-1", true),
+            game("board", "Ann", "Bo", "1-0", true),
+            game("board", "Ann", "Bo", "0-1", true),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for whole in &games {
+            let expected = rules("archivedOutcome", std::slice::from_ref(whole)).expect("outcome");
+            assert_eq!(json!(outcome(whole)), expected, "{whole}");
+            let side = rules("archivedPlayerSide", std::slice::from_ref(whole)).expect("side");
+            let named = player_side(whole).map(|color| match color {
+                shakmaty::Color::White => "white",
+                shakmaty::Color::Black => "black",
+            });
+            assert_eq!(json!(named), side, "{whole}");
+            seen.insert(outcome(whole));
+        }
+        // Every kind of outcome is among them.
+        assert_eq!(
+            seen.into_iter().collect::<Vec<_>>(),
+            [
+                "black",
+                "clock",
+                "draw",
+                "loss",
+                "ongoing",
+                "unfinished",
+                "white",
+                "win"
+            ]
+        );
+    }
 
     #[test]
     fn time_controls_read_in_minutes() {

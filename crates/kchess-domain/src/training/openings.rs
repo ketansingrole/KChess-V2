@@ -81,6 +81,41 @@ fn table() -> &'static HashMap<String, usize> {
     })
 }
 
+/// The pieces' placement and the side to move, hashed: every position of the table has one of
+/// these, so a position whose hash is not among them has no name, and needs no FEN to tell.
+/// Coarser than the table's key (it leaves out castling and en passant), so it never turns away
+/// a named position.
+fn placement_hash(pos: &impl Position) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    pos.board().hash(&mut hasher);
+    pos.turn().hash(&mut hasher);
+    hasher.finish()
+}
+
+/// The placements of every named position (`placement_hash`).
+fn placements() -> &'static std::collections::HashSet<u64> {
+    static PLACEMENTS: OnceLock<std::collections::HashSet<u64>> = OnceLock::new();
+    PLACEMENTS.get_or_init(|| {
+        let Some(start) = rules::setup_start("standard", START) else {
+            return std::collections::HashSet::new();
+        };
+        let mut placements = std::collections::HashSet::new();
+        for line in lines() {
+            let mut pos = start.clone();
+            placements.insert(placement_hash(&pos));
+            for uci in &line.moves {
+                let Some(m) = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u)) else {
+                    break;
+                };
+                pos.play_unchecked(m);
+            }
+            placements.insert(placement_hash(&pos));
+        }
+        placements
+    })
+}
+
 /// `repetitionKey`: the first four FEN fields, borrowed from the FEN.
 fn repetition_key(fen: &str) -> &str {
     let mut seen = 0;
@@ -108,22 +143,31 @@ pub fn opening_at<S: AsRef<str>>(
     }
     let mut pos = rules::setup_start("standard", fen)?;
     let books = table();
+    let placements = placements();
     let named = lines();
+    // Writing a FEN for every move was most of the lookup: only a position placed as a named one
+    // is written and looked up.
+    let name_of = |pos: &shakmaty::variant::VariantPosition| {
+        if !placements.contains(&placement_hash(pos)) {
+            return None;
+        }
+        books
+            .get(repetition_key(&rules::make_fen(pos)))
+            .map(|&index| &named[index])
+    };
     let end = js_slice_end(moves.len(), ply);
     // Walk forward once, keeping the last named position: the old code built every FEN and
     // repetition key, then scanned backwards for the same answer. SAN and UCI strings were
     // never read here.
-    let mut found = books
-        .get(repetition_key(&rules::make_fen(&pos)))
-        .map(|&index| &named[index]);
+    let mut found = name_of(&pos);
     for text in &moves[..end] {
         let Some(m) = rules::parse_uci(text.as_ref()).and_then(|u| rules::legal_move(&pos, u))
         else {
             break;
         };
         pos.play_unchecked(m);
-        if let Some(&index) = books.get(repetition_key(&rules::make_fen(&pos))) {
-            found = Some(&named[index]);
+        if let Some(line) = name_of(&pos) {
+            found = Some(line);
         }
     }
     found.map(|line| OpeningName {
@@ -402,6 +446,65 @@ mod tests {
     use super::*;
 
     const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    /// The lookup as it was: a FEN written and looked up after every move.
+    fn opening_written_out(moves: &[String]) -> Option<(String, String)> {
+        let mut pos = rules::setup_start("standard", START)?;
+        let (books, named) = (table(), lines());
+        let mut found = books
+            .get(repetition_key(&rules::make_fen(&pos)))
+            .map(|&index| &named[index]);
+        for text in moves {
+            let Some(m) = rules::parse_uci(text).and_then(|u| rules::legal_move(&pos, u)) else {
+                break;
+            };
+            pos.play_unchecked(m);
+            if let Some(&index) = books.get(repetition_key(&rules::make_fen(&pos))) {
+                found = Some(&named[index]);
+            }
+        }
+        found.map(|line| (line.eco.clone(), line.name.clone()))
+    }
+
+    /// Only a position placed as a named one is written out and looked up: every named line (and
+    /// each move of it), and random games that leave the book, are named as before.
+    #[test]
+    fn a_name_is_looked_up_only_where_one_can_be() {
+        let named = |moves: &[String]| {
+            opening_at("standard", START, moves, f64::INFINITY).map(|name| (name.eco, name.name))
+        };
+        let mut checked = 0;
+        for line in lines().iter().step_by(7) {
+            for ply in 0..=line.moves.len() {
+                let moves = &line.moves[..ply];
+                assert_eq!(named(moves), opening_written_out(moves), "{moves:?}");
+                checked += 1;
+            }
+        }
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        for _ in 0..300 {
+            let mut pos = rules::setup_start("standard", START).expect("start");
+            let mut moves = Vec::new();
+            for _ in 0..60 {
+                let legal = pos.legal_moves();
+                if legal.is_empty() {
+                    break;
+                }
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                // Mostly the first moves listed, so games stay in the book a while.
+                let pick = if seed % 3 == 0 { seed as usize } else { 0 } % legal.len();
+                let m = legal[pick];
+                moves.push(rules::make_uci(&m));
+                pos.play_unchecked(m);
+            }
+            assert_eq!(named(&moves), opening_written_out(&moves), "{moves:?}");
+            checked += 1;
+        }
+        assert!(checked > 1000, "{checked}");
+        assert!(named(&lines()[0].moves).is_some(), "a named line is named");
+    }
 
     #[test]
     fn names_the_last_named_position() {
