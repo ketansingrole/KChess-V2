@@ -200,7 +200,7 @@ impl OnlineSession {
                 return Err(aborted("This operation was aborted"));
             }
             if self.st().live.is_none() {
-                self.st().pending_id = id.clone();
+                self.st().pending_challenge = Some(id.clone()).filter(|id| !id.is_empty());
             }
             return Ok(StartResult {
                 id: Some(id),
@@ -381,8 +381,8 @@ impl OnlineSession {
         let token = self.account_token(&challenge.account).await?;
         {
             let mut st = self.st();
-            if st.pending_id == challenge.id {
-                st.pending_id.clear();
+            if st.pending_challenge.as_deref() == Some(challenge.id.as_str()) {
+                st.pending_challenge = None;
             }
         }
         let path = format!("/api/challenge/{}/cancel", path_segment(&challenge.id));

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use kchess_contracts::types::OnlinePhase;
 use serde_json::{Value, json};
 
 use crate::lichess::accounts::path_segment;
@@ -497,7 +498,7 @@ impl OnlineSession {
             st.recovery_unverified = false;
             st.epoch
         };
-        self.emit_state(session, "", "", Lane::Game, "idle", None);
+        self.emit_state(session, "", "", Lane::Game, OnlinePhase::Idle, None);
     }
 
     /// Stop everything for good (the app is quitting).

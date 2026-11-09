@@ -180,7 +180,8 @@ pub(crate) struct State {
     pub(crate) protected_account: String,
     pub(crate) recovery_unverified: bool,
     pub(crate) current_account: String,
-    pub(crate) pending_id: String,
+    /// The challenge sent and not yet answered, cancelled with the session.
+    pub(crate) pending_challenge: Option<String>,
     pub(crate) epoch: u64,
     pub(crate) resume_attempt: u64,
     /// `RequestScope` generation of attachments: a newer attachment supersedes an older one.
@@ -235,7 +236,7 @@ impl State {
             protected_account: String::new(),
             recovery_unverified: true,
             current_account: String::new(),
-            pending_id: String::new(),
+            pending_challenge: None,
             epoch: 0,
             resume_attempt: 0,
             attach_generation: 0,
