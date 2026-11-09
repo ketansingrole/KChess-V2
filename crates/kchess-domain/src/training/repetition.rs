@@ -364,13 +364,15 @@ mod tests {
         let encoded = encode_schedule(schedule.clone());
         assert_eq!(decode_schedule(&encoded), schedule);
 
-        // A full repertoire drops the line due last for a new one.
+        // A full repertoire drops the line due last for a new one. The first line written is the
+        // one due last, so a tie between every line (which picks the last written) would drop
+        // another.
         let mut full = Map::new();
         let mut table = Map::new();
         let square = |i: usize| format!("{}{}", char::from(b'a' + (i % 8) as u8), 1 + i / 8);
         for i in 0..MAX_LINES {
             let card = Card {
-                due: NOW + i as f64,
+                due: NOW + (MAX_LINES - i) as f64,
                 ..Card::review(None, true, NOW)
             };
             table.insert(
@@ -380,15 +382,12 @@ mod tests {
         }
         assert_eq!(table.len(), MAX_LINES);
         full.insert("k".into(), Value::Object(table));
-        let last = full["k"]
-            .as_object()
-            .and_then(|t| t.iter().max_by(|a, b| due_of(a.1).total_cmp(&due_of(b.1))))
-            .map(|(line, _)| line.clone())
-            .expect("a last line");
         record(&mut full, "k", "h7h8q", false, NOW).expect("record");
         let table = full["k"].as_object().expect("table");
         assert_eq!(table.len(), MAX_LINES);
-        assert!(table.contains_key("h7h8q") && !table.contains_key(&last));
+        assert!(table.contains_key("h7h8q"));
+        assert!(!table.contains_key("a1a1"), "the line due last is dropped");
+        assert!(table.contains_key("b1a1") && table.contains_key("h2h4"));
 
         let mut many = Map::new();
         for i in 0..MAX_KEYS {
@@ -396,6 +395,56 @@ mod tests {
         }
         assert!(record(&mut many, "another", "e2e4", true, NOW).is_err());
         assert!(record(&mut many, "k0", "e2e4", true, NOW).is_ok());
+    }
+
+    #[test]
+    fn a_repertoire_name_may_be_up_to_200_characters() {
+        let longest = "é".repeat(MAX_KEY_CHARS);
+        let too_long = "é".repeat(MAX_KEY_CHARS + 1);
+        let mut schedule = Map::new();
+        assert!(record(&mut schedule, &longest, "e2e4", true, NOW).is_ok());
+        assert!(record(&mut schedule, &too_long, "e2e4", true, NOW).is_err());
+
+        let card = Card::review(None, true, NOW).to_value();
+        let raw = json!({ "version": 1, "lines": {
+            (longest.clone()): { "e2e4": card },
+            (too_long): { "e2e4": card },
+        }});
+        assert_eq!(
+            Value::Object(decode_schedule(&raw)),
+            json!({ (longest): { "e2e4": card } })
+        );
+    }
+
+    #[test]
+    fn counts_in_a_stored_card_are_whole_and_not_negative() {
+        let card = Card::review(None, true, NOW).to_value();
+        let with = |field: &str, value: Value| {
+            let mut card = card.clone();
+            card[field] = value;
+            card
+        };
+        let raw = json!({ "version": 1, "lines": { "k": {
+            "e2e4": card,
+            "d2d4": with("reps", json!(1.5)),
+            "c2c4": with("reps", json!(-1)),
+            "g1f3": with("lapses", json!(-2.0)),
+            "b1c3": with("lapses", json!(0.25)),
+        }}});
+        assert_eq!(
+            Value::Object(decode_schedule(&raw)),
+            json!({ "k": { "e2e4": card } })
+        );
+    }
+
+    #[test]
+    fn a_root_tag_is_exactly_8_hex_digits() {
+        assert!(valid_line("0123abcd:e2e4"));
+        // Hex digits, but not 8 of them.
+        assert!(!valid_line("abc:e2e4"));
+        assert!(!valid_line("0123abcd0:e2e4"));
+        // 8 characters, but not hex digits.
+        assert!(!valid_line("0123abcz:e2e4"));
     }
 
     #[test]
