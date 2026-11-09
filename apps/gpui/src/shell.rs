@@ -132,7 +132,42 @@ fn nav_label(page: Page, label: &'static str) -> &'static str {
 
 #[cfg(test)]
 mod nav_tests {
-    use super::{NAV_GROUPS, nav, nav_label};
+    use super::{NAV_GROUPS, group_height, group_pages, highlighted_in, nav, nav_label};
+    use gpui_kit::px;
+
+    /// Each group of the sidebar's pages is a part of its own, drawn again only when the page it
+    /// highlights changes: every page is highlighted by its own group, and by no other, so a switch
+    /// redraws the groups it leaves and enters and keeps the rest.
+    #[test]
+    fn each_page_is_highlighted_by_its_group_alone() {
+        let mut seen = 0;
+        for (group, size) in NAV_GROUPS.iter().enumerate() {
+            assert_eq!(group_pages(group).count(), *size);
+            for page in group_pages(group) {
+                for other in 0..NAV_GROUPS.len() {
+                    let expected = (other == group).then_some(page);
+                    assert_eq!(highlighted_in(other, page), expected, "{page:?} in {other}");
+                }
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, nav().len(), "every page is in a group");
+        // Settings is in none: while it is open the page under it stays highlighted.
+        assert!(
+            (0..NAV_GROUPS.len())
+                .all(|group| { highlighted_in(group, crate::pages::Page::Settings).is_none() })
+        );
+    }
+
+    /// A group's slot is as tall as its heading and rows: Home has no heading, the others a line
+    /// (open) or a rule (on the rail).
+    #[test]
+    fn a_groups_slot_is_as_tall_as_its_rows() {
+        assert_eq!(group_height(0, true), px(32.));
+        assert_eq!(group_height(1, true), px(20. + 64.));
+        assert_eq!(group_height(1, false), px(5. + 64.));
+        assert_eq!(group_height(4, true), px(20. + 32. * 6.));
+    }
 
     /// Shortened under their headings, the open sidebar's rows still name one page each.
     #[test]
@@ -153,7 +188,7 @@ mod nav_tests {
 fn nav_item(label: impl Into<SharedString>, glyph: Icon) -> SidebarMenuItem {
     SidebarMenuItem::new(label)
         .icon(glyph.size(px(18.)))
-        .min_h(px(32.))
+        .min_h(NAV_ROW)
         .p(px(6.))
         .gap_x(px(8.))
 }
@@ -281,12 +316,87 @@ fn page_style() -> StyleRefinement {
     style
 }
 
+/// What a group of the sidebar's pages shows (`Workspace::nav_block`): drawn again only when one
+/// of these changes. Redrawing every row on every page switch was a third of opening a page.
+#[derive(PartialEq)]
+struct GroupInputs {
+    open: bool,
+    /// The group's page shown (highlighted), if it is one of the group's.
+    highlighted: Option<Page>,
+    game_mark: Option<GameMark>,
+}
+
+impl GroupInputs {
+    fn of<const GROUP: usize>(workspace: &Workspace, cx: &App) -> GroupInputs {
+        let shown = workspace.shown_page();
+        GroupInputs {
+            open: workspace.shown(),
+            highlighted: highlighted_in(GROUP, shown),
+            game_mark: game_mark(cx),
+        }
+    }
+}
+
+/// The page group `group` highlights while `shown` is shown: `shown` if it is one of the
+/// group's, else none, so a page switch redraws the group it leaves and the one it enters.
+fn highlighted_in(group: usize, shown: Page) -> Option<Page> {
+    group_pages(group)
+        .any(|page| page == shown)
+        .then_some(shown)
+}
+
+/// The width the sidebar's body gives its rows: the sidebar's, less its 16 px padding each side
+/// and its 1 px edge.
+fn sidebar_body_width(open: bool) -> Pixels {
+    sidebar_width(open) - px(33.)
+}
+
+/// A sidebar row's height (`nav_item`).
+const NAV_ROW: Pixels = px(32.);
+
+/// The height of the sidebar's group `group`: its heading (a line when the sidebar is open, a
+/// rule and the space under it on the rail; Home has none) and its rows.
+fn group_height(group: usize, open: bool) -> Pixels {
+    let heading = match (NAV_HEADINGS[group], open) {
+        (None, _) => px(0.),
+        (Some(_), true) => px(20.),
+        (Some(_), false) => px(1.) + px(4.),
+    };
+    heading + NAV_ROW * NAV_GROUPS[group] as f32
+}
+
+/// The pages of the sidebar's group `group` (`NAV_GROUPS`).
+fn group_pages(group: usize) -> impl Iterator<Item = Page> {
+    let start: usize = NAV_GROUPS[..group].iter().sum();
+    nav()
+        .into_iter()
+        .skip(start)
+        .take(NAV_GROUPS[group])
+        .map(|(page, _, _)| page)
+}
+
+fn render_group<const GROUP: usize>(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> AnyElement {
+    let open = workspace.shown();
+    workspace
+        .nav_block(GROUP, open, cx)
+        .collapsed(!open)
+        .render(GROUP, window, cx)
+        .into_any_element()
+}
+
 /// What the sidebar shows (`render_sidebar`): it is drawn again when one of these changes.
 #[derive(PartialEq)]
 struct SidebarInputs {
     open: bool,
     width_from: Pixels,
-    current: Page,
+    /// Settings is open: its button in the footer is shown pressed. Which page is current is each
+    /// group's own input (`GroupInputs`), so a switch between pages redraws only the groups whose
+    /// highlighted row changed, not every row of the sidebar.
+    in_settings: bool,
     section: Option<Section>,
     back: Page,
     game_mark: Option<GameMark>,
@@ -302,7 +412,7 @@ impl SidebarInputs {
         SidebarInputs {
             open: workspace.shown(),
             width_from: workspace.sidebar_width_from,
-            current: workspace.pages.current(),
+            in_settings: workspace.pages.current() == Page::Settings,
             section: workspace
                 .pages
                 .settings()
@@ -1025,6 +1135,8 @@ pub struct Workspace {
     /// while its width eases.
     sidebar_toggled: Option<std::time::Instant>,
     sidebar: Entity<Part<Workspace>>,
+    /// The sidebar's groups of pages, each drawn as a part of its own (`GroupInputs`).
+    nav_groups: [Entity<Part<Workspace>>; NAV_GROUPS.len()],
     /// The sidebar's list of pages, scrolled in a short window.
     sidebar_scroll: ScrollHandle,
     /// Settings' categories beside them in its dialog: to the top as it opens, and to the
@@ -1163,6 +1275,13 @@ impl Workspace {
                 SidebarInputs::of,
                 cx,
             ),
+            nav_groups: [
+                Part::keyed_panel(render_group::<0>, GroupInputs::of::<0>, cx),
+                Part::keyed_panel(render_group::<1>, GroupInputs::of::<1>, cx),
+                Part::keyed_panel(render_group::<2>, GroupInputs::of::<2>, cx),
+                Part::keyed_panel(render_group::<3>, GroupInputs::of::<3>, cx),
+                Part::keyed_panel(render_group::<4>, GroupInputs::of::<4>, cx),
+            ],
             sidebar_scroll: ScrollHandle::new(),
             sections_scroll: ScrollHandle::new(),
             sections_pending: std::cell::Cell::new(None),
@@ -1536,44 +1655,45 @@ impl Workspace {
         }
     }
 
-    /// The pages (`navItems`), the one under Settings marked while its dialog is open.
-    fn nav_blocks(&self, open: bool, cx: &mut Context<Self>) -> Vec<NavBlock> {
+    /// The pages of group `group` (`navItems`), the one under Settings marked while its dialog
+    /// is open.
+    fn nav_block(&self, group: usize, open: bool, cx: &mut Context<Self>) -> NavBlock {
         let current = self.shown_page();
-        let mut pages = nav().into_iter();
-        NAV_GROUPS
-            .into_iter()
-            .zip(NAV_HEADINGS)
-            .map(|(size, heading)| {
-                let group: Vec<_> = pages.by_ref().take(size).collect();
-                let mark = group
-                    .iter()
-                    .position(|(page, _, _)| *page == Page::Online)
-                    .and_then(|row| Some((row, game_mark(cx)?)));
-                NavBlock::Menu(
-                    heading,
-                    Box::new(SidebarMenu::new().gap_0().children(group.into_iter().map(
-                        |(page, label, glyph)| {
-                            let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
-                            let shown = if open { nav_label(page, label) } else { label };
-                            nav_item(shown, glyph)
-                                .accessibility_label(label)
-                                .active(current == page)
-                                .when_some(marked, |item, mark| {
-                                    item.accessibility_label(match mark {
-                                        GameMark::Turn => format!("{label}, your move"),
-                                        GameMark::Live => format!("{label}, game in progress"),
-                                    })
-                                    .suffix(move |_, cx| game_dot(mark, cx))
-                                })
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.choose(page, window, cx)
-                                }))
-                        },
-                    ))),
-                    mark,
-                )
-            })
-            .collect()
+        let pages: Vec<_> = {
+            let start: usize = NAV_GROUPS[..group].iter().sum();
+            nav()
+                .into_iter()
+                .skip(start)
+                .take(NAV_GROUPS[group])
+                .collect()
+        };
+        let mark = pages
+            .iter()
+            .position(|(page, _, _)| *page == Page::Online)
+            .and_then(|row| Some((row, game_mark(cx)?)));
+        NavBlock::Menu(
+            NAV_HEADINGS[group],
+            Box::new(SidebarMenu::new().gap_0().children(pages.into_iter().map(
+                |(page, label, glyph)| {
+                    let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
+                    let shown = if open { nav_label(page, label) } else { label };
+                    nav_item(shown, glyph)
+                        .accessibility_label(label)
+                        .active(current == page)
+                        .when_some(marked, |item, mark| {
+                            item.accessibility_label(match mark {
+                                GameMark::Turn => format!("{label}, your move"),
+                                GameMark::Live => format!("{label}, game in progress"),
+                            })
+                            .suffix(move |_, cx| game_dot(mark, cx))
+                        })
+                        .on_click(
+                            cx.listener(move |this, _, window, cx| this.choose(page, window, cx)),
+                        )
+                },
+            ))),
+            mark,
+        )
     }
 
     /// Settings' categories in its dialog, in their groups.
@@ -1772,7 +1892,7 @@ impl Workspace {
     /// `USidebar` with `collapsible="icon"`: the header row the toggle floats over, the pages,
     /// and the footer, divided by lines (`divide-y`); 256px open, a 64px rail of icons collapsed,
     /// its width easing between the two in 200ms.
-    fn render_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let open = self.shown();
         let in_settings = self.pages.current() == Page::Settings;
         let width = sidebar_width(open);
@@ -1780,15 +1900,17 @@ impl Workspace {
         // macOS keeps the rail's edge out of the header row, where it would cut through the
         // traffic lights (`.is-mac .kchess-sidebar-container::after`).
         let mac = cfg!(target_os = "macos");
+        // Each group as its part, across the sidebar's width and as tall as its rows: a cached
+        // view is laid out alone in its slot, so the slot takes the group's height from here.
         let blocks: Vec<AnyElement> = self
-            .nav_blocks(open, cx)
-            .into_iter()
+            .nav_groups
+            .iter()
             .enumerate()
-            .map(|(ix, block)| {
-                block
-                    .collapsed(!open)
-                    .render(ix, window, cx)
-                    .into_any_element()
+            .map(|(group, part)| {
+                let mut style = StyleRefinement::default();
+                style.size.width = Some(sidebar_body_width(open).into());
+                style.size.height = Some(group_height(group, open).into());
+                part.clone().cached(style).into_any_element()
             })
             .collect();
         let sidebar = v_flex()
