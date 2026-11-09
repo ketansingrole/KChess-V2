@@ -80,6 +80,17 @@ fn median(mut values: Vec<f64>) -> f64 {
     values[values.len() / 2]
 }
 
+/// The process's resident memory (Linux's `/proc`; 0 elsewhere).
+fn resident_mib() -> f64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
+            line.split_whitespace().nth(1)?.parse::<f64>().ok()
+        })
+        .map_or(0., |kib| kib / 1024.)
+}
+
 /// Starts as `Harness::boot` does, timing the core's start, the models and window, and the
 /// window's first frame.
 fn timed_start(cx: TestAppContext, profile: tempfile::TempDir) -> (Harness, [f64; 3]) {
@@ -192,6 +203,7 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
     let mut first: Vec<Vec<f64>> = vec![Vec::new(); pages.len()];
     let mut again: Vec<Vec<f64>> = vec![Vec::new(); pages.len()];
     let mut scrolls: Vec<Vec<f64>> = vec![Vec::new(); pages.len()];
+    let mut grown: Vec<f64> = Vec::new();
     for _ in 0..5 {
         let profile = app.profile.take().expect("the profile");
         let next = app.cx.new_app();
@@ -199,6 +211,21 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
         let (started, times) = timed_start(next, profile);
         app = started;
         starts.push(times);
+        // `KCHESS_PERF_PREWARM=1`: every page made before any is opened.
+        if std::env::var_os("KCHESS_PERF_PREWARM").is_some() {
+            app.settle();
+            let before = resident_mib();
+            for (page, _) in &pages {
+                app.cx
+                    .update_window(app.window, |_, window, cx| {
+                        let _ = crate::shell::page_view::<()>(*page, window, cx);
+                        draw(window, cx);
+                    })
+                    .expect("the window is open");
+            }
+            app.settle();
+            grown.push(resident_mib() - before);
+        }
         for (n, (page, _)) in pages.iter().enumerate() {
             first[n].push(open(&mut app, *page));
         }
@@ -206,6 +233,9 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
             again[n].push(open(&mut app, *page));
             scrolls[n].extend(scroll(&mut app));
         }
+    }
+    if !grown.is_empty() {
+        println!("prewarm: resident memory +{:.1} MiB", median(grown.clone()));
     }
     let phase = |n: usize| median(starts.iter().map(|times| times[n]).collect());
     println!(
