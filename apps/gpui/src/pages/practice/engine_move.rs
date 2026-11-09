@@ -59,9 +59,10 @@ impl EngineMove {
         engine.generation += 1;
         let mine = engine.generation;
         engine.running = true;
-        if busy {
-            engine.thinking = true;
-        }
+        // This search replaces any before it: whether one is thinking, and an earlier failure,
+        // are its own. A quiet search after a busy one left `thinking` on for good.
+        engine.thinking = busy;
+        engine.error = None;
         let search = cx.global::<AppCore>().request(calls::BestMove {
             moves: json!(moves),
             level: json!("max"),
@@ -118,5 +119,43 @@ impl EngineMove {
                 }
             })
             .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EngineMove, HasEngine};
+    use gpui_kit::{AppContext as _, Context};
+
+    #[derive(Default)]
+    struct Page {
+        engine: EngineMove,
+    }
+
+    impl HasEngine for Page {
+        fn engine(&mut self) -> &mut EngineMove {
+            &mut self.engine
+        }
+    }
+
+    fn played(_: &mut Page, _: String, _: &mut Context<Page>) {}
+
+    /// A quiet search (a hint) asked for while a reply was searched replaced it, and nothing
+    /// was left to turn `thinking` off: the page waited on the engine for good.
+    #[gpui_kit::test]
+    fn a_quiet_search_after_a_busy_one_is_not_thinking(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = crate::e2e::Harness::start(cx);
+        let (thinking, error) = app.with_window(|_, cx| {
+            let page = cx.new(|_| Page::default());
+            page.update(cx, |page, cx| {
+                let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+                EngineMove::ask(page, start, &[], 100, true, played, cx);
+                page.engine.error = Some("The engine stopped".into());
+                EngineMove::ask(page, start, &[], 100, false, played, cx);
+                (page.engine.thinking, page.engine.error.clone())
+            })
+        });
+        assert!(!thinking);
+        assert_eq!(error, None);
     }
 }

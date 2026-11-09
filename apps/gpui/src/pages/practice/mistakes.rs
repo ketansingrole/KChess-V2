@@ -99,6 +99,8 @@ pub struct Mistakes {
     items: Vec<Value>,
     /// Until the saved drills arrive, "no mistakes yet" would not be true.
     loading: bool,
+    /// Each load of the overview; an answer to an earlier one is dropped.
+    load: u64,
     games: Vec<Value>,
     error: Option<String>,
     has_accounts: bool,
@@ -149,6 +151,7 @@ impl Mistakes {
         let mut trainer = Mistakes {
             items: Vec::new(),
             loading: false,
+            load: 0,
             games: Vec::new(),
             error: None,
             has_accounts: false,
@@ -172,6 +175,8 @@ impl Mistakes {
         self.show_all = false;
         self.now = crate::clock::epoch_ms();
         self.loading = true;
+        self.load += 1;
+        let load = self.load;
         let core = cx.global::<AppCore>().clone();
         let (library, games, data) = (
             core.request(calls::Library {}),
@@ -181,10 +186,15 @@ impl Mistakes {
         cx.spawn(async move |this, cx| {
             let (library, games, data) = (library.await, games.await, data.await);
             let _ = this.update(cx, |this, cx| {
+                if load != this.load {
+                    return;
+                }
                 this.loading = false;
                 match library {
+                    // A failure to load is the last load's: one that worked clears it.
                     Ok(library) => {
                         this.items = library["mistakes"].as_array().cloned().unwrap_or_default();
+                        this.error = None;
                     }
                     Err(cause) => this.error = Some(cause.message),
                 }
@@ -699,6 +709,24 @@ impl Render for Mistakes {
 mod tests {
     use super::{judgment_counts, title};
     use serde_json::json;
+
+    /// A failed load's error stayed on the overview after a later load worked.
+    #[gpui_kit::test]
+    fn a_load_that_works_clears_an_earlier_failure(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = crate::e2e::Harness::start(cx);
+        let page = app.with_window(|window, cx| {
+            let page = cx.new(|cx| super::Mistakes::new(window, cx));
+            page.update(cx, |page, cx| {
+                page.error = Some("The library could not be read".into());
+                page.shown(cx);
+            });
+            page
+        });
+        app.wait_for("the overview to load", |_, cx| !page.read(cx).loading);
+        let error = app.with_window(|_, cx| page.read(cx).error.clone());
+        assert_eq!(error, None);
+    }
 
     #[test]
     fn a_game_is_named_by_your_opponent() {

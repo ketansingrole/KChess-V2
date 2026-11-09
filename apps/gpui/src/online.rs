@@ -97,6 +97,8 @@ pub struct OnlineState {
     pub ongoing: Vec<Value>,
     pub ongoing_loaded: bool,
     pub ongoing_error: Option<String>,
+    /// Each games-in-progress request; an answer to an earlier one is dropped.
+    ongoing_request: u64,
     /// The kind of failure that ended the game's connection (`ErrorKind`), until it recovers.
     pub failure: Option<String>,
     /// The game connection's state that ended it for good, kept until the game connects again.
@@ -725,14 +727,23 @@ impl OnlineState {
     /* ── Challenges and games in progress ── */
 
     pub fn refresh_ongoing(&mut self, cx: &mut Context<Self>) {
+        // A newer request either way: an answer still on its way (a poll overtaken by a change,
+        // or from before signing out) must not bring back older games, or their notifications.
+        self.ongoing_request += 1;
+        let request = self.ongoing_request;
         if crate::accounts::handle(cx).read(cx).connected().is_empty() {
             self.ongoing.clear();
+            self.ongoing_error = None;
+            cx.notify();
             return;
         }
         let call = cx.global::<AppCore>().request(calls::OngoingGames {});
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
+                if request != this.ongoing_request {
+                    return;
+                }
                 match answer {
                     Ok(games) => {
                         let games = games.as_array().cloned().unwrap_or_default();
@@ -1055,6 +1066,7 @@ pub fn init(cx: &mut App) {
             ongoing: Vec::new(),
             ongoing_loaded: false,
             ongoing_error: None,
+            ongoing_request: 0,
             failure: None,
             failed_state: None,
             busy_challenge: String::new(),
@@ -1202,6 +1214,30 @@ pub fn challenge_alert(challenge: &Value) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::Form;
+    use crate::e2e::Harness;
+
+    /// Signing out while the games in progress loaded kept that request current: its answer
+    /// brought the account's games back, and an earlier failure stayed on the empty list.
+    #[gpui_kit::test]
+    fn games_in_progress_from_before_signing_out_do_not_come_back(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let mut app = Harness::start(cx);
+        let (stale, error) = app.with_window(|_, cx| {
+            super::handle(cx).update(cx, |online, cx| {
+                online.ongoing_error = Some("Lichess did not answer".into());
+                let asked = online.ongoing_request;
+                // No account is connected in a fresh profile.
+                online.refresh_ongoing(cx);
+                (
+                    online.ongoing_request == asked,
+                    online.ongoing_error.clone(),
+                )
+            })
+        });
+        assert!(!stale);
+        assert_eq!(error, None);
+    }
 
     #[test]
     fn the_form_starts_at_15_plus_10() {
