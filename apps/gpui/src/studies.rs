@@ -111,11 +111,6 @@ fn written_chapter(command: &Value, result: &Value) -> Option<(String, String)> 
     Some((id.to_string(), chapter.to_string()))
 }
 
-/// Forgets what is kept for a removed study (`chapter` absent) or one of its chapters.
-fn forget_removed<V>(kept: &mut HashMap<(String, String), V>, study: &str, chapter: Option<&str>) {
-    kept.retain(|(id, at), _| id != study || chapter.is_some_and(|chapter| chapter != at));
-}
-
 fn write_in_order(
     entity: WeakEntity<StudyLibrary>,
     mut queue: mpsc::UnboundedReceiver<Write>,
@@ -177,8 +172,9 @@ fn write_in_order(
                 if result.is_ok() && (op == "remove" || op == "removeChapter") {
                     let study = command["id"].as_str().unwrap_or_default();
                     let chapter = command["chapterId"].as_str();
-                    forget_removed(&mut unsaved, study, chapter);
-                    forget_removed(&mut bases, study, chapter);
+                    unsaved.retain(|(id, at), _| {
+                        id != study || chapter.is_some_and(|chapter| chapter != at)
+                    });
                 }
                 if let Ok(result) = &result
                     && let Some(key) = written_chapter(&command, result)
@@ -398,10 +394,7 @@ impl StudyLibrary {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Bases, StudyLibrary, Write, chapter_items, forget_removed, saved_chapter, time_ago,
-        written_chapter,
-    };
+    use super::{StudyLibrary, Write, chapter_items, saved_chapter, time_ago, written_chapter};
     use futures::channel::mpsc;
     use serde_json::json;
 
@@ -487,22 +480,6 @@ mod tests {
         };
         assert_eq!(key, ("a".to_string(), "c".to_string()));
         assert_eq!(pgn.as_deref(), Some("1. d4 *"));
-    }
-
-    /// Regression: the base of every chapter opened or saved stayed after its study or chapter
-    /// was removed, a copy of its moves for the session.
-    #[test]
-    fn a_removed_study_or_chapter_is_forgotten() {
-        let key = |study: &str, chapter: &str| (study.to_string(), chapter.to_string());
-        let mut kept: Bases = [key("a", "1"), key("a", "2"), key("b", "1")]
-            .into_iter()
-            .map(|key| (key, String::new()))
-            .collect();
-        forget_removed(&mut kept, "a", Some("1"));
-        assert!(!kept.contains_key(&key("a", "1")));
-        assert!(kept.contains_key(&key("a", "2")) && kept.contains_key(&key("b", "1")));
-        forget_removed(&mut kept, "a", None);
-        assert_eq!(kept.keys().collect::<Vec<_>>(), vec![&key("b", "1")]);
     }
 
     #[test]

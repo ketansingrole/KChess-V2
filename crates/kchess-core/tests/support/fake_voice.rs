@@ -6,8 +6,6 @@
 //! - `refuse`: answers an error instead of ready, as a helper that cannot load the model does.
 //! - `crash-on-audio`: exits without answering the first audio.
 //! - `hang-on-audio`: never answers audio.
-//! - `slow-audio`: as `normal`, but takes half a second to answer audio, so a test can give up
-//!   on a request the helper has already been sent.
 //! - `slow-grammar`: as `normal`, but takes two seconds to acknowledge a grammar, longer than
 //!   the tests' per-request deadline, as a new helper on a loaded machine can.
 //!
@@ -60,14 +58,6 @@ fn main() {
             b'A' if mode == "hang-on-audio" => loop {
                 std::thread::park();
             },
-            b'A' if mode == "slow-audio" => {
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                if payload.iter().any(|byte| *byte != 0) {
-                    say(r#"{"result":{"text":"e four","words":[]}}"#);
-                } else {
-                    say(r#"{"partial":"e"}"#);
-                }
-            }
             b'A' if payload.iter().any(|byte| *byte != 0) => say(
                 r#"{"result":{"text":"e four","words":[{"word":"e","conf":0.9},{"word":"four","conf":0.8}]}}"#,
             ),

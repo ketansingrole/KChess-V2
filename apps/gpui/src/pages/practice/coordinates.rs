@@ -147,8 +147,6 @@ pub struct Coordinates {
     board: Entity<ChessBoard>,
     layout: PlayLayout,
     timers: Vec<Task<()>>,
-    /// Clears the answer's flash; the next answer replaces it, so a long run keeps only one.
-    flash_timer: Option<Task<()>>,
     /// Say the square: the voice switch, its log, and a start waiting for voice to load.
     voice: Control,
     voice_log: DrillLog,
@@ -206,7 +204,6 @@ impl Coordinates {
             board,
             layout: PlayLayout::default(),
             timers: Vec::new(),
-            flash_timer: None,
             voice: Control::new(false, cx),
             voice_log: DrillLog::default(),
             starting: false,
@@ -300,19 +297,13 @@ impl Coordinates {
         self.redraw(cx);
     }
 
-    /// The timers the drill keeps: its clock and the flash of the last answer.
-    #[cfg(test)]
-    pub(crate) fn timer_count(&self) -> usize {
-        self.timers.len() + usize::from(self.flash_timer.is_some())
-    }
-
     fn answer(&mut self, square: &str, cx: &mut Context<Self>) {
         if self.stage != Stage::Running {
             return;
         }
         let correct = square == self.target;
         self.flash = Some((square.to_string(), correct));
-        self.flash_timer = Some(cx.spawn(async move |this, cx| {
+        self.timers.push(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FLASH).await;
             let _ = this.update(cx, |this, cx| {
                 this.flash = None;

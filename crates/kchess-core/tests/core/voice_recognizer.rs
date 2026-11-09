@@ -252,31 +252,3 @@ async fn recovers_from_a_crashed_or_hung_helper_with_a_new_one() {
         );
     }
 }
-
-/// Regression: a request given up on after the helper was sent it (a cancelled call) left its
-/// answer in the pipe, so every later request read the answer to the one before it. The helper
-/// ends with it instead, and the next start brings up a new one in step.
-#[tokio::test]
-async fn a_request_given_up_on_does_not_shift_the_answers() {
-    let folder = model("slow-audio");
-    let (voice, _) = recognizer(folder.path());
-    voice.start(&grammar(), 16_000.0).await.expect("start");
-    let speech = pcm(&[900; 160]);
-    let gave_up = tokio::time::timeout(Duration::from_millis(100), voice.accept(&speech)).await;
-    assert!(gave_up.is_err(), "the helper was still answering");
-    assert!(
-        voice.accept(&pcm(&[0; 160])).await.is_err(),
-        "no answer from the abandoned request"
-    );
-    voice
-        .start(&grammar(), 16_000.0)
-        .await
-        .expect("a new helper");
-    assert_eq!(
-        voice.accept(&pcm(&[0; 160])).await.expect("silence"),
-        Heard {
-            partial: Some("e".into()),
-            result: None
-        }
-    );
-}

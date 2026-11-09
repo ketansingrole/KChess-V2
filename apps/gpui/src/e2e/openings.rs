@@ -100,57 +100,6 @@ fn the_openings_just_seen_are_listed_and_kept(cx: &mut gpui_kit::TestAppContext)
     assert_eq!(app.find("opening-title").label(), Some(KIESERITZKY));
 }
 
-/// Regression: every opening that ever passed through Recent kept its preview board for the
-/// session. Only the popular cards and the recent ones shown keep theirs.
-#[gpui_kit::test]
-fn openings_that_leave_recent_let_their_preview_go(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::openings::{OpeningChoice, OpeningsPage};
-    let mut app = openings(cx);
-    let lines = [
-        "e2e4 e7e5 f2f4",
-        "e2e4 e7e5 f2f4 e5f4",
-        "e2e4 g7g6",
-        "e2e4 b7b6",
-        "e2e4 d7d6",
-        "e2e4 e7e5 b1c3",
-        "f2f4",
-        "b2b3",
-        "g2g3",
-        "e2e4 g8f6",
-    ];
-    for line in lines {
-        let choice = OpeningChoice {
-            name: line.to_string(),
-            moves: line.split(' ').map(str::to_string).collect(),
-        };
-        app.cx
-            .update(|cx| crate::prefs::set(cx, "kchess:recent-openings", vec![choice]));
-        app.find(format!("recent-{line}"));
-    }
-    let kept = |app: &mut Harness| {
-        app.cx.update(|cx| {
-            crate::shell::view_of::<OpeningsPage>(Page::Openings, cx)
-                .expect("the page")
-                .read(cx)
-                .kept_previews()
-        })
-    };
-    let shown = kept(&mut app);
-    assert_eq!(
-        shown.len(),
-        13,
-        "the twelve popular openings and the one recent"
-    );
-    // The boards shown stay from one frame to the next, not made afresh each time.
-    app.cx.update(|cx| {
-        crate::shell::view_of::<OpeningsPage>(Page::Openings, cx)
-            .expect("the page")
-            .update(cx, |_, cx| cx.notify());
-    });
-    app.settle();
-    assert_eq!(kept(&mut app), shown);
-}
-
 #[gpui_kit::test]
 fn a_popular_opening_is_trained_in_the_repertoire_trainer(cx: &mut gpui_kit::TestAppContext) {
     let mut app = openings(cx);

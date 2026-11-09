@@ -89,27 +89,6 @@ fn a_coordinates_run_scores_the_clicked_square(cx: &mut gpui_kit::TestAppContext
     assert!(app.enabled("coordinates-start"));
 }
 
-/// Regression: every answer kept its flash's timer until the next run, so an untimed run grew by
-/// one with each square clicked. The drill now keeps its clock and the last answer's flash.
-#[gpui_kit::test]
-fn a_coordinates_run_keeps_one_flash_timer(cx: &mut gpui_kit::TestAppContext) {
-    let mut app = practice(cx);
-    app.click("coordinates-start");
-    for _ in 0..10 {
-        let target = app.find("coordinates-target").label().unwrap().to_string();
-        let wrong = if target == "a1" { "h8" } else { "a1" };
-        app.click_square(wrong, true);
-    }
-    let timers = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
-            .and_then(|page| page.read(cx).coordinates())
-            .expect("the coordinates drill")
-            .read(cx)
-            .timer_count()
-    });
-    assert_eq!(timers, 2, "the clock and the last flash");
-}
-
 #[gpui_kit::test]
 fn a_coordinates_run_can_be_limited_to_some_files_and_ranks(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);

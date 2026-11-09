@@ -2,7 +2,7 @@
 //! each made the first time it is shown and kept.
 
 mod classics;
-pub(crate) mod coordinates;
+mod coordinates;
 pub(crate) mod endgame_drills;
 pub(crate) mod endgame_lesson;
 mod endgames;
@@ -85,11 +85,6 @@ impl PracticePage {
             return None;
         }
         self.endgames.as_ref()?.read(cx).shown_drills(cx)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn coordinates(&self) -> Option<Entity<coordinates::Coordinates>> {
-        self.coordinates.clone()
     }
 
     #[cfg(test)]
