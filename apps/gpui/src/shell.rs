@@ -728,6 +728,14 @@ pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Make the pages made ahead (`Workspace::prewarm`) now.
+#[cfg(test)]
+pub fn prewarm(window: &mut Window, cx: &mut App) {
+    if let Some(workspace) = cx.try_global::<Navigator>().and_then(|nav| nav.0.upgrade()) {
+        workspace.update(cx, |workspace, cx| workspace.prewarm(window, cx));
+    }
+}
+
 /// A page's view, made now (without showing it) if it has not been shown.
 pub fn page_view<V: 'static>(page: Page, window: &mut Window, cx: &mut App) -> Option<Entity<V>> {
     let workspace = cx.try_global::<Navigator>()?.0.upgrade()?;
@@ -1061,6 +1069,16 @@ fn window_title(page: Page) -> String {
     }
 }
 
+/// The pages made ahead, a moment after the window shows: making them is most of their first
+/// opening (reading their sessions, the board game's history places), and nothing they do
+/// before being shown reaches the engine or the network. Every other page's first opening is
+/// its first frame, which making it ahead does not change. 1.8 MiB for every page, measured.
+const PREWARMED: [Page; 2] = [Page::Local, Page::Analysis];
+
+/// How long after the window opens the pages are made: past the first frames.
+#[cfg(not(test))]
+const PREWARM_AFTER: std::time::Duration = std::time::Duration::from_millis(1500);
+
 impl Workspace {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Workspace {
         crate::theme::apply(window, cx);
@@ -1176,7 +1194,23 @@ impl Workspace {
         cx.defer_in(window, |_, window, cx| {
             crate::whats_new::on_start(window, cx)
         });
+        // A moment after the window shows, the pages whose making is most of their first
+        // opening are made. The end-to-end tests make them when a test asks (`prewarm`), so
+        // each opens its pages as it did.
+        #[cfg(not(test))]
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(PREWARM_AFTER).await;
+            let _ = this.update_in(cx, |workspace, window, cx| workspace.prewarm(window, cx));
+        })
+        .detach();
         workspace
+    }
+
+    /// Make the pages of `PREWARMED` not made yet, without showing them.
+    pub fn prewarm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for page in PREWARMED {
+            let _ = self.pages.view_made::<(), _>(page, window, cx);
+        }
     }
 
     /// A model the shell and the pages read while rendering changed. The page is a cached view,

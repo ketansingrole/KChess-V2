@@ -211,18 +211,23 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
         let (started, times) = timed_start(next, profile);
         app = started;
         starts.push(times);
-        // `KCHESS_PERF_PREWARM=1`: every page made before any is opened.
-        if std::env::var_os("KCHESS_PERF_PREWARM").is_some() {
+        // The pages the app makes a moment after its window shows (`shell::prewarm`), made as
+        // it does; `KCHESS_PERF_PREWARM=all` makes every page instead, to see what that buys.
+        {
             app.settle();
             let before = resident_mib();
-            for (page, _) in &pages {
-                app.cx
-                    .update_window(app.window, |_, window, cx| {
-                        let _ = crate::shell::page_view::<()>(*page, window, cx);
-                        draw(window, cx);
-                    })
-                    .expect("the window is open");
-            }
+            let all = std::env::var("KCHESS_PERF_PREWARM").is_ok_and(|mode| mode == "all");
+            app.cx
+                .update_window(app.window, |_, window, cx| {
+                    crate::shell::prewarm(window, cx);
+                    if all {
+                        for (page, _) in &pages {
+                            let _ = crate::shell::page_view::<()>(*page, window, cx);
+                        }
+                    }
+                    draw(window, cx);
+                })
+                .expect("the window is open");
             app.settle();
             grown.push(resident_mib() - before);
         }
@@ -235,7 +240,10 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
         }
     }
     if !grown.is_empty() {
-        println!("prewarm: resident memory +{:.1} MiB", median(grown.clone()));
+        println!(
+            "made ahead: resident memory +{:.1} MiB",
+            median(grown.clone())
+        );
     }
     let phase = |n: usize| median(starts.iter().map(|times| times[n]).collect());
     println!(
