@@ -506,6 +506,24 @@ mod tests {
         assert!(named(&lines()[0].moves).is_some(), "a named line is named");
     }
 
+    /// The filter lets through the positions of the table and turns others away, so only those
+    /// are written out.
+    #[test]
+    fn only_named_placements_pass_the_filter() {
+        let mut pos = rules::setup_start("standard", START).expect("start");
+        for uci in &lines()[0].moves {
+            let m = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u));
+            pos.play_unchecked(m.expect("a legal move"));
+        }
+        assert!(
+            placements().contains(&placement_hash(&pos)),
+            "a named line's end"
+        );
+        let far = rules::setup_start("standard", "8/8/8/4k3/8/8/4P3/4K3 w - - 0 40").expect("fen");
+        assert!(!placements().contains(&placement_hash(&far)), "an endgame");
+        assert_ne!(placement_hash(&pos), placement_hash(&far));
+    }
+
     #[test]
     fn names_the_last_named_position() {
         let moves: Vec<String> = ["e2e4", "a7a6", "h2h3"]

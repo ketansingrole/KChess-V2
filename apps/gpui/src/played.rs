@@ -192,12 +192,17 @@ impl PlayedGames {
         self.revision
     }
 
+    /// The games changed.
+    fn changed(&mut self) {
+        self.revision += 1;
+    }
+
     /// Save a game: it shows at once, ahead of the rest.
     pub fn save(&mut self, game: Value, cx: &mut Context<Self>) {
         let id = game["id"].clone();
         self.games.retain(|entry| entry["id"] != id);
         self.games.insert(0, game.clone());
-        self.revision += 1;
+        self.changed();
         self.reads.edited();
         let _ = self.writes.unbounded_send(Write::Game(game));
         cx.notify();
@@ -207,7 +212,7 @@ impl PlayedGames {
     pub fn remove(&mut self, id: &str, cx: &mut Context<Self>) -> Option<(usize, Value)> {
         let index = self.games.iter().position(|entry| entry["id"] == id)?;
         let game = self.games.remove(index);
-        self.revision += 1;
+        self.changed();
         self.reads.edited();
         let _ = self.writes.unbounded_send(Write::Remove(id.to_string()));
         cx.notify();
@@ -219,7 +224,7 @@ impl PlayedGames {
         let id = game["id"].clone();
         self.games.retain(|entry| entry["id"] != id);
         self.games.insert(index.min(self.games.len()), game.clone());
-        self.revision += 1;
+        self.changed();
         self.reads.edited();
         let _ = self.writes.unbounded_send(Write::Game(game));
         cx.notify();
@@ -264,7 +269,7 @@ impl PlayedGames {
                 let _ = this.update(cx, |this, cx| match this.reads.answer(read) {
                     Answer::Show => {
                         this.games = games;
-                        this.revision += 1;
+                        this.changed();
                         cx.notify();
                     }
                     Answer::Again => this.reload(cx),
