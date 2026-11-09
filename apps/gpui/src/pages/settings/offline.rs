@@ -7,7 +7,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::voice::{Phase, Progress, Status};
+use kchess_core::voice::{Phase, Progress, Status};
 
 use super::{Section, SettingsPage, engine::engine_name};
 use crate::assets::icon;
@@ -56,9 +56,10 @@ impl SettingsPage {
         self.voice_downloading = true;
         self.voice_model_error = None;
         let (sender, mut updates) = futures::channel::mpsc::unbounded::<Progress>();
-        let listener: crate::voice::Listener = std::sync::Arc::new(move |progress: &Progress| {
-            let _ = sender.unbounded_send(progress.clone());
-        });
+        let listener: kchess_core::voice::Listener =
+            std::sync::Arc::new(move |progress: &Progress| {
+                let _ = sender.unbounded_send(progress.clone());
+            });
         let download = crate::voice::download_model(listener, cx);
         cx.spawn(async move |this, cx| {
             let watch = {
@@ -179,10 +180,6 @@ impl SettingsPage {
             )
             .children(self.voice_model_error.clone().map(|error| {
                 div()
-                    .id("offline-voice-error")
-                    .test_support()
-                    .role(Role::Status)
-                    .aria_label(error.clone())
                     .text_size(px(12.))
                     .text_color(palette.error)
                     .child(error)

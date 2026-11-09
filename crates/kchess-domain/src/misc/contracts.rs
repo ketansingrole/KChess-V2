@@ -364,8 +364,6 @@ const CORE: &[Row] = &[
     ("voiceAccept", 1, &[Valid("assertVoiceAudio")]),
     ("voiceFinish", 0, &[]),
     ("voiceStop", 0, &[]),
-    ("voiceModelStatus", 0, &[]),
-    ("voiceModelInstall", 0, &[]),
     ("library", 0, &[]),
     (
         "studyCommand",
@@ -701,7 +699,5 @@ mod tests {
         }
         assert_eq!(ok("voiceFinish", &[]), Some(Ok(())));
         assert_eq!(ok("voiceStop", &[]), Some(Ok(())));
-        assert_eq!(ok("voiceModelStatus", &[]), Some(Ok(())));
-        assert_eq!(ok("voiceModelInstall", &[]), Some(Ok(())));
     }
 }

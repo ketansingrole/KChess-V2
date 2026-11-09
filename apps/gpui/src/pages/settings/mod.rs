@@ -206,7 +206,7 @@ pub struct SettingsPage {
     exporting: bool,
     voice_history: Option<Entity<voice_history::VoiceHistory>>,
     /// The offline speech model, and whether this page is downloading it.
-    voice_model: Option<kchess_contracts::voice::Status>,
+    voice_model: Option<kchess_core::voice::Status>,
     voice_model_error: Option<SharedString>,
     voice_downloading: bool,
     /// My accounts: the Chess.com username to add.

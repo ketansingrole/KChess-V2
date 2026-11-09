@@ -106,20 +106,41 @@ pub enum Archive {
     File(PathBuf),
 }
 
-pub use kchess_contracts::voice::{Phase, Progress, Status};
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Phase {
+    Checking,
+    Downloading,
+    Preparing,
+}
+
+/// What the preparation is doing (`VoiceModelProgress`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Progress {
+    pub phase: Phase,
+    pub received: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+}
+
+/// What the directory holds (`VoiceModelStatus`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Status {
+    pub installed: bool,
+    pub bytes: u64,
+    pub busy: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<Progress>,
+}
 
 /// Receives each progress report. It must not block: the preparation calls it on its own task.
 pub type Listener = Arc<dyn Fn(&Progress) + Send + Sync>;
 
-/// The voice folder of the profile whose data directory is `data_dir`, which the model cache
-/// prepares the model in.
-pub fn cache_dir(data_dir: &Path) -> PathBuf {
-    data_dir.join("voice")
-}
-
 /// The model folder of the profile whose data directory is `data_dir`.
 pub fn model_dir(data_dir: &Path) -> PathBuf {
-    cache_dir(data_dir).join(MODEL_FOLDER)
+    data_dir.join("voice").join(MODEL_FOLDER)
 }
 
 /// One file of the published folder.

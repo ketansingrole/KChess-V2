@@ -27,8 +27,7 @@ several of them share one core, and either can embed a core instead. Host capabi
 answers (opening the browser, focusing its window, battery state) reach it as `host:request`.
 Their errors and log levels are the contracts' (`kchess_contracts::{CoreError, Level}`), and only
 the few files that start or host a core name `kchess_core` (xtask's `boundaries` test,
-`tooling/xtask/src/boundaries.rs`). The app's only requests of its own are the updater's and
-Lichess's pictures; the engine, the puzzle database and the voice model are the core's downloads.
+`tooling/xtask/src/boundaries.rs`).
 
 The chess and document rules are one Rust implementation (`crates/kchess-domain`), exposed through
 `api.rs` as `call(method, argsJson)` and as plain functions; the core and the app use them

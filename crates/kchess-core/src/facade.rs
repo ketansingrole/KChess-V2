@@ -161,8 +161,6 @@ pub const FACADE_METHODS: &[&str] = &[
     "voiceAccept",
     "voiceFinish",
     "voiceStop",
-    "voiceModelStatus",
-    "voiceModelInstall",
     "library",
     "studyCommand",
     "saveArchivedGame",
@@ -711,8 +709,9 @@ impl Core {
             | "updateVoiceAttempt"
             | "voiceHistory"
             | "clearVoiceHistory" => self.run_puzzles(method, args).await,
-            "voiceStart" | "voiceAccept" | "voiceFinish" | "voiceStop" | "voiceModelStatus"
-            | "voiceModelInstall" => self.run_voice(method, args).await,
+            "voiceStart" | "voiceAccept" | "voiceFinish" | "voiceStop" => {
+                self.run_voice(method, args).await
+            }
             "library"
             | "studyCommand"
             | "saveArchivedGame"

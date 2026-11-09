@@ -95,7 +95,6 @@ fn facade_arms_answer_exactly_the_listed_methods() {
         include_str!("../../src/facade/studies.rs"),
         include_str!("../../src/facade/system.rs"),
         include_str!("../../src/facade/tournaments.rs"),
-        include_str!("../../src/facade/voice.rs"),
     ];
     let mut arms: BTreeSet<String> = BTreeSet::new();
     let mut saw_unknown = false;

@@ -28,14 +28,8 @@ const HANDSHAKES: usize = 32;
 /// Frames waiting for a client that reads slowly.
 const QUEUE: usize = 1024;
 /// Progress events a slow client may miss: the next one carries the whole state. Their last,
-/// terminal update (`terminal`) is never dropped. The voice model's download has none: its
-/// method's answer ends it.
-const COALESCED: [&str; 4] = [
-    "engine:analysis",
-    "watch:frame",
-    "puzzledb:progress",
-    "voicemodel:progress",
-];
+/// terminal update (`terminal`) is never dropped.
+const COALESCED: [&str; 3] = ["engine:analysis", "watch:frame", "puzzledb:progress"];
 /// How long a leaving client's queued frames may take to flush.
 const FLUSH_DEADLINE: Duration = Duration::from_secs(2);
 /// The service log is started afresh beyond this size.

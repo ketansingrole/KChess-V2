@@ -471,16 +471,6 @@ pub fn methods() -> Vec<Method> {
             vec![],
         ),
         method(
-            "voiceModelStatus",
-            "Whether the offline speech model is installed, or being prepared.",
-            vec![],
-        ),
-        method(
-            "voiceModelInstall",
-            "Downloads, verifies and unpacks the speech model, reporting `voicemodel:progress`.",
-            vec![],
-        ),
-        method(
             "library",
             "The local library as saved: studies, played games, drills, sessions and training notes.",
             vec![],
@@ -598,8 +588,6 @@ pub struct CoreEvents {
     pub online_error: String,
     #[serde(rename = "puzzledb:progress")]
     pub puzzledb_progress: PuzzleDbProgress,
-    #[serde(rename = "voicemodel:progress")]
-    pub voicemodel_progress: crate::voice::Progress,
     #[serde(rename = "engine:analysis")]
     pub engine_analysis: AnalysisUpdate,
     #[serde(rename = "review:update")]
