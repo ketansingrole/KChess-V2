@@ -12,9 +12,9 @@ use fixtures::{
 };
 use kchess_core::lichess::accounts::Lichess;
 use kchess_core::lichess::watch::{
-    BroadcastUpdate, GameSetup, LineUpTiming, Spectator, WatchFrame, WatchSink, WatchState,
-    WatchTarget, align_tv_moves, broadcast_game, broadcast_summaries, parse_game_details,
-    parse_tv_game,
+    BroadcastUpdate, GameSetup, LineUpTiming, Spectator, Spectators, WatchFrame, WatchSink,
+    WatchState, WatchTarget, align_tv_moves, broadcast_game, broadcast_summaries,
+    parse_game_details, parse_tv_game,
 };
 use kchess_domain::{misc, replay};
 use serde_json::{Value, json};
@@ -771,4 +771,59 @@ async fn a_stop_for_an_earlier_watch_leaves_the_newer_one_running() {
     let _ = chunks_tx.send(format!("{PGN}\n\n\n"));
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(sink.broadcasts.lock().unwrap().len(), sent);
+}
+
+/// `stopWatching` ends the calling client's watch, and so does the client going away; a stop
+/// for an older watch leaves the running one alone.
+#[tokio::test]
+async fn a_clients_watch_stops_when_it_stops_watching_or_goes_away() {
+    for gone in [false, true] {
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        let rx = Mutex::new(Some(rx));
+        let fixture = serve(
+            move |seen: &Seen| match (seen.path(), rx.lock().unwrap().take()) {
+                ("/api/stream/game/Game0001", Some(rx)) => Reply::Stream(rx),
+                _ => Reply::Hang,
+            },
+        )
+        .await;
+        let host = Arc::new(Recording::default());
+        let spectators = Spectators::new(
+            service(&fixture.base, &host),
+            Arc::clone(&host) as Arc<dyn kchess_core::Host>,
+        );
+        let frames = || {
+            host.events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(event, _)| event == "watch:frame")
+                .count()
+        };
+        let session = spectators
+            .mine()
+            .watch(WatchTarget::Game("Game0001".into()));
+        let send = |fen: &str| {
+            tx.send(format!("{}\n", json!({ "fen": fen, "wc": 60, "bc": 60 })))
+                .unwrap();
+        };
+        tx.send(format!("{}\n", game_description("started", None)))
+            .unwrap();
+        send(INITIAL);
+        wait_until("the first frames", || frames() >= 2).await;
+
+        spectators.stop_mine(Some(session - 1));
+        send("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1");
+        wait_until("a frame after the stale stop", || frames() >= 3).await;
+
+        let seen = frames();
+        if gone {
+            spectators.forget(kchess_core::connection::current_or_app());
+        } else {
+            spectators.stop_mine(None);
+        }
+        send("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2");
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(frames(), seen, "the stopped watch reported a move");
+    }
 }

@@ -1695,4 +1695,73 @@ mod tests {
         assert!(mistakes().as_array().is_some_and(|items| !items.is_empty()));
         assert_eq!(mistakes(), library["mistakes"]);
     }
+
+    /// `studyCommand(command, now, true)` answers only the studies it changed, and the order of
+    /// all of them; without `true` (or with anything else) it answers the whole library.
+    #[test]
+    fn a_study_command_answers_incrementally_only_when_asked_with_true() {
+        let db = drills_db();
+        let now = 1_700_000_000_000.0;
+        let saved = run(
+            &db,
+            "store.library.studyCommand",
+            &[
+                json!({ "op": "save", "name": "Kept", "pgn": "1. e4 *" }),
+                json!(now),
+            ],
+        )
+        .expect("save");
+        let id = saved["id"].clone();
+        // An empty rename changes nothing, so each answer shows only how it was asked.
+        let unchanged =
+            json!({ "op": "renameChapter", "id": id, "chapterId": "none", "name": " " });
+        let answer = |flag: Option<Value>| {
+            let mut args = vec![unchanged.clone(), json!(now)];
+            args.extend(flag);
+            run(&db, "store.library.studyCommand", &args).expect("rename")
+        };
+        let incremental = answer(Some(json!(true)));
+        assert_eq!(incremental["studies"], json!([]));
+        assert_eq!(incremental["order"], json!([id]));
+        for whole in [
+            answer(None),
+            answer(Some(json!(false))),
+            answer(Some(json!(1))),
+        ] {
+            let studies = whole["studies"].as_array().expect("the whole library");
+            assert_eq!(studies.len(), 1);
+            assert_eq!(studies[0]["id"], id);
+            assert!(whole.get("order").is_none(), "{whole}");
+        }
+    }
+
+    /// The played games keep the limit they had as one `{"version":1,"games":[...]}` document:
+    /// a first game exactly filling it is kept, one unit more is refused.
+    #[test]
+    fn a_first_game_fills_the_archive_up_to_the_old_documents_limit() {
+        let db = drills_db();
+        let overhead = js::utf16_len(r#"{"version":1,"games":[]}"#);
+        let game_of = |units: usize| {
+            let bare = js::utf16_len(&js::stringify(&json!({ "id": "Big", "pad": "" })));
+            json!({ "id": "Big", "pad": "x".repeat(units - bare) })
+        };
+        let too_big = game_of(MAX_DOCUMENT - overhead + 1);
+        assert_eq!(
+            js::utf16_len(&js::stringify(&too_big)),
+            MAX_DOCUMENT - overhead + 1
+        );
+        let refused = run(&db, "store.library.saveArchivedGame", &[too_big])
+            .expect_err("one unit over the limit");
+        assert_eq!(refused.message, GAMES_FULL);
+        run(
+            &db,
+            "store.library.saveArchivedGame",
+            &[game_of(MAX_DOCUMENT - overhead)],
+        )
+        .expect("a game exactly at the limit is kept");
+        let count: i64 = db
+            .query_row("SELECT COUNT(*) FROM archived_games", [], |row| row.get(0))
+            .expect("count");
+        assert_eq!(count, 1);
+    }
 }

@@ -770,6 +770,31 @@ mod tests {
     }
 
     #[test]
+    fn a_ladder_steps_evenly_from_its_first_rating_to_its_last() {
+        // Three steps from 1000 to 2000 aim at 1000, 1500 and 2000; the puzzles between them
+        // are what a wrong step (1250 or 1333, 1667) would pick instead.
+        let db = Connection::open_in_memory().expect("in-memory database");
+        create_schema(&db).expect("schema");
+        let rows: Vec<DbPuzzle> = [1000.0, 1250.0, 1333.0, 1500.0, 1667.0, 2000.0]
+            .into_iter()
+            .map(|rating| row(&format!("r{rating}"), rating, "fork"))
+            .collect();
+        store_sample(&db, &rows, &|| false).expect("store sample");
+        let ladder = query_ladder(
+            &db,
+            &LocalLadderQuery {
+                from: 1000.0,
+                to: 2000.0,
+                count: 3.0,
+            },
+            &mut seeded(5),
+        )
+        .expect("ladder");
+        let ids: Vec<&str> = ladder.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["r1000", "r1500", "r2000"]);
+    }
+
+    #[test]
     fn status_reports_an_empty_database_as_not_installed() {
         let db = Connection::open_in_memory().expect("in-memory database");
         create_schema(&db).expect("schema");

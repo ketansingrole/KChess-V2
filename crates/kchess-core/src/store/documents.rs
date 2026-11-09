@@ -128,3 +128,50 @@ pub(crate) fn stored_studies(text: &str) -> Result<Vec<Value>> {
     }
     Ok(decoded)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn database() -> Connection {
+        let db = Connection::open_in_memory().expect("database");
+        crate::store::migrations::migrate(&db).expect("migrate");
+        db
+    }
+
+    /// A JSON string whose text (quotes included) is `units` long.
+    fn string_of(units: usize) -> Value {
+        Value::String("x".repeat(units - 2))
+    }
+
+    #[test]
+    fn a_document_exactly_at_the_limit_is_stored_and_one_unit_more_is_refused() {
+        let db = database();
+        write_document(&db, "probe", &string_of(MAX_DOCUMENT), "too large")
+            .expect("a document of exactly MAX_DOCUMENT units fits");
+        let stored = read_document_text(&db, "probe")
+            .expect("read")
+            .expect("stored");
+        assert_eq!(js::utf16_len(&stored), MAX_DOCUMENT);
+        let refused = write_document(&db, "probe", &string_of(MAX_DOCUMENT + 1), "too large")
+            .expect_err("one unit over the limit");
+        assert_eq!(refused.message, "too large");
+        // The refused write left the stored document as it was.
+        assert_eq!(
+            read_document_text(&db, "probe").expect("read"),
+            Some(stored)
+        );
+    }
+
+    #[test]
+    fn a_study_library_exactly_at_the_limit_is_read_and_one_unit_more_is_damage() {
+        let empty = r#"{"version":2,"items":[]}"#;
+        let padded = |units: usize| format!("{empty}{}", " ".repeat(units - empty.len()));
+        assert_eq!(
+            stored_studies(&padded(MAX_DOCUMENT)).expect("exactly at the limit"),
+            Vec::<Value>::new()
+        );
+        let damaged = stored_studies(&padded(MAX_DOCUMENT + 1)).expect_err("over the limit");
+        assert_eq!(damaged.message, DAMAGED_STUDIES);
+    }
+}

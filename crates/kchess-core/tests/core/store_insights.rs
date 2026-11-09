@@ -276,3 +276,60 @@ fn variant_games_are_counted_apart_from_standard_chess() {
     assert_eq!(only("standard")["total"], json!(2));
     assert_eq!(only("atomic")["total"], json!(0));
 }
+
+/// Seeds a finished review of `game` whose summary is `summary` (White's side, as Alice plays).
+fn review_game(store: &Store, game: &str, white: Value) {
+    let summary = json!({ "white": white }).to_string();
+    store.exec(&format!(
+        "INSERT INTO reviews (key, gameId, source, complete, depth, data, summary, updatedAt)
+         VALUES ('review-{game}', '{game}', 'local', 1, 18, '{{}}', '{summary}', 1);
+         INSERT INTO game_reviews (gameId, reviewKey) VALUES ('{game}', 'review-{game}');"
+    ));
+}
+
+#[test]
+fn accuracy_averages_only_the_reviews_that_have_each_figure() {
+    let store = fresh();
+    save_games(
+        &store,
+        vec![
+            game("Reviewed01", &[]),
+            game("Reviewed02", &[]),
+            game("Reviewed03", &[]),
+        ],
+    );
+    review_game(
+        &store,
+        "Reviewed01",
+        json!({ "accuracy": 80, "acpl": 30, "inaccuracy": 1, "mistake": 2, "blunder": 0 }),
+    );
+    review_game(
+        &store,
+        "Reviewed02",
+        json!({ "accuracy": 91, "acpl": 45, "inaccuracy": 3, "blunder": 1 }),
+    );
+    // A review without accuracy or average loss counts towards the games and mistakes only.
+    review_game(&store, "Reviewed03", json!({ "mistake": 1, "blunder": 2 }));
+    assert_eq!(
+        insights(&store)["accuracy"],
+        json!({
+            "games": 3,
+            "average": 85.5,
+            "acpl": 37.5,
+            "perGame": { "inaccuracy": 4.0 / 3.0, "mistake": 1.0, "blunder": 1.0 },
+        })
+    );
+
+    // Reviews without an average loss show none: not a zero, nor a blank.
+    let store = fresh();
+    save_games(&store, vec![game("Reviewed01", &[])]);
+    review_game(&store, "Reviewed01", json!({ "accuracy": 70 }));
+    assert_eq!(
+        insights(&store)["accuracy"],
+        json!({
+            "games": 1,
+            "average": 70,
+            "perGame": { "inaccuracy": 0.0, "mistake": 0.0, "blunder": 0.0 },
+        })
+    );
+}
