@@ -235,8 +235,88 @@ fn cargo_has(cargo: &str, repo: &Path, args: &[&str]) -> bool {
     succeeds(Command::new(cargo).args(args).current_dir(repo))
 }
 
-/// `mutants [--base <ref>] [-- <cargo-mutants arguments>]`.
+/// Write the Rust changes since `base` where cargo-mutants reads them (`DIFF`); whether there are any.
+fn write_diff(repo: &Path, base: &str) -> Result<bool> {
+    let diff = diff_since(repo, base)?;
+    if !changes_rust(&diff) {
+        return Ok(false);
+    }
+    let path = repo.join(DIFF);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|cause| format!("{}: {cause}", dir.display()))?;
+    }
+    std::fs::write(&path, &diff).map_err(|cause| format!("{}: {cause}", path.display()))?;
+    Ok(true)
+}
+
+/// How many mutants a CI shard tests: about eight minutes of a kchess-core change's (each
+/// rebuilds the core and runs its tests), less for the lighter packages.
+const PER_SHARD: usize = 15;
+
+/// The most shards a pull request's mutants take: each holds a runner, and the account runs
+/// about twenty jobs at once.
+const MAX_SHARDS: usize = 8;
+
+/// How many CI shards `count` mutants need: none for none.
+fn shards_for(count: usize) -> usize {
+    count.div_ceil(PER_SHARD).min(MAX_SHARDS)
+}
+
+/// The GitHub step outputs of a plan for `count` mutants: the count, the shard numbers as a JSON
+/// list for the job matrix, and how many there are.
+fn plan_outputs(count: usize) -> String {
+    let shards = shards_for(count);
+    let numbers: Vec<String> = (0..shards).map(|shard| shard.to_string()).collect();
+    format!(
+        "count={count}\nshards=[{}]\ntotal={shards}\n",
+        numbers.join(",")
+    )
+}
+
+/// `mutants --plan [--base <ref>] [-- <cargo-mutants arguments>]`: how many mutants the changed
+/// lines have and the CI shards they need, as GitHub step outputs on standard output. Listing them
+/// builds nothing, so CI's mutants jobs start only when there is something to test, and as many
+/// as it takes.
+fn plan(args: &[String]) -> Result {
+    let repo = root();
+    let base = base_of(&repo, args)?;
+    let count = if write_diff(&repo, &base)? {
+        let mut list: Vec<String> = ["mutants", "--in-diff", DIFF, "--list"]
+            .map(String::from)
+            .to_vec();
+        list.extend(passed_through(args).iter().cloned());
+        let out = Command::new("cargo")
+            .args(&list)
+            .current_dir(&repo)
+            .output()
+            .map_err(|cause| format!("Could not run cargo mutants: {cause}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "cargo mutants --list failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        count_listed(&String::from_utf8_lossy(&out.stdout))
+    } else {
+        0
+    };
+    say(&format!(
+        "{count} mutants on the lines changed since {base}."
+    ));
+    print!("{}", plan_outputs(count));
+    Ok(())
+}
+
+/// The mutants in `cargo mutants --list` output: one per line.
+fn count_listed(list: &str) -> usize {
+    list.lines().filter(|line| !line.trim().is_empty()).count()
+}
+
+/// `mutants [--plan] [--base <ref>] [-- <cargo-mutants arguments>]`.
 pub fn run(args: &[String]) -> Result {
+    if args.first().map(String::as_str) == Some("--plan") {
+        return plan(&args[1..]);
+    }
     run_in(&root(), "cargo", args)
 }
 
@@ -246,18 +326,12 @@ fn run_in(repo: &Path, cargo: &str, args: &[String]) -> Result {
         return Err("cargo-mutants is not installed: `cargo install cargo-mutants`.".into());
     }
     let base = base_of(repo, args)?;
-    let diff = diff_since(repo, &base)?;
-    if !changes_rust(&diff) {
+    if !write_diff(repo, &base)? {
         say(&format!(
             "No Rust changes since {base}: no mutants to test."
         ));
         return Ok(());
     }
-    let path = repo.join(DIFF);
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|cause| format!("{}: {cause}", dir.display()))?;
-    }
-    std::fs::write(&path, &diff).map_err(|cause| format!("{}: {cause}", path.display()))?;
     let nextest = cargo_has(cargo, repo, &["nextest", "--version"]);
     let mutants = mutants_args(DIFF, nextest, passed_through(args));
     say(&format!(
@@ -287,6 +361,27 @@ mod tests {
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn a_plan_takes_a_shard_per_fifteen_mutants_up_to_eight() {
+        assert_eq!(shards_for(0), 0);
+        assert_eq!(shards_for(1), 1);
+        assert_eq!(shards_for(15), 1);
+        assert_eq!(shards_for(16), 2);
+        assert_eq!(shards_for(120), 8);
+        assert_eq!(shards_for(665), 8);
+        assert_eq!(plan_outputs(0), "count=0\nshards=[]\ntotal=0\n");
+        assert_eq!(plan_outputs(23), "count=23\nshards=[0,1]\ntotal=2\n");
+    }
+
+    #[test]
+    fn each_listed_line_is_a_mutant() {
+        assert_eq!(
+            count_listed("a.rs:1:1: replace x\nb.rs:2:2: delete !\n\n"),
+            2
+        );
+        assert_eq!(count_listed(""), 0);
     }
 
     #[test]
