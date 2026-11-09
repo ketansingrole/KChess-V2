@@ -31,9 +31,9 @@ survives or times out. Mutants that were already missed in untouched code are th
 so a change never has to pay off the whole backlog at once.
 
 CI first counts a pull request's mutants (`cargo xtask mutants --plan`, which builds nothing),
-then splits them over a runner per 15, up to 8 (`--shard k/n`), two at a time on each (`-j 2`,
-built incrementally, from the crates.io dependencies each push to `main` keeps built:
-`--copy-target=true`), and gives each runner half an hour: a change whose mutants take longer is
+then splits them over a runner per 15, up to 8 (`--shard k/n`), one at a time on each, in the
+checkout itself (`--in-place`), built incrementally from the crates.io dependencies each push to
+`main` keeps built, and gives each runner half an hour: a change whose mutants take longer is
 too large for one pull request. A change with no mutants starts no runner. The app's mutants (`apps/gpui`) each rebuild the app, so pull requests leave them
 out; the weekly run's `gpui` job tests the mutants of the lines the past week changed in the app.
 

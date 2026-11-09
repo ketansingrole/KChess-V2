@@ -428,7 +428,7 @@ jobs:
   # Mutation testing of the lines a pull request changes (`cargo xtask mutants`,
   # docs/mutation-testing.md): every change arrives with its mutants killed, while the weekly
   # Mutants workflow works through the rest. A pull request's mutants are split over the shards
-  # `mutants-plan` counts, two at a time on each, so a large change takes about as long as the
+  # `mutants-plan` counts, one at a time on each, so a large change takes about as long as the
   # other jobs. The app's mutants each rebuild the app, so they are the weekly run's (its `gpui`
   # job tests the week's changes to the app). A push to main passes it at once: its pull request
   # ran it, and `cargo xtask release-verify` needs every job to succeed.
@@ -454,9 +454,10 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       # The crates.io dependencies of every package but the app, built as cargo-mutants builds
-      # them. It builds in copies of the repository and copies no `target` by default, so every
-      # shard compiled them all, and again for its second build folder (2026-11-10: 224 crates,
-      # 288 s before the first kchess-core mutant). Saved by main, read by pull requests.
+      # them. In copies of the repository (its default) every shard compiled them all, and again
+      # for its second build folder (2026-11-10: 224 crates, 288 s before the first kchess-core
+      # mutant); copying `target` along still rebuilt 133, since the copies' new modification times
+      # read as stale. So mutants build in place, from this. Saved by main, read by pull requests.
       - if: github.event_name == 'pull_request' || env.WARM == 'true'
         id: deps
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
@@ -511,7 +512,7 @@ jobs:
           CARGO_INCREMENTAL: 1
         run: >-
           cargo xtask mutants --base "$(git merge-base "$BASE" HEAD)"
-          -- --shard "$SHARD/$SHARDS" -j 2 --exclude 'apps/gpui/**' --copy-target=true
+          -- --shard "$SHARD/$SHARDS" --in-place --exclude 'apps/gpui/**'
       - if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
