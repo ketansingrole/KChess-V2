@@ -108,6 +108,9 @@ and in the App Store. Its readers play chess; they are not developers.
     until you remember them."
   - Not: "Fix memory leaks found by retention benchmarks."
   - But: "**Fixes**: KChess uses less memory over long sessions."
+- Keep each line to 280 characters at most (the app's tests refuse longer): a player skims the
+  bold names and a sentence, so a longer line goes unread. The `**Fixes**` line names only the
+  few fixes a player notices most and ends "Plus many smaller fixes."; leave the rest out.
 - Only what is in the build and works. Fold small fixes into one `**Fixes**` line. Changes with
   nothing a player would see (internal, tests, docs, tooling) add nothing.
 - Extend an existing line when a later change grows the same feature. Never edit a dated
