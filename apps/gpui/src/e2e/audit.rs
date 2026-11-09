@@ -252,15 +252,40 @@ fn every_page_with_content_lays_out_its_controls(cx: &mut gpui_kit::TestAppConte
 }
 
 /// Every tab of every page and every settings section, not only those a page opens on: the chess
-/// clock's time fields once had no names, behind Over the board's second tab.
+/// clock's time fields once had no names, behind Over the board's second tab. One test per window
+/// size, so they run side by side: in one they were the app's slowest test (46 s), which every
+/// run of the suite waited for.
 #[gpui_kit::test]
-fn every_tab_and_settings_section_lays_out_its_controls(cx: &mut gpui_kit::TestAppContext) {
+fn every_tab_and_settings_section_lays_out_its_controls_at_the_minimum_size(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    every_tab_and_settings_section_lays_out_its_controls(cx, SIZES[0]);
+}
+
+#[gpui_kit::test]
+fn every_tab_and_settings_section_lays_out_its_controls_at_a_mid_size(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    every_tab_and_settings_section_lays_out_its_controls(cx, SIZES[1]);
+}
+
+#[gpui_kit::test]
+fn every_tab_and_settings_section_lays_out_its_controls_at_the_default_size(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    every_tab_and_settings_section_lays_out_its_controls(cx, SIZES[2]);
+}
+
+fn every_tab_and_settings_section_lays_out_its_controls(
+    cx: &mut gpui_kit::TestAppContext,
+    (width, height): (f32, f32),
+) {
     let mut app = Harness::start(cx);
     let mut findings = Findings::default();
     let settle = |app: &mut Harness| {
         app.settle();
     };
-    for (width, height) in SIZES {
+    {
         app.cx
             .simulate_window_resize(app.window, size(px(width), px(height)));
         for (page, label, _) in crate::shell::nav().iter() {
