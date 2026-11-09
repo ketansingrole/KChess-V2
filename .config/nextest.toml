@@ -1,10 +1,14 @@
 # cargo-nextest, the test runner of `cargo xtask check`, `check-fast` and CI: every test in its own
 # process, all of them in parallel across the workspace's test binaries (`cargo test` runs one
-# binary at a time). Doctests are not nextest's: `cargo xtask check` runs `cargo test --doc`. The
+# binary at a time). The workspace has no doctests (xtask's `boundaries` test refuses one). The
 # app (`kchess-gpui`) is the exception: one binary whose tests each start GPUI, faster under
 # `cargo test` (2026-11-06: 60 s against 74 s).
 
 [profile.default]
+# Most tests wait (on processes, sockets, timeouts) rather than compute: the headless suite used
+# 28 s of CPU in a 20 s run on 10 cores (2026-11-10). One test per core left CI's 4-core runners
+# mostly idle; 16 at once ran it in 14 s here, and passed three times over at 40.
+test-threads = 16
 # A test past a minute is reported as slow, and one past five minutes is killed, so a hang names
 # its test instead of stalling the run.
 slow-timeout = { period = "60s", terminate-after = 5 }
