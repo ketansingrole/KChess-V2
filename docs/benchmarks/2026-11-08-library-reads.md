@@ -141,6 +141,42 @@ What is left is mostly laying the page out again (38% of a wheel step). A part o
 as a cached view is reused only at the same place in the window, so a scrolled list cannot reuse
 its last frame without a change to GPUI's view cache.
 
+### Every page: first openings, Home, and what did not pay
+
+Every sidebar page and Settings profiled (`perf record -g`, `KCHESS_PERF_PAGES` one page at a
+time). Over the board, the Analysis board, Puzzles, Practice, Settings, Board editor, Play with
+computer, Watch, Tournaments, Insights and Following spend their openings in GPUI drawing the page:
+prepaint and layout are 80-95% of each, and no function of KChess's own takes more than a few
+percent. What changed:
+
+- **Over the board and the Analysis board are made a moment after the window shows**
+  (`shell::prewarm`, 1.5 s after it opens): making them, which reads their sessions and sets up
+  the board game's history places, was most of their first openings. Making every page ahead
+  (`KCHESS_PERF_PREWARM=all`) costs 1.8 MiB and changes no other page's first opening, whose cost
+  is its first frame. Neither page reaches the engine or the network until shown.
+- **Home keeps its recent games** until the played games change (`PlayedGames::revision`): it
+  sorted every played game on every frame to show six.
+
+`main` (`e743415`) against this change, the whole tour, medians of 3 alternating runs (ranges):
+
+| Opening | main | After | Change |
+| ------- | ---: | ----: | -----: |
+| Over the board, first | 10.0 ms (9.8–10.1) | 6.3 ms (6.1–6.4) | **1.59×** |
+| Analysis board, first | 12.0 ms (11.9–13.4) | 10.5 ms (10.4–11.0) | 1.14× |
+| Home, again | 6.6 ms (6.1–7.2) | 5.6 ms (5.6–6.1) | 1.18× |
+
+Tried, measured and taken out:
+
+- **Each group of the sidebar's pages as a cached part of its own.** Every page switch draws the
+  whole sidebar again (its key holds the page shown); leaving the sidebar alone would take 1.3 ms
+  off a light page's opening (4.1 -> 2.8 ms, an experiment with its highlight left stale). Drawn
+  as five keyed parts, it saved 0.3 ms of a switch, but every frame that redraws a page replayed
+  five cached parts inside the sidebar's and got slower: a wheel step of Game history 6.9 -> 7.4 ms,
+  of Studies 8.4 -> 8.8, of every page about 0.1 ms. Such frames are many more than switches.
+- **All openings' families made only in view**, as the Studies cards are. Opening Openings again
+  took 13.1 -> 11.4 ms, but a wheel step stayed at 7.4 ms (the page's other parts are most of it),
+  and families out of view would be out of reach of Tab and screen readers.
+
 ## Looked at and left
 
 **Pages of synced games, newest to oldest.** Game history pages with `LIMIT … OFFSET …`, which

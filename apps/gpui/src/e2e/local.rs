@@ -243,6 +243,39 @@ fn a_game_in_progress_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
     assert_eq!(app.status(), "Black to move");
 }
 
+/// A moment after the window shows, Over the board and the analysis board are made ahead of
+/// being opened (`shell::prewarm`): the page then opened is the one made, resuming its game, and
+/// neither is shown until it is chosen.
+#[gpui_kit::test]
+fn a_page_made_ahead_opens_with_its_game(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::Page;
+    use crate::pages::analysis::AnalysisPage;
+    use crate::pages::local::LocalPage;
+    let mut app = board(cx);
+    type_moves(&mut app, &["e4", "c5", "Nf3"]);
+    let mut app = app.restart();
+    let made = |app: &mut Harness| {
+        app.with_window(|_, cx| {
+            (
+                crate::shell::view_of::<LocalPage>(Page::Local, cx).map(|page| page.entity_id()),
+                crate::shell::view_of::<AnalysisPage>(Page::Analysis, cx).is_some(),
+            )
+        })
+    };
+    assert_eq!(made(&mut app), (None, false), "made only when asked");
+    app.with_window(crate::shell::prewarm);
+    let (local, analysis) = made(&mut app);
+    assert!(local.is_some() && analysis, "both pages are made");
+    assert!(!app.shows("local-new"), "and neither is shown");
+    app.open("Over the board");
+    app.wait_for_moves(&["e4", "c5", "Nf3"]);
+    assert_eq!(
+        made(&mut app).0,
+        local,
+        "the page made ahead is the one opened"
+    );
+}
+
 #[gpui_kit::test]
 fn the_game_can_be_taken_to_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
     let mut app = board(cx);

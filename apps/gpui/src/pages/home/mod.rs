@@ -57,6 +57,9 @@ pub struct HomePage {
     /// Your Lichess activity, once an account is connected (else a Chess.com player's), and the
     /// account it shows.
     activity: Option<(String, Entity<lichess::LichessActivity>)>,
+    /// The newest played games (`RECENT`), as of a revision of the played games: Home drew them
+    /// by sorting every played game on every frame.
+    recent: std::cell::RefCell<(Option<u64>, Vec<Value>)>,
     /// The page's content, as last laid out: it, not the window, decides what goes beside what.
     area: Measured,
     focus: FocusHandle,
@@ -192,6 +195,7 @@ impl HomePage {
             board: None,
             last_opening: None,
             activity: None,
+            recent: Default::default(),
             area: Measured::default(),
             focus: cx.focus_handle(),
             _subscriptions: vec![
@@ -204,14 +208,24 @@ impl HomePage {
         page
     }
 
+    /// The newest played games, worked out again only once the played games change.
+    fn with_recent<R>(&self, cx: &App, read: impl FnOnce(&[Value]) -> R) -> R {
+        let revision = cx.global::<PlayedHandle>().0.read(cx).revision();
+        let mut kept = self.recent.borrow_mut();
+        if kept.0 != Some(revision) {
+            *kept = (Some(revision), played_games(cx, RECENT));
+        }
+        read(&kept.1)
+    }
+
     /// The game _Review_ opens: the last one, unless a computer game is left unfinished.
     fn reviewable(&self, cx: &App) -> Option<String> {
         if self.continue_game.is_some() {
             return None;
         }
-        played_games(cx, 1).first()?["id"]
-            .as_str()
-            .map(str::to_string)
+        self.with_recent(cx, |games| {
+            games.first()?["id"].as_str().map(str::to_string)
+        })
     }
 
     /// What Home's buttons can do now.
@@ -417,7 +431,7 @@ impl Render for HomePage {
         }
         let tiles = v_flex().gap(GAP).children(rows);
 
-        let mut games = played_games(cx, RECENT);
+        let mut games = self.with_recent(cx, <[Value]>::to_vec);
         // The game you left, else the last one you finished, else the starting position.
         let session = self.continue_game.as_ref().map(|(_, session)| session);
         let latest = games.first().cloned();
