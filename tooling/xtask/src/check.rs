@@ -143,17 +143,36 @@ fn run_tests(packages: &[String]) -> Result {
     Ok(())
 }
 
+/// The packages whose tests run outside the coverage gate: the app's unless `app` is false.
+fn uncovered(app: bool) -> Vec<String> {
+    NOT_COVERED
+        .iter()
+        .filter(|package| app || **package != APP)
+        .map(|package| package.to_string())
+        .collect()
+}
+
 /// The workspace's tests: under the coverage gate when cargo-llvm-cov is installed (CI installs
-/// it), else plainly; then the doctests, which nextest does not run.
-fn tests() -> Result {
+/// it), else plainly; then the doctests, which nextest does not run. Without the app's (`app`
+/// false) when another job runs them.
+fn tests(app: bool) -> Result {
     if available("cargo", &["llvm-cov", "--version"]) {
         coverage()?;
-        run_tests(&NOT_COVERED.map(String::from))?;
+        run_tests(&uncovered(app))?;
     } else {
         say(
             "cargo-llvm-cov is not installed: running the tests without the coverage gate (CI runs it).",
         );
-        run_tests(&[])?;
+        if app {
+            run_tests(&[])?;
+        } else {
+            let others: Vec<String> = workspace_dependencies()?
+                .into_iter()
+                .map(|(name, _)| name)
+                .filter(|name| name != APP)
+                .collect();
+            run_tests(&others)?;
+        }
     }
     run("cargo", &["test", "--doc", "--workspace", "--locked"])
 }
@@ -217,11 +236,26 @@ fn coverage() -> Result {
 
 /// `check`: everything a push to main must pass.
 pub fn full() -> Result {
+    full_with(true)
+}
+
+/// `check [--without-app-tests]`: CI's check job leaves the app's tests to its `gpui` job, which
+/// runs them on Linux beside it.
+pub fn check(args: &[String]) -> Result {
+    full_with(!without_app_tests(args))
+}
+
+/// Whether `check`'s arguments leave the app's tests out.
+fn without_app_tests(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--without-app-tests")
+}
+
+fn full_with(app: bool) -> Result {
     step("format and lints", lints)?;
     step("notices", crate::licenses::check_notices)?;
     step("icons", crate::icons::check)?;
     step("release metadata", crate::release::verify)?;
-    step("tests", tests)?;
+    step("tests", || tests(app))?;
     say("`check` passed.");
     Ok(())
 }
@@ -516,6 +550,14 @@ mod tests {
             main_pushes(input),
             [("refs/heads/main".to_string(), "abc123".to_string())]
         );
+    }
+
+    #[test]
+    fn ci_can_leave_the_app_tests_to_another_job() {
+        assert!(without_app_tests(&["--without-app-tests".to_string()]));
+        assert!(!without_app_tests(&[]));
+        assert_eq!(uncovered(true), [APP, "xtask"]);
+        assert_eq!(uncovered(false), ["xtask"]);
     }
 
     #[test]

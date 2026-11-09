@@ -10,8 +10,8 @@ not establish complete regression coverage.
 
 The app's end-to-end tests (`apps/gpui/src/e2e`) run the whole app headless over a fresh profile
 with the scripted engine: `cargo test -p kchess-gpui e2e::`, or one area with `e2e::computer`.
-They run with the app's unit tests in `cargo xtask check`, which CI runs on Linux, and in CI's
-`gpui` job on macOS and Windows.
+They run with the app's unit tests in `cargo xtask check`, and in CI's `gpui` job on macOS,
+Windows and Linux (CI's `check` job runs `check --without-app-tests` beside it).
 
 `e2e::audit` opens every page at the minimum, a mid and the default window size and fails when a
 control has no accessible name, runs past the window's side or overlaps another control, or when

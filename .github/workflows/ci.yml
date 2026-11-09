@@ -124,7 +124,8 @@ jobs:
           echo "packaging=$packaging" >> "$GITHUB_OUTPUT"
 
   # `cargo xtask check`: format, lints, notices, release metadata and the tests under the coverage
-  # gate, as the pre-push hook runs them. This is also the app's lints and tests on Linux.
+  # gate, as the pre-push hook runs them, but the app's tests, which `gpui` runs on Linux beside it
+  # (2026-11-09: 6 of check's 12 minutes). This is also the app's lints on Linux.
   check:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -155,7 +156,7 @@ jobs:
         run: cargo xtask engines --github-env "$RUNNER_TEMP/stockfish"
         env:
           GH_TOKEN: ${{ github.token }}
-      - run: cargo xtask check
+      - run: cargo xtask check --without-app-tests
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
@@ -179,20 +180,23 @@ jobs:
       # The fuzz workspace has its own lock file.
       - run: cargo deny --manifest-path fuzz/Cargo.toml check
 
-  # The app on the other platforms: its lints and its unit and end-to-end tests (`src/e2e`,
-  # headless). `check` runs them on Linux; `headless` runs the rest beside it.
+  # The app's unit and end-to-end tests (`src/e2e`, headless) on every platform, and its lints on
+  # the others (`check` lints it on Linux); `headless` runs the rest beside it.
   gpui:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Install GPUI build libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: gpui
@@ -215,7 +219,8 @@ jobs:
             target/**/.fingerprint/gpui-pre*
             target/**/build/gpui-pre*
           key: vendor-gpui-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}
-      - run: cargo clippy -p kchess-gpui --all-targets --locked -- -D warnings
+      - if: runner.os != 'Linux'
+        run: cargo clippy -p kchess-gpui --all-targets --locked -- -D warnings
       # The app's tests under `cargo test`: each starts GPUI, so a process per test (nextest) is slower.
       - run: cargo test -p kchess-gpui --locked
       - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'

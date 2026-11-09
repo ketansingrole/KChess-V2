@@ -68,7 +68,10 @@ exclude_re = [
     # would run `check` inside `check`; what they decide is tested (`test_commands`,
     # `coverage_args`, `with_dependents`, `builds_into_a_package`, `merge_base`). CI's check job
     # runs them and its log shows each step.
-    'tooling/xtask/src/check\.rs:.*: replace (format|clippy_workspace|lints|tests|fast) -> Result with ',
+    'tooling/xtask/src/check\.rs:.*: replace (format|clippy_workspace|lints|tests|fast|full|full_with|check) -> Result with ',
+    # `check`'s entry and its tests without cargo-llvm-cov: whether it leaves out the app's tests
+    # is `without_app_tests` and `uncovered`, tested; CI's check job runs the rest.
+    'tooling/xtask/src/check\.rs:.*: (delete ! in check|replace != with == in tests)$',
     # The Git pre-push hook: reads the push from standard input and runs `check` or cargo-mutants
     # on the working tree, so a test of it would run them inside the tests; what it decides is
     # tested (`main_pushes`, `push_problem`, `head_push`, `mutants_base`, `branch_mutants_args`).
