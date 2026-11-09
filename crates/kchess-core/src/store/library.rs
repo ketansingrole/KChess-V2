@@ -1168,6 +1168,16 @@ mod tests {
 
     /// A complete review of `BLUNDER`: level until Black's sixth move hands White mate in one.
     fn store_blunder_review(db: &Connection, source: &str, depth: u32) -> String {
+        store_blunder_review_as(db, source, depth, true)
+    }
+
+    /// `store_blunder_review`, finished or not.
+    fn store_blunder_review_as(
+        db: &Connection,
+        source: &str,
+        depth: u32,
+        complete: bool,
+    ) -> String {
         let key: Value = serde_json::from_str(
             &kchess_domain::api::call("reviewKey", &json!([START, BLUNDER]).to_string())
                 .expect("key"),
@@ -1186,11 +1196,38 @@ mod tests {
             "store.reviewStore.writeReview",
             &[json!({
                 "key": key, "fen": START, "moves": BLUNDER, "source": source,
-                "complete": true, "depth": depth, "updatedAt": 7, "evals": evals,
+                "complete": complete, "depth": depth, "updatedAt": 7, "evals": evals,
             })],
         )
         .expect("write review");
         key.as_str().expect("key").to_string()
+    }
+
+    /// A review still running adds no drills, even of a blunder it has already found.
+    #[test]
+    fn an_unfinished_review_adds_no_drills() {
+        let db = drills_db();
+        let key = store_blunder_review_as(&db, "local", 20, false);
+        let added = run(
+            &db,
+            "store.library.addMistakes",
+            &[json!(key), Value::Null, json!(1)],
+        )
+        .expect("add");
+        assert_eq!(added, json!({ "added": 0, "items": [] }));
+        assert_eq!(
+            run(&db, "store.library.mistakes", &[]).expect("mistakes"),
+            json!([])
+        );
+        // The same review finished does add the blunder: the test's review has one.
+        store_blunder_review_as(&db, "local", 20, true);
+        let added = run(
+            &db,
+            "store.library.addMistakes",
+            &[json!(key), Value::Null, json!(1)],
+        )
+        .expect("add");
+        assert_eq!(added["added"], json!(1));
     }
 
     #[test]
@@ -1772,5 +1809,49 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM archived_games", [], |row| row.get(0))
             .expect("count");
         assert_eq!(count, 1);
+    }
+
+    /// Each kept game counts its own text and one comma between it and the next, as in the
+    /// old document: a second game fills exactly what the first left.
+    #[test]
+    fn a_second_game_fills_what_the_first_left_of_the_archive() {
+        let db = drills_db();
+        let game_of = |id: &str, units: usize| {
+            let bare = js::utf16_len(&js::stringify(&json!({ "id": id, "pad": "" })));
+            json!({ "id": id, "pad": "x".repeat(units - bare) })
+        };
+        let first = 700_000;
+        run(
+            &db,
+            "store.library.saveArchivedGame",
+            &[game_of("One", first)],
+        )
+        .expect("first");
+        let overhead = js::utf16_len(r#"{"version":1,"games":[]}"#);
+        let left = MAX_DOCUMENT - overhead - first - 1;
+        let refused = run(
+            &db,
+            "store.library.saveArchivedGame",
+            &[game_of("Two", left + 1)],
+        )
+        .expect_err("one unit over the limit");
+        assert_eq!(refused.message, GAMES_FULL);
+        run(
+            &db,
+            "store.library.saveArchivedGame",
+            &[game_of("Two", left)],
+        )
+        .expect("a second game exactly at the limit is kept");
+        // Replacing a game measures it without its old text.
+        run(
+            &db,
+            "store.library.saveArchivedGame",
+            &[game_of("Two", left)],
+        )
+        .expect("the same game again");
+        let count: i64 = db
+            .query_row("SELECT COUNT(*) FROM archived_games", [], |row| row.get(0))
+            .expect("count");
+        assert_eq!(count, 2);
     }
 }

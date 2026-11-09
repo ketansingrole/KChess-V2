@@ -184,5 +184,17 @@ mod tests {
             .message,
             "This view preference is too large to save."
         );
+        // A value exactly `MAX_VALUE` units long (its quotes included) still fits.
+        let fits = json!("x".repeat(MAX_VALUE - 2));
+        run(
+            &db,
+            "store.viewPreferences.set",
+            &[json!("kchess:big"), fits.clone()],
+        )
+        .unwrap();
+        assert_eq!(
+            run(&db, "store.viewPreferences.all", &[]).unwrap(),
+            json!({ "kchess:big": fits })
+        );
     }
 }

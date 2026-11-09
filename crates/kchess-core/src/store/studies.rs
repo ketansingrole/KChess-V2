@@ -853,15 +853,6 @@ fn finish_studies(
     // The map backs both the size guard and the row writes below.
     let mut encoded: std::collections::HashMap<String, (String, i64)> =
         std::collections::HashMap::new();
-    for study in studies.items.iter() {
-        if study.as_object().is_some_and(|item| item.len() != 1)
-            && let Some(id) = id_of(study)
-        {
-            let body = js::stringify(study);
-            let units = js::utf16_len(&body) as i64;
-            encoded.insert(id.to_string(), (body, units));
-        }
-    }
     let mut text_units: usize = 2 + studies.items.len().saturating_sub(1);
     for study in studies.items.iter() {
         if study.as_object().is_some_and(|item| item.len() == 1) {
@@ -870,11 +861,13 @@ fn finish_studies(
                 .get(id_of(study).unwrap_or_default())
                 .copied()
                 .unwrap_or(0);
-        } else if let Some((_, units)) = id_of(study).and_then(|id| encoded.get(id)) {
-            text_units += *units as usize;
         } else {
-            // No id (or unexpectedly unencoded): measure directly rather than undercount.
-            text_units += js::utf16_len(&js::stringify(study));
+            let body = js::stringify(study);
+            let units = js::utf16_len(&body);
+            text_units += units;
+            if let Some(id) = id_of(study) {
+                encoded.insert(id.to_string(), (body, units as i64));
+            }
         }
     }
     let overhead = js::utf16_len("{\"version\":2,\"items\":}");
@@ -1237,6 +1230,30 @@ mod tests {
             .message,
             "A study can contain up to 64 chapters."
         );
+    }
+
+    /// The library keeps room under one document's limit: a study that would take it past
+    /// `STUDY_LIBRARY_MAX_TEXT`, counting the stored studies by their saved size, is refused.
+    #[test]
+    fn a_study_that_would_overfill_the_library_is_refused() {
+        let db = database();
+        // Each study holds its PGN twice (its own and its chapter's), so these come to about
+        // 1,000,000 and 900,000 units: together past 1,800,000, though under one document.
+        let pgn = |units: usize| format!("1. e4 {{ {} }} *", "x".repeat(units));
+        let first = create(&db, "First", &pgn(500_000));
+        let refused = run(
+            &db,
+            json!({ "op": "save", "name": "Second", "pgn": pgn(450_000) }),
+        )
+        .expect_err("the library is full");
+        assert_eq!(
+            refused.message,
+            "The study library is full. Export and remove a study before saving another."
+        );
+        let ids: Vec<Value> = all(&db).iter().map(|study| study["id"].clone()).collect();
+        assert_eq!(ids, [json!(first)]);
+        create(&db, "Second", &pgn(350_000));
+        assert_eq!(all(&db).len(), 2);
     }
 
     #[test]

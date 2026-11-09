@@ -79,3 +79,30 @@ fn write(db: &Connection, key: &str, value: &Value) -> Result<Value> {
     .map_err(db_err)?;
     Ok(Value::Null)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// An entry whose stored text is `units` long.
+    fn entry_of(units: usize) -> Value {
+        let bare = js::utf16_len(&js::stringify(&json!({ "fetchedAt": 1, "pad": "" })));
+        json!({ "fetchedAt": 1, "pad": "x".repeat(units - bare) })
+    }
+
+    #[test]
+    fn an_entry_up_to_the_read_limit_is_read_back_and_a_larger_one_is_not() {
+        let db = Connection::open_in_memory().expect("database");
+        crate::store::migrations::migrate(&db).expect("migrate");
+        let fits = entry_of(MAX_READ_LENGTH);
+        write(&db, "fits", &fits).expect("write");
+        write(&db, "over", &entry_of(MAX_READ_LENGTH + 1)).expect("write");
+        assert_eq!(
+            read(&db, "fits").expect("read"),
+            Value::String(js::stringify(&fits))
+        );
+        assert_eq!(read(&db, "over").expect("read"), Value::Null);
+        assert_eq!(read(&db, "missing").expect("read"), Value::Null);
+    }
+}
