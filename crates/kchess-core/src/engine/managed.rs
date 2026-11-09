@@ -586,24 +586,27 @@ async fn fetch_release(
     token: Option<&str>,
     cancel: &mut Option<watch::Receiver<bool>>,
 ) -> Result<Release> {
-    let response = until_cancelled(cancel, async {
+    let deadline = std::time::Instant::now() + RELEASE_TIMEOUT;
+    let request = || {
         let request = client
             .get(url)
-            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-            .timeout(RELEASE_TIMEOUT);
+            .header(reqwest::header::ACCEPT, "application/vnd.github+json");
         match token {
             Some(token) => request.bearer_auth(token),
             None => request,
         }
-        .send()
-        .await
-        .map_err(|cause| {
-            CoreError::new(if cause.is_timeout() {
-                "Could not check Stockfish releases (timed out)."
-            } else {
-                "Could not check Stockfish releases (network error)."
+    };
+    // A brief GitHub failure (a 504) is asked again rather than failing the install.
+    let response = until_cancelled(cancel, async {
+        crate::download::send_retrying(request, Some(deadline))
+            .await
+            .map_err(|cause| {
+                CoreError::new(if cause.is_timeout() {
+                    "Could not check Stockfish releases (timed out)."
+                } else {
+                    "Could not check Stockfish releases (network error)."
+                })
             })
-        })
     })
     .await?;
     usage(host, 1, 0);
@@ -642,10 +645,7 @@ async fn download_archive(
 ) -> Result<String> {
     let deadline = std::time::Instant::now() + DOWNLOAD_TIMEOUT;
     let response = until_cancelled(cancel, async {
-        client
-            .get(url)
-            .timeout(DOWNLOAD_TIMEOUT)
-            .send()
+        crate::download::send_retrying(|| client.get(url), Some(deadline))
             .await
             .map_err(|cause| {
                 CoreError::new(if cause.is_timeout() {

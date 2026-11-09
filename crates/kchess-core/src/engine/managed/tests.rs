@@ -64,6 +64,21 @@ struct Route(&'static str, u16, Vec<u8>);
 
 /// Serve `routes` (built with the server's base URL) on 127.0.0.1 until the test ends.
 async fn serve(build: impl FnOnce(&str) -> Vec<Route>) -> (String, Hits) {
+    serve_failing(Vec::new(), build).await
+}
+
+/// As `serve`, but each `(path, statuses)` first answers those statuses, one request each.
+async fn serve_failing(
+    failing: Vec<(&'static str, Vec<u16>)>,
+    build: impl FnOnce(&str) -> Vec<Route>,
+) -> (String, Hits) {
+    let failing: Arc<Mutex<HashMap<String, std::collections::VecDeque<u16>>>> =
+        Arc::new(Mutex::new(
+            failing
+                .into_iter()
+                .map(|(path, statuses)| (path.to_string(), statuses.into()))
+                .collect(),
+        ));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let routes: Arc<HashMap<String, (u16, Vec<u8>)>> = Arc::new(
@@ -78,6 +93,7 @@ async fn serve(build: impl FnOnce(&str) -> Vec<Route>) -> (String, Hits) {
         while let Ok((mut socket, _)) = listener.accept().await {
             let routes = Arc::clone(&routes);
             let hits = Arc::clone(&served);
+            let failing = Arc::clone(&failing);
             tokio::spawn(async move {
                 let mut head = Vec::new();
                 let mut byte = [0_u8; 1];
@@ -102,10 +118,18 @@ async fn serve(build: impl FnOnce(&str) -> Vec<Route>) -> (String, Hits) {
                     Some(value) => format!("{path} ({value})"),
                     None => path.clone(),
                 });
-                let (status, body) = routes
-                    .get(&path)
-                    .cloned()
-                    .unwrap_or((404, b"missing".to_vec()));
+                let failure = failing
+                    .lock()
+                    .unwrap()
+                    .get_mut(&path)
+                    .and_then(|statuses| statuses.pop_front());
+                let (status, body) = match failure {
+                    Some(status) => (status, b"unavailable".to_vec()),
+                    None => routes
+                        .get(&path)
+                        .cloned()
+                        .unwrap_or((404, b"missing".to_vec())),
+                };
                 let response = format!(
                     "HTTP/1.1 {status} Status\r\nContent-Length: {}\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n",
                     body.len()
@@ -606,7 +630,7 @@ async fn refuses_an_oversized_release_before_downloading() {
 
 #[tokio::test]
 async fn reports_a_failed_download_status() {
-    let (base, _hits) = serve(|base| {
+    let (base, hits) = serve(|base| {
         vec![Route(
             "/release",
             200,
@@ -628,6 +652,86 @@ async fn reports_a_failed_download_status() {
         .await
         .unwrap_err();
     assert_eq!(error.message, "Stockfish download failed (404).");
+    // A missing file stays missing: it is asked for once.
+    assert_eq!(*hits.lock().unwrap(), ["/release", "/asset"]);
+}
+
+// CI's `cargo xtask engines` failed on 2026-11-09 when GitHub answered one 504.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_brief_github_failure_is_asked_again_and_the_install_succeeds() {
+    let archive = tar_gz(&[Member::File("stockfish-ubuntu", FAKE_ENGINE.as_bytes())]);
+    let digest = sha256(&archive);
+    let size = archive.len();
+    let (base, hits) = serve_failing(
+        vec![("/release", vec![504]), ("/asset", vec![502, 503])],
+        |base| {
+            vec![
+                Route(
+                    "/release",
+                    200,
+                    release(
+                        "sf_18",
+                        vec![asset(
+                            LINUX_ASSET,
+                            &format!("{base}/asset"),
+                            size,
+                            Some(digest),
+                        )],
+                    ),
+                ),
+                Route("/asset", 200, archive),
+            ]
+        },
+    )
+    .await;
+    let host = RecordingHost::default();
+    let dir = tempfile::tempdir().unwrap();
+    let result = install_managed_engine(&host, &location(dir.path(), &base))
+        .await
+        .unwrap();
+    assert_eq!((result.version.as_str(), result.updated), ("sf_18", true));
+    assert_eq!(
+        *hits.lock().unwrap(),
+        ["/release", "/release", "/asset", "/asset", "/asset"]
+    );
+}
+
+#[tokio::test]
+async fn a_lasting_github_failure_still_fails_the_install() {
+    let (base, hits) = serve_failing(vec![("/release", vec![504; 3])], |_| Vec::new()).await;
+    let host = RecordingHost::default();
+    let dir = tempfile::tempdir().unwrap();
+    let error = install_managed_engine(&host, &location(dir.path(), &base))
+        .await
+        .unwrap_err();
+    assert_eq!(error.message, "Could not check Stockfish releases (504).");
+    assert_eq!(*hits.lock().unwrap(), ["/release"; 3]);
+
+    let (base, hits) = serve_failing(vec![("/asset", vec![504; 3])], |base| {
+        vec![Route(
+            "/release",
+            200,
+            release(
+                "sf_17",
+                vec![asset(
+                    LINUX_ASSET,
+                    &format!("{base}/asset"),
+                    10,
+                    Some(format!("sha256:{}", "a".repeat(64))),
+                )],
+            ),
+        )]
+    })
+    .await;
+    let error = install_managed_engine(&host, &location(dir.path(), &base))
+        .await
+        .unwrap_err();
+    assert_eq!(error.message, "Stockfish download failed (504).");
+    assert_eq!(
+        *hits.lock().unwrap(),
+        ["/release", "/asset", "/asset", "/asset"]
+    );
 }
 
 #[cfg(unix)]

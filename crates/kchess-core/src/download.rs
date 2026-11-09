@@ -6,13 +6,87 @@
 //! offered byte ranges and gave a validator (`ETag`, or `Last-Modified`), and the new answer is a
 //! `206` for exactly the rest of that same file (`If-Range`, `Content-Range`). Anything else
 //! ends the read with the failure the connection had, as it did before resuming existed.
+//!
+//! `send_retrying` sends the first request again after a brief server failure (502, 503, 504, a
+//! 429 with a short `Retry-After`, or a connection that failed before any answer), so a single
+//! hiccup at the release host does not fail a download.
 
 use std::time::{Duration, Instant};
 
 use reqwest::StatusCode;
 use reqwest::header::{
     ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG, HeaderMap, IF_RANGE, LAST_MODIFIED, RANGE,
+    RETRY_AFTER,
 };
+
+/// How long `send_retrying` waits before each further attempt (three attempts in all).
+#[cfg(not(test))]
+const SEND_WAITS: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(3)];
+#[cfg(test)]
+const SEND_WAITS: [Duration; 2] = [Duration::from_millis(1); 2];
+
+/// The longest `Retry-After` a 429 may ask for and still be waited out.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(10);
+
+/// Sends the request `request` builds, again after a transient failure: a 502, 503 or 504, a 429
+/// whose `Retry-After` is at most ten seconds, or a connection that failed before any answer
+/// (not a timeout). Every other answer, a 404 included, comes back at once. After the last
+/// attempt the caller gets that attempt's answer or error, as if it had sent only once.
+///
+/// `deadline`, when given, bounds every attempt together, as one request timeout bounded the
+/// single attempt: each one gets the time that is left, and no wait runs past it. Dropping the
+/// future (a cancelled install) stops it between or during attempts.
+pub async fn send_retrying(
+    request: impl Fn() -> reqwest::RequestBuilder,
+    deadline: Option<Instant>,
+) -> reqwest::Result<reqwest::Response> {
+    let mut waits = SEND_WAITS.iter();
+    loop {
+        let mut builder = request();
+        if let Some(deadline) = deadline {
+            builder = builder.timeout(deadline.saturating_duration_since(Instant::now()));
+        }
+        let outcome = builder.send().await;
+        let Some(wait) = retry_wait(&outcome) else {
+            return outcome;
+        };
+        let Some(&base) = waits.next() else {
+            return outcome;
+        };
+        let wait = wait.max(base);
+        if deadline.is_some_and(|deadline| Instant::now() + wait >= deadline) {
+            return outcome;
+        }
+        tokio::time::sleep(wait).await;
+    }
+}
+
+/// How long a transient failure asks to be waited out at least; `None` when it is final.
+fn retry_wait(outcome: &reqwest::Result<reqwest::Response>) -> Option<Duration> {
+    match outcome {
+        Err(error) => (error.is_request() && !error.is_timeout()).then_some(Duration::ZERO),
+        Ok(response) => match response.status() {
+            StatusCode::BAD_GATEWAY
+            | StatusCode::SERVICE_UNAVAILABLE
+            | StatusCode::GATEWAY_TIMEOUT => Some(Duration::ZERO),
+            StatusCode::TOO_MANY_REQUESTS => retry_after(response.headers()),
+            _ => None,
+        },
+    }
+}
+
+/// A 429's `Retry-After` in seconds, when it is short enough to wait out.
+fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let seconds: u64 = headers
+        .get(RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    let wait = Duration::from_secs(seconds);
+    (wait <= MAX_RETRY_AFTER).then_some(wait)
+}
 
 /// How often one download may resume, and how long it waits before each attempt.
 #[cfg(not(test))]
@@ -294,5 +368,157 @@ mod tests {
         assert!(bytes.is_err());
         assert_eq!(resumed, 3);
         assert_eq!(fixture.requests.lock().unwrap().len(), 4);
+    }
+
+    /// A server answering connections in turn by `answers` (the last repeats): a status line and
+    /// headers, `CLOSE` to hang up before answering, or `HANG` to never answer. It counts the
+    /// connections.
+    async fn answering(answers: Vec<&'static str>) -> (String, Arc<Mutex<usize>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/asset", listener.local_addr().unwrap());
+        let count = Arc::new(Mutex::new(0));
+        let seen = Arc::clone(&count);
+        tokio::spawn(async move {
+            for turn in 0.. {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                *seen.lock().unwrap() += 1;
+                let answer = answers[turn.min(answers.len() - 1)];
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    let mut byte = [0u8; 1];
+                    while !head.ends_with(b"\r\n\r\n")
+                        && matches!(socket.read(&mut byte).await, Ok(1))
+                    {
+                        head.push(byte[0]);
+                    }
+                    match answer {
+                        CLOSE => {}
+                        HANG => std::future::pending::<()>().await,
+                        head => {
+                            let reply = format!(
+                                "HTTP/1.1 {head}\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                            );
+                            let _ = socket.write_all(reply.as_bytes()).await;
+                            crate::loopback::close_after_client(&mut socket).await;
+                        }
+                    }
+                });
+            }
+        });
+        (url, count)
+    }
+
+    const CLOSE: &str = "close";
+    const HANG: &str = "hang";
+
+    /// Sends to `url` through `send_retrying`; the final status (or `None` for an error), and how
+    /// many requests were built.
+    async fn send(
+        client: &reqwest::Client,
+        url: &str,
+        deadline: Option<Instant>,
+    ) -> (Option<u16>, usize) {
+        let built = std::cell::Cell::new(0);
+        let outcome = send_retrying(
+            || {
+                built.set(built.get() + 1);
+                client.get(url)
+            },
+            deadline,
+        )
+        .await;
+        (
+            outcome.ok().map(|response| response.status().as_u16()),
+            built.get(),
+        )
+    }
+
+    fn client() -> reqwest::Client {
+        reqwest::Client::builder().no_proxy().build().unwrap()
+    }
+
+    fn later() -> Option<Instant> {
+        Some(Instant::now() + Duration::from_secs(30))
+    }
+
+    #[tokio::test]
+    async fn a_gateway_failure_is_sent_again_until_it_answers() {
+        for failure in ["502 Bad Gateway", "503 Unavailable", "504 Gateway Timeout"] {
+            let (url, connections) = answering(vec![failure, "200 OK"]).await;
+            assert_eq!(
+                send(&client(), &url, later()).await,
+                (Some(200), 2),
+                "{failure}"
+            );
+            assert_eq!(*connections.lock().unwrap(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_lasting_failure_answers_after_three_attempts() {
+        let (url, connections) = answering(vec!["504 Gateway Timeout"]).await;
+        assert_eq!(send(&client(), &url, None).await, (Some(504), 3));
+        assert_eq!(*connections.lock().unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_not_sent_again() {
+        for refusal in ["404 Not Found", "403 Forbidden", "500 Internal", "429 Slow"] {
+            let (url, connections) = answering(vec![refusal, "200 OK"]).await;
+            let status: u16 = refusal[..3].parse().unwrap();
+            assert_eq!(send(&client(), &url, later()).await, (Some(status), 1));
+            assert_eq!(*connections.lock().unwrap(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rate_limit_is_waited_out_only_when_it_is_short() {
+        let (url, _) = answering(vec!["429 Slow\r\nRetry-After: 0", "200 OK"]).await;
+        assert_eq!(send(&client(), &url, later()).await, (Some(200), 2));
+        let (url, _) = answering(vec!["429 Slow\r\nRetry-After: 10", "200 OK"]).await;
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, "10".parse().unwrap());
+        assert_eq!(retry_after(&headers), Some(Duration::from_secs(10)));
+        headers.insert(RETRY_AFTER, "11".parse().unwrap());
+        assert_eq!(retry_after(&headers), None);
+        headers.insert(RETRY_AFTER, "soon".parse().unwrap());
+        assert_eq!(retry_after(&headers), None);
+        // Ten seconds would outlast this deadline, so the 429 is the answer.
+        let soon = Some(Instant::now() + Duration::from_secs(2));
+        assert_eq!(send(&client(), &url, soon).await, (Some(429), 1));
+        let (url, _) = answering(vec!["429 Slow\r\nRetry-After: 3600", "200 OK"]).await;
+        assert_eq!(send(&client(), &url, None).await, (Some(429), 1));
+    }
+
+    #[tokio::test]
+    async fn a_connection_closed_before_any_answer_is_sent_again() {
+        let (url, connections) = answering(vec![CLOSE, "200 OK"]).await;
+        assert_eq!(send(&client(), &url, later()).await, (Some(200), 2));
+        assert_eq!(*connections.lock().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_timeout_or_a_bad_request_is_not_sent_again() {
+        let (url, connections) = answering(vec![HANG]).await;
+        let impatient = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_millis(100))
+            .build()
+            .unwrap();
+        assert_eq!(send(&impatient, &url, None).await, (None, 1));
+        assert_eq!(*connections.lock().unwrap(), 1);
+        assert_eq!(send(&client(), "not a url", None).await, (None, 1));
+    }
+
+    #[tokio::test]
+    async fn no_attempt_runs_past_the_deadline() {
+        let (url, connections) = answering(vec![HANG]).await;
+        let started = Instant::now();
+        let deadline = Some(started + Duration::from_millis(200));
+        assert_eq!(send(&client(), &url, deadline).await, (None, 1));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(*connections.lock().unwrap(), 1);
     }
 }
