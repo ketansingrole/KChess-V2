@@ -283,3 +283,15 @@ fn main() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_quick_engine_cuts_a_timed_search() {
+        assert_eq!(capped(1_000, false), 1_000);
+        assert_eq!(capped(1_000, true), QUICK_MOVETIME_MS);
+        assert_eq!(capped(5, true), 5);
+    }
+}
