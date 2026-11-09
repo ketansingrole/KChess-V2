@@ -1724,8 +1724,21 @@ impl Updates {
             self.phase = Phase::UpToDate;
             self.version = None;
             self.release = None;
+            // An update downloaded before (its install failed) is not installed on quit either.
+            self.staged = None;
             return;
         };
+        // An update whose install failed is still whole: the same version is ready again, and a
+        // newer one replaces it, which used to install the old one on quit while offering the new.
+        if self.staged.is_some() {
+            if self.version.as_deref() == Some(version.as_str()) {
+                self.phase = Phase::Downloaded;
+                self.released = release.published_at.clone();
+                self.release = Some(release);
+                return;
+            }
+            self.staged = None;
+        }
         self.phase = Phase::Available;
         self.version = Some(version);
         self.released = release.published_at.clone();
@@ -1820,6 +1833,12 @@ impl Updates {
                 cx.notify();
             });
         }));
+    }
+
+    /// Whether retrying after an error installs the update already downloaded, whose install
+    /// failed, rather than downloading it again.
+    pub fn retries_install(&self) -> bool {
+        self.phase == Phase::Error && self.staged.is_some()
     }
 
     /// `install`: save everything, then put the downloaded update in place of this app and reopen

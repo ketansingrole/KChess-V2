@@ -177,6 +177,14 @@ impl SettingsPage {
                     .label("Restart and install")
                     .on_click(|_, window, cx| ask_restart(window, cx)),
             ),
+            // The download is kept when its install failed: retrying installs it again.
+            Phase::Error if updates.retries_install() => Some(
+                Button::new("update-retry")
+                    .primary()
+                    .icon(icon("rotate-ccw"))
+                    .label("Retry install")
+                    .on_click(|_, window, cx| ask_restart(window, cx)),
+            ),
             Phase::Error if target.is_some() => Some(
                 Button::new("update-retry")
                     .primary()

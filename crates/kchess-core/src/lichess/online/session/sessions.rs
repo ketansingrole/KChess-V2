@@ -66,6 +66,9 @@ impl OnlineSession {
         };
         if let Some((session, account, game, phase, message)) = phase_report {
             self.emit_state(session, &account, &game, Lane::Game, phase, message);
+        } else {
+            // Nothing left to report, but the live game is gone: the engines may work again.
+            self.refresh_assistance();
         }
         if let Some((id, account, epoch_at_cancel)) = cancel_pending {
             // Epoch-guarded: a challenge created by the new session after `cancel_inner`
