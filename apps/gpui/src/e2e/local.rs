@@ -263,7 +263,7 @@ fn a_page_made_ahead_opens_with_its_game(cx: &mut gpui_kit::TestAppContext) {
         })
     };
     assert_eq!(made(&mut app), (None, false), "made only when asked");
-    app.with_window(|window, cx| crate::shell::prewarm(window, cx));
+    app.with_window(crate::shell::prewarm);
     let (local, analysis) = made(&mut app);
     assert!(local.is_some() && analysis, "both pages are made");
     assert!(!app.shows("local-new"), "and neither is shown");
