@@ -11,28 +11,16 @@
 //! Mac App Store provisioning profile, and `APPLE_TEAM_ID`): the app with an Apple Distribution
 //! identity and the profile embedded, the package with a Mac Installer Distribution one. Without
 //! them the bundle is signed ad hoc with the same sandbox, to try it here, and no package is made.
+//!
+//! Compiled for the tests on every Unix too (see `mac`).
+
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
 
-use super::mac::{assemble, store_plist, text};
+use super::mac::{Value, apple_silicon, assemble, plist, text};
 use super::{Built, Identity};
 use crate::util::{Result, run, say};
-
-const PLIST_HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n";
-
-fn entitlements(keys: &[(&str, Option<&str>)]) -> String {
-    let mut body = String::from(PLIST_HEAD);
-    for (key, value) in keys {
-        match value {
-            None => body.push_str(&format!("  <key>{key}</key>\n  <true/>\n")),
-            Some(value) => {
-                body.push_str(&format!("  <key>{key}</key>\n  <string>{value}</string>\n"))
-            }
-        }
-    }
-    body.push_str("</dict>\n</plist>\n");
-    body
-}
 
 /// The app's: Lichess and the downloads (client), the Lichess sign-in's loopback listener
 /// (server), voice input, and the PGNs and exports a person picks. With a team, the identifier
@@ -40,26 +28,29 @@ fn entitlements(keys: &[(&str, Option<&str>)]) -> String {
 pub fn app_entitlements(app_id: &str, team: Option<&str>) -> String {
     let identifier = team.map(|team| format!("{team}.{app_id}"));
     let mut keys = vec![
-        ("com.apple.security.app-sandbox", None),
-        ("com.apple.security.network.client", None),
-        ("com.apple.security.network.server", None),
-        ("com.apple.security.device.audio-input", None),
-        ("com.apple.security.device.microphone", None),
-        ("com.apple.security.files.user-selected.read-write", None),
+        ("com.apple.security.app-sandbox", Value::True),
+        ("com.apple.security.network.client", Value::True),
+        ("com.apple.security.network.server", Value::True),
+        ("com.apple.security.device.audio-input", Value::True),
+        ("com.apple.security.device.microphone", Value::True),
+        (
+            "com.apple.security.files.user-selected.read-write",
+            Value::True,
+        ),
     ];
     if let (Some(identifier), Some(team)) = (identifier.as_deref(), team) {
-        keys.push(("com.apple.application-identifier", Some(identifier)));
-        keys.push(("com.apple.developer.team-identifier", Some(team)));
+        keys.push(("com.apple.application-identifier", Value::Text(identifier)));
+        keys.push(("com.apple.developer.team-identifier", Value::Text(team)));
     }
-    entitlements(&keys)
+    plist(&keys)
 }
 
 /// The programs the app starts: its sandbox, and nothing of their own (the only keys the store
 /// allows beside `inherit`).
 pub fn inherited_entitlements() -> String {
-    entitlements(&[
-        ("com.apple.security.app-sandbox", None),
-        ("com.apple.security.inherit", None),
+    plist(&[
+        ("com.apple.security.app-sandbox", Value::True),
+        ("com.apple.security.inherit", Value::True),
     ])
 }
 
@@ -185,14 +176,12 @@ pub fn package(
     stage: &Path,
     out: &Path,
 ) -> Result<Vec<PathBuf>> {
-    if std::env::consts::ARCH != "aarch64" {
-        return Err("macOS packages are Apple Silicon only.".into());
-    }
+    apple_silicon()?;
     let signing = signing()?;
     let out = out.join("mas");
     std::fs::create_dir_all(&out).map_err(|cause| cause.to_string())?;
     let app = stage.join(format!("{}.app", identity.name));
-    let nested = assemble(built, &app, &store_plist(identity), false)?;
+    let nested = assemble(identity, built, &app, true)?;
     let app_entitlements = stage.join("app.entitlements");
     write(
         &app_entitlements,
@@ -215,11 +204,7 @@ pub fn package(
     say(&format!("Signing as {} in the App Sandbox…", signing.app));
     sign(&app, &nested, &signing.app, &app_entitlements, stage)?;
     verify(&app, &nested)?;
-    let pkg = out.join(format!(
-        "{}-{}-mac-arm64.pkg",
-        identity.prefix(),
-        identity.version
-    ));
+    let pkg = out.join(identity.asset(kchess_delta::Asset::MasPkg));
     say("Making the installer package…");
     run(
         "productbuild",
@@ -277,8 +262,8 @@ mod tests {
     #[test]
     fn the_store_plist_declares_exempt_encryption_only() {
         let identity = Identity::new("2026.11.3".into());
-        let plist = store_plist(&identity);
+        let plist = super::super::mac::info_plist(&identity, true);
         assert!(plist.contains("<key>ITSAppUsesNonExemptEncryption</key>\n  <false/>"));
-        assert!(!super::super::mac::info_plist(&identity).contains("ITSAppUses"));
+        assert!(!super::super::mac::info_plist(&identity, false).contains("ITSAppUses"));
     }
 }

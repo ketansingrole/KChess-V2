@@ -55,12 +55,15 @@ impl AnalysisPage {
                         this.study_pgn.clear();
                         this.study_error = Some(STALE_COPY.to_string());
                     }
-                    Err(cause) => {
+                    // The failure is the study's: shown while the board still holds it, and not on a
+                    // game or study opened since.
+                    Err(cause) if this.study == study && this.chapter == chapter => {
                         if this.study_pgn == text {
                             this.study_pgn = previous;
                         }
                         this.study_error = Some(cause);
                     }
+                    Err(_) => {}
                 }
                 cx.notify();
             });
@@ -174,9 +177,12 @@ impl AnalysisPage {
     /// be saved.
     pub fn close_study(&mut self, cx: &mut Context<Self>) -> Task<bool> {
         let flush = self.flush_study(cx);
+        let navigation = self.navigation;
         cx.spawn(async move |this, cx| {
             let saved = flush.await;
             this.update(cx, |this, cx| match saved {
+                // A game or study opened while it saved has the board now: it stays.
+                _ if this.navigation != navigation => true,
                 Ok(()) => {
                     this.study.clear();
                     this.chapter.clear();

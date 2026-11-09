@@ -6,11 +6,13 @@
 
 #![cfg_attr(target_os = "macos", allow(dead_code))]
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::{Built, Identity, copy_program, copy_voice};
+use kchess_delta::Asset;
+
+use super::{Built, Identity};
+use crate::deb::{ar, gzip, tarball, xz};
 use crate::util::{Result, download, pinned, root, run_with, say};
 
 // The pins below change only in a reviewed pull request, which CI packages and tests. The
@@ -42,18 +44,8 @@ pub fn desktop_entry(identity: &Identity, exec: &str) -> String {
     )
 }
 
-/// The app folder: the launcher, Stockfish and Fairy-Stockfish, the core service, the command
-/// line and voice.
 fn stage_folder(identity: &Identity, built: &Built, folder: &Path) -> Result {
-    copy_program(&built.app, &folder.join(identity.linux_exe))?;
-    copy_program(&built.stockfish, &folder.join("stockfish"))?;
-    copy_program(&built.fairy, &folder.join("fairy-stockfish"))?;
-    copy_program(&built.service, &folder.join("kchess-service"))?;
-    copy_program(&built.cli, &folder.join("kchess-cli"))?;
-    copy_voice(built, folder)?;
-    std::fs::copy(&built.licenses, folder.join("THIRD_PARTY_LICENSES.txt"))
-        .map_err(|cause| cause.to_string())?;
-    Ok(())
+    super::stage_folder(built, folder, identity.linux_exe)
 }
 
 fn appimage(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<PathBuf> {
@@ -109,11 +101,7 @@ fn appimage_with(
     )
     .map_err(|cause| cause.to_string())?;
     super::executable(&app_run)?;
-    let image = out.join(format!(
-        "{}-{}-linux-x86_64.AppImage",
-        identity.prefix(),
-        identity.version
-    ));
+    let image = out.join(identity.asset(Asset::AppImage));
     say("Making the AppImage…");
     run_with(&mut appimagetool(&tool, &runtime, &dir, &image))?;
     Ok(image)
@@ -132,82 +120,6 @@ fn appimagetool(tool: &Path, runtime: &Path, dir: &Path, image: &Path) -> Comman
         // Runners have no FUSE: the tool runs from its own extracted files.
         .env("APPIMAGE_EXTRACT_AND_RUN", "1");
     command
-}
-
-/// A tar of `entries` (path in the archive → contents and mode), with root ownership.
-fn tarball(entries: &[(String, Vec<u8>, u32)], dirs: &[String]) -> Result<Vec<u8>> {
-    let mut archive = tar::Builder::new(Vec::new());
-    let header = |path: &str, size: u64, mode: u32, kind: tar::EntryType| -> Result<tar::Header> {
-        let mut header = tar::Header::new_gnu();
-        header.set_path(path).map_err(|cause| cause.to_string())?;
-        header.set_size(size);
-        header.set_mode(mode);
-        header.set_uid(0);
-        header.set_gid(0);
-        header.set_mtime(0);
-        header.set_entry_type(kind);
-        header.set_cksum();
-        Ok(header)
-    };
-    for dir in dirs {
-        let header = header(&format!("./{dir}/"), 0, 0o755, tar::EntryType::Directory)?;
-        archive
-            .append(&header, std::io::empty())
-            .map_err(|cause| cause.to_string())?;
-    }
-    for (path, data, mode) in entries {
-        let header = header(
-            &format!("./{path}"),
-            data.len() as u64,
-            *mode,
-            tar::EntryType::Regular,
-        )?;
-        archive
-            .append(&header, data.as_slice())
-            .map_err(|cause| cause.to_string())?;
-    }
-    archive.into_inner().map_err(|cause| cause.to_string())
-}
-
-/// `data`, gzipped (the control archive: a few hundred bytes).
-fn gzip(data: &[u8]) -> Result<Vec<u8>> {
-    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
-    encoder.write_all(data).map_err(|cause| cause.to_string())?;
-    encoder.finish().map_err(|cause| cause.to_string())
-}
-
-/// `data` as xz (the program files: a quarter smaller than gzip, which dpkg has read since
-/// 1.15.6). Blocks of 64 MiB are compressed on every core, as `xz -9 -T0` does.
-pub fn xz(data: &[u8]) -> Result<Vec<u8>> {
-    let mut options = lzma_rust2::XzOptions::with_preset(9);
-    options.block_size = std::num::NonZeroU64::new(64 << 20);
-    let workers = std::thread::available_parallelism().map_or(1, |cores| cores.get() as u32);
-    let mut writer = lzma_rust2::XzWriterMt::new(Vec::new(), options, workers)
-        .map_err(|cause| cause.to_string())?;
-    writer.write_all(data).map_err(|cause| cause.to_string())?;
-    writer.finish().map_err(|cause| cause.to_string())
-}
-
-/// An `ar` archive, as dpkg reads it.
-fn ar(members: &[(&str, &[u8])]) -> Vec<u8> {
-    let mut out = b"!<arch>\n".to_vec();
-    for (name, data) in members {
-        let header = format!(
-            "{:<16}{:<12}{:<6}{:<6}{:<8}{:<10}`\n",
-            name,
-            0,
-            0,
-            0,
-            "100644",
-            data.len()
-        );
-        out.extend_from_slice(header.as_bytes());
-        out.extend_from_slice(data);
-        if data.len() % 2 == 1 {
-            out.push(b'\n');
-        }
-    }
-    out
 }
 
 pub fn control(identity: &Identity, installed_kb: u64) -> String {
@@ -288,18 +200,16 @@ fn deb(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<P
         ],
         &[],
     )?)?;
-    let package = out.join(format!(
-        "{}-{}-linux-amd64.deb",
-        identity.prefix(),
-        identity.version
-    ));
+    let package = out.join(identity.asset(Asset::Deb));
     say("Making the .deb…");
-    let mut file = std::fs::File::create(&package).map_err(|cause| cause.to_string())?;
-    file.write_all(&ar(&[
-        ("debian-binary", b"2.0\n"),
-        ("control.tar.gz", &control),
-        ("data.tar.xz", &data),
-    ]))
+    std::fs::write(
+        &package,
+        ar(&[
+            ("debian-binary", b"2.0\n"),
+            ("control.tar.gz", &control),
+            ("data.tar.xz", &data),
+        ]),
+    )
     .map_err(|cause| cause.to_string())?;
     Ok(package)
 }
@@ -348,10 +258,10 @@ base: core24
 grade: stable
 confinement: strict
 license: GPL-3.0-or-later
-website: https://ketansingrole.github.io/KChess-V2/
-source-code: https://github.com/ketansingrole/KChess-V2
-issues: https://github.com/ketansingrole/KChess-V2/issues
-contact: https://github.com/ketansingrole/KChess-V2/issues
+website: {homepage}
+source-code: https://github.com/{repository}
+issues: https://github.com/{repository}/issues
+contact: https://github.com/{repository}/issues
 platforms:
   amd64:
 
@@ -386,7 +296,9 @@ parts:
       - libx11-xcb1
       - libasound2t64
 "#,
-        super::DESCRIPTION
+        super::DESCRIPTION,
+        homepage = super::HOMEPAGE,
+        repository = crate::util::REPOSITORY,
     )
 }
 
@@ -408,7 +320,7 @@ fn snap(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<
         snapcraft_yaml(&identity.version),
     )
     .map_err(|cause| cause.to_string())?;
-    let package = out.join(format!("KChess-{}-linux-amd64.snap", identity.version));
+    let package = out.join(identity.asset(Asset::Snap));
     say("Making the Snap…");
     // snapcraft writes only inside its project folder; the package is moved out afterwards.
     let packed = project.join("kchess.snap");
@@ -446,34 +358,19 @@ mod tests {
     use super::*;
 
     fn digest(bytes: &[u8]) -> &'static str {
-        use sha2::Digest;
-        crate::util::hex(&sha2::Sha256::digest(bytes)).leak()
+        kchess_delta::digest(bytes).leak()
     }
 
     /// The AppImage step fetches both pinned tools into its cache and runs appimagetool on the
-    /// staged app with the pinned runtime: a stand-in appimagetool records its arguments and
-    /// makes the "image" from the runtime it was handed.
+    /// staged app with the pinned runtime, from its own extracted files (runners have no FUSE):
+    /// a stand-in appimagetool records its environment and arguments and makes the "image" from
+    /// the runtime it was handed.
     #[test]
     fn the_appimage_is_made_around_the_pinned_runtime() {
-        let scratch = std::env::temp_dir().join(format!("xtask-appimage-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&scratch);
-        let built_dir = scratch.join("built");
-        std::fs::create_dir_all(built_dir.join("voice")).unwrap();
-        let file = |name: &str| {
-            let path = built_dir.join(name);
-            std::fs::write(&path, name).unwrap();
-            path
-        };
-        let built = Built {
-            app: file("app"),
-            service: file("service"),
-            cli: file("cli"),
-            stockfish: file("stockfish"),
-            fairy: file("fairy"),
-            voice: built_dir.join("voice"),
-            licenses: file("licenses"),
-        };
-        let tool = b"#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$5.args\"\ncp \"$3\" \"$5\"\n";
+        let scratch = tempfile::tempdir().unwrap();
+        let scratch = scratch.path();
+        let built = super::super::stand_in(&scratch.join("built"));
+        let tool = b"#!/bin/sh\nprintf '%s\\n' \"$ARCH\" \"$APPIMAGE_EXTRACT_AND_RUN\" \"$@\" > \"$5.args\"\ncp \"$3\" \"$5\"\n";
         let runtime = b"the pinned runtime";
         let tools = AppImageTools {
             cache: scratch.join("cache"),
@@ -502,7 +399,7 @@ mod tests {
         assert_eq!(
             args,
             format!(
-                "--no-appstream\n--runtime-file\n{}\n{}\n{}\n",
+                "x86_64\n1\n--no-appstream\n--runtime-file\n{}\n{}\n{}\n",
                 cached.display(),
                 app_dir.display(),
                 image.display()
@@ -514,38 +411,17 @@ mod tests {
             "kchess.desktop",
             "kchess.png",
             "stockfish",
+            "fairy-stockfish",
+            "kchess-service",
+            "kchess-cli",
+            "voice/libvosk.so",
+            "THIRD_PARTY_LICENSES.txt",
         ] {
             assert!(
                 app_dir.join(name).exists(),
                 "{name} is missing from the AppDir"
             );
         }
-        let _ = std::fs::remove_dir_all(&scratch);
-    }
-
-    #[test]
-    fn appimagetool_embeds_the_pinned_runtime() {
-        let command = appimagetool(
-            Path::new("/tools/appimagetool"),
-            Path::new("/cache/runtime"),
-            Path::new("/stage/AppDir"),
-            Path::new("/out/KChess.AppImage"),
-        );
-        assert_eq!(command.get_program(), "/tools/appimagetool");
-        let args: Vec<_> = command.get_args().collect();
-        assert_eq!(
-            args,
-            [
-                "--no-appstream",
-                "--runtime-file",
-                "/cache/runtime",
-                "/stage/AppDir",
-                "/out/KChess.AppImage"
-            ]
-        );
-        let envs: Vec<_> = command.get_envs().collect();
-        assert!(envs.contains(&("ARCH".as_ref(), Some("x86_64".as_ref()))));
-        assert!(envs.contains(&("APPIMAGE_EXTRACT_AND_RUN".as_ref(), Some("1".as_ref()))));
     }
 
     #[test]
@@ -571,104 +447,53 @@ mod tests {
         assert!(text.contains("confinement: strict"));
         assert!(text.contains("- password-manager-service"));
         assert!(text.contains("- audio-record"));
-    }
-
-    #[test]
-    fn ar_members_are_padded_to_even_lengths() {
-        let archive = ar(&[("debian-binary", b"2.0\n"), ("odd", b"abc")]);
-        assert!(archive.starts_with(
-            b"!<arch>\ndebian-binary   0           0     0     100644  4         `\n2.0\n"
+        assert!(text.contains(
+            "website: https://ketansingrole.github.io/KChess-V2/\nsource-code: https://github.com/ketansingrole/KChess-V2\n"
         ));
-        assert!(archive.ends_with(b"abc\n"));
     }
 
-    /// The program files go in as xz, which dpkg reads; the archive holds them as they were.
-    #[test]
-    fn the_debs_program_files_are_xz() {
-        let entries = vec![("opt/KChess/kchess".to_string(), vec![7u8; 300_000], 0o755)];
-        let tar = tarball(&entries, &["opt".into(), "opt/KChess".into()]).unwrap();
-        let packed = xz(&tar).unwrap();
-        assert!(packed.starts_with(b"\xfd7zXZ\0"));
-        assert!(packed.len() < tar.len() / 10);
-        let mut unpacked = Vec::new();
-        std::io::Read::read_to_end(
-            &mut lzma_rust2::XzReader::new(packed.as_slice(), false),
-            &mut unpacked,
-        )
-        .unwrap();
-        assert_eq!(unpacked, tar);
-        let mut archive = tar::Archive::new(unpacked.as_slice());
-        let names: Vec<String> = archive
-            .entries()
-            .unwrap()
-            .map(|entry| entry.unwrap().path().unwrap().to_string_lossy().to_string())
-            .collect();
-        assert_eq!(names, ["opt/", "opt/KChess/", "opt/KChess/kchess"]);
-    }
-
-    #[test]
-    fn the_control_archive_is_gzip() {
-        let packed = gzip(b"Package: kchess\n").unwrap();
-        assert!(packed.starts_with(&[0x1f, 0x8b]));
-        let mut text = String::new();
-        std::io::Read::read_to_string(
-            &mut flate2::read::GzDecoder::new(packed.as_slice()),
-            &mut text,
-        )
-        .unwrap();
-        assert_eq!(text, "Package: kchess\n");
-    }
-
-    /// The .deb holds the staged programs under /opt/KChess, with the launcher and icon, as dpkg
-    /// installs them (read back as the update patches read a release's .deb).
+    /// The .deb holds the staged programs under /opt/KChess, with the launcher and icon, and the
+    /// control archive that replaces the Electron package, as dpkg installs them (read back as
+    /// the update patches read a release's .deb).
     #[test]
     fn the_deb_installs_the_app_in_opt() {
-        let dir = std::env::temp_dir().join(format!("xtask-deb-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let voice = dir.join("voice");
-        std::fs::create_dir_all(&voice).unwrap();
-        let file = |name: &str, data: &[u8]| {
-            let path = dir.join(name);
-            std::fs::write(&path, data).unwrap();
-            path
-        };
-        std::fs::write(voice.join("libvosk.so"), b"vosk").unwrap();
-        std::fs::write(voice.join("NOTICE.txt"), b"notice").unwrap();
-        let built = Built {
-            app: file("app", b"app"),
-            service: file("service", b"service"),
-            cli: file("cli", b"cli"),
-            stockfish: file("stockfish", b"engine"),
-            fairy: file("fairy", b"fairy"),
-            voice,
-            licenses: file("licenses", b"licences"),
-        };
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        let built = super::super::stand_in(dir);
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
         let identity = Identity::new("2026.11.9".into());
         let package = deb(&identity, &built, &dir.join("stage"), &out).unwrap();
         assert!(package.ends_with("KChess-2026.11.9-linux-amd64.deb"));
-        let (tree, (control, _)) =
-            crate::deltas::deb_tree(&std::fs::read(&package).unwrap()).unwrap();
-        assert_eq!(control, "control.tar.gz");
+        let (tree, (name, control)) = crate::deb::read(&std::fs::read(&package).unwrap()).unwrap();
+        assert_eq!(name, "control.tar.gz");
+        let mut control_tar = Vec::new();
+        std::io::Read::read_to_end(
+            &mut flate2::read::GzDecoder::new(control.as_slice()),
+            &mut control_tar,
+        )
+        .unwrap();
+        let control_text = String::from_utf8_lossy(&control_tar);
+        assert!(control_text.contains("Package: kchess\nVersion: 2026.11.9\n"));
+        assert!(control_text.contains("Replaces: kchess-electron\n"));
         let file_of = |path: &str| match tree.get(path) {
             Some(kchess_delta::Node::File { data, executable }) => (data.clone(), *executable),
             other => panic!("{path}: {other:?}"),
         };
         assert_eq!(file_of("opt/KChess/kchess"), (b"app".to_vec(), true));
-        assert_eq!(file_of("opt/KChess/stockfish"), (b"engine".to_vec(), true));
+        assert_eq!(
+            file_of("opt/KChess/stockfish"),
+            (b"stockfish".to_vec(), true)
+        );
+        assert_eq!(file_of("opt/KChess/kchess-cli"), (b"cli".to_vec(), true));
         assert_eq!(
             file_of("opt/KChess/voice/NOTICE.txt"),
             (b"notice".to_vec(), false)
         );
         assert!(tree.get("usr/share/applications/kchess.desktop").is_some());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn the_final_deb_replaces_the_electron_package() {
-        let text = control(&Identity::new("2026.10.16".into()), 100);
-        assert!(text.starts_with("Package: kchess\nVersion: 2026.10.16\nArchitecture: amd64\n"));
-        assert!(text.contains("Replaces: kchess-electron\n"));
+        assert!(
+            tree.get("usr/share/icons/hicolor/512x512/apps/kchess.png")
+                .is_some()
+        );
     }
 }

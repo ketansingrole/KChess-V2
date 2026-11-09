@@ -15,16 +15,17 @@ use crate::util::{Result, available, output, root, run, run_with, say};
 /// tests still run here, outside the coverage totals.
 const FLOORS: [(&str, f64); 3] = [("lines", 88.0), ("regions", 86.0), ("functions", 86.0)];
 
-/// The shipped binaries, whose code must not unwrap or expect outside tests.
-const SHIPPED_BINS: [&str; 3] = ["kchess-voice", "kchess-service", "kchess-cli"];
-
 fn step(name: &str, work: impl FnOnce() -> Result) -> Result {
     say(&format!("Checking {name}…"));
     work().map_err(|cause| format!("{name}: {cause}"))
 }
 
-fn lints() -> Result {
-    run("cargo", &["fmt", "--all", "--check"])?;
+fn format() -> Result {
+    run("cargo", &["fmt", "--all", "--check"])
+}
+
+/// Clippy over every target of the workspace, its warnings denied.
+fn clippy_workspace() -> Result {
     run(
         "cargo",
         &[
@@ -36,7 +37,12 @@ fn lints() -> Result {
             "-D",
             "warnings",
         ],
-    )?;
+    )
+}
+
+fn lints() -> Result {
+    format()?;
+    clippy_workspace()?;
     run(
         "cargo",
         &[
@@ -54,10 +60,18 @@ fn lints() -> Result {
     run("cargo", &shipped_bins_args())
 }
 
+/// The shipped binaries whose code must not unwrap or expect outside tests: every shipped
+/// program's crate but the app's.
+fn shipped_bins() -> impl Iterator<Item = &'static str> {
+    crate::package::SHIPPED
+        .into_iter()
+        .filter(|package| *package != APP)
+}
+
 /// One clippy run over every shipped binary, its `unwrap`/`expect` denied as the libraries' are.
 fn shipped_bins_args() -> Vec<&'static str> {
     let mut args = vec!["clippy"];
-    for bin in SHIPPED_BINS {
+    for bin in shipped_bins() {
         args.extend(["-p", bin]);
     }
     args.extend([
@@ -83,6 +97,10 @@ fn nextest() -> bool {
 /// parallelism there, and each test in its own process starts GPUI afresh (2026-11-06, 546 tests:
 /// 60 s under `cargo test`, 74 s under nextest).
 const APP: &str = "kchess-gpui";
+
+/// The packages outside the coverage totals: the app's views are checked by its end-to-end
+/// suite, and this tooling by running it. Their tests still run.
+const NOT_COVERED: [&str; 2] = [APP, "xtask"];
 
 /// The commands that run the tests of these packages, or of the whole workspace when there are
 /// none: the app's under `cargo test`, the others under nextest when it is installed.
@@ -112,7 +130,6 @@ fn test_commands(packages: &[String], nextest: bool) -> Vec<Vec<String>> {
     commands
 }
 
-/// Run the tests of these packages, or of the whole workspace when there are none.
 fn run_tests(packages: &[String]) -> Result {
     let nextest = nextest();
     if !nextest {
@@ -131,8 +148,7 @@ fn run_tests(packages: &[String]) -> Result {
 fn tests() -> Result {
     if available("cargo", &["llvm-cov", "--version"]) {
         coverage()?;
-        // Outside the totals: the app's views are checked by its end-to-end suite.
-        run_tests(&["kchess-gpui".into(), "xtask".into()])?;
+        run_tests(&NOT_COVERED.map(String::from))?;
     } else {
         say(
             "cargo-llvm-cov is not installed: running the tests without the coverage gate (CI runs it).",
@@ -148,12 +164,11 @@ fn coverage_args(nextest: bool, report: &str) -> Vec<&str> {
     if nextest {
         args.push("nextest");
     }
+    args.push("--workspace");
+    for package in NOT_COVERED {
+        args.extend(["--exclude", package]);
+    }
     args.extend([
-        "--workspace",
-        "--exclude",
-        "kchess-gpui",
-        "--exclude",
-        "xtask",
         "--locked",
         // A test process killed while writing its profile leaves a corrupt one, and llvm-profdata
         // then refuses to merge any: CI's check failed twice with every test passed ("file header
@@ -252,9 +267,7 @@ fn touches_dependencies(files: &[String]) -> bool {
 /// `check-fast`: format, lints, the notices when dependencies changed, and the tests of the packages changed since main (committed or
 /// not). Never a substitute for `check` before a push to main.
 pub fn fast() -> Result {
-    let base = output("git", &["merge-base", "HEAD", "origin/main"])
-        .map(|text| text.trim().to_string())
-        .unwrap_or_else(|_| "HEAD".into());
+    let base = crate::util::merge_base(&root())?;
     let mut files: Vec<String> = output("git", &["diff", "--name-only", &base])?
         .lines()
         .map(str::to_string)
@@ -275,21 +288,8 @@ pub fn fast() -> Result {
         say("No Rust changes since main.");
         return Ok(());
     }
-    step("format", || run("cargo", &["fmt", "--all", "--check"]))?;
-    step("lints", || {
-        run(
-            "cargo",
-            &[
-                "clippy",
-                "--workspace",
-                "--all-targets",
-                "--locked",
-                "--",
-                "-D",
-                "warnings",
-            ],
-        )
-    })?;
+    step("format", format)?;
+    step("lints", clippy_workspace)?;
     let mut changed: Vec<String> = files.iter().filter_map(|file| package_of(file)).collect();
     if workflows {
         changed.push("xtask".into());
@@ -467,9 +467,10 @@ mod tests {
     #[test]
     fn one_run_checks_every_shipped_binary() {
         let args = shipped_bins_args();
-        for bin in SHIPPED_BINS {
+        for bin in ["kchess-voice", "kchess-service", "kchess-cli"] {
             assert!(args.windows(2).any(|pair| pair == ["-p", bin]), "{bin}");
         }
+        assert!(!args.contains(&APP));
         assert!(args.contains(&"--bins"));
         assert!(args.ends_with(&["-D", "clippy::expect_used"]));
     }
@@ -697,6 +698,67 @@ mod tests {
             }
         }
         assert!(checked > 20, "only {checked} steps found");
+    }
+
+    /// CI packages, builds the Snap and runs the Windows upgrade only when a file matching its
+    /// `PACKAGING` pattern changed. A change to the code packaging runs (util.rs, the patches,
+    /// kchess-delta) once skipped the jobs that test it: every such file must match.
+    #[cfg(unix)]
+    #[test]
+    fn packaging_changes_run_the_package_jobs() {
+        let ci = std::fs::read_to_string(root().join(".github/workflows/ci.yml")).unwrap();
+        let pattern = ci
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("PACKAGING: '"))
+            .and_then(|rest| rest.strip_suffix('\''))
+            .expect("ci.yml has a PACKAGING pattern");
+        let mut files: Vec<String> = std::fs::read_dir(root().join("tooling/xtask/src/package"))
+            .unwrap()
+            .flatten()
+            .map(|entry| {
+                format!(
+                    "tooling/xtask/src/package/{}",
+                    entry.file_name().to_string_lossy()
+                )
+            })
+            .collect();
+        for module in [
+            "deb", "deltas", "engines", "fairy", "licenses", "sums", "util", "voice",
+        ] {
+            files.push(format!("tooling/xtask/src/{module}.rs"));
+        }
+        files.extend(
+            [
+                "crates/kchess-delta/src/lib.rs",
+                "crates/kchess-voice/src/main.rs",
+                "Cargo.lock",
+            ]
+            .map(String::from),
+        );
+        let matches = |file: &str| {
+            let mut grep = Command::new("grep")
+                .args(["-qE", pattern])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            use std::io::Write as _;
+            grep.stdin
+                .take()
+                .unwrap()
+                .write_all(format!("{file}\n").as_bytes())
+                .unwrap();
+            grep.wait().unwrap().success()
+        };
+        for file in &files {
+            assert!(matches(file), "{file} does not run CI's packaging jobs");
+        }
+        for file in [
+            "apps/gpui/src/explorer.rs",
+            "tooling/xtask/src/bench.rs",
+            "docs/releasing.md",
+        ] {
+            assert!(!matches(file), "{file} runs CI's packaging jobs");
+        }
     }
 
     #[test]

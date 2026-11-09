@@ -2346,6 +2346,7 @@ fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
         _ => return None,
     };
     let phase = updates.phase;
+    let installs = phase == Phase::Downloaded || updates.retries_install();
     let target = handle.downgrade();
     Some(
         over_title_bar(
@@ -2366,7 +2367,7 @@ fn update_button(cx: &App) -> Option<impl IntoElement + use<>> {
                 .tooltip(tooltip)
                 .disabled(phase == Phase::Downloading)
                 .on_click(move |_, window, cx| {
-                    if phase == Phase::Downloaded {
+                    if installs {
                         crate::pages::settings::updates::ask_restart(window, cx);
                     } else {
                         let _ = target.update(cx, |updates, cx| updates.download(cx));

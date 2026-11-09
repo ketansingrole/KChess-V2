@@ -6,8 +6,10 @@ mod bench;
 #[cfg(test)]
 mod boundaries;
 mod check;
+mod deb;
 mod deltas;
 mod electron_step;
+mod engines;
 mod fairy;
 mod fake_lichess;
 mod icons;
@@ -18,6 +20,7 @@ mod package;
 #[cfg(unix)]
 mod pins;
 mod release;
+mod sums;
 mod update_key;
 mod util;
 mod voice;
@@ -52,6 +55,7 @@ const HELP: &str = "cargo xtask <command>
   update-key <secret file>
                         Make the release key: the secret to <secret file>, the public half
                         to apps/gpui/update-key.pub
+  sums <dir>            Write <dir>/SHA256SUMS.txt for every other file in <dir> (release CI)
   sign-sums <file>      Sign a release's SHA256SUMS.txt into <file>.sig with
                         KCHESS_UPDATE_SIGNING_KEY (CI)
   download-release-snap Fetch and verify the published release's Snap (CI)
@@ -63,18 +67,24 @@ const HELP: &str = "cargo xtask <command>
   licenses <file>       Write the license texts of every crate compiled into the app
   voice-runtime [profile]  Stage the speech helper with libvosk (target/voice-runtime)
   fairy-stockfish       Build the pinned Fairy-Stockfish, the variant engine
-                        (target/fairy-stockfish/bin)
+                        (target/fairy-stockfish/bin); print its path
+  engines [--github-env] <stockfish folder>
+                        Fetch Stockfish into the folder and build Fairy-Stockfish; print
+                        KCHESS_ENGINE_PATH and KCHESS_VARIANT_ENGINE_PATH, or add them to
+                        $GITHUB_ENV (CI)
   package [--skip-build] [--snap|--mas]
                         Package the app for this machine (apps/gpui/dist): .dmg and .zip,
                         the NSIS installer, or the AppImage and .deb; --snap makes the Snap,
                         --mas the Mac App Store's .pkg (apps/gpui/dist/mas)
   deltas [dir]          Write the update patches to this release's packages in [dir]
                         (apps/gpui/dist) from the latest published releases (release CI)
-  deltas --from <old package> <new package>
-                        Write the one patch between two packages, beside the new one
+  deltas --from <old package> <new package> [--stage <out>]
+                        Write the one patch between two packages, beside the new one;
+                        --stage then stages a Windows patch over the old installer's files
+                        as --apply does (the Windows upgrade test)
   deltas --apply <patch> <installed folder> <out>
                         Stage a Windows patch as the updater does: <out>/files and
-                        <out>/KChess-update.exe (the Windows upgrade test)
+                        <out>/KChess-update.exe
   pins --check [--report <file>]
                         Fail when appimagetool or the AppImage runtime has a newer release than
                         its pin (package/linux.rs), naming both; the weekly Pins workflow
@@ -101,6 +111,10 @@ fn main() -> ExitCode {
             Some(path) => update_key::generate(std::path::Path::new(path)),
             None => Err("update-key needs the file to write the secret key to.".into()),
         },
+        Some("sums") => match rest.first() {
+            Some(dir) => sums::run(std::path::Path::new(dir)),
+            None => Err("sums needs the folder of the release's files.".into()),
+        },
         Some("sign-sums") => match rest.first() {
             Some(path) => update_key::sign(std::path::Path::new(path)),
             None => Err("sign-sums needs the checksums file.".into()),
@@ -120,7 +134,8 @@ fn main() -> ExitCode {
         Some("voice-runtime") => {
             voice::stage(rest.first().map_or("release", String::as_str)).map(|_| ())
         }
-        Some("fairy-stockfish") => fairy::build().map(|_| ()),
+        Some("fairy-stockfish") => fairy::build().map(|path| println!("{}", path.display())),
+        Some("engines") => engines::run(rest),
         Some("package") => package::run(rest),
         Some("deltas") => deltas::run(rest),
         #[cfg(unix)]

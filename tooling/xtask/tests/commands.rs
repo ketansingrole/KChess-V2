@@ -26,15 +26,3 @@ fn an_unknown_command_fails_and_says_why() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("Unknown command no-such-command"));
 }
-
-#[test]
-fn mutants_refuses_a_base_it_was_not_given() {
-    // Without cargo-mutants it says how to install it; with it, that `--base` needs a value.
-    let out = xtask(&["mutants", "--base"]);
-    assert!(!out.status.success());
-    let said = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        said.contains("--base needs a commit") || said.contains("cargo install cargo-mutants"),
-        "{said}"
-    );
-}

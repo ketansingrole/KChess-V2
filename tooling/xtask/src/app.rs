@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::util::{Result, root, say};
+use crate::util::{Result, modified, root, say};
 
 /// The scratch profile development runs use unless `--profile` names another.
 const PROFILE: &str = ".data/gpui-profile";
@@ -57,35 +57,11 @@ pub fn engine() -> Result<PathBuf> {
         return Ok(PathBuf::from(path));
     }
     let dir = root().join(".data/stockfish");
-    let name = if cfg!(windows) {
-        "stockfish.exe"
-    } else {
-        "stockfish"
-    };
-    if dir.join(name).is_file() {
-        return Ok(dir.join(name));
+    let cached = dir.join(crate::util::exe("stockfish"));
+    if cached.is_file() {
+        return Ok(cached);
     }
-    say("Fetching Stockfish into .data/stockfish…");
-    let out = Command::new("cargo")
-        .args([
-            "run",
-            "-q",
-            "--locked",
-            "-p",
-            "kchess-core",
-            "--example",
-            "fetch_stockfish",
-            "--",
-        ])
-        .arg(&dir)
-        .current_dir(root())
-        .stderr(Stdio::inherit())
-        .output()
-        .map_err(|cause| format!("Could not fetch Stockfish: {cause}"))?;
-    if !out.status.success() {
-        return Err("Could not fetch Stockfish.".into());
-    }
-    Ok(PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()))
+    crate::engines::stockfish(&dir, false)
 }
 
 /// Builds the app, the core service it starts and the speech helper, staged where the app finds
@@ -193,7 +169,7 @@ fn outdated_service(info: &str, built: SystemTime) -> Option<u32> {
 /// was staged, which the next client then starts: it outlives the app, so its code and the helper
 /// it was told about would otherwise stay as they were.
 fn stop_outdated_service(profile: &Path, binary: &Path) -> Result {
-    let service = binary.with_file_name(format!("kchess-service{}", std::env::consts::EXE_SUFFIX));
+    let service = binary.with_file_name(crate::util::exe("kchess-service"));
     let (Ok(info), Ok(built)) = (
         std::fs::read_to_string(profile.join("core.json")),
         std::fs::metadata(&service).and_then(|file| file.modified()),
@@ -334,12 +310,6 @@ fn changed_sources(known: &Sources) -> Option<Sources> {
         }
         found = settled;
     }
-}
-
-fn modified(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path)
-        .and_then(|file| file.modified())
-        .ok()
 }
 
 /// Stops the app this watch started and waits for it, which also frees its window's place.

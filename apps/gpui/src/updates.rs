@@ -161,18 +161,14 @@ pub fn current_version() -> String {
 /// This platform's `package` of a release, as the release names it
 /// (`KChess-2026.10.12-linux-x86_64.AppImage`, `…-linux-amd64.deb`).
 pub fn asset_name(version: &str, package: Package) -> Option<String> {
-    let arm = match std::env::consts::ARCH {
-        "aarch64" => true,
-        "x86_64" => false,
-        _ => return None,
+    use kchess_delta::Asset;
+    let asset = match package {
+        Package::MacZip => Asset::MacZip,
+        Package::WindowsInstaller => Asset::WindowsInstaller,
+        Package::AppImage => Asset::AppImage,
+        Package::Deb => Asset::Deb,
     };
-    let (platform, arch, extension) = match package {
-        Package::MacZip => ("mac", if arm { "arm64" } else { "x64" }, "zip"),
-        Package::WindowsInstaller => ("win", if arm { "arm64" } else { "x64" }, "exe"),
-        Package::AppImage => ("linux", if arm { "arm64" } else { "x86_64" }, "AppImage"),
-        Package::Deb => ("linux", if arm { "arm64" } else { "amd64" }, "deb"),
-    };
-    Some(format!("{PREFIX}-{version}-{platform}-{arch}.{extension}"))
+    Some(asset.name(version, kchess_delta::Arch::current()?))
 }
 
 /// The release key's public half (`update-key.pub`): its one line that is not a comment, the
@@ -1724,8 +1720,21 @@ impl Updates {
             self.phase = Phase::UpToDate;
             self.version = None;
             self.release = None;
+            // An update downloaded before (its install failed) is not installed on quit either.
+            self.staged = None;
             return;
         };
+        // An update whose install failed is still whole: the same version is ready again, and a
+        // newer one replaces it, which used to install the old one on quit while offering the new.
+        if self.staged.is_some() {
+            if self.version.as_deref() == Some(version.as_str()) {
+                self.phase = Phase::Downloaded;
+                self.released = release.published_at.clone();
+                self.release = Some(release);
+                return;
+            }
+            self.staged = None;
+        }
         self.phase = Phase::Available;
         self.version = Some(version);
         self.released = release.published_at.clone();
@@ -1820,6 +1829,12 @@ impl Updates {
                 cx.notify();
             });
         }));
+    }
+
+    /// Whether retrying after an error installs the update already downloaded, whose install
+    /// failed, rather than downloading it again.
+    pub fn retries_install(&self) -> bool {
+        self.phase == Phase::Error && self.staged.is_some()
     }
 
     /// `install`: save everything, then put the downloaded update in place of this app and reopen

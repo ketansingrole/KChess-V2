@@ -1637,3 +1637,56 @@ fn download_starts_the_offered_update(cx: &mut gpui_kit::TestAppContext) {
         Some("KChess has no private folder to download the update to")
     );
 }
+
+/// A release offering `version` for this platform's package.
+fn release_of(version: &str) -> Release {
+    let package = Package::for_platform().unwrap();
+    let name = asset_name(version, package).unwrap();
+    serde_json::from_value(serde_json::json!({
+        "tag_name": format!("v{version}"),
+        "assets": [{ "name": name, "browser_download_url": "http://127.0.0.1:9/pkg", "size": 1 }],
+    }))
+    .unwrap()
+}
+
+/// After an install failed, its download was kept; a check that then found a newer release
+/// offered it, while quitting still installed the old download.
+#[gpui_kit::test]
+fn a_newer_release_replaces_a_download_whose_install_failed(cx: &mut gpui_kit::TestAppContext) {
+    use super::{Phase, UpdatesHandle};
+    let mut app = crate::e2e::Harness::start(cx);
+    let (phase, staged) = app.with_window(|_, cx| {
+        let updates = cx.global::<UpdatesHandle>().0.clone();
+        updates.update(cx, |updates, cx| {
+            updates.version = Some("2026.11.8".into());
+            updates.staged = Some(std::path::PathBuf::from("/nonexistent/KChess-2026.11.8"));
+            updates.phase = Phase::Error;
+            updates.found(release_of("2026.11.9"), false, cx);
+            (updates.phase, updates.staged.clone())
+        })
+    });
+    assert_eq!(phase, Phase::Available);
+    assert_eq!(staged, None);
+}
+
+/// The same release found again after a failed install is ready to install, not downloaded
+/// again; retrying then installs it.
+#[gpui_kit::test]
+fn a_failed_install_is_retried_from_its_download(cx: &mut gpui_kit::TestAppContext) {
+    use super::{Phase, UpdatesHandle};
+    let mut app = crate::e2e::Harness::start(cx);
+    let (retries, phase, staged) = app.with_window(|_, cx| {
+        let updates = cx.global::<UpdatesHandle>().0.clone();
+        updates.update(cx, |updates, cx| {
+            updates.version = Some("2026.11.9".into());
+            updates.staged = Some(std::path::PathBuf::from("/nonexistent/KChess-2026.11.9"));
+            updates.phase = Phase::Error;
+            let retries = updates.retries_install();
+            updates.found(release_of("2026.11.9"), false, cx);
+            (retries, updates.phase, updates.staged.is_some())
+        })
+    });
+    assert!(retries);
+    assert_eq!(phase, Phase::Downloaded);
+    assert!(staged);
+}

@@ -8,6 +8,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::util::{Result, download, pinned, root, run, say};
 
@@ -58,17 +59,19 @@ pub fn staged() -> PathBuf {
 /// Stage the helper built for `profile` unless what is staged is already as new. Staging replaces
 /// the folder, so a running helper is left alone when nothing changed.
 pub fn stage_if_outdated(profile: &str) -> Result<()> {
-    let executable = format!("kchess-voice{}", std::env::consts::EXE_SUFFIX);
-    let modified = |path: PathBuf| {
-        std::fs::metadata(path)
-            .and_then(|file| file.modified())
-            .ok()
-    };
-    let built = modified(root().join("target").join(profile).join(&executable));
-    if modified(staged().join(&executable)).is_none_or(|current| Some(current) < built) {
+    use crate::util::modified;
+    let executable = crate::util::exe("kchess-voice");
+    let built = modified(&root().join("target").join(profile).join(&executable));
+    if outdated(modified(&staged().join(&executable)), built) {
         stage(profile)?;
     }
     Ok(())
+}
+
+/// Whether the helper staged at time `staged` is older than the one built at `built`, or none
+/// is staged.
+fn outdated(staged: Option<SystemTime>, built: Option<SystemTime>) -> bool {
+    staged.is_none_or(|current| Some(current) < built)
 }
 
 /// Stage the helper built for `profile` (`release` or `debug`) with libvosk and the notices.
@@ -116,7 +119,7 @@ fn stage_with(runtime: &Runtime<impl Fn(&str, &Path) -> Result>, profile: &str) 
             .map_err(|cause| cause.to_string())?;
     let _ = std::fs::remove_dir_all(target);
     std::fs::create_dir_all(target).map_err(|cause| cause.to_string())?;
-    let executable = format!("kchess-voice{}", std::env::consts::EXE_SUFFIX);
+    let executable = crate::util::exe("kchess-voice");
     let helper = built.join(&executable);
     if !helper.exists() {
         return Err(format!(
@@ -167,6 +170,19 @@ fn stage_with(runtime: &Runtime<impl Fn(&str, &Path) -> Result>, profile: &str) 
 mod tests {
     use super::*;
 
+    /// The helper is staged again only when none is, or the build is newer than what is.
+    #[test]
+    fn only_an_older_or_missing_helper_is_staged_again() {
+        let then = SystemTime::UNIX_EPOCH;
+        let later = then + std::time::Duration::from_secs(1);
+        assert!(outdated(None, Some(then)));
+        assert!(outdated(None, None));
+        assert!(outdated(Some(then), Some(later)));
+        assert!(!outdated(Some(later), Some(then)));
+        assert!(!outdated(Some(then), Some(then)));
+        assert!(!outdated(Some(then), None));
+    }
+
     /// A file as the stand-in archive holds it. On macOS staging thins the universal library to
     /// Apple Silicon, so the archive holds `bytes` as the arm64 slice of a fat file.
     fn archived(bytes: &[u8]) -> Vec<u8> {
@@ -195,7 +211,6 @@ mod tests {
     /// helper Cargo built, the archive's libraries under their staged names and the notices.
     #[test]
     fn the_helper_is_staged_with_the_pinned_libraries_and_the_notices() {
-        use sha2::Digest;
         use std::io::Write;
         let scratch = std::env::temp_dir().join(format!("xtask-voice-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&scratch);
@@ -206,7 +221,7 @@ mod tests {
             zip.write_all(&archived(bytes)).unwrap();
         }
         let archive = zip.finish().unwrap().into_inner();
-        let executable = format!("kchess-voice{}", std::env::consts::EXE_SUFFIX);
+        let executable = crate::util::exe("kchess-voice");
         let built = scratch.join("built");
         let licenses = scratch.join("licenses");
         for (dir, name, text) in [
@@ -223,7 +238,7 @@ mod tests {
         let runtime = Runtime {
             pin: Pin {
                 archive: "v0.1/vosk-0.1.zip",
-                sha256: crate::util::hex(&sha2::Sha256::digest(&archive)).leak(),
+                sha256: kchess_delta::digest(&archive).leak(),
                 files: &[
                     ("vosk-0.1/libvosk", "libvosk.so"),
                     ("vosk-0.1/runtime", "libc.so"),

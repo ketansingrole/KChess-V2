@@ -799,7 +799,10 @@ impl AnalysisPage {
         self.path.clear();
         self.edits.reset(&self.root, "");
         self.clear_evaluations();
+        // The study is let go whole, its chapter and saved text with it.
         self.study.clear();
+        self.chapter.clear();
+        self.study_pgn.clear();
         self.review.origin = None;
     }
 
