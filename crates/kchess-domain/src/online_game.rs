@@ -615,6 +615,34 @@ mod tests {
         assert_eq!(failed["state"]["onlineAccount"], json!("Alice"));
     }
 
+    /// The reply to a move says how long the server took to confirm it.
+    #[test]
+    fn a_confirmed_move_reports_how_long_the_server_took() {
+        let begun = transition(
+            "onlineGameBegin",
+            vec![
+                state_json(&playing()),
+                json!("move"),
+                json!("e2e4"),
+                ctx(1000.0),
+            ],
+        );
+        let confirmed = transition(
+            "onlineGameSettle",
+            vec![
+                begun["state"].clone(),
+                begun["pending"].clone(),
+                json!({ "ok": true, "value": true }),
+                ctx(1250.0),
+            ],
+        );
+        let ack = effects(&confirmed)
+            .into_iter()
+            .find(|e| e["effect"] == json!("moveAcknowledged"))
+            .expect("acknowledged");
+        assert_eq!(ack["ms"].as_f64(), Some(250.0));
+    }
+
     #[test]
     fn an_unconfirmed_move_fails_and_is_not_retried() {
         let mut model = Model::idle();

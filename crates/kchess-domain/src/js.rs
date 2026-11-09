@@ -207,7 +207,12 @@ pub fn number_to_string(n: f64) -> String {
         return "NaN".into();
     }
     if n.is_infinite() {
-        return if n > 0.0 { "Infinity" } else { "-Infinity" }.into();
+        return if n.is_sign_positive() {
+            "Infinity"
+        } else {
+            "-Infinity"
+        }
+        .into();
     }
     if n == 0.0 {
         return "0".into();
@@ -264,8 +269,8 @@ fn write_json(value: &Value, out: &mut String) {
         Value::Null => out.push_str("null"),
         Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
         Value::Number(number) => match number.as_f64() {
-            Some(n) if n.is_finite() => out.push_str(&number_to_string(n)),
-            _ => out.push_str("null"),
+            Some(n) => out.push_str(&number_to_string(n)),
+            None => out.push_str("null"),
         },
         Value::String(text) => write_quoted(text, out),
         Value::Array(items) => {
