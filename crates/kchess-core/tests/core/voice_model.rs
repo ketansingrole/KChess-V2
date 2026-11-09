@@ -516,8 +516,9 @@ async fn cleans_up_failed_and_interrupted_responses_and_allows_another_attempt()
     let zip = model_zip();
     let body = zip.clone();
     let server = serve(move |index| match index {
-        0 => Reply::Body(503, Vec::new()),
-        1 => Reply::Interrupted(body.clone()),
+        // A 503 is asked again twice before it fails the download.
+        0..=2 => Reply::Body(503, Vec::new()),
+        3 => Reply::Interrupted(body.clone()),
         _ => Reply::Body(200, body.clone()),
     })
     .await;
