@@ -69,8 +69,8 @@ units, both sides alike); `main` at `30627a8` against this change, medians of 3 
 | Studies, first | 37.3 ms | 35.6 ms | — |
 
 Studies' first opening still summarizes every study once. The other pages, and starting the app
-(58–62 ms to the window, from 139 ms before the first change), are unchanged within the runs'
-spread; Openings' first opening moved with the pages opened before it (13–23 ms either way).
+(57–74 ms to the window either way), are unchanged within the runs' spread; Openings' first
+opening moved with the pages opened before it (13–23 ms either way).
 
 ## Looked at and left
 
