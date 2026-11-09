@@ -72,6 +72,23 @@ Studies' first opening still summarizes every study once. The other pages, and s
 (57–74 ms to the window either way), are unchanged within the runs' spread; Openings' first
 opening moved with the pages opened before it (13–23 ms either way).
 
+### Studies, first opening
+
+`summarizeStudy` built each study's whole tree (SAN, UCI and a FEN for every move) to report
+counts and the main line's last position. `tree::summarize_pgn` reads them from the parsed game
+with the same move checks, writing only that one FEN; `records::studies` tests it against the
+tree's summary, and the rules corpus's 158 recorded answers still hold. Opening Studies alone
+(`KCHESS_PERF_PAGES=Studies,Home`), 5 alternating runs, medians:
+
+| Studies | Before | After |
+| ------- | -----: | ----: |
+| First opening | 34.0 ms | 30.1 ms |
+| Again | 20.8 ms | 21.3 ms |
+
+What is left is drawing the 50 cards (the limit), 21 ms with nothing to summarize: 37% of the
+first opening is laying them out. Drawing only the cards in view would take most of it, but cards
+off screen would then be out of reach of Tab and screen readers until scrolled to.
+
 ## Looked at and left
 
 **Pages of synced games, newest to oldest.** Game history pages with `LIMIT … OFFSET …`, which
