@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use kchess_contracts::types::OnlinePhase;
 use serde::{Deserialize, Serialize};
 use serde_json::Number;
 use tokio::task::JoinHandle;
@@ -195,6 +196,20 @@ pub(crate) struct State {
     pub(crate) presence: Vec<(String, Instant, PresenceReport)>,
 }
 
+/// What a game Lichess says started does to the board (`State::started`).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Started {
+    OnBoard,
+    Opens,
+    ListedOnly,
+}
+
+/// Whether a state reported in `phase` for `game_id` is a live game (or the startup check) in
+/// progress: what stops the engines and the watch.
+pub(crate) fn reports_live_game(phase: OnlinePhase, game_id: &str) -> bool {
+    phase == OnlinePhase::Checking || (!game_id.is_empty() && phase != OnlinePhase::Idle)
+}
+
 /// The game on the board.
 pub(crate) struct LiveGame {
     pub(crate) id: String,
@@ -222,6 +237,42 @@ impl State {
     pub(crate) fn end_live(&mut self, id: &str) {
         if self.is_live(id) {
             self.live = None;
+        }
+    }
+
+    /// The game id a lane's state reports: the board's game on the game lane, none elsewhere.
+    pub(crate) fn lane_game(&self, lane: Lane) -> &str {
+        if lane == Lane::Game {
+            self.live_id()
+        } else {
+            ""
+        }
+    }
+
+    /// What a game Lichess says started (`gameStart`) does to the board: nothing when it is
+    /// there already; it is only listed when it is a correspondence game (opened when asked
+    /// for) or a real-time game holds the board; otherwise it opens.
+    pub(crate) fn started(&self, id: &str, correspondence: bool) -> Started {
+        if id == self.live_id() {
+            Started::OnBoard
+        } else if correspondence || self.realtime_live() {
+            Started::ListedOnly
+        } else {
+            Started::Opens
+        }
+    }
+
+    /// Whether a game's event (`gameFinish`) concerns this session: the board's game, or the
+    /// protected one.
+    pub(crate) fn concerns(&self, id: &str) -> bool {
+        self.is_live(id) || self.protected_game == id
+    }
+
+    /// Game `id`'s stream (`handle_id`) ended (`.finally`): the game leaves the board when it
+    /// finished and the stream is still the board's; a stream that only dropped keeps it.
+    pub(crate) fn stream_ended(&mut self, id: &str, handle_id: u64, finished: bool) {
+        if finished && super::ongoing::finished_check(self, handle_id) {
+            self.end_live(id);
         }
     }
 
@@ -295,5 +346,80 @@ pub fn js_number(value: f64) -> String {
         format!("{}", value as i64)
     } else {
         format!("{value}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Handle, LiveGame, Started, State, reports_live_game};
+    use crate::lichess::online::state::Lane;
+    use kchess_contracts::types::OnlinePhase;
+    use tokio_util::sync::CancellationToken;
+
+    fn with_live(id: &str, correspondence: bool) -> State {
+        let mut st = State::new();
+        st.live = Some(LiveGame {
+            id: id.into(),
+            correspondence,
+        });
+        st
+    }
+
+    /// The startup check and any state of a known game but idle stop the engines and the watch;
+    /// the account's own stream, with no game, does not.
+    #[test]
+    fn a_live_game_is_the_check_or_a_known_game_not_idle() {
+        assert!(reports_live_game(OnlinePhase::Checking, ""));
+        assert!(reports_live_game(OnlinePhase::Connected, "AbCd1234"));
+        assert!(!reports_live_game(OnlinePhase::Connected, ""));
+        assert!(!reports_live_game(OnlinePhase::Idle, "AbCd1234"));
+    }
+
+    #[test]
+    fn only_the_game_lane_reports_the_boards_game() {
+        let st = with_live("AbCd1234", false);
+        assert_eq!(st.lane_game(Lane::Game), "AbCd1234");
+        assert_eq!(st.lane_game(Lane::Events), "");
+        assert_eq!(State::new().lane_game(Lane::Game), "");
+    }
+
+    /// A started game opens on an empty board, or over a correspondence game; it is only listed
+    /// when it is a correspondence game or a real-time game holds the board.
+    #[test]
+    fn a_started_game_opens_unless_the_board_is_taken_or_it_is_correspondence() {
+        let empty = State::new();
+        assert_eq!(empty.started("Other123", false), Started::Opens);
+        assert_eq!(empty.started("Corr1234", true), Started::ListedOnly);
+        let realtime = with_live("AbCd1234", false);
+        assert_eq!(realtime.started("AbCd1234", false), Started::OnBoard);
+        assert_eq!(realtime.started("Other123", false), Started::ListedOnly);
+        let correspondence = with_live("Corr1234", true);
+        assert_eq!(correspondence.started("Other123", false), Started::Opens);
+    }
+
+    #[test]
+    fn a_game_event_concerns_the_boards_game_or_the_protected_one() {
+        let mut st = with_live("AbCd1234", false);
+        st.protected_game = "Prot1234".into();
+        assert!(st.concerns("AbCd1234"));
+        assert!(st.concerns("Prot1234"));
+        assert!(!st.concerns("Other123"));
+    }
+
+    /// Only the board's own stream ending a finished game takes it off the board; one that only
+    /// dropped, or an older stream, leaves it.
+    #[test]
+    fn a_game_leaves_the_board_when_its_own_stream_ends_it() {
+        let mut st = with_live("AbCd1234", false);
+        st.game_controller = Some(Handle {
+            id: 7,
+            token: CancellationToken::new(),
+        });
+        st.stream_ended("AbCd1234", 7, false);
+        assert!(st.is_live("AbCd1234"), "a dropped stream keeps the game");
+        st.stream_ended("AbCd1234", 8, true);
+        assert!(st.is_live("AbCd1234"), "an older stream keeps it");
+        st.stream_ended("AbCd1234", 7, true);
+        assert!(st.live.is_none());
     }
 }

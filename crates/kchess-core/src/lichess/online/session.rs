@@ -130,8 +130,7 @@ impl OnlineSession {
         if let Some(kind) = kind {
             payload["kind"] = json!(kind.as_str());
         }
-        let live_game =
-            phase == OnlinePhase::Checking || (!game_id.is_empty() && phase != OnlinePhase::Idle);
+        let live_game = super::state::reports_live_game(phase, game_id);
         self.run_state_hook(live_game, self.assistance_blocked());
         self.emit("online:state", payload);
     }
@@ -489,11 +488,7 @@ impl OnlineSession {
             quiet,
             session: st.epoch,
             account: st.current_account.clone(),
-            game_id: if lane == Lane::Game {
-                st.live_id().to_string()
-            } else {
-                String::new()
-            },
+            game_id: st.lane_game(lane).to_string(),
         }
     }
 
@@ -550,18 +545,17 @@ impl OnlineSession {
                 return;
             }
             let correspondence = event["game"]["speed"].as_str() == Some("correspondence");
-            let (live, realtime) = {
-                let st = self.st();
-                (st.live_id().to_string(), st.realtime_live())
-            };
-            if game_id != live {
-                // Another game is on the board; correspondence games open only when asked for.
-                if correspondence || realtime {
+            let started = self.st().started(&game_id, correspondence);
+            match started {
+                super::state::Started::OnBoard => {}
+                super::state::Started::ListedOnly => {
                     self.ongoing_changed();
                     return;
                 }
-                self.st().pending_challenge = None;
-                self.begin_game(&game_id, token);
+                super::state::Started::Opens => {
+                    self.st().pending_challenge = None;
+                    self.begin_game(&game_id, token);
+                }
             }
             self.announce(&game_id, event);
             return;
@@ -571,7 +565,7 @@ impl OnlineSession {
             let game_id = event["game"]["gameId"].as_str().unwrap_or("").to_string();
             {
                 let mut st = self.st();
-                if !st.is_live(&game_id) && game_id != st.protected_game {
+                if !st.concerns(&game_id) {
                     return;
                 }
                 // Lichess may report the finish here before the game's own stream does, and the

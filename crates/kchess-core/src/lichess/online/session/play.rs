@@ -14,7 +14,6 @@ use crate::lichess::challenges::is_game_id;
 use crate::lichess::client::authorize;
 
 use crate::lichess::online::events::{game_in_progress, truncate};
-use crate::lichess::online::ongoing::finished_check;
 use crate::lichess::online::requests::{Emitter, Listen, StreamRequest};
 use crate::lichess::online::state::{
     ChatLine, Lane, LiveGame, OnlineAction, OnlineSession, PRESENCE_MAX, PRESENCE_TTL,
@@ -97,10 +96,8 @@ impl OnlineSession {
                 .await;
             // `.finally`: the live game ends when its stream ended for a finished game, and this
             // stream is still the game's controller.
-            let mut st = this.st();
-            if finished.load(Ordering::SeqCst) && finished_check(&st, handle_id) {
-                st.end_live(&game_id);
-            }
+            this.st()
+                .stream_ended(&game_id, handle_id, finished.load(Ordering::SeqCst));
         });
     }
 
