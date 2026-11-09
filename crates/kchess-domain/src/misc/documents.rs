@@ -9,10 +9,11 @@ use super::constants::*;
 use super::value::{J, own_entries};
 use crate::js;
 use crate::replay;
-use crate::rules::STANDARD_FEN;
 use crate::tree::{self, TreeNode};
 
 pub type Handler = fn(Vec<J>) -> Result<J, String>;
+
+const STANDARD_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 fn arg(args: &[J], i: usize) -> &J {
     args.get(i).unwrap_or(&J::Undef)

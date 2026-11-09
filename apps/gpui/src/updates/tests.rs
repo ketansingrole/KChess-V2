@@ -3,6 +3,7 @@ use super::{
     asset_name, detect, digest_for, download_signed, downloads_in, incoming, last_install_error,
     latest, offer, parse_version, rename_bridge_folder, replace_by, signed_alike, swap_file, tidy,
 };
+use sha2::{Digest, Sha256};
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
@@ -655,7 +656,10 @@ fn feed_signed(
     sign: impl Fn(&[u8]) -> Option<String>,
 ) -> String {
     let name = asset_name(version, Package::AppImage).unwrap();
-    let digest: String = kchess_delta::digest(package);
+    let digest: String = Sha256::digest(package)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     let sums = sums(&digest, &name).into_bytes();
     let signature = sign(&sums);
     // The release names its assets' URLs, so they are served first.
@@ -821,7 +825,10 @@ fn a_dropped_download_resumes_where_it_stopped() {
     let folder = scratch("resume");
     let package: Vec<u8> = (0..300_000u32).map(|n| (n % 251) as u8).collect();
     let name = asset_name("2026.11.0", Package::AppImage).unwrap();
-    let digest: String = kchess_delta::digest(&package);
+    let digest: String = Sha256::digest(&package)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     let sums = serve(vec![(
         "/SHA256SUMS.txt".into(),
         format!("{digest}  {name}\n").into_bytes(),
@@ -874,7 +881,10 @@ fn a_download_is_kept_from_one_start_to_the_next() {
     let folder = scratch("kept");
     let package: Vec<u8> = (0..300_000u32).map(|n| (n % 241) as u8).collect();
     let name = asset_name("2026.11.0", Package::AppImage).unwrap();
-    let digest: String = kchess_delta::digest(&package);
+    let digest: String = Sha256::digest(&package)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     let sums = serve(vec![(
         "/SHA256SUMS.txt".into(),
         format!("{digest}  {name}\n").into_bytes(),
@@ -1242,7 +1252,10 @@ fn the_checksums_are_asked_for_again() {
     let folder = scratch("sums-again");
     let package = b"the package".to_vec();
     let name = asset_name("2026.11.0", Package::AppImage).unwrap();
-    let digest: String = kchess_delta::digest(&package);
+    let digest: String = Sha256::digest(&package)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     let files = serve(vec![("/pkg".into(), package.clone())]);
     let attempt = |sums: String| {
         let release: Release = serde_json::from_value(serde_json::json!({
@@ -1297,7 +1310,10 @@ fn noise(seed: u32, len: usize) -> Vec<u8> {
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
-    kchess_delta::digest(bytes)
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// The patch from `old` to `new` (release 2026.11.0 to 2026.11.1), with `extras`.

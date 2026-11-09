@@ -11,8 +11,9 @@ use crate::position::{self, DestMode};
 use crate::replay::{replay_positions, replay_setup};
 use crate::review::analyse_review;
 use crate::rules;
-use crate::rules::STANDARD_FEN;
 use crate::tree::tree_from_pgn;
+
+const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 /// The deepest argument nesting `call` parses. The largest analysis tree (1024 plies, see
 /// `tree.rs`) nests 2051 levels. Parsing, walking and dropping it recurse, and an overflowed
@@ -476,13 +477,13 @@ fn tree_to_pgn(root: &Value, headers: Option<&Value>) -> Result<String> {
                 game.put_header("FEN", start);
             }
         }
-    } else if fen != STANDARD_FEN
+    } else if fen != INITIAL_FEN
         && let Some(pos) = rules::standard_from_fen(fen)
     {
         // setStartingPosition: standard rules, so no Variant header; FEN unless the usual start.
         game.remove_header("Variant");
         let start = rules::make_fen(&pos);
-        if start == STANDARD_FEN {
+        if start == INITIAL_FEN {
             game.remove_header("FEN");
         } else {
             game.put_header("FEN", start);
@@ -518,7 +519,7 @@ fn tree_to_pgn(root: &Value, headers: Option<&Value>) -> Result<String> {
 
 /// `sanHistory`: SAN of UCI moves from the standard start, as far as they are legal.
 fn san_history(moves: &[&str]) -> Vec<String> {
-    replay_setup("standard", STANDARD_FEN, moves)
+    replay_setup("standard", INITIAL_FEN, moves)
         .map(|r| r.played.into_iter().map(|m| m.san).collect())
         .unwrap_or_default()
 }
@@ -583,10 +584,20 @@ fn setup_pgn(
     }
     if variant != "standard" {
         // The PGN `Variant` header takes the names other PGN readers know, not the Lichess keys.
-        let name = crate::variant::info(variant).map_or(variant, |info| info.pgn_name);
+        let name = match variant {
+            "chess960" => "Chess960",
+            "kingOfTheHill" => "King of the Hill",
+            "threeCheck" => "Three-check",
+            "antichess" => "Antichess",
+            "atomic" => "Atomic",
+            "horde" => "Horde",
+            "racingKings" => "Racing Kings",
+            "crazyhouse" => "Crazyhouse",
+            other => other,
+        };
         game.put_header("Variant", name.to_string());
     }
-    if fen != STANDARD_FEN || variant == "chess960" {
+    if fen != INITIAL_FEN || variant == "chess960" {
         game.put_header("SetUp", "1".into());
         game.put_header("FEN", fen.to_string());
     }

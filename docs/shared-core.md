@@ -115,12 +115,10 @@ The goal is to keep **exactly one core per profile** and let **any number of cli
   - `welcome` / `refuse` (service): the connection id, or why not (see
     [Version check](#version-check)).
   - `call`: `{ id, method, args }`, exactly what `Core::call` takes today.
-  - `result`: `{ id, value }` or `{ id, error }`, with the core's whole `CoreError` (`message`,
-    `aborted`, `kind`), so a client tells a cancellation and the kind of failure apart as the
-    embedded core does.
+  - `result`: `{ id, value }` or `{ id, error }`, with the core's `CoreError` message unchanged.
   - `cancel`: `{ id }`. Cancellation must reach the work (the repository rule for `UciController`
     and `RequestScope`), so the service maps it to the task's cancellation, not to dropping the
-    reply; the call answers with an `aborted` error.
+    reply.
   - `event`: `{ name, payload }`, the `CoreEvents` names unchanged, plus the new change events
     below.
   - `host:request` / `host:reply`: the core's existing capability round trip, addressed to one

@@ -869,7 +869,7 @@ impl WatchPage {
             .collect()
         };
         let disabled = Self::playing_own_game(cx);
-        let now = crate::clock::epoch_ms();
+        let now = chrono::Utc::now().timestamp_millis() as f64;
         let status = if broadcasts.searching {
             Some("Searching…")
         } else if !searching && broadcasts.loading {

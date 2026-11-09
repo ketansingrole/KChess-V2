@@ -245,6 +245,13 @@ pub fn time_ago(timestamp: f64, now: f64) -> String {
         .unwrap_or_default()
 }
 
+/// Milliseconds since the epoch.
+pub fn now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0., |since| since.as_millis() as f64)
+}
+
 /// A study's chapters as select items: their ids, and their names numbered as the study orders them.
 pub fn chapter_items(study: &Value) -> Vec<(String, String)> {
     study["chapters"]

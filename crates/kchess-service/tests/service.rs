@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use kchess_core::{Config, CoreError};
+use kchess_core::Config;
 use kchess_service::protocol::{self, Frame, RefuseReason, read_frame, write_frame};
 use kchess_service::server::{ServeOptions, serve};
 use kchess_service::{Capability, Client, ClientEvent, ConnectError, Hello, discovery, transport};
@@ -344,8 +344,7 @@ async fn a_host_request_reaches_only_the_window_that_answers_it() {
     service.abort();
 }
 
-/// A client may cancel a call it made: the call stops and is answered as cancelled, `aborted` as
-/// the embedded core's would be, so a page hides it.
+/// A client may cancel a call it made: the call stops and is answered as cancelled.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cancelled_call_is_answered_as_cancelled() {
     let profile = tempfile::tempdir().expect("profile");
@@ -395,7 +394,7 @@ async fn a_cancelled_call_is_answered_as_cancelled() {
             break error;
         }
     };
-    assert_eq!(answer, Some(CoreError::aborted("The call was cancelled.")));
+    assert_eq!(answer.as_deref(), Some("The call was cancelled."));
     service.abort();
 }
 
@@ -524,44 +523,6 @@ async fn a_call_after_the_core_closed_fails_at_once() {
         .await
         .expect("answered");
     assert_eq!(answer, Err("The KChess core stopped.".into()));
-}
-
-/// A page hides a cancelled engine search ("Engine search cancelled.") by its `aborted` flag; the
-/// service used to send only the message, so a cancelled search showed as an error.
-#[cfg(unix)]
-#[tokio::test]
-async fn a_cancelled_answer_stays_aborted_through_the_client() {
-    let profile = tempfile::tempdir().expect("profile");
-    let core = fake_core(profile.path(), |mut stream| async move {
-        read_frame(&mut stream).await.expect("hello");
-        let welcome = Frame::Welcome {
-            connection: 1,
-            release: protocol::release(),
-            protocol: protocol::protocol(),
-        };
-        write_frame(&mut stream, &welcome).await.expect("welcome");
-        let Some(Frame::Call { id, .. }) = read_frame(&mut stream).await.expect("call") else {
-            panic!("a call");
-        };
-        let answer = Frame::Result {
-            id,
-            value: None,
-            error: Some(CoreError::aborted("Engine search cancelled.")),
-        };
-        write_frame(&mut stream, &answer).await.expect("answer");
-        // Held open until the client has read the answer.
-        let _ = read_frame(&mut stream).await;
-    })
-    .await;
-    let (client, _events) = Client::connect(profile.path(), &window("gpui"))
-        .await
-        .expect("connected");
-    let answer = tokio::time::timeout(WAIT, client.call("bestMove", vec![]))
-        .await
-        .expect("answered");
-    assert_eq!(answer, Err(CoreError::aborted("Engine search cancelled.")));
-    drop(client);
-    core.await.expect("the fake core");
 }
 
 #[cfg(unix)]

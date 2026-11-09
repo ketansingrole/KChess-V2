@@ -4,8 +4,6 @@
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
-
 /// How serious a log line is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Level {
@@ -28,8 +26,7 @@ impl Level {
 
 /// What kind of failure an error is, so a frontend offers the action that can help (a retry, a
 /// reconnect, nothing) without reading its message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorKind {
     /// Lichess could not be reached.
     Offline,
@@ -48,6 +45,32 @@ pub enum ErrorKind {
 }
 
 impl ErrorKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ErrorKind::Offline => "offline",
+            ErrorKind::TimedOut => "timedOut",
+            ErrorKind::RateLimited => "rateLimited",
+            ErrorKind::Login => "login",
+            ErrorKind::Refused => "refused",
+            ErrorKind::NotFound => "notFound",
+            ErrorKind::Unavailable => "unavailable",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<ErrorKind> {
+        [
+            ErrorKind::Offline,
+            ErrorKind::TimedOut,
+            ErrorKind::RateLimited,
+            ErrorKind::Login,
+            ErrorKind::Refused,
+            ErrorKind::NotFound,
+            ErrorKind::Unavailable,
+        ]
+        .into_iter()
+        .find(|kind| kind.as_str() == text)
+    }
+
     /// Whether the same request may work if made again later.
     pub fn retryable(self) -> bool {
         matches!(
@@ -60,13 +83,11 @@ impl ErrorKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreError {
     /// What a person is told: plain words, never a status, an endpoint or a response body.
     pub message: String,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub aborted: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<ErrorKind>,
 }
 
@@ -154,10 +175,7 @@ mod tests {
 
     #[test]
     fn each_kind_reads_back_from_its_name() {
-        let names: Vec<serde_json::Value> = KINDS
-            .iter()
-            .map(|kind| serde_json::to_value(kind).expect("a name"))
-            .collect();
+        let names: Vec<&str> = KINDS.iter().map(|kind| kind.as_str()).collect();
         assert_eq!(
             names,
             [
@@ -170,27 +188,11 @@ mod tests {
                 "unavailable"
             ]
         );
-        for (kind, name) in KINDS.into_iter().zip(names) {
-            assert_eq!(serde_json::from_value::<ErrorKind>(name).ok(), Some(kind));
+        for kind in KINDS {
+            assert_eq!(ErrorKind::parse(kind.as_str()), Some(kind));
         }
-        assert!(serde_json::from_str::<ErrorKind>("\"OFFLINE\"").is_err());
-        assert!(serde_json::from_str::<ErrorKind>("\"\"").is_err());
-    }
-
-    #[test]
-    fn an_error_crosses_as_json_whole() {
-        let cancelled = CoreError::aborted("Engine search cancelled.");
-        let text = serde_json::to_string(&cancelled).expect("json");
-        assert_eq!(
-            text,
-            r#"{"message":"Engine search cancelled.","aborted":true}"#
-        );
-        assert_eq!(
-            serde_json::from_str::<CoreError>(&text).ok(),
-            Some(cancelled)
-        );
-        let plain: CoreError = serde_json::from_str(r#"{"message":"No."}"#).expect("error");
-        assert_eq!(plain, CoreError::new("No."));
+        assert_eq!(ErrorKind::parse("OFFLINE"), None);
+        assert_eq!(ErrorKind::parse(""), None);
     }
 
     #[test]

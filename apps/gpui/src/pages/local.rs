@@ -1887,7 +1887,7 @@ impl NewGame {
             SelectState::new(
                 texts
                     .iter()
-                    .map(|text| SharedString::from(text.label))
+                    .map(|text| SharedString::from(text.label.clone()))
                     .collect(),
                 Some(IndexPath::new(row)),
                 window,
@@ -1913,7 +1913,7 @@ impl NewGame {
         let fen = cx.new(|cx| {
             let label = format!(
                 "{} start",
-                crate::game::variant_label(texts.get(row).map_or("standard", |text| text.key))
+                crate::game::variant_label(texts.get(row).map_or("standard", |text| &text.key))
             );
             let mut input = InputState::new(window, cx).placeholder(label);
             if usual.as_ref().is_some_and(|usual| *usual != current_fen) {
@@ -1978,7 +1978,7 @@ impl NewGame {
             .map_or(0, |index| index.row);
         variants()
             .get(row)
-            .map_or_else(|| "standard".into(), |text| text.key.to_string())
+            .map_or_else(|| "standard".into(), |text| text.key.clone())
     }
 
     fn number960(&self, cx: &App) -> Option<i64> {
@@ -2066,7 +2066,7 @@ impl Render for NewGame {
         let hint = variants()
             .iter()
             .find(|text| text.key == variant)
-            .map(|text| text.hint);
+            .map(|text| text.hint.clone());
         let setup = self.setup(cx);
         let no_clock = self
             .clock

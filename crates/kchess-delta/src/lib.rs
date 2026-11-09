@@ -102,8 +102,7 @@ pub fn file_digest(path: &Path) -> Result<String> {
     Ok(hex(&hasher.finalize()))
 }
 
-/// Lowercase hexadecimal, as checksum files write SHA-256 digests.
-pub fn hex(bytes: &[u8]) -> String {
+fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

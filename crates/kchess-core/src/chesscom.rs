@@ -23,7 +23,6 @@ use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use crate::store::Database;
 use crate::store::games::MAX_GAMES;
-use crate::tasks::lock;
 use kchess_domain::chesscom::{archive_month, game_row};
 
 /// Chess.com's public API.
@@ -74,6 +73,12 @@ struct MonthArchive<'a> {
     games: &'a [Value],
 }
 
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn unreachable() -> CoreError {
     CoreError::new("Chess.com could not be reached. Try again later.")
 }
@@ -84,7 +89,7 @@ fn no_such_player(name: &str) -> CoreError {
 
 /// The current month (UTC) as an archive names it, `2024/03`.
 fn this_month() -> String {
-    let days = crate::clock::now_ms().div_euclid(86_400_000);
+    let days = crate::lichess::accounts::now_ms().div_euclid(86_400_000);
     let (year, month, _) = kchess_domain::calendar::civil_from_days(days).unwrap_or((1970, 1, 1));
     format!("{year:04}/{month:02}")
 }
@@ -331,7 +336,7 @@ impl Chesscom {
     async fn run(&self, name: &str) -> Result<usize> {
         let epoch = self.epoch(name);
         let current = || self.epoch(name) == epoch && !self.lifetime.is_cancelled();
-        let started_at = crate::clock::now_ms();
+        let started_at = crate::lichess::accounts::now_ms();
         let player = name.to_lowercase();
         let list = self
             .get(

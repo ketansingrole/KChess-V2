@@ -39,7 +39,12 @@ const ANSWER_LIMIT: usize = 16 * 1024;
 fn host_id_of(mut bytes: [u8; 16]) -> String {
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex = |range: std::ops::Range<usize>| crate::archive::hex(&bytes[range]);
+    let hex = |range: std::ops::Range<usize>| -> String {
+        bytes[range]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
     format!(
         "urn:uuid:{}-{}-{}-{}-{}",
         hex(0..4),

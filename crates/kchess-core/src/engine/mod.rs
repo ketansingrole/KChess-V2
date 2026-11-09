@@ -130,6 +130,15 @@ pub(crate) fn parse_info(text: &str, white_to_move: bool) -> Option<ParsedInfo> 
     serde_json::from_value(parsed).ok()
 }
 
+/// `Date.now()`: milliseconds since the Unix epoch.
+pub(crate) fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
+        })
+}
+
 /// Runs `action` after `ms`, unless the returned handle is aborted first (`setTimeout`). Without
 /// a Tokio runtime nothing is scheduled.
 pub(crate) fn after(ms: u64, action: impl FnOnce() + Send + 'static) -> Option<AbortHandle> {

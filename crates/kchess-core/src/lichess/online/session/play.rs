@@ -19,7 +19,6 @@ use crate::lichess::online::state::{
     ChatLine, Lane, OnlineAction, OnlineSession, PRESENCE_MAX, PRESENCE_TTL, PresenceReport, Res,
     UserPresence, core,
 };
-use crate::tasks::lock;
 use kchess_domain::js;
 
 /// The one move being sent; released when its answer arrives or the call is dropped.
@@ -144,7 +143,9 @@ impl OnlineSession {
     /// Sets the hook run before each state is reported, given whether a live game is in progress
     /// and whether assistance is blocked (see `Inner::state_hook`).
     pub fn set_state_hook(&self, hook: Arc<dyn Fn(bool, bool) + Send + Sync>) {
-        *lock(&self.inner.state_hook) = Some(hook);
+        if let Ok(mut slot) = self.inner.state_hook.lock() {
+            *slot = Some(hook);
+        }
     }
 
     /// A game just stopped being live or protected: the engines' busy state follows now. It
@@ -156,7 +157,12 @@ impl OnlineSession {
 
     /// Runs the state hook, if any; called without the state lock held.
     pub(super) fn run_state_hook(&self, live_game: bool, blocked: bool) {
-        let hook = lock(&self.inner.state_hook).clone();
+        let hook = self
+            .inner
+            .state_hook
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone());
         if let Some(hook) = hook {
             hook(live_game, blocked);
         }

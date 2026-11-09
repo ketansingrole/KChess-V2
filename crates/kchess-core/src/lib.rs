@@ -33,7 +33,6 @@ pub mod ai;
 pub mod archive;
 pub mod capabilities;
 pub mod chesscom;
-pub mod clock;
 pub mod connection;
 pub mod core;
 pub mod download;

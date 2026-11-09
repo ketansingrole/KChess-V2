@@ -13,7 +13,6 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::host::Host;
-use crate::tasks::lock;
 
 mod feed;
 mod listings;
@@ -21,11 +20,32 @@ mod spectator;
 
 pub use feed::{
     GameDetails, GameSetup, TvGame, align_tv_moves, broadcast_game, display_fen,
-    parse_game_details, parse_tv_game,
+    parse_game_details, parse_tv_game, variant_from_lichess,
 };
 pub use listings::{broadcast_round, broadcast_summaries, broadcast_tour, broadcasts, tv_channels};
 pub use spectator::Spectator;
 
+/// The TV channels: key and label, in display order.
+pub const TV_CHANNELS: [(&str, &str); 16] = [
+    ("best", "Top rated"),
+    ("bullet", "Bullet"),
+    ("blitz", "Blitz"),
+    ("rapid", "Rapid"),
+    ("classical", "Classical"),
+    ("ultraBullet", "UltraBullet"),
+    ("chess960", "Chess960"),
+    ("kingOfTheHill", "King of the Hill"),
+    ("threeCheck", "Three-check"),
+    ("antichess", "Antichess"),
+    ("atomic", "Atomic"),
+    ("horde", "Horde"),
+    ("racingKings", "Racing Kings"),
+    ("crazyhouse", "Crazyhouse"),
+    ("bot", "Bots"),
+    ("computer", "Computer"),
+];
+
+pub(crate) use kchess_domain::misc::constants::VARIANTS;
 /// How many earlier games a TV channel keeps for the session.
 const PAST_GAMES: usize = 6;
 /// The longest broadcast PGN read, in UTF-16 units (`pgn.slice(0, 200_000)`).
@@ -62,7 +82,7 @@ pub struct WatchState {
     /// The kind of failure (`ErrorKind`) of an `error` phase, so the viewer is offered a retry
     /// only when one can help.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub kind: Option<crate::error::ErrorKind>,
+    pub kind: Option<&'static str>,
 }
 
 /// A game a TV channel showed before the current one (`TvPastGame`).
@@ -296,7 +316,10 @@ impl Spectators {
     /// The calling connection's watch, made on first use.
     pub fn mine(&self) -> Spectator {
         let connection = crate::connection::current_or_app();
-        let mut watches = lock(&self.watches);
+        let mut watches = self
+            .watches
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         watches
             .entry(connection)
             .or_insert_with(|| {
@@ -309,7 +332,10 @@ impl Spectators {
     }
 
     fn all(&self) -> Vec<Spectator> {
-        lock(&self.watches).values().cloned().collect()
+        self.watches
+            .lock()
+            .map(|watches| watches.values().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Stops every client's watch: a live game, closing.
@@ -324,7 +350,11 @@ impl Spectators {
     /// after it, must not end the newer one.
     pub fn stop_mine(&self, session: Option<u64>) {
         let connection = crate::connection::current_or_app();
-        let spectator = lock(&self.watches).get(&connection).cloned();
+        let spectator = self
+            .watches
+            .lock()
+            .ok()
+            .and_then(|watches| watches.get(&connection).cloned());
         if let Some(spectator) = spectator {
             match session {
                 Some(session) => spectator.stop_session(session),
@@ -335,7 +365,11 @@ impl Spectators {
 
     /// A client went away: its watch stops.
     pub fn forget(&self, connection: u64) {
-        let spectator = lock(&self.watches).remove(&connection);
+        let spectator = self
+            .watches
+            .lock()
+            .ok()
+            .and_then(|mut watches| watches.remove(&connection));
         if let Some(spectator) = spectator {
             spectator.stop();
         }

@@ -3,8 +3,6 @@
 //! service answers `welcome` or `refuse`. After that, calls, results, cancellations, events and
 //! focus reports flow until either side closes.
 
-use kchess_core::CoreError;
-use kchess_core::archive::hex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -14,7 +12,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 
 /// Raised when the framing itself changes; part of the protocol fingerprint.
-const FRAMING: &str = "kchess-frames-2";
+const FRAMING: &str = "kchess-frames-1";
 
 /// The contracts both sides are built from: every method and event, with their types.
 const CONTRACTS: [&str; 3] = [
@@ -91,14 +89,16 @@ pub enum Frame {
         method: String,
         args: Vec<Value>,
     },
-    /// A call's answer: `value`, or the core's error, whole, so the client sees a cancellation
-    /// (`aborted`) and the `ErrorKind` as the embedded core gives them.
+    /// A call's answer: `value`, or the core's error message.
     Result {
         id: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         value: Option<Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        error: Option<CoreError>,
+        error: Option<String>,
+        /// The error's `ErrorKind`, so the client picks its action without reading the message.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
     },
     /// Stop a call in flight; its result is an error.
     Cancel { id: u64 },
@@ -123,6 +123,10 @@ pub fn protocol() -> String {
         hash.update(contract.as_bytes());
     }
     hex(&hash.finalize()[..8])
+}
+
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Reads one frame; `None` when the other side closed between frames.
@@ -185,7 +189,6 @@ pub async fn write_frame<W: AsyncWrite + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_core::ErrorKind;
     use serde_json::json;
 
     #[tokio::test]
@@ -230,38 +233,33 @@ mod tests {
             id: 1,
             value: None,
             error: Some("No.".into()),
+            kind: None,
         };
         assert_eq!(
             serde_json::to_value(&result).expect("json"),
-            json!({ "type": "result", "id": 1, "error": { "message": "No." } })
+            json!({ "type": "result", "id": 1, "error": "No." })
         );
     }
 
-    /// A page chooses its action from the failure's kind, and hides a cancellation, so the whole
-    /// error crosses the service.
+    /// A page chooses its action from the failure's kind, so the kind crosses the service.
     #[test]
-    fn a_failure_carries_its_kind_and_cancellation() {
-        let round_trip = |error: CoreError| {
-            let frame = Frame::Result {
-                id: 2,
-                value: None,
-                error: Some(error),
-            };
-            let text = serde_json::to_string(&frame).expect("json");
-            let Frame::Result { error, .. } = serde_json::from_str(&text).expect("frame") else {
-                panic!("a result");
-            };
-            error.expect("an error")
+    fn a_failure_carries_its_kind() {
+        let refused = Frame::Result {
+            id: 2,
+            value: None,
+            error: Some("This game cannot be played with the Board API.".into()),
+            kind: Some("refused".into()),
         };
-        let refused = CoreError::new("This game cannot be played with the Board API.")
-            .with_kind(ErrorKind::Refused);
-        assert_eq!(round_trip(refused.clone()), refused);
-        let cancelled = CoreError::aborted("Engine search cancelled.");
-        assert_eq!(round_trip(cancelled.clone()), cancelled);
-        assert_eq!(
-            serde_json::to_value(ErrorKind::RateLimited).expect("json"),
-            json!("rateLimited")
-        );
+        let text = serde_json::to_string(&refused).expect("json");
+        let Frame::Result { kind, .. } = serde_json::from_str(&text).expect("frame") else {
+            panic!("a result");
+        };
+        assert_eq!(kind.as_deref(), Some("refused"));
+        // A frame from a service without kinds still reads.
+        let old: Frame =
+            serde_json::from_value(json!({ "type": "result", "id": 3, "error": "No." }))
+                .expect("frame");
+        assert!(matches!(old, Frame::Result { kind: None, .. }));
     }
 
     /// A frame whose body is exactly `size` bytes.

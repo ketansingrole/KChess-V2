@@ -10,7 +10,27 @@ use crate::records;
 use crate::replay::replay_setup;
 use crate::rules::{default_position, lichess_variant, make_fen};
 
-use crate::rules::{GameSetup, STANDARD_FEN};
+/// The standard start.
+pub const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+use crate::misc::constants::VARIANTS;
+
+/// `GameSetup`: the rules and the position before the first move.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Setup {
+    pub variant: String,
+    pub fen: String,
+}
+
+impl Setup {
+    pub fn standard() -> Setup {
+        Setup {
+            variant: "standard".into(),
+            fen: INITIAL_FEN.into(),
+        }
+    }
+}
 
 /// `{ initial, increment }` in seconds.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -28,7 +48,7 @@ pub struct FinishedGame {
     pub opponent: String,
     pub color: String,
     pub rated: bool,
-    pub setup: GameSetup,
+    pub setup: Setup,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minutes: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -60,7 +80,7 @@ pub struct Model {
     pub online_result: String,
     pub online_initial: f64,
     pub online_game_rated: bool,
-    pub online_setup: GameSetup,
+    pub online_setup: Setup,
     pub online_unsupported: String,
     pub online_speed: String,
     pub online_clock_config: Option<ClockConfig>,
@@ -155,7 +175,7 @@ pub struct Transition {
 
 /// A replay of the moves: the position they reach and the SAN of each move played.
 pub struct Replayed {
-    pub setup: GameSetup,
+    pub setup: Setup,
     pub played: Vec<String>,
 }
 
@@ -227,7 +247,7 @@ impl Model {
         let setup = &self.online_setup;
         match replay_setup(&setup.variant, &setup.fen, &self.online_moves) {
             None => Replayed {
-                setup: GameSetup::standard(),
+                setup: Setup::standard(),
                 played: Vec::new(),
             },
             Some(replay) => {
@@ -238,7 +258,7 @@ impl Model {
                     replay.fen
                 };
                 Replayed {
-                    setup: GameSetup {
+                    setup: Setup {
                         variant: setup.variant.clone(),
                         fen,
                     },
@@ -253,7 +273,7 @@ impl Model {
         // `replayed()` without its SAN and FEN: only the side to move is wanted.
         let setup = &self.online_setup;
         match crate::replay::replay_setup_turn(&setup.variant, &setup.fen, &self.online_moves) {
-            None => turn_of(&GameSetup::standard().fen),
+            None => turn_of(&Setup::standard().fen),
             // Without a move the position is the setup as given.
             Some((0, _)) => turn_of(&setup.fen),
             Some((_, shakmaty::Color::Black)) => "black",
@@ -301,7 +321,7 @@ impl Model {
         }
         if game.setup.variant != "standard" {
             out.insert("variant".into(), game.setup.variant.clone().into());
-        } else if game.setup.fen != STANDARD_FEN {
+        } else if game.setup.fen != INITIAL_FEN {
             out.insert("fen".into(), game.setup.fen.clone().into());
         }
         Some(Value::Object(out))
@@ -323,7 +343,7 @@ impl Model {
             online_result: String::new(),
             online_initial: 0.0,
             online_game_rated: false,
-            online_setup: GameSetup::standard(),
+            online_setup: Setup::standard(),
             online_unsupported: String::new(),
             online_speed: String::new(),
             online_clock_config: None,
@@ -354,11 +374,19 @@ pub fn turn_of(fen: &str) -> &'static str {
     }
 }
 
+/// `variantFromLichess`: the playable variant for a Lichess key; `fromPosition` is standard rules.
+pub fn variant_from_lichess(key: Option<&str>) -> Option<&'static str> {
+    match key {
+        None | Some("") | Some("fromPosition") => Some("standard"),
+        Some(key) => VARIANTS.iter().copied().find(|variant| *variant == key),
+    }
+}
+
 /// `defaultFen(variant)`: the variant's usual start (Chess960's standard start is the usual one).
 pub fn default_fen(variant: &str) -> String {
     match lichess_variant(variant) {
         Some(rules) => make_fen(&default_position(rules)),
-        None => STANDARD_FEN.into(),
+        None => INITIAL_FEN.into(),
     }
 }
 

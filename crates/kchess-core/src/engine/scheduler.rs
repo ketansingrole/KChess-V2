@@ -10,9 +10,8 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use super::uci::{cancelled_or_pending, search_cancelled, signal_aborted};
+use super::uci::{cancelled_or_pending, lock, search_cancelled, signal_aborted};
 use crate::error::Result;
-use crate::tasks::lock;
 
 type Stop = Arc<dyn Fn() + Send + Sync>;
 

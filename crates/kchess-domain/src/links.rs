@@ -122,6 +122,26 @@ pub fn tournament_link(text: &str) -> Option<(&'static str, String)> {
     .then(|| (system, id.to_string()))
 }
 
+/// The Lichess TV channels, by the keys their links and the API use.
+const TV_CHANNELS: [&str; 16] = [
+    "best",
+    "bullet",
+    "blitz",
+    "rapid",
+    "classical",
+    "chess960",
+    "kingOfTheHill",
+    "threeCheck",
+    "antichess",
+    "atomic",
+    "horde",
+    "racingKings",
+    "crazyhouse",
+    "ultraBullet",
+    "bot",
+    "computer",
+];
+
 /// The TV channel a lichess.org/tv link shows: `tv` alone is the top-rated channel (`best`).
 pub fn tv_link(text: &str) -> Option<String> {
     let path = lichess_path(text)?;
@@ -132,7 +152,7 @@ pub fn tv_link(text: &str) -> Option<String> {
         Some(rest) => rest.strip_prefix('/')?,
         None => return None,
     };
-    crate::misc::constants::TV_CHANNEL_KEYS
+    TV_CHANNELS
         .iter()
         .find(|channel| channel.eq_ignore_ascii_case(key))
         .map(|channel| (*channel).to_string())

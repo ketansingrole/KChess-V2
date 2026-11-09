@@ -28,7 +28,7 @@ use crate::game::tree::TreeNode;
 use crate::name_dialog::NameDialog;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::studies::{
-    MAX_CHAPTERS, MAX_STUDIES, StudyHandle, StudyLibrary, document_pgn, time_ago,
+    MAX_CHAPTERS, MAX_STUDIES, StudyHandle, StudyLibrary, document_pgn, now, time_ago,
 };
 use crate::theme::Palette;
 mod lichess;
@@ -881,7 +881,7 @@ impl StudiesPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let (count, card_width) = widgets::columns(width, CARD_MIN, CARD_GAP);
-        let now = crate::clock::epoch_ms();
+        let now = now();
         // Pictures of studies no longer listed (edited, removed, filtered out) are let go; those
         // of listed studies scrolled out of view are kept for when they come back.
         let listed: std::collections::HashSet<String> = studies

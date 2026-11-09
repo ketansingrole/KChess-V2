@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use kchess_core::connection::ClientInfo;
-use kchess_core::{Config, Core, CoreError, Host, Level};
+use kchess_core::{Config, Core, Host, Level};
 use serde_json::Value;
 use tokio::sync::{Notify, Semaphore, mpsc};
 use tokio::task::JoinHandle;
@@ -473,6 +473,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                 id,
                 value: Some(Value::Null),
                 error: None,
+                kind: None,
             })
             .is_ok()
     };
@@ -532,11 +533,13 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                             id,
                             value: Some(value),
                             error: None,
+                            kind: None,
                         },
                         Err(error) => Frame::Result {
                             id,
                             value: None,
-                            error: Some(error),
+                            kind: error.kind.map(|kind| kind.as_str().to_string()),
+                            error: Some(error.message),
                         },
                     };
                     let _ = sender.send(frame).await;
@@ -557,7 +560,8 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                     let cancelled = sender.try_send(Frame::Result {
                         id,
                         value: None,
-                        error: Some(CoreError::aborted("The call was cancelled.")),
+                        error: Some("The call was cancelled.".into()),
+                        kind: None,
                     });
                     if cancelled.is_err() {
                         behind = true;

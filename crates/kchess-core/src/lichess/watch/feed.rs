@@ -6,10 +6,10 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{BroadcastGame, MAX_BROADCAST_PGN, WatchClock, WatchPlayer};
+use super::{BroadcastGame, MAX_BROADCAST_PGN, VARIANTS, WatchClock, WatchPlayer};
 use crate::lichess::decode::{Text, present, read};
 use crate::lichess::reviews::split_whitespace;
-use kchess_domain::{api, js, position, variant};
+use kchess_domain::{api, js, position};
 
 /* ── Feed decoding (pure) ── */
 
@@ -232,6 +232,14 @@ pub struct GameSetup {
     pub fen: String,
 }
 
+/// `variantFromLichess(key)`: the playable variant of a Lichess key; `fromPosition` is standard.
+pub fn variant_from_lichess(key: Option<&str>) -> Option<&'static str> {
+    match key {
+        None | Some("") | Some("fromPosition") => Some("standard"),
+        Some(key) => VARIANTS.iter().copied().find(|variant| *variant == key),
+    }
+}
+
 /// `defaultFen(variant)`: the usual start of a variant.
 fn default_fen(variant: &str) -> Option<String> {
     domain_call("defaultFen", json!([variant]))?
@@ -294,7 +302,7 @@ pub fn parse_tv_game(raw: &Value) -> TvGame {
         Winner::White => "white",
         Winner::Black => "black",
     });
-    let variant = variant::from_lichess(Some(variant.unwrap_or("standard")));
+    let variant = variant_from_lichess(Some(variant.unwrap_or("standard")));
     let setup = variant.and_then(|variant| {
         let fen = match initial {
             Some(fen) => Some(fen.to_string()),
@@ -511,5 +519,14 @@ mod tests {
                 rating: Some(1500.0),
             }
         );
+    }
+
+    #[test]
+    fn variants_follow_the_lichess_keys_kchess_plays() {
+        assert_eq!(variant_from_lichess(None), Some("standard"));
+        assert_eq!(variant_from_lichess(Some("fromPosition")), Some("standard"));
+        assert_eq!(variant_from_lichess(Some("chess960")), Some("chess960"));
+        assert_eq!(variant_from_lichess(Some("crazyhouse")), Some("crazyhouse"));
+        assert_eq!(variant_from_lichess(Some("bughouse")), None);
     }
 }

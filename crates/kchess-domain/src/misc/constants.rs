@@ -19,36 +19,6 @@ pub const ENGINE_LEVELS: &[&str] = &[
     "super-gm",
     "max",
 ];
-/// The Lichess TV channels: the key their links and the API use, and the label, in display
-/// order.
-pub const TV_CHANNELS: [(&str, &str); 16] = [
-    ("best", "Top rated"),
-    ("bullet", "Bullet"),
-    ("blitz", "Blitz"),
-    ("rapid", "Rapid"),
-    ("classical", "Classical"),
-    ("ultraBullet", "UltraBullet"),
-    ("chess960", "Chess960"),
-    ("kingOfTheHill", "King of the Hill"),
-    ("threeCheck", "Three-check"),
-    ("antichess", "Antichess"),
-    ("atomic", "Atomic"),
-    ("horde", "Horde"),
-    ("racingKings", "Racing Kings"),
-    ("crazyhouse", "Crazyhouse"),
-    ("bot", "Bots"),
-    ("computer", "Computer"),
-];
-/// The keys of `TV_CHANNELS`, in its order.
-pub const TV_CHANNEL_KEYS: [&str; TV_CHANNELS.len()] = {
-    let mut keys = [""; TV_CHANNELS.len()];
-    let mut i = 0;
-    while i < TV_CHANNELS.len() {
-        keys[i] = TV_CHANNELS[i].0;
-        i += 1;
-    }
-    keys
-};
 pub const PROMOTION_MODES: &[&str] = &["ask", "queen", "premove"];
 pub const PIECE_ANIMATIONS: &[&str] = &["none", "fast", "normal", "slow"];
 pub const ONLINE_ACTIONS: &[&str] = &[
@@ -167,7 +137,17 @@ pub const EXPLORER_RATINGS: &[f64] = &[
     400.0, 1000.0, 1200.0, 1400.0, 1600.0, 1800.0, 2000.0, 2200.0, 2500.0,
 ];
 /// Lichess variant keys KChess can play: the one list every crate checks a variant against.
-pub const VARIANTS: &[&str] = &crate::variant::KEYS;
+pub const VARIANTS: &[&str] = &[
+    "standard",
+    "chess960",
+    "kingOfTheHill",
+    "threeCheck",
+    "antichess",
+    "atomic",
+    "horde",
+    "racingKings",
+    "crazyhouse",
+];
 /// The settings the core keeps, in its order.
 pub const CORE_SETTINGS_KEYS: &[&str] = &[
     "enginePath",

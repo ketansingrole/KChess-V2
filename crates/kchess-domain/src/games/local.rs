@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    Clock, Clocked, Done, Flow, GameSetup, Reads, Session, Times, arg, board_result, opponent,
+    Clock, Clocked, Done, Flow, Reads, Session, Setup, Times, arg, board_result, opponent,
     optional_arg, pgn_result, timeout_winner, to_value, transition, with_move,
 };
 use crate::js;
@@ -29,7 +29,7 @@ pub struct GameResult {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
-    pub setup: GameSetup,
+    pub setup: Setup,
     pub moves: Vec<String>,
     pub clock: Option<LocalClock>,
     pub times: Option<Times>,
@@ -48,7 +48,7 @@ pub struct Runtime {
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Saved {
-    setup: Option<GameSetup>,
+    setup: Option<Setup>,
     moves: Option<Vec<String>>,
     clock: Option<LocalClock>,
     times: Option<Times>,
@@ -59,7 +59,10 @@ struct Saved {
 pub fn state(args: &[Value]) -> Result<Value, String> {
     let saved: Saved = optional_arg(args, 0)?.unwrap_or_default();
     to_value(&State {
-        setup: saved.setup.unwrap_or_else(GameSetup::standard),
+        setup: saved.setup.unwrap_or_else(|| Setup {
+            variant: "standard".into(),
+            fen: super::INITIAL_FEN.into(),
+        }),
         moves: saved.moves.unwrap_or_default(),
         clock: saved.clock,
         times: saved.times,
@@ -72,7 +75,7 @@ pub fn state(args: &[Value]) -> Result<Value, String> {
 type Game = Session<State, Runtime>;
 
 impl Clocked for Game {
-    fn setup(&self) -> &GameSetup {
+    fn setup(&self) -> &Setup {
         &self.state.setup
     }
     fn moves(&self) -> &[String] {
@@ -194,12 +197,7 @@ impl Game {
         Ok(())
     }
 
-    fn start(
-        &mut self,
-        reads: &mut Reads,
-        setup: GameSetup,
-        clock: Option<LocalClock>,
-    ) -> Flow<()> {
+    fn start(&mut self, reads: &mut Reads, setup: Setup, clock: Option<LocalClock>) -> Flow<()> {
         self.state.setup = setup;
         self.wrote("setup");
         self.state.clock = clock;
@@ -366,7 +364,7 @@ pub fn takeback(args: &[Value]) -> Result<Value, String> {
 
 pub fn start(args: &[Value]) -> Result<Value, String> {
     Game::step(args, |game, inputs, reads| {
-        let setup: GameSetup = arg(inputs, 2, "setup")?;
+        let setup: Setup = arg(inputs, 2, "setup")?;
         let clock: Option<LocalClock> = optional_arg(inputs, 3)?;
         if let Some(clock) = clock {
             clock.white.checked()?;

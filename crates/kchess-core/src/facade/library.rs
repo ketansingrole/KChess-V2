@@ -1,8 +1,7 @@
 //! The facade's the library: studies, played games, drills, sessions and repertoire notes (`run_facade` arms, moved without changes).
 
-use super::args::{arg, normal, normal_args};
+use super::args::{arg, normal, normal_args, now_ms};
 use super::{archived_game, study_command};
-use crate::clock::now_ms;
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use serde_json::{Value, json};

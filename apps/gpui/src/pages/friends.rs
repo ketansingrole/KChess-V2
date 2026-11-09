@@ -100,7 +100,7 @@ fn key(name: &str) -> String {
 
 /// "5 minutes ago", for last seen and last synced.
 fn ago(millis: f64) -> String {
-    crate::studies::time_ago(millis, crate::clock::epoch_ms())
+    crate::studies::time_ago(millis, crate::studies::now())
 }
 
 impl FriendsPage {
@@ -248,7 +248,7 @@ impl FriendsPage {
                 {
                     let recent = saved["profileFetchedAt"]
                         .as_f64()
-                        .is_some_and(|at| crate::clock::epoch_ms() - at < PROFILE_FRESH_MS);
+                        .is_some_and(|at| crate::studies::now() - at < PROFILE_FRESH_MS);
                     if recent && !everyone {
                         fresh.insert(key(name));
                     }

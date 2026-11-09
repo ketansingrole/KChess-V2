@@ -5,8 +5,7 @@ use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
 use super::StoreContext;
-use super::library::{db_err, object};
-use crate::clock::now_ms;
+use super::library::{db_err, now_ms, object};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::js;
@@ -77,7 +76,7 @@ fn save_voice_attempt(db: &Connection, attempt: &Value) -> Result<i64> {
         "INSERT INTO voice_log (at, source, heard, confidence, words, outcome, parsed, expected, fen, retryOf)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
-            now_ms(),
+            now_ms()? as i64,
             source,
             heard,
             confidence,
@@ -196,7 +195,7 @@ fn voice_history_document(host: &dyn Host, db: &Connection) -> Result<String> {
         }
         entries.push(entry);
     }
-    let document = json!({ "exportedAt": now_ms(), "entries": entries });
+    let document = json!({ "exportedAt": now_ms()?, "entries": entries });
     let mut out = String::new();
     write_pretty(&document, 0, &mut out);
     out.push('\n');

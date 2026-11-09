@@ -170,7 +170,7 @@ impl ReviewStorage for ReviewRecords {
                     if !current() {
                         return Err(CoreError::aborted("Review was discarded."));
                     }
-                    Ok(vec![json!(ids), json!(crate::clock::now_ms())])
+                    Ok(vec![json!(ids), json!(super::now_ms())])
                 })
                 .await
                 .map(|_| ())
@@ -228,7 +228,7 @@ impl ReviewStorage for ReviewRecords {
         ids: &'a [String],
     ) -> futures_util::future::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            let at = crate::clock::now_ms();
+            let at = super::now_ms();
             self.0
                 .call_async("store.reviewStore.markChecked", &[json!(ids), json!(at)])
                 .await

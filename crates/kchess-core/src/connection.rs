@@ -8,8 +8,6 @@ use std::future::Future;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::tasks::lock;
-
 /// The connection of an app that embeds the core, and of calls made outside any connection.
 pub const APP: u64 = 0;
 
@@ -81,14 +79,16 @@ impl Connections {
 
     fn insert(&self, id: u64, info: ClientInfo) {
         let connected = self.clock.fetch_add(1, Ordering::SeqCst);
-        lock(&self.clients).insert(
-            id,
-            Client {
-                info,
-                focused: 0,
-                connected,
-            },
-        );
+        if let Ok(mut clients) = self.clients.lock() {
+            clients.insert(
+                id,
+                Client {
+                    info,
+                    focused: 0,
+                    connected,
+                },
+            );
+        }
     }
 
     /// A new client; its connection id.
@@ -103,38 +103,48 @@ impl Connections {
         if id == APP {
             return;
         }
-        lock(&self.clients).remove(&id);
+        if let Ok(mut clients) = self.clients.lock() {
+            clients.remove(&id);
+        }
     }
 
     /// The service has its own clients: the embedding app's connection goes.
     pub fn without_app(&self) {
-        lock(&self.clients).remove(&APP);
+        if let Ok(mut clients) = self.clients.lock() {
+            clients.remove(&APP);
+        }
     }
 
     /// A client reports its window gaining (or losing) focus.
     pub fn focus(&self, id: u64, focused: bool) {
         let at = self.clock.fetch_add(1, Ordering::SeqCst);
-        if let Some(client) = lock(&self.clients).get_mut(&id) {
+        if let Ok(mut clients) = self.clients.lock()
+            && let Some(client) = clients.get_mut(&id)
+        {
             client.focused = if focused { at } else { 0 };
         }
     }
 
     /// The connected ids, oldest first.
     pub fn ids(&self) -> Vec<u64> {
-        lock(&self.clients).keys().copied().collect()
+        self.clients
+            .lock()
+            .map(|clients| clients.keys().copied().collect())
+            .unwrap_or_default()
     }
 
     /// What `id` said when it connected.
     pub fn info(&self, id: u64) -> Option<ClientInfo> {
-        lock(&self.clients)
-            .get(&id)
-            .map(|client| client.info.clone())
+        self.clients
+            .lock()
+            .ok()
+            .and_then(|clients| clients.get(&id).map(|client| client.info.clone()))
     }
 
     /// The client that alerts the person: the window focused last, else the window that
     /// connected last. Clients without windows (a CLI, an MCP server) never alert.
     pub fn alert_owner(&self) -> Option<u64> {
-        let clients = lock(&self.clients);
+        let clients = self.clients.lock().ok()?;
         clients
             .iter()
             .filter(|(_, client)| client.info.capabilities.contains(&Capability::Focus))

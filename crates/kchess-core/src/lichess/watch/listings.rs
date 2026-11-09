@@ -3,12 +3,13 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{BroadcastRoundRef, BroadcastSummary, BroadcastTourDetail, TvChannel, WatchPlayer};
+use super::{
+    BroadcastRoundRef, BroadcastSummary, BroadcastTourDetail, TV_CHANNELS, TvChannel, WatchPlayer,
+};
 use crate::error::{CoreError, Result as CoreResult};
 use crate::lichess::accounts::{Lichess, path_segment};
 use crate::lichess::decode::{Loose, Millis, Text, read};
 use kchess_domain::js;
-use kchess_domain::misc::constants::TV_CHANNELS;
 
 /* ── Broadcast listings (pure) ── */
 

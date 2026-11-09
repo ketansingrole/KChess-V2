@@ -18,8 +18,8 @@ use crate::pages::Page;
 use crate::pages::analysis::AnalysisPage;
 use crate::pages::local::LocalPage;
 use crate::shell;
-use kchess_domain::rules::STANDARD_FEN;
 
+const START_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const WARM_UP: Duration = Duration::from_secs(5);
 const DRAIN_EVERY: Duration = Duration::from_millis(250);
 /// A line for the board to slide through: 24 plies of the Ruy Lopez.
@@ -188,7 +188,7 @@ fn set_up(scenario: Scenario, window: &mut Window, cx: &mut App) {
                         "white": { "minutes": 5, "increment": 3 },
                         "black": { "minutes": 5, "increment": 3 },
                     });
-                    let setup = json!({ "variant": "standard", "fen": STANDARD_FEN });
+                    let setup = json!({ "variant": "standard", "fen": START_FEN });
                     local.replace_game(setup, clock, window, cx);
                     local.play("e2e4", window, cx);
                 });

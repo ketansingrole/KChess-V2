@@ -205,7 +205,7 @@ impl EditorPage {
             SelectState::new(
                 variants()
                     .iter()
-                    .map(|text| SharedString::from(text.label))
+                    .map(|text| SharedString::from(text.label.clone()))
                     .collect(),
                 Some(IndexPath::new(0)),
                 window,
@@ -250,7 +250,7 @@ impl EditorPage {
                     if let Some(text) = variants().get(row)
                         && text.key != this.variant
                     {
-                        this.variant = text.key.to_string();
+                        this.variant = text.key.clone();
                         this.changed(cx);
                     }
                 },

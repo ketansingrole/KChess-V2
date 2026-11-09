@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use kchess_core::{Config, CoreError};
+use kchess_core::{Config, CoreError, ErrorKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
@@ -194,14 +194,23 @@ impl Client {
                         _ = &mut written => break,
                     };
                     match frame {
-                        Frame::Result { id, value, error } => {
+                        Frame::Result {
+                            id,
+                            value,
+                            error,
+                            kind,
+                        } => {
                             let waiting = pending
                                 .lock()
                                 .ok()
                                 .and_then(|mut p| p.as_mut().and_then(|p| p.remove(&id)));
                             if let Some(waiting) = waiting {
                                 let _ = waiting.send(match error {
-                                    Some(error) => Err(error),
+                                    Some(error) => {
+                                        let mut error = CoreError::new(error);
+                                        error.kind = kind.as_deref().and_then(ErrorKind::parse);
+                                        Err(error)
+                                    }
                                     None => Ok(value.unwrap_or(Value::Null)),
                                 });
                             }

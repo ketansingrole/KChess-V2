@@ -24,12 +24,10 @@ use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::status::{engine_identity, engine_status, fairy_variant, variant_engine_status};
-use super::uci::{UciController, search_cancelled, signal_aborted};
-use super::{EngineContext, after, clear_timer, domain, parse_info, replace_timer};
-use crate::clock::now_ms;
+use super::uci::{UciController, lock, search_cancelled, signal_aborted};
+use super::{EngineContext, after, clear_timer, domain, now_ms, parse_info, replace_timer};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
-use crate::tasks::lock;
 
 /// Depth of the quick first pass, and of the review that is kept.
 const QUICK_DEPTH: u32 = 10;

@@ -17,7 +17,7 @@ use crate::game::tree::analysis_context;
 static NEXT_CLIENT: AtomicU64 = AtomicU64::new(0);
 
 fn next_client() -> u64 {
-    let now = crate::clock::epoch_ms() as u64;
+    let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
     let _ = NEXT_CLIENT.compare_exchange(0, now, Ordering::Relaxed, Ordering::Relaxed);
     NEXT_CLIENT.fetch_add(1, Ordering::Relaxed) + 1
 }

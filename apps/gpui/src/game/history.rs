@@ -15,6 +15,12 @@ pub struct HistoryPlace {
     saved_identity: Value,
 }
 
+fn now_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0., |elapsed| elapsed.as_millis() as f64)
+}
+
 /// The games in history as the rules read them: only the entry of the game with this identity.
 /// The rules look a game up by its identity's id alone (before any new identity), and a copy of
 /// every played game, which they then copy again for each read, made half of opening Over the
@@ -57,7 +63,7 @@ impl HistoryPlace {
             source,
             has_play,
             games: &games,
-            now: crate::clock::epoch_ms(),
+            now: now_ms(),
         };
         match GameArchive::new((!identity.is_null()).then_some(&identity), resume, &host) {
             Ok((archive, effects)) => {
@@ -103,7 +109,7 @@ impl HistoryPlace {
             source,
             has_play,
             games: &games,
-            now: crate::clock::epoch_ms(),
+            now: now_ms(),
         };
         let effects = step(&mut archive, &host);
         self.archive = Some(archive);

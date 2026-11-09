@@ -636,7 +636,7 @@ fn analysis_fen(words: &[String]) -> Result<String, String> {
     let fen = words.join(" ");
     let fen = match fen.trim() {
         "" => return Err("analyze requires a FEN.".into()),
-        "startpos" => kchess_domain::rules::STANDARD_FEN.to_string(),
+        "startpos" => "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
         fen => fen.to_string(),
     };
     if kchess_domain::position::fen_problem(&fen).is_some() {

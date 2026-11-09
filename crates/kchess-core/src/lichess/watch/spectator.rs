@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
-use super::feed::{player_of, position_key, uci_or_none};
+use super::feed::{player_of, position_key, uci_or_none, variant_from_lichess};
 use super::{
     BroadcastGame, BroadcastUpdate, LineUpTiming, MAX_PGN, PAST_GAMES, TvGame, TvPastGame,
     WatchFrame, WatchSink, WatchState, WatchTarget, align_tv_moves, broadcast_game, display_fen,
@@ -101,6 +101,9 @@ struct GameRecord {
     bc: Loose<f64>,
 }
 
+/// The standard start, for a game described without a position.
+const STANDARD_START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
 /// What a viewer is told when a feed's task panicked (the panic hook logged it).
 const FEED_PANICKED: &str = "The feed stopped after an internal error. Retry to reconnect.";
 
@@ -135,7 +138,6 @@ struct Inner {
 }
 
 use crate::tasks::lock;
-use kchess_domain::rules::STANDARD_FEN;
 
 /// Watches one game or TV channel, or a broadcast round, at a time.
 #[derive(Clone)]
@@ -347,7 +349,7 @@ impl Inner {
                 session,
                 phase: "error",
                 message: Some(message.to_string()),
-                kind: Some(kind),
+                kind: Some(kind.as_str()),
             });
         }
     }
@@ -768,7 +770,7 @@ impl Inner {
                         // start until the position that follows it.
                         let Some(fen) = fen
                             .or_else(|| display_fen(record.initial_fen.0.as_deref()?))
-                            .or_else(|| display_fen(STANDARD_FEN))
+                            .or_else(|| display_fen(STANDARD_START))
                         else {
                             return Ok(());
                         };
@@ -798,7 +800,7 @@ impl Inner {
                             black_clock: current.as_ref().and_then(|c| c.black_clock),
                             variant: {
                                 let key = record.variant.0.and_then(|variant| variant.key.0);
-                                kchess_domain::variant::from_lichess(key.as_deref())
+                                variant_from_lichess(key.as_deref())
                                     .map_or_else(|| key.unwrap_or_default(), String::from)
                             },
                             speed: details.speed,

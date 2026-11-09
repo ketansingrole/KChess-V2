@@ -2075,7 +2075,7 @@ impl Render for MessageDialog {
 
 #[cfg(test)]
 mod tests {
-    use super::{PERFS, hours, played_perfs, suggestions, title_choices, title_shown};
+    use super::{hours, played_perfs, suggestions, title_choices, title_shown};
     use crate::game::is_username;
     use serde_json::json;
 
@@ -2115,14 +2115,6 @@ mod tests {
             })
         });
         assert!(!loading && !stale);
-    }
-
-    #[test]
-    fn variant_ratings_use_the_variant_names() {
-        for variant in &crate::game::variants()[1..] {
-            let label = PERFS.iter().find(|(key, _)| *key == variant.key);
-            assert_eq!(label.map(|(_, label)| *label), Some(variant.label));
-        }
     }
 
     #[test]

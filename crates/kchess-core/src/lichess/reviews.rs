@@ -9,14 +9,14 @@ use serde::Deserialize;
 use serde_json::{Map, Number, Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::accounts::Lichess;
+use super::accounts::{Lichess, now_ms};
 use super::client::{Failure, LichessClient, Ndjson};
 use super::decode::{Loose, read};
-use crate::clock::now_ms;
 use crate::error::{CoreError, Result as CoreResult};
-use kchess_domain::rules::STANDARD_FEN;
 use kchess_domain::{js, records, replay, review as domain_review};
 
+/// The standard start, which Lichess scores as +0.15 when it works out accuracy.
+const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 /// `fetchLichessReviews` asks about at most this many games at once.
 pub const MAX_REVIEW_IDS: usize = 300;
 
@@ -110,8 +110,7 @@ pub fn review_from_lichess(raw: &Value) -> Option<Value> {
     }
     let positions = replay::replay_positions(&fen, &moves);
     let mut evals: Vec<Option<Map<String, Value>>> = vec![None; moves.len() + 1];
-    // Lichess scores the standard start as +0.15 when it works out accuracy.
-    if fen == STANDARD_FEN {
+    if fen == INITIAL_FEN {
         evals[0] = Some(Map::from_iter([("cp".to_string(), json!(15))]));
     }
     let mut judgments: Vec<Value> = vec![Value::Null; moves.len()];

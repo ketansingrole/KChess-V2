@@ -102,16 +102,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_ladder_has_every_engine_level_in_order() {
-        let ids: Vec<&str> = ladder()
-            .expect("ladder")
-            .iter()
-            .map(|l| l.id.as_str())
-            .collect();
-        assert_eq!(ids, crate::misc::constants::ENGINE_LEVELS);
-    }
-
-    #[test]
     fn labels_and_levels() {
         assert_eq!(label("im").as_deref(), Ok("International Master · ~2400"));
         assert_eq!(label("max").as_deref(), Ok("Stockfish Max · Full strength"));

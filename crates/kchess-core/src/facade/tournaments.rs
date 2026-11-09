@@ -1,7 +1,6 @@
 //! The facade's tournaments (`run_facade` arms, moved without changes).
 
-use super::args::{arg, normal};
-use crate::clock::now_ms;
+use super::args::{arg, normal, now_ms};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::host::Level;

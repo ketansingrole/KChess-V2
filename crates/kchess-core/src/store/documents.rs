@@ -5,9 +5,8 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
-use super::library::db_err;
+use super::library::{db_err, now_ms};
 use super::studies::id_of;
-use crate::clock::now_ms;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::js;
@@ -54,7 +53,7 @@ pub(crate) fn write_document(
     if js::utf16_len(&body) > MAX_DOCUMENT {
         return Err(CoreError::new(too_large));
     }
-    let now = now_ms() as f64;
+    let now = now_ms()?;
     db.execute(
         "INSERT INTO documents (key, body, updatedAt) VALUES (?1, ?2, ?3)
          ON CONFLICT(key) DO UPDATE SET body = excluded.body, updatedAt = excluded.updatedAt",

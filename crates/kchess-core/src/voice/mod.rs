@@ -301,7 +301,10 @@ impl VoiceModelCache {
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
-        crate::tasks::lock(&self.inner.state)
+        match self.inner.state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
     }
 
     fn report(&self, progress: Progress) {

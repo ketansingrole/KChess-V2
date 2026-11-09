@@ -29,6 +29,17 @@ const DURATIONS: [f64; 28] = [
     240., 270., 300., 330., 360., 420., 480., 540., 600., 720.,
 ];
 const WAITS: [f64; 10] = [1., 2., 3., 5., 10., 15., 20., 30., 45., 60.];
+const VARIANTS: [(&str, &str); 9] = [
+    ("standard", "Standard"),
+    ("chess960", "Chess960"),
+    ("kingOfTheHill", "King of the Hill"),
+    ("threeCheck", "Three-check"),
+    ("antichess", "Antichess"),
+    ("atomic", "Atomic"),
+    ("horde", "Horde"),
+    ("racingKings", "Racing Kings"),
+    ("crazyhouse", "Crazyhouse"),
+];
 const LATER: &str = "later";
 
 fn minutes_label(minutes: f64) -> String {
@@ -135,9 +146,9 @@ impl CreateArena {
             key(60.),
         );
         let variant = select(
-            crate::game::variants()
+            VARIANTS
                 .iter()
-                .map(|variant| Choice::new(variant.key, variant.label))
+                .map(|(value, label)| Choice::new(*value, *label))
                 .collect(),
             "standard".into(),
         );
@@ -211,7 +222,7 @@ impl CreateArena {
         if !self.later(cx) {
             return None;
         }
-        let soon = crate::clock::epoch_ms() + 60_000.;
+        let soon = chrono::Utc::now().timestamp_millis() as f64 + 60_000.;
         match parse_start(&self.start_at.read(cx).value()) {
             Some(at) if at >= soon => None,
             _ => Some("Pick a start time in the future"),

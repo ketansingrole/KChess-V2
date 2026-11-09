@@ -12,6 +12,9 @@ use serde_json::{Value, json};
 use crate::js;
 use model::{Call, Ctx, Model, Run, at, string_or};
 
+/// `variantFromLichess`, for the Lichess service's challenge reader (`kchess-core`).
+pub use model::variant_from_lichess;
+
 type Out = Result<Value, String>;
 
 /// The state of a board with no game (`onlineGameState()` and the class's private fields), for
@@ -454,8 +457,8 @@ fn settle_chat(mut run: Run, pending: &Value, ok: bool, value: Option<&Value>) -
 
 #[cfg(test)]
 mod tests {
+    use super::model::Setup;
     use super::*;
-    use crate::rules::GameSetup;
 
     fn state_json(model: &Model) -> Value {
         serde_json::to_value(model).unwrap()
@@ -525,7 +528,7 @@ mod tests {
         let mut model = Model::idle();
         model.online_phase = "playing".into();
         model.online_id = "AbCd1234".into();
-        model.online_setup = GameSetup::standard();
+        model.online_setup = Setup::standard();
         model
     }
 
@@ -648,7 +651,7 @@ mod tests {
         let mut model = Model::idle();
         model.online_phase = "playing".into();
         model.online_id = "AbCd1234".into();
-        model.online_setup = GameSetup::standard();
+        model.online_setup = Setup::standard();
         let begun = transition(
             "onlineGameBegin",
             vec![state_json(&model), json!("move"), json!("e2e4"), ctx(10.0)],

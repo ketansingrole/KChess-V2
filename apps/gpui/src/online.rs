@@ -5,7 +5,8 @@
 //! until the core has said whether one was left running (`assistanceAllowed`).
 
 use kchess_contracts::calls;
-use std::time::Duration;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
@@ -60,6 +61,12 @@ impl Default for Form {
             days: 3.,
         }
     }
+}
+
+/// `performance.now()`: milliseconds on a clock that only goes forward.
+pub fn now() -> f64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.
 }
 
 fn log(message: &str) {
@@ -210,11 +217,7 @@ impl OnlineState {
     pub fn remaining(&self, color: &str) -> f64 {
         rules(
             "clockRemaining",
-            &[
-                self.clock.clone(),
-                json!(color),
-                json!(crate::clock::monotonic_ms()),
-            ],
+            &[self.clock.clone(), json!(color), json!(now())],
         )
         .ok()
         .and_then(|value| value.as_f64())
@@ -237,7 +240,7 @@ impl OnlineState {
             .try_global::<crate::settings::SettingsHandle>()
             .is_none_or(|settings| settings.0.read(cx).settings.core.online_chat);
         json!({
-            "now": crate::clock::monotonic_ms(),
+            "now": now(),
             "activeAccount": crate::accounts::handle(cx).read(cx).active(cx).unwrap_or_default(),
             "chatEnabled": chat,
         })
@@ -352,10 +355,7 @@ impl OnlineState {
                 }
             }
             "clockPause" => {
-                if let Ok(clock) = rules(
-                    "clockPause",
-                    &[self.clock.clone(), json!(crate::clock::monotonic_ms())],
-                ) {
+                if let Ok(clock) = rules("clockPause", &[self.clock.clone(), json!(now())]) {
                     self.clock = clock;
                 }
             }
@@ -369,14 +369,7 @@ impl OnlineState {
                         data[key] = effect[key].clone();
                     }
                 }
-                if let Ok(clock) = rules(
-                    "clockSet",
-                    &[
-                        self.clock.clone(),
-                        data,
-                        json!(crate::clock::monotonic_ms()),
-                    ],
-                ) {
+                if let Ok(clock) = rules("clockSet", &[self.clock.clone(), data, json!(now())]) {
                     self.clock = clock;
                 }
             }
@@ -628,11 +621,7 @@ impl OnlineState {
             && let Some(turn) = self.clock_running().map(str::to_string)
             && let Ok(alert) = rules(
                 "clockLowTimeAlert",
-                &[
-                    self.clock.clone(),
-                    json!(turn),
-                    json!(crate::clock::monotonic_ms()),
-                ],
+                &[self.clock.clone(), json!(turn), json!(now())],
             )
         {
             self.clock = alert["state"].clone();
@@ -653,7 +642,7 @@ impl OnlineState {
         }
         // Redraw only when something the game shows by the clock changes: a clock face (each
         // second, each tenth in the last ten) or a countdown to abort or claim.
-        let now = crate::clock::monotonic_ms();
+        let now = now();
         let seconds_until = |key: &str| {
             self.model[key]
                 .as_f64()
@@ -786,7 +775,7 @@ impl OnlineState {
         let core = cx.global::<AppCore>().clone();
         cx.spawn(async move |this, cx| {
             let joined = joined.await.unwrap_or(json!([]));
-            let now = crate::clock::epoch_ms();
+            let now = chrono::Utc::now().timestamp_millis() as f64;
             let current: Vec<&Value> = joined
                 .as_array()
                 .into_iter()

@@ -17,7 +17,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::{CoreError, Result};
 use crate::host::{Config, Host, Level};
-use crate::tasks::lock;
 use kchess_domain::puzzle::{Random, Sampler};
 use queries::{LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleDbStatus};
 
@@ -41,10 +40,10 @@ struct Installing<'a> {
 impl Drop for Installing<'_> {
     fn drop(&mut self) {
         self.download.cancel.cancel();
-        let mut running = lock(&self.inner.running);
-        if running
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, &self.download))
+        if let Ok(mut running) = self.inner.running.lock()
+            && running
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &self.download))
         {
             running.take();
         }
@@ -220,7 +219,7 @@ impl Inner {
     }
 
     fn running(&self) -> Option<Arc<Download>> {
-        lock(&self.running).clone()
+        self.running.lock().ok().and_then(|r| r.clone())
     }
 
     fn usage(&self, requests: u32, bytes: u64) {
@@ -294,7 +293,7 @@ impl PuzzleService {
         let result = self
             .inner
             .with_db(move |db| {
-                attempts::record(db, &attempt, crate::clock::now_ms())?;
+                attempts::record(db, &attempt, queries::now_ms())?;
                 let query = attempts::ProgressQuery {
                     today: attempt.day,
                     limit: attempts::RECENT,
@@ -345,7 +344,9 @@ impl PuzzleService {
         let inner = Arc::clone(&self.inner);
         // Closing drains admitted workers first, then releases the file.
         let _ = tokio::task::spawn_blocking(move || {
-            lock(&inner.db).take();
+            if let Ok(mut db) = inner.db.lock() {
+                db.take();
+            }
         })
         .await;
     }
@@ -355,7 +356,11 @@ impl PuzzleService {
     /// completion via the `puzzledb:progress` `cancelled`/`done` phase, not the result.
     pub async fn install(&self, url: String) -> Result<PuzzleDbStatus> {
         let download = {
-            let mut running = lock(&self.inner.running);
+            let mut running = self
+                .inner
+                .running
+                .lock()
+                .map_err(|_| CoreError::new("Puzzle service stopped. Retry the operation."))?;
             if running.is_some() {
                 let error = CoreError::new("The puzzle database is already downloading.");
                 self.inner.failed("install", &error);
@@ -742,9 +747,9 @@ mod tests {
             "day": "2026-11-09",
         }))
         .unwrap();
-        let before = crate::clock::now_ms();
+        let before = queries::now_ms();
         let progress = puzzles.record_attempt(attempt).await.unwrap();
-        let after = crate::clock::now_ms();
+        let after = queries::now_ms();
         assert_eq!(progress["today"]["attempts"], 1);
         assert_eq!(progress["dayStreak"], 1);
         let recent = progress["recent"].as_array().unwrap();

@@ -5,8 +5,7 @@ use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
 use super::StoreContext;
-use super::library::{db_err, object, opt_str, str_arg};
-use crate::clock::now_ms;
+use super::library::{db_err, now_ms, object, opt_str, str_arg};
 use crate::error::Result;
 use crate::host::{Host, Level};
 use kchess_domain::js;
@@ -131,7 +130,7 @@ fn save_run(host: &dyn Host, db: &Connection, run: &Value) -> Result<Value> {
         .map_err(db_err)?;
     db.execute(
         "INSERT INTO runs (kind, variant, score, detail, playedAt) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![kind, variant, score, detail, now_ms()],
+        params![kind, variant, score, detail, now_ms()? as i64],
     )
     .map_err(db_err)?;
     let is_best = score > 0.0 && previous.is_none_or(|best| score > best);

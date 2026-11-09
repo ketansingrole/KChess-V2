@@ -28,7 +28,6 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::{CoreError, Result};
 use crate::host::{Config, Host, Level};
-use crate::tasks::lock;
 
 /// Filtered page counts, the library overview and the storage the games take, valid until a call
 /// that can change the stored games runs. The count is a full scan of the filter's index, while
@@ -47,55 +46,70 @@ pub struct StoreCache {
 
 impl StoreCache {
     pub fn count(&self, key: &str) -> Option<i64> {
-        lock(&self.counts).get(key).copied()
+        self.counts.lock().ok()?.get(key).copied()
     }
 
     pub fn remember_count(&self, key: String, total: i64) {
-        let mut counts = lock(&self.counts);
-        if counts.len() >= 128 {
-            counts.clear();
+        if let Ok(mut counts) = self.counts.lock() {
+            if counts.len() >= 128 {
+                counts.clear();
+            }
+            counts.insert(key, total);
         }
-        counts.insert(key, total);
     }
 
     pub fn overview(&self) -> Option<Value> {
-        lock(&self.overview).clone()
+        self.overview.lock().ok()?.clone()
     }
 
     pub fn remember_overview(&self, value: &Value) {
-        *lock(&self.overview) = Some(value.clone());
+        if let Ok(mut overview) = self.overview.lock() {
+            *overview = Some(value.clone());
+        }
     }
 
     /// Each account's games and the bytes they take (`usageReport`'s storage).
     pub fn storage(&self) -> Option<Vec<(String, i64, i64)>> {
-        lock(&self.storage).clone()
+        self.storage.lock().ok()?.clone()
     }
 
     pub fn remember_storage(&self, rows: &[(String, i64, i64)]) {
-        *lock(&self.storage) = Some(rows.to_vec());
+        if let Ok(mut storage) = self.storage.lock() {
+            *storage = Some(rows.to_vec());
+        }
     }
 
     /// The library snapshot read when the connection had changed `changes` rows, if it is kept.
     pub fn library(&self, changes: u64) -> Option<Value> {
-        let library = lock(&self.library);
+        let library = self.library.lock().ok()?;
         let (read_at, snapshot) = library.as_ref()?;
         (*read_at == changes).then(|| snapshot.clone())
     }
 
     pub fn remember_library(&self, changes: u64, snapshot: &Value) {
-        *lock(&self.library) = Some((changes, snapshot.clone()));
+        if let Ok(mut library) = self.library.lock() {
+            *library = Some((changes, snapshot.clone()));
+        }
     }
 
     /// A connection opened afresh counts its changes from zero again.
     pub fn forget_library(&self) {
-        *lock(&self.library) = None;
+        if let Ok(mut library) = self.library.lock() {
+            *library = None;
+        }
     }
 
     pub fn clear(&self) {
         self.forget_library();
-        lock(&self.counts).clear();
-        *lock(&self.overview) = None;
-        *lock(&self.storage) = None;
+        if let Ok(mut counts) = self.counts.lock() {
+            counts.clear();
+        }
+        if let Ok(mut overview) = self.overview.lock() {
+            *overview = None;
+        }
+        if let Ok(mut storage) = self.storage.lock() {
+            *storage = None;
+        }
     }
 }
 
@@ -266,7 +280,9 @@ impl Database {
     /// Releases the file; the next `call` opens it again.
     pub fn close(&self) {
         self.cache.clear();
-        lock(&self.connection).take();
+        if let Ok(mut db) = self.connection.lock() {
+            db.take();
+        }
     }
 }
 

@@ -40,7 +40,6 @@ use crate::puzzles::PuzzleService;
 use crate::secrets::Credentials;
 use crate::store::Database;
 use crate::store::debug;
-use crate::tasks::lock;
 use crate::usage::{UsageBatch, UsageHost};
 use crate::voice::recognizer::VoiceRecognizer;
 
@@ -387,7 +386,7 @@ impl Core {
 
     /// Tells every client which window alerts now (`alerts:owner`), when that changed.
     fn report_alert_owner(&self) {
-        let _reporting = lock(&self.alert_reports);
+        let _reporting = self.alert_reports.lock();
         let owner = self.connections.alert_owner();
         let encoded = owner.unwrap_or(u64::MAX);
         if self.alert_owner.swap(encoded, Ordering::SeqCst) != encoded {
@@ -399,7 +398,7 @@ impl Core {
     /// Runs `join` with the current `alerts:owner` payload while no change of owner is reported:
     /// a client that joins queues it before it receives any event, so it misses no change.
     pub fn with_alert_owner<T>(&self, join: impl FnOnce(Value) -> T) -> T {
-        let _reporting = lock(&self.alert_reports);
+        let _reporting = self.alert_reports.lock();
         join(json!({ "connection": self.connections.alert_owner() }))
     }
 
@@ -687,10 +686,15 @@ impl Core {
         overridden: &LocationOverride,
     ) -> Result<Value> {
         let (cancel_tx, cancel_rx) = watch::channel(false);
-        lock(&self.installs).insert(id, cancel_tx);
+        self.installs
+            .lock()
+            .map_err(|_| CoreError::new("The engine is unavailable."))?
+            .insert(id, cancel_tx);
         // Forgotten however the request ends, a cancelled call included.
         let _forget = crate::tasks::on_drop(|| {
-            lock(&self.installs).remove(&id);
+            if let Ok(mut installs) = self.installs.lock() {
+                installs.remove(&id);
+            }
         });
         let mut location = ManagedLocation::new(self.managed_dir(overridden));
         if let Some(url) = &overridden.release_url {
@@ -720,8 +724,10 @@ impl Core {
 
     /// Cancels the managed engine installs in progress.
     pub(crate) fn cancel_installs(&self) {
-        for sender in lock(&self.installs).values() {
-            sender.send_replace(true);
+        if let Ok(installs) = self.installs.lock() {
+            for sender in installs.values() {
+                sender.send_replace(true);
+            }
         }
     }
 }

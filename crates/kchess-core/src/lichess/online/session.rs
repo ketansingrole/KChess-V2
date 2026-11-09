@@ -6,13 +6,12 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::super::accounts::Lichess;
+use super::super::accounts::{Lichess, now_ms};
 use super::super::challenges::ChallengeInbox;
 use super::super::client::{
     Failure, LichessError, TokenSource, authorize, lichess_error, read_with_deadline,
 };
 use super::super::stream::{LineOptions, read_lines};
-use crate::clock::now_ms;
 use crate::error::{CoreError, ErrorKind};
 use crate::host::Level;
 
@@ -20,9 +19,8 @@ use super::events::{is_challenge_event, validate_online_event};
 use super::requests::{Emitter, Listen, Quiet, StreamRequest, body_value, refs};
 use super::state::{
     ANNOUNCED_MAX, Handle, Inner, LOST_CONNECTION, Lane, MAX_RECONNECTS, ONGOING_DEBOUNCE,
-    OnlineSession, Res, SEEK_REJECTED, State, core,
+    OnlineSession, Res, SEEK_REJECTED, State, core, lock,
 };
-use crate::tasks::lock;
 
 mod lobby;
 mod play;
@@ -129,7 +127,7 @@ impl OnlineSession {
             payload["message"] = json!(message);
         }
         if let Some(kind) = kind {
-            payload["kind"] = json!(kind);
+            payload["kind"] = json!(kind.as_str());
         }
         let live_game = phase == "checking" || (!game_id.is_empty() && phase != "idle");
         self.run_state_hook(live_game, self.assistance_blocked());

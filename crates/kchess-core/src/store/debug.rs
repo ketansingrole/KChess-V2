@@ -218,7 +218,7 @@ fn cell(value: ValueRef<'_>) -> Value {
         ValueRef::Real(number) => json!(number),
         ValueRef::Text(text) => json!(String::from_utf8_lossy(text)),
         ValueRef::Blob(bytes) => {
-            json!(crate::archive::hex(bytes))
+            json!(bytes.iter().map(|b| format!("{b:02x}")).collect::<String>())
         }
     }
 }

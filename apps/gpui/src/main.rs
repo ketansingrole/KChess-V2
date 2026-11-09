@@ -13,7 +13,6 @@ mod assets;
 mod bench;
 mod board;
 mod chart;
-mod clock;
 mod core;
 mod dock_icon;
 #[cfg(test)]

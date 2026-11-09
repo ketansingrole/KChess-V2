@@ -27,7 +27,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
-use crate::tasks::lock;
 
 /// The constructor's default deadline for the handshake and `isready`.
 pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(10);
@@ -53,6 +52,8 @@ pub fn search_cancelled() -> CoreError {
 pub(crate) fn signal_aborted() -> CoreError {
     CoreError::aborted("This operation was aborted.")
 }
+
+pub(crate) use crate::tasks::lock;
 
 /// Resolves when `cancel` fires; never resolves without a token.
 pub(crate) async fn cancelled_or_pending(cancel: Option<&CancellationToken>) {
