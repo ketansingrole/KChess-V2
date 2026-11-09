@@ -20,6 +20,7 @@ mod package;
 #[cfg(unix)]
 mod pins;
 mod release;
+mod store_notes;
 mod sums;
 mod update_key;
 mod util;
@@ -56,6 +57,9 @@ const HELP: &str = "cargo xtask <command>
                         Make the release key: the secret to <secret file>, the public half
                         to apps/gpui/update-key.pub
   sums <dir>            Write <dir>/SHA256SUMS.txt for every other file in <dir> (release CI)
+  store-notes <in> <out>
+                        Write release notes <in> as the plain text App Store Connect takes
+                        (App Store CI)
   sign-sums <file>      Sign a release's SHA256SUMS.txt into <file>.sig with
                         KCHESS_UPDATE_SIGNING_KEY (CI)
   download-release-snap Fetch and verify the published release's Snap (CI)
@@ -115,6 +119,7 @@ fn main() -> ExitCode {
             Some(dir) => sums::run(std::path::Path::new(dir)),
             None => Err("sums needs the folder of the release's files.".into()),
         },
+        Some("store-notes") => store_notes::run(rest),
         Some("sign-sums") => match rest.first() {
             Some(path) => update_key::sign(std::path::Path::new(path)),
             None => Err("sign-sums needs the checksums file.".into()),
