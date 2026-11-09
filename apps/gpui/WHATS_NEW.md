@@ -17,7 +17,7 @@ refuses to release with nothing there.
 - **Clearer dialogs**: dialogs open in the middle of the window and dim the page behind them.
 - **Much smaller updates**: an update downloads only what changed, usually a few MB instead of over 100 MB, so it's ready in seconds.
 - **Faster with a long game history**: with hundreds of saved games and studies, KChess starts sooner, its pages open faster, and Studies and Game history scroll smoothly.
-- **Fixes**: broadcast rounds always show their boards, voice input no longer gets stuck on "Preparing voice input…", Puzzle history no longer shows the previous account's results after you sign out, and downloading Stockfish or the voice model no longer fails on a brief server hiccup. Plus many smaller fixes.
+- **Fixes**: broadcast rounds always show their boards, voice input no longer gets stuck on "Preparing voice input…", Puzzle history no longer shows the previous account's results after you sign out, and a server hiccup no longer stops Stockfish downloading. Plus many smaller fixes.
 
 ## 2026.11.5 (2026-11-07)
 
