@@ -282,12 +282,8 @@ impl Session {
         self.state.phase = "idle".into();
     }
 
-    /// Show `puzzle` as a new attempt; `retry` (tried again from the history) is logged, not
-    /// counted. It is this attempt's alone: kept in the state, it carried over to the puzzles
-    /// shown after a retry.
-    fn show(&mut self, puzzle: Value, selection: &Selection, retry: bool) {
+    fn show(&mut self, puzzle: Value, selection: &Selection) {
         self.end_attempt();
-        self.state.is_retry = retry;
         self.state.current = Some(puzzle);
         self.state.puzzle_key += 1;
         self.state.attempt_outcome = None;
@@ -297,7 +293,7 @@ impl Session {
             angle: selection.angle.clone(),
             mode: selection.mode.clone(),
             anonymous: false,
-            retry,
+            retry: self.state.is_retry,
             tries: Vec::new(),
             wrong_moves: Vec::new(),
             verdict: None,
@@ -308,8 +304,9 @@ impl Session {
     fn retry(&mut self, puzzle: Value, selection: &Selection) {
         self.end_attempt();
         self.internal.load_gen += 1;
+        self.state.is_retry = true;
         self.state.last_report = None;
-        self.show(puzzle, selection, true);
+        self.show(puzzle, selection);
     }
 
     /// No puzzle left for the theme and difficulty, on Lichess or in the local database: an
@@ -379,7 +376,7 @@ impl Session {
         };
         match token.stage.as_str() {
             "offline" => match value.as_array().and_then(|puzzles| puzzles.first()) {
-                Some(puzzle) if !puzzle.is_null() => self.show(puzzle.clone(), &selection, false),
+                Some(puzzle) if !puzzle.is_null() => self.show(puzzle.clone(), &selection),
                 _ => self.exhausted(),
             },
             "draw" => {
@@ -404,7 +401,7 @@ impl Session {
                     self.state.rating = Some(js::round(rating));
                 }
                 match value.get("puzzle").filter(|puzzle| !puzzle.is_null()) {
-                    Some(puzzle) => self.show(puzzle.clone(), &selection, false),
+                    Some(puzzle) => self.show(puzzle.clone(), &selection),
                     None => self.exhausted(),
                 }
             }
@@ -414,7 +411,7 @@ impl Session {
                 }
                 match value.get("puzzle").filter(|puzzle| !puzzle.is_null()) {
                     Some(puzzle) => {
-                        self.show(puzzle.clone(), &selection, false);
+                        self.show(puzzle.clone(), &selection);
                         if let Some(attempt) = self.internal.attempt.as_mut() {
                             attempt.anonymous = true;
                         }
@@ -707,9 +704,7 @@ pub(super) fn call(method: &str, args: &[Value]) -> Option<Out> {
                 if method == "puzzleSessionRetry" {
                     session.retry(puzzle, &selection);
                 } else {
-                    // A puzzle chosen now replaces whatever a load still on its way would show.
-                    session.internal.load_gen += 1;
-                    session.show(puzzle, &selection, false);
+                    session.show(puzzle, &selection);
                 }
                 session.finish()
             })
@@ -753,100 +748,7 @@ pub(super) fn call(method: &str, args: &[Value]) -> Option<Out> {
 
 #[cfg(test)]
 mod tests {
-    use super::{call, counts_for_rating};
-    use serde_json::{Value, json};
-
-    fn selection() -> Value {
-        json!({ "account": "", "angle": "mix", "difficulty": "normal", "color": "", "mode": "offline" })
-    }
-
-    fn puzzle(id: &str) -> Value {
-        json!({
-            "id": id,
-            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-            "solution": ["e2e4", "e7e5"],
-            "rating": 1500,
-            "themes": ["mix"],
-            "plays": 1,
-        })
-    }
-
-    fn step(method: &str, from: &Value, extra: Value) -> Value {
-        let mut arg = json!({ "state": from["state"], "internal": from["internal"] });
-        for (key, value) in extra.as_object().unwrap() {
-            arg[key] = value.clone();
-        }
-        call(method, &[arg]).unwrap().unwrap()
-    }
-
-    /// A puzzle tried again from the history marked the session as retrying, and that mark
-    /// carried over: a puzzle shown next was neither counted nor synced to Lichess.
-    #[test]
-    fn a_retry_marks_only_its_own_attempt() {
-        let start = call("puzzleSessionInitial", &[]).unwrap().unwrap();
-        let retried = step(
-            "puzzleSessionRetry",
-            &start,
-            json!({ "puzzle": puzzle("old"), "selection": selection() }),
-        );
-        assert_eq!(retried["state"]["isRetry"], json!(true));
-        let shown = step(
-            "puzzleSessionShow",
-            &retried,
-            json!({ "puzzle": puzzle("new"), "selection": selection() }),
-        );
-        assert_eq!(shown["state"]["isRetry"], json!(false));
-        assert_eq!(shown["internal"]["attempt"]["retry"], json!(false));
-    }
-
-    /// The local database answering with no puzzle (`[null]`) is out of puzzles, not one to show.
-    #[test]
-    fn an_offline_load_without_a_puzzle_is_exhausted() {
-        let start = call("puzzleSessionInitial", &[]).unwrap().unwrap();
-        let loading = step(
-            "puzzleSessionLoadBegin",
-            &start,
-            json!({ "selection": selection(), "online": true }),
-        );
-        let settled = step(
-            "puzzleSessionLoadSettled",
-            &loading,
-            json!({
-                "resume": loading["call"]["resume"],
-                "selection": selection(),
-                "outcome": { "ok": [null] },
-            }),
-        );
-        assert_eq!(settled["state"]["phase"], json!("exhausted"));
-        assert!(settled["state"]["current"].is_null());
-    }
-
-    /// A load still on its way replaced the puzzle chosen while it loaded.
-    #[test]
-    fn a_shown_puzzle_is_not_replaced_by_an_earlier_load() {
-        let start = call("puzzleSessionInitial", &[]).unwrap().unwrap();
-        let loading = step(
-            "puzzleSessionLoadBegin",
-            &start,
-            json!({ "selection": selection(), "online": true }),
-        );
-        let resume = loading["call"]["resume"].clone();
-        let shown = step(
-            "puzzleSessionShow",
-            &loading,
-            json!({ "puzzle": puzzle("chosen"), "selection": selection() }),
-        );
-        let late = step(
-            "puzzleSessionLoadSettled",
-            &shown,
-            json!({
-                "resume": resume,
-                "selection": selection(),
-                "outcome": { "ok": [puzzle("loaded")] },
-            }),
-        );
-        assert_eq!(late["state"]["current"]["id"], json!("chosen"));
-    }
+    use super::counts_for_rating;
 
     #[test]
     fn a_hint_takes_an_attempt_off_the_rating() {

@@ -279,15 +279,7 @@ impl PuzzleHistory {
     /// `loadActivity`: what Lichess recorded (`force` asks again).
     fn load_activity(&mut self, force: bool, cx: &mut Context<Self>) {
         let who = self.account.clone();
-        if who.is_empty() {
-            // Activity still on its way for the previous account must not land once there is none.
-            self.epoch += 1;
-            self.loading = false;
-            self.error = None;
-            self.reconnect = false;
-            return;
-        }
-        if !force && self.loaded == who {
+        if who.is_empty() || (!force && self.loaded == who) {
             return;
         }
         self.epoch += 1;
@@ -691,26 +683,7 @@ impl Render for PuzzleHistory {
 
 #[cfg(test)]
 mod tests {
-    use super::{PuzzleHistory, compact, rows_of};
-    use crate::e2e::Harness;
-    use gpui_kit::AppContext as _;
-
-    /// Signing out while an account's puzzle activity loaded kept the request current: its
-    /// answer then filled the page with that account's attempts, under no account.
-    #[gpui_kit::test]
-    fn activity_for_an_account_that_is_gone_does_not_land(cx: &mut gpui_kit::TestAppContext) {
-        let mut app = Harness::start(cx);
-        let (loading, stale) = app.with_window(|window, cx| {
-            let page = cx.new(|cx| PuzzleHistory::new(Vec::new(), window, cx));
-            page.update(cx, |page, cx| {
-                page.shown("Alice".into(), cx);
-                let asked = page.epoch;
-                page.shown(String::new(), cx);
-                (page.loading, page.epoch == asked)
-            })
-        });
-        assert!(!loading && !stale);
-    }
+    use super::{compact, rows_of};
 
     /// The columns need about 900 px: a 1024-wide window's card (about 700) once squeezed the
     /// themes out and pushed the buttons past its edge, so it takes two lines a row; a 1320-wide

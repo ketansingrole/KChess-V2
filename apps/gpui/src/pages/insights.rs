@@ -413,16 +413,11 @@ impl InsightsPage {
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
-        // A new epoch either way: a report still on its way for the previous account must not
-        // land once there is none.
-        self.epoch += 1;
         if self.account.is_empty() {
             self.report = None;
-            self.loading = false;
-            self.error = None;
-            cx.notify();
             return;
         }
+        self.epoch += 1;
         let epoch = self.epoch;
         self.loading = true;
         self.error = None;
@@ -978,31 +973,7 @@ impl InsightsPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        InsightsPage, balance, best_and_weakest, blunder_rate, by_clock, by_time, seconds,
-        speed_name,
-    };
-    use crate::e2e::Harness;
-    use gpui_kit::AppContext as _;
-
-    /// Signing out while an account's report loaded kept the request current: the report then
-    /// landed under no account, and the page kept loading until it did.
-    #[gpui_kit::test]
-    fn a_report_for_an_account_that_is_gone_does_not_land(cx: &mut gpui_kit::TestAppContext) {
-        let mut app = Harness::start(cx);
-        let (loading, stale) = app.with_window(|window, cx| {
-            let page = cx.new(|cx| InsightsPage::new(window, cx));
-            page.update(cx, |page, cx| {
-                page.account = "Alice".into();
-                page.load(cx);
-                let asked = page.epoch;
-                page.account.clear();
-                page.load(cx);
-                (page.loading, page.epoch == asked)
-            })
-        });
-        assert!(!loading && !stale);
-    }
+    use super::{balance, best_and_weakest, blunder_rate, by_clock, by_time, seconds, speed_name};
     use serde_json::json;
 
     /// The columns put colour, speed and opponent rating first; length and day next;

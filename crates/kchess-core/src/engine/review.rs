@@ -928,10 +928,6 @@ async fn pump(s: Arc<Shared>) {
         let mut state = lock(&s.state);
         state.pumping = false;
         state.progress = None;
-        // Only a pass runs reviews: one that failed or panicked mid-review left its job named
-        // as running, and every later request for that game joined the dead job instead.
-        state.running = None;
-        state.search = None;
         s.idle_tx.send_replace(true);
     }
     send_status(&s);

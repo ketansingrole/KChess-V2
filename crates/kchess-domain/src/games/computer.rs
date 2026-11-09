@@ -383,10 +383,9 @@ impl Game {
         Ok(())
     }
 
-    /// `takeback()`: undo back to the player's last turn. A time-out is final: undoing it left the
-    /// flagged side on 0 ms, to lose on time again on its next move.
+    /// `takeback()`: undo back to the player's last turn.
     fn takeback(&mut self, reads: &mut Reads) -> Flow<()> {
-        if self.rt.disposed || self.state.moves.is_empty() || self.state.flagged.is_some() {
+        if self.rt.disposed || self.state.moves.is_empty() {
             return Ok(());
         }
         self.cancel();

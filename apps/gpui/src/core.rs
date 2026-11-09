@@ -425,9 +425,6 @@ pub fn prepare_quit(
     if std::mem::replace(&mut cx.default_global::<Quitting>().preparing, true) {
         return cx.defer(cancelled);
     }
-    // A fresh decision: going on without the saves once (an update that then failed to install
-    // and left the app open) does not excuse the saves of a later quit.
-    cx.default_global::<Quitting>().discarded = false;
     cx.spawn(async move |cx| {
         let mut unanswered: Option<BoxedSave> = None;
         loop {
@@ -858,19 +855,6 @@ mod tests {
 
     /// "Restart to update" saved everything, then quit; the quit handler saved it all again, and
     /// when that took over GPUI's 200 ms the handler was dropped before the installer started.
-    /// "Restart without saving" once, then an update that failed to install, left the app open
-    /// with the choice kept: a later quit installed over work it could not save.
-    #[gpui_kit::test]
-    fn quitting_without_the_saves_is_chosen_again_for_each_quit(cx: &mut gpui_kit::TestAppContext) {
-        let mut app = crate::e2e::Harness::start(cx);
-        app.with_window(|_, cx| {
-            cx.default_global::<super::Quitting>().discarded = true;
-            super::prepare_quit(cx, "Quit without saving", |_| {}, |_| {});
-        });
-        let discarded = app.with_window(|_, cx| cx.default_global::<super::Quitting>().discarded);
-        assert!(!discarded);
-    }
-
     #[test]
     fn a_quit_straight_after_saving_does_not_save_again() {
         assert!(

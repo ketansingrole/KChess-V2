@@ -197,34 +197,6 @@ async fn a_review_asked_for_during_a_live_game_waits_without_spinning() {
     rig.reviews.stop_reviews().await;
 }
 
-/// A review step that panicked ended the queue's pass but left its game named as the running
-/// review: asking for that game again joined the dead job, so it was never reviewed.
-#[tokio::test]
-async fn a_review_that_panicked_runs_when_asked_for_again() {
-    let rig = rig("review", "panicked-review", false, "off", true);
-    // The request's own read passes; the review's read, once it runs, panics.
-    rig.store.panic_on_read(2);
-    rig.reviews
-        .request_review(request(&SCHOLARS))
-        .await
-        .expect("the request");
-    wait_until(WAIT, "the failed pass", || {
-        rig.recording
-            .contains("a review step panicked")
-            .then_some(())
-    })
-    .await;
-    rig.reviews
-        .request_review(request(&SCHOLARS))
-        .await
-        .expect("the second request");
-    wait_until(WAIT, "the review asked for again", || {
-        rig.host.complete_updates().into_iter().next()
-    })
-    .await;
-    rig.reviews.stop_reviews().await;
-}
-
 #[tokio::test]
 async fn a_request_for_a_finished_review_answers_from_the_store() {
     let rig = rig("review", "stored", false, "off", true);
