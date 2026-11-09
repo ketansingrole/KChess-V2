@@ -27,3 +27,7 @@ image = { version = "0.25", default-features = false, features = ["png", "ico"] 
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# Parsing the workflows as YAML (`every_workflow_is_valid_yaml`).
+yaml-rust2 = { version = "0.13", default-features = false }

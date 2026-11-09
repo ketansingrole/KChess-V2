@@ -139,7 +139,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: cargo xtask deltas apps/gpui/dist || { echo "::warning::No update patches for $RUNNER_OS: installations download the whole package."; exit 1; }
+        run: |
+          cargo xtask deltas apps/gpui/dist || { echo "::warning::No update patches for $RUNNER_OS: installations download the whole package."; exit 1; }
       # `cargo xtask package` fails without every package this platform releases. The release job
       # writes one SHA256SUMS.txt for every package.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
