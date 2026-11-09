@@ -216,7 +216,7 @@ jobs:
         with:
           shared-key: gpui
           key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: true
       # The vendored GPUI (`vendor/`) heads the app's longest chain of crates, and was compiled
       # anew on every run (2026-11-09: most of the 5 to 6 minutes the app's test build took):
       # rust-cache keeps only crates from outside the repository, and Cargo rebuilds a path crate
@@ -248,7 +248,7 @@ jobs:
       - run: cargo test -p kchess-gpui --locked
         env:
           RUST_TEST_THREADS: 8
-      - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
+      - if: steps.vendor.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           # Their libraries are named gpui, gpui_apple, gpui_macos and gpui_windows.
@@ -290,7 +290,7 @@ jobs:
         with:
           shared-key: headless
           key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: true
       # The vendored GPUI's lint build, kept as the gpui job keeps its test build.
       - name: Date the vendored sources
         shell: bash
@@ -317,7 +317,7 @@ jobs:
       # rebuilt the dependencies they share.
       - run: cargo clippy -p kchess-gpui ${{ matrix.packages }} --all-targets --locked -- -D warnings
       - run: cargo nextest run ${{ matrix.packages }} --locked
-      - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
+      - if: steps.vendor.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -442,7 +442,7 @@ jobs:
     timeout-minutes: 30
     env:
       # A push to main keeps the mutants' dependencies built for the pull requests after it.
-      WARM: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      WARM: true
     steps:
       - if: github.event_name != 'pull_request' && env.WARM != 'true'
         run: echo "Mutants are tested in the pull request."
