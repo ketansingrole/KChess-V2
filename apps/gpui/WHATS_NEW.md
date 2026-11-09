@@ -8,6 +8,8 @@ refuses to release with nothing there.
 
 ## Unreleased
 
+## 2026.11.6 (2026-11-09)
+
 - **Smarter Guess the move**: guess the games of any Lichess player, or a famous game like the Opera Game. When a player went wrong, finding the better move earns full points.
 - **Reply from the notification**: when it's your move in a correspondence game, type your move right into the notification on Windows or Mac, and confirm it before it's played.
 - **A tidier sidebar**: your account sits at the bottom of the sidebar, with Settings beside it. Its menu also opens What's new and lets you report a problem.
