@@ -4234,7 +4234,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-cli"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "kchess-contracts",
  "kchess-core",
@@ -4248,7 +4248,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-contracts"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "kchess-domain",
  "serde",
@@ -4257,7 +4257,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-core"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
@@ -4288,7 +4288,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-delta"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "qbsdiff",
  "serde",
@@ -4298,7 +4298,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-domain"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "flate2",
  "memchr",
@@ -4313,7 +4313,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-games"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "getrandom 0.4.3",
  "kchess-domain",
@@ -4324,7 +4324,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-gpui"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "base64 0.23.1",
  "block2 0.6.2",
@@ -4368,7 +4368,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-service"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "getrandom 0.4.3",
  "kchess-core",
@@ -4383,7 +4383,7 @@ dependencies = [
 
 [[package]]
 name = "kchess-voice"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "libloading 0.9.0",
  "serde",
@@ -9868,7 +9868,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "2026.11.6"
+version = "2026.11.7"
 dependencies = [
  "base64 0.23.1",
  "flate2",
