@@ -509,6 +509,11 @@ impl PuzzleBoard {
                         if board.status() != "playing" {
                             return Err(());
                         }
+                        // The opponent's reply to the last move is still on its way: the
+                        // solution goes on from the position it leads to, a step later.
+                        if this.waiting {
+                            return Ok(None);
+                        }
                         let Some(uci) = board.solution(board.index()) else {
                             return Err(());
                         };
@@ -702,7 +707,45 @@ impl Render for PuzzleBoard {
 
 #[cfg(test)]
 mod tests {
-    use super::counts_as_solved;
+    use super::{PuzzleBoard, counts_as_solved};
+    use crate::e2e::Harness;
+    use gpui_kit::AppContext as _;
+    use std::time::Duration;
+
+    /// Show solution pressed while the opponent's reply was on its way played the solution's
+    /// next move before that reply: it was the opponent's, so the solution stopped there. Only a
+    /// reply quicker than a solution step (as now) kept it whole.
+    #[gpui_kit::test]
+    fn the_solution_waits_for_a_reply_on_its_way(cx: &mut gpui_kit::TestAppContext) {
+        let mut app = Harness::start(cx);
+        let board = app.with_window(|window, cx| {
+            let board = cx.new(|cx| PuzzleBoard::new(false, window, cx));
+            board.update(cx, |board, cx| {
+                board.for_runs(Duration::from_secs(1));
+                board.start(
+                    &serde_json::json!({
+                        "id": "slowreply",
+                        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                        "solution": ["e2e4", "e7e5", "g1f3"],
+                        "rating": 1500,
+                        "themes": [],
+                    }),
+                    None,
+                    cx,
+                );
+                board.on_move("e2e4", cx);
+                assert!(board.waiting());
+                board.show_solution(cx);
+            });
+            board
+        });
+        for _ in 0..40 {
+            app.cx.executor().advance_clock(Duration::from_millis(100));
+            app.cx.run_until_parked();
+        }
+        let index = app.with_window(|_, cx| board.read(cx).puzzle().map(|puzzle| puzzle.index()));
+        assert_eq!(index, Some(3));
+    }
 
     #[test]
     fn a_nudge_costs_the_solve() {

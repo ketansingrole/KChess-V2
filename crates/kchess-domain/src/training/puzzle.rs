@@ -292,7 +292,9 @@ fn player_move(solution: &[String], state: PuzzleState, uci: &str) -> PlayerMove
     let Some(expected) = expected_at(solution, state.index) else {
         return wrong(state);
     };
-    if state.status != "playing" {
+    // The player moves first, so theirs are the solution's even moves: at an odd one the
+    // opponent's scripted reply is due (or could not be played), and typing it is no answer.
+    if state.status != "playing" || state.index % 2.0 != 0.0 {
         return wrong(state);
     }
     let Some(pos) = position_of(&state) else {
@@ -395,6 +397,22 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A scripted reply that could not be played left the opponent to move, and the player
+    /// typing the opponent's move was counted right and moved the puzzle on.
+    #[test]
+    fn the_opponents_move_is_no_answer() {
+        let solution: Vec<String> = ["e2e4", "e7e5", "g1f3"].map(String::from).to_vec();
+        let start = start_puzzle(&serde_json::json!({
+            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        }));
+        let first = player_move(&solution, start, "e2e4");
+        assert!(first.correct);
+        assert_eq!(first.reply.as_deref(), Some("e7e5"));
+        let typed = player_move(&solution, first.state.clone(), "e7e5");
+        assert!(!typed.correct);
+        assert_eq!(typed.state, first.state);
+    }
 
     #[test]
     fn move_numbers_and_squares() {
