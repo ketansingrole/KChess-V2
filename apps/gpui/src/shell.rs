@@ -1278,24 +1278,7 @@ impl Workspace {
         {
             watch.update(cx, |watch, cx| watch.hidden(cx));
         }
-        // The open tournament refreshes only while Tournaments is shown.
-        if current == Page::Tournaments
-            && page != Page::Tournaments
-            && let Some(tournaments) = self
-                .pages
-                .view_of::<crate::pages::tournaments::TournamentsPage>(Page::Tournaments)
-        {
-            tournaments.update(cx, |tournaments, _| tournaments.hidden());
-        }
         self.pages.show(page, window, cx);
-        if page == Page::Tournaments
-            && current != Page::Tournaments
-            && let Some(tournaments) = self
-                .pages
-                .view_of::<crate::pages::tournaments::TournamentsPage>(Page::Tournaments)
-        {
-            tournaments.update(cx, |tournaments, cx| tournaments.shown(cx));
-        }
         if page == Page::Watch
             && current != Page::Watch
             && let Some(watch) = self

@@ -35,7 +35,6 @@ pub mod capabilities;
 pub mod chesscom;
 pub mod connection;
 pub mod core;
-pub mod download;
 pub mod engine;
 pub mod env;
 pub mod error;

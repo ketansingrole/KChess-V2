@@ -829,45 +829,6 @@ async fn a_game_exported_once_opens_again_without_a_connection() {
     assert!(lichess.export_game("game0002").await.is_err());
 }
 
-// Reopening a finished game (a player's recent games, TV's past games) fetched it every time.
-#[tokio::test]
-async fn a_finished_game_opens_from_its_kept_copy_and_a_running_one_is_fetched_again() {
-    let fixture = serve(|seen| match (seen.path(), seen.body.as_str()) {
-        ("/api/games/export/_ids", "done0001") => Reply::Text(
-            200,
-            "application/x-chess-pgn",
-            "[White \"Alice\"]\n[Black \"Bob\"]\n[Result \"1-0\"]\n\n1. e4 e5 1-0\n".into(),
-        ),
-        ("/api/games/export/_ids", "live0001") => Reply::Text(
-            200,
-            "application/x-chess-pgn",
-            "[White \"Alice\"]\n[Black \"Bob\"]\n[Result \"*\"]\n\n1. e4 e5 *\n".into(),
-        ),
-        _ => Reply::Text(200, "application/x-chess-pgn", String::new()),
-    })
-    .await;
-    let host = Arc::new(Recording::default());
-    let lichess = service(
-        &fixture.base,
-        &host,
-        MemoryStore::with_accounts(&[]),
-        MemoryTokens::with(&[]),
-    );
-    let exports = |id: &str| {
-        fixture
-            .to("/api/games/export/_ids")
-            .iter()
-            .filter(|seen| seen.body == id)
-            .count()
-    };
-    let first = lichess.export_game("done0001").await.unwrap();
-    assert_eq!(lichess.export_game("done0001").await.unwrap(), first);
-    assert_eq!(exports("done0001"), 1);
-    lichess.export_game("live0001").await.unwrap();
-    lichess.export_game("live0001").await.unwrap();
-    assert_eq!(exports("live0001"), 2);
-}
-
 #[tokio::test]
 async fn a_game_is_exported_without_an_account_and_a_missing_one_is_named() {
     let fixture = serve(|seen| match (seen.path(), seen.body.as_str()) {

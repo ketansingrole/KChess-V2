@@ -7,6 +7,7 @@ pub mod attempts;
 pub mod queries;
 mod zst;
 
+use futures_util::StreamExt;
 use rusqlite::Connection;
 use serde_json::json;
 use std::path::Path;
@@ -421,12 +422,9 @@ impl PuzzleService {
         let cancelled = || CoreError::aborted("Cancelled");
         let cancel = download.cancel.clone();
         // A server that stops sending ends the download instead of holding the puzzle database's
-        // "downloading" state until the user cancels. The file is already Zstandard: it is fetched
-        // as published (no gzip on top), so its length is the progress total and a dropped
-        // connection can resume from the byte it reached.
+        // "downloading" state until the user cancels.
         let client = crate::lichess::client::http_client_builder()
             .read_timeout(DOWNLOAD_SILENCE)
-            .no_gzip()
             .build()
             .map_err(|e| CoreError::new(fetch_failed(&e)))?;
         let response = tokio::select! {
@@ -474,17 +472,16 @@ impl PuzzleService {
                     .collect();
                 Ok((rows, sampler.count()))
             });
-        // A dropped connection picks up at the byte it reached instead of starting over.
-        let mut body = crate::download::Resumable::new(&client, response, None);
+        let mut stream = response.bytes_stream();
         let cancel = download.cancel.clone();
         let fed: Result<()> = async {
             loop {
                 let chunk = tokio::select! {
-                    chunk = body.chunk() => chunk,
+                    chunk = stream.next() => chunk,
                     _ = cancel.cancelled() => return Err(cancelled()),
                 };
-                let chunk = chunk.map_err(|e| CoreError::new(fetch_failed(&e)))?;
                 let Some(chunk) = chunk else { return Ok(()) };
+                let chunk = chunk.map_err(|e| CoreError::new(fetch_failed(&e)))?;
                 if cancel.is_cancelled() {
                     return Err(cancelled());
                 }
@@ -502,9 +499,6 @@ impl PuzzleService {
             }
         }
         .await;
-        if body.resumed() > 0 {
-            self.inner.usage(body.resumed() as u32, 0);
-        }
         drop(send);
         let sampled = sampling
             .await
@@ -651,67 +645,6 @@ mod tests {
             }
         });
         url
-    }
-
-    /// Offers byte ranges; the first answer stops halfway, a range request gets the rest.
-    async fn serve_dropping_once(body: Vec<u8>) -> String {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/puzzles.csv.zst", listener.local_addr().unwrap());
-        tokio::spawn(async move {
-            while let Ok((mut socket, _)) = listener.accept().await {
-                let mut request = [0u8; 4096];
-                let read = socket.read(&mut request).await.unwrap_or(0);
-                let request = String::from_utf8_lossy(&request[..read]).to_lowercase();
-                let from: Option<usize> = request
-                    .lines()
-                    .find_map(|line| line.strip_prefix("range: bytes="))
-                    .and_then(|range| range.trim_end_matches('-').parse().ok());
-                let answer = match from {
-                    None => {
-                        let head = format!(
-                            "HTTP/1.1 200 OK\r\naccept-ranges: bytes\r\netag: \"db\"\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                            body.len()
-                        );
-                        [head.as_bytes(), &body[..body.len() / 2]].concat()
-                    }
-                    Some(from) => {
-                        let head = format!(
-                            "HTTP/1.1 206 Partial Content\r\ncontent-range: bytes {from}-{}/{}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                            body.len() - 1,
-                            body.len(),
-                            body.len() - from
-                        );
-                        [head.as_bytes(), &body[from..]].concat()
-                    }
-                };
-                let _ = socket.write_all(&answer).await;
-                let _ = socket.shutdown().await;
-            }
-        });
-        url
-    }
-
-    #[tokio::test]
-    async fn a_download_cut_off_halfway_resumes_and_installs() {
-        let dir = tempfile::tempdir().unwrap();
-        let (puzzles, host) = service(dir.path());
-        let body = csv(&[
-            ("aaa", 1200, "fork short"),
-            ("bbb", 1500, "pin middlegame"),
-            ("ccc", 1800, "fork long"),
-        ]);
-        let length = body.len() as u64;
-        let status = puzzles
-            .install(serve_dropping_once(body).await)
-            .await
-            .unwrap();
-        assert_eq!(status.count, 3);
-        let done = host.of("puzzledb:progress").pop().unwrap();
-        // Each byte arrived once: the resumed request asked only for the rest.
-        assert_eq!(done["received"], json!(length));
-        let usage = host.of("host:usage");
-        assert_eq!(usage[0]["requests"], json!(1));
-        assert_eq!(usage[1]["requests"], json!(1));
     }
 
     fn service(dir: &Path) -> (PuzzleService, Arc<Events>) {

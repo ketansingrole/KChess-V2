@@ -407,8 +407,6 @@ async fn install(
     let mut cancel = location.cancel.clone();
     let client = reqwest::Client::builder()
         .user_agent(crate::USER_AGENT)
-        // Byte-exact: the digest and the progress total are of the file as published.
-        .no_gzip()
         .build()
         .map_err(|_| CoreError::new("Could not start the Stockfish download."))?;
 
@@ -666,11 +664,9 @@ async fn download_archive(
         .await
         .map_err(|cause| io_error("Could not stage the Stockfish download", cause))?;
     let mut hasher = Sha256::new();
-    // A dropped connection picks up at the byte it reached instead of starting over.
-    let mut body = crate::download::Resumable::new(client, response, Some(deadline));
     loop {
         let chunk = until_cancelled(cancel, async {
-            body.chunk().await.map_err(|cause| {
+            response.chunk().await.map_err(|cause| {
                 CoreError::new(if cause.is_timeout() {
                     "Stockfish download timed out."
                 } else {
