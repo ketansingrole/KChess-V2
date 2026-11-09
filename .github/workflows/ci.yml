@@ -52,7 +52,7 @@ jobs:
       release: ${{ steps.docs.outputs.release }}
       packaging: ${{ steps.diff.outputs.packaging }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -140,7 +140,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
       # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: check
           key: ${{ runner.os }}-${{ runner.arch }}
@@ -194,6 +194,8 @@ jobs:
         with:
           tool: cargo-deny
       - run: cargo deny check
+      # The fuzz workspace has its own lock file.
+      - run: cargo deny --manifest-path fuzz/Cargo.toml check
 
   # The app's unit and end-to-end tests (`src/e2e`, headless) on every platform; `headless` runs
   # the rest beside it, the app's lints included.
@@ -356,7 +358,7 @@ jobs:
       - name: Install GPUI build libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ${{ needs.changes.outputs.release == 'true' && 'package' || 'package-fast' }}
           key: ${{ runner.os }}-${{ runner.arch }}
@@ -367,7 +369,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           # Release packages are made by the Release workflow; CI's are ad hoc signed.
           KCHESS_SIGN_IDENTITY: ''
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: gpui-${{ matrix.os }}
           path: apps/gpui/dist/

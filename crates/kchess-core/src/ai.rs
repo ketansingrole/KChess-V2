@@ -72,13 +72,24 @@ pub fn valid_host_id(id: &str) -> bool {
 }
 
 /// What is kept of a sign-in, sealed by the credential store.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Tokens {
     pub access: String,
     pub refresh: String,
     /// Milliseconds since the epoch.
     pub expires_at: f64,
+}
+
+/// Never the tokens themselves, so a stray `{:?}` cannot log them.
+impl std::fmt::Debug for Tokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tokens")
+            .field("access", &"[redacted]")
+            .field("refresh", &"[redacted]")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 impl Tokens {

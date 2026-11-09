@@ -171,6 +171,35 @@ pub fn asset_name(version: &str, package: Package) -> Option<String> {
     Some(asset.name(version, kchess_delta::Arch::current()?))
 }
 
+/// The release key's public half (`update-key.pub`): its one line that is not a comment, the
+/// base64 of a 32-byte Ed25519 key. `None` until a key is made (`cargo xtask update-key`).
+pub fn update_key() -> Option<Vec<u8>> {
+    parse_update_key(include_str!("../update-key.pub"))
+}
+
+pub fn parse_update_key(file: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    let line = file
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))?;
+    base64::engine::general_purpose::STANDARD
+        .decode(line)
+        .ok()
+        .filter(|key| key.len() == 32)
+}
+
+/// Whether `signature` (base64, `SHA256SUMS.txt.sig`) is `key`'s Ed25519 signature of `sums`.
+pub fn sums_signed_by(key: &[u8], sums: &[u8], signature: &str) -> Result<(), String> {
+    use base64::Engine as _;
+    let signature = base64::engine::general_purpose::STANDARD
+        .decode(signature.trim())
+        .map_err(|_| "The release's checksum signature could not be read")?;
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
+        .verify(sums, &signature)
+        .map_err(|_| "The release's checksums are not signed by KChess".to_string())
+}
+
 /// The SHA-256 a `SHA256SUMS.txt` lists for `name`.
 pub fn digest_for(sums: &str, name: &str) -> Option<String> {
     sums.lines().find_map(|line| {
@@ -1025,6 +1054,25 @@ async fn fetch_patch(
     Ok(staged)
 }
 
+/// What a Developer ID build's update must satisfy: signed through Apple's own certificate
+/// chain, as `app`, by `team`. The team and identifier `codesign --display` prints are the
+/// bundle's own claims, which a self-signed certificate can make; this requirement is not.
+fn developer_requirement(app: &str, team: &str) -> String {
+    format!(
+        "=anchor apple generic and identifier \"{app}\" and certificate leaf[subject.OU] = \"{team}\""
+    )
+}
+
+/// Whether the bundle at `path` passes `codesign --verify` against `requirement`.
+fn meets_requirement(path: &Path, requirement: &str) -> bool {
+    Command::new("codesign")
+        .args(["--verify", "--deep", "--strict", "-R", requirement])
+        .arg(path)
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 /// Put the staged update in place of `install`, which `lock` holds; with `reopen`, open the new
 /// KChess once this one has quit.
 fn apply(staged: &Path, install: &Install, lock: &InstallLock, reopen: bool) -> Result<(), String> {
@@ -1521,9 +1569,8 @@ pub fn init(cx: &mut App) {
         }
     }
     let failed = last_install_error(install.as_ref(), root.as_deref());
-    let feed = std::env::var("KCHESS_UPDATE_FEED")
-        .ok()
-        .filter(|feed| !feed.is_empty())
+    let feed = kchess_core::dev_override("KCHESS_UPDATE_FEED")
+        .map(|feed| feed.to_string_lossy().into_owned())
         .filter(|_| !store)
         .or_else(|| install.is_some().then(|| FEED.to_string()));
     let workspace = feed.as_ref().and_then(|_| {
@@ -1870,6 +1917,8 @@ impl Updates {
         self.release
             .as_ref()
             .and_then(|release| release.html_url.clone())
+            // Only the repository's own pages open from here, whatever the feed answered.
+            .filter(|url| url.starts_with(&format!("https://github.com/{REPOSITORY}/")))
             .unwrap_or_else(|| format!("https://github.com/{REPOSITORY}/releases"))
     }
 }

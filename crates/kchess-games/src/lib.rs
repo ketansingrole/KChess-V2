@@ -8,7 +8,7 @@ pub mod computer;
 pub mod local;
 pub mod puzzle;
 
-use serde::Deserialize as _;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 /// A random number in [0, 1), like `Math.random()`, for the rules that draw from them.

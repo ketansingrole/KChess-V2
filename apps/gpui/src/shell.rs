@@ -929,14 +929,20 @@ pub fn read_game_file(path: &std::path::Path) -> Option<String> {
         .is_some_and(|extension| {
             ["pgn", "fen", "txt"].contains(&extension.to_ascii_lowercase().as_str())
         });
-    readable
-        .then(|| {
-            std::fs::metadata(path)
-                .ok()
-                .filter(|meta| meta.len() <= DROPPED_MAX)
-                .and_then(|_| std::fs::read_to_string(path).ok())
-        })
-        .flatten()
+    if !readable {
+        return None;
+    }
+    // The opened file itself must be a regular file (a symlink to `/dev/zero` or a FIFO named
+    // `.pgn` reports a length of 0), and the read stops past the limit whatever it reported.
+    use std::io::Read as _;
+    let file = std::fs::File::open(path).ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > DROPPED_MAX {
+        return None;
+    }
+    let mut text = String::new();
+    file.take(DROPPED_MAX + 1).read_to_string(&mut text).ok()?;
+    (text.len() as u64 <= DROPPED_MAX).then_some(text)
 }
 
 /// Practise a reviewed game's positions on the analysis board (`usePracticeGame`); another game
@@ -2507,4 +2513,29 @@ pub fn analyse_puzzle(
     replace_analysis(window, cx, move |analysis, _, cx| {
         analysis.open_puzzle(&puzzle, &wrong_moves, cx)
     });
+}
+
+#[cfg(test)]
+mod dropped_file_tests {
+    use super::{DROPPED_MAX, read_game_file};
+
+    #[test]
+    fn a_game_file_under_the_limit_reads() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("game.pgn");
+        std::fs::write(&path, "1. e4 e5 *").unwrap();
+        assert_eq!(read_game_file(&path).as_deref(), Some("1. e4 e5 *"));
+        std::fs::write(&path, vec![b'a'; DROPPED_MAX as usize + 1]).unwrap();
+        assert_eq!(read_game_file(&path), None);
+    }
+
+    /// A `.pgn` symlink to `/dev/zero` reported a length of 0 and was read until memory ran out.
+    #[cfg(unix)]
+    #[test]
+    fn a_device_behind_a_game_name_is_refused() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("game.pgn");
+        std::os::unix::fs::symlink("/dev/zero", &path).unwrap();
+        assert_eq!(read_game_file(&path), None);
+    }
 }

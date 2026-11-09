@@ -21,6 +21,10 @@ use kchess_domain::puzzle::{Random, Sampler};
 use queries::{LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleDbStatus};
 
 pub const PUZZLE_DB_URL: &str = "https://database.lichess.org/lichess_db_puzzle.csv.zst";
+/// How long the puzzle database download may go without a byte before it fails.
+const DOWNLOAD_SILENCE: std::time::Duration = std::time::Duration::from_secs(60);
+/// The most the download may bring: the compressed database is some 300 MB (2026).
+const MAX_DOWNLOAD: u64 = 2 * 1024 * 1024 * 1024;
 
 /// One running download: cancelled through the token.
 struct Download {
@@ -485,6 +489,11 @@ impl PuzzleService {
                     return Err(cancelled());
                 }
                 progress.received += chunk.len() as u64;
+                if progress.received > MAX_DOWNLOAD {
+                    return Err(CoreError::new(
+                        "The puzzle database download is unexpectedly large.",
+                    ));
+                }
                 progress.report(Phase::Downloading, counted.load(Ordering::Relaxed), false);
                 if send.send(chunk.to_vec()).await.is_err() {
                     // The sampler stopped; its error is reported below.

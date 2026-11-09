@@ -88,7 +88,7 @@ pub fn legacy_database() -> Option<PathBuf> {
 /// `voice` folder beside the app (in `Contents/Resources` in the macOS bundle), else (a build in
 /// this repository) the helper `cargo xtask voice-runtime` stages in `target/voice-runtime`.
 pub fn voice_helper() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("KCHESS_VOICE_HELPER").filter(|path| !path.is_empty()) {
+    if let Some(path) = kchess_core::dev_override("KCHESS_VOICE_HELPER") {
         return Some(PathBuf::from(path));
     }
     let name = if cfg!(windows) {
@@ -117,7 +117,7 @@ pub fn voice_helper() -> Option<PathBuf> {
 /// macOS bundle), started without a runtime. `KCHESS_ENGINE_PATH` names another one (development
 /// builds, which ship none).
 pub fn bundled_engine() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("KCHESS_ENGINE_PATH").filter(|path| !path.is_empty()) {
+    if let Some(path) = kchess_core::dev_override("KCHESS_ENGINE_PATH") {
         return Some(PathBuf::from(path));
     }
     let name = if cfg!(windows) {
@@ -133,9 +133,7 @@ pub fn bundled_engine() -> Option<PathBuf> {
 /// the app's executable (`Contents/MacOS` in the macOS bundle), else (a build in this repository)
 /// the one `cargo xtask fairy-stockfish` builds in `target/fairy-stockfish/bin`.
 pub fn variant_engine() -> Option<PathBuf> {
-    if let Some(path) =
-        std::env::var_os("KCHESS_VARIANT_ENGINE_PATH").filter(|path| !path.is_empty())
-    {
+    if let Some(path) = kchess_core::dev_override("KCHESS_VARIANT_ENGINE_PATH") {
         return Some(PathBuf::from(path));
     }
     let name = if cfg!(windows) {
