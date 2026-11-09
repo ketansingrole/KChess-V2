@@ -524,6 +524,10 @@ impl PlayersPage {
     fn lookup(&mut self, name: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let name = name.unwrap_or_else(|| self.input.read(cx).value().trim().to_string());
         if !crate::game::is_username(&name) {
+            // This search replaces one still on its way: its answer would show that profile
+            // under this error and put its name back in the box over what was typed.
+            self.epoch += 1;
+            self.loading = false;
             self.error = Some(if name.is_empty() {
                 "Enter a Lichess username".into()
             } else {
@@ -1949,6 +1953,9 @@ impl MessageDialog {
         }
         self.busy = true;
         self.error = None;
+        // Each try says for itself whether the account must reconnect (as creating a
+        // tournament does): an earlier banner stayed over a later, different failure.
+        self.reconnect = false;
         cx.notify();
         let send = cx.global::<AppCore>().call(
             "sendMessage",
@@ -2045,6 +2052,44 @@ mod tests {
     use super::{hours, played_perfs, suggestions, title_choices, title_shown};
     use crate::game::is_username;
     use serde_json::json;
+
+    /// A reconnect banner from an earlier try stayed while the message was sent again.
+    #[gpui_kit::test]
+    fn sending_again_clears_the_reconnect_banner(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = crate::e2e::Harness::start(cx);
+        let reconnect = app.with_window(|window, cx| {
+            let dialog =
+                cx.new(|cx| super::MessageDialog::new("Alice".into(), "Bob".into(), window, cx));
+            dialog.update(cx, |dialog, cx| {
+                dialog.reconnect = true;
+                dialog
+                    .text
+                    .update(cx, |text, cx| text.set_value("Good game!", window, cx));
+                dialog.send(window, cx);
+                dialog.reconnect
+            })
+        });
+        assert!(!reconnect);
+    }
+
+    /// An invalid name searched while a lookup was on its way left that lookup current: its
+    /// answer showed the old player under the error and put their name back over the typing.
+    #[gpui_kit::test]
+    fn an_invalid_search_replaces_the_lookup_on_its_way(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = crate::e2e::Harness::start(cx);
+        let (loading, stale) = app.with_window(|window, cx| {
+            let page = cx.new(|cx| super::PlayersPage::new(window, cx));
+            page.update(cx, |page, cx| {
+                page.lookup(Some("Alice".into()), window, cx);
+                let asked = page.epoch;
+                page.lookup(Some("a".into()), window, cx);
+                (page.loading, page.epoch == asked)
+            })
+        });
+        assert!(!loading && !stale);
+    }
 
     #[test]
     fn usernames_are_checked_before_asking() {

@@ -443,21 +443,38 @@ impl PuzzleRush {
         let mode = config["mode"].as_str().unwrap_or("storm").to_string();
         let save = cx.global::<AppCore>().call("saveRun", vec![run]);
         cx.spawn(async move |this, cx| {
-            let saved = save.await;
-            let _ = this.update(cx, |this, cx| {
-                match saved {
-                    Ok(saved) => {
-                        this.summaries.insert(mode, saved["summary"].clone());
-                        if generation == this.generation {
-                            this.saved = Some(saved);
-                        }
-                    }
-                    Err(cause) => this.error = Some(cause.message),
-                }
-                cx.notify();
-            });
+            let saved = save.await.map_err(|cause| cause.message);
+            let _ = this.update(cx, |this, cx| this.run_saved(generation, mode, saved, cx));
         })
         .detach();
+        cx.notify();
+    }
+
+    /// The answer to saving the run of `generation`: the mode's best scores either way, and the
+    /// result or failure shown only while that run is still the one on screen. A late failure
+    /// showed in the next run.
+    fn run_saved(
+        &mut self,
+        generation: u64,
+        mode: String,
+        saved: Result<Value, String>,
+        cx: &mut Context<Self>,
+    ) {
+        let current = generation == self.generation;
+        match saved {
+            Ok(saved) => {
+                self.summaries.insert(mode, saved["summary"].clone());
+                if current {
+                    self.saved = Some(saved);
+                }
+            }
+            Err(message) if current => self.error = Some(message),
+            Err(message) => crate::log::write(
+                kchess_contracts::Level::Warn,
+                "rush",
+                &format!("Saving an earlier run failed: {message}"),
+            ),
+        }
         cx.notify();
     }
 
@@ -973,6 +990,26 @@ impl Render for PuzzleRush {
 mod tests {
     use super::{step, training};
     use serde_json::json;
+
+    /// Saving a finished run failed after the next run had begun: the failure showed in it.
+    #[gpui_kit::test]
+    fn an_earlier_runs_failed_save_stays_out_of_the_next(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = crate::e2e::Harness::start(cx);
+        let (late, current) = app.with_window(|window, cx| {
+            let stats = cx.new(|cx| super::super::stats::PuzzleStats::new(Vec::new(), window, cx));
+            let rush = cx.new(|cx| super::PuzzleRush::new(stats, window, cx));
+            rush.update(cx, |rush, cx| {
+                rush.generation = 2;
+                rush.run_saved(1, "storm".into(), Err("The disk is full".into()), cx);
+                let late = rush.error.clone();
+                rush.run_saved(2, "storm".into(), Err("The disk is full".into()), cx);
+                (late, rush.error.clone())
+            })
+        });
+        assert_eq!(late, None);
+        assert_eq!(current.as_deref(), Some("The disk is full"));
+    }
 
     #[test]
     fn a_storm_run_follows_the_rules() {

@@ -83,6 +83,8 @@ pub struct TournamentsPage {
     list: Option<Value>,
     loading: bool,
     error: Option<SharedString>,
+    /// Each list request; an answer to an earlier one (another account's) is dropped.
+    list_request: u64,
     /// `JoinedTournament`s the core keeps.
     joined: Vec<Value>,
     open: Option<Open>,
@@ -179,6 +181,7 @@ impl TournamentsPage {
             list: None,
             loading: false,
             error: None,
+            list_request: 0,
             joined: Vec::new(),
             open: None,
             password,
@@ -209,6 +212,8 @@ impl TournamentsPage {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.list_request += 1;
+        let request = self.list_request;
         self.loading = true;
         self.error = None;
         cx.notify();
@@ -218,6 +223,10 @@ impl TournamentsPage {
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
+                // A later refresh (another account's) owns the list and its spinner now.
+                if request != this.list_request {
+                    return;
+                }
                 this.loading = false;
                 match answer {
                     Ok(list) => this.list = Some(list),
@@ -745,6 +754,24 @@ impl Render for TournamentsPage {
 
 #[cfg(test)]
 mod tests {
+    /// Overlapping list requests (a refresh, then the account changed) let the first answer
+    /// clear the spinner while the second was on its way, and land over it if it came later.
+    #[gpui_kit::test]
+    fn only_the_latest_tournament_list_lands(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let mut app = crate::e2e::Harness::start(cx);
+        let (first, second) = app.with_window(|window, cx| {
+            let page = cx.new(|cx| super::TournamentsPage::new(window, cx));
+            page.update(cx, |page, cx| {
+                page.refresh(cx);
+                let first = page.list_request;
+                page.refresh(cx);
+                (first, page.list_request)
+            })
+        });
+        assert_ne!(first, second);
+    }
+
     #[test]
     fn only_a_running_event_refreshes_every_tick_and_a_waiting_one_each_minute() {
         use super::{REFRESH_EVERY, WAITING_REFRESH_EVERY, refresh_due};
