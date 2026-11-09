@@ -85,14 +85,10 @@ jobs:
         with:
           tool: cargo-nextest,cargo-mutants
       # The engines CI's `check` gives the tests, as a pull request's mutants job does.
-      - name: Fetch Stockfish
-        run: echo "KCHESS_ENGINE_PATH=$(cargo run -q --locked -p kchess-core --example fetch_stockfish -- "$RUNNER_TEMP/stockfish")" >> "$GITHUB_ENV"
+      - name: Fetch the engines
+        run: cargo xtask engines --github-env "$RUNNER_TEMP/stockfish"
         env:
           GH_TOKEN: ${{ github.token }}
-      - name: Build Fairy-Stockfish
-        run: |
-          cargo xtask fairy-stockfish
-          echo "KCHESS_VARIANT_ENGINE_PATH=$PWD/target/fairy-stockfish/bin/fairy-stockfish" >> "$GITHUB_ENV"
       - name: Mutants of the app's lines changed this week
         env:
           SHARD: ${{ matrix.shard }}

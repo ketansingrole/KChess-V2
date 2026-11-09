@@ -12,7 +12,7 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use kchess_delta::{APPIMAGE, Node, Tree, WINDOWS_INSTALLER};
+use kchess_delta::{APPIMAGE, Arch, Asset, Node, Tree, WINDOWS_INSTALLER};
 
 use crate::util::{Result, output, root, run_with, say, version};
 
@@ -21,33 +21,13 @@ use crate::util::{Result, output, root, run_with, say, version};
 const PREVIOUS: usize = 3;
 /// A patch is published only while it is at most this share of the whole package.
 const WORTH: f64 = 0.75;
-/// The bundle a macOS zip holds.
-const BUNDLE: &str = "KChess.app";
 
 /// What a patch carries beside the files, by name.
 type Extras = Vec<(String, Vec<u8>)>;
 
-/// The kind of package, by its release asset's name.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Kind {
-    Deb,
-    AppImage,
-    MacZip,
-    Windows,
-}
-
-fn kind(name: &str) -> Option<Kind> {
-    if name.ends_with("-linux-amd64.deb") {
-        Some(Kind::Deb)
-    } else if name.ends_with("-linux-x86_64.AppImage") {
-        Some(Kind::AppImage)
-    } else if name.ends_with("-mac-arm64.zip") {
-        Some(Kind::MacZip)
-    } else if name.ends_with("-win-x64.exe") && !name.ends_with("-update.exe") {
-        Some(Kind::Windows)
-    } else {
-        None
-    }
+/// A package installations update from, by its name: its kind, version and architecture.
+fn package(name: &str) -> Option<(Asset, &str, Arch)> {
+    Asset::parse(name).filter(|(kind, ..)| kind.patched())
 }
 
 fn parse(version: &str) -> Option<[u64; 3]> {
@@ -94,92 +74,6 @@ fn previous(
         .collect()
 }
 
-/// The members of an `ar` archive (a `.deb`), by name.
-fn ar_members(bytes: &[u8]) -> Result<Vec<(String, &[u8])>> {
-    let mut rest = bytes
-        .strip_prefix(b"!<arch>\n")
-        .ok_or("The .deb is not an ar archive.")?;
-    let mut members = Vec::new();
-    while rest.len() >= 60 {
-        let (header, body) = rest.split_at(60);
-        let name = String::from_utf8_lossy(&header[..16])
-            .trim()
-            .trim_end_matches('/')
-            .to_string();
-        let size: usize = String::from_utf8_lossy(&header[48..58])
-            .trim()
-            .parse()
-            .map_err(|_| "The .deb has a member of no size.")?;
-        let data = body.get(..size).ok_or("The .deb is cut short.")?;
-        members.push((name, data));
-        rest = body.get(size + size % 2..).unwrap_or_default();
-    }
-    Ok(members)
-}
-
-/// The files a `.deb` installs (paths from `/`), and its control archive: what the updater
-/// needs to make a `.deb` of the rebuilt files.
-pub(crate) fn deb_tree(bytes: &[u8]) -> Result<(Tree, (String, Vec<u8>))> {
-    let members = ar_members(bytes)?;
-    let (control, control_data) = members
-        .iter()
-        .find(|(name, _)| name.starts_with("control.tar"))
-        .ok_or("The .deb has no control archive.")?;
-    let (data_name, data) = members
-        .iter()
-        .find(|(name, _)| name.starts_with("data.tar"))
-        .ok_or("The .deb has no data archive.")?;
-    let mut tar = Vec::new();
-    match data_name.as_str() {
-        "data.tar.gz" => flate2::read::GzDecoder::new(*data).read_to_end(&mut tar),
-        "data.tar.xz" => lzma_rust2::XzReader::new(*data, true).read_to_end(&mut tar),
-        "data.tar" => {
-            tar.extend_from_slice(data);
-            Ok(0)
-        }
-        other => return Err(format!("The .deb's {other} is not one this reads.")),
-    }
-    .map_err(|cause| format!("The .deb's {data_name} could not be read: {cause}"))?;
-    let mut tree = Tree::new();
-    let mut archive = tar::Archive::new(tar.as_slice());
-    for entry in archive.entries().map_err(|cause| cause.to_string())? {
-        let mut entry = entry.map_err(|cause| cause.to_string())?;
-        let path = entry
-            .path()
-            .map_err(|cause| cause.to_string())?
-            .to_string_lossy()
-            .trim_start_matches("./")
-            .trim_end_matches('/')
-            .to_string();
-        if path.is_empty() {
-            continue;
-        }
-        let header = entry.header().clone();
-        match header.entry_type() {
-            tar::EntryType::Regular => {
-                let mut data = Vec::new();
-                entry
-                    .read_to_end(&mut data)
-                    .map_err(|cause| cause.to_string())?;
-                let executable = header.mode().is_ok_and(|mode| mode & 0o111 != 0);
-                tree.insert(path, Node::File { data, executable });
-            }
-            tar::EntryType::Symlink => {
-                let target = header
-                    .link_name()
-                    .ok()
-                    .flatten()
-                    .map(|target| target.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                tree.insert(path, Node::Link(target));
-            }
-            // Folders come with the files in them; the updater writes each file's parents.
-            _ => {}
-        }
-    }
-    Ok((tree, (control.clone(), control_data.to_vec())))
-}
-
 /// The bundle a macOS zip holds, its paths from inside `KChess.app`.
 fn zip_tree(bytes: &[u8]) -> Result<Tree> {
     let mut archive =
@@ -210,9 +104,10 @@ fn zip_tree(bytes: &[u8]) -> Result<Tree> {
         };
         tree.insert(path, node);
     }
-    let bundle = tree.under(BUNDLE);
+    let name = format!("{}.app", crate::package::NAME);
+    let bundle = tree.under(&name);
     if bundle.is_empty() {
-        return Err(format!("The zip holds no {BUNDLE}."));
+        return Err(format!("The zip holds no {name}."));
     }
     Ok(bundle)
 }
@@ -230,13 +125,18 @@ fn appimage_tree(bytes: Vec<u8>) -> Tree {
     tree
 }
 
+/// Where a Windows installer read in `work` is installed.
+fn installed_folder(work: &Path) -> PathBuf {
+    // In the system's own separators: `root()` joins `target/package/…` with `/`, which a
+    // Windows installer does not take in `/D=`, so it installed somewhere else.
+    work.join("installed").components().collect()
+}
+
 /// The files the Windows installer at `installer` installs: it is run silently into a folder
 /// of its own, so they are exactly what an installation holds. Its uninstaller, which every
 /// installer writes for itself, is not one of them.
 fn installed_tree(installer: &Path, work: &Path) -> Result<Tree> {
-    // In the system's own separators: `root()` joins `target/package/…` with `/`, which a
-    // Windows installer does not take in `/D=`, so it installed somewhere else.
-    let folder: PathBuf = work.join("installed").components().collect();
+    let folder = installed_folder(work);
     let _ = std::fs::remove_dir_all(&folder);
     forget_installation();
     // `/D=` is the last argument, unquoted, as NSIS reads it.
@@ -255,7 +155,8 @@ fn installed_tree(installer: &Path, work: &Path) -> Result<Tree> {
     if !folder.is_dir() {
         return Err(nothing());
     }
-    let tree = Tree::read(&folder, |path| path.starts_with("Uninstall "))
+    let uninstaller = crate::package::windows::uninstaller(crate::package::NAME);
+    let tree = Tree::read(&folder, |path| path == uninstaller)
         .map_err(|cause| format!("{}: {cause}", folder.display()))?;
     if tree.is_empty() {
         return Err(nothing());
@@ -269,7 +170,7 @@ fn installed_tree(installer: &Path, work: &Path) -> Result<Tree> {
 /// the machines that make patches run installers (the Windows package job, a disposable runner).
 fn forget_installation() {
     if cfg!(windows) {
-        let guid = crate::package::Identity::new(String::new()).guid;
+        let guid = crate::package::GUID;
         let _ = Command::new("reg")
             .args(["delete", &format!("HKCU\\Software\\{guid}"), "/f"])
             .stdout(std::process::Stdio::null())
@@ -279,16 +180,17 @@ fn forget_installation() {
 }
 
 /// A package's files, and what its patches carry beside them, read from `path`.
-fn files(kind: Kind, path: &Path, work: &Path) -> Result<(Tree, Extras)> {
+fn files(kind: Asset, path: &Path, work: &Path) -> Result<(Tree, Extras)> {
     let read = || std::fs::read(path).map_err(|cause| format!("{}: {cause}", path.display()));
     match kind {
-        Kind::Deb => {
-            let (tree, control) = deb_tree(&read()?)?;
+        Asset::Deb => {
+            let (tree, control) = crate::deb::read(&read()?)?;
             Ok((tree, vec![control]))
         }
-        Kind::AppImage => Ok((appimage_tree(read()?), Vec::new())),
-        Kind::MacZip => Ok((zip_tree(&read()?)?, Vec::new())),
-        Kind::Windows => Ok((installed_tree(path, work)?, Vec::new())),
+        Asset::AppImage => Ok((appimage_tree(read()?), Vec::new())),
+        Asset::MacZip => Ok((zip_tree(&read()?)?, Vec::new())),
+        Asset::WindowsInstaller => Ok((installed_tree(path, work)?, Vec::new())),
+        other => Err(format!("No installation updates from a {other:?}.")),
     }
 }
 
@@ -305,7 +207,6 @@ fn windows_extras(version: &str) -> Result<Extras> {
     Ok(vec![(WINDOWS_INSTALLER.to_string(), data)])
 }
 
-/// What `write` says of the patch `name`.
 fn report(name: &str, stats: &kchess_delta::Stats, package_size: u64, worth: bool) -> String {
     let mb = |bytes: u64| bytes as f64 / 1e6;
     format!(
@@ -319,8 +220,8 @@ fn report(name: &str, stats: &kchess_delta::Stats, package_size: u64, worth: boo
     )
 }
 
-/// Write the patch from `old` (release `from`) to `new` (`to`) as `delta`, with `only_worth` only when
-/// it is worth publishing; whether it is.
+/// Write the patch from `old` (release `from`) to `new` (`to`) as `delta`: only if it is worth
+/// publishing, unless `only_worth` is false; whether it is worth it.
 fn write(
     (from, to): (&str, &str),
     (old, new): (&Tree, &Tree),
@@ -344,38 +245,44 @@ fn write(
     Ok(worth)
 }
 
-/// `deltas --from <old package> <new package>`: one patch between two packages on disk, written
-/// beside the new one (trying a patch by hand; Windows installers are installed to read them).
-fn between(old_path: &Path, new_path: &Path) -> Result {
+/// `deltas --from <old package> <new package> [--stage <out>]`: one patch between two packages
+/// on disk, written beside the new one (trying a patch by hand; Windows installers are installed
+/// to read them). `--stage` then stages a Windows patch over the old installer's files as `apply`
+/// does (the Windows upgrade test).
+fn between(old_path: &Path, new_path: &Path, stage: Option<&Path>) -> Result {
     let name = |path: &Path| {
         path.file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_default()
     };
     let (old_name, new_name) = (name(old_path), name(new_path));
-    let package = kind(&new_name)
-        .filter(|kind| Some(*kind) == self::kind(&old_name))
-        .ok_or("Both packages must be of one kind KChess releases.")?;
-    let release = |name: &str| {
-        name.split('-')
-            .nth(1)
-            .map(str::to_string)
-            .ok_or_else(|| format!("{name} names no version."))
+    let Some(((kind, to, arch), (_, from, _))) = package(&new_name)
+        .zip(package(&old_name))
+        .filter(|((kind, _, arch), (old_kind, _, old_arch))| (kind, arch) == (old_kind, old_arch))
+    else {
+        return Err("Both packages must be of one kind KChess releases.".into());
     };
-    let (from, to) = (release(&old_name)?, release(&new_name)?);
+    if stage.is_some() && kind != Asset::WindowsInstaller {
+        return Err("Only a Windows patch is staged beside an installer.".into());
+    }
     let work = root().join("target/package/deltas");
-    let (old, _) = files(package, old_path, &work.join(&from))?;
-    let (new, mut extras) = files(package, new_path, &work.join(&to))?;
-    if package == Kind::Windows {
-        extras.extend(windows_extras(&to)?);
+    let (old, _) = files(kind, old_path, &work.join(from))?;
+    let (new, mut extras) = files(kind, new_path, &work.join(to))?;
+    if kind == Asset::WindowsInstaller {
+        extras.extend(windows_extras(to)?);
     }
     let size = std::fs::metadata(new_path)
         .map_err(|cause| cause.to_string())?
         .len();
     let delta = new_path.with_file_name(
-        kchess_delta::name(&new_name, &from).ok_or("A package without a patch name.")?,
+        kind.patch(to, arch, from)
+            .ok_or("A package without a patch name.")?,
     );
-    write((&from, &to), (&old, &new), &extras, size, &delta, false).map(|_| ())
+    write((from, to), (&old, &new), &extras, size, &delta, false)?;
+    match stage {
+        Some(out) => apply(&delta, &installed_folder(&work.join(from)), out),
+        None => Ok(()),
+    }
 }
 
 /// `deltas --apply <patch> <installed folder> <out>`: what the Windows updater stages from a
@@ -412,13 +319,13 @@ fn patches(
     work: &Path,
     download: Download,
 ) -> Result<usize> {
-    let packages: Vec<(Kind, PathBuf, String)> = std::fs::read_dir(dir)
+    let packages: Vec<(Asset, Arch, PathBuf)> = std::fs::read_dir(dir)
         .map_err(|cause| format!("{}: {cause}", dir.display()))?
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().to_string();
-            let kind = kind(&name).filter(|_| name.contains(&format!("-{current}-")))?;
-            Some((kind, entry.path(), name))
+            let (kind, _, arch) = package(&name).filter(|(_, version, _)| *version == current)?;
+            Some((kind, arch, entry.path()))
         })
         .collect();
     if packages.is_empty() {
@@ -426,16 +333,16 @@ fn patches(
     }
     let earlier = previous(current, releases, PREVIOUS);
     let mut written = 0;
-    for (kind, path, name) in &packages {
+    for (kind, arch, path) in &packages {
         let package_size = std::fs::metadata(path)
             .map_err(|cause| cause.to_string())?
             .len();
         let (new, mut extras) = files(*kind, path, &work.join(current))?;
-        if *kind == Kind::Windows {
+        if *kind == Asset::WindowsInstaller {
             extras.extend(windows_extras(current)?);
         }
         for (from, assets) in &earlier {
-            let old_name = name.replace(&format!("-{current}-"), &format!("-{from}-"));
+            let old_name = kind.name(from, *arch);
             if !assets.contains(&old_name) {
                 say(&format!("{from} has no {old_name}: no patch from it."));
                 continue;
@@ -447,8 +354,10 @@ fn patches(
                 download(from, &old_name, &folder)?;
             }
             let (old, _) = files(*kind, &old_path, &folder)?;
-            let delta =
-                dir.join(kchess_delta::name(name, from).ok_or("A package without a patch name.")?);
+            let delta = dir.join(
+                kind.patch(current, *arch, from)
+                    .ok_or("A package without a patch name.")?,
+            );
             if write(
                 (from, current),
                 (&old, &new),
@@ -466,7 +375,12 @@ fn patches(
 
 pub fn run(args: &[String]) -> Result {
     match args {
-        [flag, old, new] if flag == "--from" => return between(Path::new(old), Path::new(new)),
+        [flag, old, new] if flag == "--from" => {
+            return between(Path::new(old), Path::new(new), None);
+        }
+        [flag, old, new, stage, out] if flag == "--from" && stage == "--stage" => {
+            return between(Path::new(old), Path::new(new), Some(Path::new(out)));
+        }
         [flag, delta, installed, out] if flag == "--apply" => {
             return apply(Path::new(delta), Path::new(installed), Path::new(out));
         }
@@ -480,7 +394,10 @@ pub fn run(args: &[String]) -> Result {
     }
     let releases: serde_json::Value = serde_json::from_str(&output(
         "gh",
-        &["api", "repos/{owner}/{repo}/releases?per_page=30"],
+        &[
+            "api",
+            &format!("repos/{}/releases?per_page=30", crate::util::repository()),
+        ],
     )?)
     .map_err(|cause| format!("The release list could not be read: {cause}"))?;
     let download = |from: &str, name: &str, folder: &Path| {
@@ -490,6 +407,8 @@ pub fn run(args: &[String]) -> Result {
                     "release",
                     "download",
                     &format!("v{from}"),
+                    "--repo",
+                    &crate::util::repository(),
                     "--pattern",
                     name,
                     "--dir",
@@ -558,17 +477,26 @@ mod tests {
     }
 
     #[test]
-    fn packages_are_known_by_their_names() {
-        assert_eq!(kind("KChess-2026.11.5-linux-amd64.deb"), Some(Kind::Deb));
+    fn only_the_packages_installations_update_from_get_patches() {
+        let kind = |name| package(name).map(|(kind, ..)| kind);
+        assert_eq!(kind("KChess-2026.11.5-linux-amd64.deb"), Some(Asset::Deb));
         assert_eq!(
             kind("KChess-2026.11.5-linux-x86_64.AppImage"),
-            Some(Kind::AppImage)
+            Some(Asset::AppImage)
         );
-        assert_eq!(kind("KChess-2026.11.5-mac-arm64.zip"), Some(Kind::MacZip));
-        assert_eq!(kind("KChess-2026.11.5-win-x64.exe"), Some(Kind::Windows));
-        assert_eq!(kind("KChess-2026.11.5-win-x64-update.exe"), None);
-        assert_eq!(kind("KChess-2026.11.5-mac-arm64.dmg"), None);
-        assert_eq!(kind("SHA256SUMS.txt"), None);
+        assert_eq!(kind("KChess-2026.11.5-mac-arm64.zip"), Some(Asset::MacZip));
+        assert_eq!(
+            kind("KChess-2026.11.5-win-x64.exe"),
+            Some(Asset::WindowsInstaller)
+        );
+        for other in [
+            "KChess-2026.11.5-win-x64-update.exe",
+            "KChess-2026.11.5-mac-arm64.dmg",
+            "KChess-2026.11.5-linux-amd64.snap",
+            "SHA256SUMS.txt",
+        ] {
+            assert_eq!(kind(other), None, "{other}");
+        }
     }
 
     /// Patches come from the newest published releases before this one, never a draft, a
@@ -600,108 +528,6 @@ mod tests {
         );
         assert!(previous("junk", &releases, 3).is_empty());
         assert_eq!(previous("2026.11.6", &releases, 1).len(), 1);
-    }
-
-    fn tar_of(entries: &[(&str, &[u8], u32)]) -> Vec<u8> {
-        let mut archive = tar::Builder::new(Vec::new());
-        let mut dir = tar::Header::new_gnu();
-        dir.set_path("./opt/").unwrap();
-        dir.set_entry_type(tar::EntryType::Directory);
-        dir.set_mode(0o755);
-        dir.set_size(0);
-        dir.set_cksum();
-        archive.append(&dir, std::io::empty()).unwrap();
-        for (path, data, mode) in entries {
-            let mut header = tar::Header::new_gnu();
-            header.set_path(path).unwrap();
-            header.set_size(data.len() as u64);
-            header.set_mode(*mode);
-            header.set_cksum();
-            archive.append(&header, *data).unwrap();
-        }
-        let mut link = tar::Header::new_gnu();
-        link.set_path("./usr/bin/kchess").unwrap();
-        link.set_entry_type(tar::EntryType::Symlink);
-        link.set_link_name("/opt/KChess/kchess").unwrap();
-        link.set_size(0);
-        link.set_cksum();
-        archive.append(&link, std::io::empty()).unwrap();
-        archive.into_inner().unwrap()
-    }
-
-    fn ar_of(members: &[(&str, &[u8])]) -> Vec<u8> {
-        let mut out = b"!<arch>\n".to_vec();
-        for (name, data) in members {
-            out.extend(
-                format!(
-                    "{name:<16}{:<12}{:<6}{:<6}{:<8}{:<10}`\n",
-                    0,
-                    0,
-                    0,
-                    "100644",
-                    data.len()
-                )
-                .bytes(),
-            );
-            out.extend_from_slice(data);
-            if data.len() % 2 == 1 {
-                out.push(b'\n');
-            }
-        }
-        out
-    }
-
-    /// A `.deb`'s files are what dpkg installs, whichever way its data is compressed.
-    #[test]
-    fn a_deb_is_read_as_the_files_it_installs() {
-        let tar = tar_of(&[
-            ("./opt/KChess/kchess", b"app", 0o755),
-            ("./opt/KChess/notes.txt", b"odd", 0o644),
-        ]);
-        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-        std::io::Write::write_all(&mut gz, &tar).unwrap();
-        let gz = gz.finish().unwrap();
-        let mut xz =
-            lzma_rust2::XzWriter::new(Vec::new(), lzma_rust2::XzOptions::with_preset(1)).unwrap();
-        std::io::Write::write_all(&mut xz, &tar).unwrap();
-        let xz = xz.finish().unwrap();
-        for (member, data) in [
-            ("data.tar.gz", gz.as_slice()),
-            ("data.tar.xz", xz.as_slice()),
-            ("data.tar", tar.as_slice()),
-        ] {
-            let deb = ar_of(&[
-                ("debian-binary", b"2.0\n"),
-                ("control.tar.gz", b"ctl"),
-                (member, data),
-            ]);
-            let (tree, control) = deb_tree(&deb).unwrap();
-            assert_eq!(control, ("control.tar.gz".to_string(), b"ctl".to_vec()));
-            assert_eq!(
-                tree.get("opt/KChess/kchess"),
-                Some(&Node::File {
-                    data: b"app".to_vec(),
-                    executable: true
-                })
-            );
-            assert_eq!(
-                tree.get("opt/KChess/notes.txt"),
-                Some(&Node::File {
-                    data: b"odd".to_vec(),
-                    executable: false
-                })
-            );
-            assert_eq!(
-                tree.get("usr/bin/kchess"),
-                Some(&Node::Link("/opt/KChess/kchess".into()))
-            );
-            assert_eq!(tree.len(), 3, "folders come with their files");
-        }
-        assert!(deb_tree(b"not an archive").is_err());
-        assert!(deb_tree(&ar_of(&[("debian-binary", b"2.0\n")])).is_err());
-        assert!(deb_tree(&ar_of(&[("control.tar.gz", b"c"), ("data.tar.zst", b"d")])).is_err());
-        let whole = ar_of(&[("control.tar.gz", b"c"), ("data.tar", &tar)]);
-        assert!(deb_tree(&whole[..whole.len() - 100]).is_err(), "cut short");
     }
 
     /// A macOS zip is read as the bundle it holds, links and modes kept, sequestered forks left out.
@@ -840,7 +666,7 @@ mod tests {
         let dir = scratch("installed");
         let installer = dir.join("KChess-1.0.0-win-x64.exe");
         fake_installer(&installer, "old");
-        let (tree, extras) = files(Kind::Windows, &installer, &dir.join("work")).unwrap();
+        let (tree, extras) = files(Asset::WindowsInstaller, &installer, &dir.join("work")).unwrap();
         assert!(extras.is_empty());
         let paths: Vec<&str> = tree.iter().map(|(path, _)| path).collect();
         assert_eq!(paths, ["KChess.exe", "voice/x.dll"]);
@@ -863,8 +689,11 @@ mod tests {
         std::fs::write(&elsewhere, "#!/bin/sh\n").unwrap();
         crate::package::executable(&elsewhere).unwrap();
         let refused = installed_tree(&elsewhere, &dir.join("none")).unwrap_err();
-        assert!(refused.contains("installed nothing in"), "{refused}");
-        assert!(refused.contains("installed"), "{refused}");
+        let folder = installed_folder(&dir.join("none"));
+        assert!(
+            refused.ends_with(&format!("installed nothing in {}.", folder.display())),
+            "{refused}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -874,7 +703,7 @@ mod tests {
         let dir = scratch("kinds");
         let image = dir.join("KChess-1.0.0-linux-x86_64.AppImage");
         std::fs::write(&image, b"an AppImage").unwrap();
-        let (tree, extras) = files(Kind::AppImage, &image, &dir).unwrap();
+        let (tree, extras) = files(Asset::AppImage, &image, &dir).unwrap();
         assert_eq!(
             tree.get(APPIMAGE),
             Some(&Node::File {
@@ -884,18 +713,19 @@ mod tests {
         );
         assert!(extras.is_empty());
 
-        let tar = tar_of(&[("./opt/KChess/kchess", b"app", 0o755)]);
+        let tar = crate::deb::tarball(&[("opt/KChess/kchess".into(), b"app".to_vec(), 0o755)], &[])
+            .unwrap();
         let deb = dir.join("KChess-1.0.0-linux-amd64.deb");
         std::fs::write(
             &deb,
-            ar_of(&[
+            crate::deb::ar(&[
                 ("debian-binary", b"2.0\n"),
                 ("control.tar.gz", b"ctl"),
                 ("data.tar", &tar),
             ]),
         )
         .unwrap();
-        let (tree, extras) = files(Kind::Deb, &deb, &dir).unwrap();
+        let (tree, extras) = files(Asset::Deb, &deb, &dir).unwrap();
         assert!(tree.get("opt/KChess/kchess").is_some());
         assert_eq!(
             extras,
@@ -911,9 +741,9 @@ mod tests {
         std::io::Write::write_all(&mut zip, b"plist").unwrap();
         let path = dir.join("KChess-1.0.0-mac-arm64.zip");
         std::fs::write(&path, zip.finish().unwrap().into_inner()).unwrap();
-        let (tree, _) = files(Kind::MacZip, &path, &dir).unwrap();
+        let (tree, _) = files(Asset::MacZip, &path, &dir).unwrap();
         assert!(tree.get("Contents/Info.plist").is_some());
-        assert!(files(Kind::Deb, &dir.join("missing.deb"), &dir).is_err());
+        assert!(files(Asset::Deb, &dir.join("missing.deb"), &dir).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -978,8 +808,12 @@ mod tests {
         let mut mixed = vec!["--from".to_string()];
         mixed.extend(args(&[&deb, &new]));
         assert!(run(&mixed).unwrap_err().contains("one kind"));
+        let mut staged = from.clone();
+        staged.extend(["--stage".to_string(), "out".to_string()]);
+        assert!(run(&staged).unwrap_err().contains("Only a Windows patch"));
 
-        // A Windows patch carries its update installer, which packaging leaves for the version.
+        // A Windows patch carries its update installer, which packaging leaves for the version,
+        // and is staged over the files the old installer installed.
         let version = format!("1.{}.1", std::process::id());
         let (win_old, win_new) = (
             dir.join("KChess-1.0.0-win-x64.exe"),
@@ -992,16 +826,17 @@ mod tests {
         ));
         std::fs::create_dir_all(update.parent().unwrap()).unwrap();
         std::fs::write(&update, b"MZ update").unwrap();
+        let out = dir.join("staged");
         let mut windows = vec!["--from".to_string()];
         windows.extend(args(&[&win_old, &win_new]));
+        windows.push("--stage".to_string());
+        windows.extend(args(&[&out]));
         run(&windows).unwrap();
         let _ = std::fs::remove_file(&update);
-        let patch = dir.join(format!("KChess-{version}-win-x64.from-1.0.0.delta"));
-        let installed = root().join("target/package/deltas/1.0.0/installed");
-        let out = dir.join("staged");
-        let mut stage = vec!["--apply".to_string()];
-        stage.extend(args(&[&patch, &installed, &out]));
-        run(&stage).unwrap();
+        assert!(
+            dir.join(format!("KChess-{version}-win-x64.from-1.0.0.delta"))
+                .exists()
+        );
         assert_eq!(std::fs::read(out.join("files/KChess.exe")).unwrap(), b"new");
         assert_eq!(
             std::fs::read(out.join("KChess-update.exe")).unwrap(),
@@ -1010,7 +845,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Only `--from` with two packages and `--apply` with three paths are the by-hand forms;
+    /// Only `--from` with two packages (and `--stage <out>`) and `--apply` with three paths are
+    /// the by-hand forms;
     /// anything else names the folder of a release's packages.
     #[test]
     fn other_arguments_name_the_packages_folder() {
@@ -1020,6 +856,16 @@ mod tests {
         };
         assert!(missing(&["/no/such/dist", "a", "b"]).contains("is no folder of packages"));
         assert!(missing(&["/no/such/dist", "a", "b", "c"]).contains("is no folder of packages"));
+        // `--stage` only after `--from` and two packages.
+        for args in [
+            ["--from", "a", "b", "--into", "c"],
+            ["/no/such/dist", "a", "b", "--stage", "c"],
+        ] {
+            assert!(
+                missing(&args).contains("is no folder of packages"),
+                "{args:?}"
+            );
+        }
     }
 
     /// In release CI, each package gets a patch from each earlier release that shipped one, its

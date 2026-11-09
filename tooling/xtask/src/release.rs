@@ -2,6 +2,8 @@
 //! 2026.11.0), without zero padding, so the version stays valid semver for Cargo and the update
 //! manifests. The workspace version in Cargo.toml is the release.
 
+use kchess_delta::Asset;
+
 use crate::util::{Result, output, root, run, say, version, workspace_version};
 
 /// `(year, month, counter)` of a release version.
@@ -62,7 +64,6 @@ pub fn next_version(tags: &[&str], year: u32, month: u32) -> Result<String> {
     ))
 }
 
-/// The UTC date now, from the system clock.
 fn utc_date() -> (u32, u32, u32) {
     let (year, month, day) = crate::util::civil_date(crate::util::unix_now());
     (year as u32, month, day)
@@ -101,26 +102,32 @@ pub fn date_notes(notes: &str, version: &str, date: &str) -> Result<String> {
     Ok(format!("{head}{UNRELEASED}\n\n## {version} ({date}){rest}"))
 }
 
-/// The items of `version`'s section in `notes`, as the release's text.
-pub fn release_notes(notes: &str, version: &str) -> Option<String> {
+/// The lines under `version`'s `## <version> (<date>)` heading in `notes`, up to the next
+/// section; none without that heading.
+fn section<'a>(notes: &'a str, version: &str) -> Option<Vec<&'a str>> {
     let heading = format!("## {version} (");
     let start = notes.lines().position(|line| line.starts_with(&heading))?;
-    let body: Vec<&str> = notes
-        .lines()
-        .skip(start + 1)
-        .take_while(|line| !line.starts_with("## "))
-        .collect();
-    let body = body.join("\n").trim().to_string();
+    Some(
+        notes
+            .lines()
+            .skip(start + 1)
+            .take_while(|line| !line.starts_with("## "))
+            .collect(),
+    )
+}
+
+/// The items of `version`'s section in `notes`, as the release's text; none when it has none.
+pub fn release_notes(notes: &str, version: &str) -> Option<String> {
+    let body = section(notes, version)?.join("\n").trim().to_string();
     (!body.is_empty()).then_some(body)
 }
 
-/// Whether `notes` has a section for `version`.
+/// Whether `notes` has a heading for `version`, even one with nothing under it.
 pub fn has_notes(notes: &str, version: &str) -> bool {
-    let heading = format!("## {version} (");
-    notes.lines().any(|line| line.starts_with(&heading))
+    section(notes, version).is_some()
 }
 
-/// Replace the workspace version in Cargo.toml's text.
+/// Cargo.toml's text with `next` as the workspace version, and no other version changed.
 pub fn with_version(manifest: &str, next: &str) -> Result<String> {
     let current = workspace_version(manifest).ok_or("Cargo.toml has no workspace version.")?;
     let from = format!("version = \"{current}\"");
@@ -176,17 +183,24 @@ fn lock_names_version(lock: &str, version: &str) -> bool {
 /// `release-verify`: the version is a release version, and a tag build's tag names it exactly.
 pub fn verify() -> Result {
     let version = version()?;
-    parse(&version)?;
     let lock =
         std::fs::read_to_string(root().join("Cargo.lock")).map_err(|cause| cause.to_string())?;
-    if !lock_names_version(&lock, &version) {
+    let notes = std::fs::read_to_string(root().join(NOTES)).map_err(|cause| cause.to_string())?;
+    metadata(&version, &lock, &notes, tag_build().as_deref())?;
+    say(&format!("Release metadata verified: v{version}"));
+    Ok(())
+}
+
+/// Whether release `version` has its Cargo.lock, its notes and, on a tag build, its tag.
+fn metadata(version: &str, lock: &str, notes: &str, tag: Option<&str>) -> Result {
+    parse(version)?;
+    if !lock_names_version(lock, version) {
         return Err(
             "Cargo.lock does not match the workspace version. Run `cargo update --workspace`."
                 .into(),
         );
     }
-    let notes = std::fs::read_to_string(root().join(NOTES)).map_err(|cause| cause.to_string())?;
-    if !has_notes(&notes, &version) {
+    if !has_notes(notes, version) {
         return Err(format!(
             "{NOTES} has no `## {version} (date)` section, so the app would show this release \
              with no notes. `cargo xtask release-version` writes it from `{UNRELEASED}`."
@@ -199,7 +213,6 @@ pub fn verify() -> Result {
     {
         return Err(format!("Tag {tag} must be exactly v{version}."));
     }
-    say(&format!("Release metadata verified: v{version}"));
     Ok(())
 }
 
@@ -239,19 +252,14 @@ pub fn tag_version(tag: &str) -> Result<&str> {
 /// a release commit has had them all; before, each of them first failed after a tag. A manual Release build (downloads only) skips this.
 pub fn verify_release() -> Result {
     verify()?;
-    let on_tag =
-        std::env::var("GITHUB_REF").is_ok_and(|reference| reference.starts_with("refs/tags/"));
-    if std::env::var_os("GITHUB_ACTIONS").is_some() && !on_tag {
+    if !needs_ci(
+        std::env::var_os("GITHUB_ACTIONS").is_some(),
+        tag_build().as_deref(),
+    ) {
         say("Not a tag: CI is not required for a manual Release build.");
         return Ok(());
     }
-    if crate::update_key::public_key().is_none() {
-        return Err(
-            "apps/gpui/update-key.pub holds no release key, so installed apps could not tell \
-             this release's checksums from replaced ones. Run `cargo xtask update-key`."
-                .into(),
-        );
-    }
+    crate::update_key::require_public_key()?;
     let commit = output("git", &["rev-parse", "HEAD"])?.trim().to_string();
     let run = output(
         "gh",
@@ -335,19 +343,15 @@ pub fn ci_verdict(commit: &str, run: &str, jobs: &str) -> Result {
 /// draft release, creating it as a draft. A published release is never changed: its assets are
 /// permanent, so a fix ships as the next version.
 pub fn attach_draft(dir: &std::path::Path) -> Result {
-    let tag = std::env::var("GITHUB_REF_NAME").unwrap_or_default();
-    if std::env::var("GITHUB_EVENT_NAME").as_deref() != Ok("push")
-        || std::env::var("GITHUB_REF").as_deref() != Ok(&format!("refs/tags/{tag}"))
-    {
+    let event = std::env::var("GITHUB_EVENT_NAME").ok();
+    let reference = std::env::var("GITHUB_REF").ok();
+    let Some(tag) = pushed_tag(event.as_deref(), reference.as_deref()).map(str::to_string) else {
         return Err(
             "Draft releases may only be attached by a tag-push workflow, never a manual build."
                 .into(),
         );
-    }
-    parse(
-        tag.strip_prefix('v')
-            .ok_or("A release tag must start with v.")?,
-    )?;
+    };
+    let version = tag_version(&tag)?;
     let mut files: Vec<String> = std::fs::read_dir(dir)
         .map_err(|cause| cause.to_string())?
         .flatten()
@@ -411,12 +415,12 @@ pub fn attach_draft(dir: &std::path::Path) -> Result {
             Ok(())
         }
         None => {
-            let title = format!("KChess {}", &tag[1..]);
+            let title = format!("KChess {version}");
             // The notes the app shows for this release, reviewed in the release commit, are the
             // release's text, and through it the App Store's What's New.
             let notes = std::fs::read_to_string(root().join(NOTES))
                 .ok()
-                .and_then(|notes| release_notes(&notes, &tag[1..]))
+                .and_then(|notes| release_notes(&notes, version))
                 .ok_or_else(|| format!("{NOTES} has no notes for {tag}."))?;
             let mut args = vec!["release", "create", tag.as_str()];
             args.extend(&file_args);
@@ -434,20 +438,16 @@ pub fn attach_draft(dir: &std::path::Path) -> Result {
     }
 }
 
-/// The Mac App Store installer package, which only installs from the store.
+/// The Mac App Store installer package, which only installs from the store: any `.pkg`, however
+/// it is named.
 fn store_only(file: &str) -> bool {
     file.ends_with(".pkg")
 }
 
 /// The release's Snap, named for its tag, as SHA256SUMS.txt lists it exactly once.
 pub fn verify_snap(tag: &str, checksums: &str, digest: &str) -> Result<String> {
-    parse(tag.strip_prefix('v').ok_or("Missing release tag.")?)?;
-    let name = format!("KChess-{}-linux-amd64.snap", &tag[1..]);
-    let entries: Vec<&str> = checksums
-        .lines()
-        .filter(|line| line.ends_with(&format!("  {name}")))
-        .collect();
-    if entries.len() != 1 || entries[0] != format!("{digest}  {name}") {
+    let name = Asset::Snap.released(tag_version(tag)?);
+    if crate::sums::listed(checksums, &name) != [digest] {
         return Err("Snap checksum is missing, ambiguous or incorrect.".into());
     }
     Ok(name)
@@ -457,17 +457,18 @@ pub fn verify_snap(tag: &str, checksums: &str, digest: &str) -> Result<String> {
 /// SHA256SUMS.txt; only the latest release may reach the store's stable channel.
 pub fn download_snap() -> Result {
     let tag = std::env::var("RELEASE_TAG").unwrap_or_default();
-    parse(tag.strip_prefix('v').ok_or("Missing release tag.")?)?;
-    let repo = std::env::var("GH_REPO").unwrap_or_default();
+    let name = Asset::Snap.released(tag_version(&tag)?);
     let latest: serde_json::Value = serde_json::from_str(&output(
         "gh",
-        &["api", &format!("repos/{repo}/releases/latest")],
+        &[
+            "api",
+            &format!("repos/{}/releases/latest", crate::util::repository()),
+        ],
     )?)
     .map_err(|cause| cause.to_string())?;
     if latest["tag_name"] != tag.as_str() {
         return Err("Refusing to publish an older release over latest/stable.".into());
     }
-    let name = format!("KChess-{}-linux-amd64.snap", &tag[1..]);
     run(
         "gh",
         &[
@@ -484,7 +485,7 @@ pub fn download_snap() -> Result {
     )?;
     let checksums = std::fs::read_to_string(root().join("packages/SHA256SUMS.txt"))
         .map_err(|cause| cause.to_string())?;
-    let digest = crate::util::sha256_file(&root().join("packages").join(&name))?;
+    let digest = crate::sums::file(&root().join("packages").join(&name))?;
     verify_snap(&tag, &checksums, &digest).map(|_| ())
 }
 
@@ -668,15 +669,12 @@ mod tests {
             Some("- **Old**: before.")
         );
         assert_eq!(release_notes(&dated, "2026.11.5"), None);
+        // A heading with nothing under it is a section, but no release text.
+        let empty = "## 2026.11.6 (2026-11-22)\n\n## 2026.11.5 (2026-11-21)\n\n- **Fixes**: x.\n";
+        assert!(has_notes(empty, "2026.11.6"));
+        assert_eq!(release_notes(empty, "2026.11.6"), None);
         // Nothing new to say: no release yet.
         assert!(date_notes(&dated, "2026.11.5", "2026-11-21").is_err());
         assert!(date_notes("# What's new\n", "2026.11.4", "2026-11-20").is_err());
-    }
-
-    /// The notes in the repository carry the workspace version's section.
-    #[test]
-    fn the_notes_name_the_workspace_version() {
-        let notes = std::fs::read_to_string(root().join(NOTES)).unwrap();
-        assert!(has_notes(&notes, &version().unwrap()));
     }
 }

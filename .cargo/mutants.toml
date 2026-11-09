@@ -24,6 +24,9 @@ exclude_re = [
     # A patch exactly as long as the file whole: either makes the same file, and no input makes
     # bsdiff's compressed patch and bzip2's whole file the same length to test it.
     'kchess-delta/src/lib\.rs:.*: replace < with <= in build',
+    # Mutants run on x86-64, where the arm64 arm is never taken; the app's updater tests use it on
+    # the Apple Silicon runner (CI's `gpui` job on macOS), where every asset name needs it.
+    'kchess-delta/src/assets\.rs:.*: delete match arm "aarch64" in Arch::current$',
     # Every signer reads as unsigned where mutants run (Linux): `codesign` is macOS's and
     # Authenticode PowerShell's, so a staged update and the running app always match there. What
     # it calls is tested (`an_update_is_signed_as_the_app_it_replaces`, and on macOS
