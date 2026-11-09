@@ -133,18 +133,25 @@ fn start(mut run: Run, options: &Value) -> Out {
     }
     let generation = run.next_generation();
     let correspondence = options.get("days").is_some();
+    // A real-time seek from a correspondence game being played: the game it leaves, to go back to
+    // if the seek fails.
+    let left = (phase == "playing")
+        .then(|| json!({ "id": run.m.online_id, "account": run.m.online_account }));
     if !correspondence {
         run.m.online_id.clear();
         run.m.online_account = string_or(options.get("account"), &run.ctx.active_account);
         run.m.online_phase = "seeking".into();
         run.m.online_status = "Looking for an opponent…".into();
     }
-    let pending = json!({
+    let mut pending = json!({
         "op": "start",
         "generation": generation,
         "correspondence": correspondence,
         "previous": phase,
     });
+    if let Some(left) = left {
+        pending["left"] = left;
+    }
     run.done(
         None,
         Some(Call::new("startOnline", vec![options.clone()])),
@@ -281,7 +288,9 @@ fn settle(args: &[Value]) -> Out {
     }
 }
 
-/// Whether a reply to a move or action still applies: the same request, game and epoch.
+/// Whether a reply to a move or action still applies: the same request, game and epoch, and the
+/// game not over. A late reply once it finished turned the result back into "The move could not
+/// be confirmed", or showed a draw or takeback offer on a finished game.
 fn same_request(run: &Run, pending: &Value, current: bool) -> bool {
     current
         && run.m.online_phase != "finished"
