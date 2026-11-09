@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use kchess_contracts::types::OnlinePhase;
 use serde_json::Value;
 
 use super::state::{Lane, OnlineOptions};
@@ -17,7 +18,7 @@ pub(crate) struct StreamRequest {
 }
 
 pub(crate) type Emitter = Arc<dyn Fn(Value) + Send + Sync>;
-pub(crate) type Quiet = Arc<dyn Fn(&str, Option<&str>) + Send + Sync>;
+pub(crate) type Quiet = Arc<dyn Fn(OnlinePhase, Option<&str>) + Send + Sync>;
 
 /// How one `listen` runs (`ListenOptions`), with the session facts it captured at the start.
 #[derive(Clone)]
