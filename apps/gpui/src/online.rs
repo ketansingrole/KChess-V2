@@ -4,6 +4,7 @@
 //! Engine help stays off while a game is live or being looked for, and
 //! until the core has said whether one was left running (`assistanceAllowed`).
 
+use kchess_contracts::calls;
 use std::time::Duration;
 
 use gpui_kit::component::WindowExt as _;
@@ -574,9 +575,11 @@ impl OnlineState {
         if id.is_empty() || text.trim().is_empty() {
             return Task::ready(false);
         }
-        let call = cx
-            .global::<AppCore>()
-            .call("sendChat", vec![json!(id), json!(room), json!(text.trim())]);
+        let call = cx.global::<AppCore>().request(calls::SendChat {
+            id: json!(id),
+            room: json!(room),
+            text: json!(text.trim()),
+        });
         cx.spawn(async move |_, cx| match call.await {
             Ok(_) => true,
             Err(cause) => {
@@ -693,7 +696,9 @@ impl OnlineState {
         };
         let epoch = self.presence_epoch;
         self.presence_pending = true;
-        let call = cx.global::<AppCore>().call("presence", vec![ids]);
+        let call = cx
+            .global::<AppCore>()
+            .request(calls::Presence { usernames: ids });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
@@ -724,7 +729,7 @@ impl OnlineState {
             self.ongoing.clear();
             return;
         }
-        let call = cx.global::<AppCore>().call("ongoingGames", Vec::new());
+        let call = cx.global::<AppCore>().request(calls::OngoingGames {});
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
@@ -762,7 +767,7 @@ impl OnlineState {
         let wanted = cx
             .try_global::<crate::settings::SettingsHandle>()
             .is_none_or(|settings| settings.0.read(cx).settings.core.receive_challenges);
-        let joined = cx.global::<AppCore>().call("joinedTournaments", Vec::new());
+        let joined = cx.global::<AppCore>().request(calls::JoinedTournaments {});
         let active = crate::accounts::handle(cx)
             .read(cx)
             .active(cx)
@@ -783,7 +788,12 @@ impl OnlineState {
                 .or(current.last())
                 .and_then(|entry| entry["account"].as_str().map(str::to_string));
             let account = participant.unwrap_or(if wanted { active } else { String::new() });
-            if let Err(cause) = core.call("stayConnected", vec![json!(account)]).await {
+            if let Err(cause) = core
+                .request(calls::StayConnected {
+                    account: json!(account),
+                })
+                .await
+            {
                 log(&format!("staying connected failed: {}", cause.message));
             }
             if account.is_empty() {
@@ -797,7 +807,7 @@ impl OnlineState {
     }
 
     fn load_challenges(&mut self, cx: &mut Context<Self>) {
-        let call = cx.global::<AppCore>().call("challenges", Vec::new());
+        let call = cx.global::<AppCore>().request(calls::Challenges {});
         cx.spawn(async move |this, cx| {
             if let Ok(list) = call.await {
                 let _ = this.update(cx, |this, cx| {
@@ -1123,9 +1133,11 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
     let core = cx.global::<AppCore>().clone();
     let resume = async move {
         if quiet_first {
-            let _ = core.call("stayConnected", vec![json!("")]).await;
+            let _ = core
+                .request(calls::StayConnected { account: json!("") })
+                .await;
         }
-        core.call("resumeOnline", Vec::new()).await
+        core.request(calls::ResumeOnline {}).await
     };
     cx.spawn(async move |cx| {
         let resumed = resume.await;

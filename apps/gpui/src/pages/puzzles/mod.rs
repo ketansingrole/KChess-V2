@@ -2,6 +2,7 @@
 //! rated puzzles. The session's transitions are Rust (`game/puzzle.rs`); this page fetches what
 //! they ask for, plays the puzzle on the board and keeps the attempt log up to date.
 
+use kchess_contracts::calls;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
@@ -357,7 +358,7 @@ impl PuzzlesPage {
                     .record?;
                 let save = cx
                     .global::<AppCore>()
-                    .call("recordPuzzleAttempt", vec![record]);
+                    .request(calls::RecordPuzzleAttempt { attempt: record });
                 Some(
                     Box::pin(async move { save.await.map(|_| ()).map_err(|cause| cause.message) })
                         as crate::core::BoxedSave,
@@ -394,10 +395,9 @@ impl PuzzlesPage {
         let core = cx.global::<AppCore>().clone();
         let puzzle_db = cx.global::<PuzzleDbHandle>().0.clone();
         puzzle_db.update(cx, |db, cx| db.refresh(cx));
-        let progress = core.call(
-            "puzzleProgress",
-            vec![json!({ "today": local_day(), "limit": 10 })],
-        );
+        let progress = core.request(calls::PuzzleProgress {
+            query: json!({ "today": local_day(), "limit": 10 }),
+        });
         let first = !self.started;
         self.started = true;
         cx.spawn(async move |this, cx| {
@@ -521,7 +521,7 @@ impl PuzzlesPage {
     fn record(&mut self, attempt: Value, cx: &mut Context<Self>) {
         let save = cx
             .global::<AppCore>()
-            .call("recordPuzzleAttempt", vec![attempt]);
+            .request(calls::RecordPuzzleAttempt { attempt });
         cx.spawn(async move |this, cx| match save.await {
             Ok(progress) => {
                 let _ = this.update(cx, |this, cx| {

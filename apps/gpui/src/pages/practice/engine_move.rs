@@ -4,6 +4,7 @@
 
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 
 use crate::core::AppCore;
@@ -30,7 +31,9 @@ pub trait HasEngine: 'static + Sized {
 impl EngineMove {
     /// Ask whether Stockfish is installed (`engineReady`).
     pub fn check<V: HasEngine>(cx: &mut Context<V>) {
-        let status = cx.global::<AppCore>().call("engineStatus", Vec::new());
+        let status = cx
+            .global::<AppCore>()
+            .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
             let ready =
                 matches!(status.await, Ok(status) if status["ready"].as_bool() == Some(true));
@@ -59,14 +62,11 @@ impl EngineMove {
         if busy {
             engine.thinking = true;
         }
-        let search = cx.global::<AppCore>().call(
-            "bestMove",
-            vec![
-                json!(moves),
-                json!("max"),
-                json!({ "fen": fen, "movetime": movetime }),
-            ],
-        );
+        let search = cx.global::<AppCore>().request(calls::BestMove {
+            moves: json!(moves),
+            level: json!("max"),
+            options: Some(json!({ "fen": fen, "movetime": movetime })),
+        });
         let task = cx.spawn(async move |this, cx| {
             let reply = search.await;
             let _ = this.update(cx, |view, cx| {
@@ -106,7 +106,7 @@ impl EngineMove {
         if !std::mem::take(&mut self.running) {
             return;
         }
-        let stop = cx.global::<AppCore>().call("stopEngine", Vec::new());
+        let stop = cx.global::<AppCore>().request(calls::StopEngine {});
         cx.background_executor()
             .spawn(async move {
                 if let Err(cause) = stop.await {

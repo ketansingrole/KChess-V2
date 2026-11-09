@@ -6,6 +6,7 @@
 //! same starting position are one tree. An opening chosen on the Openings page is drilled without a
 //! study: its named line, then the explorer's popular moves for a few more.
 
+use kchess_contracts::calls;
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -375,7 +376,7 @@ impl Repertoire {
 
     /// The missed moves, as the core keeps them.
     fn load_misses(&mut self, cx: &mut Context<Self>) {
-        let library = cx.global::<AppCore>().call("library", Vec::new());
+        let library = cx.global::<AppCore>().request(calls::Library {});
         cx.spawn(async move |this, cx| match library.await {
             Ok(library) => {
                 let _ = this.update(cx, |this, cx| {
@@ -530,10 +531,11 @@ impl Repertoire {
                 };
                 let fen = root.node_at(&path).fen.clone();
                 let found = core
-                    .call(
-                        "positionLookup",
-                        vec![json!("opening"), json!(fen), json!({})],
-                    )
+                    .request(calls::PositionLookup {
+                        kind: json!("opening"),
+                        fen: json!(fen),
+                        options: Some(json!({})),
+                    })
                     .await;
                 let moves = match found {
                     Ok(found) => found["moves"].clone(),
@@ -917,10 +919,11 @@ impl Repertoire {
             return;
         }
         self.schedule = Value::Object(schedule);
-        let saved = cx.global::<AppCore>().call(
-            "reviewRepertoireLine",
-            vec![json!(key), json!(line), json!(correct)],
-        );
+        let saved = cx.global::<AppCore>().request(calls::ReviewRepertoireLine {
+            key: json!(key),
+            line: json!(line),
+            correct: json!(correct),
+        });
         cx.spawn(async move |this, cx| match saved.await {
             Ok(schedule) => {
                 let _ = this.update(cx, |this, cx| {
@@ -947,9 +950,10 @@ impl Repertoire {
             *table = json!({});
         }
         table[&fen] = json!(table[&fen].as_f64().unwrap_or(0.) + 1.);
-        let saved = cx
-            .global::<AppCore>()
-            .call("recordRepertoireMiss", vec![json!(key), json!(fen)]);
+        let saved = cx.global::<AppCore>().request(calls::RecordRepertoireMiss {
+            key: json!(key),
+            fen: json!(fen),
+        });
         self.keep_misses(saved, "saving a repertoire miss", cx);
     }
 
@@ -970,7 +974,7 @@ impl Repertoire {
             .filter(|table| table.as_object().is_some_and(|table| !table.is_empty()));
         let saved = cx
             .global::<AppCore>()
-            .call("clearRepertoireMisses", vec![json!(key)]);
+            .request(calls::ClearRepertoireMisses { key: json!(key) });
         self.keep_misses(saved, "clearing repertoire misses", cx);
         let Some(forgotten) = forgotten else {
             return;
@@ -984,9 +988,12 @@ impl Repertoire {
                 move |_, cx| {
                     let (key, forgotten) = (key.clone(), forgotten.clone());
                     let _ = page.update(cx, |page, cx| {
-                        let saved = cx
-                            .global::<AppCore>()
-                            .call("restoreRepertoireMisses", vec![json!(key), forgotten]);
+                        let saved =
+                            cx.global::<AppCore>()
+                                .request(calls::RestoreRepertoireMisses {
+                                    key: json!(key),
+                                    misses: forgotten,
+                                });
                         page.keep_misses(saved, "restoring repertoire misses", cx);
                     });
                 },

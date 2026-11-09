@@ -3,6 +3,7 @@
 //! them while it quits. Each command's answer comes back to its caller; the library shows the
 //! studies the answers name. A command the core refuses shows its error and what the profile keeps.
 
+use kchess_contracts::calls;
 use std::collections::HashMap;
 
 use futures::StreamExt as _;
@@ -149,9 +150,12 @@ fn write_in_order(
                 };
                 let op = command["op"].as_str().unwrap_or_default().to_string();
                 let based_on = saved_chapter(&command).and_then(|key| bases.get(&key).cloned());
-                let mut args = vec![command.clone(), json!(true)];
-                args.extend(based_on.map(Value::String));
-                let result = core.call("studyCommand", args).await.map_err(|cause| {
+                let call = calls::StudyCommand {
+                    command: command.clone(),
+                    incremental: Some(json!(true)),
+                    based_on: based_on.map(Value::String),
+                };
+                let result = core.request(call).await.map_err(|cause| {
                     crate::log::write(
                         Level::Warn,
                         "studies",
@@ -363,7 +367,7 @@ impl StudyLibrary {
         cx.spawn(async move |this, cx| {
             let _ = sent.await;
             let Ok(library) = this.update(cx, |_, cx| {
-                cx.global::<AppCore>().call("library", Vec::new())
+                cx.global::<AppCore>().request(calls::Library {})
             }) else {
                 return;
             };

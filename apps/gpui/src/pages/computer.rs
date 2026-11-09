@@ -3,6 +3,7 @@
 //! reads, runs the engine searches the game asks for, keeps the clocks moving and saves the
 //! unfinished game in the profile, to resume it.
 
+use kchess_contracts::calls;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -260,7 +261,7 @@ impl ComputerPage {
 
     /// Resume the unfinished game the profile keeps (`sessions.computer`).
     fn load(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let library = Self::core(cx).call("library", Vec::new());
+        let library = Self::core(cx).request(calls::Library {});
         cx.spawn_in(window, async move |this, cx| {
             let library = library.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -299,7 +300,9 @@ impl ComputerPage {
     fn check_engine(&mut self, cx: &mut Context<Self>) {
         self.engine = Engine::Checking;
         cx.notify();
-        let status = Self::core(cx).call("engineStatus", vec![json!(self.setup_variant())]);
+        let status = Self::core(cx).request(calls::EngineStatus {
+            variant: Some(json!(self.setup_variant())),
+        });
         cx.spawn(async move |this, cx| {
             let ready =
                 matches!(status.await, Ok(status) if status["ready"].as_bool() == Some(true));
@@ -344,7 +347,7 @@ impl ComputerPage {
         for effect in effects {
             match effect {
                 Effect::StopEngine => {
-                    let stop = Self::core(cx).call("stopEngine", Vec::new());
+                    let stop = Self::core(cx).request(calls::StopEngine {});
                     cx.background_executor()
                         .spawn(async move {
                             if let Err(cause) = stop.await {
@@ -390,14 +393,11 @@ impl ComputerPage {
             Ok(None) => return,
             Err(cause) => return self.log_warn(&cause),
         };
-        let search = Self::core(cx).call(
-            "bestMove",
-            vec![
-                json!(request.moves),
-                json!(request.level),
-                request.options.clone(),
-            ],
-        );
+        let search = Self::core(cx).request(calls::BestMove {
+            moves: json!(request.moves),
+            level: json!(request.level),
+            options: Some(request.options.clone()),
+        });
         cx.notify();
         self.search = Some(cx.spawn(async move |this, cx| {
             let reply = search.await;
@@ -767,7 +767,10 @@ impl ComputerPage {
         }
         self.save = None;
         let snapshot = self.game.snapshot(&self.host());
-        let save = Self::core(cx).call("saveSession", vec![json!("computer"), snapshot]);
+        let save = Self::core(cx).request(calls::SaveSession {
+            kind: json!("computer"),
+            session: snapshot,
+        });
         let page = cx.entity().downgrade();
         let mut cx = cx.to_async();
         Some(Box::pin(async move {

@@ -7,6 +7,7 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 
 use crate::assets::icon;
@@ -414,9 +415,9 @@ impl InsightsPage {
         self.loading = true;
         self.error = None;
         cx.notify();
-        let call = cx
-            .global::<AppCore>()
-            .call("insights", vec![self.query(cx)]);
+        let call = cx.global::<AppCore>().request(calls::Insights {
+            query: self.query(cx),
+        });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {

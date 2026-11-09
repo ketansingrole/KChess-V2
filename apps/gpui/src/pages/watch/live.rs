@@ -2,6 +2,7 @@
 //! board with ticking clocks, the moves once Lichess's delayed export lines up, the head-to-head,
 //! a channel's earlier games, and Analyse.
 
+use kchess_contracts::calls;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -266,9 +267,10 @@ impl Live {
         if !real_player(white) || !real_player(black) {
             return;
         }
-        let call = cx
-            .global::<AppCore>()
-            .call("crosstable", vec![json!(white), json!(black)]);
+        let call = cx.global::<AppCore>().request(calls::Crosstable {
+            a: json!(white),
+            b: json!(black),
+        });
         cx.spawn(async move |this, cx| {
             // Optional context: the game is watchable without it.
             if let Ok(table) = call.await

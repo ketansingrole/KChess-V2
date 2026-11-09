@@ -2,6 +2,7 @@
 //! relays, searchable; a tournament's rounds and boards with their clocks; one board followed
 //! move by move, and Analyse.
 
+use kchess_contracts::calls;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -360,7 +361,9 @@ impl Broadcasts {
         }
         self.loading = true;
         self.error = None;
-        let call = cx.global::<AppCore>().call("broadcasts", Vec::new());
+        let call = cx
+            .global::<AppCore>()
+            .request(calls::Broadcasts { query: None });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {
@@ -397,7 +400,11 @@ impl WatchPage {
         let core = cx.global::<AppCore>().clone();
         broadcasts._search = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SEARCH_DELAY).await;
-            let answer = core.call("broadcasts", vec![json!(query)]).await;
+            let answer = core
+                .request(calls::Broadcasts {
+                    query: Some(json!(query)),
+                })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 let broadcasts = &mut this.broadcasts;
                 if broadcasts.search_epoch != epoch {
@@ -438,7 +445,7 @@ impl WatchPage {
         let epoch = self.epoch;
         let call = cx
             .global::<AppCore>()
-            .call("broadcastTour", vec![json!(id)]);
+            .request(calls::BroadcastTour { id: json!(id) });
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -525,9 +532,9 @@ impl WatchPage {
         });
         self.pending = Some(Pending::Round);
         cx.notify();
-        let call = cx
-            .global::<AppCore>()
-            .call("watchBroadcast", vec![json!(round)]);
+        let call = cx.global::<AppCore>().request(calls::WatchBroadcast {
+            round_id: json!(round),
+        });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
             let _ = this.update(cx, |this, cx| {

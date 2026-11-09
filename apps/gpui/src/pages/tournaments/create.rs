@@ -7,6 +7,7 @@ use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 
 use super::TournamentsPage;
@@ -269,10 +270,10 @@ impl CreateArena {
         self.error = None;
         self.reconnect = false;
         cx.notify();
-        let call = cx.global::<AppCore>().call(
-            "createTournament",
-            vec![json!(self.account), self.arena(cx)],
-        );
+        let call = cx.global::<AppCore>().request(calls::CreateTournament {
+            account: json!(self.account),
+            arena: self.arena(cx),
+        });
         let page = self.page.clone();
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;

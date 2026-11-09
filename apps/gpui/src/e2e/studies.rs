@@ -5,6 +5,7 @@ use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
 use super::Harness;
 use crate::pages::Page;
 use crate::pages::studies::StudiesPage;
+use gpui_kit::{InputEvent as _, px};
 
 /// Let animations run their course: a dialog that is closing is gone after this.
 fn settle(app: &mut Harness) {
@@ -295,6 +296,134 @@ fn an_edited_study_is_summarized_again(cx: &mut gpui_kit::TestAppContext) {
     app.click_label("Search studies");
     app.type_text("new event");
     wait_for_listed(&mut app, &["Alpha"]);
+}
+
+/// Only the cards in view are made, laid out and drawn: fifty studies' cards (the limit) were most
+/// of opening the page. Scrolled down with the wheel, the cards coming into view are made and those
+/// left behind are let go, and the grid keeps its height, so the oldest study can be reached;
+/// scrolled back by the page itself, which asks for no frame, the first cards come back.
+#[gpui_kit::test]
+fn only_the_studies_in_view_are_made(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let saved = std::rc::Rc::new(std::cell::Cell::new(0));
+    app.cx.update(|cx| {
+        for n in 0..50 {
+            let save = cx.global::<crate::studies::StudyHandle>().0.read(cx).command(
+                serde_json::json!({ "op": "save", "name": format!("Study {n:02}"), "pgn": "1. e4 *" }),
+            );
+            let saved = saved.clone();
+            cx.spawn(async move |_| {
+                save.await.expect("the save");
+                saved.set(saved.get() + 1);
+            })
+            .detach();
+        }
+    });
+    app.wait_for("fifty studies", |_, _| saved.get() == 50);
+    app.open("Studies");
+    let listed = |app: &mut Harness| {
+        app.with_window(|window, _| {
+            window
+                .elements()
+                .iter()
+                .filter_map(|element| element.label()?.strip_prefix("Actions for "))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+    };
+    // Newest first: the last study made heads the list.
+    app.wait_for("the first cards", |window, _| {
+        window
+            .elements()
+            .iter()
+            .any(|element| element.label() == Some("Actions for Study 49"))
+    });
+    let first = listed(&mut app);
+    assert!(
+        first.len() < 50,
+        "only the cards in view are made, not {}",
+        first.len()
+    );
+    // The cards made are a run of the list, in its order: the newest first.
+    let run: Vec<String> = (0..first.len())
+        .map(|n| format!("Study {:02}", 49 - n))
+        .collect();
+    assert_eq!(first, run);
+    // Each row made is measured, its first-frame estimate is near what it measures, and the grid
+    // is as tall as every row, made or not, and the gaps between them.
+    let grid = |app: &mut Harness| {
+        app.with_window(|_, cx| {
+            crate::shell::view_of::<StudiesPage>(Page::Studies, cx)
+                .expect("the page")
+                .read(cx)
+                .grid_layout()
+        })
+    };
+    let (heights, height) = grid(&mut app);
+    let row = heights[0];
+    assert!(row > px(0.), "the first row is measured");
+    // Cards side by side are a card's width and the 16 px gap apart.
+    let card = app.with_window(|window, _| {
+        let at = |label: &str| {
+            window
+                .try_find_by_label(label)
+                .expect("a card's actions")
+                .bounds()
+                .origin
+        };
+        let (first, second) = (at("Actions for Study 49"), at("Actions for Study 48"));
+        assert_eq!(first.y, second.y, "the first two cards share a row");
+        second.x - first.x - px(16.)
+    });
+    let estimate = crate::pages::studies::estimated_row(card);
+    assert!(
+        estimate > row * 0.85 && estimate < row * 1.15,
+        "estimated {estimate:?}, measured {row:?}"
+    );
+    let rows = heights.len() as f32;
+    let whole = row * rows + px(16.) * (rows - 1.);
+    assert!(
+        (height - whole).abs() < px(1.),
+        "the grid is {height:?}, its rows {whole:?}"
+    );
+
+    // The middle of the window, over the page (the sidebar is at its left).
+    let middle = app.with_window(|window, _| {
+        let size = window.viewport_size();
+        gpui_kit::point(size.width * 0.6, size.height * 0.5)
+    });
+    let mut turns = 0;
+    while !listed(&mut app).contains(&"Study 00".to_string()) {
+        turns += 1;
+        assert!(turns < 200, "the oldest study is reached by scrolling");
+        app.with_window(|window, cx| {
+            let wheel = gpui_kit::ScrollEvent {
+                position: middle,
+                delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-300.))),
+                ..Default::default()
+            };
+            window.dispatch_event(wheel.to_platform_input(), cx);
+        });
+    }
+    let last = listed(&mut app);
+    assert!(
+        !last.contains(&"Study 49".to_string()),
+        "the cards scrolled past are let go"
+    );
+
+    app.cx.update(|cx| {
+        crate::shell::view_of::<StudiesPage>(Page::Studies, cx)
+            .expect("the page")
+            .read(cx)
+            .scroll_to_top();
+    });
+    app.wait_for("the first cards again", |window, cx| {
+        window.draw(cx).clear(cx);
+        window
+            .elements()
+            .iter()
+            .any(|element| element.label() == Some("Actions for Study 49"))
+    });
 }
 
 #[gpui_kit::test]

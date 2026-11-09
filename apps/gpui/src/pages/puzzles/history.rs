@@ -7,6 +7,7 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::{Value, json};
 
 use super::{Theme, theme_name};
@@ -255,10 +256,9 @@ impl PuzzleHistory {
     /// The tab was shown for `account` (the rated account; empty without one).
     pub fn shown(&mut self, account: String, cx: &mut Context<Self>) {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-        let progress = cx.global::<AppCore>().call(
-            "puzzleProgress",
-            vec![json!({ "today": today, "limit": 200 })],
-        );
+        let progress = cx.global::<AppCore>().request(calls::PuzzleProgress {
+            query: json!({ "today": today, "limit": 200 }),
+        });
         cx.spawn(async move |this, cx| {
             if let Ok(progress) = progress.await {
                 let _ = this.update(cx, |this, cx| {
@@ -296,9 +296,10 @@ impl PuzzleHistory {
         self.error = None;
         self.reconnect = false;
         cx.notify();
-        let activity = cx
-            .global::<AppCore>()
-            .call("puzzleActivity", vec![json!(who), json!(100)]);
+        let activity = cx.global::<AppCore>().request(calls::PuzzleActivity {
+            account: json!(who),
+            max: json!(100),
+        });
         cx.spawn(async move |this, cx| {
             let result = activity.await;
             let _ = this.update(cx, |this, cx| {

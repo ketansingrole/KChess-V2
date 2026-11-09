@@ -9,6 +9,7 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::{Map, Value, json};
 use shakmaty::Color;
 
@@ -219,7 +220,7 @@ impl HistoryPage {
             query["search"] = json!(tab.search);
         }
         let core = cx.global::<AppCore>().clone();
-        let page = core.call("gamePage", vec![query]);
+        let page = core.request(calls::GamePage { query });
         cx.spawn(async move |this, cx| {
             let page = page.await;
             let ids: Vec<Value> = page
@@ -231,7 +232,8 @@ impl HistoryPage {
             let summaries = if ids.is_empty() {
                 Ok(Value::Null)
             } else {
-                core.call("reviewSummaries", vec![json!(ids)]).await
+                core.request(calls::ReviewSummaries { ids: json!(ids) })
+                    .await
             };
             let _ = this.update(cx, |this, cx| {
                 let tab = &mut this.lichess;
@@ -323,10 +325,10 @@ impl HistoryPage {
         let read = if game["pgn"].is_string() {
             None
         } else {
-            Some(
-                cx.global::<AppCore>()
-                    .call("gamePgn", vec![game["account"].clone(), game["id"].clone()]),
-            )
+            Some(cx.global::<AppCore>().request(calls::GamePgn {
+                account: game["account"].clone(),
+                id: game["id"].clone(),
+            }))
         };
         cx.spawn_in(window, async move |this, cx| {
             let pgn = match read {

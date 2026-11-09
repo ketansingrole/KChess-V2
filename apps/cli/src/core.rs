@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kchess_contracts::Level;
+use kchess_contracts::calls::CoreCall;
 use kchess_core::{Config, Core, Host};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -221,6 +222,13 @@ impl CoreClient {
                 .await
                 .map_err(|cause| cause.message),
         }
+    }
+
+    /// A typed core call (`kchess_contracts::calls`): its method with its arguments, and its
+    /// answer read in its shape.
+    pub async fn request<C: CoreCall>(&self, call: C) -> Result<C::Answer, String> {
+        let answer = self.call(C::METHOD, call.args()).await?;
+        kchess_contracts::calls::decode::<C>(answer).map_err(|cause| cause.message)
     }
 
     /// Answers a `host:request` the core sent; other events are left to the caller.

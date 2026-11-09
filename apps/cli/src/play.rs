@@ -3,6 +3,7 @@
 //! The rules run both (`kchess-games`); the session and Game history entry are saved in the
 //! core's library as the app saves them, so either can carry the game on.
 
+use kchess_contracts::calls;
 use std::future::Future;
 use std::time::Instant;
 
@@ -330,7 +331,7 @@ impl Session<'_> {
         for effect in effects {
             match effect {
                 computer::Effect::StopEngine => {
-                    let _ = self.core.call("stopEngine", vec![]).await;
+                    let _ = self.core.request(calls::StopEngine {}).await;
                 }
                 computer::Effect::Moved { san, computer } => {
                     if computer {
@@ -361,14 +362,11 @@ impl Session<'_> {
                     return;
                 }
             };
-            let search = self.core.call(
-                "bestMove",
-                vec![
-                    json!(request.moves),
-                    json!(request.level),
-                    request.options.clone(),
-                ],
-            );
+            let search = self.core.request(calls::BestMove {
+                moves: json!(request.moves),
+                level: json!(request.level),
+                options: Some(request.options.clone()),
+            });
             let reply = answering(self.core, events, search).await;
             let host = self.host();
             let Game::Computer(game) = &mut self.game else {
@@ -598,10 +596,10 @@ async fn computer_game(
     }
 
     // The core still refuses engine help during a live game on every search.
-    core.call("resumeOnline", vec![]).await?;
+    core.request(calls::ResumeOnline {}).await?;
     // Fairy-Stockfish plays the other variants; the core says so if it is missing.
     let fairy = variant.is_some_and(|variant| !matches!(variant, "standard" | "chess960"));
-    let engine = core.call("engineStatus", vec![]).await?;
+    let engine = core.request(calls::EngineStatus { variant: None }).await?;
     if !fairy && engine["ready"] != json!(true) {
         return Err("Stockfish is unavailable. Install an engine or pass --engine.".into());
     }
@@ -698,7 +696,7 @@ pub async fn interactive(
     variant: Option<String>,
     fen: Option<String>,
 ) -> Result<(), String> {
-    let library = core.call("library", vec![]).await?;
+    let library = core.request(calls::Library {}).await?;
     let sessions = &library["sessions"];
     let started = Instant::now();
     let game = if computer {
@@ -745,7 +743,7 @@ pub async fn interactive(
 
     session.play(events).await;
     if let Game::Computer(_) = session.game {
-        let _ = core.call("stopEngine", vec![]).await;
+        let _ = core.request(calls::StopEngine {}).await;
     }
     session.persist().await;
     if session.failed {

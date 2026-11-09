@@ -1,6 +1,7 @@
 //! How long the app takes to start and to open each page over a full profile: its maximum of
 //! played games (500) and 50 studies, which the app reads to start and pages read to resume.
-//! Headless, so it times the main thread's work (reads, views, layout), not the GPU's.
+//! Headless, so it times the main thread's work (reads, views, layout), not the GPU's. Each page
+//! is also scrolled, a wheel step at a time.
 //!
 //! Not part of `check`; it prints the figures:
 //! `cargo test --release -p kchess-gpui e2e::perf -- --ignored --nocapture`, and
@@ -144,6 +145,35 @@ fn opening(app: &mut Harness, page: Page) -> f64 {
     ms(started.elapsed())
 }
 
+/// Six steps of the wheel down the open page, each timed with the frame that shows it.
+fn scroll(app: &mut Harness) -> Vec<f64> {
+    app.settle();
+    (0..6).map(|_| scrolling(app)).collect()
+}
+
+#[inline(never)]
+fn scrolling(app: &mut Harness) -> f64 {
+    use gpui_kit::InputEvent as _;
+    let started = Instant::now();
+    app.cx
+        .update_window(app.window, |_, window, cx| {
+            // Over the page: the sidebar is at the window's left.
+            let size = window.viewport_size();
+            let wheel = gpui_kit::ScrollEvent {
+                position: gpui_kit::point(size.width * 0.6, size.height * 0.5),
+                delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-300.),
+                )),
+                ..Default::default()
+            };
+            window.dispatch_event(wheel.to_platform_input(), cx);
+            draw(window, cx);
+        })
+        .expect("the window is open");
+    ms(started.elapsed())
+}
+
 #[gpui_kit::test]
 #[ignore = "a benchmark: run with --ignored --nocapture"]
 fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
@@ -161,6 +191,7 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
     }
     let mut first: Vec<Vec<f64>> = vec![Vec::new(); pages.len()];
     let mut again: Vec<Vec<f64>> = vec![Vec::new(); pages.len()];
+    let mut scrolls: Vec<Vec<f64>> = vec![Vec::new(); pages.len()];
     for _ in 0..5 {
         let profile = app.profile.take().expect("the profile");
         let next = app.cx.new_app();
@@ -173,6 +204,7 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
         }
         for (n, (page, _)) in pages.iter().enumerate() {
             again[n].push(open(&mut app, *page));
+            scrolls[n].extend(scroll(&mut app));
         }
     }
     let phase = |n: usize| median(starts.iter().map(|times| times[n]).collect());
@@ -184,9 +216,10 @@ fn start_and_open_every_page_over_a_full_profile(cx: &mut TestAppContext) {
     );
     for (n, (_, label)) in pages.iter().enumerate() {
         println!(
-            "open {label}: first {:.1} ms, again {:.1} ms",
+            "open {label}: first {:.1} ms, again {:.1} ms, scroll step {:.1} ms",
             median(first[n].clone()),
-            median(again[n].clone())
+            median(again[n].clone()),
+            median(scrolls[n].clone())
         );
     }
 }

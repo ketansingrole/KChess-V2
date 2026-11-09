@@ -7,6 +7,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::calls;
 use serde_json::Value;
 
 use super::{Theme, status_panel};
@@ -80,7 +81,7 @@ impl DailyPuzzle {
         self.error = None;
         cx.notify();
         let day = utc_day();
-        let daily = cx.global::<AppCore>().call("puzzleDaily", Vec::new());
+        let daily = cx.global::<AppCore>().request(calls::PuzzleDaily {});
         self.fetch(daily, day, cx);
     }
 
@@ -91,7 +92,9 @@ impl DailyPuzzle {
         self.error = None;
         self.puzzle = None;
         cx.notify();
-        let puzzle = cx.global::<AppCore>().call("puzzleById", vec![id.into()]);
+        let puzzle = cx
+            .global::<AppCore>()
+            .request(calls::PuzzleById { id: id.into() });
         self.fetch(puzzle, String::new(), cx);
     }
 

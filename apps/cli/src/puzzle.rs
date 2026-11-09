@@ -1,6 +1,7 @@
 //! `puzzle [id|link]`: solve Lichess's daily puzzle, or the one named, by typing moves, as on the
 //! Puzzles page.
 
+use kchess_contracts::calls;
 use kchess_domain::position::{play_san, play_uci};
 use kchess_domain::rules::setup_start;
 use kchess_games::puzzle::OnBoard;
@@ -126,8 +127,13 @@ pub async fn interactive(
     id: Option<&str>,
 ) -> Result<(), String> {
     let puzzle = match id {
-        Some(word) => core.call("puzzleById", vec![json!(named(word))]).await?,
-        None => core.call("puzzleDaily", vec![]).await?,
+        Some(word) => {
+            core.request(calls::PuzzleById {
+                id: json!(named(word)),
+            })
+            .await?
+        }
+        None => core.request(calls::PuzzleDaily {}).await?,
     };
     let mut solving =
         Solving::new(&puzzle).ok_or("Lichess sent a puzzle KChess could not read.")?;

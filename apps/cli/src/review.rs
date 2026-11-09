@@ -1,6 +1,7 @@
 //! `review <link|file|moves>`: review a game with the local engine, as the analysis board does,
 //! and print each side's accuracy and the moves Stockfish faults.
 
+use kchess_contracts::calls;
 use kchess_domain::pgn::parse_pgn;
 use kchess_domain::review::{analyse_review, san_to_uci};
 use serde_json::{Value, json};
@@ -132,7 +133,7 @@ pub async fn run(
     pgn: &str,
 ) -> Result<Value, String> {
     let line = main_line(pgn)?;
-    core.call("resumeOnline", vec![]).await?;
+    core.request(calls::ResumeOnline {}).await?;
     // A queued request answers null; the finished review arrives as an update. The core keys it
     // by its own reading of the start position, so it is recognised by its moves and position.
     let mut request = json!({ "fen": line.fen, "moves": line.moves });
@@ -140,7 +141,7 @@ pub async fn run(
     if let Some(variant) = line.variant {
         request["variant"] = json!(variant);
     }
-    let mut stored = core.call("reviewRequest", vec![request]).await?;
+    let mut stored = core.request(calls::ReviewRequest { request }).await?;
     let start = |fen: &str| fen.split(' ').take(2).collect::<Vec<_>>().join(" ");
     let ours = |review: &Value| {
         review["moves"] == json!(line.moves)
@@ -160,7 +161,7 @@ pub async fn run(
         tokio::select! {
             _ = &mut interrupted => {
                 if let Some(key) = stored["key"].as_str().or(key.as_deref()) {
-                    let _ = core.call("reviewCancel", vec![json!(key)]).await;
+                    let _ = core.request(calls::ReviewCancel { key: json!(key) }).await;
                 }
                 return Err("Review cancelled.".into());
             }

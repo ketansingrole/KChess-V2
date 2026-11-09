@@ -2,6 +2,7 @@
 //! analysis board: a new request replaces the search running (stopping it in the engine, not only
 //! dropping its answers), and only updates for the request asked last are kept.
 
+use kchess_contracts::calls;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -78,7 +79,9 @@ impl PositionEngine {
         self.error = None;
         self.busy = request.is_some();
         // Cancellation reaches the core's search, including when nothing replaces it.
-        let stopped = cx.global::<AppCore>().call("stopAnalysis", Vec::new());
+        let stopped = cx
+            .global::<AppCore>()
+            .request(calls::StopAnalysis { kill: None });
         let Some(request) = request else {
             self._start = None;
             cx.background_executor()
@@ -103,7 +106,8 @@ impl PositionEngine {
                 (engine(owner).client_id == id).then(|| {
                     let mut request = request;
                     request["clientId"] = json!(id);
-                    cx.global::<AppCore>().call("startAnalysis", vec![request])
+                    cx.global::<AppCore>()
+                        .request(calls::StartAnalysis { request })
                 })
             });
             let Ok(Some(start)) = start else {

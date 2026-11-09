@@ -2,6 +2,7 @@
 //! the position shown, their lines and the engine panel.
 
 use super::*;
+use kchess_contracts::calls;
 
 impl AnalysisPage {
     pub(crate) fn engine_on(cx: &App) -> bool {
@@ -25,7 +26,9 @@ impl AnalysisPage {
             return;
         }
         self.attached = true;
-        let status = cx.global::<AppCore>().call("engineStatus", Vec::new());
+        let status = cx
+            .global::<AppCore>()
+            .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
             let status = status.await.unwrap_or(Value::Null);
             let _ = this.update(cx, |this, cx| {
@@ -122,7 +125,9 @@ impl AnalysisPage {
         if let Some(variant) = self.fairy_variant() {
             asked["variant"] = json!(variant);
         }
-        let start = cx.global::<AppCore>().call("startAnalysis", vec![asked]);
+        let start = cx
+            .global::<AppCore>()
+            .request(calls::StartAnalysis { request: asked });
         cx.spawn(async move |this, cx| {
             let started = start.await;
             let _ = this.update(cx, |this, cx| {
@@ -257,7 +262,12 @@ impl AnalysisPage {
                 this.cloud_busy = true;
                 cx.notify();
             });
-            let answer = core.call("cloudEval", vec![json!(fen), json!(lines)]).await;
+            let answer = core
+                .request(calls::CloudEval {
+                    fen: json!(fen),
+                    lines: json!(lines),
+                })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 if request != this.cloud_request {
                     return;
@@ -737,14 +747,9 @@ pub(super) fn prefs_lines(cx: &App) -> usize {
 
 /// `stopAnalysisSafe`: stop the search; `release` also closes the engine.
 pub(super) fn stop_analysis(release: bool, cx: &mut App) {
-    let stop = cx.global::<AppCore>().call(
-        "stopAnalysis",
-        if release {
-            vec![json!(true)]
-        } else {
-            Vec::new()
-        },
-    );
+    let stop = cx.global::<AppCore>().request(calls::StopAnalysis {
+        kill: release.then(|| json!(true)),
+    });
     cx.background_executor()
         .spawn(async move {
             if let Err(cause) = stop.await {
