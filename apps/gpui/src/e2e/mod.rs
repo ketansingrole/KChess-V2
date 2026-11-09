@@ -691,6 +691,11 @@ fn engine() -> PathBuf {
         "--bin",
         "kchess-fake-uci",
     ]);
+    // Into the target folder this test runs from, which `cargo llvm-cov` moves with a flag that
+    // a nested build does not inherit.
+    build
+        .arg("--target-dir")
+        .arg(target.parent().expect("the target folder"));
     if target.file_name().is_some_and(|name| name == "release") {
         build.arg("--release");
     }

@@ -298,6 +298,11 @@ fn workspace_binary(package: &str, name: &str) -> std::path::PathBuf {
         .expect("the test executable is in target/<profile>/deps");
     let mut build = Command::new(env!("CARGO"));
     build.args(["build", "-q", "--locked", "-p", package, "--bin", name]);
+    // Into the target folder this test runs from, which `cargo llvm-cov` moves with a flag that
+    // a nested build does not inherit.
+    build
+        .arg("--target-dir")
+        .arg(target.parent().expect("the target folder"));
     if target.file_name().is_some_and(|name| name == "release") {
         build.arg("--release");
     }
