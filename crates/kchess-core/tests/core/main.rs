@@ -11,6 +11,7 @@ mod signed_in;
 #[path = "../support/mod.rs"]
 mod support;
 
+mod alert_owner;
 mod chesscom_sync;
 mod core_startup;
 mod domain_dispatch;
