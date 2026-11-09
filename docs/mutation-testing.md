@@ -31,11 +31,15 @@ survives or times out. Mutants that were already missed in untouched code are th
 so a change never has to pay off the whole backlog at once.
 
 CI splits a pull request's mutants over four runners (`--shard k/4`), two at a time on each
-(`-j 2`), and gives each runner an hour: a change whose mutants take longer is too large for one
-pull request. The app's mutants (`apps/gpui`) each rebuild the app, so pull requests leave them
+(`-j 2`), and gives each runner half an hour: a change whose mutants take longer is too large for
+one pull request. The app's mutants (`apps/gpui`) each rebuild the app, so pull requests leave them
 out; the weekly run's `gpui` job tests the mutants of the lines the past week changed in the app.
 
-You need not run it before pushing: CI does. When its `mutants` job fails, the `mutants-diff-<k>`
+The pre-push hook (`cargo xtask install-hooks`) runs it before every push of a branch, on the
+lines new since that branch's last push, and refuses the push while a mutant survives: a survivor
+costs minutes here rather than a whole CI run. It skips a push of anything but a clean HEAD, and
+clones without cargo-mutants; `KCHESS_SKIP_PRE_PUSH=1 git push …` skips it on purpose. When CI's
+`mutants` job fails, the `mutants-diff-<k>`
 artifact's `missed.txt` and `timeout.txt` name the survivors. To work on them locally,
 `--base <ref>` diffs against another commit, and arguments after `--` go to cargo-mutants
 (`-- -j 4`, `-- -p kchess-domain`, `-- --file 'crates/kchess-core/src/engine/**'`).

@@ -45,7 +45,8 @@ const HELP: &str = "cargo xtask <command>
   mutants [--base <ref>] [-- <cargo-mutants arguments>]
                         Mutation testing of the lines changed since main (or <ref>); fails
                         when a mutant survives (docs/mutation-testing.md)
-  pre-push              The Git pre-push hook (.githooks/pre-push)
+  pre-push              The Git pre-push hook (.githooks/pre-push): `check` before a push to
+                        main, the new lines' mutants before a branch push
   install-hooks         Point Git at .githooks
   release-version       Set the next YEAR.MONTH.COUNTER release in Cargo.toml (fetches tags)
   release-verify        Check the release version (and, on a tag build, the tag), and that CI
