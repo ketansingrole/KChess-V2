@@ -254,6 +254,44 @@ fn the_list_is_narrowed_by_result(cx: &mut gpui_kit::TestAppContext) {
     app.find(("history-row", 1usize));
 }
 
+/// The page keeps each game's outcome rather than asking the rules on every frame: a game saved
+/// again with another result (an unfinished game finished) shows its new one at once.
+#[gpui_kit::test]
+fn a_game_saved_again_shows_its_new_result(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let save = |app: &mut Harness, result: &str, finished: bool| {
+        let game = serde_json::json!({
+            "id": "kept", "source": "board", "startedAt": 1, "updatedAt": 2, "white": "Ann",
+            "black": "Bo", "result": result, "reason": "-", "finished": finished,
+            "timeControl": "-", "moves": ["e2e4"],
+            "setup": { "variant": "standard", "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
+        });
+        app.cx.update(|cx| {
+            let played = cx.global::<crate::played::PlayedHandle>().0.clone();
+            played.update(cx, |played, cx| played.save(game, cx));
+        });
+    };
+    save(&mut app, "*", false);
+    board_games(&mut app);
+    app.find(("history-row", 0usize));
+    // Nothing won by White yet: that filter leads nowhere.
+    app.click(("history-filter", 1usize));
+    assert_eq!(app.find(("history-filter", 1usize)).selected(), Some(false));
+    save(&mut app, "1-0", true);
+    let started = std::time::Instant::now();
+    loop {
+        app.click(("history-filter", 1usize));
+        if app.find(("history-filter", 1usize)).selected() == Some(true) {
+            break;
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "White's win is counted"
+        );
+    }
+    app.find(("history-row", 0usize));
+}
+
 #[gpui_kit::test]
 fn deleting_a_game_asks_first_and_is_kept_after_a_restart(cx: &mut gpui_kit::TestAppContext) {
     let mut app = mate_in_history(cx);

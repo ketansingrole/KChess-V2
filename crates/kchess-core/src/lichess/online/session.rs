@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
+use kchess_contracts::types::OnlinePhase;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -34,7 +35,7 @@ struct StateUpdate<'a> {
     account: &'a str,
     game_id: &'a str,
     lane: Lane,
-    phase: &'a str,
+    phase: OnlinePhase,
     message: Option<&'a str>,
     kind: Option<ErrorKind>,
 }
@@ -90,7 +91,7 @@ impl OnlineSession {
         account: &str,
         game_id: &str,
         lane: Lane,
-        phase: &str,
+        phase: OnlinePhase,
         message: Option<&str>,
     ) {
         self.emit_state_update(StateUpdate {
@@ -129,7 +130,7 @@ impl OnlineSession {
         if let Some(kind) = kind {
             payload["kind"] = json!(kind.as_str());
         }
-        let live_game = phase == "checking" || (!game_id.is_empty() && phase != "idle");
+        let live_game = super::state::reports_live_game(phase, game_id);
         self.run_state_hook(live_game, self.assistance_blocked());
         self.emit("online:state", payload);
     }
@@ -259,7 +260,7 @@ impl OnlineSession {
         &self,
         options: &Listen,
         cancel: &CancellationToken,
-        phase: &str,
+        phase: OnlinePhase,
         message: Option<&str>,
     ) {
         if cancel.is_cancelled() {
@@ -284,7 +285,7 @@ impl OnlineSession {
         &self,
         options: &Listen,
         cancel: &CancellationToken,
-        phase: &str,
+        phase: OnlinePhase,
         cause: &Failure,
     ) {
         if cancel.is_cancelled() {
@@ -325,7 +326,7 @@ impl OnlineSession {
             self.listen_state(
                 &options,
                 &cancel,
-                "disconnected",
+                OnlinePhase::Disconnected,
                 Some("Lost connection to Lichess. Reconnect to recover the game."),
             );
             if options.quiet.is_none() && !cancel.is_cancelled() {
@@ -342,7 +343,7 @@ impl OnlineSession {
         options: &Listen,
     ) {
         let mut failures: u32 = 0;
-        self.listen_state(options, cancel, "connecting", None);
+        self.listen_state(options, cancel, OnlinePhase::Connecting, None);
         while !cancel.is_cancelled() {
             let mut received = false;
             // A malformed line ends the read the way a thrown error does: the line error wins.
@@ -350,7 +351,7 @@ impl OnlineSession {
             let mut line_error: Option<String> = None;
             let mut on_open = || {
                 if options.quiet.is_some() {
-                    self.listen_state(options, cancel, "connected", None);
+                    self.listen_state(options, cancel, OnlinePhase::Connected, None);
                 }
             };
             let mut on_line = |line: &str| -> Result<(), CoreError> {
@@ -364,7 +365,7 @@ impl OnlineSession {
                 };
                 match parsed {
                     Ok(Some(event)) => {
-                        self.listen_state(options, cancel, "connected", None);
+                        self.listen_state(options, cancel, OnlinePhase::Connected, None);
                         emit(event);
                     }
                     Ok(None) => {}
@@ -402,9 +403,9 @@ impl OnlineSession {
                     let permanent = status.is_some_and(|code| code < 500 && code != 429);
                     if !options.reconnect || permanent {
                         let phase = if matches!(status, Some(401) | Some(403)) {
-                            "auth-required"
+                            OnlinePhase::AuthRequired
                         } else {
-                            "disconnected"
+                            OnlinePhase::Disconnected
                         };
                         self.listen_failed(options, cancel, phase, &cause);
                         if options.quiet.is_none() {
@@ -426,7 +427,7 @@ impl OnlineSession {
                 self.listen_state(
                     options,
                     cancel,
-                    "disconnected",
+                    OnlinePhase::Disconnected,
                     Some("The seek ended. Try finding a game again."),
                 );
                 return;
@@ -447,7 +448,7 @@ impl OnlineSession {
                 self.listen_state(
                     options,
                     cancel,
-                    "disconnected",
+                    OnlinePhase::Disconnected,
                     Some("Lost connection to Lichess. Reconnect to recover the game."),
                 );
                 if options.quiet.is_none() {
@@ -458,7 +459,7 @@ impl OnlineSession {
             self.listen_state(
                 options,
                 cancel,
-                "reconnecting",
+                OnlinePhase::Reconnecting,
                 Some("Connection interrupted. Reconnecting…"),
             );
             // Backing off ends early when the session is cancelled; the loop then exits.
@@ -487,11 +488,7 @@ impl OnlineSession {
             quiet,
             session: st.epoch,
             account: st.current_account.clone(),
-            game_id: if lane == Lane::Game {
-                st.live_game.clone()
-            } else {
-                String::new()
-            },
+            game_id: st.lane_game(lane).to_string(),
         }
     }
 
@@ -547,19 +544,18 @@ impl OnlineSession {
                 self.ongoing_changed();
                 return;
             }
-            let correspondence = event["game"]["speed"].as_str() == Some("correspondence");
-            let (live, live_correspondence) = {
-                let st = self.st();
-                (st.live_game.clone(), st.live_correspondence)
-            };
-            if game_id != live {
-                // Another game is on the board; correspondence games open only when asked for.
-                if correspondence || (!live.is_empty() && !live_correspondence) {
+            let correspondence = super::ongoing::correspondence(&event["game"]);
+            let started = self.st().started(&game_id, correspondence);
+            match started {
+                super::state::Started::OnBoard => {}
+                super::state::Started::ListedOnly => {
                     self.ongoing_changed();
                     return;
                 }
-                self.st().pending_id.clear();
-                self.begin_game(&game_id, token);
+                super::state::Started::Opens => {
+                    self.st().pending_challenge = None;
+                    self.begin_game(&game_id, token);
+                }
             }
             self.announce(&game_id, event);
             return;
@@ -569,14 +565,12 @@ impl OnlineSession {
             let game_id = event["game"]["gameId"].as_str().unwrap_or("").to_string();
             {
                 let mut st = self.st();
-                if game_id != st.live_game && game_id != st.protected_game {
+                if !st.concerns(&game_id) {
                     return;
                 }
                 // Lichess may report the finish here before the game's own stream does, and the
                 // window offers a new game on it: end the game now, as its final state would.
-                if st.live_game == game_id {
-                    st.live_game.clear();
-                }
+                st.end_live(&game_id);
                 if st.protected_game == game_id {
                     st.protected_game.clear();
                 }

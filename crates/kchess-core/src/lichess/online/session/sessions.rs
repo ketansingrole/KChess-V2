@@ -1,6 +1,7 @@
 //! Cancelling, attaching to, resuming and listing the online session's games (moved from
 //! `session.rs` without changes).
 
+use kchess_contracts::types::OnlinePhase;
 use serde_json::Value;
 
 use crate::host::Level;
@@ -21,17 +22,17 @@ impl OnlineSession {
             let mut st = self.st();
             st.attach_generation += 1;
             st.attaching_account.clear();
-            let leaving_correspondence = st.live_correspondence
-                && !st.live_game.is_empty()
-                && st.protected_game == st.live_game;
+            let leaving_correspondence = st
+                .live
+                .as_ref()
+                .is_some_and(|game| game.correspondence && st.protected_game == game.id);
             if leaving_correspondence {
                 st.protected_game.clear();
             }
             st.resume_attempt += 1;
             st.presence.clear();
             st.epoch += 1;
-            st.live_game.clear();
-            st.live_correspondence = false;
+            st.live = None;
             if let Some((_, token)) = st.lobby.take() {
                 token.cancel();
             }
@@ -43,12 +44,12 @@ impl OnlineSession {
             }
             let report = if !st.protected_game.is_empty() || st.recovery_unverified {
                 Some((
-                    "disconnected",
+                    OnlinePhase::Disconnected,
                     st.protected_game.clone(),
                     Some("Reconnect to verify the current game before using engine assistance."),
                 ))
             } else if leaving_correspondence {
-                Some(("idle", String::new(), None))
+                Some((OnlinePhase::Idle, String::new(), None))
             } else {
                 None
             };
@@ -56,12 +57,10 @@ impl OnlineSession {
             let account = st.current_account.clone();
             let phase_report =
                 report.map(|(phase, game, message)| (epoch, account, game, phase, message));
-            let cancel_pending = if st.pending_id.is_empty() {
-                None
-            } else {
-                let id = std::mem::take(&mut st.pending_id);
-                Some((id, st.current_account.clone(), st.epoch))
-            };
+            let cancel_pending = st
+                .pending_challenge
+                .take()
+                .map(|id| (id, st.current_account.clone(), st.epoch));
             (phase_report, cancel_pending)
         };
         if let Some((session, account, game, phase, message)) = phase_report {
@@ -110,7 +109,7 @@ impl OnlineSession {
 
     /// Open a known game of `account` on the board: its event stream, then its game stream.
     pub async fn attach(&self, account: &str, id: &str) -> Res<()> {
-        if self.st().live_game == id {
+        if self.st().is_live(id) {
             return Ok(());
         }
         let generation = {
@@ -148,7 +147,7 @@ impl OnlineSession {
             )));
         };
         // Another caller may have attached this game while credentials were loading.
-        if self.st().live_game == id {
+        if self.st().is_live(id) {
             return Ok(());
         }
         self.cancel_inner();
@@ -189,7 +188,7 @@ impl OnlineSession {
             &account,
             &game,
             Lane::Game,
-            "checking",
+            OnlinePhase::Checking,
             Some("Checking Lichess for an ongoing game…"),
         );
         let outcome = self.resume_body(attempt, &mut checking).await;
@@ -213,9 +212,9 @@ impl OnlineSession {
                     let phase = if checking.auth_required
                         || matches!(cause.status(), Some(401) | Some(403))
                     {
-                        "auth-required"
+                        OnlinePhase::AuthRequired
                     } else {
-                        "disconnected"
+                        OnlinePhase::Disconnected
                     };
                     self.emit_state(
                         session,
@@ -287,7 +286,7 @@ impl OnlineSession {
             st.protected_game.clear();
             (st.epoch, st.current_account.clone())
         };
-        self.emit_state(session, &account, "", Lane::Game, "idle", None);
+        self.emit_state(session, &account, "", Lane::Game, OnlinePhase::Idle, None);
         self.start_lobby();
         Ok(None)
     }
@@ -318,7 +317,7 @@ impl OnlineSession {
                     account,
                     &game,
                     Lane::Game,
-                    "auth-required",
+                    OnlinePhase::AuthRequired,
                     Some("Lichess login is unavailable. Reconnect in Settings."),
                 );
                 return Err(core(format!(
@@ -484,10 +483,10 @@ impl OnlineSession {
     pub async fn open(&self, account: &str, id: &str) -> Res<()> {
         {
             let st = self.st();
-            if st.live_game == id {
+            if st.is_live(id) {
                 return Ok(());
             }
-            if !st.live_game.is_empty() && !st.live_correspondence {
+            if st.realtime_live() {
                 return Err(core(
                     "Finish the live game on the board before opening another.",
                 ));
@@ -496,7 +495,7 @@ impl OnlineSession {
             // over; attaching another would replace its protection with the other game's.
             if !st.protected_game.is_empty()
                 && st.protected_game != id
-                && st.protected_game != st.live_game
+                && st.protected_game != st.live_id()
             {
                 return Err(core(
                     "Reconnect to your current game before opening another.",

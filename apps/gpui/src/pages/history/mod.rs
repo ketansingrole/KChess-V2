@@ -88,15 +88,38 @@ pub(crate) fn opening_name(game: &Value) -> Option<String> {
     ))
 }
 
+/// What `archivedOutcome` and `archivedPlayerSide` read of a played game: the rules check every
+/// argument in full, and a game's moves made most of that work, for each game, every frame.
+fn result_fields(game: &Value) -> Value {
+    let mut fields = serde_json::Map::new();
+    for key in ["source", "result", "finished", "white", "black"] {
+        if let Some(value) = game.get(key) {
+            fields.insert(key.to_string(), value.clone());
+        }
+    }
+    Value::Object(fields)
+}
+
 pub(crate) fn outcome(game: &Value) -> String {
-    rules("archivedOutcome", std::slice::from_ref(game))
+    rules("archivedOutcome", &[result_fields(game)])
         .ok()
         .and_then(|outcome| outcome.as_str().map(str::to_string))
         .unwrap_or_default()
 }
 
+/// The played game with this id, as it is now.
+fn played_game(id: &str, cx: &App) -> Option<Value> {
+    cx.global::<PlayedHandle>()
+        .0
+        .read(cx)
+        .games()
+        .iter()
+        .find(|game| text(game, "id") == id)
+        .cloned()
+}
+
 fn player_side(game: &Value) -> Option<Color> {
-    match rules("archivedPlayerSide", std::slice::from_ref(game))
+    match rules("archivedPlayerSide", &[result_fields(game)])
         .ok()?
         .as_str()?
     {
@@ -269,6 +292,9 @@ pub struct HistoryPage {
     search_input: Entity<InputState>,
     /// Each game's opening (`openingAt`), by its id and length, worked out once.
     openings: std::cell::RefCell<std::collections::HashMap<(String, usize), Option<String>>>,
+    /// Each played game's outcome by id, as of a revision of the played games: the list, its
+    /// filters' counts and the pages ask for every game's outcome on every frame.
+    outcomes: std::cell::RefCell<(u64, std::collections::HashMap<String, String>)>,
     /// The Lichess tab: synced games, their filters and the game open.
     lichess: lichess::LichessTab,
     /// The Bookmarks tab: the games, once read, or why they are not.
@@ -335,6 +361,7 @@ impl HistoryPage {
             search: String::new(),
             search_input,
             openings: Default::default(),
+            outcomes: Default::default(),
             lichess,
             bookmarks: None,
             bookmarks_error: None,
@@ -347,6 +374,19 @@ impl HistoryPage {
     }
 
     /// A game's opening, as `C40 King's Knight Opening`, in standard chess; worked out once.
+    /// A played game's outcome (`outcome`), kept until the played games change.
+    fn outcome_of(&self, game: &Value, cx: &App) -> String {
+        let revision = cx.global::<PlayedHandle>().0.read(cx).revision();
+        let mut kept = self.outcomes.borrow_mut();
+        if kept.0 != revision {
+            *kept = (revision, std::collections::HashMap::new());
+        }
+        kept.1
+            .entry(text(game, "id").to_string())
+            .or_insert_with(|| outcome(game))
+            .clone()
+    }
+
     fn opening(&self, game: &Value) -> Option<String> {
         let moves = game["moves"].as_array().map_or(0, Vec::len);
         let key = (text(game, "id").to_string(), moves);
@@ -406,7 +446,8 @@ impl HistoryPage {
         self.games(cx)
             .into_iter()
             .filter(|game| {
-                self.filter == Filter::All || filter_of(&outcome(game)) == Some(self.filter)
+                self.filter == Filter::All
+                    || filter_of(&self.outcome_of(game, cx)) == Some(self.filter)
             })
             .collect()
     }
@@ -838,7 +879,8 @@ impl HistoryPage {
         self.games(cx)
             .into_iter()
             .filter(|game| {
-                self.filter == Filter::All || filter_of(&outcome(game)) == Some(self.filter)
+                self.filter == Filter::All
+                    || filter_of(&self.outcome_of(game, cx)) == Some(self.filter)
             })
             .collect()
     }
@@ -1006,7 +1048,7 @@ impl HistoryPage {
                                 cx.listener(|this, _, window, cx| this.step_game(1, window, cx)),
                             ),
                     )
-                    .child(badge(&outcome(game), None, palette))
+                    .child(badge(&self.outcome_of(game, cx), None, palette))
                     .child(format!(
                         "{} vs {}",
                         text(game, "white"),
@@ -1059,7 +1101,7 @@ impl HistoryPage {
             )
             .into_any_element();
         }
-        let outcomes: Vec<String> = games.iter().map(|game| outcome(game)).collect();
+        let outcomes: Vec<String> = games.iter().map(|game| self.outcome_of(game, cx)).collect();
         let count = |filter: Filter| match filter {
             Filter::All => games.len(),
             filter => outcomes
@@ -1168,24 +1210,26 @@ impl HistoryPage {
             .take(PAGE_SIZE)
             .enumerate()
             .map(|(index, (game, outcome))| {
-                let game = (*game).clone();
-                let id = text(&game, "id").to_string();
-                let clock = text(&game, "source") == "clock";
-                let side = player_side(&game);
+                // Read in place: a row's actions find the game by its id when chosen, so a frame
+                // copies no game (four copies of each listed game's moves were made each frame).
+                let game: &Value = game;
+                let id = text(game, "id").to_string();
+                let clock = text(game, "source") == "clock";
+                let side = player_side(game);
                 let variant = game["setup"]["variant"].as_str().unwrap_or("standard");
                 // Why it ended, and the opening it reached, as a Lichess game's line has; in a
                 // narrow list, which leaves the game's column out, its variant first.
                 let details = [
                     (narrow && variant != "standard").then(|| crate::game::variant_label(variant)),
-                    Some(details(&game)),
-                    self.opening(&game).filter(|_| opening_names_shown(cx)),
+                    Some(details(game)),
+                    self.opening(game).filter(|_| opening_names_shown(cx)),
                 ]
                 .into_iter()
                 .flatten()
                 .filter(|part| !part.is_empty())
                 .collect::<Vec<_>>()
                 .join(" · ");
-                let mut kind = time_label(text(&game, "timeControl"));
+                let mut kind = time_label(text(game, "timeControl"));
                 if variant != "standard" {
                     kind.push_str(&format!(" · {}", crate::game::variant_label(variant)));
                 }
@@ -1197,7 +1241,7 @@ impl HistoryPage {
                             .min_w_0()
                             .font_weight(FontWeight::MEDIUM)
                             .children(side.map(widgets::side_dot))
-                            .child(div().min_w_0().truncate().child(opponent(&game))),
+                            .child(div().min_w_0().truncate().child(opponent(game))),
                     )
                     .when(!details.is_empty(), |cell| {
                         cell.child(
@@ -1220,8 +1264,7 @@ impl HistoryPage {
                             .text_color(palette.text_muted)
                             .child(kind),
                     );
-                let exported = game.clone();
-                let deleted = game.clone();
+                let (exported, deleted) = (id.clone(), id.clone());
                 let finished = game["finished"] == json!(true);
                 let page = cx.entity().downgrade();
                 let actions = Button::new(SharedString::from(format!("actions-{id}")))
@@ -1244,24 +1287,27 @@ impl HistoryPage {
                                     icon("download")
                                 })
                                 .on_click(move |_, _, cx| {
-                                    let _ = export_page
-                                        .update(cx, |page, cx| page.export(&exported, cx));
+                                    if let Some(game) = played_game(&exported, cx) {
+                                        let _ = export_page
+                                            .update(cx, |page, cx| page.export(&game, cx));
+                                    }
                                 }),
                         )
                         .when(finished, |menu| {
                             menu.separator().item(
                                 PopupMenuItem::new("Delete").icon(icon("trash-2")).on_click(
                                     move |_, window, cx| {
-                                        let deleted = deleted.clone();
-                                        let _ = delete_page.update(cx, |page, cx| {
-                                            page.delete(deleted, window, cx)
-                                        });
+                                        if let Some(game) = played_game(&deleted, cx) {
+                                            let _ = delete_page.update(cx, |page, cx| {
+                                                page.delete(game, window, cx)
+                                            });
+                                        }
                                     },
                                 ),
                             )
                         })
                     });
-                let opened = game.clone();
+                let opened = id.clone();
                 columns(
                     h_flex()
                         .id(("history-row", index))
@@ -1269,8 +1315,8 @@ impl HistoryPage {
                         .keyboard_focus(palette.primary)
                         .aria_label(format!(
                             "{} vs {}",
-                            text(&game, "white"),
-                            text(&game, "black")
+                            text(game, "white"),
+                            text(game, "black")
                         ))
                         .pl(px(12.))
                         .pr(px(8.))
@@ -1282,7 +1328,9 @@ impl HistoryPage {
                             row.cursor_pointer()
                                 .pressable(palette)
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_game(opened.clone(), window, cx)
+                                    if let Some(game) = played_game(&opened, cx) {
+                                        this.open_game(game, window, cx)
+                                    }
                                 }))
                         }),
                     [
@@ -1496,7 +1544,62 @@ impl Render for HistoryPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{move_count, time_label};
+    use super::{move_count, outcome, player_side, time_label};
+    use crate::game::rules;
+    use serde_json::json;
+
+    /// The rules read only a game's result fields: given those alone, each outcome and side is
+    /// what the whole game gets, for every kind of result.
+    #[test]
+    fn a_games_outcome_is_read_from_its_result_fields() {
+        let moves: Vec<&str> = ["e2e4", "e7e5"].repeat(40);
+        let game = |source: &str, white: &str, black: &str, result: &str, finished: bool| {
+            json!({
+                "id": "g", "source": source, "white": white, "black": black, "result": result,
+                "finished": finished, "reason": "-", "startedAt": 1, "updatedAt": 2,
+                "timeControl": "-", "moves": moves,
+                "setup": { "variant": "standard", "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
+            })
+        };
+        let games = [
+            game("clock", "A", "B", "*", true),
+            game("computer", "You", "Stockfish", "*", false),
+            game("computer", "You", "Stockfish", "*", true),
+            game("computer", "You", "Stockfish", "1/2-1/2", true),
+            game("computer", "You", "Stockfish", "1-0", true),
+            game("computer", "You", "Stockfish", "0-1", true),
+            game("computer", "Stockfish", "You", "1-0", true),
+            game("computer", "Stockfish", "You", "0-1", true),
+            game("board", "Ann", "Bo", "1-0", true),
+            game("board", "Ann", "Bo", "0-1", true),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for whole in &games {
+            let expected = rules("archivedOutcome", std::slice::from_ref(whole)).expect("outcome");
+            assert_eq!(json!(outcome(whole)), expected, "{whole}");
+            let side = rules("archivedPlayerSide", std::slice::from_ref(whole)).expect("side");
+            let named = player_side(whole).map(|color| match color {
+                shakmaty::Color::White => "white",
+                shakmaty::Color::Black => "black",
+            });
+            assert_eq!(json!(named), side, "{whole}");
+            seen.insert(outcome(whole));
+        }
+        // Every kind of outcome is among them.
+        assert_eq!(
+            seen.into_iter().collect::<Vec<_>>(),
+            [
+                "black",
+                "clock",
+                "draw",
+                "loss",
+                "ongoing",
+                "unfinished",
+                "white",
+                "win"
+            ]
+        );
+    }
 
     #[test]
     fn time_controls_read_in_minutes() {
