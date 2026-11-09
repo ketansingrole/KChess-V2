@@ -408,7 +408,7 @@ impl ComputerPage {
     fn search_finished(
         &mut self,
         request: &SearchRequest,
-        reply: Result<Value, kchess_core::CoreError>,
+        reply: Result<Value, kchess_contracts::CoreError>,
         cx: &mut Context<Self>,
     ) {
         let host = self.host();

@@ -76,7 +76,7 @@ fn format_of(bytes: &[u8]) -> Option<ImageFormat> {
 
 fn client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
-        .user_agent(kchess_core::USER_AGENT)
+        .user_agent(kchess_contracts::USER_AGENT)
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(20))
         // A redirect could lead off Lichess's hosts.

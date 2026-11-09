@@ -132,7 +132,7 @@ impl SettingsPage {
                     cx.spawn(async move |cx| {
                         if let Err(cause) = reset.await {
                             crate::log::write(
-                                kchess_core::Level::Warn,
+                                kchess_contracts::Level::Warn,
                                 "usage",
                                 &format!("Resetting usage failed: {}", cause.message),
                             );
@@ -176,7 +176,7 @@ impl SettingsPage {
                     Ok(_) => "Local scores and progress cleared".into(),
                     Err(cause) => {
                         crate::log::write(
-                            kchess_core::Level::Warn,
+                            kchess_contracts::Level::Warn,
                             "settings",
                             &format!("Clearing local scores failed: {}", cause.message),
                         );
@@ -218,7 +218,7 @@ impl SettingsPage {
                     Some(Ok(())) => Some("Diagnostics exported".into()),
                     Some(Err(cause)) => {
                         crate::log::write(
-                            kchess_core::Level::Warn,
+                            kchess_contracts::Level::Warn,
                             "settings",
                             &format!("Diagnostics export failed: {cause}"),
                         );

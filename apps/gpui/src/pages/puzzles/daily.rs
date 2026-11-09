@@ -113,7 +113,7 @@ impl DailyPuzzle {
 
     fn fetch(
         &mut self,
-        request: impl std::future::Future<Output = Result<Value, kchess_core::CoreError>> + 'static,
+        request: impl std::future::Future<Output = Result<Value, kchess_contracts::CoreError>> + 'static,
         day: String,
         cx: &mut Context<Self>,
     ) {
@@ -136,7 +136,7 @@ impl DailyPuzzle {
                     }
                     Err(cause) => {
                         crate::log::write(
-                            kchess_core::Level::Warn,
+                            kchess_contracts::Level::Warn,
                             "puzzles",
                             &format!("loading a puzzle failed: {}", cause.message),
                         );

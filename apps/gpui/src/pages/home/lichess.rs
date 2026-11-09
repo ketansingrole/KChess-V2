@@ -192,7 +192,7 @@ impl LichessActivity {
                             .update(cx, |chart, cx| chart.set_official(history, cx));
                     }
                     (Err(cause), _) | (_, Err(cause)) => crate::log::write(
-                        kchess_core::Level::Warn,
+                        kchess_contracts::Level::Warn,
                         "account-profile",
                         &format!("loading profile failed: {}", cause.message),
                     ),
