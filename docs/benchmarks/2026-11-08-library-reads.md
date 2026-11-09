@@ -89,6 +89,27 @@ What is left is drawing the 50 cards (the limit), 21 ms with nothing to summariz
 first opening is laying them out. Drawing only the cards in view would take most of it, but cards
 off screen would then be out of reach of Tab and screen readers until scrolled to.
 
+### Studies: only the cards in view
+
+After the summaries, laying out the 50 cards was 37% of opening the page, and every wheel step
+re-rendered all of them. The page now makes the rows of cards its viewport shows and as much again
+above and below; spaces as tall as the rows left out keep the grid's height. Each row records its
+measured height for the card width it was laid out at: a row measured at the first frame's width
+and then scrolled out of view made the grid 18.5 px short until this was added
+(`e2e::studies::only_the_studies_in_view_are_made` checks the grid is as tall as its rows). Cards
+out of view are not reachable by Tab or a screen reader until scrolled to; that trade was asked for.
+
+`e2e::perf` now also times six 300 px wheel steps on every page. `main` (`dc566eb`) against this
+change, medians of 3 alternating runs of the whole tour:
+
+| Studies | main | After | Change |
+| ------- | ---: | ----: | -----: |
+| First opening | 33.7 ms | 16.1 ms | **2.1×** |
+| Again | 26.4 ms | 12.5 ms | **2.1×** |
+| A wheel step | 21.2 ms | 9.3 ms | **2.3×** |
+
+No other page's figures moved beyond the runs' spread or a fraction of a millisecond.
+
 ## Looked at and left
 
 **Pages of synced games, newest to oldest.** Game history pages with `LIMIT … OFFSET …`, which
@@ -101,4 +122,5 @@ them flat, but at 3 ms there is nothing a player could notice.
 ```bash
 cargo test --release -p kchess-core --test store_speed -- --ignored --nocapture
 cargo test --release -p kchess-gpui e2e::perf -- --ignored --nocapture
+KCHESS_PERF_PAGES=Studies,Home cargo test --release -p kchess-gpui e2e::perf -- --ignored --nocapture
 ```
