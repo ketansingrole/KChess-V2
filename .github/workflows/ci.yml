@@ -229,11 +229,19 @@ jobs:
       - id: vendor
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
+          # Their libraries are named gpui, gpui_apple, gpui_macos and gpui_windows.
           path: |
-            target/**/deps/*gpui_pre*
+            target/**/deps/libgpui-*
+            target/**/deps/gpui-*.d
+            target/**/deps/libgpui_apple-*
+            target/**/deps/gpui_apple-*.d
+            target/**/deps/libgpui_macos-*
+            target/**/deps/gpui_macos-*.d
+            target/**/deps/libgpui_windows-*
+            target/**/deps/gpui_windows-*.d
             target/**/.fingerprint/gpui-pre*
             target/**/build/gpui-pre*
-          key: vendor-gpui-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}
+          key: vendor-gpui-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}
       - if: runner.os != 'Linux'
         run: cargo clippy -p kchess-gpui --all-targets --locked -- -D warnings
       # The app's tests under `cargo test`: each starts GPUI, so a process per test (nextest) is slower.
@@ -241,8 +249,16 @@ jobs:
       - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
+          # Their libraries are named gpui, gpui_apple, gpui_macos and gpui_windows.
           path: |
-            target/**/deps/*gpui_pre*
+            target/**/deps/libgpui-*
+            target/**/deps/gpui-*.d
+            target/**/deps/libgpui_apple-*
+            target/**/deps/gpui_apple-*.d
+            target/**/deps/libgpui_macos-*
+            target/**/deps/gpui_macos-*.d
+            target/**/deps/libgpui_windows-*
+            target/**/deps/gpui_windows-*.d
             target/**/.fingerprint/gpui-pre*
             target/**/build/gpui-pre*
           key: ${{ steps.vendor.outputs.cache-primary-key }}
@@ -395,6 +411,10 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           SHARD: ${{ matrix.shard }}
+          # Each mutant rebuilds its package with one small edit: incrementally, its build takes a
+          # third of the time (2026-11-09, 43 kchess-domain mutants: 6.0 s against 2.1 s each, the
+          # same outcomes). rust-cache turns incremental builds off for the job.
+          CARGO_INCREMENTAL: 1
         run: >-
           cargo xtask mutants --base "$(git merge-base "$BASE" HEAD)"
           -- --shard "$SHARD/4" -j 2 --exclude 'apps/gpui/**'
