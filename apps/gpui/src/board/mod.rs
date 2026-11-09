@@ -538,12 +538,19 @@ impl ChessBoard {
             self.pieces = next;
             self.promotion = None;
         }
-        // A selection survives only while its piece can still move.
+        // A selection, and a promotion being chosen, survive only while their piece can still
+        // move: a game that ended on the same position left the picker open, still playing.
         if self
             .selected
             .is_some_and(|square| !state.dests.contains_key(&square))
         {
             self.selected = None;
+        }
+        if self
+            .promotion
+            .is_some_and(|(from, _)| !state.dests.contains_key(&from))
+        {
+            self.promotion = None;
         }
         if self
             .selected_drop
@@ -2466,6 +2473,23 @@ mod keyboard_tests {
             keyboard::promotion_key(3, "enter"),
             Some(keyboard::PromotionKey::Pick(Role::Knight))
         );
+    }
+
+    /// The pieces to promote to were left on offer when the game ended on the same position, and
+    /// picking one still played the move.
+    #[gpui_kit::test]
+    fn the_promotion_picker_closes_when_its_pawn_can_no_longer_move(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use gpui_kit::AppContext as _;
+        let fen = "4k3/P7/8/8/8/8/8/4K3 w - - 0 1";
+        let board = cx.new(|_| board(fen, "standard", Color::White));
+        let open = board.update(cx, |board, cx| {
+            board.promotion = Some((Square::A7, Square::A8));
+            board.set_state(BoardState::shown(fen, "standard", Color::White, None), cx);
+            board.promotion
+        });
+        assert_eq!(open, None);
     }
 
     /// A pocket piece picked, Enter drops it on the cursor's square where it may land.

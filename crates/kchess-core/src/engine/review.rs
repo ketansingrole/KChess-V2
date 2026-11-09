@@ -1363,8 +1363,9 @@ async fn search_once(
             {
                 return Err(search_cancelled());
             }
-            // Threads is constant within a job (1 in the background, the budget otherwise), so
-            // confirming it once avoids a round-trip per position. Chess960 is always on, as for
+            // Threads follows the job: 1 in the background, the budget once someone asks for it
+            // (a promoted job speeds up mid-review). `ensure_options` sends it only when it
+            // changes, so there is no round-trip per position. Chess960 is always on, as for
             // analysis: castling is king-takes-rook in the moves, and an engine in standard mode
             // reads that as an illegal move (the bundled engine then never answers `go`).
             let threads = if job.background.load(Ordering::SeqCst) {
