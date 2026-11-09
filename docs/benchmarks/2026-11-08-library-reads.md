@@ -110,6 +110,37 @@ change, medians of 3 alternating runs of the whole tour:
 
 No other page's figures moved beyond the runs' spread or a fraction of a millisecond.
 
+### Game history: outcomes and opening names
+
+Profiled over 500 played games, a wheel step of Game history spent 20% working out every game's
+outcome (each frame, for the list and its filters' counts) and its rows copied each listed game,
+moves and all, four times a frame; its first opening spent 16% naming openings.
+
+- The page asked `archivedOutcome` for each game with the whole game, which the rules check in
+  full; it now keeps each game's outcome by id for one revision of the played games
+  (`PlayedGames::revision`, bumped by every change), and asks with the five fields the outcome is
+  read from when it must. `e2e::history::a_game_saved_again_shows_its_new_result` fails with an
+  outcome kept across a change.
+- A row reads its game in place; its actions find the game by its id when chosen.
+- `openingAt` wrote a FEN after every move. A position is now written out only when its placement
+  (the pieces and the side to move) is that of a named position, a filter coarser than the
+  table's key, so it never turns a named position away. Tested against the old lookup on every
+  seventh named line at each move and on 300 random games; the corpus's 200 recorded answers
+  still hold.
+
+`main` (`c05fe2a`) against this change, `KCHESS_PERF_PAGES="Game history,Home"`, 5 alternating
+runs, medians (ranges):
+
+| Game history | main | After | Change |
+| ------------ | ---: | ----: | -----: |
+| First opening | 17.4 ms (17.0–17.8) | 15.3 ms (15.1–15.8) | 1.14× |
+| Again | 13.3 ms (12.7–13.5) | 11.2 ms (11.0–11.5) | 1.19× |
+| A wheel step | 8.7 ms (8.4–9.0) | 6.7 ms (6.6–7.0) | 1.30× |
+
+What is left is mostly laying the page out again (38% of a wheel step). A part of the page drawn
+as a cached view is reused only at the same place in the window, so a scrolled list cannot reuse
+its last frame without a change to GPUI's view cache.
+
 ## Looked at and left
 
 **Pages of synced games, newest to oldest.** Game history pages with `LIMIT … OFFSET …`, which
