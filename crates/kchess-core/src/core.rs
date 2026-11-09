@@ -75,6 +75,8 @@ pub struct Core {
     /// The client listening through `voice`: one microphone at a time. Held across each
     /// recognizer call, so a change of owner and the session it starts or ends happen together.
     pub(crate) voice_owner: Arc<AsyncMutex<Option<u64>>>,
+    /// The offline speech model `voice` loads: downloaded and verified once per profile.
+    pub(crate) voice_model: crate::voice::VoiceModelCache,
     /// Network accounting counters, batched before they reach the database.
     pub(crate) usage: Arc<UsageBatch>,
     /// Managed engine installs and deletes in progress, by request id; `true` cancels one.
@@ -262,6 +264,13 @@ impl Core {
             config.voice_helper_path.clone(),
             crate::voice::model_dir(&config.data_dir),
         ));
+        let (voice_archive, voice_model) = crate::voice::active_model();
+        let voice_model = crate::voice::VoiceModelCache::new(
+            Arc::clone(&host),
+            crate::voice::cache_dir(&config.data_dir),
+            voice_archive,
+            voice_model,
+        );
         let chesscom = crate::chesscom::Chesscom::new(
             Arc::clone(&database),
             Arc::clone(&services_host),
@@ -278,6 +287,7 @@ impl Core {
             puzzles: PuzzleService::new(config, services_host),
             voice,
             voice_owner: Arc::new(AsyncMutex::new(None)),
+            voice_model,
             host,
             capabilities,
             database,

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui_kit::*;
-use kchess_core::voice::{self as model, VoiceModelCache};
+use kchess_contracts::voice as model;
 use serde_json::{Value, json};
 
 use crate::core::AppCore;
@@ -120,32 +120,8 @@ pub fn handle(cx: &App) -> Entity<Voice> {
     cx.global::<VoiceHandle>().0.clone()
 }
 
-/// Something only the app needs to hear from the voice model's download.
-struct QuietHost;
-
-impl kchess_core::Host for QuietHost {
-    fn log(&self, level: kchess_core::Level, scope: &str, message: &str) {
-        crate::log::write(level, scope, message);
-    }
-
-    fn emit(&self, _: &str, _: Value) {}
-}
-
-/// The profile's voice model (`VoiceModelCache` in the core).
-fn model_cache() -> &'static VoiceModelCache {
-    static CACHE: std::sync::OnceLock<VoiceModelCache> = std::sync::OnceLock::new();
-    CACHE.get_or_init(|| {
-        // Tests share one cache, first made on a core thread, where the test's own profile
-        // (thread-local) is not set and `data_dir` would be the real profile: a scratch folder of
-        // the test process's own instead.
-        #[cfg(test)]
-        let dir = std::env::temp_dir().join(format!("kchess-test-voice-{}", std::process::id()));
-        #[cfg(not(test))]
-        let dir = crate::profile::data_dir().unwrap_or_default().join("voice");
-        let (archive, official) = model::active_model();
-        VoiceModelCache::new(Arc::new(QuietHost), dir, archive, official)
-    })
-}
+/// Receives each progress report of the model's download (`voicemodel:progress`).
+pub type Listener = Arc<dyn Fn(&model::Progress) + Send + Sync>;
 
 /// Whether the offline model is installed, or being prepared (`voiceModelStatus`).
 pub fn model_status(cx: &App) -> impl Future<Output = Option<model::Status>> + 'static + use<> {
@@ -192,17 +168,11 @@ fn progress_of(event: &crate::core::CoreEvent) -> Option<model::Progress> {
 
 /// Download and prepare the model ahead of use; `progress` hears how far.
 pub fn download_model(
-    progress: model::Listener,
-    cx: &App,
+    progress: Listener,
+    cx: &mut App,
 ) -> impl Future<Output = Option<Result<(), String>>> + 'static + use<> {
-    let bridge = Arc::clone(&cx.global::<AppCore>().bridge);
-    bridge.spawn(async move {
-        model_cache()
-            .ensure(Some(progress))
-            .await
-            .map(|_| ())
-            .map_err(|cause| cause.message)
-    })
+    let install = install_model(progress, cx);
+    async move { Some(install.await.map_err(|cause| cause.message)) }
 }
 
 /// The real words' average confidence: noise markers would sink a clearly heard command, and a
@@ -371,11 +341,10 @@ impl Voice {
         cx.notify();
         let (progress, mut progress_updates) =
             futures::channel::mpsc::unbounded::<model::Progress>();
-        let listener: model::Listener = Arc::new(move |update: &model::Progress| {
+        let listener: Listener = Arc::new(move |update: &model::Progress| {
             let _ = progress.unbounded_send(update.clone());
         });
-        let bridge = Arc::clone(&cx.global::<AppCore>().bridge);
-        let ensure = bridge.spawn(async move { model_cache().ensure(Some(listener)).await });
+        let ensure = install_model(listener, cx).map(Some);
         let epoch = self.epoch;
         cx.spawn(async move |this, cx| {
             let watch = {
@@ -767,7 +736,7 @@ pub fn grammar(name: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ErrorKind, grammar, handle, heard_of};
+    use super::{ErrorKind, grammar, handle, heard_of, model, progress_of};
     use crate::e2e::Harness;
     use kchess_contracts::CoreError;
     use serde_json::{Value, json};
@@ -806,6 +775,28 @@ mod tests {
             })
         });
         assert_eq!(after, before);
+    }
+
+    #[test]
+    fn only_the_model_s_progress_reaches_its_listener() {
+        let event = |name: &str, payload: Value| crate::core::CoreEvent {
+            name: name.into(),
+            payload,
+        };
+        let report = json!({ "phase": "downloading", "received": 3, "total": 9 });
+        assert_eq!(
+            progress_of(&event("voicemodel:progress", report.clone())),
+            Some(model::Progress {
+                phase: model::Phase::Downloading,
+                received: 3,
+                total: Some(9),
+            })
+        );
+        assert_eq!(progress_of(&event("puzzledb:progress", report)), None);
+        assert_eq!(
+            progress_of(&event("voicemodel:progress", json!("noise"))),
+            None
+        );
     }
 
     #[test]
