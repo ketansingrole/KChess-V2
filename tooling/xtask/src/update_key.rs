@@ -16,7 +16,8 @@ fn key_file() -> std::path::PathBuf {
     root().join("apps/gpui/update-key.pub")
 }
 
-/// The committed public key, if one has been made.
+/// The committed public key, if one has been made: the base64 of 32 bytes on the file's one line
+/// that is not a comment, as the app reads it (`apps/gpui/src/updates.rs`, `parse_update_key`).
 pub fn public_key() -> Option<Vec<u8>> {
     let text = std::fs::read_to_string(key_file()).ok()?;
     let line = text
@@ -27,6 +28,15 @@ pub fn public_key() -> Option<Vec<u8>> {
         .decode(line)
         .ok()
         .filter(|key| key.len() == 32)
+}
+
+/// The committed public key, which every release step that signs or checks needs.
+pub fn require_public_key() -> Result<Vec<u8>> {
+    public_key().ok_or_else(|| {
+        "apps/gpui/update-key.pub holds no release key, so installed apps could not tell a \
+         release's checksums from replaced ones. Run `cargo xtask update-key`."
+            .into()
+    })
 }
 
 /// `update-key <secret file>`: make the pair, write the secret half to `secret` (owner-only,
@@ -98,9 +108,13 @@ fn write_private(path: &Path, text: &str) -> Result {
 /// `<file>.sig`, and check the signature against the committed public key, so a wrong secret
 /// fails the release instead of every app's update.
 pub fn sign(file: &Path) -> Result {
-    let public = public_key()
-        .ok_or("apps/gpui/update-key.pub holds no key: run `cargo xtask update-key` first.")?;
-    let secret = std::env::var(SECRET).map_err(|_| format!("{SECRET} is not set."))?;
+    sign_with(file, std::env::var(SECRET).ok(), &require_public_key()?)
+}
+
+/// `sign` with `secret` (base64 PKCS#8) as the release job's secret and `public` as the committed
+/// key.
+fn sign_with(file: &Path, secret: Option<String>, public: &[u8]) -> Result {
+    let secret = secret.ok_or_else(|| format!("{SECRET} is not set."))?;
     let pkcs8 = base64::engine::general_purpose::STANDARD
         .decode(secret.trim())
         .map_err(|_| format!("{SECRET} is not base64."))?;
@@ -108,7 +122,7 @@ pub fn sign(file: &Path) -> Result {
         .map_err(|_| format!("{SECRET} is not an Ed25519 key."))?;
     let sums = std::fs::read(file).map_err(|cause| format!("{}: {cause}", file.display()))?;
     let signature = signature_of(&pair, &sums);
-    check(&public, &sums, &signature)?;
+    check(public, &sums, &signature)?;
     let mut target = file.as_os_str().to_owned();
     target.push(".sig");
     std::fs::write(&target, format!("{signature}\n")).map_err(|cause| cause.to_string())?;
@@ -147,5 +161,54 @@ mod tests {
         assert!(check(ours.public_key().as_ref(), b"sums", &signature).is_ok());
         assert!(check(ours.public_key().as_ref(), b"other", &signature).is_err());
         assert!(check(theirs.public_key().as_ref(), b"sums", &signature).is_err());
+    }
+
+    /// The committed key is the one release steps get: 32 bytes, as the app reads them.
+    #[test]
+    fn the_release_key_is_the_committed_one() {
+        let key = require_public_key().unwrap();
+        assert_eq!(key.len(), 32);
+        assert_eq!(Some(key), public_key());
+    }
+
+    /// The release job's secret signs the sums into `<file>.sig`, checked against the committed
+    /// key first: a secret that is not the key's is refused, and nothing is written.
+    #[test]
+    fn the_checksums_are_signed_by_the_release_key_only() {
+        let random = ring::rand::SystemRandom::new();
+        let ours = Ed25519KeyPair::generate_pkcs8(&random).unwrap();
+        let pair = Ed25519KeyPair::from_pkcs8(ours.as_ref()).unwrap();
+        let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+        let dir = tempfile::tempdir().unwrap();
+        let sums = dir.path().join("SHA256SUMS.txt");
+        std::fs::write(&sums, "abc  KChess.deb\n").unwrap();
+        let signature = dir.path().join("SHA256SUMS.txt.sig");
+        let theirs = Ed25519KeyPair::generate_pkcs8(&random).unwrap();
+        assert!(
+            sign_with(
+                &sums,
+                Some(encode(theirs.as_ref())),
+                pair.public_key().as_ref()
+            )
+            .unwrap_err()
+            .contains("does not match")
+        );
+        assert!(sign_with(&sums, None, pair.public_key().as_ref()).is_err());
+        assert!(!signature.exists());
+        sign_with(
+            &sums,
+            Some(encode(ours.as_ref())),
+            pair.public_key().as_ref(),
+        )
+        .unwrap();
+        let written = std::fs::read_to_string(&signature).unwrap();
+        assert!(
+            check(
+                pair.public_key().as_ref(),
+                b"abc  KChess.deb\n",
+                written.trim()
+            )
+            .is_ok()
+        );
     }
 }

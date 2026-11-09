@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    Delta, Entry, Error, MAX_HEADER, Node, Source, Tree, build, digest, file_digest, name,
+    Arch, Asset, Delta, Entry, Error, MAX_HEADER, Node, Source, Tree, build, digest, file_digest,
+    name,
 };
 
 fn scratch(name: &str) -> PathBuf {
@@ -331,6 +332,76 @@ fn a_delta_is_named_after_its_package_and_base() {
         Some("KChess-2026.11.5-win-x64.from-2026.11.4.delta")
     );
     assert_eq!(name("KChess-2026.11.5-mac-arm64.dmg", "2026.11.4"), None);
+    assert_eq!(
+        name("KChess-2026.11.5-win-x64-update.exe", "2026.11.4"),
+        None
+    );
+    assert_eq!(name("notes.exe", "2026.11.4"), None);
+}
+
+/// The names installed apps ask releases for: never change them.
+#[test]
+fn every_package_keeps_the_name_installations_ask_for() {
+    let released: Vec<String> = Asset::ALL
+        .into_iter()
+        .map(|asset| asset.released("2026.11.5"))
+        .collect();
+    assert_eq!(
+        released,
+        [
+            "KChess-2026.11.5-mac-arm64.zip",
+            "KChess-2026.11.5-mac-arm64.dmg",
+            "KChess-2026.11.5-mac-arm64.pkg",
+            "KChess-2026.11.5-win-x64.exe",
+            "KChess-2026.11.5-win-x64-update.exe",
+            "KChess-2026.11.5-linux-x86_64.AppImage",
+            "KChess-2026.11.5-linux-amd64.deb",
+            "KChess-2026.11.5-linux-amd64.snap",
+        ]
+    );
+    assert_eq!(
+        Asset::AppImage.name("2026.11.5", Arch::Arm64),
+        "KChess-2026.11.5-linux-arm64.AppImage"
+    );
+    assert_eq!(
+        Asset::MacZip.name("2026.11.5", Arch::X64),
+        "KChess-2026.11.5-mac-x64.zip"
+    );
+}
+
+#[test]
+fn packages_are_made_for_this_machine() {
+    let expected = match std::env::consts::ARCH {
+        "aarch64" => Some(Arch::Arm64),
+        "x86_64" => Some(Arch::X64),
+        _ => None,
+    };
+    assert_eq!(Arch::current(), expected);
+}
+
+#[test]
+fn a_package_is_known_by_its_name() {
+    for asset in Asset::ALL {
+        for arch in [Arch::Arm64, Arch::X64] {
+            let name = asset.name("2026.11.5", arch);
+            assert_eq!(
+                Asset::parse(&name),
+                Some((asset, "2026.11.5", arch)),
+                "{name}"
+            );
+        }
+    }
+    for other in [
+        "SHA256SUMS.txt",
+        "latest-mac.yml",
+        "KChess-2026.11.5-linux-amd64.from-2026.11.4.delta",
+        "KChess-Preview-2026.10.1-win-x64.exe",
+        "KChess--win-x64.exe",
+        "KChess-2026.11.5-win-x86.exe",
+        "Other-2026.11.5-win-x64.exe",
+    ] {
+        assert_eq!(Asset::parse(other), None, "{other}");
+    }
 }
 
 /// A file replaced by unrelated bytes comes whole: its patch would be no smaller.

@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::util::{Result, root, say};
+use crate::util::{Result, git, merge_base, root, say, succeeds};
 
 /// Where the diff cargo-mutants reads is written, under the (ignored) target directory.
 const DIFF: &str = "target/mutants-diff.patch";
@@ -20,8 +20,7 @@ fn base_of(repo: &Path, args: &[String]) -> Result<String> {
             .get(at + 1)
             .cloned()
             .ok_or_else(|| "--base needs a commit or branch.".to_string()),
-        None => git(repo, &["merge-base", "HEAD", "origin/main"], &[0])
-            .map(|text| text.trim().to_string()),
+        None => merge_base(repo),
     }
 }
 
@@ -37,25 +36,6 @@ fn passed_through(args: &[String]) -> &[String] {
 fn changes_rust(diff: &str) -> bool {
     diff.lines()
         .any(|line| line.starts_with("+++ b/") && line.ends_with(".rs"))
-}
-
-/// Git's output in `repo`, when it exits with one of the `accepted` statuses.
-fn git(repo: &Path, args: &[&str], accepted: &[i32]) -> Result<String> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .output()
-        .map_err(|cause| format!("Could not run git: {cause}"))?;
-    match out.status.code() {
-        Some(code) if accepted.contains(&code) => {
-            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-        }
-        _ => Err(format!(
-            "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        )),
-    }
 }
 
 /// Git colours a moved block's lines with these, and no other line: `-c` settings that override
@@ -250,15 +230,9 @@ fn mutants_args(diff: &str, nextest: bool, extra: &[String]) -> Vec<String> {
     args
 }
 
-/// Whether `cargo <args>` runs and succeeds in `repo`, quietly.
+/// Whether `cargo <args>` runs and succeeds in `repo`.
 fn cargo_has(cargo: &str, repo: &Path, args: &[&str]) -> bool {
-    Command::new(cargo)
-        .args(args)
-        .current_dir(repo)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+    succeeds(Command::new(cargo).args(args).current_dir(repo))
 }
 
 /// `mutants [--base <ref>] [-- <cargo-mutants arguments>]`.
@@ -266,7 +240,7 @@ pub fn run(args: &[String]) -> Result {
     run_in(&root(), "cargo", args)
 }
 
-/// `mutants` in `repo`, with `cargo` as the cargo to run.
+/// `run` in `repo`, with `cargo` as the cargo to run (a stand-in in the tests).
 fn run_in(repo: &Path, cargo: &str, args: &[String]) -> Result {
     if !cargo_has(cargo, repo, &["mutants", "--version"]) {
         return Err("cargo-mutants is not installed: `cargo install cargo-mutants`.".into());

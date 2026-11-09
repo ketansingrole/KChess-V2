@@ -67,6 +67,8 @@ jobs:
           fi
           echo "Release commit: $release"
           echo "release=$release" >> "$GITHUB_OUTPUT"
+      # The packaging jobs by their names (`package (<os>)`, `snap / …`, `windows-upgrade / …`):
+      # renaming one of them needs this pattern changed too.
       - id: packaged
         if: github.event_name == 'push'
         env:
@@ -85,7 +87,9 @@ jobs:
       - id: diff
         env:
           BASE: ${{ github.event.pull_request.base.sha || steps.packaged.outputs.sha }}
-          PACKAGING: '^(Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.cargo/|apps/gpui/build\.rs$|apps/gpui/build/|crates/kchess-voice/|tooling/xtask/src/(package/|voice\.rs$|fairy\.rs$|licenses\.rs$)|tooling/windows-upgrade-test\.ps1$|\.github/actions/|\.github/workflows/(ci|release|snap-build|windows-upgrade)\.yml$)'
+          # The files packaging is made from; xtask's `packaging_changes_run_the_package_jobs`
+          # checks it names each of xtask's.
+          PACKAGING: '^(Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.cargo/|apps/gpui/build\.rs$|apps/gpui/build/|crates/kchess-voice/|crates/kchess-delta/|tooling/xtask/src/(package/|deb\.rs$|deltas\.rs$|engines\.rs$|fairy\.rs$|licenses\.rs$|sums\.rs$|util\.rs$|voice\.rs$)|tooling/windows-upgrade-test\.ps1$|\.github/actions/|\.github/workflows/(ci|release|snap-build|windows-upgrade)\.yml$)'
         run: |
           base="${BASE:-$(git describe --tags --abbrev=0 --match 'v2*' HEAD 2>/dev/null || true)}"
           if [ -z "$base" ] || git diff --name-only "$base" HEAD | grep -qE "$PACKAGING"; then
@@ -122,16 +126,12 @@ jobs:
         with:
           tool: cargo-nextest
       - run: rustup component add llvm-tools-preview
-      # The official Stockfish, so the tests that need a real engine run (`tests/support`).
-      - name: Fetch Stockfish
-        run: echo "KCHESS_ENGINE_PATH=$(cargo run -q --locked -p kchess-core --example fetch_stockfish -- "$RUNNER_TEMP/stockfish")" >> "$GITHUB_ENV"
+      # The official Stockfish, so the tests that need a real engine run (`tests/support`), and
+      # Fairy-Stockfish, built from its pinned source, so the variant-analysis tests run too.
+      - name: Fetch the engines
+        run: cargo xtask engines --github-env "$RUNNER_TEMP/stockfish"
         env:
           GH_TOKEN: ${{ github.token }}
-      # Fairy-Stockfish, built from its pinned source, so the variant-analysis tests run too.
-      - name: Build Fairy-Stockfish
-        run: |
-          cargo xtask fairy-stockfish
-          echo "KCHESS_VARIANT_ENGINE_PATH=$PWD/target/fairy-stockfish/bin/fairy-stockfish" >> "$GITHUB_ENV"
       - run: cargo xtask check
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
@@ -284,15 +284,10 @@ jobs:
           tool: cargo-nextest,cargo-mutants
       # The engines `check` gives the tests, so the mutants they kill there die here too.
       - if: github.event_name == 'pull_request'
-        name: Fetch Stockfish
-        run: echo "KCHESS_ENGINE_PATH=$(cargo run -q --locked -p kchess-core --example fetch_stockfish -- "$RUNNER_TEMP/stockfish")" >> "$GITHUB_ENV"
+        name: Fetch the engines
+        run: cargo xtask engines --github-env "$RUNNER_TEMP/stockfish"
         env:
           GH_TOKEN: ${{ github.token }}
-      - if: github.event_name == 'pull_request'
-        name: Build Fairy-Stockfish
-        run: |
-          cargo xtask fairy-stockfish
-          echo "KCHESS_VARIANT_ENGINE_PATH=$PWD/target/fairy-stockfish/bin/fairy-stockfish" >> "$GITHUB_ENV"
       - if: github.event_name == 'pull_request'
         name: Mutants of the changed lines
         env:

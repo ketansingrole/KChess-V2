@@ -161,18 +161,14 @@ pub fn current_version() -> String {
 /// This platform's `package` of a release, as the release names it
 /// (`KChess-2026.10.12-linux-x86_64.AppImage`, `…-linux-amd64.deb`).
 pub fn asset_name(version: &str, package: Package) -> Option<String> {
-    let arm = match std::env::consts::ARCH {
-        "aarch64" => true,
-        "x86_64" => false,
-        _ => return None,
+    use kchess_delta::Asset;
+    let asset = match package {
+        Package::MacZip => Asset::MacZip,
+        Package::WindowsInstaller => Asset::WindowsInstaller,
+        Package::AppImage => Asset::AppImage,
+        Package::Deb => Asset::Deb,
     };
-    let (platform, arch, extension) = match package {
-        Package::MacZip => ("mac", if arm { "arm64" } else { "x64" }, "zip"),
-        Package::WindowsInstaller => ("win", if arm { "arm64" } else { "x64" }, "exe"),
-        Package::AppImage => ("linux", if arm { "arm64" } else { "x86_64" }, "AppImage"),
-        Package::Deb => ("linux", if arm { "arm64" } else { "amd64" }, "deb"),
-    };
-    Some(format!("{PREFIX}-{version}-{platform}-{arch}.{extension}"))
+    Some(asset.name(version, kchess_delta::Arch::current()?))
 }
 
 /// The release key's public half (`update-key.pub`): its one line that is not a comment, the

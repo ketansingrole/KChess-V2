@@ -15,11 +15,6 @@ use crate::util::{Result, download, pinned, root, run_with, say};
 const COMMIT: &str = "2f1959e1f0b44d4648ff35015b89d8e918a5c746";
 const SHA256: &str = "f226f3c67cb30e87b6990ce7d38cf29cbaca59709f2dba23f421fafdecbb67e5";
 
-/// The program's name, as the app looks for it.
-pub fn executable() -> String {
-    format!("fairy-stockfish{}", std::env::consts::EXE_SUFFIX)
-}
-
 /// The Makefile's `ARCH` for this machine: Apple Silicon, or 64-bit x86 with SSE4.1 and POPCNT.
 fn arch() -> Result<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
@@ -56,7 +51,7 @@ fn build_with(source: &Source<impl Fn(&str, &Path) -> Result>) -> Result<PathBuf
         fetch,
     } = source;
     let stamp = dir.join("bin/COMMIT");
-    let target = dir.join("bin").join(executable());
+    let target = dir.join("bin").join(crate::util::exe("fairy-stockfish"));
     if target.exists() && std::fs::read_to_string(&stamp).is_ok_and(|built| built.trim() == *commit)
     {
         return Ok(target);
@@ -97,7 +92,7 @@ fn build_with(source: &Source<impl Fn(&str, &Path) -> Result>) -> Result<PathBuf
         make.args(arguments.split(' ')).arg(&src);
         run_with(&mut make)?;
     }
-    let built = src.join(format!("stockfish{}", std::env::consts::EXE_SUFFIX));
+    let built = src.join(crate::util::exe("stockfish"));
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|cause| cause.to_string())?;
     }
@@ -146,7 +141,6 @@ mod tests {
     /// program naming the `ARCH` it was given.
     #[test]
     fn the_pinned_source_is_fetched_built_and_staged_once() {
-        use sha2::Digest;
         const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
         let scratch = std::env::temp_dir().join(format!("xtask-fairy-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&scratch);
@@ -174,7 +168,7 @@ mod tests {
         let source = Source {
             dir: scratch.clone(),
             commit: COMMIT,
-            sha256: crate::util::hex(&sha2::Sha256::digest(&archive)).leak(),
+            sha256: kchess_delta::digest(&archive).leak(),
             fetch: |url: &str, to: &Path| -> Result {
                 fetched.borrow_mut().push(url.to_string());
                 std::fs::create_dir_all(to.parent().unwrap()).unwrap();
@@ -184,7 +178,12 @@ mod tests {
 
         let target = build_with(&source).unwrap();
 
-        assert_eq!(target, scratch.join("bin").join(executable()));
+        assert_eq!(
+            target,
+            scratch
+                .join("bin")
+                .join(crate::util::exe("fairy-stockfish"))
+        );
         assert_eq!(
             std::fs::read_to_string(&target).unwrap(),
             format!("stockfish for {}", arch().unwrap())
