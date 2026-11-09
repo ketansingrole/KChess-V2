@@ -38,7 +38,8 @@ const HELP: &str = "cargo xtask <command>
         [--out <file>]  The app's frame benchmarks for builds made with
                         `cargo build --release -p kchess-gpui --features bench`, alternating
                         run by run on fresh profiles; prints each scenario's medians
-  check                 Everything a push to main must pass: format, lints, notices, release
+  check [--without-app-tests]
+                        Everything a push to main must pass: format, lints, notices, release
                         metadata and the Rust tests (under the coverage gate when cargo-llvm-cov
                         is installed)
   check-fast            Format, lints and the tests of the packages changed since main
@@ -98,7 +99,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("app") => app::run(rest),
         Some("bench") => bench::run(rest),
-        Some("check") => check::full(),
+        Some("check") => check::check(rest),
         Some("check-fast") => check::fast(),
         Some("mutants") => mutants::run(rest),
         Some("pre-push") => check::pre_push(),
