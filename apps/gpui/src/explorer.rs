@@ -453,6 +453,10 @@ impl PositionExplorer {
             self.error.clear();
         }
         if self.needs_player(cx) {
+            // A lookup still on its way for another database must not land here.
+            self.epoch += 1;
+            self.lookup_task = None;
+            self.busy = false;
             self.result = None;
             self.error.clear();
             if asked && let Some(window) = window {
@@ -1207,7 +1211,28 @@ impl Render for PositionExplorer {
 
 #[cfg(test)]
 mod tests {
-    use super::{Prefs, category, toggled};
+    use super::{PositionExplorer, Prefs, category, toggled};
+    use crate::e2e::Harness;
+    use gpui_kit::AppContext as _;
+
+    /// Choosing the player database with no name yet left a lookup for the other database
+    /// current: its answer then showed under the player tab, and the spinner stayed on until it.
+    #[gpui_kit::test]
+    fn a_lookup_for_another_database_does_not_land_on_the_player_tab(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let mut app = Harness::start(cx);
+        let (busy, stale) = app.with_window(|window, cx| {
+            let explorer = cx.new(|cx| PositionExplorer::new(false, window, cx));
+            explorer.update(cx, |explorer, cx| {
+                explorer.lookup(Some("masters"), false, None, cx);
+                let asked = explorer.epoch;
+                explorer.lookup(Some("player"), false, None, cx);
+                (explorer.busy, explorer.epoch == asked)
+            })
+        });
+        assert!(!busy && !stale);
+    }
     use crate::game::is_username;
     use serde_json::json;
 
