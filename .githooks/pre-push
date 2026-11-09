@@ -1,3 +1,4 @@
 #!/bin/sh
-# Runs the full `cargo xtask check` before a push to main (tooling/xtask/src/check.rs).
+# Runs the full `cargo xtask check` before a push to main, and the mutants of a branch push's new
+# lines before any other (tooling/xtask/src/check.rs).
 exec cargo xtask pre-push "$@"

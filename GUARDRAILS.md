@@ -22,8 +22,11 @@ offscreen into `<dir>/<width>x<height>/<page>.png`.
 
 `cargo xtask install-hooks` points Git at `.githooks`. Its pre-push hook runs the full
 `cargo xtask check` when a push updates `main`, and refuses if the pushed commit is not HEAD or
-the working tree has uncommitted or untracked files, since `check` would test those instead. Other
-branches push without it. Skip it only on purpose: `KCHESS_SKIP_PRE_PUSH=1 git push …`.
+the working tree has uncommitted or untracked files, since `check` would test those instead. A
+push of another branch runs `cargo xtask mutants` on the lines new since that branch's last push
+(the app's left out, as in CI) and refuses while a mutant survives; it skips a push that is not a
+clean HEAD, or when cargo-mutants is not installed. Skip either only on purpose:
+`KCHESS_SKIP_PRE_PUSH=1 git push …`.
 
 Code reaches `main` through a pull request, whose CI runs `cargo xtask check` on Linux and the
 app's tests on macOS and Windows before it lands; run `check-fast` before opening it. GitHub's rulesets
