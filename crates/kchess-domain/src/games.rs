@@ -24,7 +24,6 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use crate::api;
-use crate::js;
 use crate::position::Info;
 use crate::replay;
 use crate::rules;
@@ -550,11 +549,6 @@ pub(crate) fn engine_level(level: &str) -> Result<Value, String> {
         Some(Ok(Value::Null)) | None => Err(format!("unknown engine level {level}")),
         Some(result) => result,
     }
-}
-
-/// `JS` number text, as a template string prints it.
-pub(crate) fn number_text(n: f64) -> String {
-    js::number_to_string(n)
 }
 
 /// This module's methods for `api::call`; None when the method is not one of them.

@@ -10,8 +10,7 @@ use serde_json::{Map, Value, json};
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Bitboard, Color, Move, Position, Rank};
 
-use crate::replay;
-use crate::rules;
+use crate::{js, replay, rules};
 
 /* ── JavaScript arithmetic ── */
 
@@ -127,39 +126,6 @@ pub fn js_exp(x: f64) -> f64 {
     }
 }
 
-/// `Math.round`: halves round up, toward +∞.
-pub fn js_round(x: f64) -> f64 {
-    if !x.is_finite() {
-        return x;
-    }
-    let floor = x.floor();
-    let rounded = if x - floor >= 0.5 { floor + 1.0 } else { floor };
-    // Math.round keeps the sign of zero for -0.5 ≤ x ≤ -0.
-    if rounded == 0.0 && x.is_sign_negative() {
-        -0.0
-    } else {
-        rounded
-    }
-}
-
-/// `Math.max(a, b)` for numbers: +0 is larger than −0.
-fn js_max(a: f64, b: f64) -> f64 {
-    if a > b || (a == b && a.is_sign_positive()) {
-        a
-    } else {
-        b
-    }
-}
-
-/// `Math.min(a, b)` for numbers: −0 is smaller than +0.
-fn js_min(a: f64, b: f64) -> f64 {
-    if a < b || (a == b && a.is_sign_negative()) {
-        a
-    } else {
-        b
-    }
-}
-
 /// `Math.sign` for a finite non-zero-or-zero number.
 fn js_sign(x: f64) -> f64 {
     if x > 0.0 {
@@ -182,7 +148,7 @@ struct Score {
 const MAX_CP: f64 = 1000.0;
 
 fn clamp_cp(cp: f64) -> f64 {
-    js_max(-MAX_CP, js_min(MAX_CP, cp))
+    js::max(-MAX_CP, js::min(MAX_CP, cp))
 }
 
 fn raw_chances(cp: f64) -> f64 {
@@ -194,7 +160,7 @@ fn win_chances(score: Score, white_to_move: bool) -> f64 {
         return if white_to_move { -1.0 } else { 1.0 };
     }
     if let Some(mate) = score.mate {
-        let cp = (21.0 - js_min(10.0, mate.abs())) * 100.0;
+        let cp = (21.0 - js::min(10.0, mate.abs())) * 100.0;
         return raw_chances(js_sign(mate) * cp);
     }
     raw_chances(clamp_cp(score.cp.unwrap_or(0.0)))
@@ -261,7 +227,7 @@ fn move_accuracy(win_before: f64, win_after: f64) -> f64 {
         return 100.0;
     }
     let raw = 103.166_810_071_164_9 * js_exp(-0.043_544_153_867_539_51 * (win_before - win_after));
-    js_max(0.0, js_min(100.0, raw - 3.166_924_740_191_411 + 1.0))
+    js::max(0.0, js::min(100.0, raw - 3.166_924_740_191_411 + 1.0))
 }
 
 fn mean(values: &[f64]) -> f64 {
@@ -281,7 +247,7 @@ fn standard_deviation(values: &[f64]) -> f64 {
 fn harmonic_mean(values: &[f64]) -> f64 {
     let sum = values
         .iter()
-        .fold(0.0, |sum, v| sum + 1.0 / js_max(*v, 0.001));
+        .fold(0.0, |sum, v| sum + 1.0 / js::max(*v, 0.001));
     values.len() as f64 / sum
 }
 
@@ -470,7 +436,7 @@ fn analyse(review: &Review) -> Option<Analysis> {
         if let (Some(b), Some(a)) = (before, after) {
             let loss =
                 pov(white, centipawns(b, white)) - pov(white, centipawns(a, white_at(i + 1)));
-            losses[usize::from(!white)].push(js_max(0.0, loss));
+            losses[usize::from(!white)].push(js::max(0.0, loss));
         }
         colors.push(white);
         accuracies.push(accuracy);
@@ -503,10 +469,10 @@ fn analyse(review: &Review) -> Option<Analysis> {
         };
         let mut side = Map::new();
         if let Some(figure) = lichess.or(computed[index]) {
-            side.insert("accuracy".into(), json!(js_round(figure)));
+            side.insert("accuracy".into(), json!(js::round(figure)));
         }
         if !losses[index].is_empty() {
-            side.insert("acpl".into(), json!(js_round(mean(&losses[index]))));
+            side.insert("acpl".into(), json!(js::round(mean(&losses[index]))));
         }
         for (slot, label) in ["inaccuracy", "mistake", "blunder"].into_iter().enumerate() {
             side.insert(label.into(), label_counts[index][slot].into());
@@ -535,7 +501,7 @@ fn volatility_weights(count: usize, percent: &dyn Fn(usize) -> Option<f64>) -> O
     }
     let size = 2.max(8.min(wins.len() / 10));
     let mut weights = Vec::new();
-    let window_weight = |window: &[f64]| js_max(0.5, js_min(12.0, standard_deviation(window)));
+    let window_weight = |window: &[f64]| js::max(0.5, js::min(12.0, standard_deviation(window)));
     for _ in 0..size.min(wins.len()).saturating_sub(2) {
         weights.push(window_weight(&wins[..size.min(wins.len())]));
     }
@@ -649,7 +615,7 @@ pub fn review_phases(raw: &Value) -> Option<Value> {
             let figures = weighted_accuracy(&analysis.colors, &analysis.accuracies, weights, range);
             for (side, figure) in sides.iter_mut().zip(figures) {
                 if let Some(figure) = figure {
-                    side.insert(name.into(), json!(js_round(figure)));
+                    side.insert(name.into(), json!(js::round(figure)));
                 }
             }
         }
@@ -991,10 +957,10 @@ mod tests {
 
     #[test]
     fn round_matches_javascript() {
-        assert_eq!(js_round(2.5), 3.0);
-        assert_eq!(js_round(-2.5), -2.0);
-        assert_eq!(js_round(0.499_999_999_999_999_94), 0.0);
-        assert!(js_round(-0.4).is_sign_negative());
+        assert_eq!(js::round(2.5), 3.0);
+        assert_eq!(js::round(-2.5), -2.0);
+        assert_eq!(js::round(0.499_999_999_999_999_94), 0.0);
+        assert!(js::round(-0.4).is_sign_negative());
     }
 
     #[test]
