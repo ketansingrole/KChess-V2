@@ -678,8 +678,7 @@ impl PlayersPage {
         let name = self.username().unwrap_or_default();
         let account = Self::active_account(cx).unwrap_or_default();
         let apply = std::rc::Rc::new(apply);
-        crate::widgets::open_alert_dialog(
-            window,
+        window.open_alert_dialog(
             cx,
             move |dialog: gpui_kit::component::dialog::AlertDialog, _, _| {
                 let apply = apply.clone();
@@ -1001,7 +1000,7 @@ impl PlayersPage {
         };
         let dialog = cx.new(|cx| MessageDialog::new(account, username.clone(), window, cx));
         let field = dialog.read(cx).text.clone();
-        crate::widgets::open_dialog(window, cx, move |modal, _, _| {
+        window.open_dialog(cx, move |modal, _, _| {
             modal
                 .title(format!("Message {username}"))
                 .w(px(480.))

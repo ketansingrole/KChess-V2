@@ -103,7 +103,7 @@ impl CreateArena {
         cx: &mut App,
     ) {
         let view = cx.new(|cx| CreateArena::new(account, page, window, cx));
-        crate::widgets::open_dialog(window, cx, move |dialog, _, _| {
+        window.open_dialog(cx, move |dialog, _, _| {
             dialog
                 .title("Create an arena")
                 .w(px(560.))

@@ -494,8 +494,7 @@ impl TournamentsPage {
     }
 
     fn ask_connect(window: &mut Window, cx: &mut App) {
-        crate::widgets::open_alert_dialog(
-            window,
+        window.open_alert_dialog(
             cx,
             |dialog: gpui_kit::component::dialog::AlertDialog, _, _| {
                 dialog

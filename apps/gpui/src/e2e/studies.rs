@@ -16,6 +16,20 @@ fn settle(app: &mut Harness) {
     });
 }
 
+/// Type into the labelled input of a dialog once it has slid into place.
+fn fill_in_dialog(app: &mut Harness, label: &str, text: &str) {
+    let mut last = None;
+    app.wait_for(&format!("{label:?} to stop moving"), |window, _| {
+        let bounds = window.try_find_by_label(label).map(|input| input.bounds());
+        let still = bounds.is_some() && bounds == last;
+        last = bounds;
+        still
+    });
+    app.click_label(label);
+    app.press("secondary-a");
+    app.type_text(text);
+}
+
 /// Choose the chapter at `row` (from 0) in the open study's chapter select, by keyboard.
 fn choose_chapter(app: &mut Harness, row: usize) {
     app.click_label("Study chapter");
@@ -73,8 +87,8 @@ fn import_study(app: &mut Harness, name: &str, pgn: &str) {
     app.open("Studies");
     let empty = app.shows("empty-import");
     app.click(if empty { "empty-import" } else { "import-pgn" });
-    app.fill_in_dialog("PGN", pgn);
-    app.fill_in_dialog("Study name", name);
+    fill_in_dialog(app, "PGN", pgn);
+    fill_in_dialog(app, "Study name", name);
     app.click("import-run");
     app.find("open-imported");
 }
@@ -145,7 +159,7 @@ fn a_dropped_file_of_several_games_is_offered_as_a_study(cx: &mut gpui_kit::Test
         app.cx.update(|cx| crate::shell::current_page(cx)),
         Some(crate::pages::Page::Studies)
     );
-    app.fill_in_dialog("Study name", "Dropped openings");
+    fill_in_dialog(&mut app, "Study name", "Dropped openings");
     app.click("import-run");
     app.find("open-imported");
     wait_for_listed(&mut app, &["Dropped openings"]);
@@ -160,7 +174,7 @@ fn a_pgn_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.open("Studies");
     app.click("empty-import");
-    app.fill_in_dialog("PGN", "1. e4 e5 2. Ke5 *");
+    fill_in_dialog(&mut app, "PGN", "1. e4 e5 2. Ke5 *");
     app.click("import-run");
     settle(&mut app);
     assert!(app.shows("import-run"), "the dialog stays for a correction");
@@ -183,7 +197,7 @@ fn an_annotated_study_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
     app.click("glyph-2");
     app.click("study-actions");
     app.click_label("Game details…");
-    app.fill_in_dialog("White", "Alice");
+    fill_in_dialog(&mut app, "White", "Alice");
     app.press("escape");
     settle(&mut app);
 

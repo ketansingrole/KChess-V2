@@ -665,7 +665,7 @@ impl LocalPage {
             "Black"
         };
         let page = cx.entity().downgrade();
-        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
+        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
             let page = page.clone();
             dialog
                 .title(format!("Resign for {name}?"))
@@ -694,7 +694,7 @@ impl LocalPage {
                 cx,
             )
         });
-        crate::widgets::open_dialog(window, cx, move |dialog, _, _| {
+        window.open_dialog(cx, move |dialog, _, _| {
             dialog
                 .title("New game over the board")
                 .w(px(512.))
@@ -721,7 +721,7 @@ impl LocalPage {
         }
         let page = cx.entity().downgrade();
         let chosen = std::rc::Rc::new((setup, clock));
-        crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
+        window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
             let (page, chosen) = (page.clone(), chosen.clone());
             dialog
                 .title("Start a new game?")

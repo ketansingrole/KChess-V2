@@ -564,11 +564,9 @@ pub fn sidebar_open(cx: &App) -> bool {
         .is_none_or(|workspace| workspace.read(cx).shown())
 }
 
-/// Show or hide the sidebar from its shortcut, the menu or the command palette: at once, since a
-/// command repeated many times a day should not wait on an animation.
 pub fn toggle_sidebar(_: &mut Window, cx: &mut App) {
     if let Some(workspace) = cx.try_global::<Navigator>().and_then(|n| n.0.upgrade()) {
-        workspace.update(cx, |workspace, cx| workspace.toggle_sidebar(false, cx));
+        workspace.update(cx, |workspace, cx| workspace.toggle_sidebar(cx));
     }
 }
 
@@ -834,7 +832,7 @@ pub fn replace_analysis(
         run(&*load, window, cx);
         return;
     }
-    crate::widgets::open_alert_dialog(window, cx, move |dialog: AlertDialog, _, _| {
+    window.open_alert_dialog(cx, move |dialog: AlertDialog, _, _| {
         let (load, run) = (load.clone(), run.clone());
         dialog
             .title("Replace the unsaved analysis?")
@@ -1128,9 +1126,6 @@ impl Workspace {
                 cx.global::<crate::core::AppCore>()
                     .bridge
                     .focus(window.is_window_active());
-                if window.is_window_active() {
-                    crate::motion::refresh(cx);
-                }
             }),
             cx.subscribe_in(
                 &settings,
@@ -1740,9 +1735,7 @@ impl Workspace {
         }
     }
 
-    /// Open or close the sidebar; `ease` widens or narrows it over `SIDEBAR_EASE` (a click on its
-    /// toggle, where the motion shows where it went) instead of at once.
-    fn toggle_sidebar(&mut self, ease: bool, cx: &mut Context<Self>) {
+    fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_width_from = sidebar_width(self.shown());
         if self.narrow {
             self.narrow_open = !self.narrow_open;
@@ -1750,11 +1743,7 @@ impl Workspace {
             self.sidebar_open = !self.sidebar_open;
             crate::prefs::set(cx, SIDEBAR_OPEN, self.sidebar_open);
         }
-        if ease {
-            self.sidebar_toggled = Some(std::time::Instant::now());
-        } else {
-            self.sidebar_width_from = sidebar_width(self.shown());
-        }
+        self.sidebar_toggled = Some(std::time::Instant::now());
         cx.notify();
     }
 
@@ -1839,8 +1828,7 @@ impl Workspace {
             .h_full()
             .flex_none()
             .overflow_hidden()
-            .child(sidebar)
-            .test_support();
+            .child(sidebar);
         let from = self.sidebar_width_from;
         if from == width || self.sidebar_settled() {
             return frame.w(width).into_any_element();
@@ -1924,9 +1912,7 @@ impl Workspace {
                     .size(px(28.))
                     .tooltip_with_action(label, &crate::menu::ToggleSidebar, None)
                     .accessibility_label(label)
-                    .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
-                        this.toggle_sidebar(!event.is_keyboard(), cx)
-                    })),
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
             ))
             .when(self.shown(), |wrap| {
                 wrap.child(
