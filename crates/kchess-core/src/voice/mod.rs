@@ -518,12 +518,8 @@ impl VoiceModelCache {
 
     async fn download(&self, url: &str, zip: &Path) -> Result<u64> {
         let deadline = std::time::Instant::now() + DOWNLOAD_TIMEOUT;
-        let response = self
-            .inner
-            .client
-            .get(url)
-            .timeout(DOWNLOAD_TIMEOUT)
-            .send()
+        let client = &self.inner.client;
+        let response = crate::download::send_retrying(|| client.get(url), Some(deadline))
             .await
             .map_err(|cause| CoreError::new(error_text(&cause)))?;
         if !response.status().is_success() {

@@ -430,7 +430,7 @@ impl PuzzleService {
             .build()
             .map_err(|e| CoreError::new(fetch_failed(&e)))?;
         let response = tokio::select! {
-            response = client.get(url).send() => response.map_err(|e| CoreError::new(fetch_failed(&e))),
+            response = crate::download::send_retrying(|| client.get(url), None) => response.map_err(|e| CoreError::new(fetch_failed(&e))),
             _ = cancel.cancelled() => Err(cancelled()),
         }?;
         self.inner.usage(1, 0);
