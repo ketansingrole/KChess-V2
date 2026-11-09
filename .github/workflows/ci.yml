@@ -3,14 +3,19 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Nightly: main's packages, Snap and Windows upgrade, when packaging changed since main last
+  # packaged (`changes`); the rest of CI ran on each push. By hand: package main now.
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# A pull request's newer push replaces its run; every push to main runs to the end, so each
+# A pull request's newer push replaces its run; every run on main runs to the end, so each
 # commit has a result (`cargo xtask release-verify` needs its release commit's).
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'pr' }}
+  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -22,11 +27,14 @@ env:
     desktop-file-utils
 
 jobs:
-  # Whether packaging may have changed since main last packaged (a pull request: since its base).
-  # The packages, the Snap and the Windows upgrade take most of CI's time, so they run only then.
-  # A release commit changes Cargo.toml, so it always runs them. Measured from the newest main
-  # commit whose packaging jobs all passed (else the last release) rather than the previous push,
-  # so a change keeps running them until they pass.
+  # Whether to package. The packages, the Snap and the Windows upgrade take most of CI's time
+  # (2026-11-09: 20 to 30 minutes on a push to main), so they run only for
+  # - a pull request whose change may touch packaging (since its base): it packages before it lands;
+  # - a release commit: it changes Cargo.toml's version, and is the commit the tag will build;
+  # - the nightly run, when packaging may have changed since main last packaged: measured from the
+  #   newest main commit whose packaging jobs all passed (else the last release), so a change keeps
+  #   running them each night until they pass. A push to main does not: its pull request packaged.
+  # - a run started by hand, always.
   #
   # Whether this push or pull request changes more than the documents nothing reads. A release
   # commit changes Cargo.toml, so `cargo xtask release-verify` never meets a skipped `check`.
@@ -51,16 +59,20 @@ jobs:
       - id: docs
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT: ${{ github.event_name }}
           DOCS: '^(docs/|site/|(AGENTS|ARCHITECTURE|CONTRIBUTING|CORE_FRONTENDS|GUARDRAILS|README|RUST_MIGRATION|SECURITY)\.md$)'
         run: |
-          if files="$(git diff --name-only "$BASE" HEAD)" && [ -z "$(echo "$files" | grep -vE "$DOCS")" ]; then
+          # The nightly and by-hand runs only package: each push to main ran the rest.
+          if [ "$EVENT" = schedule ] || [ "$EVENT" = workflow_dispatch ]; then
+            code=false
+          elif files="$(git diff --name-only "$BASE" HEAD)" && [ -z "$(echo "$files" | grep -vE "$DOCS")" ]; then
             code=false
           else
             code=true
           fi
           echo "Code changed: $code"
           echo "code=$code" >> "$GITHUB_OUTPUT"
-          if git diff "$BASE" HEAD -- Cargo.toml | grep -q '^+version = '; then
+          if [ -n "$BASE" ] && git diff "$BASE" HEAD -- Cargo.toml | grep -q '^+version = '; then
             release=true
           else
             release=false
@@ -69,15 +81,16 @@ jobs:
           echo "release=$release" >> "$GITHUB_OUTPUT"
       # The packaging jobs by their names (`package (<os>)`, `snap / …`, `windows-upgrade / …`):
       # renaming one of them needs this pattern changed too.
+      # The nightly run's base: the newest main commit, this one included, that a push or nightly
+      # run packaged.
       - id: packaged
-        if: github.event_name == 'push'
+        if: github.event_name == 'schedule'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for run in $(gh run list --workflow ci.yml --branch main --event push --status success --limit 30 \
-              --json databaseId,headSha --jq '.[] | "\(.databaseId):\(.headSha)"'); do
+          for run in $(gh run list --workflow ci.yml --branch main --status success --limit 60 \
+              --json databaseId,headSha,event --jq '.[] | select(.event == "push" or .event == "schedule") | "\(.databaseId):\(.headSha)"'); do
             sha="${run#*:}"
-            [ "$sha" = "$GITHUB_SHA" ] && continue
             git merge-base --is-ancestor "$sha" HEAD 2>/dev/null || continue
             if gh run view "${run%%:*}" --json jobs --jq '[.jobs[] | select(.name | test("^(package |snap|windows-upgrade)")) | .conclusion] | length > 0 and all(. == "success")' | grep -qx true; then
               echo "sha=$sha" >> "$GITHUB_OUTPUT"
@@ -87,17 +100,27 @@ jobs:
       - id: diff
         env:
           BASE: ${{ github.event.pull_request.base.sha || steps.packaged.outputs.sha }}
+          EVENT: ${{ github.event_name }}
+          RELEASE: ${{ steps.docs.outputs.release }}
           # The files packaging is made from; xtask's `packaging_changes_run_the_package_jobs`
           # checks it names each of xtask's.
           PACKAGING: '^(Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.cargo/|apps/gpui/build\.rs$|apps/gpui/build/|crates/kchess-voice/|crates/kchess-delta/|tooling/xtask/src/(package/|deb\.rs$|deltas\.rs$|engines\.rs$|fairy\.rs$|licenses\.rs$|sums\.rs$|util\.rs$|voice\.rs$)|tooling/windows-upgrade-test\.ps1$|\.github/actions/|\.github/workflows/(ci|release|snap-build|windows-upgrade)\.yml$)'
         run: |
-          base="${BASE:-$(git describe --tags --abbrev=0 --match 'v2*' HEAD 2>/dev/null || true)}"
-          if [ -z "$base" ] || git diff --name-only "$base" HEAD | grep -qE "$PACKAGING"; then
+          if [ "$RELEASE" = true ] || [ "$EVENT" = workflow_dispatch ]; then
             packaging=true
-          else
+            echo "Packaging: a release commit or a run by hand"
+          elif [ "$EVENT" = push ]; then
             packaging=false
+            echo "Packaging: not on a push to main (its pull request packaged; the nightly run packages main)"
+          else
+            base="${BASE:-$(git describe --tags --abbrev=0 --match 'v2*' HEAD 2>/dev/null || true)}"
+            if [ -z "$base" ] || git diff --name-only "$base" HEAD | grep -qE "$PACKAGING"; then
+              packaging=true
+            else
+              packaging=false
+            fi
+            echo "Packaging changed since ${base:-the start}: $packaging"
           fi
-          echo "Packaging changed since ${base:-the start}: $packaging"
           echo "packaging=$packaging" >> "$GITHUB_OUTPUT"
 
   # `cargo xtask check`: format, lints, notices, release metadata and the tests under the coverage
@@ -157,7 +180,7 @@ jobs:
       - run: cargo deny --manifest-path fuzz/Cargo.toml check
 
   # The app on the other platforms: its lints and its unit and end-to-end tests (`src/e2e`,
-  # headless). `check` runs them on Linux.
+  # headless). `check` runs them on Linux; `headless` runs the rest beside it.
   gpui:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -175,15 +198,60 @@ jobs:
           shared-key: gpui
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The vendored GPUI (`vendor/`) heads the app's longest chain of crates, and was compiled
+      # anew on every run (2026-11-09: most of the 5 to 6 minutes the app's test build took):
+      # rust-cache keeps only crates from outside the repository, and Cargo rebuilds a path crate
+      # whose files are newer than its build, as a fresh checkout's are. So its files get a fixed
+      # old date and its build a cache of its own, keyed by those files: Cargo finds it up to date,
+      # and with it the registry crates built on it, until a file of it changes.
+      - name: Date the vendored sources
+        shell: bash
+        run: find vendor -type f -exec touch -t 200001010000 {} +
+      - id: vendor
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/**/deps/*gpui_pre*
+            target/**/.fingerprint/gpui-pre*
+            target/**/build/gpui-pre*
+          key: vendor-gpui-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}
+      - run: cargo clippy -p kchess-gpui --all-targets --locked -- -D warnings
+      # The app's tests under `cargo test`: each starts GPUI, so a process per test (nextest) is slower.
+      - run: cargo test -p kchess-gpui --locked
+      - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/**/deps/*gpui_pre*
+            target/**/.fingerprint/gpui-pre*
+            target/**/build/gpui-pre*
+          key: ${{ steps.vendor.outputs.cache-primary-key }}
+
+  # Everything else on the other platforms, beside `gpui` rather than after it: the command line
+  # and xtask, and on Windows the headless packages, which `check` runs on Linux; here they keep
+  # building and passing on Windows: named pipes, CRLF checkouts, Unix-only test helpers.
+  headless:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: headless
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
           tool: cargo-nextest
-      - run: cargo clippy -p kchess-gpui -p kchess-cli -p xtask --all-targets --locked -- -D warnings
-      # The app's tests under `cargo test`: each starts GPUI, so a process per test (nextest) is slower.
-      - run: cargo test -p kchess-gpui --locked
+      - run: cargo clippy -p kchess-cli -p xtask --all-targets --locked -- -D warnings
       - run: cargo nextest run -p kchess-cli -p xtask --locked
-      # The headless packages run everywhere else in `check` (Linux); here they keep building and
-      # passing on Windows: named pipes, CRLF checkouts, Unix-only test helpers.
       - if: runner.os == 'Windows'
         run: cargo clippy -p kchess-domain -p kchess-core -p kchess-service --all-targets --locked -- -D warnings
       - if: runner.os == 'Windows'
@@ -309,7 +377,7 @@ jobs:
   # cannot name the jobs themselves.
   ci-passed:
     if: always()
-    needs: [changes, check, deny, gpui, mutants, package, snap, windows-upgrade]
+    needs: [changes, check, deny, gpui, headless, mutants, package, snap, windows-upgrade]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or was skipped
