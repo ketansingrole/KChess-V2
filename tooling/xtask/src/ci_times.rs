@@ -285,7 +285,9 @@ fn report(
                     .iter()
                     .filter(|job| job.run == run.id && job.attempt == 1)
                     .collect();
-                if first.is_empty() || first.iter().any(|job| job.conclusion == "cancelled") {
+                // A run whose first attempt was cancelled took no full time to measure; one with
+                // no jobs has no last job either.
+                if first.iter().any(|job| job.conclusion == "cancelled") {
                     return None;
                 }
                 let end = first.iter().map(|job| job.completed).max()?;
@@ -415,6 +417,11 @@ mod tests {
         assert_eq!(date(0), "1970-01-01");
         assert_eq!(date(951_782_400), "2000-02-29");
         assert_eq!(date(1_793_750_400 + 86_399), "2026-11-04");
+        // The century and 400-year leap rules.
+        assert_eq!(date(4_107_456_000), "2100-02-28");
+        assert_eq!(date(4_107_542_400), "2100-03-01");
+        assert_eq!(date(13_574_563_200), "2400-02-29");
+        assert_eq!(date(13_574_649_600), "2400-03-01");
     }
 
     #[test]
@@ -541,6 +548,11 @@ mod tests {
                 conclusion: "cancelled".into(),
                 ..run(3, "pull_request", "c")
             },
+            Run {
+                created: 0,
+                conclusion: "failure".into(),
+                ..run(4, "push", "d")
+            },
         ];
         let jobs = [
             job(10, 1, 1, "gpui (windows-latest)", "failure", 9),
@@ -548,6 +560,7 @@ mod tests {
             job(12, 1, 1, "check", "success", 5),
             job(13, 2, 1, "check", "success", 6),
             job(14, 1, 1, "snap", "skipped", 0),
+            job(15, 4, 1, "deny", "cancelled", 60),
         ];
         let flaky = [(jobs[0].clone(), vec!["e2e::practice::slow".to_string()])];
         let text = report(7, "2026-11-03", "o/r", &runs, &jobs, &flaky);
