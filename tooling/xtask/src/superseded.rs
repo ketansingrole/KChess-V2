@@ -368,10 +368,19 @@ pub fn cache_superseded(
 /// Everything a profile folder (`target/debug`) keeps of units no current build uses, given its
 /// workspace's `targets` (`None`: no target counts as removed).
 pub fn plan(profile: &Path, targets: Option<&Targets>) -> Plan {
-    let deps = profile.join("deps");
-    let files: Vec<String> = names(&deps);
+    // Examples are built into their own folder: without their outputs, an example's check and
+    // its build would look the same, and the newer would replace the other.
+    let files: Vec<(PathBuf, String)> = ["deps", "examples"]
+        .iter()
+        .flat_map(|folder| {
+            let folder = profile.join(folder);
+            names(&folder)
+                .into_iter()
+                .map(move |name| (folder.clone(), name))
+        })
+        .collect();
     let mut outputs: HashMap<&str, Vec<&str>> = HashMap::new();
-    for file in &files {
+    for (_, file) in &files {
         if let Some(hash) = hash_of(file) {
             outputs.entry(hash).or_default().push(file);
         }
@@ -436,9 +445,9 @@ pub fn plan(profile: &Path, targets: Option<&Targets>) -> Plan {
         .iter()
         .filter_map(|folder| folder.rsplit('-').next())
         .collect();
-    for file in &files {
+    for (folder, file) in &files {
         if hash_of(file).is_some_and(|hash| stale_hashes.contains(hash)) {
-            add(deps.join(file));
+            add(folder.join(file));
         }
     }
     for folder in &stale {
@@ -803,10 +812,11 @@ pub(crate) mod tests {
             unit_of("dep-0000000000000001", "lib-dep", 1, &[], 0),
             // The tests built with other features, before a change made every build use one set.
             features("core-0000000000000001", "[a]", 0),
-            // Still built within the week since the newest.
-            features("core-0000000000000002", "[b]", 7 * day - 1),
+            // Built a week before the newest, to the second: still built within the week.
+            features("core-0000000000000002", "[b]", day),
             features("core-0000000000000003", "[c]", 8 * day),
         ];
+        assert_eq!(LEFT_BEHIND, Duration::from_secs(7 * day));
         assert_eq!(current(&units, |_| false), HashSet::from([0, 2, 3]));
         // A unit no time is known for is never left behind.
         let mut unknown = units.clone();
@@ -973,6 +983,47 @@ pub(crate) mod tests {
             "nothing of its crate"
         );
         assert!(cache_superseded("b", start(101), &units, &live));
+    }
+
+    #[test]
+    fn an_examples_check_and_build_are_two_things() {
+        let profile = tempfile::tempdir().unwrap();
+        let profile = profile.path();
+        let examples = profile.join("examples");
+        std::fs::create_dir_all(&examples).unwrap();
+        let json = "{\"features\":\"[]\",\"deps\":[]}";
+        // An older build, its build since, then a check (`cargo check --all-targets`).
+        for (hash, own, invoked, outputs) in [
+            ("0000000000000001", 1, 0, &["fetch-0000000000000001"][..]),
+            ("0000000000000002", 2, 10, &["fetch-0000000000000002"][..]),
+            (
+                "0000000000000003",
+                3,
+                20,
+                &[
+                    "fetch-0000000000000003.d",
+                    "libfetch-0000000000000003.rmeta",
+                ][..],
+            ),
+        ] {
+            write_unit(
+                profile,
+                &format!("core-{hash}"),
+                "example-fetch",
+                json,
+                own,
+                invoked,
+            );
+            for output in outputs {
+                std::fs::write(examples.join(output), b"x").unwrap();
+            }
+        }
+        let gone: Vec<PathBuf> = plan(profile, None)
+            .paths
+            .into_iter()
+            .filter(|path| path.starts_with(&examples))
+            .collect();
+        assert_eq!(gone, [examples.join("fetch-0000000000000001")]);
     }
 
     #[test]
