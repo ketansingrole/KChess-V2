@@ -20,8 +20,35 @@ fn help_names_the_commands() {
         "ci-times [--days <n>]",
         "mutants [--plan] [--base <ref>]",
         "release-verify",
+        "sweep",
     ] {
         assert!(help.contains(command), "help misses {command}");
+    }
+}
+
+#[test]
+fn sweep_deletes_the_objects_of_a_program_no_longer_built_on_macos_only() {
+    let target = tempfile::tempdir().unwrap();
+    let deps = target.path().join("debug/deps");
+    std::fs::create_dir_all(&deps).unwrap();
+    let object = deps.join("gone-0123456789abcdef.a1.x7.rcgu.o");
+    std::fs::write(&object, b"o").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("sweep")
+        .env("CARGO_TARGET_DIR", target.path())
+        .output()
+        .expect("xtask runs");
+    assert!(out.status.success());
+    let said = String::from_utf8_lossy(&out.stderr);
+    if cfg!(target_os = "macos") {
+        assert!(!object.exists());
+        assert!(
+            said.contains("Deleted 1 object file no program uses"),
+            "{said}"
+        );
+    } else {
+        assert!(object.exists());
+        assert!(said.is_empty(), "{said}");
     }
 }
 

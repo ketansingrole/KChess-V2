@@ -23,6 +23,7 @@ mod pins;
 mod release;
 mod store_notes;
 mod sums;
+mod sweep;
 mod update_key;
 mod util;
 mod voice;
@@ -48,6 +49,8 @@ const HELP: &str = "cargo xtask <command>
   ci-times [--days <n>]  How long CI took over the last n days (7), job by job, and the tests
                         that failed and then passed on the same commit, as Markdown (the
                         weekly CI times workflow)
+  sweep                 Delete the build's object files no program uses (macOS; `check`,
+                        `check-fast` and `app` do it first). CARGO_TARGET_DIR picks the build
   mutants [--plan] [--base <ref>] [-- <cargo-mutants arguments>]
                         Mutation testing of the lines changed since main (or <ref>); fails
                         when a mutant survives (docs/mutation-testing.md); with --plan, only
@@ -111,6 +114,10 @@ fn main() -> ExitCode {
         Some("check") => check::check(rest),
         Some("check-fast") => check::fast(),
         Some("ci-times") => ci_times::run(rest),
+        Some("sweep") => {
+            sweep::objects();
+            Ok(())
+        }
         Some("mutants") => mutants::run(rest),
         Some("pre-push") => check::pre_push(),
         Some("install-hooks") => check::install_hooks(),
