@@ -4,6 +4,10 @@
 # Mutants no test can tell apart from the original, because the program behaves the same. Each
 # entry names why; never add one only because a test is missing.
 exclude_re = [
+    # A load command shorter than 8 bytes and a whole number of 8-byte words can only be 0 long,
+    # and a 0-long one is read again until the command count runs out, finding no symbol table:
+    # `None` either way.
+    'tooling/xtask/src/sweep\.rs:.*: replace \|\| with && in debug_map',
     # The version bits are cleared by the mask first, so `| 0x40` and `^ 0x40` (and `| 0x80` and
     # `^ 0x80`) set the same byte.
     'kchess-games/src/archive\.rs:.*: replace \| with \^ in new_id',
