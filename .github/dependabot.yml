@@ -18,8 +18,9 @@ updates:
     groups:
       crates:
         patterns: ['*']
+  # The local actions' too: install-tools pins install-action, whose commit sets the tools' versions.
   - package-ecosystem: github-actions
-    directory: /
+    directories: ['/', '/.github/actions/*']
     schedule:
       interval: monthly
     cooldown:

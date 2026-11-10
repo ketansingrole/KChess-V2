@@ -149,16 +149,10 @@ jobs:
           shared-key: check
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+      # cargo-hakari: `cargo xtask check` refuses a workspace hack that it would write differently.
+      - uses: ./.github/actions/install-tools
         with:
-          tool: cargo-llvm-cov
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
-        with:
-          tool: cargo-nextest
-      # `cargo xtask check` refuses a workspace hack that `cargo hakari` would write differently.
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
-        with:
-          tool: cargo-hakari
+          tools: cargo-llvm-cov,cargo-nextest,cargo-hakari
       - run: rustup component add llvm-tools-preview
       # The official Stockfish, so the tests that need a real engine run (`tests/support`), and
       # Fairy-Stockfish, built from its pinned source, so the variant-analysis tests run too.
@@ -202,9 +196,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+      - uses: ./.github/actions/install-tools
         with:
-          tool: cargo-deny
+          tools: cargo-deny
       - run: cargo deny check
       # The fuzz workspace has its own lock file.
       - run: cargo deny --manifest-path fuzz/Cargo.toml check
@@ -360,9 +354,9 @@ jobs:
             target/**/.fingerprint/gpui-pre*
             target/**/build/gpui-pre*
           key: vendor-headless-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+      - uses: ./.github/actions/install-tools
         with:
-          tool: cargo-nextest
+          tools: cargo-nextest
       # One clippy and one nextest over all of them: separate runs resolved features apart and
       # rebuilt the dependencies they share.
       - run: cargo clippy -p kchess-gpui ${{ matrix.packages }} --all-targets --locked -- -D warnings
@@ -529,9 +523,9 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: false
       - if: github.event_name == 'pull_request'
-        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        uses: ./.github/actions/install-tools
         with:
-          tool: cargo-mutants
+          tools: cargo-mutants
       - if: github.event_name == 'pull_request'
         id: plan
         env:
@@ -585,9 +579,9 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ env.WARM == 'true' }}
       - if: github.event_name == 'pull_request' || (env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true')
-        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        uses: ./.github/actions/install-tools
         with:
-          tool: cargo-nextest,cargo-mutants
+          tools: cargo-nextest,cargo-mutants
       # One package at a time, as cargo-mutants builds each mutant's package, so the features
       # each is built with are the ones a mutant of it asks for.
       - if: env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true'
