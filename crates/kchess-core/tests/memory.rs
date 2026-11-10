@@ -193,6 +193,11 @@ async fn measure<F, Fut>(
         "{name} keeps {per_cycle} B per cycle (allowed {allowance}): {}",
         trail.join(" → ")
     );
+    // A task still alive `TASKS_SETTLE` after the cycles is held work, whatever it weighs.
+    assert!(
+        tasks <= 0,
+        "{name} left {tasks} tasks running after {cycles} cycles"
+    );
 }
 
 async fn finish(core: Core) {
