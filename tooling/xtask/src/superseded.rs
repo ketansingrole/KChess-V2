@@ -1,4 +1,5 @@
-//! Deletes what a build folder keeps of compiled units that a newer build has replaced.
+//! Deletes what a build folder keeps of compiled units that no current build uses: those a newer
+//! build replaced, and those left behind by a change nothing will replace them after.
 //!
 //! Cargo names every unit it compiles `<package>-<hash>`. The hash covers the package's version,
 //! its features, its dependencies' hashes, the profile and the compiler, and Cargo never deletes
@@ -8,15 +9,32 @@
 //! unit a new hash. By 2026-11-10 the main checkout's `target/debug` held 104 incremental caches
 //! of `kchess_service` and 74 of `kchess_core`: 76 GB of incremental caches, 31 GB of `deps`.
 //!
-//! Age says nothing about whether a unit is needed again, so this deletes only units another
-//! build replaced. A unit is current when it is the newest build of what it is (its package,
-//! target, check or build, own features and flags) among the units built on their own, or when a
-//! current unit depends on it (by the fingerprint each fingerprint records for its
-//! dependencies). Every other unit is superseded: its fingerprint, outputs and incremental cache
-//! go. An incremental cache belongs to the unit whose compilation started it: Cargo stamps a
-//! unit's fingerprint folder (`invoked.timestamp`) just before it starts rustc, which names the
-//! cache's session after its own start time. A cache is deleted only when every unit of its
-//! crate started within a minute before it is superseded; one it cannot place is kept.
+//! Age alone says nothing about whether a unit is needed again: Cargo stamps a unit when it
+//! compiles it, not when a build finds it fresh and uses it. So a unit is current when Cargo's
+//! own records say a build may still use it:
+//!
+//! - It is the newest build of what it is (its package, target, check or build, own features and
+//!   flags) among the units built on their own (nothing depends on them, or they were built
+//!   after everything that does). Its older builds are replaced.
+//! - Unless its package no longer has its target (a test, binary, example or bench deleted or
+//!   renamed: `cargo metadata` of the workspace does not list it), or the same target was built
+//!   with other features or flags more than [`LEFT_BEHIND`] after it, and this variant not since.
+//!   Nothing will ever build either again under the same identity, so nothing would replace them:
+//!   on 2026-11-11 the main checkout kept 86 builds of deleted tests that way.
+//! - Or a current unit depends on it, by the fingerprint each fingerprint records for its
+//!   dependencies. A dependency rebuilt in place since has a new fingerprint, so that one names
+//!   no unit; it keeps the units it may be that were built since the dependent was. Keeping
+//!   every unit of its name instead kept all 51 builds of `kchess_core` there.
+//!
+//! Every other unit goes: its fingerprint, outputs and incremental cache. An incremental cache
+//! belongs to the unit whose compilation started it: Cargo stamps a unit's fingerprint folder
+//! (`invoked.timestamp`) just before it starts rustc, which names the cache's session after its
+//! own start time. A cache is deleted only when every unit of its crate started within a minute
+//! before it is not current; one it cannot place is kept.
+//!
+//! What this gets wrong costs a build, never a wrong one: a variant built less often than every
+//! [`LEFT_BEHIND`] while another is built, or a target that exists only on another branch, is
+//! compiled again from scratch when next used.
 //!
 //! It runs with the object sweep (`sweep.rs`) under Cargo's build lock, before `check`,
 //! `check-fast` and `app`. On 2026-11-10 `cargo xtask sweep --dry-run` found 922 replaced builds,
@@ -31,6 +49,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const STARTUP: Duration = Duration::from_secs(60);
 /// How far a session's start may precede its unit's stamp: the two clocks are read separately.
 const SKEW: Duration = Duration::from_secs(1);
+/// How much later another variant of a target (other features or flags) must have been built for
+/// one not built since to be left behind: a week of building the other, so a variant used once a
+/// week is kept.
+pub const LEFT_BEHIND: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+/// Each workspace package's target names, as `cargo metadata` lists them.
+pub type Targets = HashMap<String, HashSet<String>>;
 
 /// One compiled unit, from its fingerprint.
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +68,10 @@ pub struct Unit {
     pub build_run: bool,
     /// What it is: two units with the same identity are builds of one thing.
     pub identity: String,
+    /// What it builds, however: the identity without its features and flags.
+    pub target: String,
+    /// Its fingerprint file's stem (`lib-kchess_core`, `test-integration-test-core_close`).
+    pub stem: String,
     /// The crate rustc compiles for it, which names its incremental cache.
     pub krate: String,
     /// Its own fingerprint, as its dependents record it.
@@ -126,6 +155,7 @@ pub fn unit(
             ))
         })
         .collect();
+    let compile_kind = field("compile_kind");
     Some(Unit {
         folder: folder.to_string(),
         package: package.to_string(),
@@ -137,9 +167,11 @@ pub fn unit(
             &field("features"),
             &field("rustflags"),
             &field("config"),
-            &field("compile_kind"),
+            &compile_kind,
         ]
         .join(" "),
+        target: [package, stem, mode, &compile_kind].join(" "),
+        stem: stem.to_string(),
         krate: crate_of(stem),
         fingerprint: own.and_then(fingerprint),
         dependencies,
@@ -161,15 +193,20 @@ pub fn fingerprint(hex: &str) -> Option<u64> {
 }
 
 /// The units still in use: the newest of each identity among the units built on their own
-/// (nothing depends on them, or they were built after everything that does), and what they
-/// depend on. A dependency whose fingerprint none has any more (a build script run again since)
-/// keeps every unit it may be: its package's build script runs, or each library of its name.
-pub fn current(units: &[Unit]) -> HashSet<usize> {
+/// (nothing depends on them, or they were built after everything that does), unless `removed`
+/// says their target is gone or another variant of it left them behind, and what they depend
+/// on. A dependency whose fingerprint none has any more was rebuilt since, so it is one of the
+/// units it may be (its package's build script runs, or each library of its name) built since
+/// the dependent was, and those are kept.
+pub fn current(units: &[Unit], removed: impl Fn(&Unit) -> bool) -> HashSet<usize> {
     let mut dependents: HashMap<u64, Vec<usize>> = HashMap::new();
+    let mut latest: HashMap<&str, Option<SystemTime>> = HashMap::new();
     for (index, unit) in units.iter().enumerate() {
         for (_, dependency) in &unit.dependencies {
             dependents.entry(*dependency).or_default().push(index);
         }
+        let entry = latest.entry(&unit.target).or_insert(unit.invoked);
+        *entry = (*entry).max(unit.invoked);
     }
     let mut on_their_own = Vec::new();
     for (index, unit) in units.iter().enumerate() {
@@ -195,11 +232,24 @@ pub fn current(units: &[Unit]) -> HashSet<usize> {
             by_fingerprint.entry(own).or_default().push(index);
         }
     }
+    let left_behind = |unit: &Unit| {
+        let latest = latest.get(unit.target.as_str()).copied().flatten();
+        unit.invoked.zip(latest).is_some_and(|(built, latest)| {
+            latest
+                .duration_since(built)
+                .is_ok_and(|gap| gap > LEFT_BEHIND)
+        })
+    };
     let mut live: HashSet<usize> = HashSet::new();
     // Builds of one thing stamped at the same moment are all kept.
     let mut stack: Vec<usize> = on_their_own
         .into_iter()
-        .filter(|index| newest.get(units[*index].identity.as_str()) == Some(&units[*index].invoked))
+        .filter(|index| {
+            let unit = &units[*index];
+            newest.get(unit.identity.as_str()) == Some(&unit.invoked)
+                && !left_behind(unit)
+                && !removed(unit)
+        })
         .collect();
     while let Some(index) = stack.pop() {
         if !live.insert(index) {
@@ -215,12 +265,73 @@ pub fn current(units: &[Unit]) -> HashSet<usize> {
                     } else {
                         !candidate.build_run && candidate.krate == *name
                     };
-                    may_be.then_some(other)
+                    let since = candidate.invoked.is_none() || candidate.invoked >= unit.invoked;
+                    (may_be && since).then_some(other)
                 })),
             }
         }
     }
     live
+}
+
+/// The name of the target a fingerprint file's stem builds, when it is one its package may drop
+/// (a test, binary, example or bench); `None` for its library and build script, which last as
+/// long as the package.
+pub fn droppable(stem: &str) -> Option<&str> {
+    let stem = stem.strip_prefix("test-").unwrap_or(stem);
+    ["integration-test-", "example-", "bench-", "bin-"]
+        .iter()
+        .find_map(|kind| stem.strip_prefix(kind))
+}
+
+/// Whether `unit` builds a target its workspace package no longer has. A package not in
+/// `targets` (a dependency's, or one this cannot tell) keeps every target.
+pub fn removed(unit: &Unit, targets: &Targets) -> bool {
+    targets
+        .get(&unit.package)
+        .is_some_and(|names| droppable(&unit.stem).is_some_and(|name| !names.contains(name)))
+}
+
+/// Each package's target names in `cargo metadata --no-deps` output; `None` when it cannot be
+/// read.
+pub fn targets_of(metadata: &str) -> Option<Targets> {
+    let value: serde_json::Value = serde_json::from_str(metadata).ok()?;
+    value
+        .get("packages")?
+        .as_array()?
+        .iter()
+        .map(|package| {
+            let names = package
+                .get("targets")?
+                .as_array()?
+                .iter()
+                .map(|target| Some(target.get("name")?.as_str()?.to_string()))
+                .collect::<Option<HashSet<String>>>()?;
+            Some((package.get("name")?.as_str()?.to_string(), names))
+        })
+        .collect()
+}
+
+/// The targets of the workspace at `workspace`, from Cargo: `None` when it has none or Cargo
+/// cannot say, so no target counts as removed.
+pub fn workspace_targets(workspace: &Path) -> Option<Targets> {
+    let output = std::process::Command::new("cargo")
+        .args([
+            "metadata",
+            "--no-deps",
+            "--offline",
+            "--format-version",
+            "1",
+        ])
+        .arg("--manifest-path")
+        .arg(workspace.join("Cargo.toml"))
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    targets_of(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// When an incremental session folder (`s-<start>-<random>[-<id>]`) started: rustc names it
@@ -254,8 +365,9 @@ pub fn cache_superseded(
         && starters.all(|(index, _)| !live.contains(&index))
 }
 
-/// Everything a profile folder (`target/debug`) keeps of superseded units.
-pub fn plan(profile: &Path) -> Plan {
+/// Everything a profile folder (`target/debug`) keeps of units no current build uses, given its
+/// workspace's `targets` (`None`: no target counts as removed).
+pub fn plan(profile: &Path, targets: Option<&Targets>) -> Plan {
     let deps = profile.join("deps");
     let files: Vec<String> = names(&deps);
     let mut outputs: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -283,7 +395,9 @@ pub fn plan(profile: &Path) -> Plan {
             }
         }
     }
-    let live = current(&units);
+    let live = current(&units, |unit| {
+        targets.is_some_and(|targets| removed(unit, targets))
+    });
     let stale: HashSet<&str> = units
         .iter()
         .map(|unit| unit.folder.as_str())
@@ -412,7 +526,14 @@ pub(crate) mod tests {
     }
 
     /// Writes a unit's fingerprint folder into `profile` as Cargo does.
-    fn write_unit(profile: &Path, folder: &str, stem: &str, json: &str, own: u64, invoked: u64) {
+    pub(crate) fn write_unit(
+        profile: &Path,
+        folder: &str,
+        stem: &str,
+        json: &str,
+        own: u64,
+        invoked: u64,
+    ) {
         let path = profile.join(".fingerprint").join(folder);
         std::fs::create_dir_all(&path).unwrap();
         std::fs::write(path.join(format!("{stem}.json")), json).unwrap();
@@ -574,7 +695,7 @@ pub(crate) mod tests {
             // Something nothing replaced: kept, however old.
             unit_of("tool-0000000000000001", "bin-tool", 31, &[("dep", 11)], 0),
         ];
-        let live = current(&units);
+        let live = current(&units, |_| false);
         assert_eq!(live, HashSet::from([2, 3, 4, 0]));
     }
 
@@ -590,8 +711,8 @@ pub(crate) mod tests {
             unit_of("lib-0000000000000003", "lib-lib", 15, &[], 0),
             unit_of("app-0000000000000003", "bin-app", 16, &[("lib", 15)], 2),
         ];
-        assert_eq!(current(&units), HashSet::from([2, 3]));
-        assert_eq!(current(&[]), HashSet::new());
+        assert_eq!(current(&units, |_| false), HashSet::from([2, 3]));
+        assert_eq!(current(&[], |_| false), HashSet::new());
     }
 
     #[test]
@@ -606,7 +727,7 @@ pub(crate) mod tests {
             unit_of("use-0000000000000001", "bin-use", 15, &[("dep", 14)], 3),
             unit_of("use-0000000000000002", "bin-use", 16, &[], 4),
         ];
-        assert_eq!(current(&units), HashSet::from([0, 2, 5]));
+        assert_eq!(current(&units, |_| false), HashSet::from([0, 2, 5]));
     }
 
     #[test]
@@ -616,43 +737,184 @@ pub(crate) mod tests {
             unit_of("a-0000000000000002", "bin-a", 2, &[], 7),
             unit_of("a-0000000000000003", "bin-a", 3, &[], 6),
         ];
-        assert_eq!(current(&units), HashSet::from([0, 1]));
+        assert_eq!(current(&units, |_| false), HashSet::from([0, 1]));
     }
 
     #[test]
-    fn a_dependency_no_fingerprint_names_keeps_whatever_it_may_be() {
+    fn a_dependency_no_fingerprint_names_keeps_what_it_may_be_built_since() {
         let run = "run-build-script-build-script-build";
         let units = [
-            unit_of("a-0000000000000001", run, 1, &[], 0),
-            unit_of("b-0000000000000001", run, 2, &[], 0),
+            // Built before the library below, used by a replaced program: not what it uses.
             unit_of("ring-0000000000000001", "lib-ring", 3, &[], 0),
-            unit_of("ring-0000000000000002", "lib-ring", 4, &[], 0),
-            unit_of("ring-0000000000000003", run, 5, &[], 0),
-            // A replaced program used them all, so none is current on its own.
+            unit_of("a-0000000000000001", run, 1, &[], 0),
             unit_of(
                 "x-0000000000000001",
                 "bin-x",
                 50,
-                &[
-                    ("build_script_build", 1),
-                    ("build_script_build", 2),
-                    ("ring", 3),
-                    ("ring", 4),
-                    ("build_script_build", 5),
-                ],
+                &[("build_script_build", 1), ("ring", 3)],
                 50,
             ),
             unit_of("x-0000000000000002", "bin-x", 60, &[], 60),
+            // Built since the library (or in its second), used by another replaced program.
+            unit_of("ring-0000000000000002", "lib-ring", 5, &[], 80),
+            unit_of("a-0000000000000002", run, 6, &[], 75),
+            unit_of("ring-0000000000000003", "lib-ring", 7, &[], 70),
+            // Since too, but another package's build script and a build script's run.
+            unit_of("b-0000000000000001", run, 8, &[], 80),
+            unit_of("ring-0000000000000004", run, 9, &[], 80),
             unit_of(
-                "a-0000000000000002",
+                "z-0000000000000001",
+                "bin-z",
+                95,
+                &[
+                    ("ring", 5),
+                    ("build_script_build", 6),
+                    ("ring", 7),
+                    ("build_script_build", 8),
+                    ("build_script_build", 9),
+                ],
+                95,
+            ),
+            unit_of("z-0000000000000002", "bin-z", 96, &[], 96),
+            // Its build script and `ring` were rebuilt since it was.
+            unit_of(
+                "a-0000000000000003",
                 "lib-a",
                 70,
                 &[("build_script_build", 99), ("ring", 98)],
                 70,
             ),
         ];
-        assert_eq!(current(&units), HashSet::from([0, 2, 3, 6, 7]));
-        assert_eq!(current(&units[..7]), HashSet::from([6]));
+        assert_eq!(
+            current(&units, |_| false),
+            HashSet::from([3, 4, 5, 6, 10, 11])
+        );
+        assert_eq!(current(&units[..11], |_| false), HashSet::from([3, 10]));
+    }
+
+    #[test]
+    fn a_variant_another_left_behind_goes_and_one_still_built_stays() {
+        let day = 24 * 60 * 60;
+        let features = |folder: &str, features: &str, invoked: u64| {
+            let json = format!("{{\"features\":\"{features}\",\"deps\":[[1, \"dep\", false, 1]]}}");
+            unit(folder, "test-lib-core", &json, None, "build", at(invoked)).unwrap()
+        };
+        let units = [
+            unit_of("dep-0000000000000001", "lib-dep", 1, &[], 0),
+            // The tests built with other features, before a change made every build use one set.
+            features("core-0000000000000001", "[a]", 0),
+            // Still built within the week since the newest.
+            features("core-0000000000000002", "[b]", 7 * day - 1),
+            features("core-0000000000000003", "[c]", 8 * day),
+        ];
+        assert_eq!(current(&units, |_| false), HashSet::from([0, 2, 3]));
+        // A unit no time is known for is never left behind.
+        let mut unknown = units.clone();
+        unknown[1].invoked = None;
+        assert_eq!(current(&unknown, |_| false), HashSet::from([0, 1, 2, 3]));
+        // Only another build of the same target leaves one behind.
+        assert_eq!(current(&units[..2], |_| false), HashSet::from([0, 1]));
+    }
+
+    #[test]
+    fn a_target_its_package_no_longer_has_is_not_built_again() {
+        let units = [
+            unit_of("core-0000000000000001", "lib-core", 1, &[], 0),
+            unit_of(
+                "core-0000000000000002",
+                "test-integration-test-gone",
+                2,
+                &[("core", 1)],
+                1,
+            ),
+            unit_of(
+                "core-0000000000000003",
+                "test-integration-test-kept",
+                3,
+                &[("core", 1)],
+                1,
+            ),
+        ];
+        let targets = Targets::from([(
+            "core".to_string(),
+            HashSet::from(["core".to_string(), "kept".to_string()]),
+        )]);
+        let live = current(&units, |unit| removed(unit, &targets));
+        assert_eq!(live, HashSet::from([0, 2]));
+        assert!(
+            !removed(&units[0], &targets),
+            "a library lasts as its package"
+        );
+        assert!(
+            !removed(&units[1], &Targets::new()),
+            "a package it cannot tell keeps all"
+        );
+    }
+
+    #[test]
+    fn a_stem_names_the_targets_a_package_may_drop() {
+        assert_eq!(
+            droppable("test-integration-test-core_close"),
+            Some("core_close")
+        );
+        assert_eq!(droppable("integration-test-core_close"), Some("core_close"));
+        assert_eq!(droppable("test-bin-KChess"), Some("KChess"));
+        assert_eq!(droppable("bin-kchess-fake-uci"), Some("kchess-fake-uci"));
+        assert_eq!(droppable("example-fetch"), Some("fetch"));
+        assert_eq!(droppable("test-bench-speed"), Some("speed"));
+        assert_eq!(droppable("lib-kchess_core"), None);
+        assert_eq!(droppable("test-lib-kchess_core"), None);
+        assert_eq!(droppable("build-script-build-script-build"), None);
+        assert_eq!(droppable("run-build-script-build-script-build"), None);
+    }
+
+    #[test]
+    fn cargo_metadata_names_each_packages_targets() {
+        let metadata = r#"{"packages":[
+            {"name":"kchess-core","targets":[{"name":"kchess_core"},{"name":"core_close"}]},
+            {"name":"xtask","targets":[{"name":"xtask"}]}
+        ]}"#;
+        assert_eq!(
+            targets_of(metadata),
+            Some(Targets::from([
+                (
+                    "kchess-core".to_string(),
+                    HashSet::from(["kchess_core".to_string(), "core_close".to_string()])
+                ),
+                ("xtask".to_string(), HashSet::from(["xtask".to_string()])),
+            ]))
+        );
+        assert_eq!(targets_of("{"), None);
+        assert_eq!(targets_of("{}"), None);
+        assert_eq!(targets_of(r#"{"packages":[{"name":"a"}]}"#), None);
+        assert_eq!(targets_of(r#"{"packages":[{"targets":[]}]}"#), None);
+        assert_eq!(
+            targets_of(r#"{"packages":[{"name":"a","targets":[{}]}]}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn cargo_lists_a_workspaces_targets() {
+        let workspace = tempfile::tempdir().unwrap();
+        let root = workspace.path();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("tests")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(root.join("tests/close.rs"), "").unwrap();
+        assert_eq!(
+            workspace_targets(root),
+            Some(Targets::from([(
+                "probe".to_string(),
+                HashSet::from(["probe".to_string(), "close".to_string()])
+            )]))
+        );
+        assert_eq!(workspace_targets(&root.join("missing")), None);
     }
 
     #[test]
@@ -753,7 +1015,7 @@ pub(crate) mod tests {
             std::fs::write(path.with_extension("lock"), b"").unwrap();
         }
         std::fs::create_dir_all(profile.join("incremental/nodash")).unwrap();
-        let planned = plan(profile);
+        let planned = plan(profile, None);
         let mut gone: Vec<String> = planned
             .paths
             .iter()
@@ -786,7 +1048,7 @@ pub(crate) mod tests {
         assert!(deps.join("libold-0000000000000002.rlib").exists());
         assert!(profile.join("incremental/old-bbb").exists());
         assert!(profile.join(".fingerprint/odd-0000000000000003").exists());
-        assert_eq!(plan(profile), Plan::default(), "nothing more to go");
-        assert_eq!(plan(&profile.join("missing")), Plan::default());
+        assert_eq!(plan(profile, None), Plan::default(), "nothing more to go");
+        assert_eq!(plan(&profile.join("missing"), None), Plan::default());
     }
 }

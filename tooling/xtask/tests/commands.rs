@@ -76,14 +76,14 @@ fn sweep_deletes_replaced_builds_and_on_macos_the_objects_no_program_uses() {
     };
     let said = sweep(true);
     assert!(
-        said.contains("Would delete 1 build that newer builds replaced (0.0 GB)."),
+        said.contains("Would delete 1 build no current build uses (0.0 GB)."),
         "{said}"
     );
     assert!(replaced.exists() && objects.iter().all(|object| object.exists()));
     let said = sweep(false);
     assert!(!replaced.exists());
     assert!(
-        said.contains("Deleted 1 build that newer builds replaced (0.0 GB)."),
+        said.contains("Deleted 1 build no current build uses (0.0 GB)."),
         "{said}"
     );
     if cfg!(target_os = "macos") {

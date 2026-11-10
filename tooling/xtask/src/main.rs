@@ -52,9 +52,9 @@ const HELP: &str = "cargo xtask <command>
   ci-times [--days <n>]  How long CI took over the last n days (7), job by job, and the tests
                         that failed and then passed on the same commit, as Markdown (the
                         weekly CI times workflow)
-  sweep [--dry-run]     Delete what the build folder keeps of builds newer ones replaced, and
+  sweep [--dry-run]     Delete what the build folder keeps of builds no current one uses, and
                         on macOS the object files no program uses (`check`, `check-fast` and
-                        `app` do it first), then the replaced builds of the checkout's
+                        `app` do it first), then those of the checkout's
                         mutants tree (the pre-push hook's, which sweeps it too); --dry-run
                         says how much would go. CARGO_TARGET_DIR picks the build
   mutants [--plan] [--base <ref>] [-- <cargo-mutants arguments>]
