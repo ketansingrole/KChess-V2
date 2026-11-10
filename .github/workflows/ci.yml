@@ -212,6 +212,13 @@ jobs:
       - name: Install GPUI build libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      # Windows links its tests with LLVM's linker (rustup ships it), which links faster than
+      # Microsoft's; the packages that ship keep Microsoft's. Set before the cache, whose key
+      # holds Cargo's variables, and on Windows only, so the other caches stay as they are.
+      - name: Link with rust-lld
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld.exe" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: gpui
@@ -288,6 +295,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      # Windows links its tests with LLVM's linker (rustup ships it), which links faster than
+      # Microsoft's; the packages that ship keep Microsoft's. Set before the cache, whose key
+      # holds Cargo's variables, and on Windows only, so the other caches stay as they are.
+      - name: Link with rust-lld
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld.exe" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: headless
