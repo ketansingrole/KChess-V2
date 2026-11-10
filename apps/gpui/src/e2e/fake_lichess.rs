@@ -83,6 +83,11 @@ pub struct Session {
     /// `account/playing` waits until this is cleared: the check for a game in progress still
     /// running.
     pub hold_playing: bool,
+    /// The check for a game in progress (`account/playing` without `nb`, as signing in asks) is
+    /// answered 503: Lichess failing it.
+    pub fail_check: bool,
+    /// The check for a game in progress has been answered.
+    pub checked: bool,
     /// Counts changes: a game stream sends the state again whenever this moves on.
     version: usize,
 }
@@ -546,6 +551,12 @@ fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
         ("GET", "/api/account/playing") => {
             while session.lock().hold_playing {
                 std::thread::sleep(Duration::from_millis(5));
+            }
+            if request.query_string().is_empty() {
+                session.lock().checked = true;
+                if session.lock().fail_check {
+                    return kchess_testkit::json(out, 503, &json!({ "error": "Unavailable" }));
+                }
             }
             let session = session.lock();
             let mut playing: Vec<Value> = session

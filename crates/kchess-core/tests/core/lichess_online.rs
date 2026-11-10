@@ -880,6 +880,38 @@ async fn blocks_startup_assistance_through_pending_and_failed_verification_then_
     online.close();
 }
 
+/// 2026-11-10, Windows CI: the check for a game in progress failed, and a seek started after it
+/// reported "disconnected" over the seek: the page never showed it, while it was open on Lichess.
+/// The seek is reported as nothing to reconnect to; assistance stays blocked until a check
+/// answers.
+#[tokio::test]
+async fn a_seek_after_a_failed_check_is_not_reported_as_a_game_to_reconnect_to() {
+    let fixture = serve(move |seen| match (seen.method.as_str(), seen.path()) {
+        ("GET", "/api/account/playing") => Reply::Json(503, json!({ "error": "down" }).to_string()),
+        ("POST", "/api/board/seek") => Reply::Hang,
+        _ => refuse(seen),
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    assert!(online.resume().await.is_err());
+    assert_eq!(states(&host).last().unwrap()["phase"], "disconnected");
+    let reported = states(&host).len();
+    let seeking = online.clone();
+    let seek = tokio::spawn(async move { seeking.start(&seek_options(None)).await });
+    fixture.requested("/api/board/seek", 1).await;
+    assert!(
+        states(&host)[reported..]
+            .iter()
+            .all(|state| state["phase"] != "disconnected"),
+        "{:?}",
+        &states(&host)[reported..]
+    );
+    assert!(online.assistance_blocked());
+    online.close();
+    let _ = seek.await;
+}
+
 #[tokio::test]
 async fn clears_startup_protection_immediately_with_no_connected_accounts() {
     let fixture = serve(|_| Reply::Json(200, json!({ "nowPlaying": [] }).to_string())).await;

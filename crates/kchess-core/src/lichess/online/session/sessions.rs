@@ -17,6 +17,18 @@ impl OnlineSession {
     /// `cancel()` without the deferred lobby: the caller is about to claim the streams itself.
     /// Ends every stream, moves the epoch, and reports what remains protected.
     pub(super) fn cancel_inner(&self) {
+        self.end_session(true);
+    }
+
+    /// `cancel_inner`, for a new seek or challenge: a check for a game in progress that has not
+    /// answered (or failed) is not reported as a game to reconnect to, which would replace the
+    /// seek the player just started. The seek's event stream announces any game in progress, and
+    /// assistance stays blocked until a check answers (`assistance_blocked`).
+    pub(super) fn cancel_for_start(&self) {
+        self.end_session(false);
+    }
+
+    fn end_session(&self, report_unverified: bool) {
         let (phase_report, cancel_pending) = {
             let mut st = self.st();
             st.attach_generation += 1;
@@ -41,7 +53,9 @@ impl OnlineSession {
             if let Some(controller) = st.game_controller.take() {
                 controller.token.cancel();
             }
-            let report = if !st.protected_game.is_empty() || st.recovery_unverified {
+            let report = if !st.protected_game.is_empty()
+                || (report_unverified && st.recovery_unverified)
+            {
                 Some((
                     OnlinePhase::Disconnected,
                     st.protected_game.clone(),
