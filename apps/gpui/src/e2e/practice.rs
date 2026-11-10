@@ -586,6 +586,38 @@ fn a_game_opened_for_guessing_starts_as_its_side(cx: &mut gpui_kit::TestAppConte
     wait_for_label(&mut app, "guess-error", "That game has no moves");
 }
 
+/// A guess made before the core says whether the engine is installed waits for that answer and is
+/// then judged by the engine. It was judged at once as if there were no engine: Windows CI showed
+/// `d5` where the engine marks `d5?!` (2026-11-10, `a_game_opened_for_guessing_starts_as_its_side`).
+#[gpui_kit::test]
+fn a_guess_before_the_engine_answers_waits_for_it(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, 6);
+    let guess = app
+        .cx
+        .update(|cx| {
+            crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+        })
+        .and_then(|practice| app.cx.update(|cx| practice.read(cx).guess()))
+        .expect("the Guess the move tab");
+    app.wait_for("the engine's status", |_, cx| {
+        guess.update(cx, |guess, _| guess.engine_status_known(false))
+    });
+    // The core's answer not in yet, as on a busy runner.
+    app.cx
+        .update(|cx| guess.update(cx, |guess, _| guess.engine_status_known(true)));
+    app.with_window(|window, cx| {
+        crate::shell::guess_moves("1. d4 d5 2. c4 *", Some(shakmaty::Color::Black), window, cx)
+    });
+    app.wait_for_moves(&["d4"]);
+    app.drag_square("d7", "d5", false);
+    assert_eq!(app.moves(), ["d4"], "the guess waits for the engine");
+
+    app.cx
+        .update(|cx| guess.update(cx, |guess, cx| guess.answer_engine_status(true, cx)));
+    app.wait_for_moves(&["d4", "d5?!", "c4"]);
+}
+
 /// The square colors trainer is a panel's width, not the page's.
 #[gpui_kit::test]
 fn the_square_colors_card_is_a_panels_width(cx: &mut gpui_kit::TestAppContext) {
