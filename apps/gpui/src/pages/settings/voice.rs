@@ -182,7 +182,9 @@ impl SettingsPage {
                     palette,
                 ))
             });
+        // Wraps: "Allow microphone" beside "Privacy settings" ran past a 640 px window's side.
         let access_actions = h_flex()
+            .flex_wrap()
             .gap(px(8.))
             .when(access == Access::NotDetermined, |row| {
                 row.child(

@@ -328,10 +328,10 @@ fn report(
         return out;
     }
     let mut tests: BTreeMap<&str, (usize, u64)> = BTreeMap::new();
-    let mut unnamed: BTreeMap<String, usize> = BTreeMap::new();
+    let mut unnamed: BTreeMap<String, Vec<&Job>> = BTreeMap::new();
     for (job, names) in flaky {
         if names.is_empty() {
-            *unnamed.entry(normalize(&job.name)).or_default() += 1;
+            unnamed.entry(normalize(&job.name)).or_default().push(job);
         }
         for name in names {
             let entry = tests.entry(name).or_insert((0, job.run));
@@ -351,12 +351,20 @@ fn report(
         }
     }
     if !unnamed.is_empty() {
-        out += "\nJobs that failed, then passed, with no failed test in their log:";
-        for (name, times) in unnamed {
-            out += &format!(" {name} ×{times};");
+        // Linked job by job: their logs are what tell why they failed.
+        out += "\nJobs that failed, then passed, with no failed test in their log:\n\n";
+        for (name, jobs) in unnamed {
+            let links: Vec<String> = jobs
+                .iter()
+                .map(|job| {
+                    format!(
+                        "[job {}](https://github.com/{repo}/actions/runs/{}/job/{})",
+                        job.id, job.run, job.id
+                    )
+                })
+                .collect();
+            out += &format!("- {name} ×{}: {}\n", jobs.len(), links.join(", "));
         }
-        out.pop();
-        out += ".\n";
     }
     out
 }
@@ -591,12 +599,17 @@ mod tests {
 
     #[test]
     fn a_flaky_job_without_a_named_test_is_listed_by_job() {
-        let jobs = [job(10, 1, 1, "mutants (2)", "failure", 9)];
-        let flaky = [(jobs[0].clone(), Vec::new()), (jobs[0].clone(), Vec::new())];
+        let jobs = [
+            job(10, 1, 1, "mutants (2)", "failure", 9),
+            job(11, 1, 1, "mutants (3)", "failure", 9),
+        ];
+        let flaky = [(jobs[0].clone(), Vec::new()), (jobs[1].clone(), Vec::new())];
         let text = report(7, "d", "o/r", &[run(1, "pull_request", "a")], &jobs, &flaky);
         assert!(
             text.ends_with(
-                "Jobs that failed, then passed, with no failed test in their log: mutants ×2.\n"
+                "Jobs that failed, then passed, with no failed test in their log:\n\n\
+                 - mutants ×2: [job 10](https://github.com/o/r/actions/runs/1/job/10), \
+                 [job 11](https://github.com/o/r/actions/runs/1/job/11)\n"
             ),
             "{text}"
         );
