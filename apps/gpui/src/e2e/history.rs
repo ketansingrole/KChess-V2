@@ -487,7 +487,12 @@ fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppConte
                     page.requests()
                 );
             }
+            // And settled: a report with games can come while the sync still runs, and the sync's
+            // end reads it again, replacing the time use shown below (macOS CI, 2026-11-10: timed
+            // out waiting for the time use).
             total.is_some_and(|total| total > 0.)
+                && page.loaded()
+                && !crate::accounts::handle(cx).read(cx).working()
         })
     });
     let shown = |app: &mut Harness| {
