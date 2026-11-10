@@ -236,7 +236,8 @@ fn debug_map(file: &mut (impl Read + Seek)) -> Option<HashSet<String>> {
             ));
             break;
         }
-        if size < 8 {
+        // Every command is a whole number of 8-byte words: anything else is not a Mach-O file.
+        if size < 8 || !size.is_multiple_of(8) {
             return None;
         }
         at += size;
@@ -304,14 +305,14 @@ mod tests {
             strings.extend(text.as_bytes());
             strings.push(0);
         }
-        let symbols_at = 32 + 16 + 24;
+        let symbols_at = 32 + 8 + 16 + 24;
         let strings_at = symbols_at + entries.len();
         let mut file = Vec::new();
-        for word in [MH_MAGIC_64, 0x0100_000c, 0, 2, 2, 40, 0, 0] {
+        for word in [MH_MAGIC_64, 0x0100_000c, 0, 2, 3, 48, 0, 0] {
             file.extend(word.to_le_bytes());
         }
-        // An unrelated command (LC_UUID-sized) before the symbol table's.
-        for word in [0x1b_u32, 16, 0, 0] {
+        // Unrelated commands before the symbol table's: one of the smallest size, one longer.
+        for word in [0x2a_u32, 8, 0x1b, 16, 0, 0] {
             file.extend(word.to_le_bytes());
         }
         for word in [
@@ -373,16 +374,30 @@ mod tests {
         assert_eq!(debug_map(&mut Cursor::new(cut)), None);
         // A symbol table bigger than the file.
         let mut huge = mach_o(&[(N_OSO, "/t/a-1.b.c.rcgu.o")]);
-        huge[60..64].copy_from_slice(&u32::MAX.to_le_bytes());
+        huge[68..72].copy_from_slice(&u32::MAX.to_le_bytes());
         assert_eq!(debug_map(&mut Cursor::new(huge)), None);
         // A load command too short to step past.
         let mut looping = mach_o(&[]);
         looping[36..40].copy_from_slice(&0u32.to_le_bytes());
         assert_eq!(debug_map(&mut Cursor::new(looping)), None);
+        // One that is not a whole number of words.
+        let mut ragged = mach_o(&[]);
+        ragged[36..40].copy_from_slice(&12u32.to_le_bytes());
+        assert_eq!(debug_map(&mut Cursor::new(ragged)), None);
         // No symbol table among the commands.
         let mut without = mach_o(&[(N_OSO, "/t/a-1.b.c.rcgu.o")]);
         without[16..20].copy_from_slice(&1u32.to_le_bytes());
         assert_eq!(debug_map(&mut Cursor::new(without)), None);
+    }
+
+    #[test]
+    fn a_read_may_end_at_the_end_of_the_file_but_not_past_it() {
+        let mut file = Cursor::new(b"abcd".to_vec());
+        assert_eq!(read_at(&mut file, 0, 4), Some(b"abcd".to_vec()));
+        assert_eq!(read_at(&mut file, 1, 3), Some(b"bcd".to_vec()));
+        assert_eq!(read_at(&mut file, 1, 4), None);
+        assert_eq!(read_at(&mut file, u64::MAX, 2), None);
+        assert_eq!(read_at_most(&mut file, 2, 10), Some(b"cd".to_vec()));
     }
 
     #[test]

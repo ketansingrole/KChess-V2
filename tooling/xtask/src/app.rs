@@ -68,7 +68,6 @@ pub fn engine() -> Result<PathBuf> {
 /// it, and answers the app's executable, as Cargo reports it. Without the helper, for instance
 /// offline with no libvosk yet, the app still starts.
 fn build() -> Result<PathBuf> {
-    crate::sweep::objects();
     let out = Command::new("cargo")
         .args([
             "build",

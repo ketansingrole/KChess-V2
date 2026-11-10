@@ -109,7 +109,10 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let rest = args.get(1..).unwrap_or_default();
     let result = match args.first().map(String::as_str) {
-        Some("app") => app::run(rest),
+        Some("app") => {
+            sweep::objects();
+            app::run(rest)
+        }
         Some("bench") => bench::run(rest),
         Some("check") => check::check(rest),
         Some("check-fast") => check::fast(),

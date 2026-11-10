@@ -27,12 +27,16 @@ fn help_names_the_commands() {
 }
 
 #[test]
-fn sweep_deletes_the_objects_of_a_program_no_longer_built_on_macos_only() {
+fn sweep_deletes_the_objects_of_programs_no_longer_built_on_macos_only() {
     let target = tempfile::tempdir().unwrap();
-    let deps = target.path().join("debug/deps");
-    std::fs::create_dir_all(&deps).unwrap();
-    let object = deps.join("gone-0123456789abcdef.a1.x7.rcgu.o");
-    std::fs::write(&object, b"o").unwrap();
+    // One in each profile's folder, and big enough to count in megabytes.
+    let objects = ["debug", "llvm-cov-target/debug"].map(|profile| {
+        let deps = target.path().join(profile).join("deps");
+        std::fs::create_dir_all(&deps).unwrap();
+        let object = deps.join("gone-0123456789abcdef.a1.x7.rcgu.o");
+        std::fs::write(&object, vec![0; 1_500_000]).unwrap();
+        object
+    });
     let out = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("sweep")
         .env("CARGO_TARGET_DIR", target.path())
@@ -41,13 +45,13 @@ fn sweep_deletes_the_objects_of_a_program_no_longer_built_on_macos_only() {
     assert!(out.status.success());
     let said = String::from_utf8_lossy(&out.stderr);
     if cfg!(target_os = "macos") {
-        assert!(!object.exists());
+        assert!(objects.iter().all(|object| !object.exists()));
         assert!(
-            said.contains("Deleted 1 object file no program uses"),
+            said.contains("Deleted 2 object files no program uses (3 MB)."),
             "{said}"
         );
     } else {
-        assert!(object.exists());
+        assert!(objects.iter().all(|object| object.exists()));
         assert!(said.is_empty(), "{said}");
     }
 }
