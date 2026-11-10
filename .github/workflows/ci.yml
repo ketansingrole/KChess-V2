@@ -533,13 +533,10 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           SHARD: ${{ matrix.shard }}
           SHARDS: ${{ needs.mutants-plan.outputs.total }}
-          # Each mutant rebuilds its package with one small edit: incrementally, its build takes a
-          # third of the time (2026-11-09, 43 kchess-domain mutants: 6.0 s against 2.1 s each, the
-          # same outcomes). rust-cache turns incremental builds off for the job.
-          CARGO_INCREMENTAL: 1
+        # In the checkout itself, built incrementally (`--in-place`, tooling/xtask/src/mutants.rs).
         run: >-
-          cargo xtask mutants --base "$(git merge-base "$BASE" HEAD)"
-          -- --shard "$SHARD/$SHARDS" --in-place --exclude 'apps/gpui/**'
+          cargo xtask mutants --in-place --base "$(git merge-base "$BASE" HEAD)"
+          -- --shard "$SHARD/$SHARDS" --exclude 'apps/gpui/**'
       - if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

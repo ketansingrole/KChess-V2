@@ -1,6 +1,7 @@
 //! `check`, `check-fast` and the pre-push hook.
 
 use std::io::Read;
+use std::path::Path;
 use std::process::Command;
 
 use crate::util::{Result, available, output, root, run, run_with, say};
@@ -570,9 +571,10 @@ pub fn pre_push() -> Result {
 
 /// A push of another branch: the mutants of the lines it sends, so a survivor stops the push here
 /// rather than failing CI's `mutants` job a quarter of an hour later. Only the lines new since the
-/// branch's last push, which was tested then; the app's are left out as in CI. It tests the working
-/// tree, so a push of anything but a clean HEAD, or without cargo-mutants, skips it: CI still runs
-/// them all.
+/// branch's last push, which was tested then; the app's are left out as in CI. They are tested in
+/// the checkout's own mutants tree (`mutants_tree`), set to the pushed commit, one at a time in
+/// place as in CI, so each push rebuilds only what changed since the last; a push of anything but
+/// a clean HEAD, or without cargo-mutants, skips it: CI still runs them all.
 fn branch_mutants(input: &str) -> Result {
     let head = output("git", &["rev-parse", "HEAD"])?;
     let Some(remote) = head_push(input, head.trim()) else {
@@ -606,9 +608,13 @@ fn branch_mutants(input: &str) -> Result {
         Some(base) => base.to_string(),
         None => crate::util::merge_base(&root())?,
     };
-    crate::mutants::run(&branch_mutants_args(&base)).map_err(|cause| {
+    let refused = |cause| {
         format!("Push refused: {cause}\nSkip on purpose with KCHESS_SKIP_PRE_PUSH=1 git push …")
-    })
+    };
+    let checkout = root();
+    let tree = crate::mutants_tree::prepare(&checkout, head.trim()).map_err(refused)?;
+    crate::mutants::run_in(&tree.path, "cargo", &branch_mutants_args(&base, &checkout))
+        .map_err(refused)
 }
 
 /// The remote's current commit for the pushed branch whose new commit is `head`, from the hook's
@@ -631,11 +637,27 @@ fn mutants_base(remote: &str, is_ancestor: impl Fn(&str) -> bool) -> Option<&str
     (!remote.bytes().all(|b| b == b'0') && is_ancestor(remote)).then_some(remote)
 }
 
-/// `cargo xtask mutants`' arguments for a branch push from `base`: CI's, on one machine.
-fn branch_mutants_args(base: &str) -> Vec<String> {
-    ["--base", base, "--", "--exclude", "apps/gpui/**", "-j", "4"]
-        .map(String::from)
-        .to_vec()
+/// `cargo xtask mutants`' arguments for a branch push from `base`: CI's, with the results in
+/// `checkout`'s `mutants.out`, where the pusher looks for them.
+///
+/// One mutant at a time, in place, in a tree kept built, rather than four at once in copies built
+/// afresh: 2026-11-10, the 4 kchess-core mutants of 9e39cc7f took 92 s on the next push against
+/// 337 s (each build 8–19 s against 38–254 s), and 226 s against 409 s the first time, with the
+/// same outcomes.
+fn branch_mutants_args(base: &str, checkout: &Path) -> Vec<String> {
+    let out = checkout.to_string_lossy();
+    [
+        "--base",
+        base,
+        "--in-place",
+        "--",
+        "--exclude",
+        "apps/gpui/**",
+        "--output",
+        &out,
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 /// Point Git at the repository's hooks, unless the clone already uses others on purpose.
@@ -705,15 +727,16 @@ mod tests {
     #[test]
     fn a_branch_push_runs_cis_mutants_without_the_app() {
         assert_eq!(
-            branch_mutants_args("abc"),
+            branch_mutants_args("abc", Path::new("/work/kchess")),
             [
                 "--base",
                 "abc",
+                "--in-place",
                 "--",
                 "--exclude",
                 "apps/gpui/**",
-                "-j",
-                "4"
+                "--output",
+                "/work/kchess"
             ]
         );
     }

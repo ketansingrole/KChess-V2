@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::util::{Result, git, merge_base, root, say, succeeds};
+use crate::util::{Result, git, merge_base, root, say, succeeds, without_git_location};
 
 /// Where the diff cargo-mutants reads is written, under the (ignored) target directory.
 const DIFF: &str = "target/mutants-diff.patch";
@@ -15,13 +15,27 @@ const NEXTEST_PROFILE: &str = "mutants";
 
 /// The base to diff against: `--base <ref>`, else where this branch left `origin/main`.
 fn base_of(repo: &Path, args: &[String]) -> Result<String> {
-    match args.iter().position(|arg| arg == "--base") {
-        Some(at) => args
+    let own = own(args);
+    match own.iter().position(|arg| arg == "--base") {
+        Some(at) => own
             .get(at + 1)
             .cloned()
             .ok_or_else(|| "--base needs a commit or branch.".to_string()),
         None => merge_base(repo),
     }
+}
+
+/// The arguments before `--`: this command's own.
+fn own(args: &[String]) -> &[String] {
+    match args.iter().position(|arg| arg == "--") {
+        Some(at) => &args[..at],
+        None => args,
+    }
+}
+
+/// Whether this command's own arguments hold `flag`.
+fn has(args: &[String], flag: &str) -> bool {
+    own(args).iter().any(|arg| arg == flag)
 }
 
 /// The arguments after `--`, passed to cargo-mutants as they are.
@@ -217,12 +231,14 @@ fn hunk_header(line: &str) -> Option<(usize, usize, usize, &str)> {
     Some((start(old)?, count(old)?, start(new)?, rest))
 }
 
-/// cargo-mutants' arguments: only mutants on the diff's lines, each tested with the tests of its
-/// own package, under nextest when it is installed.
-fn mutants_args(diff: &str, nextest: bool, extra: &[String]) -> Vec<String> {
-    let mut args: Vec<String> = ["mutants", "--in-diff", diff, "--no-shuffle"]
-        .map(String::from)
-        .to_vec();
+/// cargo-mutants' arguments: only mutants on the diff's lines (every mutant without one), each
+/// tested with the tests of its own package, under nextest when it is installed.
+fn mutants_args(diff: Option<&str>, nextest: bool, extra: &[String]) -> Vec<String> {
+    let mut args: Vec<String> = vec!["mutants".into()];
+    if let Some(diff) = diff {
+        args.extend(["--in-diff".into(), diff.into()]);
+    }
+    args.push("--no-shuffle".into());
     if nextest {
         args.extend(["--test-tool", "nextest"].map(String::from));
     }
@@ -312,7 +328,7 @@ fn count_listed(list: &str) -> usize {
     list.lines().filter(|line| !line.trim().is_empty()).count()
 }
 
-/// `mutants [--plan] [--base <ref>] [-- <cargo-mutants arguments>]`.
+/// `mutants [--plan] [--base <ref> | --all] [--in-place] [-- <cargo-mutants arguments>]`.
 pub fn run(args: &[String]) -> Result {
     if args.first().map(String::as_str) == Some("--plan") {
         return plan(&args[1..]);
@@ -320,28 +336,64 @@ pub fn run(args: &[String]) -> Result {
     run_in(&root(), "cargo", args)
 }
 
+/// What a run tests: the mutants of the lines changed since a base, or (`--all`) every mutant
+/// of the code the arguments after `--` select, as the weekly run does.
+fn scope_of(repo: &Path, args: &[String]) -> Result<Option<String>> {
+    if !has(args, "--all") {
+        return base_of(repo, args).map(Some);
+    }
+    if has(args, "--base") {
+        return Err("--all tests every mutant: it takes no --base.".into());
+    }
+    Ok(None)
+}
+
+/// cargo-mutants' arguments and environment for a run in place (`--in-place`): each mutant is
+/// built and tested in the checkout itself, one at a time, incrementally, as the dev profile
+/// builds the workspace's own crates. Incrementally, a mutant's build takes a third of the time
+/// (2026-11-09, 43 kchess-domain mutants: 6.0 s against 2.1 s each, the same outcomes). CI's
+/// rust-cache turns incremental builds off (`CARGO_INCREMENTAL=0`), so the variable goes; it is
+/// not set to 1, which sccache refuses ("incremental compilation is prohibited"), failing every
+/// build where it is the wrapper. The checkout must be one nobody else is using: CI's, or the
+/// pre-push hook's own tree (`mutants_tree`).
+fn in_place(mutants: &mut Vec<String>, command: &mut Command) {
+    mutants.push("--in-place".into());
+    command.env_remove("CARGO_INCREMENTAL");
+}
+
 /// `run` in `repo`, with `cargo` as the cargo to run (a stand-in in the tests).
-fn run_in(repo: &Path, cargo: &str, args: &[String]) -> Result {
+pub(crate) fn run_in(repo: &Path, cargo: &str, args: &[String]) -> Result {
     if !cargo_has(cargo, repo, &["mutants", "--version"]) {
         return Err("cargo-mutants is not installed: `cargo install cargo-mutants`.".into());
     }
-    let base = base_of(repo, args)?;
-    if !write_diff(repo, &base)? {
-        say(&format!(
-            "No Rust changes since {base}: no mutants to test."
-        ));
-        return Ok(());
-    }
+    let scope = scope_of(repo, args)?;
     let nextest = cargo_has(cargo, repo, &["nextest", "--version"]);
-    let mutants = mutants_args(DIFF, nextest, passed_through(args));
-    say(&format!(
-        "Testing the mutants of the lines changed since {base}…"
-    ));
-    let status = Command::new(cargo)
-        .args(&mutants)
+    let mut mutants = match &scope {
+        Some(base) => {
+            if !write_diff(repo, base)? {
+                say(&format!(
+                    "No Rust changes since {base}: no mutants to test."
+                ));
+                return Ok(());
+            }
+            say(&format!(
+                "Testing the mutants of the lines changed since {base}…"
+            ));
+            mutants_args(Some(DIFF), nextest, passed_through(args))
+        }
+        None => mutants_args(None, nextest, passed_through(args)),
+    };
+    let mut command = Command::new(cargo);
+    // From the pre-push hook, Git's variables name the pushing checkout, not `repo`.
+    without_git_location(&mut command)
         .current_dir(repo)
         // The run ends at a mutant's first failing test (`.config/nextest.toml`).
-        .env("NEXTEST_PROFILE", NEXTEST_PROFILE)
+        .env("NEXTEST_PROFILE", NEXTEST_PROFILE);
+    if has(args, "--in-place") {
+        in_place(&mut mutants, &mut command);
+    }
+    let status = command
+        .args(&mutants)
         .status()
         .map_err(|cause| format!("Could not run {cargo}: {cause}"))?;
     if status.success() {
@@ -418,7 +470,7 @@ mod tests {
     fn mutants_run_on_the_diff_under_nextest_when_installed() {
         let extra = strings(&["-j", "2"]);
         assert_eq!(
-            mutants_args("d.patch", true, &extra),
+            mutants_args(Some("d.patch"), true, &extra),
             strings(&[
                 "mutants",
                 "--in-diff",
@@ -431,7 +483,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            mutants_args("d.patch", false, &[]),
+            mutants_args(Some("d.patch"), false, &[]),
             strings(&["mutants", "--in-diff", "d.patch", "--no-shuffle"])
         );
     }
@@ -741,8 +793,10 @@ mod tests {
         let script = format!(
             "#!/bin/sh\ncase \"$2\" in --version) exit {version};; esac\n\
              echo \"$@\" > \"{calls}\"\necho \"$NEXTEST_PROFILE\" > \"{profile}\"\n\
-             cat \"$3\" > \"{seen}\"\nexit {status}\n",
+             echo \"${{CARGO_INCREMENTAL-unset}}\" > \"{incremental}\"\n\
+             cat \"$3\" > \"{seen}\" 2>/dev/null\nexit {status}\n",
             calls = dir.join("calls").display(),
+            incremental = dir.join("incremental").display(),
             seen = dir.join("seen.patch").display(),
             profile = dir.join("profile").display(),
         );
@@ -798,5 +852,104 @@ mod tests {
         let cargo = fake_cargo(tools.path(), true, 2);
         let failed = run_in(dir.path(), &cargo, &args).unwrap_err();
         assert!(failed.contains("mutants.out/missed.txt"), "{failed}");
+    }
+
+    /// What the stand-in cargo recorded in `tools`: its arguments and `CARGO_INCREMENTAL`.
+    #[cfg(unix)]
+    fn recorded(tools: &Path) -> (String, String) {
+        let read = |name: &str| {
+            std::fs::read_to_string(tools.join(name))
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        (read("calls"), read("incremental"))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn in_place_each_mutant_builds_incrementally_in_the_checkout() {
+        let (dir, base) = repo();
+        std::fs::write(dir.path().join("new.rs"), "fn new() {}\n").unwrap();
+        let tools = tempfile::tempdir().unwrap();
+        let cargo = fake_cargo(tools.path(), true, 0);
+        let args = strings(&["--base", &base, "--in-place", "--", "--shard", "1/2"]);
+        run_in(dir.path(), &cargo, &args).unwrap();
+        let (calls, incremental) = recorded(tools.path());
+        assert_eq!(
+            calls,
+            format!(
+                "mutants --in-diff {DIFF} --no-shuffle --test-tool nextest --shard 1/2 --in-place"
+            )
+        );
+        assert_eq!(incremental, "unset");
+
+        // Without it, the run is in cargo-mutants' copies, built as the caller's environment says.
+        run_in(dir.path(), &cargo, &strings(&["--base", &base])).unwrap();
+        let (calls, incremental) = recorded(tools.path());
+        assert!(!calls.contains("--in-place"), "{calls}");
+        let inherited = std::env::var("CARGO_INCREMENTAL").unwrap_or_else(|_| "unset".into());
+        assert_eq!(incremental, inherited);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn all_tests_every_mutant_the_arguments_select_without_a_diff() {
+        // No `origin/main` here: a run that looked for a base would fail.
+        let (dir, base) = repo();
+        let tools = tempfile::tempdir().unwrap();
+        let cargo = fake_cargo(tools.path(), true, 0);
+        let args = strings(&["--all", "--in-place", "--", "-p", "kchess-domain"]);
+        run_in(dir.path(), &cargo, &args).unwrap();
+        let (calls, incremental) = recorded(tools.path());
+        assert_eq!(
+            calls,
+            "mutants --no-shuffle --test-tool nextest -p kchess-domain --in-place"
+        );
+        assert_eq!(incremental, "unset");
+        assert!(!dir.path().join(DIFF).exists());
+
+        let both = strings(&["--all", "--base", &base]);
+        let refused = run_in(dir.path(), &cargo, &both).unwrap_err();
+        assert!(refused.contains("takes no --base"), "{refused}");
+    }
+
+    #[test]
+    fn only_arguments_before_the_separator_are_the_command_s_own() {
+        let args = strings(&["--in-place", "--", "--all", "--base", "x"]);
+        assert_eq!(own(&args), strings(&["--in-place"]));
+        assert!(has(&args, "--in-place"));
+        assert!(!has(&args, "--all"));
+        assert_eq!(own(&strings(&["--all"])), strings(&["--all"]));
+        // A `--base` meant for cargo-mutants is not this command's base.
+        let (dir, _) = repo();
+        assert!(base_of(dir.path(), &strings(&["--", "--base", "x"])).is_err());
+    }
+
+    /// What `command` does with `variable`: `Some(None)` when it removes it.
+    fn env_of(command: &Command, variable: &str) -> Option<Option<String>> {
+        command
+            .get_envs()
+            .find(|(key, _)| *key == variable)
+            .map(|(_, value)| value.map(|value| value.to_string_lossy().into_owned()))
+    }
+
+    #[test]
+    fn in_place_lifts_ci_s_incremental_off_without_forcing_it_on() {
+        let mut command = Command::new("cargo");
+        command.env("CARGO_INCREMENTAL", "0");
+        let mut args = strings(&["mutants"]);
+        in_place(&mut args, &mut command);
+        assert_eq!(args, strings(&["mutants", "--in-place"]));
+        assert_eq!(env_of(&command, "CARGO_INCREMENTAL"), Some(None));
+    }
+
+    #[test]
+    fn cargo_mutants_finds_its_repository_from_its_own_folder() {
+        let mut command = Command::new("cargo");
+        command.env("GIT_DIR", "/elsewhere/.git");
+        without_git_location(&mut command);
+        assert_eq!(env_of(&command, "GIT_DIR"), Some(None));
+        assert_eq!(env_of(&command, "GIT_INDEX_FILE"), Some(None));
     }
 }

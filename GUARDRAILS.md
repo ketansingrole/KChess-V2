@@ -27,7 +27,8 @@ offscreen into `<dir>/<width>x<height>/<page>.png`.
 `cargo xtask check` when a push updates `main`, and refuses if the pushed commit is not HEAD or
 the working tree has uncommitted or untracked files, since `check` would test those instead. A
 push of another branch runs `cargo xtask mutants` on the lines new since that branch's last push
-(the app's left out, as in CI) and refuses while a mutant survives; it skips a push that is not a
+(the app's left out, as in CI), in the checkout's own built tree (`.data/mutants-tree`), and refuses
+while a mutant survives; it skips a push that is not a
 clean HEAD, or when cargo-mutants is not installed. Skip either only on purpose:
 `KCHESS_SKIP_PRE_PUSH=1 git push …`.
 

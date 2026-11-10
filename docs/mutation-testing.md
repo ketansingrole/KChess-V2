@@ -39,11 +39,18 @@ out; the weekly run's `gpui` job tests the mutants of the lines the past week ch
 
 The pre-push hook (`cargo xtask install-hooks`) runs it before every push of a branch, on the
 lines new since that branch's last push, and refuses the push while a mutant survives: a survivor
-costs minutes here rather than a whole CI run. It skips a push of anything but a clean HEAD, and
+costs minutes here rather than a whole CI run. It tests them as CI does, one at a time in place,
+but in the checkout's own mutants tree (`.data/mutants-tree`, a detached worktree set to the pushed
+commit), never in the files you are editing; the tree stays built, so a push rebuilds only what
+changed since the last one. A second push from the same checkout waits for the first, and whatever
+an interrupted run left in the tree is reset before the next. Results land in the checkout's
+`mutants.out/`. It skips a push of anything but a clean HEAD, and
 clones without cargo-mutants; `KCHESS_SKIP_PRE_PUSH=1 git push …` skips it on purpose. When CI's
 `mutants` job fails, the `mutants-diff-<k>`
 artifact's `missed.txt` and `timeout.txt` name the survivors. To work on them locally,
-`--base <ref>` diffs against another commit, and arguments after `--` go to cargo-mutants
+`--base <ref>` diffs against another commit, `--all` tests every mutant instead of the changed
+lines', `--in-place` builds and tests them in the checkout itself (only one nobody is editing),
+and arguments after `--` go to cargo-mutants
 (`-- -j 4`, `-- -p kchess-domain`, `-- --file 'crates/kchess-core/src/engine/**'`).
 
 Code that only moved is not a change: a block Git's `--color-moved` marks as moved (at least
@@ -67,7 +74,8 @@ moved code still is a change. Commit a move first: an untracked file is compared
 ## Weekly runs
 
 `.github/workflows/mutants.yml` runs a package in eight shards every Saturday (the rules) and on
-demand for any package. Its `gpui` job, on the same schedule, tests the mutants of the app's
+demand for any package, through `cargo xtask mutants --all --in-place` as a pull request's run
+does. Its `gpui` job, on the same schedule, tests the mutants of the app's
 lines changed in the past week, which pull requests leave out. The rules and the core take hours on one machine: about 20 seconds of
 CPU per mutant for the rules' 7,000, more for the core's 6,300 and the app's 12,000, whose every
 mutant rebuilds the app.

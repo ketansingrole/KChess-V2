@@ -51,7 +51,9 @@ jobs:
         env:
           PACKAGE: ${{ inputs.package || 'kchess-domain' }}
           SHARD: ${{ matrix.shard }}
-        run: cargo mutants -p "$PACKAGE" --test-tool nextest --shard "$SHARD/8" --no-shuffle
+        # As a pull request's mutants run (ci.yml): in the checkout, built incrementally, each
+        # mutant's tests ending at their first failure (tooling/xtask/src/mutants.rs).
+        run: cargo xtask mutants --all --in-place -- -p "$PACKAGE" --shard "$SHARD/8"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
@@ -93,7 +95,7 @@ jobs:
         env:
           SHARD: ${{ matrix.shard }}
         run: >-
-          cargo xtask mutants --base "$(git rev-list -1 --before='7 days ago' HEAD)"
+          cargo xtask mutants --in-place --base "$(git rev-list -1 --before='7 days ago' HEAD)"
           -- --file 'apps/gpui/**' --shard "$SHARD/4"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
