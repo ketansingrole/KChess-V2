@@ -12,6 +12,7 @@ serde_json.workspace = true
 sha2 = { version = "0.11", default-features = false }
 # bsdiff patches, bzip2-compressed: a rebuilt binary differs from the last by a few percent.
 qbsdiff = "1.4"
+kchess-hack = { version = "0.1", path = "../kchess-hack" }
 
 [lints]
 workspace = true

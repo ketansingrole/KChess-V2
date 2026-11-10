@@ -4240,6 +4240,7 @@ dependencies = [
  "kchess-core",
  "kchess-domain",
  "kchess-games",
+ "kchess-hack",
  "kchess-service",
  "serde_json",
  "tempfile",
@@ -4251,6 +4252,7 @@ name = "kchess-contracts"
 version = "2026.11.7"
 dependencies = [
  "kchess-domain",
+ "kchess-hack",
  "serde",
  "serde_json",
 ]
@@ -4268,6 +4270,7 @@ dependencies = [
  "getrandom 0.4.3",
  "kchess-contracts",
  "kchess-domain",
+ "kchess-hack",
  "keyring",
  "regex",
  "reqwest",
@@ -4290,6 +4293,7 @@ dependencies = [
 name = "kchess-delta"
 version = "2026.11.7"
 dependencies = [
+ "kchess-hack",
  "qbsdiff",
  "serde",
  "serde_json",
@@ -4301,6 +4305,7 @@ name = "kchess-domain"
 version = "2026.11.7"
 dependencies = [
  "flate2",
+ "kchess-hack",
  "memchr",
  "regex",
  "regex-syntax",
@@ -4317,6 +4322,7 @@ version = "2026.11.7"
 dependencies = [
  "getrandom 0.4.3",
  "kchess-domain",
+ "kchess-hack",
  "serde",
  "serde_json",
  "shakmaty",
@@ -4342,6 +4348,7 @@ dependencies = [
  "kchess-delta",
  "kchess-domain",
  "kchess-games",
+ "kchess-hack",
  "kchess-service",
  "nix",
  "notify-rust",
@@ -4367,11 +4374,88 @@ dependencies = [
 ]
 
 [[package]]
+name = "kchess-hack"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "arrayvec",
+ "bitflags 2.13.2",
+ "bytemuck",
+ "crc32fast",
+ "crossbeam-utils",
+ "crypto-common 0.2.2",
+ "digest 0.11.3",
+ "either",
+ "errno",
+ "fastrand",
+ "flate2",
+ "foldhash",
+ "futures-channel",
+ "futures-core",
+ "futures-io",
+ "futures-sink",
+ "futures-util",
+ "getrandom 0.4.3",
+ "hashbrown 0.17.1",
+ "icu_locale_core",
+ "icu_provider",
+ "indexmap",
+ "libc",
+ "linux-raw-sys",
+ "litemap",
+ "log",
+ "memchr",
+ "mio",
+ "nix",
+ "num-complex",
+ "num-rational",
+ "num-traits",
+ "once_cell",
+ "percent-encoding",
+ "potential_utf",
+ "proc-macro2",
+ "quote",
+ "regex-automata",
+ "regex-syntax",
+ "rustix",
+ "serde",
+ "serde_core",
+ "serde_json",
+ "sha2 0.11.1",
+ "simd-adler32",
+ "slab",
+ "smallvec",
+ "stable_deref_trait",
+ "subtle",
+ "syn 2.0.119",
+ "syn 3.0.6",
+ "tinystr",
+ "tokio",
+ "toml_datetime 1.1.2+spec-1.1.0",
+ "tracing",
+ "uuid",
+ "windows-sys 0.61.2",
+ "writeable",
+ "yoke",
+ "zbus",
+ "zbus_macros",
+ "zerofrom",
+ "zeroize",
+ "zerotrie",
+ "zerovec",
+ "zlib-rs",
+ "zvariant",
+ "zvariant_derive",
+ "zvariant_utils",
+]
+
+[[package]]
 name = "kchess-service"
 version = "2026.11.7"
 dependencies = [
  "getrandom 0.4.3",
  "kchess-core",
+ "kchess-hack",
  "rustix",
  "serde",
  "serde_json",
@@ -4385,6 +4469,7 @@ dependencies = [
 name = "kchess-voice"
 version = "2026.11.7"
 dependencies = [
+ "kchess-hack",
  "libloading 0.9.0",
  "serde",
  "serde_json",
@@ -9874,6 +9959,7 @@ dependencies = [
  "flate2",
  "image",
  "kchess-delta",
+ "kchess-hack",
  "lzma-rust2",
  "ring",
  "serde_json",

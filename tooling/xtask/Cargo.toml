@@ -24,6 +24,7 @@ tempfile = "3"
 # Drawing the app icon (`app-icon`).
 tiny-skia = { version = "0.12", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+kchess-hack = { version = "0.1", path = "../../crates/kchess-hack" }
 
 [lints]
 workspace = true

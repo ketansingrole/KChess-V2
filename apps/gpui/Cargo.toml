@@ -64,6 +64,7 @@ notify-rust = "4.18"
 # recognizer takes, as base64 (already in Cargo.lock through the core).
 cpal = "0.18"
 base64 = "0.23"
+kchess-hack = { version = "0.1", path = "../../crates/kchess-hack" }
 
 [lints]
 workspace = true

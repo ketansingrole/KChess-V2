@@ -41,6 +41,11 @@ pub fn names(notices: &str, name: &str) -> bool {
     false
 }
 
+/// Workspace packages whose dependencies ship in no program: the tooling, and the workspace hack
+/// (`crates/kchess-hack`), which every package depends on only to build its dependencies with one
+/// feature set; its own dependencies are linked only where a package uses them.
+const NOT_SHIPPED: [&str; 2] = ["xtask", "kchess-hack"];
+
 /// `notices`: every direct dependency of a shipped KChess crate is attributed.
 pub fn check_notices() -> Result {
     let notices = std::fs::read_to_string(root().join("THIRD_PARTY_NOTICES.md"))
@@ -49,7 +54,7 @@ pub fn check_notices() -> Result {
     let mut dependencies = BTreeSet::new();
     for package in metadata["packages"].as_array().into_iter().flatten() {
         let name = package["name"].as_str().unwrap_or_default();
-        if name == "xtask" {
+        if NOT_SHIPPED.contains(&name) {
             continue;
         }
         for dependency in package["dependencies"].as_array().into_iter().flatten() {
@@ -229,7 +234,10 @@ pub fn write(path: &Path) -> Result {
                             .any(|kind| kind == "proc-macro")
                     })
             });
-            if runtime && !proc_macro {
+            let hack = packages.get(target).is_some_and(|package| {
+                NOT_SHIPPED.contains(&package["name"].as_str().unwrap_or_default())
+            });
+            if runtime && !proc_macro && !hack {
                 queue.push(target);
             }
         }

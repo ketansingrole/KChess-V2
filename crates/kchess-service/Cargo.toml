@@ -19,6 +19,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 sha2 = { version = "0.11", default-features = false }
 # The connection token (already in Cargo.lock through kchess-core).
 getrandom = "0.4"
+kchess-hack = { version = "0.1", path = "../kchess-hack" }
 
 # The caller's user id, checked against the socket's peer (already in Cargo.lock).
 [target.'cfg(unix)'.dependencies]
@@ -31,8 +32,6 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 
 [dev-dependencies]
 tempfile = "3"
-# A paused clock for the start deadline (tests/service_start_waits.rs).
-tokio = { version = "1", features = ["test-util"] }
 
 [lints]
 workspace = true

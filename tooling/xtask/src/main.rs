@@ -13,6 +13,7 @@ mod electron_step;
 mod engines;
 mod fairy;
 mod fake_lichess;
+mod hack;
 mod icons;
 mod licenses;
 mod mutants;
