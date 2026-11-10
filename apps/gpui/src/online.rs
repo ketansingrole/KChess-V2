@@ -1114,6 +1114,12 @@ pub fn account_connected(cx: &mut App) {
     let state = handle(cx);
     let phase = state.read(cx).model["onlinePhase"].as_str();
     if !matches!(phase, Some("playing" | "seeking")) {
+        // Checking from now, not from the core's first report: a seek begun before that report
+        // cut the check short, and the check's end put the page back to its form while Lichess
+        // still held the seek.
+        state.update(cx, |state, cx| {
+            state.transition("onlineGameChecking", Vec::new(), None, cx);
+        });
         resume_quietly(state, true, cx);
     }
 }

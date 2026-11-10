@@ -191,35 +191,42 @@ impl Accounts {
             .request(calls::ConnectLichess { look: None });
         cx.spawn_in(window, async move |this, cx| {
             let result = connected.await;
-            let _ = this.update_in(cx, |this, window, cx| {
+            let connected = this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 cx.notify();
                 let result = match result {
                     Ok(result) => result,
-                    Err(cause) => return say(window, cx, cause.message),
+                    Err(cause) => {
+                        say(window, cx, cause.message);
+                        return false;
+                    }
                 };
                 if result["data"].is_object() {
                     this.adopt(result["data"].clone());
                 }
                 let Some(username) = result["username"].as_str().map(str::to_string) else {
-                    return;
+                    return false;
                 };
                 if known.contains(&username.to_lowercase()) {
-                    crate::online::account_connected(cx);
                     // Lichess authorises whoever is signed in to the browser: the same account.
-                    return say(
+                    say(
                         window,
                         cx,
                         format!(
                             "@{username} was already connected, so its login was refreshed. To add another account, sign in to it on lichess.org first."
                         ),
                     );
+                    return true;
                 }
                 this.set_active(&username, cx);
-                crate::online::account_connected(cx);
                 say(window, cx, format!("Connected @{username}"));
                 this.sync(Some(username), window, cx);
+                true
             });
+            // Once the accounts hold the new one: the online state reads them.
+            if matches!(connected, Ok(true)) {
+                let _ = cx.update(|_, cx| crate::online::account_connected(cx));
+            }
         })
         .detach();
     }
