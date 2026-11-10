@@ -24,6 +24,7 @@ mod pins;
 mod release;
 mod store_notes;
 mod sums;
+mod superseded;
 mod sweep;
 mod update_key;
 mod util;
@@ -50,8 +51,10 @@ const HELP: &str = "cargo xtask <command>
   ci-times [--days <n>]  How long CI took over the last n days (7), job by job, and the tests
                         that failed and then passed on the same commit, as Markdown (the
                         weekly CI times workflow)
-  sweep                 Delete the build's object files no program uses (macOS; `check`,
-                        `check-fast` and `app` do it first). CARGO_TARGET_DIR picks the build
+  sweep [--dry-run]     Delete what the build folder keeps of builds newer ones replaced, and
+                        on macOS the object files no program uses (`check`, `check-fast` and
+                        `app` do it first); --dry-run says how much would go. CARGO_TARGET_DIR
+                        picks the build
   mutants [--plan] [--base <ref>] [-- <cargo-mutants arguments>]
                         Mutation testing of the lines changed since main (or <ref>); fails
                         when a mutant survives (docs/mutation-testing.md); with --plan, only
@@ -111,7 +114,7 @@ fn main() -> ExitCode {
     let rest = args.get(1..).unwrap_or_default();
     let result = match args.first().map(String::as_str) {
         Some("app") => {
-            sweep::objects();
+            sweep::build_folder(false);
             app::run(rest)
         }
         Some("bench") => bench::run(rest),
@@ -119,7 +122,7 @@ fn main() -> ExitCode {
         Some("check-fast") => check::fast(),
         Some("ci-times") => ci_times::run(rest),
         Some("sweep") => {
-            sweep::objects();
+            sweep::build_folder(rest.iter().any(|arg| arg == "--dry-run"));
             Ok(())
         }
         Some("mutants") => mutants::run(rest),

@@ -8,6 +8,9 @@
 //! 213–246 s; with the 503,000 objects no program named deleted, 89–92 s. A library's objects
 //! are never needed loose: programs name them inside the library's `.rlib`.
 //!
+//! It runs after the sweep of builds newer ones replaced (`superseded.rs`), which goes on every
+//! platform.
+//!
 //! So `check-fast`, `check` and `app` first delete every loose object that is neither named by
 //! the debug map of the program or library it was compiled for, nor that program's own when it
 //! cannot be read. They skip a folder while a build holds Cargo's lock on it, whose objects may
@@ -33,38 +36,83 @@ const SWEPT: &str = ".kchess-swept";
 /// The longest object path read from the string table.
 const LONGEST_PATH: usize = 4096;
 
-/// Deletes the stale objects of every `deps` folder in the build folder, and says how many went.
-/// Only macOS keeps objects beside its programs; elsewhere it does nothing.
-pub fn objects() {
-    if !cfg!(target_os = "macos") {
-        return;
-    }
+/// Sweeps the build folder: the units newer builds replaced (`superseded.rs`) on every platform,
+/// then on macOS the objects no program uses, saying what went. With `dry_run`, deletes nothing
+/// and says what would go.
+pub fn build_folder(dry_run: bool) {
     let target = target_folder(std::env::var_os("CARGO_TARGET_DIR"));
-    if let Some(message) = sweep_all(&target) {
+    for message in sweep_all(&target, dry_run, cfg!(target_os = "macos")) {
         say(&message);
     }
 }
 
-/// Sweeps every `deps` folder in `target`: what to say about it.
-fn sweep_all(target: &Path) -> Option<String> {
-    let (files, bytes) = deps_folders(target)
+/// Sweeps every profile folder in `target`, and its objects when `objects`: what to say about it.
+fn sweep_all(target: &Path, dry_run: bool, objects: bool) -> Vec<String> {
+    let folders = deps_folders(target);
+    let (units, unit_bytes) = folders
         .iter()
-        .map(|deps| sweep(deps))
-        .fold((0, 0), |(files, bytes), (more, size)| {
-            (files + more, bytes + size)
+        .map(|deps| superseded(deps, dry_run))
+        .fold((0, 0), |(units, bytes), (more, size)| {
+            (units + more, bytes + size)
         });
-    summary(files, bytes)
+    let (files, bytes) = if objects {
+        folders
+            .iter()
+            .map(|deps| sweep(deps, dry_run))
+            .fold((0, 0), |(files, bytes), (more, size)| {
+                (files + more, bytes + size)
+            })
+    } else {
+        (0, 0)
+    };
+    [
+        units_summary(units, unit_bytes, dry_run),
+        summary(files, bytes, dry_run),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
-/// What a sweep says: nothing when it deleted nothing.
-fn summary(files: usize, bytes: u64) -> Option<String> {
+/// What a sweep of objects says: nothing when it found none.
+fn summary(files: usize, bytes: u64, dry_run: bool) -> Option<String> {
     let plural = if files == 1 { "" } else { "s" };
+    let verb = if dry_run { "Would delete" } else { "Deleted" };
     (files > 0).then(|| {
         format!(
-            "Deleted {files} object file{plural} no program uses ({} MB).",
+            "{verb} {files} object file{plural} no program uses ({} MB).",
             bytes / 1_000_000
         )
     })
+}
+
+/// What a sweep of superseded units says: nothing when it found none.
+fn units_summary(units: usize, bytes: u64, dry_run: bool) -> Option<String> {
+    let plural = if units == 1 { "" } else { "s" };
+    let verb = if dry_run { "Would delete" } else { "Deleted" };
+    (units > 0).then(|| {
+        format!(
+            "{verb} {units} build{plural} that newer builds replaced ({:.1} GB).",
+            bytes as f64 / 1e9
+        )
+    })
+}
+
+/// Deletes, under Cargo's build lock, the units of one profile folder (the parent of `deps`)
+/// that newer builds replaced: how many, and their size.
+fn superseded(deps: &Path, dry_run: bool) -> (usize, u64) {
+    let Some(profile) = deps.parent() else {
+        return (0, 0);
+    };
+    let Some(_lock) = build_lock(profile) else {
+        return (0, 0);
+    };
+    let plan = crate::superseded::plan(profile);
+    if dry_run {
+        (plan.units, plan.bytes)
+    } else {
+        (plan.units, crate::superseded::delete(&plan))
+    }
 }
 
 /// The build folder: `CARGO_TARGET_DIR` (given), else the repository's `target`.
@@ -105,7 +153,8 @@ fn subfolders(folder: &Path) -> Vec<PathBuf> {
 }
 
 /// Deletes one `deps` folder's stale objects under Cargo's build lock: how many, and their size.
-fn sweep(deps: &Path) -> (usize, u64) {
+/// With `dry_run`, only counts them.
+fn sweep(deps: &Path, dry_run: bool) -> (usize, u64) {
     let Some(_lock) = deps.parent().and_then(build_lock) else {
         return (0, 0);
     };
@@ -136,11 +185,13 @@ fn sweep(deps: &Path) -> (usize, u64) {
     for name in stale {
         let path = deps.join(&name);
         let size = std::fs::metadata(&path).map_or(0, |file| file.len());
-        if std::fs::remove_file(&path).is_ok() {
+        if dry_run || std::fs::remove_file(&path).is_ok() {
             deleted = (deleted.0 + 1, deleted.1 + size);
         }
     }
-    let _ = std::fs::write(&marker, b"");
+    if !dry_run {
+        let _ = std::fs::write(&marker, b"");
+    }
     deleted
 }
 
@@ -349,28 +400,60 @@ mod tests {
     #[test]
     fn every_folder_counts_toward_what_a_sweep_says() {
         let target = tempfile::tempdir().unwrap();
-        assert_eq!(sweep_all(target.path()), None);
+        assert!(sweep_all(target.path(), false, true).is_empty());
+        let mut objects = Vec::new();
         for (profile, size) in [("debug", 1_500_000), ("release", 2_000_000)] {
             let deps = target.path().join(profile).join("deps");
             std::fs::create_dir_all(&deps).unwrap();
-            std::fs::write(deps.join("gone-1.a.b.rcgu.o"), vec![0; size]).unwrap();
+            objects.push(deps.join("gone-1.a.b.rcgu.o"));
+            std::fs::write(objects.last().unwrap(), vec![0; size]).unwrap();
+            crate::superseded::tests::replaced_build(
+                &target.path().join(profile),
+                size as u64 * 1000,
+            );
         }
         assert_eq!(
-            sweep_all(target.path()).as_deref(),
-            Some("Deleted 2 object files no program uses (3 MB).")
+            sweep_all(target.path(), true, true),
+            [
+                "Would delete 2 builds that newer builds replaced (3.5 GB).",
+                "Would delete 2 object files no program uses (3 MB).",
+            ]
         );
+        assert!(
+            objects.iter().all(|object| object.exists()),
+            "a dry run deletes nothing"
+        );
+        assert_eq!(
+            sweep_all(target.path(), false, false),
+            ["Deleted 2 builds that newer builds replaced (3.5 GB)."],
+            "objects only where asked"
+        );
+        assert_eq!(
+            sweep_all(target.path(), false, true),
+            ["Deleted 2 object files no program uses (3 MB)."]
+        );
+        assert!(sweep_all(target.path(), false, true).is_empty());
     }
 
     #[test]
     fn a_sweep_says_what_it_deleted_and_nothing_else() {
-        assert_eq!(summary(0, 0), None);
+        assert_eq!(summary(0, 0, false), None);
         assert_eq!(
-            summary(1, 2_500_000).as_deref(),
+            summary(1, 2_500_000, false).as_deref(),
             Some("Deleted 1 object file no program uses (2 MB).")
         );
         assert_eq!(
-            summary(18_239, 2_602_000_000).as_deref(),
-            Some("Deleted 18239 object files no program uses (2602 MB).")
+            summary(18_239, 2_602_000_000, true).as_deref(),
+            Some("Would delete 18239 object files no program uses (2602 MB).")
+        );
+        assert_eq!(units_summary(0, 0, true), None);
+        assert_eq!(
+            units_summary(1, 1_250_000_000, false).as_deref(),
+            Some("Deleted 1 build that newer builds replaced (1.2 GB).")
+        );
+        assert_eq!(
+            units_summary(277, 10_960_000_000, true).as_deref(),
+            Some("Would delete 277 builds that newer builds replaced (11.0 GB).")
         );
     }
 
@@ -505,12 +588,16 @@ mod tests {
                 .unwrap();
         };
         std::fs::write(&object, b"o").unwrap();
-        assert_eq!(sweep(&deps), (1, 1), "the first sweep reads every program");
+        assert_eq!(
+            sweep(&deps, false),
+            (1, 1),
+            "the first sweep reads every program"
+        );
         assert!(profile.path().join(SWEPT).exists());
         std::fs::write(&object, b"o").unwrap();
         built(60);
         assert_eq!(
-            sweep(&deps),
+            sweep(&deps, false),
             (0, 0),
             "a program built before the last sweep is not read"
         );
@@ -522,7 +609,7 @@ mod tests {
             .unwrap()
             .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(30))
             .unwrap();
-        assert_eq!(sweep(&deps), (1, 1), "one built since is");
+        assert_eq!(sweep(&deps, false), (1, 1), "one built since is");
     }
 
     #[test]
@@ -560,10 +647,15 @@ mod tests {
         std::fs::write(&lock, b"").unwrap();
         let cargo = File::options().write(true).open(&lock).unwrap();
         cargo.lock().unwrap();
-        assert_eq!(sweep(&deps), (0, 0));
+        crate::superseded::tests::replaced_build(profile.path(), 5);
+        assert_eq!(sweep(&deps, false), (0, 0));
+        assert_eq!(superseded(&deps, false), (0, 0));
         assert!(deps.join("gone-1.a.b.rcgu.o").exists());
         cargo.unlock().unwrap();
-        assert_eq!(sweep(&deps), (1, 4));
+        assert_eq!(sweep(&deps, false), (1, 4));
+        assert_eq!(superseded(&deps, true).0, 1, "a dry run counts");
+        assert_eq!(superseded(&deps, false).0, 1);
+        assert_eq!(superseded(&deps, false), (0, 0));
         assert!(!deps.join("gone-1.a.b.rcgu.o").exists());
     }
 
@@ -602,7 +694,7 @@ mod tests {
             .collect();
         assert!(!kept.is_empty());
         std::fs::write(deps.join("probe-0123456789abcdef.old.x.rcgu.o"), b"12").unwrap();
-        assert_eq!(sweep(&deps), (1, 2));
+        assert_eq!(sweep(&deps, false), (1, 2));
         for name in kept {
             assert!(deps.join(name).exists());
         }
