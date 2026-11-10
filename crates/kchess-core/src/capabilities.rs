@@ -21,19 +21,18 @@ use crate::secrets::{self, Credentials};
 const DEADLINE: Duration = Duration::from_secs(30);
 const HOST_CLOSED: &str = "The host closed before answering.";
 
-/// Each unanswered request: the connection it was routed to (`None` when every client heard it),
+/// An unanswered request: the connection it was routed to (`None` when every client heard it),
 /// and where its answer goes.
+type Waiting = (
+    Option<u64>,
+    oneshot::Sender<std::result::Result<Value, String>>,
+);
+
 type Pending = Mutex<Requests>;
 
 #[derive(Default)]
 struct Requests {
-    waiting: HashMap<
-        u64,
-        (
-            Option<u64>,
-            oneshot::Sender<std::result::Result<Value, String>>,
-        ),
-    >,
+    waiting: HashMap<u64, Waiting>,
     /// Set by `close`, under the same lock, so no request is taken after it: a host request
     /// started by work the closing core had spawned (a battery refresh first polled after close
     /// on a loaded runner) would otherwise wait out `DEADLINE` for an answer no host will send.
