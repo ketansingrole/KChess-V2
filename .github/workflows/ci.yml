@@ -204,7 +204,10 @@ jobs:
       - run: cargo deny --manifest-path fuzz/Cargo.toml check
 
   # The app's unit and end-to-end tests (`src/e2e`, headless) on every platform; `headless` runs
-  # the rest beside it, the app's lints included.
+  # the rest beside it on Windows, the app's lints included. On macOS this job runs them itself,
+  # after the app's tests: GitHub runs short of macOS arm64 runners (2026-11-11: jobs cancelled
+  # after 15 minutes waiting for one), and the app's tests and these (2026-11-11: 3 to 5 minutes
+  # each, a minute of it setup) still end before Windows `headless` (7 to 9 minutes).
   gpui:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -217,6 +220,9 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # The packages besides the app that macOS lints and tests.
+      MACOS_HEADLESS: -p kchess-cli -p xtask
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -231,7 +237,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld.exe" >> "$GITHUB_ENV"
-      # `headless` restores this cache too, and saves none of its own.
+      # `headless` restores this cache too, and saves none of its own. On macOS it holds the
+      # lints' and the command line's builds too.
       - id: cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
@@ -262,7 +269,8 @@ jobs:
             target/**/deps/gpui_windows-*.d
             target/**/.fingerprint/gpui-pre*
             target/**/build/gpui-pre*
-          key: vendor-gpui-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}
+          # On macOS the lint build too (below), so its key tells it from a cache without one.
+          key: vendor-gpui-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}${{ runner.os == 'macOS' && '-lint' || '' }}
       # The app's tests under `cargo test`: each starts GPUI, so a process per test (nextest) is slower.
       # They mostly wait on the app's timers and tasks (2026-11-09, three threads: 57 s of CPU in
       # 320 s), so more threads than the runners' 3 or 4 cores finish them sooner. Not on Windows:
@@ -271,6 +279,15 @@ jobs:
       - run: cargo test -p kchess-gpui --locked
         env:
           RUST_TEST_THREADS: ${{ runner.os == 'Windows' && 4 || 8 }}
+      # What `headless` runs on Windows, here for macOS: one runner fewer per run.
+      - if: runner.os == 'macOS'
+        uses: ./.github/actions/install-tools
+        with:
+          tools: cargo-nextest
+      - if: runner.os == 'macOS'
+        run: cargo clippy -p kchess-gpui ${{ env.MACOS_HEADLESS }} --all-targets --locked -- -D warnings
+      - if: runner.os == 'macOS'
+        run: cargo nextest run ${{ env.MACOS_HEADLESS }} --locked
       - if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         uses: ./.github/actions/drop-caches
         with:
@@ -296,9 +313,9 @@ jobs:
             target/**/build/gpui-pre*
           key: ${{ steps.vendor.outputs.cache-primary-key }}
 
-  # Everything else on the other platforms, beside `gpui` rather than after it: the app's lints
-  # (`check` lints it on Linux; here its macOS and Windows code), the command line and xtask, and
-  # on Windows the headless packages, which `check` runs on Linux; here they keep building and
+  # Everything else on Windows, beside `gpui` rather than after it: the app's lints (`check` lints
+  # it on Linux, the macOS `gpui` job its macOS code; here its Windows code), the command line and
+  # xtask, and the headless packages, which `check` runs on Linux; here they keep building and
   # passing on Windows: named pipes, CRLF checkouts, Unix-only test helpers.
   headless:
     needs: changes
@@ -311,8 +328,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            packages: -p kchess-cli -p xtask
           # `check` runs these on Linux; here they keep building and passing on Windows.
           - os: windows-latest
             packages: -p kchess-cli -p xtask -p kchess-domain -p kchess-core -p kchess-service
