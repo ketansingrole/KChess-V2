@@ -304,9 +304,9 @@ parts:
 
 /// snapcraft's pack of the staged project. CI packs straight on its Ubuntu 24.04 runner, the Snap's
 /// own base (`KCHESS_SNAP_DESTRUCTIVE=1`), as root, since snapcraft installs the stage packages
-/// with apt: in LXD, creating the build instance downloaded Ubuntu's image each run (2026-11-10:
-/// 21 of the Snap job's 48 minutes) and the packages from Ubuntu's archive rather than the
-/// runner's mirror. Elsewhere snapcraft chooses its build environment.
+/// with apt. In LXD, each run also downloaded Ubuntu's image to create the build instance (196
+/// builds to 2026-11-10: 1.5 minutes as a rule, 21 once) and fetched the packages from Ubuntu's
+/// archive rather than the runner's mirror. Elsewhere snapcraft chooses its build environment.
 fn snapcraft_pack(destructive: Option<&str>) -> Command {
     let destructive = destructive == Some("1");
     let mut command = if destructive {

@@ -43,7 +43,7 @@ jobs:
           save-if: false
       # Packed on the runner itself, an Ubuntu 24.04 like the Snap's core24 base: snapcraft only
       # dumps the built app and its stage packages into it (`cargo xtask package --snap`). Its
-      # LXD build instance downloaded Ubuntu's image every run (2026-11-10: 21 minutes).
+      # LXD build instance downloaded Ubuntu's image every run: 1.5 minutes as a rule.
       - run: sudo snap install snapcraft --classic
       - name: Build the Snap
         run: cargo xtask package --snap
