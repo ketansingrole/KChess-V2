@@ -100,6 +100,7 @@ pub fn voice_bar(
         .voice_push_to_talk;
     let line = status(&bar, cx).filter(|_| bar.inline);
     let denied = matches!(voice.error, Some((_, ErrorKind::Denied)));
+    let privacy = crate::microphone::host(cx).privacy_settings;
     let enabled = bar.enabled;
     h_flex()
         .id(bar.id)
@@ -156,22 +157,19 @@ pub fn voice_bar(
                     .child(line)
             }))
             .children(bar.extra)
-            .when(state == State::Error && denied, |row| {
-                row.child(
-                    Button::new((bar.id, 1usize))
-                        .xsmall()
-                        .outline()
-                        .icon(icon("settings-2"))
-                        .label("Privacy settings")
-                        .on_click(|_, _, cx| {
-                            if cfg!(target_os = "macos") {
-                                cx.open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
-                            } else if cfg!(target_os = "windows") {
-                                cx.open_url("ms-settings:privacy-microphone");
-                            }
-                        }),
-                )
-            })
+            .when_some(
+                privacy.filter(|_| state == State::Error && denied),
+                |row, url| {
+                    row.child(
+                        Button::new((bar.id, 1usize))
+                            .xsmall()
+                            .outline()
+                            .icon(icon("settings-2"))
+                            .label("Privacy settings")
+                            .on_click(move |_, _, cx| cx.open_url(url)),
+                    )
+                },
+            )
             .when(state == State::Error, |row| {
                 row.child(
                     Button::new((bar.id, 2usize))
@@ -184,29 +182,32 @@ pub fn voice_bar(
                         }),
                 )
             })
-            .when(push && bar.active && matches!(state, State::Paused | State::Listening), |row| {
-                row.child(
-                    div()
-                        .id((bar.id, 3usize))
-                        .px(px(12.))
-                        .py(px(4.))
-                        .rounded(radii::SM)
-                        .border_1()
-                        .border_color(palette.border)
-                        .when(state == State::Listening, |hold| hold.bg(palette.accented))
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                            super::handle(cx).update(cx, |voice, cx| voice.talk(true, cx))
-                        })
-                        .on_mouse_up(MouseButton::Left, |_, _, cx| {
-                            super::handle(cx).update(cx, |voice, cx| voice.talk(false, cx))
-                        })
-                        .on_mouse_up_out(MouseButton::Left, |_, _, cx| {
-                            super::handle(cx).update(cx, |voice, cx| voice.talk(false, cx))
-                        })
-                        .child("Hold to speak"),
-                )
-            })
+            .when(
+                push && bar.active && matches!(state, State::Paused | State::Listening),
+                |row| {
+                    row.child(
+                        div()
+                            .id((bar.id, 3usize))
+                            .px(px(12.))
+                            .py(px(4.))
+                            .rounded(radii::SM)
+                            .border_1()
+                            .border_color(palette.border)
+                            .when(state == State::Listening, |hold| hold.bg(palette.accented))
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                super::handle(cx).update(cx, |voice, cx| voice.talk(true, cx))
+                            })
+                            .on_mouse_up(MouseButton::Left, |_, _, cx| {
+                                super::handle(cx).update(cx, |voice, cx| voice.talk(false, cx))
+                            })
+                            .on_mouse_up_out(MouseButton::Left, |_, _, cx| {
+                                super::handle(cx).update(cx, |voice, cx| voice.talk(false, cx))
+                            })
+                            .child("Hold to speak"),
+                    )
+                },
+            )
         })
         .into_any_element()
 }
