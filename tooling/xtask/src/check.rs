@@ -316,9 +316,7 @@ pub fn fast() -> Result {
         step("notices", crate::licenses::check_notices)?;
     }
     // xtask's tests check the workflows' and actions' scripts (`every_workflow_step_parses_in_bash`).
-    let workflows = files
-        .iter()
-        .any(|file| file.starts_with(".github/workflows/") || file.starts_with(".github/actions/"));
+    let workflows = files.iter().any(|file| is_workflow(file));
     if !workflows && !files.iter().any(|file| builds_into_a_package(file)) {
         say("No Rust changes since main.");
         return Ok(());
@@ -536,6 +534,11 @@ pub fn install_hooks() -> Result {
         return Ok(());
     }
     run("git", &["config", "core.hooksPath", ".githooks"])
+}
+
+/// A workflow or one of the repository's own actions, whose scripts xtask's tests check.
+fn is_workflow(file: &str) -> bool {
+    file.starts_with(".github/workflows/") || file.starts_with(".github/actions/")
 }
 
 #[cfg(test)]
@@ -835,6 +838,14 @@ mod tests {
                 .filter(|path| path.is_file()),
         );
         files
+    }
+
+    #[test]
+    fn a_change_to_a_workflow_or_an_action_runs_their_checks() {
+        assert!(is_workflow(".github/workflows/ci.yml"));
+        assert!(is_workflow(".github/actions/snap/action.yml"));
+        assert!(!is_workflow(".github/dependabot.yml"));
+        assert!(!is_workflow("tooling/xtask/src/check.rs"));
     }
 
     #[test]
