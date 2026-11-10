@@ -757,7 +757,12 @@ pub(crate) mod tests {
         let mut gone: Vec<String> = planned
             .paths
             .iter()
-            .map(|path| path.strip_prefix(profile).unwrap().display().to_string())
+            .map(|path| {
+                // One separator on every platform, so the list below holds on Windows too.
+                let relative = path.strip_prefix(profile).unwrap();
+                let parts: Vec<_> = relative.iter().map(|part| part.to_string_lossy()).collect();
+                parts.join("/")
+            })
             .collect();
         gone.sort();
         assert_eq!(
