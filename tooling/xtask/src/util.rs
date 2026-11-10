@@ -141,11 +141,33 @@ pub fn succeeds(command: &mut Command) -> bool {
         .is_ok_and(|status| status.success())
 }
 
+/// The variables that tell Git which repository to use. A Git hook sets them for its own
+/// repository: from a worktree, `GIT_DIR` is the absolute path of the shared one, so the mutants
+/// tests' `git init` in a temporary folder, run by the pre-push hook, re-initialized the real
+/// repository as bare (2026-11-10).
+const GIT_LOCATION: [&str; 6] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
+
+/// Git run in `repo`, finding the repository from there whatever its caller's Git set.
+fn git_in(repo: &Path) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(repo);
+    for variable in GIT_LOCATION {
+        command.env_remove(variable);
+    }
+    command
+}
+
 /// Git's output in `repo`, when it exits with one of the `accepted` statuses.
 pub fn git(repo: &Path, args: &[&str], accepted: &[i32]) -> Result<String> {
-    let out = Command::new("git")
+    let out = git_in(repo)
         .args(args)
-        .current_dir(repo)
         .output()
         .map_err(|cause| format!("Could not run git: {cause}"))?;
     match out.status.code() {
@@ -248,6 +270,23 @@ mod tests {
 
     fn writes(bytes: &'static [u8]) -> impl FnOnce(&str, &Path) -> Result {
         move |_, path| std::fs::write(path, bytes).map_err(|cause| cause.to_string())
+    }
+
+    #[test]
+    fn git_finds_its_repository_from_its_folder_not_a_hooks_variables() {
+        let command = git_in(Path::new("/some/repo"));
+        assert_eq!(command.get_current_dir(), Some(Path::new("/some/repo")));
+        let removed: Vec<_> = command
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(name, _)| name.to_string_lossy().into_owned())
+            .collect();
+        for variable in GIT_LOCATION {
+            assert!(
+                removed.iter().any(|name| name == variable),
+                "{variable} is kept"
+            );
+        }
     }
 
     #[test]
