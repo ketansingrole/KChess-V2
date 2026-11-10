@@ -581,6 +581,31 @@ async fn an_answered_challenge_is_withdrawn_with_the_session_but_not_with_anothe
     online.close();
 }
 
+/// A new seek ends the session before it: the challenge Lichess answered is withdrawn.
+#[tokio::test]
+async fn a_new_seek_withdraws_the_answered_challenge_before_it() {
+    let fixture = serve(|seen| match (seen.method.as_str(), seen.path()) {
+        ("POST", "/api/challenge/Bob") => Reply::Json(
+            200,
+            json!({ "id": "AbCd1234", "url": "https://lichess.org/AbCd1234" }).to_string(),
+        ),
+        ("POST", _) => Reply::Json(200, json!({ "ok": true }).to_string()),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    online
+        .start(&seek_options(Some("Bob")))
+        .await
+        .expect("the challenge is sent");
+    let seeking = online.clone();
+    let seek = tokio::spawn(async move { seeking.start(&seek_options(None)).await });
+    fixture.requested("/api/challenge/AbCd1234/cancel", 1).await;
+    online.close();
+    let _ = seek.await;
+}
+
 /// A real-time game on the board, or one left protected by a dropped connection, keeps any other
 /// game from starting or opening until it is verified over; the protected game itself opens.
 #[tokio::test]
