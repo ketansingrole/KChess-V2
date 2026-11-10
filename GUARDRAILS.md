@@ -39,7 +39,9 @@ installed. Packaging changes also need `cargo xtask package` on the platform the
 and Linux, builds the Snap and runs the Windows upgrade workflow, which packages for Windows, on a
 pull request that may change packaging, on a release commit, and nightly when packaging may have
 changed since `main` last packaged successfully; a push to `main` otherwise does not, since its
-pull request packaged. Run `CI` by hand (`gh workflow run ci.yml`) to package `main` now.
+pull request packaged. The Snap is the exception: never on a pull request, since its build depends
+on the Snap Store, whose outages held pull requests. Run `CI` by hand (`gh workflow run ci.yml`) to
+package `main` now, or with `--ref <branch>` to build a branch's Snap before it merges.
 Only a release commit's packages use the release profile's fat LTO; the others link without it.
 A change to documents alone (`docs/` and the top-level guides) runs none of it. `cargo xtask release-verify` refuses a commit
 whose CI did not run and pass every job, and every push to `main` runs CI to the end.
