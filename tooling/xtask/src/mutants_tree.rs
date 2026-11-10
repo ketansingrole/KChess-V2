@@ -111,13 +111,12 @@ fn holds(tree: &Path, commit: &str) -> Result<bool> {
 }
 
 /// Whether `tree` is a worktree of `checkout`'s repository in its own right. Inside the checkout,
-/// a folder that is not one would answer Git as the checkout itself.
+/// a folder without its own `.git` would answer Git as the checkout itself; one with a `.git` file
+/// is its own top, or an error when that file is broken.
 fn is_tree_of(checkout: &Path, tree: &Path) -> bool {
     if !tree.join(".git").is_file() {
         return false;
     }
-    let canonical = |path: &str| std::fs::canonicalize(path.trim()).ok();
-    let top = git(tree, &["rev-parse", "--show-toplevel"], &[0]).ok();
     let common = |repo: &Path| {
         git(
             repo,
@@ -125,11 +124,9 @@ fn is_tree_of(checkout: &Path, tree: &Path) -> bool {
             &[0],
         )
         .ok()
-        .and_then(|dir| canonical(&dir))
+        .and_then(|dir| std::fs::canonicalize(dir.trim()).ok())
     };
-    top.and_then(|top| canonical(&top)) == std::fs::canonicalize(tree).ok()
-        && common(tree).is_some()
-        && common(tree) == common(checkout)
+    matches!((common(tree), common(checkout)), (Some(theirs), Some(ours)) if theirs == ours)
 }
 
 #[cfg(test)]
@@ -283,5 +280,37 @@ mod tests {
         got.recv_timeout(std::time::Duration::from_secs(30))
             .expect("it never ran once the first let go");
         waiting.join().unwrap();
+    }
+
+    #[test]
+    fn a_tree_holds_a_commit_only_at_it_and_unchanged() {
+        let (dir, first, second) = repo();
+        let checkout = dir.path();
+        assert!(holds(checkout, &second).unwrap());
+        assert!(!holds(checkout, &first).unwrap());
+        std::fs::write(checkout.join("a.rs"), "fn a() { 2; }\n").unwrap();
+        assert!(!holds(checkout, &second).unwrap());
+        git(checkout, &["checkout", "-q", "--", "a.rs"], &[0]).unwrap();
+        std::fs::write(checkout.join("new.rs"), "fn new() {}\n").unwrap();
+        assert!(!holds(checkout, &second).unwrap());
+    }
+
+    #[test]
+    fn a_worktree_of_another_repository_is_not_the_tree() {
+        let (dir, _, second) = repo();
+        let checkout = dir.path();
+        let (elsewhere, _, theirs) = repo();
+        let path = checkout.join(TREE);
+        let at = path.to_string_lossy();
+        git(
+            elsewhere.path(),
+            &["worktree", "add", "-q", "--detach", &at, &theirs],
+            &[0],
+        )
+        .unwrap();
+        assert!(!is_tree_of(checkout, &path));
+        let tree = prepare(checkout, &second).unwrap();
+        assert!(is_tree_of(checkout, &tree.path));
+        assert!(holds(&tree.path, &second).unwrap());
     }
 }
