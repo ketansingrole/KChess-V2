@@ -406,6 +406,66 @@ mod tests {
         assert_eq!(verify_no_dev_build(&app), Ok(()));
     }
 
+    #[test]
+    fn each_flag_asks_for_its_own_option() {
+        let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        assert_eq!(options(&args(&[])), Options::default());
+        assert_eq!(
+            options(&args(&["--build-only"])),
+            Options {
+                build_only: true,
+                ..Options::default()
+            }
+        );
+        assert_eq!(
+            options(&args(&["--snap", "--skip-build"])),
+            Options {
+                skip: true,
+                snap: true,
+                ..Options::default()
+            }
+        );
+        assert_eq!(
+            options(&args(&["--mas"])),
+            Options {
+                store: true,
+                ..Options::default()
+            }
+        );
+    }
+
+    /// The Snap and the App Store's package join the packages already made; any other run starts
+    /// from an empty folder.
+    #[test]
+    fn only_the_snap_and_the_app_store_keep_the_other_packages() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("dist");
+        let deb = out.join("KChess-2026.11.9-linux-amd64.deb");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(&deb, b"x").unwrap();
+        clear_out(&out, true, false);
+        assert!(deb.exists(), "--snap removed the .deb");
+        clear_out(&out, false, true);
+        assert!(deb.exists(), "--mas removed the .deb");
+        clear_out(&out, false, false);
+        assert!(!out.exists(), "a new run kept the last run's packages");
+    }
+
+    /// The build packaging ships, as `--build-only` makes it for CI's cache: every shipped program,
+    /// released and without the development overrides.
+    #[test]
+    fn the_cached_build_is_the_shipped_build() {
+        let cargo = compile();
+        let args: Vec<_> = cargo.get_args().map(|arg| arg.to_string_lossy()).collect();
+        let mut expected = vec!["build", "--release", "--locked"];
+        for package in SHIPPED {
+            expected.extend(["-p", package]);
+        }
+        expected.extend(["--features", "kchess-core/packaged"]);
+        assert_eq!(args, expected);
+        assert_eq!(cargo.get_program(), "cargo");
+    }
+
     /// A platform's packaging fails without any package it releases, or with an empty one.
     #[test]
     fn packaging_fails_without_every_package_it_releases() {
