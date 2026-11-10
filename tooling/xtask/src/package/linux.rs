@@ -302,6 +302,26 @@ parts:
     )
 }
 
+/// snapcraft's pack of the staged project. CI packs straight on its Ubuntu 24.04 runner, the Snap's
+/// own base (`KCHESS_SNAP_DESTRUCTIVE=1`), as root, since snapcraft installs the stage packages
+/// with apt: in LXD, creating the build instance downloaded Ubuntu's image each run (2026-11-10:
+/// 21 of the Snap job's 48 minutes) and the packages from Ubuntu's archive rather than the
+/// runner's mirror. Elsewhere snapcraft chooses its build environment.
+fn snapcraft_pack(destructive: bool) -> Command {
+    let mut command = if destructive {
+        let mut sudo = Command::new("sudo");
+        sudo.arg("snapcraft");
+        sudo
+    } else {
+        Command::new("snapcraft")
+    };
+    command.args(["pack", "--output", "kchess.snap"]);
+    if destructive {
+        command.arg("--destructive-mode");
+    }
+    command
+}
+
 fn snap(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<PathBuf> {
     let project = stage.join("snap");
     let app = project.join("app");
@@ -324,15 +344,10 @@ fn snap(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<
     say("Making the Snap…");
     // snapcraft writes only inside its project folder; the package is moved out afterwards.
     let packed = project.join("kchess.snap");
-    let mut snapcraft = Command::new("snapcraft");
-    snapcraft
-        .args(["pack", "--output", "kchess.snap"])
-        .current_dir(&project);
-    // CI builds in LXD (KCHESS_SNAP_LXD=1); elsewhere snapcraft chooses.
-    if std::env::var("KCHESS_SNAP_LXD").as_deref() == Ok("1") {
-        snapcraft.arg("--use-lxd");
-    }
+    let mut snapcraft =
+        snapcraft_pack(std::env::var("KCHESS_SNAP_DESTRUCTIVE").as_deref() == Ok("1"));
     let status = snapcraft
+        .current_dir(&project)
         .status()
         .map_err(|cause| format!("Could not run snapcraft: {cause}"))?;
     if !status.success() {
@@ -365,6 +380,31 @@ mod tests {
     /// staged app with the pinned runtime, from its own extracted files (runners have no FUSE):
     /// a stand-in appimagetool records its environment and arguments and makes the "image" from
     /// the runtime it was handed.
+    #[test]
+    fn ci_packs_the_snap_on_the_runner_as_root() {
+        let args = |command: &Command| -> Vec<String> {
+            std::iter::once(command.get_program())
+                .chain(command.get_args())
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(
+            args(&super::snapcraft_pack(true)),
+            [
+                "sudo",
+                "snapcraft",
+                "pack",
+                "--output",
+                "kchess.snap",
+                "--destructive-mode"
+            ]
+        );
+        assert_eq!(
+            args(&super::snapcraft_pack(false)),
+            ["snapcraft", "pack", "--output", "kchess.snap"]
+        );
+    }
+
     #[test]
     fn the_appimage_is_made_around_the_pinned_runtime() {
         let scratch = tempfile::tempdir().unwrap();
