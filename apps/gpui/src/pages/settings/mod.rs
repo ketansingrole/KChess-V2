@@ -198,7 +198,8 @@ pub struct SettingsPage {
     /// The microphone test, and why it could not start.
     mic_test: Option<voice::MicTest>,
     mic_error: Option<SharedString>,
-    mic_access: crate::microphone::Access,
+    /// What the system says about the microphone.
+    mic: crate::microphone::Host,
     mic_asking: bool,
     /// Data & storage: what clearing the scores and exporting diagnostics said.
     runs_note: Option<SharedString>,
@@ -395,7 +396,7 @@ impl SettingsPage {
             test_pending: false,
             mic_test: None,
             mic_error: None,
-            mic_access: crate::microphone::status(),
+            mic: crate::microphone::host(cx),
             mic_asking: false,
             runs_note: None,
             diagnostics_note: None,
