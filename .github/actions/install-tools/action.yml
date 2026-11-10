@@ -25,7 +25,7 @@ runs:
         [ "$RUNNER_OS" != Windows ] || bin="$(cygpath -m "$bin")"
         names="$(echo "$TOOLS" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | sed '/^$/d' | sort -u)"
         {
-          echo "key=tools-$RUNNER_OS-$RUNNER_ARCH-$(echo $names | tr ' ' ',')-${pin:0:12}"
+          echo "key=tools-$RUNNER_OS-$RUNNER_ARCH-$(echo $names | tr ' ' '+')-${pin:0:12}"
           echo 'paths<<EOF'
           for name in $names; do
             case "$RUNNER_OS" in Windows) echo "$bin/$name.exe" ;; *) echo "$bin/$name" ;; esac
