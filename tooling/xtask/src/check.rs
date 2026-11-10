@@ -613,6 +613,9 @@ fn branch_mutants(input: &str) -> Result {
     };
     let checkout = root();
     let tree = crate::mutants_tree::prepare(&checkout, head.trim()).map_err(refused)?;
+    for message in crate::sweep::mutants_tree(&tree.target(), false) {
+        say(&message);
+    }
     crate::mutants::run_in(&tree.path, "cargo", &branch_mutants_args(&base, &checkout))
         .map_err(refused)
 }

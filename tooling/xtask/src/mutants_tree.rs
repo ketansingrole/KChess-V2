@@ -24,6 +24,30 @@ pub struct Tree {
     _lock: File,
 }
 
+impl Tree {
+    /// Its build folder.
+    pub fn target(&self) -> PathBuf {
+        self.path.join("target")
+    }
+}
+
+/// `checkout`'s tree's build folder, with the tree's lock held until the file is dropped: none
+/// when it has none, or while a push is using the tree.
+pub fn idle_target(checkout: &Path) -> Option<(PathBuf, File)> {
+    let target = checkout.join(TREE).join("target");
+    if !target.is_dir() {
+        return None;
+    }
+    let lock = File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(checkout.join(LOCK))
+        .ok()?;
+    lock.try_lock().ok()?;
+    Some((target, lock))
+}
+
 /// `checkout`'s tree, locked (after any other run from `checkout` ends) and holding exactly
 /// `commit`: its files, and nothing else but its build output.
 pub fn prepare(checkout: &Path, commit: &str) -> Result<Tree> {
@@ -168,6 +192,21 @@ mod tests {
 
     fn read(path: &Path) -> String {
         std::fs::read_to_string(path).unwrap()
+    }
+
+    #[test]
+    fn its_build_folder_is_idle_only_while_no_push_holds_the_tree() {
+        let (dir, first, _) = repo();
+        let checkout = dir.path();
+        let tree = prepare(checkout, &first).unwrap();
+        std::fs::create_dir_all(tree.target()).unwrap();
+        assert_eq!(tree.target(), checkout.join(".data/mutants-tree/target"));
+        assert!(idle_target(checkout).is_none(), "the push holds it");
+        drop(tree);
+        let (target, _lock) = idle_target(checkout).unwrap();
+        assert_eq!(target, checkout.join(".data/mutants-tree/target"));
+        std::fs::remove_dir(&target).unwrap();
+        assert!(idle_target(checkout).is_none(), "no build folder");
     }
 
     #[test]
