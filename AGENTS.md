@@ -201,8 +201,9 @@ and in the App Store. Its readers play chess; they are not developers.
   where `cargo test` runs them one at a time. The app's tests are the exception: one binary whose
   tests each start GPUI, faster under `cargo test -p kchess-gpui`. CI runs the full `cargo xtask check` on the pull
   request. Packaging changes
-  also need `cargo xtask package` on the platform they touch; CI then packages, builds the Snap and
-  runs the Windows upgrade (`ci.yml` `changes`).
+  also need `cargo xtask package` on the platform they touch; CI then packages and runs the Windows
+  upgrade (`ci.yml` `changes`). It builds the Snap only on main's nightly run and on a run by hand
+  (`gh workflow run ci.yml --ref <branch>`): run that before merging a Snap change.
 - Run anything that may take over a minute (`cargo xtask check`, the app's tests, packaging) in
   the background with its output in a file, and read the result when it finishes. Never wait in
   a loop (`sleep`, `until grep …; do sleep`, `while pgrep`): the tool reports when a background
