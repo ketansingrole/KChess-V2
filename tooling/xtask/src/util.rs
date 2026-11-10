@@ -154,13 +154,20 @@ const GIT_LOCATION: [&str; 6] = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
 ];
 
+/// `command` without the variables a hook's Git set (`GIT_LOCATION`), so it, and any Git it runs,
+/// finds the repository from its own folder.
+pub fn without_git_location(command: &mut Command) -> &mut Command {
+    for variable in GIT_LOCATION {
+        command.env_remove(variable);
+    }
+    command
+}
+
 /// Git run in `repo`, finding the repository from there whatever its caller's Git set.
 fn git_in(repo: &Path) -> Command {
     let mut command = Command::new("git");
     command.current_dir(repo);
-    for variable in GIT_LOCATION {
-        command.env_remove(variable);
-    }
+    without_git_location(&mut command);
     command
 }
 

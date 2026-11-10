@@ -16,6 +16,7 @@ mod fake_lichess;
 mod icons;
 mod licenses;
 mod mutants;
+mod mutants_tree;
 mod package;
 // The pins it checks live with the Linux packaging, compiled on Unix.
 #[cfg(unix)]
