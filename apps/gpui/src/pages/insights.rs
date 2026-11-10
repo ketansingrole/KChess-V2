@@ -516,6 +516,10 @@ impl InsightsPage {
     /// As if the last report had had `time` as its time use.
     #[cfg(test)]
     pub(crate) fn show_time_use(&mut self, time: Value, cx: &mut Context<Self>) {
+        assert!(
+            !self.loading,
+            "a report is on its way and would replace this time use"
+        );
         if let Some(report) = &mut self.report {
             report["timeUse"] = time;
         }

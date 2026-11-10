@@ -97,6 +97,11 @@ impl PracticePage {
         self.mistakes.clone()
     }
 
+    #[cfg(test)]
+    pub(crate) fn guess(&self) -> Option<Entity<guess::GuessMoves>> {
+        self.guess.clone()
+    }
+
     /// Guess through a game's PGN as `side`, on the Guess the move tab.
     pub(crate) fn guess_moves(
         &mut self,
