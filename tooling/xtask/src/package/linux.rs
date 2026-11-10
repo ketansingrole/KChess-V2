@@ -307,7 +307,8 @@ parts:
 /// with apt: in LXD, creating the build instance downloaded Ubuntu's image each run (2026-11-10:
 /// 21 of the Snap job's 48 minutes) and the packages from Ubuntu's archive rather than the
 /// runner's mirror. Elsewhere snapcraft chooses its build environment.
-fn snapcraft_pack(destructive: bool) -> Command {
+fn snapcraft_pack(destructive: Option<&str>) -> Command {
+    let destructive = destructive == Some("1");
     let mut command = if destructive {
         let mut sudo = Command::new("sudo");
         sudo.arg("snapcraft");
@@ -344,8 +345,7 @@ fn snap(identity: &Identity, built: &Built, stage: &Path, out: &Path) -> Result<
     say("Making the Snap…");
     // snapcraft writes only inside its project folder; the package is moved out afterwards.
     let packed = project.join("kchess.snap");
-    let mut snapcraft =
-        snapcraft_pack(std::env::var("KCHESS_SNAP_DESTRUCTIVE").as_deref() == Ok("1"));
+    let mut snapcraft = snapcraft_pack(std::env::var("KCHESS_SNAP_DESTRUCTIVE").ok().as_deref());
     let status = snapcraft
         .current_dir(&project)
         .status()
@@ -389,7 +389,7 @@ mod tests {
                 .collect()
         };
         assert_eq!(
-            args(&super::snapcraft_pack(true)),
+            args(&super::snapcraft_pack(Some("1"))),
             [
                 "sudo",
                 "snapcraft",
@@ -400,7 +400,11 @@ mod tests {
             ]
         );
         assert_eq!(
-            args(&super::snapcraft_pack(false)),
+            args(&super::snapcraft_pack(None)),
+            ["snapcraft", "pack", "--output", "kchess.snap"]
+        );
+        assert_eq!(
+            args(&super::snapcraft_pack(Some("0"))),
             ["snapcraft", "pack", "--output", "kchess.snap"]
         );
     }
