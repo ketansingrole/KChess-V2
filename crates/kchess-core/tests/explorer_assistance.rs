@@ -4,24 +4,12 @@ mod fixtures;
 #[path = "support/signed_in.rs"]
 mod signed_in;
 
-use fixtures::{Fixture, Reply, serve};
+use fixtures::{Reply, serve};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{sync::Arc, time::Duration};
 
 const PLAYING: &str = "/api/account/playing";
-
-/// Waits, bounded, until the fixture has seen what `seen` looks for. Bounds, not waits: a loaded
-/// Windows PC filtering 127.0.0.1 took over 5 s here.
-async fn reached(fixture: &Fixture, what: &str, seen: impl Fn(&Fixture) -> bool) {
-    tokio::time::timeout(Duration::from_secs(30), async {
-        while !seen(fixture) {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("{what} reaches the fixture"));
-}
 
 /// `positionLookup` checks assistance before its fetch and again after it resolves, so a game
 /// starting while the lookup is in flight discards the answer instead of delivering explorer
@@ -73,10 +61,11 @@ async fn a_game_starting_mid_lookup_blocks_the_explorer_answer() {
             .await
         }
     });
-    reached(&fixture, "the lookup", |fixture| {
-        fixture.requests().iter().any(|seen| seen.path() != PLAYING)
-    })
-    .await;
+    fixture
+        .wait_for("the lookup", |requests| {
+            requests.iter().any(|seen| seen.path() != PLAYING)
+        })
+        .await;
     assert!(!lookup.is_finished(), "the gated fixture holds the lookup");
     // A game starts while the lookup is in flight: recovery re-blocks assistance and checks
     // Lichess, which the fixture holds until the lookup has answered.
@@ -84,10 +73,7 @@ async fn a_game_starting_mid_lookup_blocks_the_explorer_answer() {
         let core = Arc::clone(core);
         async move { core.call("resumeOnline", vec![]).await }
     });
-    reached(&fixture, "the mid-lookup recovery", |fixture| {
-        fixture.to(PLAYING).len() >= 2
-    })
-    .await;
+    fixture.requested(PLAYING, 2).await;
     assert!(!recovery.is_finished(), "the gated fixture holds recovery");
     assert_eq!(
         core.call_sync("online.assistanceBlocked", vec![]).unwrap(),

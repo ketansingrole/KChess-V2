@@ -210,13 +210,11 @@ async fn deduplicates_lookups_validates_legal_san_and_reuses_the_saved_result() 
 }
 
 async fn wait_for_requests(fixture: &fixtures::Fixture, count: usize) {
-    for _ in 0..200 {
-        if fixture.requests().len() >= count {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("the lookup never reached the fixture");
+    fixture
+        .wait_for(&format!("{count} lookup request(s)"), |requests| {
+            requests.len() >= count
+        })
+        .await;
 }
 
 #[tokio::test]

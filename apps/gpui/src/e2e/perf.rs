@@ -108,7 +108,9 @@ fn timed_start(cx: TestAppContext, profile: tempfile::TempDir) -> (Harness, [f64
     loop {
         match cx.update(|cx| crate::core::start(dir.clone(), cx)) {
             Ok(()) => break,
-            Err(cause) if cause.contains("already running") => {
+            Err(cause)
+                if cause.contains("already running") && started.elapsed() < super::TIMEOUT =>
+            {
                 std::thread::sleep(Duration::from_millis(20))
             }
             Err(cause) => panic!("the core opens the profile: {cause:?}"),
