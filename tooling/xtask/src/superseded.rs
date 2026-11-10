@@ -171,7 +171,7 @@ pub fn current(units: &[Unit]) -> HashSet<usize> {
             dependents.entry(*dependency).or_default().push(index);
         }
     }
-    let mut newest: HashMap<&str, usize> = HashMap::new();
+    let mut on_their_own = Vec::new();
     for (index, unit) in units.iter().enumerate() {
         let users = unit
             .fingerprint
@@ -179,13 +179,15 @@ pub fn current(units: &[Unit]) -> HashSet<usize> {
             .map(Vec::as_slice)
             .unwrap_or_default();
         let on_its_own = users.iter().all(|user| units[*user].invoked < unit.invoked);
-        if !on_its_own {
-            continue;
+        if on_its_own {
+            on_their_own.push(index);
         }
-        let entry = newest.entry(&unit.identity).or_insert(index);
-        if units[*entry].invoked < unit.invoked {
-            *entry = index;
-        }
+    }
+    let mut newest: HashMap<&str, Option<SystemTime>> = HashMap::new();
+    for index in &on_their_own {
+        let unit = &units[*index];
+        let entry = newest.entry(&unit.identity).or_insert(unit.invoked);
+        *entry = (*entry).max(unit.invoked);
     }
     let mut by_fingerprint: HashMap<u64, Vec<usize>> = HashMap::new();
     for (index, unit) in units.iter().enumerate() {
@@ -194,7 +196,11 @@ pub fn current(units: &[Unit]) -> HashSet<usize> {
         }
     }
     let mut live: HashSet<usize> = HashSet::new();
-    let mut stack: Vec<usize> = newest.into_values().collect();
+    // Builds of one thing stamped at the same moment are all kept.
+    let mut stack: Vec<usize> = on_their_own
+        .into_iter()
+        .filter(|index| newest.get(units[*index].identity.as_str()) == Some(&units[*index].invoked))
+        .collect();
     while let Some(index) = stack.pop() {
         if !live.insert(index) {
             continue;
@@ -303,9 +309,9 @@ pub fn plan(profile: &Path) -> Plan {
             continue;
         };
         let path = profile.join("incremental").join(&cache);
+        // A session's lock (`s-<start>-<random>.lock`) carries its start too.
         let start = names(&path)
             .iter()
-            .filter(|session| !session.ends_with(".lock"))
             .filter_map(|session| session_start(session))
             .max();
         if start.is_some_and(|start| cache_superseded(krate, start, &units, &live)) {
@@ -586,6 +592,31 @@ pub(crate) mod tests {
         ];
         assert_eq!(current(&units), HashSet::from([2, 3]));
         assert_eq!(current(&[]), HashSet::new());
+    }
+
+    #[test]
+    fn a_unit_used_since_or_at_once_is_not_built_on_its_own() {
+        let units = [
+            // Built after its only user, which another build replaced: current.
+            unit_of("lib-0000000000000001", "lib-lib", 11, &[], 9),
+            unit_of("app-0000000000000001", "bin-app", 12, &[("lib", 11)], 1),
+            unit_of("app-0000000000000002", "bin-app", 13, &[], 5),
+            // Stamped with its replaced user at the same moment: not.
+            unit_of("dep-0000000000000001", "lib-dep", 14, &[], 3),
+            unit_of("use-0000000000000001", "bin-use", 15, &[("dep", 14)], 3),
+            unit_of("use-0000000000000002", "bin-use", 16, &[], 4),
+        ];
+        assert_eq!(current(&units), HashSet::from([0, 2, 5]));
+    }
+
+    #[test]
+    fn builds_of_one_thing_stamped_at_once_are_all_kept() {
+        let units = [
+            unit_of("a-0000000000000001", "bin-a", 1, &[], 7),
+            unit_of("a-0000000000000002", "bin-a", 2, &[], 7),
+            unit_of("a-0000000000000003", "bin-a", 3, &[], 6),
+        ];
+        assert_eq!(current(&units), HashSet::from([0, 1]));
     }
 
     #[test]
