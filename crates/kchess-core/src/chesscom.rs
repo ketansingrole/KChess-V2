@@ -51,9 +51,15 @@ pub struct Chesscom {
     /// The sync running per player (lowercase name), which a second request joins.
     syncs: Mutex<HashMap<String, (u64, Outcome)>>,
     next_sync: AtomicU64,
-    /// Bumped when a player is removed, so a sync that started before writes nothing after.
+    /// Bumped when a player is removed, so an add or sync that started before stops and writes
+    /// nothing after.
     epochs: Mutex<HashMap<String, u64>>,
+    /// Signals each removal, so a request in flight for a removed player stops waiting at once.
+    removals: watch::Sender<()>,
 }
+
+/// Whether the add or sync that asks still owns its player: no removal and no close since.
+type Current<'a> = &'a (dyn Fn() -> bool + Sync);
 
 /// An answer: its status, validators and body.
 struct Answer {
@@ -77,6 +83,10 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn cancelled() -> CoreError {
+    CoreError::new("Sync was cancelled.")
 }
 
 fn unreachable() -> CoreError {
@@ -118,6 +128,7 @@ impl Chesscom {
             syncs: Mutex::new(HashMap::new()),
             next_sync: AtomicU64::new(0),
             epochs: Mutex::new(HashMap::new()),
+            removals: watch::Sender::new(()),
         }
     }
 
@@ -133,12 +144,41 @@ impl Chesscom {
             .unwrap_or(0)
     }
 
-    /// A GET, in its turn, tried again after a rate limit.
-    async fn get(&self, path: &str, validators: (Option<&str>, Option<&str>)) -> Result<Answer> {
+    /// Whether `name` has not been removed since `epoch` and the core is open.
+    fn current(&self, name: &str, epoch: u64) -> bool {
+        self.epoch(name) == epoch && !self.lifetime.is_cancelled()
+    }
+
+    /// Ends once `current` no longer holds: the player was removed or the core closed.
+    async fn overtaken(&self, current: Current<'_>) {
+        let mut removals = self.removals.subscribe();
+        tokio::select! {
+            () = self.lifetime.cancelled() => {}
+            () = async {
+                while current() {
+                    if removals.changed().await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                }
+            } => {}
+        }
+    }
+
+    /// A GET, in its turn, tried again after a rate limit; it stops as soon as `current` does
+    /// not hold, so a removal or a close reaches the request in flight.
+    async fn get(
+        &self,
+        path: &str,
+        validators: (Option<&str>, Option<&str>),
+        current: Current<'_>,
+    ) -> Result<Answer> {
         let url = format!("{}{path}", self.base);
         for attempt in 0..=RETRIES {
             let answer = {
                 let _turn = self.turn.lock().await;
+                if !current() {
+                    return Err(cancelled());
+                }
                 let mut request = self.http.get(&url).header("Accept", "application/json");
                 if let Some(etag) = validators.0 {
                     request = request.header(IF_NONE_MATCH, etag);
@@ -147,7 +187,7 @@ impl Chesscom {
                     request = request.header(IF_MODIFIED_SINCE, modified);
                 }
                 tokio::select! {
-                    () = self.lifetime.cancelled() => return Err(CoreError::new("Sync was cancelled.")),
+                    () = self.overtaken(current) => return Err(cancelled()),
                     answer = Self::read(request) => answer?,
                 }
             };
@@ -166,7 +206,7 @@ impl Chesscom {
                 &format!("Rate limited; trying again in {}s", wait.as_secs()),
             );
             tokio::select! {
-                () = self.lifetime.cancelled() => return Err(CoreError::new("Sync was cancelled.")),
+                () = self.overtaken(current) => return Err(cancelled()),
                 () = tokio::time::sleep(wait) => {}
             }
         }
@@ -210,11 +250,12 @@ impl Chesscom {
     }
 
     /// Whether Chess.com knows the player: their name as Chess.com spells it.
-    async fn player(&self, name: &str) -> Result<String> {
+    async fn player(&self, name: &str, current: Current<'_>) -> Result<String> {
         let answer = self
             .get(
                 &format!("/pub/player/{}", name.to_lowercase()),
                 (None, None),
+                current,
             )
             .await?;
         match answer.status {
@@ -234,20 +275,32 @@ impl Chesscom {
         }
     }
 
-    /// `addChesscomAccount`: adds a player Chess.com knows, then syncs their games.
+    /// `addChesscomAccount`: adds a player Chess.com knows, then syncs their games. A removal
+    /// of the player before it ends wins: the player is not added back, and the add fails.
     pub async fn add(&self, name: &str) -> Result<Value> {
-        let spelled = self.player(name).await?;
+        let epoch = self.epoch(name);
+        let current = || self.current(name, epoch);
+        let spelled = self.player(name, &current).await?;
+        // `current` is read once the database admits the call, so a removal is either before
+        // it (no add) or after it (the removal deletes the player).
         self.database
-            .call_async("store.chesscom.addAccount", &[json!(spelled)])
+            .call_async_with("store.chesscom.addAccount", || {
+                Ok(vec![json!(spelled), json!(current())])
+            })
             .await?;
-        // The player stays added when their games cannot be read yet: Sync tries again.
-        self.sync(Some(&spelled)).await
+        // The player stays added when their games cannot be read yet: Sync tries again. The
+        // player synced is the one just added, never a re-read list a removal has changed since.
+        self.sync_logged(&spelled, epoch).await?;
+        self.database
+            .call_async("store.chesscom.accounts", &[])
+            .await
     }
 
-    /// `removeChesscomAccount`: stops a sync in flight from writing, then deletes the player.
+    /// `removeChesscomAccount`: stops an add or sync in flight, then deletes the player.
     pub async fn remove(&self, name: &str) -> Result<Value> {
         let key = name.to_lowercase();
         *lock(&self.epochs).entry(key.clone()).or_insert(0) += 1;
+        self.removals.send_replace(());
         lock(&self.syncs).remove(&key);
         self.database
             .call_async("store.chesscom.removeAccount", &[json!(name)])
@@ -257,6 +310,8 @@ impl Chesscom {
     /// `syncChesscomGames`: one player's games, or every player's in turn. Every player still
     /// syncs when one fails; the first failure is reported afterwards.
     pub async fn sync(&self, name: Option<&str>) -> Result<Value> {
+        // Taken before the players are read: a removal after this stops that player's sync.
+        let epochs = lock(&self.epochs).clone();
         let accounts = self
             .database
             .call_async("store.chesscom.accounts", &[])
@@ -272,12 +327,8 @@ impl Chesscom {
             .collect();
         let mut first_error = None;
         for name in &names {
-            if let Err(cause) = self.sync_one(name).await {
-                self.host.log(
-                    Level::Warn,
-                    "chesscom",
-                    &format!("Game sync failed: {name} {}", cause.message),
-                );
+            let epoch = epochs.get(&name.to_lowercase()).copied().unwrap_or(0);
+            if let Err(cause) = self.sync_logged(name, epoch).await {
                 first_error.get_or_insert(cause);
             }
         }
@@ -291,8 +342,22 @@ impl Chesscom {
         }
     }
 
-    /// One player's sync; a second request for the same player joins the running one.
-    async fn sync_one(&self, name: &str) -> Result<usize> {
+    /// One player's sync as of `epoch`, its failure logged.
+    async fn sync_logged(&self, name: &str, epoch: u64) -> Result<usize> {
+        let result = self.sync_one(name, epoch).await;
+        if let Err(cause) = &result {
+            self.host.log(
+                Level::Warn,
+                "chesscom",
+                &format!("Game sync failed: {name} {}", cause.message),
+            );
+        }
+        result
+    }
+
+    /// One player's sync as of `epoch`; a second request for the same player joins the running
+    /// one.
+    async fn sync_one(&self, name: &str, epoch: u64) -> Result<usize> {
         let key = name.to_lowercase();
         let joined = lock(&self.syncs)
             .get(&key)
@@ -303,7 +368,7 @@ impl Chesscom {
                     return result;
                 }
                 if outcome.changed().await.is_err() {
-                    return Err(CoreError::new("Sync was cancelled."));
+                    return Err(cancelled());
                 }
             }
         }
@@ -320,7 +385,7 @@ impl Chesscom {
                 syncs.remove(&key);
             }
         });
-        let result = self.run(name).await;
+        let result = self.run(name, epoch).await;
         drop(forget);
         let _ = send.send(Some(result.clone()));
         if let Ok(fetched) = &result {
@@ -333,15 +398,15 @@ impl Chesscom {
         result
     }
 
-    async fn run(&self, name: &str) -> Result<usize> {
-        let epoch = self.epoch(name);
-        let current = || self.epoch(name) == epoch && !self.lifetime.is_cancelled();
+    async fn run(&self, name: &str, epoch: u64) -> Result<usize> {
+        let current = || self.current(name, epoch);
         let started_at = crate::lichess::accounts::now_ms();
         let player = name.to_lowercase();
         let list = self
             .get(
                 &format!("/pub/player/{player}/games/archives"),
                 (None, None),
+                &current,
             )
             .await?;
         match list.status {
@@ -405,6 +470,7 @@ impl Chesscom {
                 .get(
                     &format!("/pub/player/{player}/games/{month}"),
                     (validator("etag"), validator("lastModified")),
+                    &current,
                 )
                 .await?;
             match answer.status {
@@ -444,7 +510,7 @@ impl Chesscom {
             }
         }
         if !current() {
-            return Err(CoreError::new("Sync was cancelled."));
+            return Err(cancelled());
         }
         self.database
             .call_async_with("store.chesscom.finishSync", || {
@@ -458,10 +524,10 @@ impl Chesscom {
         &self,
         name: &str,
         archive: MonthArchive<'_>,
-        current: &(dyn Fn() -> bool + Sync),
+        current: Current<'_>,
     ) -> Result<()> {
         if !current() {
-            return Err(CoreError::new("Sync was cancelled."));
+            return Err(cancelled());
         }
         let archive = json!({
             "username": name,

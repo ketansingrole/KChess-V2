@@ -1,6 +1,7 @@
 //! Chess.com game sync (`crates/kchess-core/src/chesscom.rs`) against a local fixture of its public
 //! API: the archive list, months read once they have ended, conditional requests for the current
-//! month, a rate limit waited out, a removal that overtakes a sync, and an unknown player.
+//! month, a rate limit waited out, a removal that overtakes an add or a sync, and an unknown
+//! player.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -194,10 +195,49 @@ async fn a_rate_limited_month_is_asked_again_after_the_wait() {
     assert_eq!(games[0]["status"], "outoftime");
 }
 
+/// Waits until the fixture has been asked for `path`; panics if it never is, rather than letting
+/// the test go on to check an ordering it did not set up.
+async fn requested(fixture: &Fixture, path: &str) {
+    for _ in 0..1_000 {
+        if !fixture.to(path).is_empty() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("{path} was never requested");
+}
+
+/// The player, their archives and accounts are gone, and the add that was overtaken failed
+/// without waiting for Chess.com to answer (`open` is never sent).
+async fn removed_during_add(
+    profile: &Profile,
+    adding: tokio::task::JoinHandle<Result<Value, kchess_core::error::CoreError>>,
+) {
+    let left = profile.chesscom.remove("alice").await.expect("removed");
+    assert_eq!(left, json!([]));
+    let outcome = tokio::time::timeout(Duration::from_secs(10), adding)
+        .await
+        .expect("the removal stops the request in flight")
+        .unwrap();
+    assert!(outcome.is_err(), "the add was overtaken: {outcome:?}");
+    assert!(profile.games("Alice@chess.com").await.is_empty());
+    let accounts = profile
+        .database
+        .call_async("store.chesscom.accounts", &[])
+        .await
+        .unwrap();
+    assert_eq!(accounts, json!([]));
+    let archives = profile
+        .database
+        .call_async("store.chesscom.archives", &[json!("alice")])
+        .await
+        .unwrap();
+    assert_eq!(archives, json!([]));
+}
+
 #[tokio::test]
 async fn removing_a_player_during_their_sync_leaves_nothing_behind() {
     let (open, gate) = watch::channel(false);
-    let gate = Arc::new(Mutex::new(Some(gate)));
     let fixture = serve(move |seen: &Seen| match seen.path() {
         "/pub/player/alice" => Reply::Json(200, profile_body()),
         "/pub/player/alice/games/archives" => Reply::Json(
@@ -205,16 +245,13 @@ async fn removing_a_player_during_their_sync_leaves_nothing_behind() {
             json!({ "archives": [format!("https://api.chess.com/pub/player/alice/games/{PAST}")] })
                 .to_string(),
         ),
-        path if path.ends_with(PAST) => match gate.lock().unwrap().take() {
-            Some(gate) => Reply::Gated(
-                gate,
-                Box::new(Reply::Json(
-                    200,
-                    month_body(&[game(9, "Alice", "bob", "win", "resigned")]),
-                )),
-            ),
-            None => Reply::Json(200, month_body(&[])),
-        },
+        path if path.ends_with(PAST) => Reply::Gated(
+            gate.clone(),
+            Box::new(Reply::Json(
+                200,
+                month_body(&[game(9, "Alice", "bob", "win", "resigned")]),
+            )),
+        ),
         _ => Reply::Json(404, "{}".into()),
     })
     .await;
@@ -223,27 +260,61 @@ async fn removing_a_player_during_their_sync_leaves_nothing_behind() {
         let profile = Arc::clone(&profile);
         tokio::spawn(async move { profile.chesscom.add("alice").await })
     };
-    for _ in 0..200 {
-        if !fixture
-            .to(&format!("/pub/player/alice/games/{PAST}"))
-            .is_empty()
-        {
-            break;
+    requested(&fixture, &format!("/pub/player/alice/games/{PAST}")).await;
+    removed_during_add(&profile, adding).await;
+    drop(open);
+}
+
+/// Regression: a removal while the add was still looking the player up on Chess.com was undone
+/// when the lookup answered: the add stored the player again and synced their games, so the
+/// removed player came back (Windows CI, where the add was slow enough to be overtaken there).
+#[tokio::test]
+async fn removing_a_player_while_they_are_looked_up_does_not_add_them_back() {
+    let (open, gate) = watch::channel(false);
+    let fixture = serve(move |seen: &Seen| match seen.path() {
+        "/pub/player/alice" => {
+            Reply::Gated(gate.clone(), Box::new(Reply::Json(200, profile_body())))
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let left = profile.chesscom.remove("alice").await.expect("removed");
-    assert_eq!(left, json!([]));
-    open.send(true).unwrap();
-    let outcome = adding.await.unwrap();
-    assert!(outcome.is_err(), "the sync was overtaken: {outcome:?}");
-    assert!(profile.games("Alice@chess.com").await.is_empty());
-    let accounts = profile
+        "/pub/player/alice/games/archives" => Reply::Json(
+            200,
+            json!({ "archives": [format!("https://api.chess.com/pub/player/alice/games/{PAST}")] })
+                .to_string(),
+        ),
+        path if path.ends_with(PAST) => Reply::Json(
+            200,
+            month_body(&[game(9, "Alice", "bob", "win", "resigned")]),
+        ),
+        _ => Reply::Json(404, "{}".into()),
+    })
+    .await;
+    let profile = Arc::new(profile(&fixture));
+    let adding = {
+        let profile = Arc::clone(&profile);
+        tokio::spawn(async move { profile.chesscom.add("alice").await })
+    };
+    requested(&fixture, "/pub/player/alice").await;
+    removed_during_add(&profile, adding).await;
+    assert!(fixture.to("/pub/player/alice/games/archives").is_empty());
+    drop(open);
+}
+
+/// An add the player's removal overtook stores nothing, however late the database admits it.
+#[tokio::test]
+async fn an_overtaken_add_stores_no_player() {
+    let fixture = serve(|_: &Seen| Reply::Json(404, "{}".into())).await;
+    let profile = profile(&fixture);
+    let refused = profile
         .database
-        .call_async("store.chesscom.accounts", &[])
+        .call_async("store.chesscom.addAccount", &[json!("alice"), json!(false)])
+        .await
+        .unwrap_err();
+    assert_eq!(refused.message, "Sync was cancelled.");
+    let added = profile
+        .database
+        .call_async("store.chesscom.addAccount", &[json!("alice"), json!(true)])
         .await
         .unwrap();
-    assert_eq!(accounts, json!([]));
+    assert_eq!(added[0]["username"], "alice");
 }
 
 /// Regression: a sync whose call was cancelled (a socket client cancelling it or leaving aborts
@@ -278,15 +349,7 @@ async fn a_cancelled_sync_does_not_fail_the_next_one() {
         let profile = Arc::clone(&profile);
         tokio::spawn(async move { profile.chesscom.add("alice").await })
     };
-    for _ in 0..200 {
-        if !fixture
-            .to(&format!("/pub/player/alice/games/{PAST}"))
-            .is_empty()
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    requested(&fixture, &format!("/pub/player/alice/games/{PAST}")).await;
     adding.abort();
     assert!(adding.await.unwrap_err().is_cancelled());
     drop(open);

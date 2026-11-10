@@ -8,7 +8,7 @@ refuses to release with nothing there.
 
 ## Unreleased
 
-- **Fixes**: Insights opened while your games are still syncing fill in once the sync finishes, instead of showing no games. Finding an opponent just after signing in to Lichess no longer loses the Cancel seek button. Plus many smaller fixes.
+- **Fixes**: Insights opened during a sync fill in once it finishes. Finding an opponent just after signing in to Lichess keeps the Cancel seek button. A Chess.com player you remove while they're being added stays removed. Plus many smaller fixes.
 
 ## 2026.11.7 (2026-11-09)
 
