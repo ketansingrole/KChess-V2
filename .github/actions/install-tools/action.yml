@@ -1,0 +1,64 @@
+name: Install Cargo tools
+description: >-
+  Installs Cargo tools with taiki-e/install-action, keeping their binaries in a small cache so a
+  run with a warm cache never downloads them. Two jobs failed on 2026-11-08 and 11-09 when GitHub
+  answered 504 to every one of install-action's downloads of cargo-nextest for over a minute.
+
+inputs:
+  tools:
+    description: The tools, comma-separated, as install-action's `tool` input takes them.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The tools' versions are the ones install-action's pinned commit names, the only place they
+    # are pinned: the key carries that commit, so a Dependabot update of it installs them afresh.
+    - id: plan
+      shell: bash
+      env:
+        TOOLS: ${{ inputs.tools }}
+      run: |
+        pin="$(sed -n 's|.*uses: taiki-e/install-action@\([0-9a-f]\{40\}\).*|\1|p' "$GITHUB_ACTION_PATH/action.yml")"
+        [ -n "$pin" ] || { echo "::error::No pinned taiki-e/install-action in $GITHUB_ACTION_PATH/action.yml"; exit 1; }
+        bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+        [ "$RUNNER_OS" != Windows ] || bin="$(cygpath -m "$bin")"
+        names="$(echo "$TOOLS" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | sed '/^$/d' | sort -u)"
+        {
+          echo "key=tools-$RUNNER_OS-$RUNNER_ARCH-$(echo $names | tr ' ' ',')-${pin:0:12}"
+          echo 'paths<<EOF'
+          for name in $names; do
+            case "$RUNNER_OS" in Windows) echo "$bin/$name.exe" ;; *) echo "$bin/$name" ;; esac
+          done
+          echo 'EOF'
+        } >> "$GITHUB_OUTPUT"
+    - id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.plan.outputs.paths }}
+        key: ${{ steps.plan.outputs.key }}
+    # A restore can come back without a file it names; install then, as on a miss.
+    - id: check
+      shell: bash
+      env:
+        PATHS: ${{ steps.plan.outputs.paths }}
+        HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        install=false
+        [ "$HIT" = true ] || install=true
+        while read -r path; do
+          [ -z "$path" ] || [ -x "$path" ] || install=true
+        done <<< "$PATHS"
+        echo "install=$install" >> "$GITHUB_OUTPUT"
+    - if: steps.check.outputs.install == 'true'
+      uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+      with:
+        tool: ${{ inputs.tools }}
+    # Saved from main alone, whose caches every branch reads: one entry per tool set and runner,
+    # a few megabytes, replaced only when the pin moves (an unread one expires in a week).
+    - if: steps.check.outputs.install == 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      continue-on-error: true
+      with:
+        path: ${{ steps.plan.outputs.paths }}
+        key: ${{ steps.plan.outputs.key }}
