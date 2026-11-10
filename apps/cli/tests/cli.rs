@@ -382,28 +382,50 @@ fn a_nested_build_drops_only_this_packages_variables() {
 #[cfg(unix)]
 #[test]
 fn a_stale_workspace_binary_is_rebuilt_before_use() {
+    use std::os::unix::fs::MetadataExt as _;
     let fresh = workspace_binary("kchess-core", "kchess-fake-uci");
-    let built = std::fs::read(&fresh).expect("the scripted engine");
-    // Stale, yet still a working engine for tests running at once: the same program with bytes
-    // after it, put in place under another name first so nobody reads half of it. Renamed over
-    // the file, not written into it, which Cargo may have hard-linked to its own copy.
-    let mut stale = built.clone();
-    stale.extend_from_slice(b"stale");
-    let partial = fresh.with_file_name(format!("kchess-fake-uci-stale-{}", std::process::id()));
-    std::fs::write(&partial, &stale).expect("stale copy");
-    std::fs::set_permissions(
-        &partial,
-        std::fs::metadata(&fresh).expect("mode").permissions(),
-    )
-    .expect("executable");
-    std::fs::rename(&partial, &fresh).expect("stale binary in place");
-
+    let stale = put_stale_copy(&fresh);
     let used = workspace_binary("kchess-core", "kchess-fake-uci");
     assert_eq!(used, fresh);
-    assert!(
-        std::fs::read(&used).expect("the scripted engine") == built,
+    assert_ne!(
+        std::fs::metadata(&used).expect("the scripted engine").ino(),
+        stale,
         "the stale binary was used as it was"
     );
+}
+
+/// Puts a file that is not Cargo's output in place of `binary`, and answers its inode. Tests in
+/// other binaries run this one at once (kchess-core's run it as their engine), and the core
+/// takes an executable of another length or time for another engine: it restarted a warm engine
+/// between two moves of `consecutive_moves_reuse_the_warm_engine_and_send_only_changed_options`
+/// (2026-11-11) when this put a longer copy here. So the copy is the same bytes and time, put in
+/// place under another name first so nobody reads half of it, and renamed over the file rather
+/// than written into it, which Cargo hard-links to its own copy.
+#[cfg(unix)]
+fn put_stale_copy(binary: &std::path::Path) -> u64 {
+    use std::os::unix::fs::MetadataExt as _;
+    let built = std::fs::metadata(binary).expect("the binary");
+    let partial = binary.with_file_name(format!(
+        "{}-stale-{}",
+        binary.file_name().expect("a file").to_string_lossy(),
+        std::process::id()
+    ));
+    std::fs::copy(binary, &partial).expect("stale copy");
+    let copy = std::fs::File::options()
+        .write(true)
+        .open(&partial)
+        .expect("the stale copy");
+    copy.set_modified(built.modified().expect("modified"))
+        .expect("the binary's time");
+    drop(copy);
+    let stale = std::fs::metadata(&partial).expect("the stale copy");
+    assert_eq!(
+        (stale.len(), stale.modified().ok()),
+        (built.len(), built.modified().ok()),
+        "the copy looks like the binary to the tests running it"
+    );
+    std::fs::rename(&partial, binary).expect("stale binary in place");
+    stale.ino()
 }
 
 /// The scripted engine (`kchess-fake-uci`, built first) as the copy `engine-quick`: its
