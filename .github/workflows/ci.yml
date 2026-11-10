@@ -212,6 +212,20 @@ jobs:
       - name: Install GPUI build libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      # Windows builds in a trusted Dev Drive: ReFS, which Defender scans in its performance mode.
+      # `target` is a junction to it, so the caches below restore into it unchanged.
+      - if: runner.os == 'Windows'
+        uses: samypr100/setup-dev-drive@562171fe8df7401fdf582d766cd3b6ab80d5b1a0 # v4.1.0
+        with:
+          drive-size: 40GB
+          drive-format: ReFS
+          native-dev-drive: true
+          trusted-dev-drive: true
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:DEV_DRIVE\target" | Out-Null
+          New-Item -ItemType Junction -Path target -Target "$env:DEV_DRIVE\target" | Out-Null
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: gpui
@@ -288,6 +302,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      # Windows builds in a trusted Dev Drive: ReFS, which Defender scans in its performance mode.
+      # `target` is a junction to it, so the caches below restore into it unchanged.
+      - if: runner.os == 'Windows'
+        uses: samypr100/setup-dev-drive@562171fe8df7401fdf582d766cd3b6ab80d5b1a0 # v4.1.0
+        with:
+          drive-size: 40GB
+          drive-format: ReFS
+          native-dev-drive: true
+          trusted-dev-drive: true
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:DEV_DRIVE\target" | Out-Null
+          New-Item -ItemType Junction -Path target -Target "$env:DEV_DRIVE\target" | Out-Null
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: headless
