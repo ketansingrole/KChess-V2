@@ -154,6 +154,9 @@ mod tests {
             run(&["rev-parse", "HEAD"])
         };
         run(&["init", "-q"]);
+        // Windows runners convert line endings on checkout (`core.autocrlf`); the files here
+        // must come back byte for byte, whatever the machine's own Git settings.
+        run(&["config", "core.autocrlf", "false"]);
         std::fs::write(path.join(".gitignore"), "target/\n.data/\n").unwrap();
         std::fs::write(path.join("a.rs"), "fn a() {}\n").unwrap();
         std::fs::write(path.join("b.rs"), "fn b() {}\n").unwrap();
