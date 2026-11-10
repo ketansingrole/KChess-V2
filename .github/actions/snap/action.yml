@@ -1,0 +1,61 @@
+name: Snap
+description: >-
+  The Snap Store's KChess, packed from the release build `cargo xtask package` just made in this
+  job, uploaded as the `kchess-snap` artifact. Linux was compiled twice, once for the AppImage and
+  .deb and again in a Snap job of its own (2026-11-09: 743 s and 1,413 s, both from cold).
+
+runs:
+  using: composite
+  steps:
+    # Packed on the runner itself, an Ubuntu 24.04 like the Snap's core24 base: snapcraft only
+    # dumps the built app and its stage packages into it (`cargo xtask package --snap`). Its LXD
+    # build instance downloaded Ubuntu's image every run: 1.5 minutes as a rule.
+    - name: Check the runner is the Snap's base
+      shell: bash
+      run: |
+        . /etc/os-release
+        test "$VERSION_ID" = 24.04 || { echo "::error::The Snap packs on Ubuntu 24.04, its core24 base, not $PRETTY_NAME."; exit 1; }
+    - shell: bash
+      run: sudo snap install snapcraft --classic
+    - name: Build the Snap
+      shell: bash
+      run: cargo xtask package --snap --skip-build
+      env:
+        GH_TOKEN: ${{ github.token }}
+        KCHESS_SNAP_DESTRUCTIVE: '1'
+    # snapcraft keeps none of the output of the `snap install`s it runs, so a Store problem left
+    # only "Error installing snap" (2026-11-10). snapd's own account of each install, its tasks
+    # with their times (download, mount, setup), goes in the job log of every build, slow ones
+    # that pass included; with snapd's journal, it joins a failed build's diagnostics.
+    - name: Show snapd's installs
+      if: always()
+      shell: bash
+      run: |
+        mkdir -p snapcraft-log/snapd
+        cd snapcraft-log/snapd
+        snap version > version.txt 2>&1 || true
+        snap changes 2>&1 | tee changes.txt || true
+        for change in $(snap changes 2>/dev/null | awk 'NR > 1 && $1 ~ /^[0-9]+$/ {print $1}'); do
+          snap tasks "$change" 2>&1 | tee "tasks-$change.txt" || true
+        done
+        snap debug connectivity > connectivity.txt 2>&1 || true
+        sudo journalctl -u snapd --no-pager -o short-iso > journal.txt 2>&1 || true
+    # snapcraft ran as root, so its logs are root's.
+    - if: failure()
+      shell: bash
+      run: sudo cp -r /root/.local/state/snapcraft/log/. snapcraft-log/ && sudo chown -R "$USER" snapcraft-log
+    - name: Retain Snap build diagnostics
+      if: failure()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: snap-build-diagnostics
+        path: |
+          snapcraft-log/
+          target/package/stage/snap/snap/snapcraft.yaml
+        retention-days: 7
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: kchess-snap
+        path: apps/gpui/dist/*.snap
+        if-no-files-found: error
+        retention-days: 14

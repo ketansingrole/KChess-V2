@@ -91,10 +91,11 @@ const HELP: &str = "cargo xtask <command>
                         Fetch Stockfish into the folder and build Fairy-Stockfish; print
                         KCHESS_ENGINE_PATH and KCHESS_VARIANT_ENGINE_PATH, or add them to
                         $GITHUB_ENV (CI)
-  package [--skip-build] [--snap|--mas]
+  package [--skip-build|--build-only] [--snap|--mas]
                         Package the app for this machine (apps/gpui/dist): .dmg and .zip,
-                        the NSIS installer, or the AppImage and .deb; --snap makes the Snap,
-                        --mas the Mac App Store's .pkg (apps/gpui/dist/mas)
+                        the NSIS installer, or the AppImage and .deb; --snap adds the Snap,
+                        --mas the Mac App Store's .pkg (apps/gpui/dist/mas); --build-only
+                        only compiles what packaging ships (CI's package cache)
   deltas [dir]          Write the update patches to this release's packages in [dir]
                         (apps/gpui/dist) from the latest published releases (release CI)
   deltas --from <old package> <new package> [--stage <out>]

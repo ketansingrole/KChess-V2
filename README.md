@@ -91,7 +91,7 @@ cargo xtask package             # KChess for this platform, with the update mani
 ```
 
 macOS makes a `.dmg` and `.zip` (Apple Silicon), Windows a per-user NSIS installer, Linux an
-AppImage and a `.deb` (`--snap` makes the Snap). Each carries the app's own Stockfish, Fairy-Stockfish
+AppImage and a `.deb` (`--snap` adds the Snap beside them). Each carries the app's own Stockfish, Fairy-Stockfish
 (built from source by `cargo xtask fairy-stockfish`, for variant analysis and reviews), the core
 service, the command line, the voice runtime and `THIRD_PARTY_LICENSES.txt`. `--skip-build`
 reuses the release binaries already built. Release packages come from the Release workflow.
