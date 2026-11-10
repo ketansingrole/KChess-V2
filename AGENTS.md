@@ -4,6 +4,20 @@ KChess is Rust: the app (`apps/gpui`, GPUI Kit), the command line (`apps/cli`), 
 (`crates/`) and the tooling (`tooling/xtask`, run as `cargo xtask <command>`). There is no
 JavaScript, TypeScript or Node in the repository; do not add any.
 
+## Fix the root cause, never only the symptom
+
+Always. This holds for a failing or flaky test, a failing check, a slow job or build, a broken pull
+request (Dependabot included), bad config and a measurement that surprises you.
+
+- Find out why it happens before changing anything: measure or reproduce until the cause is known,
+  not guessed, and say so plainly while it is still a guess.
+- Change what causes it. Raising a timeout, retrying, skipping, ignoring, excluding, closing or
+  reverting hides the cause; offer one only as a named stopgap beside the real fix.
+- Examples: a test that timed out on Windows was a real bug, core close not waiting for its
+  analysis to end, which a longer timeout would have hidden. Dependabot once moved every
+  `taiki-e/install-action` pin to one tool's tag commit, so every step installed that tool; the
+  fix was one pinned release with a `tool:` input, not closing the pull request.
+
 ## Landing changes
 
 - Code reaches `main` through a pull request, so CI tests it on macOS, Windows and Linux before
@@ -200,11 +214,6 @@ and in the App Store. Its readers play chess; they are not developers.
   use `git stash` (one stash list serves every worktree, so a pop can take another session's
   work); keep work in progress as commits on your own branch, and never commit in a checkout or
   on a branch another session is using.
-- Fix why something breaks, not only its symptom. Before closing, reverting, skipping or ignoring
-  a failing check, broken pull request (Dependabot included) or bad config, find what made it fail
-  and whether a small change stops it for good; do that change, and offer the stopgap only as a
-  fallback. Dependabot once moved every `taiki-e/install-action` pin to one tool's tag commit, so
-  every step installed that tool; the fix was one pinned release with a `tool:` input.
 - Bug fixes must retain a regression for the concrete failure sequence. When generated
   tests expose a failure, preserve its replay seed/path and a focused reproducer.
 - Do not lower the coverage floors (`tooling/xtask/src/check.rs`) without a measurement that
