@@ -910,6 +910,7 @@ mod tests {
                 "crates/kchess-delta/src/lib.rs",
                 "crates/kchess-voice/src/main.rs",
                 "Cargo.lock",
+                ".cargo/config.toml",
             ]
             .map(String::from),
         );
@@ -934,6 +935,8 @@ mod tests {
             "apps/gpui/src/explorer.rs",
             "tooling/xtask/src/bench.rs",
             "docs/releasing.md",
+            // The mutants' settings: no package is built from them.
+            ".cargo/mutants.toml",
         ] {
             assert!(!matches(file), "{file} runs CI's packaging jobs");
         }
