@@ -1,0 +1,24 @@
+name: CI times
+
+# Monday's report of the past week of CI (`cargo xtask ci-times`): each job's typical and worst
+# times, and the tests that failed and then passed on the same commit, in this run's summary.
+on:
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: cargo xtask ci-times --days 7 >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

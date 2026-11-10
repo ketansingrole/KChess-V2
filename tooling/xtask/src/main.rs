@@ -6,6 +6,7 @@ mod bench;
 #[cfg(test)]
 mod boundaries;
 mod check;
+mod ci_times;
 mod deb;
 mod deltas;
 mod electron_step;
@@ -44,6 +45,9 @@ const HELP: &str = "cargo xtask <command>
                         metadata and the Rust tests (under the coverage gate when cargo-llvm-cov
                         is installed)
   check-fast            Format, lints and the tests of the packages changed since main
+  ci-times [--days <n>]  How long CI took over the last n days (7), job by job, and the tests
+                        that failed and then passed on the same commit, as Markdown (the
+                        weekly CI times workflow)
   mutants [--plan] [--base <ref>] [-- <cargo-mutants arguments>]
                         Mutation testing of the lines changed since main (or <ref>); fails
                         when a mutant survives (docs/mutation-testing.md); with --plan, only
@@ -106,6 +110,7 @@ fn main() -> ExitCode {
         Some("bench") => bench::run(rest),
         Some("check") => check::check(rest),
         Some("check-fast") => check::fast(),
+        Some("ci-times") => ci_times::run(rest),
         Some("mutants") => mutants::run(rest),
         Some("pre-push") => check::pre_push(),
         Some("install-hooks") => check::install_hooks(),
