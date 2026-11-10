@@ -10,6 +10,11 @@ updates:
     # is usually yanked before it reaches a pull request. Security updates are not delayed.
     cooldown:
       default-days: 7
+    # `cargo hakari generate` writes the workspace hack from the versions the real crates resolve.
+    # Dependabot once raised its zbus 5 to 6, which nothing used: a second zbus in the lockfile and
+    # an outdated hack that failed `cargo xtask check`.
+    exclude-paths:
+      - crates/kchess-hack/Cargo.toml
     # gpui-kit is pinned to the gpui-pre patched in vendor/ (apps/gpui/Cargo.toml); it moves by hand.
     ignore:
       - dependency-name: gpui-kit

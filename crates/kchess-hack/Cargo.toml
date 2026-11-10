@@ -134,7 +134,7 @@ subtle = { version = "2" }
 syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 tracing = { version = "0.1", features = ["log"] }
 uuid = { version = "1", default-features = false, features = ["v5"] }
-zbus = { version = "6" }
+zbus = { version = "5" }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", features = ["enumflags2", "gvariant", "serde_bytes"] }
 zvariant_utils = { version = "4", features = ["gvariant"] }
