@@ -57,6 +57,32 @@ fn every_sidebar_page_opens(cx: &mut gpui_kit::TestAppContext) {
     }
 }
 
+/// A dialog that closes on the core's answer covers the sidebar until then: a page opened from it
+/// opens once the dialog has gone, not never (`studies_are_found_by_name`, Linux CI 2026.11.10).
+#[gpui_kit::test]
+fn a_page_opens_after_a_dialog_in_its_way_closes(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open("Analysis board");
+    app.click("save-as-study");
+    app.find("name-confirm");
+    // The core's answer, late: the dialog closes 100 ms from now on the test clock.
+    app.with_window(|window, cx| {
+        use gpui_kit::component::WindowExt as _;
+        window
+            .spawn(cx, async move |cx| {
+                let late = cx
+                    .background_executor()
+                    .timer(std::time::Duration::from_millis(100));
+                late.await;
+                let _ = cx.update(|window, cx| window.close_dialog(cx));
+            })
+            .detach();
+    });
+    app.open("Studies");
+    let shown = app.cx.update(|cx| crate::shell::current_page(cx));
+    assert_eq!(shown, Some(crate::pages::Page::Studies));
+}
+
 /// The keyboard goes back and forward through the pages visited, as a swipe does: ⌘[ and ⌘] on
 /// macOS, Alt with an arrow elsewhere.
 #[gpui_kit::test]

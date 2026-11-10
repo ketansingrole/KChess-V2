@@ -252,6 +252,7 @@ fn without_app_tests(args: &[String]) -> bool {
 }
 
 fn full_with(app: bool) -> Result {
+    crate::sweep::objects();
     step("format and lints", lints)?;
     step("notices", crate::licenses::check_notices)?;
     step("icons", crate::icons::check)?;
@@ -400,6 +401,7 @@ fn touches_dependencies(files: &[String]) -> bool {
 /// `check-fast`: format, lints, the notices when dependencies changed, and the tests of the packages changed since main (committed or
 /// not). Never a substitute for `check` before a push to main.
 pub fn fast() -> Result {
+    crate::sweep::objects();
     let base = crate::util::merge_base(&root())?;
     let mut files: Vec<String> = output("git", &["diff", "--name-only", &base])?
         .lines()
@@ -1187,6 +1189,7 @@ mod tests {
                 "crates/kchess-delta/src/lib.rs",
                 "crates/kchess-voice/src/main.rs",
                 "Cargo.lock",
+                ".cargo/config.toml",
             ]
             .map(String::from),
         );
@@ -1211,6 +1214,8 @@ mod tests {
             "apps/gpui/src/explorer.rs",
             "tooling/xtask/src/bench.rs",
             "docs/releasing.md",
+            // The mutants' settings: no package is built from them.
+            ".cargo/mutants.toml",
         ] {
             assert!(!matches(file), "{file} runs CI's packaging jobs");
         }

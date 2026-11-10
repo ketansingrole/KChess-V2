@@ -49,7 +49,8 @@ fn wait_for_value(app: &mut Harness, label: &str, expected: &str) {
     });
 }
 
-/// Name a study in the dialog the app opened for it.
+/// Name a study in the dialog the app opened for it, and wait for the dialog to close: it stays
+/// up until the core has the name.
 fn name_in_dialog(app: &mut Harness, name: &str) {
     app.find("name-confirm");
     let mut last = None;
@@ -64,6 +65,7 @@ fn name_in_dialog(app: &mut Harness, name: &str) {
     app.press("secondary-a");
     app.type_text(name);
     app.click("name-confirm");
+    app.wait_gone("name-confirm");
 }
 
 const TWO_CHAPTERS: &str = "[Event \"King pawn\"]\n\n1. e4 e5 *\n\n[Event \"Queen pawn\"]\n\n1. d4 {Offline notes} d5 (1... Nf6) *";

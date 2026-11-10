@@ -23,10 +23,27 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
         KCHESS_SNAP_DESTRUCTIVE: '1'
+    # snapcraft keeps none of the output of the `snap install`s it runs, so a Store problem left
+    # only "Error installing snap" (2026-11-10). snapd's own account of each install, its tasks
+    # with their times (download, mount, setup), goes in the job log of every build, slow ones
+    # that pass included; with snapd's journal, it joins a failed build's diagnostics.
+    - name: Show snapd's installs
+      if: always()
+      shell: bash
+      run: |
+        mkdir -p snapcraft-log/snapd
+        cd snapcraft-log/snapd
+        snap version > version.txt 2>&1 || true
+        snap changes 2>&1 | tee changes.txt || true
+        for change in $(snap changes 2>/dev/null | awk 'NR > 1 && $1 ~ /^[0-9]+$/ {print $1}'); do
+          snap tasks "$change" 2>&1 | tee "tasks-$change.txt" || true
+        done
+        snap debug connectivity > connectivity.txt 2>&1 || true
+        sudo journalctl -u snapd --no-pager -o short-iso > journal.txt 2>&1 || true
     # snapcraft ran as root, so its logs are root's.
     - if: failure()
       shell: bash
-      run: sudo cp -r /root/.local/state/snapcraft/log snapcraft-log && sudo chown -R "$USER" snapcraft-log
+      run: sudo cp -r /root/.local/state/snapcraft/log/. snapcraft-log/ && sudo chown -R "$USER" snapcraft-log
     - name: Retain Snap build diagnostics
       if: failure()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
