@@ -27,3 +27,11 @@ failure-output = "immediate-final"
 # read as a timeout rather than caught.
 [profile.mutants]
 fail-fast = { max-fail = 1, terminate = "immediate" }
+
+# The memory benchmarks (kchess-core's `tests/memory.rs`) print what each scenario kept, passing or
+# not, so CI's logs show a drift toward the allowance before it fails: a passing run's output was
+# hidden, and on 2026-11-10 a Windows failure had no record of how close main's runs came. The
+# default profile's overrides apply to every profile.
+[[profile.default.overrides]]
+filter = 'package(kchess-core) & binary(memory)'
+success-output = "final"

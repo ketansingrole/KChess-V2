@@ -5,7 +5,9 @@
 //!
 //! Each scenario warms up first, so caches that are bounded by design fill before measuring, then
 //! samples the live heap after every batch of cycles and fails when the cycles keep more than
-//! their allowance. `cargo test -p kchess-core --test memory -- --nocapture` prints the table.
+//! their allowance. Each scenario prints its trail, which nextest shows for passing runs too
+//! (`.config/nextest.toml`), so CI's logs record how close to the allowance every run comes;
+//! `cargo test -p kchess-core --test memory -- --nocapture` prints them here.
 //! Its own binary: the allocator counts the whole process, so the scenarios run one at a time.
 
 mod support;
@@ -98,9 +100,11 @@ async fn settled(tasks: isize) -> isize {
     low
 }
 
-/// How long `settled` waits for the cycles' tasks to end. A closed core's tasks end within a
-/// sampling window here, but a loaded Windows runner left 12 alive after 20 open/close cycles
-/// (2026-11-10, sixteen tests at once), counted as 964 B kept per cycle.
+/// How long `settled` waits for the cycles' tasks to end: a task finishing its last cycle is not
+/// counted as kept. A closed core leaves none, so the wait normally ends at once. When loaded
+/// Windows runners left 12 and then 14 alive after 20 open/close cycles (2026-11-10, read as 964
+/// and 972 B kept per cycle), the tasks were not slow but stuck: a battery refresh first polled
+/// after close asked the closed host and waited 30 s for its answer (`Capabilities::close`).
 const TASKS_SETTLE: Duration = Duration::from_secs(5);
 
 /// Bytes each cycle keeps, judged from `samples` (the settled heap after each batch of
@@ -188,6 +192,11 @@ async fn measure<F, Fut>(
         per_cycle <= allowance,
         "{name} keeps {per_cycle} B per cycle (allowed {allowance}): {}",
         trail.join(" → ")
+    );
+    // A task still alive `TASKS_SETTLE` after the cycles is held work, whatever it weighs.
+    assert!(
+        tasks <= 0,
+        "{name} left {tasks} tasks running after {cycles} cycles"
     );
 }
 

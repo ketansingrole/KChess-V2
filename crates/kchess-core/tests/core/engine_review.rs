@@ -640,6 +640,33 @@ async fn a_request_for_an_account_that_is_gone_stores_nothing() {
     rig.reviews.stop_reviews().await;
 }
 
+/// A pass that finds nothing to review, with no review engine open, leaves only its recheck:
+/// the engine's idle countdown closes nothing then, and lived on for a minute after every
+/// automatic look (the memory benchmarks counted it on loaded Windows runners, 2026-11-10).
+#[tokio::test]
+async fn a_pass_with_no_engine_open_leaves_no_idle_countdown() {
+    let rig = rig("review", "no-idle-countdown", false, "all", true);
+    let alive = || {
+        tokio::runtime::Handle::current()
+            .metrics()
+            .num_alive_tasks()
+    };
+    // Only `setup_reviews`' recheck timer runs.
+    assert_eq!(alive(), 1, "the recheck timer alone");
+    rig.reviews.reviews_changed();
+    wait_until(WAIT, "the pass to find nothing", || {
+        (rig.host.last_status()?.waiting == 0).then_some(())
+    })
+    .await;
+    // The pass ends just after its status: then only the later recheck's timer is left.
+    let started = std::time::Instant::now();
+    while alive() > 1 && started.elapsed() < Duration::from_secs(2) {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(alive(), 1, "the later recheck alone, no idle countdown");
+    rig.reviews.stop_reviews().await;
+}
+
 #[tokio::test]
 async fn a_finished_review_is_not_queued_again_automatically() {
     let rig = rig("review", "finished", false, "all", true);

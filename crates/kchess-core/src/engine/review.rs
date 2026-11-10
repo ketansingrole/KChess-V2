@@ -938,8 +938,10 @@ async fn pump(s: Arc<Shared>) {
     let (arm_idle, asked) = {
         let state = lock(&s.state);
         let present = state.host.is_some();
+        // The countdown only closes the engine: with none open (a pass that found nothing to
+        // review) it would just hold a task for a minute after every automatic look.
         (
-            present && state.running.is_none() && state.asked.is_empty(),
+            present && state.running.is_none() && state.asked.is_empty() && state.engine.is_some(),
             present && !state.asked.is_empty(),
         )
     };

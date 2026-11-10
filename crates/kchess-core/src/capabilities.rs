@@ -19,18 +19,25 @@ use crate::host::Host;
 use crate::secrets::{self, Credentials};
 
 const DEADLINE: Duration = Duration::from_secs(30);
+const HOST_CLOSED: &str = "The host closed before answering.";
 
-/// Each unanswered request: the connection it was routed to (`None` when every client heard it),
+/// An unanswered request: the connection it was routed to (`None` when every client heard it),
 /// and where its answer goes.
-type Pending = Mutex<
-    HashMap<
-        u64,
-        (
-            Option<u64>,
-            oneshot::Sender<std::result::Result<Value, String>>,
-        ),
-    >,
->;
+type Waiting = (
+    Option<u64>,
+    oneshot::Sender<std::result::Result<Value, String>>,
+);
+
+type Pending = Mutex<Requests>;
+
+#[derive(Default)]
+struct Requests {
+    waiting: HashMap<u64, Waiting>,
+    /// Set by `close`, under the same lock, so no request is taken after it: a host request
+    /// started by work the closing core had spawned (a battery refresh first polled after close
+    /// on a loaded runner) would otherwise wait out `DEADLINE` for an answer no host will send.
+    closed: bool,
+}
 
 pub struct Capabilities {
     host: Arc<dyn Host>,
@@ -65,7 +72,7 @@ impl Capabilities {
         Capabilities {
             host,
             next: AtomicU64::new(1),
-            pending: Mutex::new(HashMap::new()),
+            pending: Mutex::new(Requests::default()),
             credentials,
             connections: None,
         }
@@ -109,15 +116,21 @@ impl Capabilities {
         };
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (send, receive) = oneshot::channel();
-        self.pending
-            .lock()
-            .map_err(|_| CoreError::new("The host is unavailable."))?
-            .insert(id, (target, send));
+        {
+            let mut pending = self
+                .pending
+                .lock()
+                .map_err(|_| CoreError::new("The host is unavailable."))?;
+            if pending.closed {
+                return Err(CoreError::new(HOST_CLOSED));
+            }
+            pending.waiting.insert(id, (target, send));
+        }
         // Forgotten however the wait ends: a caller that was cancelled while its window had
         // gone would otherwise leave the entry until the core closed.
         let _forget = crate::tasks::on_drop(|| {
             if let Ok(mut pending) = self.pending.lock() {
-                pending.remove(&id);
+                pending.waiting.remove(&id);
             }
         });
         let request = json!({ "id": id, "kind": kind, "payload": payload });
@@ -129,7 +142,7 @@ impl Capabilities {
         match answer {
             Ok(Ok(Ok(value))) => Ok(value),
             Ok(Ok(Err(message))) => Err(CoreError::new(message)),
-            Ok(Err(_)) => Err(CoreError::new("The host closed before answering.")),
+            Ok(Err(_)) => Err(CoreError::new(HOST_CLOSED)),
             Err(_) => Err(CoreError::new(format!("The host did not answer {kind}."))),
         }
     }
@@ -140,13 +153,13 @@ impl Capabilities {
     pub fn reply(&self, id: u64, answer: &Value) {
         let Some(send) = self.pending.lock().ok().and_then(|mut pending| {
             let replier = crate::connection::current();
-            match pending.get(&id) {
+            match pending.waiting.get(&id) {
                 // In-process callers run outside any connection's scope; every socket client's
                 // call is scoped (`Core::call_client`).
                 Some((Some(target), _)) if replier.is_some_and(|replier| replier != *target) => {
                     None
                 }
-                Some(_) => pending.remove(&id).map(|(_, send)| send),
+                Some(_) => pending.waiting.remove(&id).map(|(_, send)| send),
                 None => None,
             }
         }) else {
@@ -159,10 +172,11 @@ impl Capabilities {
         let _ = send.send(result);
     }
 
-    /// Fail every unanswered request (the core is closing).
+    /// Fail every unanswered request, and every later one (the core is closing).
     pub fn close(&self) {
         if let Ok(mut pending) = self.pending.lock() {
-            pending.clear();
+            pending.closed = true;
+            pending.waiting.clear();
         }
     }
 
@@ -293,7 +307,7 @@ mod tests {
         assert_eq!(caps.decrypt("abc").await.unwrap(), "plain:abc");
         assert!(caps.on_battery().await.unwrap());
         assert_eq!(caps.focus().await.unwrap_err().message, "Not supported.");
-        assert!(caps.pending.lock().unwrap().is_empty());
+        assert!(caps.pending.lock().unwrap().waiting.is_empty());
     }
 
     /// A credential store in memory.
@@ -331,7 +345,7 @@ mod tests {
         );
         let sealed = caps.encrypt("lip_token").await.unwrap();
         assert_eq!(caps.decrypt(&sealed).await.unwrap(), "lip_token");
-        assert!(caps.pending.lock().unwrap().is_empty());
+        assert!(caps.pending.lock().unwrap().waiting.is_empty());
     }
 
     #[test]
@@ -358,13 +372,75 @@ mod tests {
         let (send, receive) = oneshot::channel();
         let echo = Arc::new(Echo(Mutex::new(None)));
         let caps = Capabilities::new(echo);
-        caps.pending.lock().unwrap().insert(7, (Some(2), send));
+        caps.pending
+            .lock()
+            .unwrap()
+            .waiting
+            .insert(7, (Some(2), send));
         crate::connection::scope(3, async { caps.reply(7, &json!({ "value": "forged" })) }).await;
         assert!(
-            caps.pending.lock().unwrap().contains_key(&7),
+            caps.pending.lock().unwrap().waiting.contains_key(&7),
             "another client's answer"
         );
         crate::connection::scope(2, async { caps.reply(7, &json!({ "value": "real" })) }).await;
         assert_eq!(receive.await.unwrap(), Ok(json!("real")));
+    }
+
+    /// Hears requests and never answers, like the closing core's gated host.
+    #[derive(Default)]
+    struct Silent(Mutex<usize>);
+
+    impl Host for Silent {
+        fn log(&self, _: Level, _: &str, _: &str) {}
+        fn emit(&self, _: &str, _: Value) {
+            *self.0.lock().unwrap() += 1;
+        }
+    }
+
+    /// A request made once the capabilities have closed fails at once, unheard: it is no longer
+    /// left waiting `DEADLINE` for an answer that cannot come.
+    #[tokio::test]
+    async fn a_request_after_close_fails_at_once() {
+        let host = Arc::new(Silent::default());
+        let caps = Capabilities::new(host.clone());
+        caps.close();
+        let answer = tokio::time::timeout(Duration::from_secs(1), caps.on_battery())
+            .await
+            .expect("answered at once");
+        assert_eq!(
+            answer.unwrap_err().message,
+            "The host closed before answering."
+        );
+        assert_eq!(*host.0.lock().unwrap(), 0, "the host was asked");
+        assert!(caps.pending.lock().unwrap().waiting.is_empty());
+    }
+
+    /// 2026-11-10, CI on Windows: a core's battery refresh, spawned by its first call, ran only
+    /// after the core had closed its capabilities. Its request then waited 30 s for an answer, so
+    /// 14 of 20 cores opened and closed in a row were still held, read as 972 B kept per cycle
+    /// (`tests/memory.rs`, `cores_opened_and_closed`). The refresh now ends with the core.
+    #[tokio::test]
+    async fn a_battery_refresh_that_starts_after_close_ends_at_once() {
+        let host: Arc<dyn Host> = Arc::new(Silent::default());
+        let caps = Arc::new(Capabilities::new(Arc::clone(&host)));
+        let battery = crate::engine::bridge::Battery::new(host);
+        let alive = || {
+            tokio::runtime::Handle::current()
+                .metrics()
+                .num_alive_tasks()
+        };
+        let before = alive();
+        // One thread: the refresh is not polled before the capabilities close.
+        battery.refresh(&caps);
+        assert_eq!(alive(), before + 1);
+        caps.close();
+        battery.close();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while alive() > before {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the refresh ended with the core");
     }
 }
