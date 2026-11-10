@@ -392,9 +392,14 @@ jobs:
           retention-days: 14
 
   # The Snap as the Release workflow builds it, before a tag rather than after one (2026.10.16).
+  # Not on pull requests: snapcraft fetches itself and its build snaps from the Snap Store, whose
+  # outages (2026-11-06, 2026-11-10 twice: slow installs, then HTTP 503 downloads) held pull
+  # requests that could not pass until it recovered. Main's nightly run, a run by hand (on any
+  # branch, to test a Snap change before it merges) and release commits build it; `release.yml`
+  # builds the published one.
   snap:
     needs: changes
-    if: needs.changes.outputs.packaging == 'true'
+    if: needs.changes.outputs.packaging == 'true' && github.event_name != 'pull_request'
     uses: ./.github/workflows/snap-build.yml
     with:
       fast: ${{ needs.changes.outputs.release != 'true' }}

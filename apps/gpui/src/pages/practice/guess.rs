@@ -163,7 +163,10 @@ pub struct GuessMoves {
     /// The engine's evaluation after the move played at a ply (none when it found none).
     played_eval: Option<(usize, Option<Eval>)>,
     engine: PositionEngine,
-    engine_ready: bool,
+    /// Whether the engine is installed; none until the core answers. A guess made before then
+    /// waits for the answer: judged at once, it scored as if there were no engine (Windows CI,
+    /// 2026-11-10: `d5`, not `d5?!`).
+    engine_ready: Option<bool>,
     error: Option<String>,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
@@ -235,10 +238,7 @@ impl GuessMoves {
         cx.spawn(async move |this, cx| {
             let ready =
                 matches!(status.await, Ok(status) if status["ready"].as_bool() == Some(true));
-            let _ = this.update(cx, |this, cx| {
-                this.engine_ready = ready;
-                cx.notify();
-            });
+            let _ = this.update(cx, |this, cx| this.engine_known(ready, cx));
         })
         .detach();
         GuessMoves {
@@ -252,7 +252,7 @@ impl GuessMoves {
             best: None,
             played_eval: None,
             engine: PositionEngine::default(),
-            engine_ready: false,
+            engine_ready: None,
             error: None,
             board,
             layout: PlayLayout::default(),
@@ -336,7 +336,38 @@ impl GuessMoves {
 
     /// Whether the engine can judge guesses now: installed, and no live Lichess game going on.
     fn engine_usable(&self, cx: &App) -> bool {
-        self.engine_ready && cx.global::<OnlineHandle>().0.read(cx).assistance_allowed()
+        self.engine_ready == Some(true)
+            && cx.global::<OnlineHandle>().0.read(cx).assistance_allowed()
+    }
+
+    /// Whether the core has said if the engine is installed; `forget` makes it unsaid again.
+    #[cfg(test)]
+    pub(crate) fn engine_status_known(&mut self, forget: bool) -> bool {
+        if forget {
+            self.engine_ready = None;
+        }
+        self.engine_ready.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn answer_engine_status(&mut self, ready: bool, cx: &mut Context<Self>) {
+        self.engine_known(ready, cx);
+    }
+
+    /// The core has said whether the engine is installed: look at the position to guess, or
+    /// judge the guess that waited for this.
+    fn engine_known(&mut self, ready: bool, cx: &mut Context<Self>) {
+        self.engine_ready = Some(ready);
+        if let Some(uci) = self.pending.clone() {
+            if self.engine_usable(cx) {
+                self.judge_pending(cx);
+            } else {
+                self.judged(&uci, Evals::default(), cx);
+            }
+        } else if self.your_turn() && self.probe.is_none() && self.engine_usable(cx) {
+            self.start_probe(Probe::Best(self.ply), None, cx);
+        }
+        self.redraw(cx);
     }
 
     /// The next step at `ply`: the other side's move, the player's guess, or the end.
@@ -386,6 +417,11 @@ impl GuessMoves {
     /// A guess at the move at `ply`: the move played scores at once; another waits for the engine.
     fn guess(&mut self, uci: String, cx: &mut Context<Self>) {
         if !self.your_turn() {
+            return self.redraw(cx);
+        }
+        if self.engine_ready.is_none() {
+            // Judged once the core says whether the engine is there (`engine_known`).
+            self.pending = Some(uci);
             return self.redraw(cx);
         }
         if !self.engine_usable(cx) {
@@ -1032,12 +1068,15 @@ impl GuessMoves {
                 self.side_pills("guess-side", cx, palette),
                 palette,
             ))
-            .when(!self.engine_usable(cx), |panel| {
-                panel.child(widgets::hint(
-                    "Without the engine only the move played scores",
-                    palette,
-                ))
-            })
+            .when(
+                self.engine_ready.is_some() && !self.engine_usable(cx),
+                |panel| {
+                    panel.child(widgets::hint(
+                        "Without the engine only the move played scores",
+                        palette,
+                    ))
+                },
+            )
             .children(self.banner())
             .child(div().flex_1().min_h_0().child(moves))
             .child(

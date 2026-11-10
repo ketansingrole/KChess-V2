@@ -167,9 +167,9 @@ fn tests(app: bool) -> Result {
         if app {
             run_tests(&[])?;
         } else {
-            let others: Vec<String> = workspace_dependencies()?
+            let others: Vec<String> = workspace_packages()?
+                .members
                 .into_iter()
-                .map(|(name, _)| name)
                 .filter(|name| name != APP)
                 .collect();
             run_tests(&others)?;
@@ -262,7 +262,8 @@ fn full_with(app: bool) -> Result {
     Ok(())
 }
 
-/// The workspace package a changed file belongs to, by its nearest Cargo.toml.
+/// The package a changed file belongs to, by its nearest Cargo.toml: a workspace member, a
+/// vendored crate (`vendor/`) or an excluded one (`fuzz/`).
 fn package_of(file: &str) -> Option<String> {
     let mut dir = std::path::Path::new(file).parent();
     while let Some(current) = dir {
@@ -280,14 +281,111 @@ fn package_of(file: &str) -> Option<String> {
     None
 }
 
-/// Whether a change to `file` can change what a package builds or tests: Rust, Cargo files, and
-/// anything inside a package, which `include_str!`, `build.rs` or a test may read (a release key
-/// once skipped every test this way). Documents outside the packages do not.
-fn builds_into_a_package(file: &str) -> bool {
-    file.ends_with(".rs")
-        || file.ends_with("Cargo.toml")
-        || file == "Cargo.lock"
-        || package_of(file).is_some()
+/// What a change to a file asks `check-fast` to run.
+#[derive(Debug, PartialEq)]
+enum Scope {
+    /// Nothing `check-fast` runs reads it: documents, the site, the mutants' exclusions
+    /// (`.cargo/mutants.toml`, read only by `cargo mutants`), cargo-deny's and the hooks' settings.
+    Nothing,
+    /// Only the format and lints read it.
+    Lints,
+    /// Every package's build or tests read it.
+    Everything,
+    /// The tests of these packages and of every workspace member that depends on one of them.
+    Packages(Vec<String>),
+}
+
+/// Files outside any package that every build or test run reads: the workspace's manifest and
+/// lock, the toolchain, nextest's profiles, and Cargo's runner on macOS (`.cargo/config.toml`
+/// starts every test binary through it). Anything else under `.cargo/` is Cargo's configuration
+/// too, which can change every build's flags.
+const EVERYTHING: [&str; 5] = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".config/nextest.toml",
+    "tooling/macos-dev-runner.sh",
+];
+
+/// cargo-mutants' settings: under `.cargo/`, but no build or test reads them.
+const MUTANTS_SETTINGS: &str = ".cargo/mutants.toml";
+
+/// rustfmt's and clippy's settings: the format and lints read them, no test does.
+const LINT_SETTINGS: [&str; 4] = [
+    "rustfmt.toml",
+    ".rustfmt.toml",
+    "clippy.toml",
+    ".clippy.toml",
+];
+
+/// The directories whose Rust sources xtask's tests read, wherever their package
+/// (`boundaries.rs`: the frontends' boundaries, and no doctest anywhere).
+const READ_BY_XTASK: [&str; 3] = ["apps/", "crates/", "tooling/"];
+
+/// What a change to `file` asks `check-fast` to run, `package` being the package it belongs to
+/// (`package_of`). Anything inside a package counts, as `include_str!`, `build.rs` or a test may
+/// read it (a release key once skipped every test this way).
+fn scope_of(file: &str, package: Option<String>) -> Scope {
+    if EVERYTHING.contains(&file) || (file.starts_with(".cargo/") && file != MUTANTS_SETTINGS) {
+        return Scope::Everything;
+    }
+    if LINT_SETTINGS.contains(&file) {
+        return Scope::Lints;
+    }
+    let mut packages: Vec<String> = package.into_iter().collect();
+    // xtask's tests check the workflows' scripts (`every_workflow_step_parses_in_bash`) and read
+    // every Rust source of the repository's own packages.
+    if file.starts_with(".github/workflows/")
+        || (file.ends_with(".rs") && READ_BY_XTASK.iter().any(|dir| file.starts_with(dir)))
+    {
+        packages.push("xtask".into());
+    }
+    if packages.is_empty() {
+        Scope::Nothing
+    } else {
+        Scope::Packages(packages)
+    }
+}
+
+/// What `check-fast` runs for these changes.
+#[derive(Debug, PartialEq)]
+enum Selection {
+    /// Nothing: no change reaches the workspace's build.
+    Nothing,
+    /// The format and lints.
+    Lints,
+    /// The format, lints and the tests of these workspace members.
+    Packages(Vec<String>),
+    /// The format, lints and every test.
+    Everything,
+}
+
+/// The selection for these scopes, from the workspace's packages: a change to a vendored crate
+/// tests the members that depend on it, and one to a crate outside the workspace (`fuzz/`) tests
+/// nothing.
+fn select(scopes: &[Scope], packages: &Packages) -> Selection {
+    if scopes.contains(&Scope::Everything) {
+        return Selection::Everything;
+    }
+    let changed: Vec<String> = scopes
+        .iter()
+        .filter_map(|scope| match scope {
+            Scope::Packages(names) => Some(names.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let members: Vec<String> = with_dependents(&changed, &packages.uses)
+        .into_iter()
+        .filter(|name| packages.members.contains(name))
+        .collect();
+    if !members.is_empty() {
+        Selection::Packages(members)
+    } else if scopes.contains(&Scope::Lints) {
+        Selection::Lints
+    } else {
+        Selection::Nothing
+    }
 }
 
 /// Whether a change can add or drop a shipped dependency, which THIRD_PARTY_NOTICES.md must name.
@@ -317,68 +415,78 @@ pub fn fast() -> Result {
     if touches_dependencies(&files) {
         step("notices", crate::licenses::check_notices)?;
     }
-    // xtask's tests check the workflows' scripts (`every_workflow_step_parses_in_bash`).
-    let workflows = files
+    let scopes: Vec<Scope> = files
         .iter()
-        .any(|file| file.starts_with(".github/workflows/"));
-    if !workflows && !files.iter().any(|file| builds_into_a_package(file)) {
-        say("No Rust changes since main.");
+        .map(|file| scope_of(file, package_of(file)))
+        .collect();
+    let selection = select(&scopes, &workspace_packages()?);
+    if selection == Selection::Nothing {
+        say("No change since main reaches the workspace's build.");
         return Ok(());
     }
     step("format", format)?;
     step("lints", clippy_workspace)?;
-    let mut changed: Vec<String> = files.iter().filter_map(|file| package_of(file)).collect();
-    if workflows {
-        changed.push("xtask".into());
+    match selection {
+        Selection::Everything => step("tests", || run_tests(&[])),
+        Selection::Packages(packages) => step(&format!("tests of {}", packages.join(", ")), || {
+            run_tests(&packages)
+        }),
+        Selection::Nothing | Selection::Lints => Ok(()),
     }
-    changed.sort();
-    changed.dedup();
-    if changed.is_empty()
-        || files
-            .iter()
-            .any(|file| file == "Cargo.toml" || file == "Cargo.lock")
-    {
-        return step("tests", || run_tests(&[]));
-    }
-    let packages = with_dependents(&changed, &workspace_dependencies()?);
-    step(&format!("tests of {}", packages.join(", ")), || {
-        run_tests(&packages)
-    })
 }
 
-/// Each workspace package with the workspace packages it depends on (normal, dev or build), from
-/// `cargo metadata`.
-fn workspace_dependencies() -> Result<Vec<(String, Vec<String>)>> {
-    let text = output(
-        "cargo",
-        &["metadata", "--format-version", "1", "--no-deps", "--locked"],
-    )?;
+/// The workspace's members, and every package of its build (members, vendored crates and
+/// dependencies) with the packages it uses (normal, dev or build, on any platform).
+#[derive(Debug, Default)]
+struct Packages {
+    members: Vec<String>,
+    uses: Vec<(String, Vec<String>)>,
+}
+
+/// The workspace's packages, from `cargo metadata` with its resolved dependencies (half a second).
+fn workspace_packages() -> Result<Packages> {
+    let text = output("cargo", &["metadata", "--format-version", "1", "--locked"])?;
     let metadata: serde_json::Value =
         serde_json::from_str(&text).map_err(|cause| cause.to_string())?;
-    let packages = metadata["packages"].as_array().cloned().unwrap_or_default();
-    let names: Vec<String> = packages
-        .iter()
-        .filter_map(|package| package["name"].as_str().map(str::to_string))
+    Ok(packages_in(&metadata))
+}
+
+/// The packages in `cargo metadata`'s answer.
+fn packages_in(metadata: &serde_json::Value) -> Packages {
+    let names: std::collections::HashMap<&str, &str> = metadata["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|package| Some((package["id"].as_str()?, package["name"].as_str()?)))
         .collect();
-    Ok(packages
-        .iter()
-        .filter_map(|package| {
-            let name = package["name"].as_str()?.to_string();
-            let dependencies = package["dependencies"]
+    let name = |id: &serde_json::Value| id.as_str().and_then(|id| names.get(id)).copied();
+    let members = metadata["workspace_members"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(name)
+        .map(str::to_string)
+        .collect();
+    let uses = metadata["resolve"]["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|node| {
+            let uses = node["deps"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter_map(|dependency| dependency["name"].as_str())
-                .filter(|dependency| names.iter().any(|name| name == dependency))
+                .filter_map(|dependency| name(&dependency["pkg"]))
                 .map(str::to_string)
                 .collect();
-            Some((name, dependencies))
+            Some((name(&node["id"])?.to_string(), uses))
         })
-        .collect())
+        .collect();
+    Packages { members, uses }
 }
 
-/// The changed packages and every workspace package that depends on one of them, directly or not:
-/// a change to the core runs the app's tests as well as its own.
+/// The changed packages and every package that depends on one of them, directly or not: a change
+/// to the core runs the app's tests as well as its own.
 fn with_dependents(changed: &[String], dependencies: &[(String, Vec<String>)]) -> Vec<String> {
     let mut packages = changed.to_vec();
     loop {
@@ -393,6 +501,7 @@ fn with_dependents(changed: &[String], dependencies: &[(String, Vec<String>)]) -
         }
     }
     packages.sort();
+    packages.dedup();
     packages
 }
 
@@ -746,16 +855,150 @@ mod tests {
         ]));
     }
 
+    /// A build like the workspace's: the app uses the vendored GPUI, which uses its Apple backend.
+    fn packages() -> Packages {
+        let strings = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let uses = |name: &str, list: &[&str]| (name.to_string(), strings(list));
+        Packages {
+            members: strings(&[
+                "kchess-cli",
+                "kchess-core",
+                "kchess-domain",
+                "kchess-gpui",
+                "xtask",
+            ]),
+            uses: vec![
+                uses("kchess-gpui", &["gpui-pre", "kchess-core", "serde"]),
+                uses("gpui-pre", &["gpui-pre-apple", "serde"]),
+                uses("gpui-pre-apple", &[]),
+                uses("kchess-cli", &["kchess-core"]),
+                uses("kchess-core", &["kchess-domain", "serde"]),
+                uses("kchess-domain", &["serde"]),
+                uses("serde", &[]),
+                uses("xtask", &["serde"]),
+            ],
+        }
+    }
+
+    /// 2026-11-07: committing the release key (`apps/gpui/update-key.pub`, read by
+    /// `include_str!`) ran no tests, and CI found four the key broke.
+    /// 2026-11-10: a change to `.cargo/config.toml`, `rust-toolchain.toml` or
+    /// `.config/nextest.toml` alone ran nothing ("No Rust changes since main."), and one to
+    /// `vendor/gpui-pre` tested the vendored crate instead of the app that builds it.
     #[test]
-    fn a_file_a_package_reads_is_a_change_to_test() {
-        assert!(builds_into_a_package("apps/gpui/update-key.pub"));
-        assert!(builds_into_a_package(
-            "crates/kchess-domain/tests/fixtures/rules-corpus.jsonl.gz"
-        ));
-        assert!(builds_into_a_package("Cargo.lock"));
-        assert!(!builds_into_a_package("docs/releasing.md"));
-        assert!(!builds_into_a_package(".github/workflows/ci.yml"));
-        assert!(!builds_into_a_package("AGENTS.md"));
+    fn each_change_tests_what_reads_it() {
+        let all = |member: &[&str]| member.iter().map(|s| s.to_string()).collect();
+        let domain = all(&["kchess-cli", "kchess-core", "kchess-domain", "kchess-gpui"]);
+        let cases: [(&[&str], Selection); 21] = [
+            (&[".cargo/config.toml"], Selection::Everything),
+            (&[".cargo/config"], Selection::Everything),
+            (&["rust-toolchain.toml"], Selection::Everything),
+            (&[".config/nextest.toml"], Selection::Everything),
+            (&["tooling/macos-dev-runner.sh"], Selection::Everything),
+            (&["Cargo.toml"], Selection::Everything),
+            (&["Cargo.lock", "docs/releasing.md"], Selection::Everything),
+            (&[".cargo/mutants.toml"], Selection::Nothing),
+            (&["docs/releasing.md", "AGENTS.md"], Selection::Nothing),
+            (&["fuzz/fuzz_targets/pgn.rs"], Selection::Nothing),
+            (&["clippy.toml"], Selection::Lints),
+            (&["rustfmt.toml"], Selection::Lints),
+            (
+                &["vendor/gpui-pre/src/window.rs"],
+                Selection::Packages(all(&["kchess-gpui"])),
+            ),
+            (
+                &["vendor/gpui-pre-apple/KCHESS-PATCH.md"],
+                Selection::Packages(all(&["kchess-gpui"])),
+            ),
+            (
+                &[".github/workflows/ci.yml"],
+                Selection::Packages(all(&["xtask"])),
+            ),
+            (
+                &["apps/gpui/update-key.pub"],
+                Selection::Packages(all(&["kchess-gpui"])),
+            ),
+            (
+                &["crates/kchess-domain/tests/fixtures/rules-corpus.jsonl.gz"],
+                Selection::Packages(domain),
+            ),
+            (
+                &["crates/kchess-domain/src/api.rs"],
+                Selection::Packages(all(&[
+                    "kchess-cli",
+                    "kchess-core",
+                    "kchess-domain",
+                    "kchess-gpui",
+                    "xtask",
+                ])),
+            ),
+            (
+                &["apps/cli/src/main.rs", "clippy.toml"],
+                Selection::Packages(all(&["kchess-cli", "xtask"])),
+            ),
+            (
+                &["apps/gpui/update-key.pub", "apps/gpui/build.rs"],
+                Selection::Packages(all(&["kchess-gpui", "xtask"])),
+            ),
+            (
+                &["tooling/xtask/src/check.rs"],
+                Selection::Packages(all(&["xtask"])),
+            ),
+        ];
+        for (files, expected) in cases {
+            let scopes: Vec<Scope> = files
+                .iter()
+                .map(|file| scope_of(file, package_of(file)))
+                .collect();
+            assert_eq!(select(&scopes, &packages()), expected, "{files:?}");
+        }
+    }
+
+    #[test]
+    fn the_packages_are_read_from_cargo_metadata() {
+        let metadata = serde_json::json!({
+            "packages": [
+                {"id": "path+file:///r/apps/gpui#1", "name": "kchess-gpui"},
+                {"id": "path+file:///r/vendor/gpui-pre#0.3.11", "name": "gpui-pre"},
+                {"id": "registry+https://x#serde@1", "name": "serde"},
+            ],
+            "workspace_members": ["path+file:///r/apps/gpui#1"],
+            "resolve": {"nodes": [
+                {"id": "path+file:///r/apps/gpui#1", "deps": [
+                    {"name": "gpui", "pkg": "path+file:///r/vendor/gpui-pre#0.3.11"},
+                ]},
+                {"id": "path+file:///r/vendor/gpui-pre#0.3.11", "deps": [
+                    {"name": "serde", "pkg": "registry+https://x#serde@1"},
+                ]},
+                {"id": "registry+https://x#serde@1", "deps": []},
+            ]},
+        });
+        let packages = packages_in(&metadata);
+        assert_eq!(packages.members, ["kchess-gpui"]);
+        assert_eq!(
+            packages.uses,
+            [
+                ("kchess-gpui".to_string(), vec!["gpui-pre".to_string()]),
+                ("gpui-pre".to_string(), vec!["serde".to_string()]),
+                ("serde".to_string(), vec![]),
+            ]
+        );
+    }
+
+    /// The real workspace: its vendored GPUI is the app's.
+    #[test]
+    fn a_vendored_crate_tests_the_members_that_build_it() {
+        let packages = workspace_packages().unwrap();
+        assert!(packages.members.contains(&APP.to_string()));
+        assert!(!packages.members.contains(&"gpui-pre".to_string()));
+        let scopes = [scope_of(
+            "vendor/gpui-pre-macos/src/events.rs",
+            package_of("vendor/gpui-pre-macos/src/events.rs"),
+        )];
+        assert_eq!(
+            select(&scopes, &packages),
+            Selection::Packages(vec![APP.to_string()])
+        );
     }
 
     /// Each workflow step's shell script that runs on bash, with its line: every step of a

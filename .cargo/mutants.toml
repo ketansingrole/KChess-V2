@@ -73,9 +73,10 @@ exclude_re = [
     'tooling/xtask/src/app\.rs:.*: replace stop_outdated_service -> Result with ',
     # Run cargo fmt, clippy and the test suites over the whole workspace, so a test of them
     # would run `check` inside `check`; what they decide is tested (`test_commands`,
-    # `coverage_args`, `with_dependents`, `builds_into_a_package`, `merge_base`). CI's check job
-    # runs them and its log shows each step.
+    # `coverage_args`, `with_dependents`, `scope_of`, `select`, `merge_base`). CI's check job
+    # runs them and its log shows each step. `fast` only runs what `select` chose.
     'tooling/xtask/src/check\.rs:.*: replace (format|clippy_workspace|lints|tests|fast|full|full_with|check) -> Result with ',
+    'tooling/xtask/src/check\.rs:.*: .* in fast$',
     # `check`'s entry and its tests without cargo-llvm-cov: whether it leaves out the app's tests
     # is `without_app_tests` and `uncovered`, tested; CI's check job runs the rest.
     'tooling/xtask/src/check\.rs:.*: (delete ! in check|replace != with == in tests)$',
