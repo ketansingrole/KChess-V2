@@ -54,8 +54,8 @@ pub struct Chesscom {
     /// Bumped when a player is removed, so an add or sync that started before stops and writes
     /// nothing after.
     epochs: Mutex<HashMap<String, u64>>,
-    /// Counts removals, so a request in flight for a removed player stops waiting at once.
-    removals: watch::Sender<u64>,
+    /// Signals each removal, so a request in flight for a removed player stops waiting at once.
+    removals: watch::Sender<()>,
 }
 
 /// Whether the add or sync that asks still owns its player: no removal and no close since.
@@ -128,7 +128,7 @@ impl Chesscom {
             syncs: Mutex::new(HashMap::new()),
             next_sync: AtomicU64::new(0),
             epochs: Mutex::new(HashMap::new()),
-            removals: watch::Sender::new(0),
+            removals: watch::Sender::new(()),
         }
     }
 
@@ -300,7 +300,7 @@ impl Chesscom {
     pub async fn remove(&self, name: &str) -> Result<Value> {
         let key = name.to_lowercase();
         *lock(&self.epochs).entry(key.clone()).or_insert(0) += 1;
-        self.removals.send_modify(|count| *count += 1);
+        self.removals.send_replace(());
         lock(&self.syncs).remove(&key);
         self.database
             .call_async("store.chesscom.removeAccount", &[json!(name)])
