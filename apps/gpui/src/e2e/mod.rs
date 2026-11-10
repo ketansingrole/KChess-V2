@@ -180,6 +180,14 @@ impl Harness {
         });
     }
 
+    /// Take the system to say `host` about the microphone for the rest of the test, whatever the
+    /// machine running it says (`microphone::Host::TEST` until then). Settings reads it again
+    /// when Voice input is shown.
+    pub fn set_microphone(&mut self, host: crate::microphone::Host) {
+        self.cx
+            .update(|cx| cx.set_global(crate::microphone::Pinned(host)));
+    }
+
     /// Quit the app as a person would (its saves flushed, the core closed), then start it again
     /// over the same profile.
     pub fn restart(mut self) -> Harness {
@@ -675,6 +683,9 @@ fn environment() {
         set("KCHESS_TEST_VOICE_ARCHIVE", "/nonexistent/voice-model.zip");
         set("KCHESS_TEST_VOICE_NAME", "no-model");
         set("KCHESS_TEST_VOICE_SHA256", "0");
+        // No update feed from the shell the tests run in: Settings → Updates shows one state
+        // everywhere.
+        kchess_core::env::unset("KCHESS_UPDATE_FEED");
     });
 }
 

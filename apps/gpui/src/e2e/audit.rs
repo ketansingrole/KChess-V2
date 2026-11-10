@@ -125,6 +125,44 @@ fn a_voice_error_is_read_in_full_under_the_board(cx: &mut gpui_kit::TestAppConte
     );
 }
 
+/// Before the system had asked, Voice input's Allow microphone pushed Privacy settings past a
+/// 640 px window's side (cut off at x 485 + 179 px); the audit saw it only on a Mac that had never
+/// been asked, as it read the machine's own permission.
+#[gpui_kit::test]
+fn the_microphone_access_buttons_stay_in_the_minimum_window_before_the_system_asks(
+    cx: &mut gpui_kit::TestAppContext,
+) {
+    let mut app = Harness::start(cx);
+    app.set_microphone(crate::microphone::Host {
+        access: crate::microphone::Access::NotDetermined,
+        from_terminal: false,
+        privacy_settings: crate::microphone::Host::TEST.privacy_settings,
+    });
+    let (width, height) = SIZES[0];
+    app.cx
+        .simulate_window_resize(app.window, size(px(width), px(height)));
+    app.with_window(|window, cx| {
+        crate::shell::open_settings(crate::pages::settings::Section::Voice, window, cx)
+    });
+    app.settle();
+    let controls = app.with_window(|window, _| in_front(window.elements()));
+    for label in ["Allow microphone", "Privacy settings"] {
+        assert!(
+            controls
+                .iter()
+                .any(|e| e.visible() && e.label() == Some(label)),
+            "{label} is shown"
+        );
+    }
+    let mut findings = Findings::default();
+    check("Settings → Voice input", width, &controls, &mut findings);
+    assert!(
+        findings.problems.is_empty(),
+        "{}",
+        findings.problems.join("\n")
+    );
+}
+
 fn check(page: &str, width: f32, elements: &[ElementSnapshot], findings: &mut Findings) {
     let controls: Vec<&ElementSnapshot> = elements
         .iter()
@@ -322,15 +360,23 @@ fn every_tab_and_settings_section_lays_out_its_controls(
             }
         }
         for (section, label, _) in crate::pages::settings::sections() {
-            app.with_window(|window, cx| crate::shell::open_settings(section, window, cx));
-            settle(&mut app);
-            let controls = app.with_window(|window, _| in_front(window.elements()));
-            check(
-                &format!("Settings → {label} at {width}×{height}"),
-                width,
-                &controls,
-                &mut findings,
-            );
+            let states = if section == crate::pages::settings::Section::Voice {
+                microphone_states()
+            } else {
+                vec![(crate::microphone::Host::TEST, String::new())]
+            };
+            for (host, state) in states {
+                app.set_microphone(host);
+                app.with_window(|window, cx| crate::shell::open_settings(section, window, cx));
+                settle(&mut app);
+                let controls = app.with_window(|window, _| in_front(window.elements()));
+                check(
+                    &format!("Settings → {label}{state} at {width}×{height}"),
+                    width,
+                    &controls,
+                    &mut findings,
+                );
+            }
         }
     }
     findings.problems.sort();
@@ -348,6 +394,46 @@ fn every_tab_and_settings_section_lays_out_its_controls(
             .collect::<Vec<_>>()
             .join("\n  ")
     );
+}
+
+/// Every state Settings → Voice input shows the microphone in, on every machine: the one a test
+/// ran on once decided which was checked, and Allow microphone pushed Privacy settings past a
+/// 640 px window's side only while macOS had not asked yet, which no CI runner reports.
+fn microphone_states() -> Vec<(crate::microphone::Host, String)> {
+    use crate::microphone::{Access, Host};
+    let mut states = Vec::new();
+    for access in [
+        Access::NotDetermined,
+        Access::Denied,
+        Access::Granted,
+        Access::Restricted,
+        Access::Unknown,
+    ] {
+        for from_terminal in [false, true] {
+            for privacy_settings in [Host::TEST.privacy_settings, None] {
+                let host = Host {
+                    access,
+                    from_terminal,
+                    privacy_settings,
+                };
+                let state = format!(
+                    " (microphone {access:?}{}{})",
+                    if from_terminal {
+                        ", from a terminal"
+                    } else {
+                        ""
+                    },
+                    if privacy_settings.is_none() {
+                        ", no privacy settings"
+                    } else {
+                        ""
+                    },
+                );
+                states.push((host, state));
+            }
+        }
+    }
+    states
 }
 
 /// The dialogs a fresh profile opens: the computer's game options, a new game over the board,

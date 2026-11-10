@@ -54,8 +54,9 @@ const HELP: &str = "cargo xtask <command>
                         weekly CI times workflow)
   sweep [--dry-run]     Delete what the build folder keeps of builds newer ones replaced, and
                         on macOS the object files no program uses (`check`, `check-fast` and
-                        `app` do it first); --dry-run says how much would go. CARGO_TARGET_DIR
-                        picks the build
+                        `app` do it first), then the replaced builds of the checkout's
+                        mutants tree (the pre-push hook's, which sweeps it too); --dry-run
+                        says how much would go. CARGO_TARGET_DIR picks the build
   mutants [--plan] [--base <ref>] [-- <cargo-mutants arguments>]
                         Mutation testing of the lines changed since main (or <ref>); fails
                         when a mutant survives (docs/mutation-testing.md); with --plan, only

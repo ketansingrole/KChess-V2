@@ -37,13 +37,33 @@ const SWEPT: &str = ".kchess-swept";
 const LONGEST_PATH: usize = 4096;
 
 /// Sweeps the build folder: the units newer builds replaced (`superseded.rs`) on every platform,
-/// then on macOS the objects no program uses, saying what went. With `dry_run`, deletes nothing
-/// and says what would go.
+/// then on macOS the objects no program uses, saying what went; then the build folder of the
+/// checkout's mutants tree, unless a push is testing in it. With `dry_run`, deletes nothing and
+/// says what would go.
 pub fn build_folder(dry_run: bool) {
     let target = target_folder(std::env::var_os("CARGO_TARGET_DIR"));
-    for message in sweep_all(&target, dry_run, cfg!(target_os = "macos")) {
+    let mut messages = sweep_all(&target, dry_run, cfg!(target_os = "macos"));
+    messages.extend(idle_mutants_tree(&crate::util::root(), dry_run));
+    for message in messages {
         say(&message);
     }
+}
+
+/// Sweeps the build folder (`target`) of the pre-push hook's mutants tree (`mutants_tree.rs`),
+/// which builds a pushed commit's mutants in place and so replaces units as the checkout's own
+/// build does: the units newer builds replaced, under the same build lock. What to say about it.
+pub fn mutants_tree(target: &Path, dry_run: bool) -> Vec<String> {
+    sweep_all(target, dry_run, false)
+        .into_iter()
+        .map(|message| format!("Mutants tree: {message}"))
+        .collect()
+}
+
+/// [`mutants_tree`] of `checkout`'s tree, while no push holds it: one that does sweeps it itself.
+fn idle_mutants_tree(checkout: &Path, dry_run: bool) -> Vec<String> {
+    crate::mutants_tree::idle_target(checkout)
+        .map(|(target, _lock)| mutants_tree(&target, dry_run))
+        .unwrap_or_default()
 }
 
 /// Sweeps every profile folder in `target`, and its objects when `objects`: what to say about it.
@@ -433,6 +453,37 @@ mod tests {
             ["Deleted 2 object files no program uses (3 MB)."]
         );
         assert!(sweep_all(target.path(), false, true).is_empty());
+    }
+
+    #[test]
+    fn the_mutants_tree_loses_its_replaced_builds_unless_a_push_holds_it() {
+        let checkout = tempfile::tempdir().unwrap();
+        assert!(
+            idle_mutants_tree(checkout.path(), true).is_empty(),
+            "no tree"
+        );
+        let target = checkout.path().join(".data/mutants-tree/target");
+        let deps = target.join("debug").join("deps");
+        std::fs::create_dir_all(&deps).unwrap();
+        let object = deps.join("gone-1.a.b.rcgu.o");
+        std::fs::write(&object, b"o").unwrap();
+        crate::superseded::tests::replaced_build(&target.join("debug"), 2_000_000_000);
+        let held = crate::mutants_tree::idle_target(checkout.path()).unwrap();
+        assert!(
+            idle_mutants_tree(checkout.path(), false).is_empty(),
+            "a push is testing in it"
+        );
+        drop(held);
+        assert_eq!(
+            idle_mutants_tree(checkout.path(), true),
+            ["Mutants tree: Would delete 1 build that newer builds replaced (2.0 GB)."]
+        );
+        assert_eq!(
+            idle_mutants_tree(checkout.path(), false),
+            ["Mutants tree: Deleted 1 build that newer builds replaced (2.0 GB)."]
+        );
+        assert!(idle_mutants_tree(checkout.path(), false).is_empty());
+        assert!(object.exists(), "only the replaced builds");
     }
 
     #[test]

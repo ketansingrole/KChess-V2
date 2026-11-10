@@ -79,6 +79,9 @@ pub struct Session {
     pub events: Vec<Value>,
     /// The account's game download waits until this is cleared: a sync still running.
     pub hold_games: bool,
+    /// `account/playing` waits until this is cleared: the check for a game in progress still
+    /// running.
+    pub hold_playing: bool,
     /// Counts changes: a game stream sends the state again whenever this moves on.
     version: usize,
 }
@@ -587,6 +590,9 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             reply(&mut out, &account(&username))
         }
         ("GET", "/api/account/playing") => {
+            while session.lock().hold_playing {
+                std::thread::sleep(Duration::from_millis(5));
+            }
             let session = session.lock();
             let mut playing: Vec<Value> = session
                 .game

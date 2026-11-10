@@ -15,17 +15,6 @@ use crate::voice::capture::{self, Capture, CaptureError};
 use crate::widgets::{self, Look};
 use kchess_contracts::types::Settings;
 
-/// The system's microphone privacy settings, where there are any to open.
-pub fn privacy_settings_url() -> Option<&'static str> {
-    if cfg!(target_os = "macos") {
-        Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
-    } else if cfg!(target_os = "windows") {
-        Some("ms-settings:privacy-microphone")
-    } else {
-        None
-    }
-}
-
 /// A running level check: the microphone stays open until it is stopped.
 pub(super) struct MicTest {
     _capture: Capture,
@@ -67,7 +56,7 @@ impl SettingsPage {
             }
             Err(cause) => {
                 if cause == CaptureError::Denied {
-                    self.mic_access = crate::microphone::status();
+                    self.mic = crate::microphone::host(cx);
                 }
                 self.mic_error = Some(cause.message().into());
             }
@@ -78,9 +67,9 @@ impl SettingsPage {
     /// Read the system's microphone permission again (on showing the section, and on coming back
     /// to the window from System Settings).
     pub(super) fn refresh_microphone(&mut self, cx: &mut Context<Self>) {
-        let access = crate::microphone::status();
-        if access != self.mic_access {
-            self.mic_access = access;
+        let mic = crate::microphone::host(cx);
+        if mic != self.mic {
+            self.mic = mic;
             cx.notify();
         }
     }
@@ -89,14 +78,14 @@ impl SettingsPage {
     fn ask_microphone(&mut self, cx: &mut Context<Self>) {
         self.mic_asking = true;
         let (sender, answer) = futures::channel::oneshot::channel();
-        crate::microphone::request(move |access| {
+        crate::microphone::ask(cx, move |access| {
             let _ = sender.send(access);
         });
         cx.spawn(async move |this, cx| {
             let access = answer.await.unwrap_or(Access::Unknown);
             let _ = this.update(cx, |this, cx| {
                 this.mic_asking = false;
-                this.mic_access = access;
+                this.mic.access = access;
                 cx.notify();
             });
         })
@@ -143,7 +132,7 @@ impl SettingsPage {
                         .w(relative(test.level.max(0.02))),
                 )
         });
-        let access = self.mic_access;
+        let access = self.mic.access;
         let (label, look) = match access {
             Access::Granted => ("Allowed", Look::Success),
             Access::Denied => ("Blocked", Look::Error),
@@ -160,7 +149,7 @@ impl SettingsPage {
             Access::NotDetermined => Some("Your system will ask the first time voice input starts"),
             Access::Unknown => Some("Voice input asks for access when you turn it on"),
         };
-        let launcher = access != Access::Granted && crate::microphone::launched_from_terminal();
+        let launcher = access != Access::Granted && self.mic.from_terminal;
         let access_info = v_flex()
             .gap(px(4.))
             .child(
@@ -196,7 +185,7 @@ impl SettingsPage {
                         .on_click(cx.listener(|this, _, _, cx| this.ask_microphone(cx))),
                 )
             })
-            .children(privacy_settings_url().map(|url| {
+            .children(self.mic.privacy_settings.map(|url| {
                 Button::new("voice-privacy")
                     .ghost()
                     .icon(icon("settings-2"))
