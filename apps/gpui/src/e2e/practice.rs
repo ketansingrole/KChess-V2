@@ -574,7 +574,8 @@ fn a_game_opened_for_guessing_starts_as_its_side(cx: &mut gpui_kit::TestAppConte
     // White's first move is played for Black to answer.
     app.wait_for_moves(&["d4"]);
     app.drag_square("d7", "d5", false);
-    wait_for_label(&mut app, "status-banner", "d5?! ✓");
+    // Not `d5?! ✓`: that banner lasts only until White's reply ends the game, and a busy Windows
+    // runner looked after the summary had replaced it (2026-11-10). The move list keeps the glyph.
     app.wait_for_moves(&["d4", "d5?!", "c4"]);
     wait_for_label(&mut app, "status-banner", "Spot on");
 

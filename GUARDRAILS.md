@@ -10,8 +10,8 @@ not establish complete regression coverage.
 
 The app's end-to-end tests (`apps/gpui/src/e2e`) run the whole app headless over a fresh profile
 with the scripted engine: `cargo test -p kchess-gpui e2e::`, or one area with `e2e::computer`.
-They run with the app's unit tests in `cargo xtask check`, which CI runs on Linux, and in CI's
-`gpui` job on macOS and Windows.
+They run with the app's unit tests in `cargo xtask check`, and in CI's `gpui` job on macOS,
+Windows and Linux (CI's `check` job runs `check --without-app-tests` beside it).
 
 `e2e::audit` opens every page at the minimum, a mid and the default window size and fails when a
 control has no accessible name, runs past the window's side or overlaps another control, or when
@@ -22,8 +22,11 @@ offscreen into `<dir>/<width>x<height>/<page>.png`.
 
 `cargo xtask install-hooks` points Git at `.githooks`. Its pre-push hook runs the full
 `cargo xtask check` when a push updates `main`, and refuses if the pushed commit is not HEAD or
-the working tree has uncommitted or untracked files, since `check` would test those instead. Other
-branches push without it. Skip it only on purpose: `KCHESS_SKIP_PRE_PUSH=1 git push …`.
+the working tree has uncommitted or untracked files, since `check` would test those instead. A
+push of another branch runs `cargo xtask mutants` on the lines new since that branch's last push
+(the app's left out, as in CI) and refuses while a mutant survives; it skips a push that is not a
+clean HEAD, or when cargo-mutants is not installed. Skip either only on purpose:
+`KCHESS_SKIP_PRE_PUSH=1 git push …`.
 
 Code reaches `main` through a pull request, whose CI runs `cargo xtask check` on Linux and the
 app's tests on macOS and Windows before it lands; run `check-fast` before opening it. GitHub's rulesets
@@ -32,9 +35,11 @@ check is `cargo fmt --check`, clippy over every target with
 warnings denied (and `unwrap`/`expect` denied in libraries and shipped binaries), the notices
 check, the release metadata, and every test, under the coverage gate when `cargo-llvm-cov` is
 installed. Packaging changes also need `cargo xtask package` on the platform they touch. CI runs
-`check`, `cargo deny`, and the app's tests on macOS, Windows and Linux; when packaging may have
-changed since `main` last packaged successfully (a version bump always has), it also packages for
-macOS and Linux, builds the Snap and runs the Windows upgrade workflow, which packages for Windows.
+`check`, `cargo deny`, and the app's tests on macOS, Windows and Linux. It also packages for macOS
+and Linux, builds the Snap and runs the Windows upgrade workflow, which packages for Windows, on a
+pull request that may change packaging, on a release commit, and nightly when packaging may have
+changed since `main` last packaged successfully; a push to `main` otherwise does not, since its
+pull request packaged. Run `CI` by hand (`gh workflow run ci.yml`) to package `main` now.
 Only a release commit's packages use the release profile's fat LTO; the others link without it.
 A change to documents alone (`docs/` and the top-level guides) runs none of it. `cargo xtask release-verify` refuses a commit
 whose CI did not run and pass every job, and every push to `main` runs CI to the end.

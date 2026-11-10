@@ -15,7 +15,11 @@ fn help_names_the_commands() {
     assert!(out.status.success());
     let help = String::from_utf8_lossy(&out.stdout);
     assert!(help.starts_with("cargo xtask <command>"), "{help}");
-    for command in ["check-fast", "mutants [--base <ref>]", "release-verify"] {
+    for command in [
+        "check-fast",
+        "mutants [--plan] [--base <ref>]",
+        "release-verify",
+    ] {
         assert!(help.contains(command), "help misses {command}");
     }
 }

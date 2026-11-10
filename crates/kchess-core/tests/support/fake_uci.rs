@@ -20,6 +20,8 @@
 //!   a blunder at move 6 (Black's `Nf6`).
 //! - `stall`: a deep search (depth 18 and up) reports one scored line and then waits for `stop`;
 //!   shallower searches answer at once.
+//! - `quick`: `search`, but `go movetime M` waits at most `QUICK_MOVETIME_MS`: for tests that need
+//!   the computer's move, not its clock (a level's move takes a second or more).
 //!
 //! With no arguments, the name of a copy names the mode (`engine-search`), else `handshake`.
 //!
@@ -126,6 +128,17 @@ fn run_search(mode: String, position: String, multipv: usize, stop: Arc<AtomicBo
     emit(&format!("bestmove {best}"));
 }
 
+/// Whether this is the `quick` engine.
+static QUICK: AtomicBool = AtomicBool::new(false);
+
+/// The longest a `quick` engine's `go movetime` waits.
+const QUICK_MOVETIME_MS: u64 = 20;
+
+/// How long a `go movetime` of `ms` waits: at most `QUICK_MOVETIME_MS` for a `quick` engine.
+fn capped(ms: u64, quick: bool) -> u64 {
+    if quick { ms.min(QUICK_MOVETIME_MS) } else { ms }
+}
+
 /// Answers one command in a search mode.
 fn search_command(mode: &str, line: &str, state: &Mutex<Search>) {
     match line {
@@ -168,7 +181,10 @@ fn search_command(mode: &str, line: &str, state: &Mutex<Search>) {
                     depth: depth as u32,
                 }
             } else {
-                Kind::MoveTime(number("movetime").unwrap_or(0))
+                Kind::MoveTime(capped(
+                    number("movetime").unwrap_or(0),
+                    QUICK.load(Ordering::SeqCst),
+                ))
             };
             let stop = Arc::new(AtomicBool::new(false));
             let (position, multipv) = {
@@ -204,6 +220,12 @@ fn main() {
     // `slow-review`: the review script, taking 20 ms per search so reviews overlap in tests.
     let slow = mode == "slow-review";
     let mode = if slow { "review".to_string() } else { mode };
+    let mode = if mode == "quick" {
+        QUICK.store(true, Ordering::SeqCst);
+        "search".to_string()
+    } else {
+        mode
+    };
     let log = args.next();
     let searching = matches!(mode.as_str(), "search" | "review" | "stall");
     let state = Mutex::new(Search {
@@ -259,5 +281,17 @@ fn main() {
         if let Some(reply) = reply {
             emit(reply);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_quick_engine_cuts_a_timed_search() {
+        assert_eq!(capped(1_000, false), 1_000);
+        assert_eq!(capped(1_000, true), QUICK_MOVETIME_MS);
+        assert_eq!(capped(5, true), 5);
     }
 }

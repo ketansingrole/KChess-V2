@@ -48,11 +48,15 @@ async fn close_cancels_a_stalled_explorer_and_releases_the_profile() {
             }).await.expect("the lookup reaches the fixture");
         } => {}
     }
-    let (_, result) = tokio::time::timeout(Duration::from_secs(2), async {
-        tokio::join!(core.close(), lookup)
-    })
-    .await
-    .expect("close cancels the HTTP request immediately");
+    // The lookup is bounded well inside its own 15 s response deadline, and close only as a whole:
+    // closing also flushes and closes the profile's databases, which took over 2 s on a Windows
+    // runner busy with sixteen test processes (2026-11-10).
+    let (closed, result) = tokio::join!(
+        tokio::time::timeout(Duration::from_secs(30), core.close()),
+        tokio::time::timeout(Duration::from_secs(5), lookup),
+    );
+    closed.expect("close finishes");
+    let result = result.expect("close cancels the HTTP request, not its deadline");
     assert!(result.unwrap_err().aborted);
     let next = Core::open(Config::new(dir.path().to_path_buf()), host).unwrap();
     next.close().await;

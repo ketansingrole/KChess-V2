@@ -81,9 +81,15 @@ impl Host for Quiet {
     fn emit(&self, _event: &str, _payload: Value) {}
 }
 
-/// The live heap once background work has settled: the lowest of a few samples a moment apart,
-/// so a task still finishing its last cycle is not counted as kept.
-async fn settled() -> isize {
+/// The live heap once background work has settled: once no more than `tasks` tasks are alive (or
+/// after `TASKS_SETTLE`), the lowest of a few samples a moment apart, so a task still finishing
+/// its last cycle is not counted as kept. A task that never ends still shows, in the heap and in
+/// the task count `measure` reports.
+async fn settled(tasks: isize) -> isize {
+    let deadline = tokio::time::Instant::now() + TASKS_SETTLE;
+    while alive_tasks() > tasks && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let mut low = isize::MAX;
     for _ in 0..5 {
         tokio::time::sleep(Duration::from_millis(40)).await;
@@ -91,6 +97,11 @@ async fn settled() -> isize {
     }
     low
 }
+
+/// How long `settled` waits for the cycles' tasks to end. A closed core's tasks end within a
+/// sampling window here, but a loaded Windows runner left 12 alive after 20 open/close cycles
+/// (2026-11-10, sixteen tests at once), counted as 964 B kept per cycle.
+const TASKS_SETTLE: Duration = Duration::from_secs(5);
 
 /// Bytes each cycle keeps, judged from `samples` (the settled heap after each batch of
 /// `per_batch` cycles, from 0): the smallest batch's growth. Memory the cycles keep grows every
@@ -147,7 +158,7 @@ async fn measure<F, Fut>(
         cycle(n).await;
         n += 1;
     }
-    let base = settled().await;
+    let base = settled(isize::MAX).await;
     let tasks = alive_tasks();
     let mut samples = vec![0isize];
     for _ in 0..batches {
@@ -155,7 +166,7 @@ async fn measure<F, Fut>(
             cycle(n).await;
             n += 1;
         }
-        samples.push(settled().await - base);
+        samples.push(settled(tasks).await - base);
     }
     let cycles = (batches * per_batch) as isize;
     let kept = *samples.last().unwrap_or(&0);

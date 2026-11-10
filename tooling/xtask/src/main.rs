@@ -39,14 +39,17 @@ const HELP: &str = "cargo xtask <command>
         [--out <file>]  The app's frame benchmarks for builds made with
                         `cargo build --release -p kchess-gpui --features bench`, alternating
                         run by run on fresh profiles; prints each scenario's medians
-  check                 Everything a push to main must pass: format, lints, notices, release
+  check [--without-app-tests]
+                        Everything a push to main must pass: format, lints, notices, release
                         metadata and the Rust tests (under the coverage gate when cargo-llvm-cov
                         is installed)
   check-fast            Format, lints and the tests of the packages changed since main
-  mutants [--base <ref>] [-- <cargo-mutants arguments>]
+  mutants [--plan] [--base <ref>] [-- <cargo-mutants arguments>]
                         Mutation testing of the lines changed since main (or <ref>); fails
-                        when a mutant survives (docs/mutation-testing.md)
-  pre-push              The Git pre-push hook (.githooks/pre-push)
+                        when a mutant survives (docs/mutation-testing.md); with --plan, only
+                        count them and print CI's shards
+  pre-push              The Git pre-push hook (.githooks/pre-push): `check` before a push to
+                        main, the new lines' mutants before a branch push
   install-hooks         Point Git at .githooks
   release-version       Set the next YEAR.MONTH.COUNTER release in Cargo.toml (fetches tags)
   release-verify        Check the release version (and, on a tag build, the tag), and that CI
@@ -101,7 +104,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("app") => app::run(rest),
         Some("bench") => bench::run(rest),
-        Some("check") => check::full(),
+        Some("check") => check::check(rest),
         Some("check-fast") => check::fast(),
         Some("mutants") => mutants::run(rest),
         Some("pre-push") => check::pre_push(),

@@ -143,19 +143,39 @@ fn run_tests(packages: &[String]) -> Result {
     Ok(())
 }
 
+/// The packages whose tests run outside the coverage gate: the app's unless `app` is false.
+fn uncovered(app: bool) -> Vec<String> {
+    NOT_COVERED
+        .iter()
+        .filter(|package| app || **package != APP)
+        .map(|package| package.to_string())
+        .collect()
+}
+
 /// The workspace's tests: under the coverage gate when cargo-llvm-cov is installed (CI installs
-/// it), else plainly; then the doctests, which nextest does not run.
-fn tests() -> Result {
+/// it), else plainly. No doctests: the workspace has none (`boundaries` refuses a doc-comment
+/// code block), and `cargo test --doc` compiled every library again to run nothing. Without the
+/// app's (`app` false) when another job runs them.
+fn tests(app: bool) -> Result {
     if available("cargo", &["llvm-cov", "--version"]) {
         coverage()?;
-        run_tests(&NOT_COVERED.map(String::from))?;
+        run_tests(&uncovered(app))?;
     } else {
         say(
             "cargo-llvm-cov is not installed: running the tests without the coverage gate (CI runs it).",
         );
-        run_tests(&[])?;
+        if app {
+            run_tests(&[])?;
+        } else {
+            let others: Vec<String> = workspace_dependencies()?
+                .into_iter()
+                .map(|(name, _)| name)
+                .filter(|name| name != APP)
+                .collect();
+            run_tests(&others)?;
+        }
     }
-    run("cargo", &["test", "--doc", "--workspace", "--locked"])
+    Ok(())
 }
 
 /// `cargo llvm-cov`'s arguments: through nextest when it is installed.
@@ -217,11 +237,26 @@ fn coverage() -> Result {
 
 /// `check`: everything a push to main must pass.
 pub fn full() -> Result {
+    full_with(true)
+}
+
+/// `check [--without-app-tests]`: CI's check job leaves the app's tests to its `gpui` job, which
+/// runs them on Linux beside it.
+pub fn check(args: &[String]) -> Result {
+    full_with(!without_app_tests(args))
+}
+
+/// Whether `check`'s arguments leave the app's tests out.
+fn without_app_tests(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--without-app-tests")
+}
+
+fn full_with(app: bool) -> Result {
     step("format and lints", lints)?;
     step("notices", crate::licenses::check_notices)?;
     step("icons", crate::icons::check)?;
     step("release metadata", crate::release::verify)?;
-    step("tests", tests)?;
+    step("tests", || tests(app))?;
     say("`check` passed.");
     Ok(())
 }
@@ -391,8 +426,8 @@ pub fn push_problem(pushes: &[(String, String)], head: &str, status: &str) -> Op
     })
 }
 
-/// The pre-push hook: pushes to main must pass the full `check` first; other branches push at
-/// once (CI still runs everything). Skip on purpose with `KCHESS_SKIP_PRE_PUSH=1`.
+/// The pre-push hook: pushes to main must pass the full `check` first; other branches the
+/// mutants of their new lines (`branch_mutants`). Skip on purpose with `KCHESS_SKIP_PRE_PUSH=1`.
 pub fn pre_push() -> Result {
     let mut input = String::new();
     std::io::stdin()
@@ -400,7 +435,7 @@ pub fn pre_push() -> Result {
         .map_err(|cause| cause.to_string())?;
     let pushes = main_pushes(&input);
     if pushes.is_empty() {
-        return Ok(());
+        return branch_mutants(&input);
     }
     if std::env::var("KCHESS_SKIP_PRE_PUSH").as_deref() == Ok("1") {
         say("KCHESS_SKIP_PRE_PUSH=1: pushing to main without `cargo xtask check`.");
@@ -418,6 +453,76 @@ pub fn pre_push() -> Result {
     }
     say("Pushing to main: running `cargo xtask check`…");
     full().map_err(|cause| format!("Push to main refused: {cause}"))
+}
+
+/// A push of another branch: the mutants of the lines it sends, so a survivor stops the push here
+/// rather than failing CI's `mutants` job a quarter of an hour later. Only the lines new since the
+/// branch's last push, which was tested then; the app's are left out as in CI. It tests the working
+/// tree, so a push of anything but a clean HEAD, or without cargo-mutants, skips it: CI still runs
+/// them all.
+fn branch_mutants(input: &str) -> Result {
+    let head = output("git", &["rev-parse", "HEAD"])?;
+    let Some(remote) = head_push(input, head.trim()) else {
+        return Ok(());
+    };
+    if std::env::var("KCHESS_SKIP_PRE_PUSH").as_deref() == Ok("1") {
+        say("KCHESS_SKIP_PRE_PUSH=1: pushing without testing the changed lines' mutants.");
+        return Ok(());
+    }
+    let status = output(
+        "git",
+        &["status", "--porcelain", "--untracked-files=normal"],
+    )?;
+    if !status.trim().is_empty() {
+        say("Uncommitted or untracked files: not testing mutants before the push (CI does).");
+        return Ok(());
+    }
+    if !available("cargo", &["mutants", "--version"]) {
+        say(
+            "cargo-mutants is not installed (`cargo install cargo-mutants`): CI tests the mutants.",
+        );
+        return Ok(());
+    }
+    let is_ancestor = |remote: &str| {
+        Command::new("git")
+            .args(["merge-base", "--is-ancestor", remote, head.trim()])
+            .status()
+            .is_ok_and(|status| status.success())
+    };
+    let base = match mutants_base(&remote, is_ancestor) {
+        Some(base) => base.to_string(),
+        None => crate::util::merge_base(&root())?,
+    };
+    crate::mutants::run(&branch_mutants_args(&base)).map_err(|cause| {
+        format!("Push refused: {cause}\nSkip on purpose with KCHESS_SKIP_PRE_PUSH=1 git push …")
+    })
+}
+
+/// The remote's current commit for the pushed branch whose new commit is `head`, from the hook's
+/// standard input; none when no such branch is pushed (a delete, a tag, another commit).
+fn head_push(input: &str, head: &str) -> Option<String> {
+    input.lines().find_map(|line| {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        let [_, local_sha, remote_ref, remote_sha] = fields.as_slice() else {
+            return None;
+        };
+        (*local_sha == head && remote_ref.starts_with("refs/heads/"))
+            .then(|| (*remote_sha).to_string())
+    })
+}
+
+/// What the push's mutants are measured from: the branch's previous push, when the remote has one
+/// and this push builds on it (`is_ancestor`), since that push tested the lines before it; else
+/// none, for where the branch left main.
+fn mutants_base(remote: &str, is_ancestor: impl Fn(&str) -> bool) -> Option<&str> {
+    (!remote.bytes().all(|b| b == b'0') && is_ancestor(remote)).then_some(remote)
+}
+
+/// `cargo xtask mutants`' arguments for a branch push from `base`: CI's, on one machine.
+fn branch_mutants_args(base: &str) -> Vec<String> {
+    ["--base", base, "--", "--exclude", "apps/gpui/**", "-j", "4"]
+        .map(String::from)
+        .to_vec()
 }
 
 /// Point Git at the repository's hooks, unless the clone already uses others on purpose.
@@ -445,6 +550,58 @@ mod tests {
         assert_eq!(
             main_pushes(input),
             [("refs/heads/main".to_string(), "abc123".to_string())]
+        );
+    }
+
+    #[test]
+    fn ci_can_leave_the_app_tests_to_another_job() {
+        assert!(without_app_tests(&["--without-app-tests".to_string()]));
+        assert!(!without_app_tests(&[]));
+        assert_eq!(uncovered(true), [APP, "xtask"]);
+        assert_eq!(uncovered(false), ["xtask"]);
+    }
+
+    #[test]
+    fn a_branch_push_is_found_by_its_head() {
+        let input = "refs/heads/topic abc123 refs/heads/topic 999\n\
+                     refs/tags/v1 abc123 refs/tags/v1 000\n\
+                     refs/heads/other def456 refs/heads/other 888\n";
+        assert_eq!(head_push(input, "abc123").as_deref(), Some("999"));
+        assert_eq!(head_push(input, "def456").as_deref(), Some("888"));
+        assert_eq!(head_push(input, "fff"), None);
+        assert_eq!(
+            head_push("refs/tags/v1 abc123 refs/tags/v1 000\n", "abc123"),
+            None
+        );
+        assert_eq!(head_push("refs/heads/topic abc123\n", "abc123"), None);
+    }
+
+    #[test]
+    fn a_branch_push_tests_only_what_its_last_push_did_not() {
+        assert_eq!(mutants_base("999", |_| true), Some("999"));
+        // A rewritten branch: its previous push is not under this one.
+        assert_eq!(mutants_base("999", |_| false), None);
+        // A new branch: nothing pushed yet, measured from main.
+        assert_eq!(
+            mutants_base("0000", |_| panic!("no commit to ask about")),
+            None
+        );
+        assert_eq!(mutants_base("0a00", |_| true), Some("0a00"));
+    }
+
+    #[test]
+    fn a_branch_push_runs_cis_mutants_without_the_app() {
+        assert_eq!(
+            branch_mutants_args("abc"),
+            [
+                "--base",
+                "abc",
+                "--",
+                "--exclude",
+                "apps/gpui/**",
+                "-j",
+                "4"
+            ]
         );
     }
 

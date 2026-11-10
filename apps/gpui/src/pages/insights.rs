@@ -492,6 +492,12 @@ impl InsightsPage {
         self.epoch
     }
 
+    /// Why the last report failed, if it did.
+    #[cfg(test)]
+    pub(crate) fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
     /// How many games the last report counted.
     #[cfg(test)]
     pub(crate) fn report_total(&self) -> Option<f64> {

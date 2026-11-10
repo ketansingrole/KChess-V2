@@ -803,6 +803,14 @@ impl Core {
                 &format!("Engine shutdown failed: {}", cause.message),
             );
         }
+        // The stopped analysis also ends (its final `interrupted` update sent, no longer running)
+        // before close returns: on a busy Windows runner it was still current after close
+        // (2026-11-10). Bounded: with its engine gone it ends at once.
+        let _ = tokio::time::timeout(
+            crate::engine::bridge::SETTLE_DEADLINE,
+            self.analysis.settled(),
+        )
+        .await;
         self.tracker.wait().await;
         if let Err(cause) = self.dispatch("lichess.reset", vec![]).await {
             self.host.log(
