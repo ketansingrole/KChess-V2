@@ -39,15 +39,21 @@ pub fn objects() {
     if !cfg!(target_os = "macos") {
         return;
     }
-    let (files, bytes) = deps_folders(&target())
+    let target = target_folder(std::env::var_os("CARGO_TARGET_DIR"));
+    if let Some(message) = sweep_all(&target) {
+        say(&message);
+    }
+}
+
+/// Sweeps every `deps` folder in `target`: what to say about it.
+fn sweep_all(target: &Path) -> Option<String> {
+    let (files, bytes) = deps_folders(target)
         .iter()
         .map(|deps| sweep(deps))
         .fold((0, 0), |(files, bytes), (more, size)| {
             (files + more, bytes + size)
         });
-    if let Some(message) = summary(files, bytes) {
-        say(&message);
-    }
+    summary(files, bytes)
 }
 
 /// What a sweep says: nothing when it deleted nothing.
@@ -61,9 +67,9 @@ fn summary(files: usize, bytes: u64) -> Option<String> {
     })
 }
 
-/// The build folder: `CARGO_TARGET_DIR`, else the repository's `target`.
-fn target() -> PathBuf {
-    std::env::var_os("CARGO_TARGET_DIR")
+/// The build folder: `CARGO_TARGET_DIR` (given), else the repository's `target`.
+fn target_folder(cargo_target_dir: Option<std::ffi::OsString>) -> PathBuf {
+    cargo_target_dir
         .map(PathBuf::from)
         .unwrap_or_else(|| crate::util::root().join("target"))
 }
@@ -332,6 +338,27 @@ mod tests {
 
     fn set(names: &[&str]) -> HashSet<String> {
         names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn the_build_folder_is_cargos_own_choice_or_the_repositorys() {
+        assert_eq!(target_folder(Some("/b".into())), PathBuf::from("/b"));
+        assert_eq!(target_folder(None), crate::util::root().join("target"));
+    }
+
+    #[test]
+    fn every_folder_counts_toward_what_a_sweep_says() {
+        let target = tempfile::tempdir().unwrap();
+        assert_eq!(sweep_all(target.path()), None);
+        for (profile, size) in [("debug", 1_500_000), ("release", 2_000_000)] {
+            let deps = target.path().join(profile).join("deps");
+            std::fs::create_dir_all(&deps).unwrap();
+            std::fs::write(deps.join("gone-1.a.b.rcgu.o"), vec![0; size]).unwrap();
+        }
+        assert_eq!(
+            sweep_all(target.path()).as_deref(),
+            Some("Deleted 2 object files no program uses (3 MB).")
+        );
     }
 
     #[test]

@@ -8,6 +8,9 @@ exclude_re = [
     # and a 0-long one is read again until the command count runs out, finding no symbol table:
     # `None` either way.
     'tooling/xtask/src/sweep\.rs:.*: replace \|\| with && in debug_map',
+    # The sweep runs on macOS only; mutants run on Linux, where it returns at once with or without
+    # its body. The command's test checks it deletes on macOS (CI's headless macOS job).
+    'tooling/xtask/src/sweep\.rs:.*: replace objects with \(\)',
     # The version bits are cleared by the mask first, so `| 0x40` and `^ 0x40` (and `| 0x80` and
     # `^ 0x80`) set the same byte.
     'kchess-games/src/archive\.rs:.*: replace \| with \^ in new_id',
