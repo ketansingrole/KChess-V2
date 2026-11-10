@@ -444,6 +444,49 @@ fn a_seek_is_cancelled_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     });
 }
 
+/// Signing in asks Lichess for a game in progress, and no seek goes out until it answers. A seek
+/// begun first (Windows CI was slow enough to click Find opponent then) cut the check short, and
+/// the check's end put the page back to its form while Lichess still held the seek, with no
+/// Cancel seek.
+#[gpui_kit::test]
+fn a_seek_waits_for_the_check_for_a_game_in_progress(cx: &mut gpui_kit::TestAppContext) {
+    use crate::online::Phase;
+    let mut app = Harness::start(cx);
+    let lichess = app.connect_with("Tester", false, |session| session.hold_playing = true);
+    app.open("Play on Lichess");
+    assert!(!app.shows("online-start"));
+    // Quick pick's Play online, while Lichess has not answered.
+    app.with_window(|window, cx| crate::shell::play_online(10., 0., false, window, cx));
+    app.settle();
+    assert_ne!(
+        app.with_window(|_, cx| crate::online::handle(cx).read(cx).phase),
+        Phase::Seeking
+    );
+    lichess.lock().hold_playing = false;
+    app.find("online-start");
+    // The page shows the check from the moment the app asks, not from the core's first report.
+    let shown = app.with_window(|_, cx| {
+        crate::online::account_connected(cx);
+        crate::online::handle(cx).read(cx).phase
+    });
+    assert_eq!(shown, Phase::Disconnected);
+    app.click("online-start");
+    app.wait_for("the seek", |_, cx| {
+        writes(&lichess)
+            .iter()
+            .any(|write| write.starts_with("POST /api/board/seek"))
+            && crate::online::handle(cx).read(cx).phase == Phase::Seeking
+    });
+    assert_eq!(
+        writes(&lichess)
+            .iter()
+            .filter(|write| write.starts_with("POST /api/board/seek"))
+            .count(),
+        1
+    );
+    app.find("online-cancel");
+}
+
 /// A correspondence move cannot be taken back, so it waits on the board for Confirm (Return) and
 /// can be cancelled (Esc) until then, as on Lichess; with the setting off it goes at once.
 #[gpui_kit::test]

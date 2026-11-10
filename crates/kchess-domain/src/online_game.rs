@@ -122,12 +122,22 @@ fn begin(args: &[Value]) -> Out {
     }
 }
 
-/// `start(options)`: a seek or challenge. A game being played, or a seek in progress, refuses it.
+/// `start(options)`: a seek or challenge. A game being played, a seek in progress, or Lichess
+/// still being asked for a game in progress refuses it: the seek cut that check short, and its
+/// end put the state back to idle while Lichess held the seek.
 fn start(mut run: Run, options: &Value) -> Out {
     let phase = run.m.online_phase.clone();
+    // What `checking` (and the core's report of the check) leaves; a report left over once the
+    // phase moved on (a finished game, idle) does not hold seeks back.
+    let checking = phase == "disconnected"
+        && run.m.online_connection.as_ref().is_some_and(|connection| {
+            js::string(connection.get("lane")) == Some("game")
+                && js::string(connection.get("phase")) == Some("checking")
+        });
     let refused = (phase == "disconnected" && !run.m.online_id.is_empty())
         || (phase == "playing" && !run.m.correspondence())
-        || phase == "seeking";
+        || phase == "seeking"
+        || checking;
     if refused {
         return run.done(Some(json!(false)), None, None, false);
     }
@@ -492,6 +502,47 @@ mod tests {
         );
         assert_eq!(result["ret"], json!(false));
         assert!(result.get("call").is_none());
+    }
+
+    /// Lichess is still asked for a game in progress (after signing in): a seek begun then cut
+    /// the check short, and the check's end put the state back to idle while Lichess held the
+    /// seek. Once Lichess has answered, a seek goes out.
+    #[test]
+    fn a_seek_waits_for_the_check_for_a_game_in_progress() {
+        let seek = json!({ "minutes": 10, "increment": 0, "color": "random", "rated": false });
+        let checking = transition(
+            "onlineGameChecking",
+            vec![state_json(&Model::idle()), ctx(0.0)],
+        );
+        let refused = transition(
+            "onlineGameBegin",
+            vec![
+                checking["state"].clone(),
+                json!("start"),
+                seek.clone(),
+                ctx(0.0),
+            ],
+        );
+        assert_eq!(refused["ret"], json!(false));
+        assert!(refused.get("call").is_none());
+        assert_eq!(
+            refused["state"]["onlinePhase"],
+            checking["state"]["onlinePhase"]
+        );
+        let answered = transition(
+            "onlineGameConnection",
+            vec![
+                checking["state"].clone(),
+                json!({ "session": 0, "account": "Alice", "gameId": "", "lane": "game", "phase": "idle" }),
+                ctx(0.0),
+            ],
+        );
+        let begun = transition(
+            "onlineGameBegin",
+            vec![answered["state"].clone(), json!("start"), seek, ctx(0.0)],
+        );
+        assert_eq!(begun["call"]["method"], json!("startOnline"));
+        assert_eq!(begun["state"]["onlinePhase"], json!("seeking"));
     }
 
     #[test]
