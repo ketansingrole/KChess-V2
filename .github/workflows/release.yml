@@ -151,10 +151,34 @@ jobs:
             !apps/gpui/dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
+      # The Snap Store's KChess, from this job's build (`kchess-snap`, which the release job
+      # attaches); the store publishes it from the published release (snap-publish.yml).
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/snap
 
-  # The Snap Store's KChess; the store publishes it from the published release (snap-publish.yml).
-  snap:
-    uses: ./.github/workflows/snap-build.yml
+  # The release profile's dependencies, which the release commit's CI saved for this build, are
+  # nobody's until the next release commit, whose new version gives them a new key: dropped, they
+  # leave their 2.75 GB (2026-11-09) under the repository's 10 GB to the caches pull requests read.
+  # The App Store build restores them too.
+  drop-caches:
+    needs: [package, app-store]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions
+      # Not `v0-rust-package-` alone, which `package-fast`'s keys start with too.
+      - uses: ./.github/actions/drop-caches
+        with:
+          prefix: |
+            v0-rust-package-Darwin-
+            v0-rust-package-Linux-
+            v0-rust-package-Windows_NT-
 
   # The Mac App Store's KChess: a tag's build goes to App Store Connect (TestFlight), and review
   # follows the published release (app-store-publish.yml). It is no release asset.
@@ -173,7 +197,7 @@ jobs:
       ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
 
   release:
-    needs: [validate, package, snap]
+    needs: [validate, package]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     # The release key's secret lives in this environment, limited to `v*` tags (Settings →

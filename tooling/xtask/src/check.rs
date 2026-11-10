@@ -315,10 +315,10 @@ pub fn fast() -> Result {
     if touches_dependencies(&files) {
         step("notices", crate::licenses::check_notices)?;
     }
-    // xtask's tests check the workflows' scripts (`every_workflow_step_parses_in_bash`).
+    // xtask's tests check the workflows' and actions' scripts (`every_workflow_step_parses_in_bash`).
     let workflows = files
         .iter()
-        .any(|file| file.starts_with(".github/workflows/"));
+        .any(|file| file.starts_with(".github/workflows/") || file.starts_with(".github/actions/"));
     if !workflows && !files.iter().any(|file| builds_into_a_package(file)) {
         say("No Rust changes since main.");
         return Ok(());
@@ -818,18 +818,40 @@ mod tests {
         found
     }
 
+    /// The workflows and the repository's own actions (`.github/actions/<name>/action.yml`).
+    fn workflow_files() -> Vec<std::path::PathBuf> {
+        let github = crate::util::root().join(".github");
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(github.join("workflows"))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "yml"))
+            .collect();
+        files.extend(
+            std::fs::read_dir(github.join("actions"))
+                .unwrap()
+                .flatten()
+                .map(|entry| entry.path().join("action.yml"))
+                .filter(|path| path.is_file()),
+        );
+        files
+    }
+
+    #[test]
+    fn the_actions_are_checked_with_the_workflows() {
+        let files = workflow_files();
+        let named = |name: &str| files.iter().any(|path| path.ends_with(name));
+        assert!(named("workflows/ci.yml"), "{files:?}");
+        assert!(named("actions/install-nsis/action.yml"), "{files:?}");
+    }
+
     /// 2026-11-07: a heredoc inside `$(...)` with a backtick in it parsed in zsh but not in bash,
     /// and the TestFlight step failed on the first release that ran it. Every bash step parses.
     #[cfg(unix)]
     #[test]
     fn every_workflow_step_parses_in_bash() {
-        let dir = crate::util::root().join(".github/workflows");
         let mut checked = 0;
-        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.extension().is_none_or(|ext| ext != "yml") {
-                continue;
-            }
+        for path in workflow_files() {
             let text = std::fs::read_to_string(&path).unwrap();
             for (line, script) in bash_steps(&text) {
                 let mut bash = std::process::Command::new("bash")
@@ -862,13 +884,8 @@ mod tests {
     /// workflow parses as one YAML document.
     #[test]
     fn every_workflow_is_valid_yaml() {
-        let dir = crate::util::root().join(".github/workflows");
         let mut checked = 0;
-        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
-            let path = entry.path();
-            if path.extension().is_none_or(|ext| ext != "yml") {
-                continue;
-            }
+        for path in workflow_files() {
             let text = std::fs::read_to_string(&path).unwrap();
             let docs = yaml_rust2::YamlLoader::load_from_str(&text)
                 .unwrap_or_else(|error| panic!("{} is not valid YAML: {error}", path.display()));

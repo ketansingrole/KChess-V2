@@ -1,0 +1,44 @@
+name: Drop superseded caches
+description: >-
+  Deletes main's caches under a key prefix, right before the job saves the one that replaces them.
+  A new Cargo.lock gives every Rust cache a new key while the old one stays: 26 of main's commits
+  from 2026-11-01 to 11-10 did so, each adding up to 7 GB beside the old caches, and the
+  repository's 10 GB limit then evicted the least recently used, the package caches that only
+  packaging runs read. Run it only on main, when the job's restore was not a full match.
+
+inputs:
+  rust-cache:
+    description: The `shared-key` of the job's Swatinem/rust-cache, whose keys on this runner go.
+    default: ''
+  prefix:
+    description: Key prefixes to drop, one per line.
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RUST_CACHE: ${{ inputs.rust-cache }}
+        PREFIXES: ${{ inputs.prefix }}
+      run: |
+        # rust-cache names the system and processor as Node does: Darwin, Windows_NT; x64, arm64.
+        if [ -n "$RUST_CACHE" ]; then
+          case "$RUNNER_OS" in macOS) os=Darwin ;; Windows) os=Windows_NT ;; *) os="$RUNNER_OS" ;; esac
+          PREFIXES="v0-rust-$RUST_CACHE-$os-$(echo "$RUNNER_ARCH" | tr '[:upper:]' '[:lower:]')-"
+        fi
+        # Housekeeping: a failure warns, and the cache limit's eviction is all it costs.
+        for prefix in $PREFIXES; do
+          caches="$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?ref=refs/heads/main&key=$prefix&per_page=100" \
+            --jq '.actions_caches[] | "\(.id) \(.size_in_bytes) \(.key)"')" \
+            || { echo "::warning::Could not list the caches under $prefix."; continue; }
+          echo "$caches" | while read -r id size key; do
+            [ -n "$id" ] || continue
+            if gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$id" > /dev/null; then
+              echo "Dropped $key ($((size / 1000000)) MB)"
+            else
+              echo "::warning::Could not drop $key."
+            fi
+          done
+        done

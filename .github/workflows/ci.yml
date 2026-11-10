@@ -79,8 +79,8 @@ jobs:
           fi
           echo "Release commit: $release"
           echo "release=$release" >> "$GITHUB_OUTPUT"
-      # The packaging jobs by their names (`package (<os>)`, `snap / …`, `windows-upgrade / …`):
-      # renaming one of them needs this pattern changed too.
+      # The packaging jobs by their names (`package (<os>)`, which packs the Snap on Linux, and
+      # `windows-upgrade / …`): renaming one of them needs this pattern changed too.
       # The nightly run's base: the newest main commit, this one included, that a push or nightly
       # run packaged.
       - id: packaged
@@ -92,7 +92,7 @@ jobs:
               --json databaseId,headSha,event --jq '.[] | select(.event == "push" or .event == "schedule") | "\(.databaseId):\(.headSha)"'); do
             sha="${run#*:}"
             git merge-base --is-ancestor "$sha" HEAD 2>/dev/null || continue
-            if gh run view "${run%%:*}" --json jobs --jq '[.jobs[] | select(.name | test("^(package |snap|windows-upgrade)")) | .conclusion] | length > 0 and all(. == "success")' | grep -qx true; then
+            if gh run view "${run%%:*}" --json jobs --jq '[.jobs[] | select(.name | test("^(package |windows-upgrade)")) | .conclusion] | length > 0 and all(. == "success")' | grep -qx true; then
               echo "sha=$sha" >> "$GITHUB_OUTPUT"
               break
             fi
@@ -104,7 +104,7 @@ jobs:
           RELEASE: ${{ steps.docs.outputs.release }}
           # The files packaging is made from; xtask's `packaging_changes_run_the_package_jobs`
           # checks it names each of xtask's.
-          PACKAGING: '^(Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.cargo/|apps/gpui/build\.rs$|apps/gpui/build/|crates/kchess-voice/|crates/kchess-delta/|tooling/xtask/src/(package/|deb\.rs$|deltas\.rs$|engines\.rs$|fairy\.rs$|licenses\.rs$|sums\.rs$|util\.rs$|voice\.rs$)|tooling/windows-upgrade-test\.ps1$|\.github/actions/|\.github/workflows/(ci|release|snap-build|windows-upgrade)\.yml$)'
+          PACKAGING: '^(Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.cargo/|apps/gpui/build\.rs$|apps/gpui/build/|crates/kchess-voice/|crates/kchess-delta/|tooling/xtask/src/(package/|deb\.rs$|deltas\.rs$|engines\.rs$|fairy\.rs$|licenses\.rs$|sums\.rs$|util\.rs$|voice\.rs$)|tooling/windows-upgrade-test\.ps1$|\.github/actions/|\.github/workflows/(ci|release|windows-upgrade)\.yml$)'
         run: |
           if [ "$RELEASE" = true ] || [ "$EVENT" = workflow_dispatch ]; then
             packaging=true
@@ -130,6 +130,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The drop-caches action.
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -138,7 +142,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
       # Compiled Rust dependencies, restored on every run and saved only from main (the repository's
       # cache quota is shared): only KChess's own crates recompile. CI and release jobs share keys.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      # Each job that saves one drops the cache it replaces first (`.github/actions/drop-caches`).
+      - id: cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: check
           key: ${{ runner.os }}-${{ runner.arch }}
@@ -172,6 +178,10 @@ jobs:
           echo "KCHESS_ENGINE_PATH=$RUNNER_TEMP/stockfish/stockfish" >> "$GITHUB_ENV"
           echo "KCHESS_VARIANT_ENGINE_PATH=$PWD/target/fairy-stockfish/bin/fairy-stockfish" >> "$GITHUB_ENV"
       - run: cargo xtask check --without-app-tests
+      - if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/drop-caches
+        with:
+          rust-cache: check
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
@@ -200,6 +210,10 @@ jobs:
   gpui:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+      # The drop-caches action.
+      actions: write
     strategy:
       fail-fast: false
       matrix:
@@ -219,7 +233,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld.exe" >> "$GITHUB_ENV"
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      # `headless` restores this cache too, and saves none of its own.
+      - id: cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: gpui
           key: ${{ runner.os }}-${{ runner.arch }}
@@ -257,6 +273,14 @@ jobs:
       - run: cargo test -p kchess-gpui --locked
         env:
           RUST_TEST_THREADS: ${{ runner.os == 'Windows' && 4 || 8 }}
+      - if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/drop-caches
+        with:
+          rust-cache: gpui
+      - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
+        uses: ./.github/actions/drop-caches
+        with:
+          prefix: vendor-gpui-v2-${{ runner.os }}-${{ runner.arch }}-
       - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -281,6 +305,10 @@ jobs:
   headless:
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+      # The drop-caches action.
+      actions: write
     strategy:
       fail-fast: false
       matrix:
@@ -302,11 +330,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld.exe" >> "$GITHUB_ENV"
+      # The gpui job's dependencies, read only: a cache of its own held 554 to 602 MB more per
+      # platform (2026-11-10), room the package caches need under the repository's 10 GB.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          shared-key: headless
+          shared-key: gpui
           key: ${{ runner.os }}-${{ runner.arch }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: false
       # The vendored GPUI's lint build, kept as the gpui job keeps its test build.
       - name: Date the vendored sources
         shell: bash
@@ -334,6 +364,10 @@ jobs:
       - run: cargo clippy -p kchess-gpui ${{ matrix.packages }} --all-targets --locked -- -D warnings
       - run: cargo nextest run ${{ matrix.packages }} --locked
       - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
+        uses: ./.github/actions/drop-caches
+        with:
+          prefix: vendor-headless-${{ runner.os }}-${{ runner.arch }}-
+      - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -351,14 +385,19 @@ jobs:
 
   # The packages as the Release workflow makes them (ad hoc signed on macOS), with the release
   # profile's dependencies cached apart from the tests' debug ones. `windows-upgrade` packages
-  # for Windows.
+  # for Windows. Linux packs the Snap from the same build, on Ubuntu 24.04 as the Release
+  # workflow does: the Snap's core24 base (ubuntu-latest is 26.04).
   package:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
+    permissions:
+      contents: read
+      # The drop-caches action.
+      actions: write
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     env:
       CARGO_PROFILE_RELEASE_LTO: ${{ needs.changes.outputs.release != 'true' && 'off' || 'fat' }}
@@ -374,40 +413,89 @@ jobs:
       - name: Install GPUI build libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      # Saved even when the Snap fails after the build: the Snap Store's outages
+      # (2026-11-06, 2026-11-10 twice) would otherwise keep the Linux build out of the cache.
+      - id: cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ${{ needs.changes.outputs.release == 'true' && 'package' || 'package-fast' }}
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - run: cargo xtask package
         env:
           # Stockfish's release check; shared runners hit GitHub's anonymous rate limit.
           GH_TOKEN: ${{ github.token }}
           # Release packages are made by the Release workflow; CI's are ad hoc signed.
           KCHESS_SIGN_IDENTITY: ''
+      - if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/drop-caches
+        with:
+          rust-cache: ${{ needs.changes.outputs.release == 'true' && 'package' || 'package-fast' }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: gpui-${{ matrix.os }}
           path: apps/gpui/dist/
           retention-days: 14
+      # The Snap as the Release workflow builds it, before a tag rather than after one (2026.10.16).
+      # Not on pull requests: snapcraft fetches itself and its build snaps from the Snap Store,
+      # whose outages (2026-11-06, 2026-11-10 twice: slow installs, then HTTP 503 downloads) held
+      # pull requests that could not pass until it recovered. Main's nightly run, a run by hand (on
+      # any branch, to test a Snap change before it merges) and release commits build it;
+      # `release.yml` builds the published one.
+      - if: runner.os == 'Linux' && github.event_name != 'pull_request'
+        uses: ./.github/actions/snap
 
-  # The Snap as the Release workflow builds it, before a tag rather than after one (2026.10.16).
-  # Not on pull requests: snapcraft fetches itself and its build snaps from the Snap Store, whose
-  # outages (2026-11-06, 2026-11-10 twice: slow installs, then HTTP 503 downloads) held pull
-  # requests that could not pass until it recovered. Main's nightly run, a run by hand (on any
-  # branch, to test a Snap change before it merges) and release commits build it; `release.yml`
-  # builds the published one.
-  snap:
+  # The package caches, for the pull requests that package: built as `cargo xtask package` builds
+  # (`--build-only`), by main's nightly run when it does not package (the package jobs save their
+  # own when it does). Only packaging runs read them, so the cache limit evicted them first: none
+  # was left on 2026-11-10, and every packaging pull request compiled from cold (Windows 1,224 s,
+  # macOS 900 s, Linux 743 s). A cache still there costs a restore, which keeps it recently used.
+  package-cache:
     needs: changes
-    if: needs.changes.outputs.packaging == 'true' && github.event_name != 'pull_request'
-    uses: ./.github/workflows/snap-build.yml
-    with:
-      fast: ${{ needs.changes.outputs.release != 'true' }}
+    if: github.event_name == 'schedule' && needs.changes.outputs.packaging != 'true'
+    permissions:
+      contents: read
+      # The drop-caches action.
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # As the package jobs and `windows-upgrade` build a pull request's, so the keys are theirs.
+    env:
+      CARGO_PROFILE_RELEASE_LTO: 'off'
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install GPUI build libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ${{ env.GPUI_LINUX_LIBS }}
+      - id: cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: package-fast
+          key: ${{ runner.os }}-${{ runner.arch }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: cargo xtask package --build-only
+      - if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/drop-caches
+        with:
+          rust-cache: package-fast
 
   # Every way a Windows installation upgrades to this commit's installer.
   windows-upgrade:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
+    permissions:
+      contents: read
+      # Its build job's drop-caches action.
+      actions: write
     uses: ./.github/workflows/windows-upgrade.yml
     with:
       fast: ${{ needs.changes.outputs.release != 'true' }}
@@ -463,6 +551,10 @@ jobs:
       matrix:
         shard: ${{ fromJSON(needs.mutants-plan.outputs.shards) }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The drop-caches action.
+      actions: write
     # A change whose mutants take longer than this is too large to review in one pull request.
     timeout-minutes: 30
     env:
@@ -503,6 +595,10 @@ jobs:
               | jq -r '.packages[].name | select(. != "kchess-gpui")'); do
             cargo nextest run --no-run --locked --package="$package"
           done
+      - if: env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true'
+        uses: ./.github/actions/drop-caches
+        with:
+          rust-cache: mutants
       # The engines `check` gives the tests, so the mutants they kill there die here too; kept as
       # `check` keeps them.
       - if: github.event_name == 'pull_request'
@@ -549,7 +645,7 @@ jobs:
   # cannot name the jobs themselves.
   ci-passed:
     if: always()
-    needs: [changes, check, deny, gpui, headless, mutants-plan, mutants, package, snap, windows-upgrade]
+    needs: [changes, check, deny, gpui, headless, mutants-plan, mutants, package, package-cache, windows-upgrade]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed or was skipped

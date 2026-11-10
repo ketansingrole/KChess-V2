@@ -1,9 +1,12 @@
-//! `cargo xtask package [--skip-build] [--snap]`: the app for this machine, with its own native
-//! Stockfish, the core service, the command line and the voice runtime beside it, in the formats
-//! KChess has always shipped: macOS a .dmg and a .zip (Apple Silicon); Windows the per-user NSIS
-//! installer (.exe); Linux an .AppImage and a .deb. The updater installs each kind
+//! `cargo xtask package [--skip-build|--build-only] [--snap]`: the app for this machine, with its
+//! own native Stockfish, the core service, the command line and the voice runtime beside it, in the
+//! formats KChess has always shipped: macOS a .dmg and a .zip (Apple Silicon); Windows the per-user
+//! NSIS installer (.exe); Linux an .AppImage and a .deb. The updater installs each kind
 //! (`apps/gpui/src/updates.rs`). Every file gets a line in SHA256SUMS.txt. Output:
-//! `apps/gpui/dist/`.
+//! `apps/gpui/dist/`, where `--snap` (and the App Store's `--mas`) adds its package beside the
+//! others: CI packs the Snap from the build that made the AppImage and .deb (`--skip-build`).
+//! `--build-only` compiles what packaging ships and packages nothing: CI keeps that build's
+//! dependencies between runs (ci.yml `package-cache`).
 //!
 //! Every package carries the identity every KChess installation runs (`com.kchess.app`, "KChess",
 //! the Electron app's NSIS GUID and .deb name). Electron installations update to the frozen
@@ -205,18 +208,23 @@ fn verify_no_dev_build(path: &Path) -> Result {
     Ok(())
 }
 
+/// The release build of everything packaging ships.
+fn compile() -> Command {
+    let mut cargo = Command::new("cargo");
+    cargo.args(["build", "--release", "--locked"]);
+    for package in SHIPPED {
+        cargo.args(["-p", package]);
+    }
+    // A shipped build ignores the development overrides (`kchess_core::dev_overrides`).
+    cargo.args(["--features", "kchess-core/packaged"]);
+    cargo
+}
+
 fn build(skip: bool) -> Result<Built> {
     let target = root().join("target/release");
     if !skip {
         say("Building the app, core service, command line and voice helper (release)…");
-        let mut cargo = Command::new("cargo");
-        cargo.args(["build", "--release", "--locked"]);
-        for package in SHIPPED {
-            cargo.args(["-p", package]);
-        }
-        // A shipped build ignores the development overrides (`kchess_core::dev_overrides`).
-        cargo.args(["--features", "kchess-core/packaged"]);
-        run_with(&mut cargo)?;
+        run_with(&mut compile())?;
     }
     let voice = crate::voice::stage("release")?;
     let fairy = crate::fairy::build()?;
@@ -262,10 +270,44 @@ fn check_released(out: &Path, identity: &Identity, kinds: &[Asset]) -> Result {
     Ok(())
 }
 
+/// Empties `out` for this run's packages, unless the run adds one beside them: the Snap beside the
+/// AppImage and .deb that the same build made, the App Store's package beside the downloads.
+fn clear_out(out: &Path, snap: bool, store: bool) {
+    if !snap && !store {
+        let _ = std::fs::remove_dir_all(out);
+    }
+}
+
+/// What `cargo xtask package` was asked for.
+#[derive(Debug, Default, PartialEq)]
+struct Options {
+    build_only: bool,
+    skip: bool,
+    snap: bool,
+    store: bool,
+}
+
+fn options(args: &[String]) -> Options {
+    let flag = |name: &str| args.iter().any(|arg| arg == name);
+    Options {
+        build_only: flag("--build-only"),
+        skip: flag("--skip-build"),
+        snap: flag("--snap"),
+        store: flag("--mas"),
+    }
+}
+
 pub fn run(args: &[String]) -> Result {
-    let skip = args.iter().any(|arg| arg == "--skip-build");
-    let snap = args.iter().any(|arg| arg == "--snap");
-    let store = args.iter().any(|arg| arg == "--mas");
+    let Options {
+        build_only,
+        skip,
+        snap,
+        store,
+    } = options(args);
+    if build_only {
+        say("Building the app, core service, command line and voice helper (release)…");
+        return run_with(&mut compile());
+    }
     // KCHESS_PACKAGE_VERSION builds a test installer above every release (windows-upgrade.yml);
     // the app reads the same variable (apps/gpui/build.rs).
     let version = std::env::var("KCHESS_PACKAGE_VERSION")
@@ -276,10 +318,7 @@ pub fn run(args: &[String]) -> Result {
     let built = build(skip)?;
     let out = root().join("apps/gpui/dist");
     let stage = root().join("target/package/stage");
-    // The App Store's package leaves the other packages in place.
-    if !store {
-        let _ = std::fs::remove_dir_all(&out);
-    }
+    clear_out(&out, snap, store);
     let _ = std::fs::remove_dir_all(&stage);
     std::fs::create_dir_all(&out).map_err(|cause| cause.to_string())?;
     std::fs::create_dir_all(&stage).map_err(|cause| cause.to_string())?;
