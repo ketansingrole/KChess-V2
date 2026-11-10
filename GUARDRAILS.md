@@ -2,8 +2,11 @@
 
 Run `cargo xtask check-fast` while editing. It checks format and lints for the workspace and runs
 the tests of every package with changes since `main` (committed, staged, unstaged or new) and of
-every workspace package that depends on one of them; a change to `Cargo.toml` or `Cargo.lock` runs
-every test. Tests run under cargo-nextest when it is installed (`.config/nextest.toml`), as in
+every workspace package that depends on one of them (a vendored crate under `vendor/` tests the
+members that build it). A change to `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, Cargo's
+configuration (`.cargo/` except `mutants.toml`), `.config/nextest.toml` or the macOS test
+runner (`tooling/macos-dev-runner.sh`) runs every test; one to `rustfmt.toml` or `clippy.toml` runs
+the format and lints. Tests run under cargo-nextest when it is installed (`.config/nextest.toml`), as in
 CI: all test binaries at once, each test in its own process, a hung test killed and named after
 five minutes. The app's run under `cargo test`, since each of its tests starts GPUI. This is an editing aid; related tests do
 not establish complete regression coverage.
