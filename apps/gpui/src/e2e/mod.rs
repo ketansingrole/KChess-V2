@@ -414,8 +414,15 @@ impl Harness {
         self.cx.run_until_parked();
     }
 
-    /// Open a page from the sidebar by its label ("Play with computer").
+    /// Open a page from the sidebar by its label ("Play with computer"), once no dialog covers it.
+    /// A dialog waiting on the core (naming a study) stays up until the core answers; a click on
+    /// the sidebar under it landed on the dialog's overlay, so the page never opened, and Linux CI
+    /// timed out in `studies_are_found_by_name` (2026.11.10).
     pub fn open(&mut self, label: &str) {
+        self.wait_for("the dialog to close", |window, cx| {
+            use gpui_kit::component::WindowExt as _;
+            !window.has_active_dialog(cx)
+        });
         let index = crate::shell::nav()
             .iter()
             .position(|(_, name, _)| *name == label)
