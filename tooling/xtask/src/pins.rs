@@ -197,8 +197,11 @@ mod tests {
 
     #[test]
     fn the_pins_name_their_release_tags() {
-        assert_eq!(release_tag(APPIMAGE_RUNTIME), Some("20251108"));
-        assert_eq!(release_tag(APPIMAGETOOL), Some("1.9.0"));
+        let url = "https://github.com/AppImage/appimagetool/releases/download/1.9.1/tool.AppImage";
+        assert_eq!(release_tag(url), Some("1.9.1"));
+        for pin in [APPIMAGE_RUNTIME, APPIMAGETOOL] {
+            assert!(release_tag(pin).and_then(version).is_some(), "{pin}");
+        }
         assert_eq!(file_name(APPIMAGE_RUNTIME), "runtime-x86_64");
         assert_eq!(release_tag("https://example.test/runtime"), None);
         assert_eq!(release_tag("https://x/releases/download//runtime"), None);
@@ -274,28 +277,31 @@ mod tests {
 
     #[test]
     fn the_check_reports_each_pin_that_is_behind() {
+        // Read from the pins, so bumping one does not break this test.
+        let runtime = release_tag(APPIMAGE_RUNTIME).unwrap();
+        let tool = release_tag(APPIMAGETOOL).unwrap();
         let current = |repo: &str| -> Result<String> {
             Ok(answer(&[match repo {
-                "AppImage/type2-runtime" => release("20251108"),
-                _ => release("1.9.0"),
+                "AppImage/type2-runtime" => release(runtime),
+                _ => release(tool),
             }]))
         };
         assert_eq!(check(current), Ok(None));
 
         let runtime_newer = |repo: &str| -> Result<String> {
             Ok(answer(&[match repo {
-                "AppImage/type2-runtime" => release("20260301"),
-                _ => release("1.8.0"),
+                "AppImage/type2-runtime" => release("99991231"),
+                _ => release("0.1.0"),
             }]))
         };
         let text = check(runtime_newer)
             .unwrap()
             .expect("the runtime is behind");
-        assert!(text.contains(
-            "- **the AppImage runtime** (`AppImage/type2-runtime`): pinned `20251108`, newest \
-             [`20260301`](https://github.com/o/r/releases/tag/20260301).\n"
-        ));
-        assert!(text.contains("  Its `runtime-x86_64` has SHA-256 `20260301digest`.\n"));
+        assert!(text.contains(&format!(
+            "- **the AppImage runtime** (`AppImage/type2-runtime`): pinned `{runtime}`, newest \
+             [`99991231`](https://github.com/o/r/releases/tag/99991231).\n"
+        )));
+        assert!(text.contains("  Its `runtime-x86_64` has SHA-256 `99991231digest`.\n"));
         assert!(text.contains(
             "  Change `APPIMAGE_RUNTIME` and `APPIMAGE_RUNTIME_SHA256` in \
              `tooling/xtask/src/package/linux.rs`.\n"
@@ -304,12 +310,12 @@ mod tests {
 
         let both_newer = |repo: &str| -> Result<String> {
             Ok(answer(&[match repo {
-                "AppImage/type2-runtime" => release("20260301"),
-                _ => release("1.9.1"),
+                "AppImage/type2-runtime" => release("99991231"),
+                _ => release("999.0.0"),
             }]))
         };
         let text = check(both_newer).unwrap().unwrap();
-        assert!(text.contains("pinned `1.9.0`, newest [`1.9.1`]"));
+        assert!(text.contains(&format!("pinned `{tool}`, newest [`999.0.0`]")));
         assert!(text.contains("Change `APPIMAGETOOL` and `APPIMAGETOOL_SHA256`"));
         assert!(!text.contains("Its `appimagetool-x86_64.AppImage`"));
     }

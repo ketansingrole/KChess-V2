@@ -18,9 +18,9 @@ use crate::util::{Result, download, pinned, root, run_with, say};
 // The pins below change only in a reviewed pull request, which CI packages and tests. The
 // weekly Pins workflow (`cargo xtask pins --check`) opens an issue when either has a newer release.
 pub const APPIMAGETOOL: &str =
-    "https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage";
+    "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage";
 pub const APPIMAGETOOL_SHA256: &str =
-    "46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1";
+    "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0";
 /// The runtime appimagetool puts at the front of every AppImage: the launcher that mounts the
 /// app and starts it. Without `--runtime-file`, appimagetool would fetch the moving `continuous`
 /// release on every build, unverified.
