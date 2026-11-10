@@ -43,9 +43,7 @@ async fn close_cancels_a_stalled_explorer_and_releases_the_profile() {
         biased;
         _ = &mut lookup => panic!("the fixture never responds"),
         _ = async {
-            tokio::time::timeout(Duration::from_secs(2), async {
-                while fixture.requests().is_empty() { tokio::time::sleep(Duration::from_millis(5)).await; }
-            }).await.expect("the lookup reaches the fixture");
+            fixture.wait_for("the lookup", |requests| !requests.is_empty()).await;
         } => {}
     }
     // The lookup is bounded well inside its own 15 s response deadline, and close only as a whole:

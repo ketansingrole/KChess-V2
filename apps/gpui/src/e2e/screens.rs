@@ -916,24 +916,23 @@ fn connect_showcase(
         crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.connect(window, cx))
     })
     .expect("the window");
-    for _ in 0..400 {
+    // Each wait fails the run rather than taking a picture of a showcase that never connected.
+    let login = (0..400)
+        .find_map(|_| {
+            settle(cx, window);
+            logins().into_iter().nth(earlier)
+        })
+        .expect("the login page opens");
+    super::fake_lichess::return_from_login(&login, &code);
+    let connected = (0..400).any(|_| {
         settle(cx, window);
-        if let Some(url) = logins().into_iter().nth(earlier) {
-            super::fake_lichess::return_from_login(&url, &code);
-            break;
-        }
-    }
-    for _ in 0..400 {
-        settle(cx, window);
-        let done = cx.update(|cx| {
+        cx.update(|cx| {
             let accounts = crate::accounts::handle(cx);
             let accounts = accounts.read(cx);
             accounts.active(cx).as_deref() == Some(username) && !accounts.working()
-        });
-        if done {
-            break;
-        }
-    }
+        })
+    });
+    assert!(connected, "{username} connects and syncs");
 }
 
 /// The Opera Game, a real game with a clear story for a review to tell.

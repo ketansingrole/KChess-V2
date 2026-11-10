@@ -8,7 +8,7 @@ mod support;
 use std::net::TcpListener;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use kchess_core::engine::scheduler::default_budget;
 use kchess_core::{Config, Core, Host, Level};
@@ -52,18 +52,6 @@ impl Wire {
             .into_iter()
             .filter(|payload| payload["kind"] == kind)
             .collect()
-    }
-}
-
-/// Polls `check` every 10 ms until it returns `Some`, failing after `WAIT`.
-async fn until<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> T {
-    let started = Instant::now();
-    loop {
-        if let Some(value) = check() {
-            return value;
-        }
-        assert!(started.elapsed() < WAIT, "timed out waiting for {what}");
-        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 
@@ -122,14 +110,17 @@ async fn the_hosts_battery_reading_reaches_the_thread_budget() {
     // The first call starts the battery refresh; the reading is still the default (off battery).
     let budget = core.call("engine.threads", vec![]).await.expect("threads");
     let off = budget.as_u64().expect("a count") as usize;
-    let request = until("the battery request", || host.requests("onBattery").pop()).await;
+    let request = support::wait_until(WAIT, "the battery request", || {
+        host.requests("onBattery").pop()
+    })
+    .await;
     core.call(
         "host.reply",
         vec![request["id"].clone(), json!({ "value": true })],
     )
     .await
     .expect("reply");
-    let on = until("the battery reading", || {
+    let on = support::wait_until(WAIT, "the battery reading", || {
         let threads = core.call_sync("engine.threads", vec![]).ok()?.as_u64()? as usize;
         (threads == expected_threads_on_battery()).then_some(threads)
     })
@@ -158,7 +149,7 @@ async fn managed_replacement_stops_running_engines_before_it_publishes() {
         )
         .await
         .expect("analysis started");
-    until("the analysis to run", || {
+    support::wait_until(WAIT, "the analysis to run", || {
         core.call_sync("analysis.running", vec![])
             .ok()
             .filter(|running| running == &json!(true))
@@ -206,7 +197,7 @@ async fn analysis_and_review_events_carry_the_contract_payloads() {
         )
         .await
         .expect("analysis started");
-    let live = until("a live analysis update", || {
+    let live = support::wait_until(WAIT, "a live analysis update", || {
         host.named("engine:analysis").into_iter().find(|update| {
             update["done"] == json!(false) && !update["lines"].as_array().unwrap().is_empty()
         })
@@ -223,7 +214,7 @@ async fn analysis_and_review_events_carry_the_contract_payloads() {
     core.call("analysis.stop", vec![json!(false)])
         .await
         .expect("stop");
-    let last = until("the final analysis update", || {
+    let last = support::wait_until(WAIT, "the final analysis update", || {
         host.named("engine:analysis")
             .into_iter()
             .find(|update| update["done"] == json!(true))
@@ -240,7 +231,7 @@ async fn analysis_and_review_events_carry_the_contract_payloads() {
     )
     .await
     .expect("request");
-    let failed = until("a failed review status", || {
+    let failed = support::wait_until(WAIT, "a failed review status", || {
         host.named("review:status")
             .into_iter()
             .find(|status| status.get("failed").is_some())
@@ -275,7 +266,7 @@ async fn a_review_update_carries_the_stored_review_and_its_summary() {
     )
     .await
     .expect("request");
-    let update = until("a review update", || {
+    let update = support::wait_until(WAIT, "a review update", || {
         host.named("review:update").into_iter().next()
     })
     .await;
@@ -297,7 +288,7 @@ async fn online_play_pauses_automatic_reviews() {
     core.call_sync("engine.setBusy", vec![json!(true)])
         .expect("busy");
     core.call("reviews.changed", vec![]).await.expect("changed");
-    let status = until("a paused status", || {
+    let status = support::wait_until(WAIT, "a paused status", || {
         host.named("review:status")
             .into_iter()
             .find(|status| status["paused"] == json!("online"))
@@ -324,7 +315,7 @@ async fn closing_the_core_cancels_an_install_and_stops_engines() {
     )
     .await
     .expect("analysis started");
-    until("the analysis to run", || {
+    support::wait_until(WAIT, "the analysis to run", || {
         core.call_sync("analysis.running", vec![])
             .ok()
             .filter(|running| running == &json!(true))
@@ -343,7 +334,7 @@ async fn closing_the_core_cancels_an_install_and_stops_engines() {
         })
     };
     // Let the install reach its download before the core closes.
-    until("the install to request the release", || {
+    support::wait_until(WAIT, "the install to request the release", || {
         (!host.named("host:request").is_empty() || !engine_dir.exists()).then_some(())
     })
     .await;

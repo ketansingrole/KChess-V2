@@ -195,18 +195,6 @@ async fn a_rate_limited_month_is_asked_again_after_the_wait() {
     assert_eq!(games[0]["status"], "outoftime");
 }
 
-/// Waits until the fixture has been asked for `path`; panics if it never is, rather than letting
-/// the test go on to check an ordering it did not set up.
-async fn requested(fixture: &Fixture, path: &str) {
-    for _ in 0..1_000 {
-        if !fixture.to(path).is_empty() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("{path} was never requested");
-}
-
 /// The player, their archives and accounts are gone, and the add that was overtaken failed
 /// without waiting for Chess.com to answer (`open` is never sent).
 async fn removed_during_add(
@@ -260,7 +248,9 @@ async fn removing_a_player_during_their_sync_leaves_nothing_behind() {
         let profile = Arc::clone(&profile);
         tokio::spawn(async move { profile.chesscom.add("alice").await })
     };
-    requested(&fixture, &format!("/pub/player/alice/games/{PAST}")).await;
+    fixture
+        .requested(&format!("/pub/player/alice/games/{PAST}"), 1)
+        .await;
     removed_during_add(&profile, adding).await;
     drop(open);
 }
@@ -292,7 +282,7 @@ async fn removing_a_player_while_they_are_looked_up_does_not_add_them_back() {
         let profile = Arc::clone(&profile);
         tokio::spawn(async move { profile.chesscom.add("alice").await })
     };
-    requested(&fixture, "/pub/player/alice").await;
+    fixture.requested("/pub/player/alice", 1).await;
     removed_during_add(&profile, adding).await;
     assert!(fixture.to("/pub/player/alice/games/archives").is_empty());
     drop(open);
@@ -349,7 +339,9 @@ async fn a_cancelled_sync_does_not_fail_the_next_one() {
         let profile = Arc::clone(&profile);
         tokio::spawn(async move { profile.chesscom.add("alice").await })
     };
-    requested(&fixture, &format!("/pub/player/alice/games/{PAST}")).await;
+    fixture
+        .requested(&format!("/pub/player/alice/games/{PAST}"), 1)
+        .await;
     adding.abort();
     assert!(adding.await.unwrap_err().is_cancelled());
     drop(open);

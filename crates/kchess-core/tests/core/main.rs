@@ -50,6 +50,7 @@ mod store_import;
 mod store_insights;
 mod store_library_scale;
 mod store_reviews;
+mod support_waits;
 mod uci_lifecycle;
 mod voice_model;
 mod voice_ownership;

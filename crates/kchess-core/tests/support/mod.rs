@@ -132,6 +132,16 @@ pub fn context(
     ctx
 }
 
+/// How long `until` waits before it fails the test: a ceiling for a condition that never comes,
+/// not a pause, so it is generous for a loaded Windows runner.
+pub const UNTIL_LIMIT: Duration = Duration::from_secs(30);
+
+/// Polls `check` every 10 ms until it holds, failing the test after `UNTIL_LIMIT`: a test never
+/// carries on in a state it did not reach.
+pub async fn until(what: &str, mut check: impl FnMut() -> bool) {
+    wait_until(UNTIL_LIMIT, what, || check().then_some(())).await;
+}
+
 /// Polls `check` every 10 ms until it returns `Some`, failing after `timeout`.
 pub async fn wait_until<T>(
     timeout: Duration,

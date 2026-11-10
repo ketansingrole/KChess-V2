@@ -2,6 +2,7 @@
 //! alignment and validation.
 
 use crate::fixtures;
+use crate::support::until;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -53,17 +54,6 @@ fn service(base: &str, host: &Arc<Recording>) -> Arc<Lichess> {
     )
 }
 
-/// Waits until `condition` holds, or fails the test.
-async fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
-    for _ in 0..300 {
-        if condition() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("timed out waiting for {what}");
-}
-
 #[tokio::test]
 async fn reports_an_initial_http_failure_after_the_start_call_has_returned() {
     let fixture = serve(|_| Reply::Json(503, String::new())).await;
@@ -74,7 +64,7 @@ async fn reports_an_initial_http_failure_after_the_start_call_has_returned() {
         Arc::clone(&sink) as Arc<dyn WatchSink>,
     );
     let session = spectator.watch(WatchTarget::Channel("rapid".into()));
-    wait_until("the error state", || {
+    until("the error state", || {
         sink.states
             .lock()
             .unwrap()
@@ -104,9 +94,9 @@ async fn a_cancelled_watch_reports_nothing_after_it_is_stopped() {
         Arc::clone(&sink) as Arc<dyn WatchSink>,
     );
     let first = spectator.watch(WatchTarget::Game("Game0001".into()));
-    wait_until("the first connection", || !fixture.requests().is_empty()).await;
+    until("the first connection", || !fixture.requests().is_empty()).await;
     let second = spectator.watch(WatchTarget::Game("Game0002".into()));
-    wait_until("the second connection", || fixture.requests().len() >= 2).await;
+    until("the second connection", || fixture.requests().len() >= 2).await;
     spectator.stop();
     let reported = sink.states.lock().unwrap().len();
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -133,7 +123,7 @@ async fn a_stopped_broadcast_round_is_not_logged_as_failed() {
         Arc::clone(&sink) as Arc<dyn WatchSink>,
     );
     spectator.watch_round("Round001");
-    wait_until("the round's connection", || !fixture.requests().is_empty()).await;
+    until("the round's connection", || !fixture.requests().is_empty()).await;
     spectator.stop();
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(!host.logged().contains("failed"), "{}", host.logged());
@@ -178,7 +168,7 @@ async fn a_game_described_without_its_position_is_shown_from_the_next_one() {
         Arc::clone(&sink) as Arc<dyn WatchSink>,
     );
     let session = spectator.watch(WatchTarget::Game("VuAqDosj".into()));
-    wait_until("the position after the first move", || {
+    until("the position after the first move", || {
         sink.frames.lock().unwrap().len() >= 3
     })
     .await;
@@ -223,7 +213,7 @@ async fn last_state_of_a_closed_game_stream(records: Vec<Value>) -> WatchState {
         Arc::clone(&sink) as Arc<dyn WatchSink>,
     );
     spectator.watch(WatchTarget::Game("Game0001".into()));
-    wait_until("the end of the feed", || {
+    until("the end of the feed", || {
         sink.states
             .lock()
             .unwrap()
@@ -333,7 +323,7 @@ async fn a_tv_feed_adds_its_moves_once_the_delayed_export_lines_up() {
     );
     spectator.watch(WatchTarget::Channel("rapid".into()));
     feed_tx.send(tv_frame("abcdefghijkl", after_e4)).unwrap();
-    wait_until("the lined-up moves", || {
+    until("the lined-up moves", || {
         sink.frames
             .lock()
             .unwrap()
@@ -364,7 +354,7 @@ async fn a_tv_feed_adds_its_moves_once_the_delayed_export_lines_up() {
             json!({ "t": "fen", "d": { "fen": after_e5, "lm": "e7e5", "wc": 599, "bc": 580 } })
         ))
         .unwrap();
-    wait_until("the second move", || {
+    until("the second move", || {
         sink.frames
             .lock()
             .unwrap()
@@ -417,7 +407,7 @@ async fn a_silent_tv_feed_reconnects_instead_of_ending_the_watch() {
     );
     let spectator = Spectator::new(lichess, Arc::clone(&sink) as Arc<dyn WatchSink>);
     spectator.watch(WatchTarget::Channel("rapid".into()));
-    wait_until("a reconnect", || feeds.lock().unwrap().len() >= 2).await;
+    until("a reconnect", || feeds.lock().unwrap().len() >= 2).await;
     assert!(
         sink.states
             .lock()
@@ -704,7 +694,7 @@ async fn a_round_feed_is_sent_per_chunk_with_the_games_that_have_arrived() {
             "{PGN}\n\n\n[Event \"Test Open\"]\n[White \"Gamma\"]\n"
         ))
         .expect("the feed is open");
-    wait_until("the first game", || {
+    until("the first game", || {
         sink.broadcasts.lock().unwrap().len() == 1
     })
     .await;
@@ -712,7 +702,7 @@ async fn a_round_feed_is_sent_per_chunk_with_the_games_that_have_arrived() {
     chunks_tx
         .send("[Black \"Delta\"]\n\n1. d4 d5 *\n\n\n".to_string())
         .expect("the feed is open");
-    wait_until("the second game", || {
+    until("the second game", || {
         sink.broadcasts.lock().unwrap().len() == 2
     })
     .await;
@@ -748,17 +738,17 @@ async fn a_stop_for_an_earlier_watch_leaves_the_newer_one_running() {
         Arc::clone(&sink) as Arc<dyn WatchSink>,
     );
     let first = spectator.watch_round("Round001");
-    wait_until("the first round's connection", || {
+    until("the first round's connection", || {
         !fixture.requests().is_empty()
     })
     .await;
     let second = spectator.watch_round("Round002");
-    wait_until("both rounds' connections", || fixture.requests().len() >= 2).await;
+    until("both rounds' connections", || fixture.requests().len() >= 2).await;
     spectator.stop_session(first);
     chunks_tx
         .send(format!("{PGN}\n\n\n"))
         .expect("the feed is open");
-    wait_until("the newer round's game", || {
+    until("the newer round's game", || {
         sink.broadcasts
             .lock()
             .unwrap()

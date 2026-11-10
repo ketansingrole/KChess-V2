@@ -23,18 +23,6 @@ async fn cancel_after(token: &CancellationToken, delay: Duration) {
     token.cancel();
 }
 
-#[cfg(unix)]
-async fn wait_until(what: &str, condition: impl Fn() -> bool) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while !condition() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
 #[tokio::test]
 async fn bounds_a_silent_startup_and_terminates_its_process() {
     let host = support::host();
@@ -192,7 +180,7 @@ async fn waits_for_process_exit_before_replacement_and_blocks_new_engines_until_
         "Stockfish is being updated. Retry shortly."
     );
 
-    wait_until("the replacement to start", || {
+    support::until("the replacement to start", || {
         replaced.load(Ordering::SeqCst)
     })
     .await;

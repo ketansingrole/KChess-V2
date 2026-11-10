@@ -813,6 +813,18 @@ mod tests {
         puzzles.close().await;
     }
 
+    /// Waits until the download has started; fails the test if it never does (an install that
+    /// ended at once would otherwise leave the test polling forever).
+    async fn downloading(puzzles: &PuzzleService) {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while !puzzles.status().await.unwrap().busy {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the download starts");
+    }
+
     #[tokio::test]
     async fn a_running_download_blocks_another_and_deletion_until_cancelled() {
         let dir = tempfile::tempdir().unwrap();
@@ -823,9 +835,7 @@ mod tests {
             let puzzles = Arc::clone(&puzzles);
             async move { puzzles.install(stalled).await }
         });
-        while !puzzles.status().await.unwrap().busy {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        downloading(&puzzles).await;
         let again = puzzles.install("http://127.0.0.1:9/".into()).await;
         assert_eq!(
             again.unwrap_err().message,
@@ -862,9 +872,7 @@ mod tests {
             let puzzles = Arc::clone(&puzzles);
             async move { puzzles.install(stalled).await }
         });
-        while !puzzles.status().await.unwrap().busy {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        downloading(&puzzles).await;
         first.abort();
         assert!(first.await.unwrap_err().is_cancelled());
         assert!(!puzzles.status().await.unwrap().busy);

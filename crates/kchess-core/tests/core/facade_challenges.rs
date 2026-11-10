@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::fixtures;
 use crate::signed_in;
+use crate::support;
 
 use fixtures::{Reply, serve};
 use serde_json::json;
@@ -30,16 +31,10 @@ async fn a_declined_challenge_is_answered_and_leaves_the_inbox() {
     core.call("stayConnected", vec![json!("Alice")])
         .await
         .unwrap();
-    let sender = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            if let Some(sender) = stream.lock().unwrap().clone() {
-                return sender;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+    let sender = support::wait_until(support::UNTIL_LIMIT, "the event stream to open", || {
+        stream.lock().unwrap().clone()
     })
-    .await
-    .expect("the event stream opens");
+    .await;
     let challenge = json!({
         "type": "challenge",
         "challenge": {

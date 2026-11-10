@@ -74,15 +74,61 @@ pub enum Reply {
 
 type Handler = Box<dyn FnMut(&Seen) -> Reply + Send>;
 
+/// How long a test waits for a request before it fails: a ceiling for a request that never
+/// comes, not a pause, so it can be generous. A loaded Windows runner filtering 127.0.0.1 took
+/// over 5 s to deliver one (`explorer_assistance.rs`).
+pub const REQUEST_WAIT: Duration = Duration::from_secs(30);
+
 /// A running fixture: its origin, and every request it has received, in arrival order.
 pub struct Fixture {
     pub base: String,
-    seen: Arc<Mutex<Vec<Seen>>>,
+    /// Every request so far; a waiter wakes on each one.
+    seen: Arc<watch::Sender<Vec<Seen>>>,
 }
 
 impl Fixture {
     pub fn requests(&self) -> Vec<Seen> {
-        self.seen.lock().unwrap().clone()
+        self.seen.borrow().clone()
+    }
+
+    /// Waits until the requests so far satisfy `done`, and returns them. Fails the test after
+    /// `REQUEST_WAIT`, naming `what` and the requests that did come, so a test never carries on
+    /// in a state it did not set up.
+    pub async fn wait_for(&self, what: &str, done: impl FnMut(&[Seen]) -> bool) -> Vec<Seen> {
+        self.wait_for_within(REQUEST_WAIT, what, done).await
+    }
+
+    /// `wait_for` with its own limit.
+    pub async fn wait_for_within(
+        &self,
+        limit: Duration,
+        what: &str,
+        mut done: impl FnMut(&[Seen]) -> bool,
+    ) -> Vec<Seen> {
+        let mut seen = self.seen.subscribe();
+        match tokio::time::timeout(limit, seen.wait_for(|requests| done(requests))).await {
+            Ok(Ok(requests)) => requests.clone(),
+            _ => {
+                let paths: Vec<String> = self.requests().iter().map(|r| r.target.clone()).collect();
+                panic!("timed out after {limit:?} waiting for {what}; requested: {paths:?}")
+            }
+        }
+    }
+
+    /// Waits until `path` has been requested `count` times, and returns those requests; fails the
+    /// test if it never is (see `wait_for`).
+    pub async fn requested(&self, path: &str, count: usize) -> Vec<Seen> {
+        let to = |requests: &[Seen]| -> Vec<Seen> {
+            requests
+                .iter()
+                .filter(|seen| seen.path() == path)
+                .cloned()
+                .collect()
+        };
+        let what = format!("{count} request(s) to {path}");
+        to(&self
+            .wait_for(&what, |requests| to(requests).len() >= count)
+            .await)
     }
 
     /// The requests whose path is `path`.
@@ -103,7 +149,7 @@ where
         .await
         .expect("bind fixture");
     let base = format!("http://{}", listener.local_addr().expect("address"));
-    let seen = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::new(watch::Sender::new(Vec::new()));
     let handler: Arc<Mutex<Handler>> = Arc::new(Mutex::new(Box::new(handler)));
     let seen_for_task = Arc::clone(&seen);
     tokio::spawn(async move {
@@ -183,12 +229,12 @@ fn status_text(status: u16) -> &'static str {
 async fn handle(
     mut socket: TcpStream,
     handler: Arc<Mutex<Handler>>,
-    seen: Arc<Mutex<Vec<Seen>>>,
+    seen: Arc<watch::Sender<Vec<Seen>>>,
 ) -> std::io::Result<()> {
     let Some(request) = read_request(&mut socket).await? else {
         return Ok(());
     };
-    seen.lock().unwrap().push(request.clone());
+    seen.send_modify(|requests| requests.push(request.clone()));
     let mut reply = (handler.lock().unwrap())(&request);
     loop {
         match reply {

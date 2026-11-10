@@ -3,6 +3,7 @@
 //! a dropped game stream reconnects, and a tournament join and withdrawal use the account's login.
 
 use crate::fixtures;
+use crate::support::until;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -135,17 +136,6 @@ fn rig(accounts: &[(&str, bool)]) -> (Arc<Recording>, Arc<MemoryStore>, Arc<Scri
     )
 }
 
-/// Polls until `check` holds, or fails the test after a few seconds.
-async fn until(what: &str, mut check: impl FnMut() -> bool) {
-    for _ in 0..500 {
-        if check() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("condition not met: {what}");
-}
-
 /// Every payload the host received for `event`, in order.
 fn emitted(host: &Recording, event: &str) -> Vec<Value> {
     host.events
@@ -165,14 +155,6 @@ fn has_state(host: &Recording, phase: &str, game: &str) -> bool {
     states(host)
         .iter()
         .any(|state| state["phase"] == phase && state["gameId"] == game)
-}
-
-async fn wait_requests(fixture: &fixtures::Fixture, path: &str, count: usize) {
-    let path = path.to_string();
-    until(&format!("{count} requests to {path}"), || {
-        fixture.to(&path).len() >= count
-    })
-    .await;
 }
 
 /// The default answer of the account and game routes: a game of Alice's, and every stream
@@ -312,13 +294,13 @@ async fn aborts_an_outstanding_challenge_and_sends_no_more_once_cancelled() {
     let online = session(&fixture.base, &host, &store, &tokens);
     let starting = online.clone();
     let result = tokio::spawn(async move { starting.start(&seek_options(Some("Bob"))).await });
-    wait_requests(&fixture, "/api/challenge/Bob", 1).await;
+    fixture.requested("/api/challenge/Bob", 1).await;
     online.cancel();
     // Lichess answers after the cancel: the late challenge is still cancelled, once.
     let _ = gate_tx.send(true);
     let outcome = result.await.unwrap();
     assert!(outcome.as_ref().is_err_and(|cause| cause.is_aborted()));
-    wait_requests(&fixture, "/api/challenge/AbCd1234/cancel", 1).await;
+    fixture.requested("/api/challenge/AbCd1234/cancel", 1).await;
     assert_eq!(fixture.to("/api/challenge/Bob").len(), 1);
     assert_eq!(fixture.to("/api/challenge/AbCd1234/cancel").len(), 1);
     online.cancel();
@@ -350,7 +332,9 @@ async fn leaving_a_correspondence_game_lets_go_of_its_protection() {
         .open("Alice", "Corr1234")
         .await
         .expect("the game opens");
-    wait_requests(&fixture, "/api/board/game/stream/Corr1234", 1).await;
+    fixture
+        .requested("/api/board/game/stream/Corr1234", 1)
+        .await;
     let sender = game.lock().unwrap().clone().unwrap();
     let full = json!({
         "type": "gameFull",
@@ -416,7 +400,7 @@ async fn an_answered_challenge_is_withdrawn_with_the_session_but_not_with_anothe
         .await
         .expect("another challenge is withdrawn");
     online.cancel();
-    wait_requests(&fixture, "/api/challenge/AbCd1234/cancel", 1).await;
+    fixture.requested("/api/challenge/AbCd1234/cancel", 1).await;
     online.close();
 }
 
@@ -471,7 +455,7 @@ async fn a_refused_start_leaves_the_pending_challenge_running() {
     let online = session(&fixture.base, &_host, &store, &tokens);
     let starting = online.clone();
     let result = tokio::spawn(async move { starting.start(&seek_options(Some("Bob"))).await });
-    wait_requests(&fixture, "/api/challenge/Bob", 1).await;
+    fixture.requested("/api/challenge/Bob", 1).await;
     let mut bullet = seek_options(Some("Carol"));
     bullet.minutes = 1.0;
     let refused = online.start(&bullet).await;
@@ -811,7 +795,9 @@ async fn keeps_the_newer_attachment_when_an_older_account_login_arrives_late() {
     let pending = tokio::spawn(async move { older.attach("Alice", "AbCd1234").await });
     until("alice requested", || tokens.calls_for("Alice") >= 1).await;
     online.attach("Bob", "Other123").await.unwrap();
-    wait_requests(&fixture, "/api/board/game/stream/Other123", 1).await;
+    fixture
+        .requested("/api/board/game/stream/Other123", 1)
+        .await;
     let games = fixture.to("/api/board/game/stream/Other123");
     assert_eq!(games.len(), 1);
     assert_eq!(games[0].header("Authorization"), Some("Bearer Bob-token"));
@@ -933,7 +919,9 @@ async fn playing(
 async fn reattaches_to_the_live_game_not_a_correspondence_one() {
     let (_host, fixture, online) = playing(|_| None).await;
     assert!(online.playing());
-    wait_requests(&fixture, "/api/board/game/stream/AbCd1234", 1).await;
+    fixture
+        .requested("/api/board/game/stream/AbCd1234", 1)
+        .await;
     assert!(fixture.to("/api/board/game/stream/Corr1234").is_empty());
     online.cancel();
     online.close();
@@ -1048,20 +1036,17 @@ async fn keeps_the_idle_event_stream_open_for_challenges_and_closes_it_on_reques
     let (host, store, tokens) = rig(&[("Alice", true)]);
     let online = session(&fixture.base, &host, &store, &tokens);
     online.stay_connected("Alice");
-    wait_requests(&fixture, "/api/stream/event", 1).await;
+    fixture.requested("/api/stream/event", 1).await;
     let call = fixture.to("/api/stream/event").remove(0);
     assert_eq!(call.header("Authorization"), Some("Bearer Alice-token"));
     let sender = streams.lock().unwrap().clone().unwrap();
     online.stay_connected("");
     // Writes to the stream find it gone once the client has closed its end.
-    for _ in 0..200 {
-        if sender.is_closed() {
-            break;
-        }
+    until("the client to close the stream", || {
         let _ = sender.send("\n".into());
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(sender.is_closed(), "the stream was closed by the client");
+        sender.is_closed()
+    })
+    .await;
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(fixture.to("/api/stream/event").len(), 1, "no reconnect");
     online.close();
@@ -1090,7 +1075,7 @@ async fn reopens_the_idle_event_stream_after_it_ended_on_its_own() {
     .await;
     tokio::time::sleep(Duration::from_millis(20)).await;
     online.stay_connected("Alice");
-    wait_requests(&fixture, "/api/stream/event", 1).await;
+    fixture.requested("/api/stream/event", 1).await;
     assert_eq!(tokens.calls_for("Alice"), 2);
     online.close();
 }
@@ -1112,7 +1097,7 @@ async fn hands_challenge_events_on_the_idle_stream_to_the_inbox_and_opens_accept
     let (host, store, tokens) = rig(&[("Alice", true)]);
     let online = session(&fixture.base, &host, &store, &tokens);
     online.stay_connected("Alice");
-    wait_requests(&fixture, "/api/stream/event", 1).await;
+    fixture.requested("/api/stream/event", 1).await;
     let sender = streams.lock().unwrap().clone().unwrap();
     let challenge = json!({
         "type": "challenge",
@@ -1141,7 +1126,9 @@ async fn hands_challenge_events_on_the_idle_stream_to_the_inbox_and_opens_accept
             json!({ "type": "gameStart", "game": { "gameId": "Chal1234", "speed": "rapid" } })
         ))
         .unwrap();
-    wait_requests(&fixture, "/api/board/game/stream/Chal1234", 1).await;
+    fixture
+        .requested("/api/board/game/stream/Chal1234", 1)
+        .await;
     assert!(online.playing());
     // Accepted elsewhere, the challenge became this game: Lichess sends nothing else for it.
     assert!(online.challenges().list().is_empty());
@@ -1306,13 +1293,9 @@ async fn a_second_move_is_refused_while_the_first_is_unanswered() {
         let online = online.clone();
         async move { online.move_uci("AbCd1234", "e2e4").await }
     });
-    for _ in 0..500 {
-        if !fixture.to("/api/board/game/AbCd1234/move/e2e4").is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert!(!fixture.to("/api/board/game/AbCd1234/move/e2e4").is_empty());
+    fixture
+        .requested("/api/board/game/AbCd1234/move/e2e4", 1)
+        .await;
     let second = online.move_uci("AbCd1234", "d2d4").await;
     assert!(second.unwrap_err().message().contains("already being sent"));
     assert!(
@@ -1462,7 +1445,7 @@ async fn a_malformed_line_on_the_event_stream_is_reported_as_it_arrives() {
     let (host, store, tokens) = rig(&[("Alice", true)]);
     let online = session(&fixture.base, &host, &store, &tokens);
     online.stay_connected("Alice");
-    wait_requests(&fixture, "/api/stream/event", 1).await;
+    fixture.requested("/api/stream/event", 1).await;
     lines_tx
         .send("{\"type\": \"challenge\", \"challenge\": \n".to_string())
         .expect("the stream is open");
@@ -1494,7 +1477,7 @@ async fn a_refused_record_on_every_connect_backs_off_instead_of_reconnecting_eac
     let (host, store, tokens) = rig(&[("Alice", true)]);
     let online = session(&fixture.base, &host, &store, &tokens);
     online.stay_connected("Alice");
-    wait_requests(&fixture, "/api/stream/event", 1).await;
+    fixture.requested("/api/stream/event", 1).await;
     // Backing off: connects at 0 s, 1 s and 3 s, then 7 s. Once a second would be five by now.
     tokio::time::sleep(Duration::from_millis(4_500)).await;
     let seen = attempts.load(Ordering::SeqCst);
@@ -1540,7 +1523,7 @@ async fn lists_the_challenges_of_accounts_without_an_open_event_stream() {
     let (host, store, tokens) = rig(&[("Alice", true), ("Bob", true)]);
     let online = session(&fixture.base, &host, &store, &tokens);
     online.stay_connected("Alice");
-    wait_requests(&fixture, "/api/stream/event", 1).await;
+    fixture.requested("/api/stream/event", 1).await;
 
     online.ongoing().await.unwrap();
     let calls = fixture.to("/api/challenge");
@@ -1589,7 +1572,9 @@ async fn a_game_ended_on_its_own_stream_frees_the_board_and_engines() {
     online.set_state_hook(Arc::new(move |_, blocked| {
         seen.store(blocked, std::sync::atomic::Ordering::SeqCst);
     }));
-    wait_requests(&fixture, "/api/board/game/stream/AbCd1234", 1).await;
+    fixture
+        .requested("/api/board/game/stream/AbCd1234", 1)
+        .await;
     let sender = game.lock().unwrap().clone().unwrap();
     let over =
         json!({ "type": "gameState", "moves": "e2e4", "status": "resign", "winner": "black" });
@@ -1627,7 +1612,7 @@ async fn a_finished_game_frees_the_engines_at_once() {
     online.set_state_hook(Arc::new(move |_, blocked| {
         seen.store(blocked, std::sync::atomic::Ordering::SeqCst);
     }));
-    wait_requests(&fixture, "/api/stream/event", 1).await;
+    fixture.requested("/api/stream/event", 1).await;
     let sender = events.lock().unwrap().clone().unwrap();
     let finish = json!({
         "type": "gameFinish",
@@ -1667,7 +1652,7 @@ async fn a_game_finished_on_the_account_stream_ends_the_live_game() {
         _ => None,
     })
     .await;
-    wait_requests(&fixture, "/api/stream/event", 1).await;
+    fixture.requested("/api/stream/event", 1).await;
     let sender = events.lock().unwrap().clone().unwrap();
     let finish = json!({
         "type": "gameFinish",
