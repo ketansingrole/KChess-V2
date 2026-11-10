@@ -8,7 +8,7 @@
 //! 213–246 s; with the 503,000 objects no program named deleted, 89–92 s. A library's objects
 //! are never needed loose: programs name them inside the library's `.rlib`.
 //!
-//! It runs after the sweep of builds newer ones replaced (`superseded.rs`), which goes on every
+//! It runs after the sweep of builds no current build uses (`superseded.rs`), which goes on every
 //! platform.
 //!
 //! So `check-fast`, `check` and `app` first delete every loose object that is neither named by
@@ -36,14 +36,15 @@ const SWEPT: &str = ".kchess-swept";
 /// The longest object path read from the string table.
 const LONGEST_PATH: usize = 4096;
 
-/// Sweeps the build folder: the units newer builds replaced (`superseded.rs`) on every platform,
+/// Sweeps the build folder: the units no current build uses (`superseded.rs`) on every platform,
 /// then on macOS the objects no program uses, saying what went; then the build folder of the
 /// checkout's mutants tree, unless a push is testing in it. With `dry_run`, deletes nothing and
 /// says what would go.
 pub fn build_folder(dry_run: bool) {
     let target = target_folder(std::env::var_os("CARGO_TARGET_DIR"));
-    let mut messages = sweep_all(&target, dry_run, cfg!(target_os = "macos"));
-    messages.extend(idle_mutants_tree(&crate::util::root(), dry_run));
+    let root = crate::util::root();
+    let mut messages = sweep_all(&target, &root, dry_run, cfg!(target_os = "macos"));
+    messages.extend(idle_mutants_tree(&root, dry_run));
     for message in messages {
         say(&message);
     }
@@ -51,9 +52,10 @@ pub fn build_folder(dry_run: bool) {
 
 /// Sweeps the build folder (`target`) of the pre-push hook's mutants tree (`mutants_tree.rs`),
 /// which builds a pushed commit's mutants in place and so replaces units as the checkout's own
-/// build does: the units newer builds replaced, under the same build lock. What to say about it.
+/// build does: the units no current build of the tree (its parent) uses, under the same build
+/// lock. What to say about it.
 pub fn mutants_tree(target: &Path, dry_run: bool) -> Vec<String> {
-    sweep_all(target, dry_run, false)
+    sweep_all(target, target.parent().unwrap_or(target), dry_run, false)
         .into_iter()
         .map(|message| format!("Mutants tree: {message}"))
         .collect()
@@ -66,12 +68,14 @@ fn idle_mutants_tree(checkout: &Path, dry_run: bool) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Sweeps every profile folder in `target`, and its objects when `objects`: what to say about it.
-fn sweep_all(target: &Path, dry_run: bool, objects: bool) -> Vec<String> {
+/// Sweeps every profile folder in `target`, the build folder of the workspace at `workspace`, and
+/// its objects when `objects`: what to say about it.
+fn sweep_all(target: &Path, workspace: &Path, dry_run: bool, objects: bool) -> Vec<String> {
     let folders = deps_folders(target);
+    let targets = crate::superseded::workspace_targets(workspace);
     let (units, unit_bytes) = folders
         .iter()
-        .map(|deps| superseded(deps, dry_run))
+        .map(|deps| superseded(deps, targets.as_ref(), dry_run))
         .fold((0, 0), |(units, bytes), (more, size)| {
             (units + more, bytes + size)
         });
@@ -106,28 +110,32 @@ fn summary(files: usize, bytes: u64, dry_run: bool) -> Option<String> {
     })
 }
 
-/// What a sweep of superseded units says: nothing when it found none.
+/// What a sweep of units no current build uses says: nothing when it found none.
 fn units_summary(units: usize, bytes: u64, dry_run: bool) -> Option<String> {
     let plural = if units == 1 { "" } else { "s" };
     let verb = if dry_run { "Would delete" } else { "Deleted" };
     (units > 0).then(|| {
         format!(
-            "{verb} {units} build{plural} that newer builds replaced ({:.1} GB).",
+            "{verb} {units} build{plural} no current build uses ({:.1} GB).",
             bytes as f64 / 1e9
         )
     })
 }
 
 /// Deletes, under Cargo's build lock, the units of one profile folder (the parent of `deps`)
-/// that newer builds replaced: how many, and their size.
-fn superseded(deps: &Path, dry_run: bool) -> (usize, u64) {
+/// that no current build of the workspace's `targets` uses: how many, and their size.
+fn superseded(
+    deps: &Path,
+    targets: Option<&crate::superseded::Targets>,
+    dry_run: bool,
+) -> (usize, u64) {
     let Some(profile) = deps.parent() else {
         return (0, 0);
     };
     let Some(_lock) = build_lock(profile) else {
         return (0, 0);
     };
-    let plan = crate::superseded::plan(profile);
+    let plan = crate::superseded::plan(profile, targets);
     if dry_run {
         (plan.units, plan.bytes)
     } else {
@@ -420,7 +428,7 @@ mod tests {
     #[test]
     fn every_folder_counts_toward_what_a_sweep_says() {
         let target = tempfile::tempdir().unwrap();
-        assert!(sweep_all(target.path(), false, true).is_empty());
+        assert!(sweep_all(target.path(), target.path(), false, true).is_empty());
         let mut objects = Vec::new();
         for (profile, size) in [("debug", 1_500_000), ("release", 2_000_000)] {
             let deps = target.path().join(profile).join("deps");
@@ -433,9 +441,9 @@ mod tests {
             );
         }
         assert_eq!(
-            sweep_all(target.path(), true, true),
+            sweep_all(target.path(), target.path(), true, true),
             [
-                "Would delete 2 builds that newer builds replaced (3.5 GB).",
+                "Would delete 2 builds no current build uses (3.5 GB).",
                 "Would delete 2 object files no program uses (3 MB).",
             ]
         );
@@ -444,15 +452,54 @@ mod tests {
             "a dry run deletes nothing"
         );
         assert_eq!(
-            sweep_all(target.path(), false, false),
-            ["Deleted 2 builds that newer builds replaced (3.5 GB)."],
+            sweep_all(target.path(), target.path(), false, false),
+            ["Deleted 2 builds no current build uses (3.5 GB)."],
             "objects only where asked"
         );
         assert_eq!(
-            sweep_all(target.path(), false, true),
+            sweep_all(target.path(), target.path(), false, true),
             ["Deleted 2 object files no program uses (3 MB)."]
         );
-        assert!(sweep_all(target.path(), false, true).is_empty());
+        assert!(sweep_all(target.path(), target.path(), false, true).is_empty());
+    }
+
+    #[test]
+    fn a_workspace_loses_the_builds_of_targets_it_no_longer_has() {
+        let workspace = tempfile::tempdir().unwrap();
+        let root = workspace.path();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("tests")).unwrap();
+        std::fs::write(root.join("src.rs"), "").unwrap();
+        std::fs::write(root.join("tests/kept.rs"), "").unwrap();
+        let profile = root.join("target/debug");
+        let deps = profile.join("deps");
+        std::fs::create_dir_all(&deps).unwrap();
+        let json = "{\"features\":\"[]\",\"deps\":[]}";
+        for (folder, stem) in [
+            ("core-0000000000000001", "test-integration-test-gone"),
+            ("core-0000000000000002", "test-integration-test-kept"),
+        ] {
+            crate::superseded::tests::write_unit(&profile, folder, stem, json, 1, 0);
+            let hash = folder.rsplit('-').next().unwrap();
+            let test = std::fs::File::create(deps.join(format!("x-{hash}"))).unwrap();
+            test.set_len(1_500_000_000).unwrap();
+        }
+        assert_eq!(
+            sweep_all(&root.join("target"), root, true, false),
+            ["Would delete 1 build no current build uses (1.5 GB)."]
+        );
+        assert_eq!(
+            sweep_all(&root.join("target"), &root.join("elsewhere"), true, false),
+            Vec::<String>::new(),
+            "without the workspace's targets, every target is kept"
+        );
+        sweep_all(&root.join("target"), root, false, false);
+        assert!(!deps.join("x-0000000000000001").exists());
+        assert!(deps.join("x-0000000000000002").exists());
     }
 
     #[test]
@@ -476,11 +523,11 @@ mod tests {
         drop(held);
         assert_eq!(
             idle_mutants_tree(checkout.path(), true),
-            ["Mutants tree: Would delete 1 build that newer builds replaced (2.0 GB)."]
+            ["Mutants tree: Would delete 1 build no current build uses (2.0 GB)."]
         );
         assert_eq!(
             idle_mutants_tree(checkout.path(), false),
-            ["Mutants tree: Deleted 1 build that newer builds replaced (2.0 GB)."]
+            ["Mutants tree: Deleted 1 build no current build uses (2.0 GB)."]
         );
         assert!(idle_mutants_tree(checkout.path(), false).is_empty());
         assert!(object.exists(), "only the replaced builds");
@@ -500,11 +547,11 @@ mod tests {
         assert_eq!(units_summary(0, 0, true), None);
         assert_eq!(
             units_summary(1, 1_250_000_000, false).as_deref(),
-            Some("Deleted 1 build that newer builds replaced (1.2 GB).")
+            Some("Deleted 1 build no current build uses (1.2 GB).")
         );
         assert_eq!(
             units_summary(277, 10_960_000_000, true).as_deref(),
-            Some("Would delete 277 builds that newer builds replaced (11.0 GB).")
+            Some("Would delete 277 builds no current build uses (11.0 GB).")
         );
     }
 
@@ -700,13 +747,13 @@ mod tests {
         cargo.lock().unwrap();
         crate::superseded::tests::replaced_build(profile.path(), 5);
         assert_eq!(sweep(&deps, false), (0, 0));
-        assert_eq!(superseded(&deps, false), (0, 0));
+        assert_eq!(superseded(&deps, None, false), (0, 0));
         assert!(deps.join("gone-1.a.b.rcgu.o").exists());
         cargo.unlock().unwrap();
         assert_eq!(sweep(&deps, false), (1, 4));
-        assert_eq!(superseded(&deps, true).0, 1, "a dry run counts");
-        assert_eq!(superseded(&deps, false).0, 1);
-        assert_eq!(superseded(&deps, false), (0, 0));
+        assert_eq!(superseded(&deps, None, true).0, 1, "a dry run counts");
+        assert_eq!(superseded(&deps, None, false).0, 1);
+        assert_eq!(superseded(&deps, None, false), (0, 0));
         assert!(!deps.join("gone-1.a.b.rcgu.o").exists());
     }
 
