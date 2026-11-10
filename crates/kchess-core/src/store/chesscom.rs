@@ -47,6 +47,9 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
     Some(match name {
         "accounts" => accounts(db).and_then(as_json),
         "addAccount" => arg(args, 0, "username").and_then(|username: String| {
+            if !current(args, 1) {
+                return Err(cancelled());
+            }
             add_account(db, &username)?;
             accounts(db).and_then(as_json)
         }),
