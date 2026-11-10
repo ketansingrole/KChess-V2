@@ -12,6 +12,7 @@ shakmaty.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 memchr.workspace = true
+kchess-hack = { version = "0.1", path = "../kchess-hack" }
 
 [dev-dependencies]
 regex = { version = "1" }

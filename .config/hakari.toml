@@ -1,0 +1,45 @@
+# `cargo hakari` (cargo install cargo-hakari) keeps crates/kchess-hack: one feature set for every
+# dependency, whichever packages a build selects. Without it `cargo test -p kchess-core` and
+# `cargo test -p kchess-service` resolve tokio, serde and getrandom with different features, so
+# each compiled the core and its tests again under a new hash, and target/ kept every copy.
+# `cargo xtask check` refuses an outdated hack; after a dependency change run
+# `cargo hakari generate` (and `cargo hakari manage-deps` for a new workspace package).
+hakari-package = "kchess-hack"
+dep-format-version = "4"
+resolver = "2"
+# CI's and the release builds' platforms.
+platforms = [
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
+
+
+# Only the dependencies of the headless packages (the core, the service, the CLI, the speech
+# helper and their libraries) go in, so they build nothing of the app's or xtask's own.
+# xtask's test `the_hack_holds_only_headless_dependencies` names any other to add here.
+[final-excludes]
+third-party = [
+    { name = "arraydeque" },
+    { name = "gpui-base" },
+    { name = "gpui-component" },
+    { name = "gpui-kit" },
+    { name = "gpui-pre", path = "vendor/gpui-pre" },
+    { name = "gpui-pre-apple", path = "vendor/gpui-pre-apple" },
+    { name = "gpui-pre-collections" },
+    { name = "gpui-pre-http-client" },
+    { name = "gpui-pre-macos", path = "vendor/gpui-pre-macos" },
+    { name = "gpui-pre-platform" },
+    { name = "gpui-pre-wgpu" },
+    { name = "gpui-pre-windows", path = "vendor/gpui-pre-windows" },
+    { name = "image" },
+    { name = "objc2-core-foundation" },
+    { name = "phf_shared" },
+    { name = "read-fonts" },
+    { name = "rust-i18n-support" },
+    { name = "semver" },
+    { name = "strict-num" },
+    { name = "tiny-skia" },
+    { name = "tiny-skia-path" },
+    { name = "windows" },
+]

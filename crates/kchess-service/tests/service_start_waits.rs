@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use kchess_service::protocol::{self, Frame, RefuseReason, read_frame, write_frame};
 use kchess_service::{
-    Capability, ConnectError, Hello, ServiceConfig, Start, connect_or_start, discovery,
+    Capability, ConnectError, Hello, ServiceConfig, Start, connect_or_start,
+    connect_or_start_within, discovery,
 };
 
 const SCRIPT: &str = "#!/bin/sh
@@ -44,14 +45,16 @@ fn hello() -> Hello {
     }
 }
 
-#[tokio::test(start_paused = true)]
+/// A short deadline in real time: the client's wait is the same at any length.
+#[tokio::test]
 async fn a_core_that_never_starts_fails_at_the_deadline() {
     let profile = tempfile::tempdir().expect("profile");
     let start = start();
-    let started = tokio::time::Instant::now();
+    let deadline = Duration::from_millis(500);
+    let started = std::time::Instant::now();
     let outcome = tokio::time::timeout(
-        Duration::from_secs(60),
-        connect_or_start(profile.path(), &hello(), &start),
+        Duration::from_secs(20),
+        connect_or_start_within(profile.path(), &hello(), &start, deadline),
     )
     .await
     .expect("gave up within the start deadline");
@@ -59,7 +62,7 @@ async fn a_core_that_never_starts_fails_at_the_deadline() {
         panic!("a core that never starts is an error");
     };
     assert_eq!(message, "The KChess core did not start.");
-    assert!(started.elapsed() >= Duration::from_secs(30));
+    assert!(started.elapsed() >= deadline);
 }
 
 /// A stand-in core of another release, used by nobody: it refuses with `sole`, as a real one

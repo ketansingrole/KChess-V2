@@ -13,6 +13,7 @@ serde.workspace = true
 shakmaty.workspace = true
 serde_json = { workspace = true }
 getrandom = "0.4"
+kchess-hack = { version = "0.1", path = "../kchess-hack" }
 
 [lints]
 workspace = true

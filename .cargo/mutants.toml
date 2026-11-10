@@ -76,6 +76,12 @@ exclude_re = [
     # `coverage_args`, `with_dependents`, `scope_of`, `select`, `merge_base`). CI's check job
     # runs them and its log shows each step. `fast` only runs what `select` chose.
     'tooling/xtask/src/check\.rs:.*: replace (format|clippy_workspace|lints|tests|fast|full|full_with|check) -> Result with ',
+    # Commands over the repository's own files and `cargo metadata`, which pass there, so a test
+    # sees the same `Ok` from them as from their mutants; what they decide is tested: the hack's
+    # `dependencies`, `outside` and `packages`, the notices' `direct_dependencies` and `names`,
+    # the license file's `shipped_crates` and `license_text`. `check` runs the first two.
+    'tooling/xtask/src/hack\.rs:.*: replace check -> Result with ',
+    'tooling/xtask/src/licenses\.rs:.*: replace (check_notices|write) -> Result with ',
     'tooling/xtask/src/check\.rs:.*: .* in fast$',
     # `check`'s entry and its tests without cargo-llvm-cov: whether it leaves out the app's tests
     # is `without_app_tests` and `uncovered`, tested; CI's check job runs the rest.

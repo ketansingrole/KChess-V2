@@ -41,15 +41,18 @@ pub fn names(notices: &str, name: &str) -> bool {
     false
 }
 
-/// `notices`: every direct dependency of a shipped KChess crate is attributed.
-pub fn check_notices() -> Result {
-    let notices = std::fs::read_to_string(root().join("THIRD_PARTY_NOTICES.md"))
-        .map_err(|cause| format!("Cannot read THIRD_PARTY_NOTICES.md: {cause}"))?;
-    let metadata = metadata(true)?;
+/// Workspace packages whose dependencies ship in no program: the tooling, and the workspace hack
+/// (`crates/kchess-hack`), which every package depends on only to build its dependencies with one
+/// feature set; its own dependencies are linked only where a package uses them.
+const NOT_SHIPPED: [&str; 2] = ["xtask", "kchess-hack"];
+
+/// The registry and git dependencies that shipped workspace packages name directly, for their
+/// programs or libraries (not their tests or build scripts), from `cargo metadata --no-deps`.
+fn direct_dependencies(metadata: &Value) -> BTreeSet<String> {
     let mut dependencies = BTreeSet::new();
     for package in metadata["packages"].as_array().into_iter().flatten() {
         let name = package["name"].as_str().unwrap_or_default();
-        if name == "xtask" {
+        if NOT_SHIPPED.contains(&name) {
             continue;
         }
         for dependency in package["dependencies"].as_array().into_iter().flatten() {
@@ -58,6 +61,14 @@ pub fn check_notices() -> Result {
             }
         }
     }
+    dependencies
+}
+
+/// `notices`: every direct dependency of a shipped KChess crate is attributed.
+pub fn check_notices() -> Result {
+    let notices = std::fs::read_to_string(root().join("THIRD_PARTY_NOTICES.md"))
+        .map_err(|cause| format!("Cannot read THIRD_PARTY_NOTICES.md: {cause}"))?;
+    let dependencies = direct_dependencies(&metadata(true)?);
     let missing: Vec<&String> = dependencies
         .iter()
         .filter(|name| !names(&notices, name))
@@ -176,10 +187,10 @@ fn license_text(package: &Value) -> Result<String> {
     ))
 }
 
-/// `licenses <file>`: the license texts of every crate compiled into a shipped program (for any
-/// platform); proc-macros and build scripts run only at compile time and are left out.
-pub fn write(path: &Path) -> Result {
-    let metadata = metadata(false)?;
+/// The third-party crates compiled into a shipped program (for any platform), sorted by name and
+/// version, from `cargo metadata`'s resolved graph: their runtime dependencies, not proc-macros,
+/// build scripts' or tests', nor what only the workspace hack names.
+fn shipped_crates(metadata: &Value) -> Vec<&Value> {
     let packages: BTreeMap<&str, &Value> = metadata["packages"]
         .as_array()
         .into_iter()
@@ -229,7 +240,10 @@ pub fn write(path: &Path) -> Result {
                             .any(|kind| kind == "proc-macro")
                     })
             });
-            if runtime && !proc_macro {
+            let hack = packages.get(target).is_some_and(|package| {
+                NOT_SHIPPED.contains(&package["name"].as_str().unwrap_or_default())
+            });
+            if runtime && !proc_macro && !hack {
                 queue.push(target);
             }
         }
@@ -246,6 +260,14 @@ pub fn write(path: &Path) -> Result {
             package["version"].as_str().unwrap_or_default().to_string(),
         )
     });
+    crates
+}
+
+/// `licenses <file>`: the license texts of every crate compiled into a shipped program (for any
+/// platform); proc-macros and build scripts run only at compile time and are left out.
+pub fn write(path: &Path) -> Result {
+    let metadata = metadata(false)?;
+    let crates = shipped_crates(&metadata);
     let mut texts: Vec<(String, Vec<String>)> = Vec::new();
     for package in &crates {
         let text = license_text(package)?;
@@ -293,7 +315,8 @@ pub fn write(path: &Path) -> Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{MIT, license_text, names, offers};
+    use super::{MIT, direct_dependencies, license_text, names, offers, shipped_crates};
+    use std::collections::BTreeSet;
 
     /// A crate's own license files come first; without them, the text of a license it offers.
     #[test]
@@ -346,6 +369,64 @@ mod tests {
         assert!(offers("Apache-2.0/MIT", "MIT"));
         assert!(!offers("MIT-0", "MIT"));
         assert!(!offers("GPL-3.0-or-later", "MIT"));
+    }
+
+    #[test]
+    fn notices_name_what_shipped_packages_use_directly() {
+        let metadata = serde_json::json!({ "packages": [
+            { "name": "kchess-core", "dependencies": [
+                { "name": "tokio", "kind": null, "path": null },
+                { "name": "tempfile", "kind": "dev", "path": null },
+                { "name": "cc", "kind": "build", "path": null },
+                { "name": "kchess-domain", "kind": null, "path": "/r/crates/kchess-domain" },
+            ] },
+            { "name": "kchess-hack", "dependencies": [
+                { "name": "proptest", "kind": null, "path": null },
+            ] },
+            { "name": "xtask", "dependencies": [
+                { "name": "image", "kind": null, "path": null },
+            ] },
+        ] });
+        assert_eq!(
+            direct_dependencies(&metadata),
+            BTreeSet::from(["tokio".to_string()])
+        );
+    }
+
+    #[test]
+    fn the_license_file_follows_what_shipped_programs_link() {
+        let package = |id: &str, name: &str, source: Option<&str>, kind: &str| {
+            serde_json::json!({ "id": id, "name": name, "version": "1.0.0", "source": source,
+                "targets": [{ "kind": [kind] }] })
+        };
+        let registry = Some("registry+https://github.com/rust-lang/crates.io-index");
+        let dep = |pkg: &str, kind: Option<&str>| serde_json::json!({ "pkg": pkg, "dep_kinds": [{ "kind": kind }] });
+        let metadata = serde_json::json!({
+            "packages": [
+                package("cli", "kchess-cli", None, "bin"),
+                package("hack", "kchess-hack", None, "lib"),
+                package("tokio", "tokio", registry, "lib"),
+                package("bytes", "bytes", registry, "lib"),
+                package("macros", "tokio-macros", registry, "proc-macro"),
+                package("cc", "cc", registry, "lib"),
+                package("tempfile", "tempfile", registry, "lib"),
+                package("proptest", "proptest", registry, "lib"),
+                package("unused", "unused", registry, "lib"),
+            ],
+            "resolve": { "nodes": [
+                { "id": "cli", "deps": [
+                    dep("tokio", None), dep("hack", None), dep("cc", Some("build")),
+                    dep("tempfile", Some("dev")), dep("macros", None),
+                ] },
+                { "id": "tokio", "deps": [dep("bytes", None)] },
+                { "id": "hack", "deps": [dep("proptest", None)] },
+            ] },
+        });
+        let names: Vec<&str> = shipped_crates(&metadata)
+            .iter()
+            .map(|package| package["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["bytes", "tokio"]);
     }
 
     #[test]

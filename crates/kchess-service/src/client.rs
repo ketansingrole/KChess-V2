@@ -336,17 +336,27 @@ pub async fn connect_or_start(
     hello: &Hello,
     start: &Start,
 ) -> Result<(Client, mpsc::UnboundedReceiver<ClientEvent>), ConnectError> {
+    connect_or_start_within(profile, hello, start, START_DEADLINE).await
+}
+
+/// `connect_or_start`, giving a core it starts (or a closing one it waits for) `wait` to be ready.
+pub async fn connect_or_start_within(
+    profile: &Path,
+    hello: &Hello,
+    start: &Start,
+    wait: Duration,
+) -> Result<(Client, mpsc::UnboundedReceiver<ClientEvent>), ConnectError> {
     match Client::connect(profile, hello).await {
         Err(ConnectError::NotRunning) => {}
         Err(ConnectError::Refused {
             reason: RefuseReason::Version,
             sole: true,
             ..
-        }) => wait_until_gone(profile).await,
+        }) => wait_until_gone(profile, wait).await,
         other => return other,
     }
     launch(profile, start)?;
-    let deadline = tokio::time::Instant::now() + START_DEADLINE;
+    let deadline = tokio::time::Instant::now() + wait;
     let not_started = || ConnectError::Failed("The KChess core did not start.".into());
     loop {
         // The start deadline bounds each attempt too, not only the waits between them.
@@ -362,8 +372,8 @@ pub async fn connect_or_start(
 }
 
 /// Waits for a closing core to release the profile.
-async fn wait_until_gone(profile: &Path) {
-    let deadline = tokio::time::Instant::now() + START_DEADLINE;
+async fn wait_until_gone(profile: &Path, wait: Duration) {
+    let deadline = tokio::time::Instant::now() + wait;
     while discovery::read_info(profile).is_some() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(RETRY).await;
     }

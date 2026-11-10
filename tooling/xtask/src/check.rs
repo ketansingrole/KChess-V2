@@ -255,6 +255,7 @@ fn full_with(app: bool) -> Result {
     crate::sweep::objects();
     step("format and lints", lints)?;
     step("notices", crate::licenses::check_notices)?;
+    step("workspace hack", crate::hack::check)?;
     step("icons", crate::icons::check)?;
     step("release metadata", crate::release::verify)?;
     step("tests", || tests(app))?;
@@ -414,6 +415,7 @@ pub fn fast() -> Result {
     );
     if touches_dependencies(&files) {
         step("notices", crate::licenses::check_notices)?;
+        step("workspace hack", crate::hack::check)?;
     }
     let scopes: Vec<Scope> = files
         .iter()
