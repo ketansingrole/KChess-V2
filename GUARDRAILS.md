@@ -36,7 +36,9 @@ app's tests on macOS and Windows before it lands; run `check-fast` before openin
 refuse direct pushes to `main`: a pull request merges once CI's `ci-passed` check is green. The
 check is `cargo fmt --check`, clippy over every target with
 warnings denied (and `unwrap`/`expect` denied in libraries and shipped binaries), the notices
-check, the release metadata, and every test, under the coverage gate when `cargo-llvm-cov` is
+check, the workspace hack (`crates/kchess-hack`: one feature set for every dependency, whichever
+packages a command selects; after a dependency change run `cargo hakari generate`, with
+`cargo install cargo-hakari`), the release metadata, and every test, under the coverage gate when `cargo-llvm-cov` is
 installed. Packaging changes also need `cargo xtask package` on the platform they touch. CI runs
 `check`, `cargo deny`, and the app's tests on macOS, Windows and Linux. It also packages for macOS
 and Linux, builds the Snap and runs the Windows upgrade workflow, which packages for Windows, on a
