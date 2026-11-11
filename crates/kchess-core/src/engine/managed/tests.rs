@@ -445,16 +445,12 @@ async fn installs_the_verified_release_and_records_its_version() {
     assert_eq!(mode & 0o777, 0o755);
     assert!(!engine.join(format!("{EXE}.pending")).exists());
     assert_eq!(*hits.lock().unwrap(), ["/release", "/asset"]);
+    // The release check, then the download: one request and its bytes each.
     let usage = host.usage_events();
-    assert_eq!(usage.first().unwrap()["requests"], 1);
-    assert_eq!(usage.last().unwrap()["bytes"], size as u64);
-    assert_eq!(
-        usage
-            .iter()
-            .map(|u| u["bytes"].as_u64().unwrap())
-            .sum::<u64>(),
-        size as u64
-    );
+    assert_eq!(usage.len(), 2);
+    assert!(usage.iter().all(|u| u["requests"] == 1));
+    assert!(usage[0]["bytes"].as_u64().unwrap() > 0);
+    assert_eq!(usage[1]["bytes"], size as u64);
 }
 
 // The release is a Linux archive whose engine is a shell script.
@@ -905,7 +901,7 @@ fn zip_archives_extract_named_files_and_directories() {
     )
     .unwrap();
     let out = root.path().join("out");
-    extract(ArchiveKind::Zip, &archive, &out).unwrap();
+    extract(ArchiveKind::Zip, &archive, &out, None).unwrap();
     assert_eq!(
         std::fs::read(out.join("stockfish/bin/stockfish.exe")).unwrap(),
         b"engine"
@@ -933,7 +929,7 @@ fn zip_archives_refuse_traversal_absolute_paths_and_links() {
     for (index, (bytes, expected)) in cases.iter().enumerate() {
         std::fs::write(&archive, bytes).unwrap();
         let out = root.path().join(format!("out{index}"));
-        let error = extract(ArchiveKind::Zip, &archive, &out).unwrap_err();
+        let error = extract(ArchiveKind::Zip, &archive, &out, None).unwrap_err();
         assert_eq!(error.message, *expected);
     }
     assert!(!root.path().join("escape").exists());
@@ -946,15 +942,6 @@ fn archive_names_select_the_format_case_insensitively() {
     assert_eq!(archive_kind("a.TGZ"), Some(ArchiveKind::TarGz));
     assert_eq!(archive_kind("a.tar"), Some(ArchiveKind::Tar));
     assert_eq!(archive_kind("a.7z"), None);
-}
-
-#[test]
-fn safe_relative_keeps_only_normal_components() {
-    assert_eq!(safe_relative("./a/b").unwrap(), Path::new("a/b"));
-    assert!(safe_relative("../a").is_err());
-    assert!(safe_relative("a/../../b").is_err());
-    assert!(safe_relative("/etc/passwd").is_err());
-    assert!(safe_relative("a\\..\\b").is_err());
 }
 
 // --- Handoff, cancellation and deadlines ---
@@ -1044,10 +1031,8 @@ async fn a_cancelled_install_fails_as_an_abort() {
     let (base, _hits) = serve(|_| vec![Route("/release", 200, release("sf_17", vec![]))]).await;
     let host = RecordingHost::default();
     let dir = tempfile::tempdir().unwrap();
-    let (cancel, receiver) = watch::channel(false);
-    cancel.send(true).unwrap();
-    let mut location = location(dir.path(), &base);
-    location.cancel = Some(receiver);
+    let location = location(dir.path(), &base);
+    location.cancel.cancel();
     let error = install_managed_engine(&host, &location).await.unwrap_err();
     assert!(error.aborted);
     assert_eq!(error.message, "This operation was aborted");

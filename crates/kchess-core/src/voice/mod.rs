@@ -12,18 +12,20 @@
 use std::fs::{self, File};
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use futures_util::FutureExt;
 use futures_util::future::{BoxFuture, Shared};
+use kchess_contracts::types::UsageKind;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
+use tokio_util::sync::CancellationToken;
 
 pub mod recognizer;
 
-use crate::archive::{self, Member};
+use crate::archive::{self, Refusal};
+use crate::download;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 
@@ -170,7 +172,6 @@ struct Inner {
     directory: PathBuf,
     archive: Archive,
     model: VoiceModel,
-    client: reqwest::Client,
     state: Mutex<State>,
 }
 
@@ -187,19 +188,12 @@ impl VoiceModelCache {
         archive: Archive,
         model: VoiceModel,
     ) -> VoiceModelCache {
-        let client = reqwest::Client::builder()
-            .user_agent(crate::USER_AGENT)
-            // Byte-exact: the archive check and the progress total are of the file as published.
-            .no_gzip()
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
         VoiceModelCache {
             inner: Arc::new(Inner {
                 host,
                 directory,
                 archive,
                 model,
-                client,
                 state: Mutex::new(State::default()),
             }),
         }
@@ -516,66 +510,53 @@ impl VoiceModelCache {
         }
     }
 
+    /// Downloads the zip. The preparation has no caller to cancel it (callers share it and may
+    /// leave), so only its deadline ends it.
     async fn download(&self, url: &str, zip: &Path) -> Result<u64> {
-        let deadline = std::time::Instant::now() + DOWNLOAD_TIMEOUT;
-        let client = &self.inner.client;
-        let response = crate::download::send_retrying(|| client.get(url), Some(deadline))
-            .await
-            .map_err(|cause| CoreError::new(error_text(&cause)))?;
-        if !response.status().is_success() {
-            return Err(CoreError::new(format!(
-                "Voice model download failed: HTTP {}.",
-                response.status().as_u16()
-            )));
-        }
-        let total = response.content_length().filter(|total| *total > 0);
-        if total.is_some_and(|total| total > MAX_DOWNLOAD_BYTES) {
-            return Err(CoreError::new("Voice model download is too large."));
-        }
+        let client = download::client(None)?;
+        let limits = download::Limits {
+            max_bytes: MAX_DOWNLOAD_BYTES,
+            deadline: Some(std::time::Instant::now() + DOWNLOAD_TIMEOUT),
+        };
+        let never = CancellationToken::new();
+        let usage = download::Usage {
+            host: &*self.inner.host,
+            kind: UsageKind::Other,
+        };
+        let mut body =
+            download::open(&client, || client.get(url), limits, &never, usage, &WORDING).await?;
         let mut file = tokio::fs::File::create(zip)
             .await
             .map_err(|cause| io_error("Could not stage the voice model", cause))?;
-        let mut received = 0_u64;
-        // A dropped connection picks up at the byte it reached instead of starting over.
-        let mut body =
-            crate::download::Resumable::new(&self.inner.client, response, Some(deadline));
-        while let Some(chunk) = body
-            .chunk()
-            .await
-            .map_err(|cause| CoreError::new(error_text(&cause)))?
-        {
-            received += chunk.len() as u64;
-            if received > MAX_DOWNLOAD_BYTES {
-                return Err(CoreError::new("Voice model download is too large."));
-            }
+        while let Some(chunk) = body.next().await? {
             file.write_all(&chunk)
                 .await
                 .map_err(|cause| io_error("Could not stage the voice model", cause))?;
             self.report(Progress {
                 phase: Phase::Downloading,
-                received,
-                total,
+                received: body.received(),
+                total: body.total(),
             });
         }
         file.flush()
             .await
             .map_err(|cause| io_error("Could not stage the voice model", cause))?;
-        Ok(received)
+        Ok(body.received())
     }
 
     /// Verify and unpack the zip on a blocking thread. On timeout the work is told to stop at its
     /// next member and awaited, so the staging folder is only removed once nothing writes to it.
     async fn prepare_archive(&self, zip: &Path, staging: &Path) -> Result<Marker> {
-        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel = CancellationToken::new();
         let (zip_path, staging_path) = (zip.to_path_buf(), staging.to_path_buf());
         let model = self.inner.model.clone();
-        let flag = Arc::clone(&cancel);
+        let flag = cancel.clone();
         let mut work =
             tokio::task::spawn_blocking(move || build(&zip_path, &staging_path, &model, &flag));
         let outcome = match tokio::time::timeout(PREPARE_TIMEOUT, &mut work).await {
             Ok(joined) => joined.map_err(|_| CoreError::new(STOPPED_MESSAGE))?,
             Err(_) => {
-                cancel.store(true, Ordering::SeqCst);
+                cancel.cancel();
                 let _ = work.await;
                 Err(CoreError::new("Voice model preparation timed out."))
             }
@@ -675,6 +656,13 @@ fn io_error(context: &str, cause: io::Error) -> CoreError {
     CoreError::new(format!("{context}: {cause}"))
 }
 
+/// How the model download words its failures.
+const WORDING: download::Wording = download::Wording {
+    network: error_text,
+    status: |status| format!("Voice model download failed: HTTP {status}."),
+    too_large: "Voice model download is too large.",
+};
+
 /// The message of a failed request, with its causes beneath it. The server's own response text
 /// is never included.
 fn error_text(cause: &reqwest::Error) -> String {
@@ -694,7 +682,12 @@ fn error_text(cause: &reqwest::Error) -> String {
 
 /// The blocking half of preparation: check the zip's digest, unpack it under the model's folder
 /// name in `staging/unpacked`, and describe every file of the result.
-fn build(zip: &Path, staging: &Path, model: &VoiceModel, cancel: &AtomicBool) -> Result<Marker> {
+fn build(
+    zip: &Path,
+    staging: &Path,
+    model: &VoiceModel,
+    cancel: &CancellationToken,
+) -> Result<Marker> {
     let digest = archive::sha256_file(zip)
         .map_err(|cause| io_error("Could not read the voice model archive", cause))?;
     if digest != model.sha256 {
@@ -711,45 +704,13 @@ fn build(zip: &Path, staging: &Path, model: &VoiceModel, cancel: &AtomicBool) ->
 }
 
 /// The blocking half of a migration: unpack the files under `name/` of an earlier release's
-/// `model.tar.gz` into `staging/unpacked` and describe them. Links and members outside the folder
-/// fail, as they do for the zip.
+/// `model.tar.gz` into `staging/unpacked` and describe them.
 fn unpack_legacy(archive: &Path, staging: &Path, model: &VoiceModel) -> Result<Marker> {
     let extracted = staging.join("unpacked");
-    fs::create_dir_all(&extracted)
-        .map_err(|cause| io_error("Could not unpack the voice model", cause))?;
-    let file = File::open(archive)
-        .map_err(|cause| io_error("Could not read the voice model archive", cause))?;
-    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(BufReader::new(file)));
-    let folder = format!("{}/", model.name);
-    let mut budget = MAX_EXTRACTED_BYTES;
-    let mut files = 0_usize;
-    let invalid = |_| CoreError::new(INVALID_MESSAGE);
-    for entry in tar.entries().map_err(invalid)? {
-        let mut entry = entry.map_err(invalid)?;
-        let member = entry
-            .path()
-            .map_err(invalid)?
-            .to_string_lossy()
-            .into_owned();
-        let kind = entry.header().entry_type();
-        if kind.is_dir() {
-            continue;
-        }
-        if !kind.is_file() || !member.starts_with(&folder) {
-            return Err(CoreError::new(INVALID_MESSAGE));
-        }
-        let relative =
-            archive::safe_relative(&member).ok_or_else(|| CoreError::new(INVALID_MESSAGE))?;
-        match archive::write_member(&extracted, &relative, &mut entry, &mut budget)
-            .map_err(|cause| io_error("Could not unpack the voice model", cause))?
-        {
-            Member::Written => files += 1,
-            Member::OverBudget => return Err(CoreError::new(INVALID_MESSAGE)),
-        }
-    }
-    if files == 0 {
-        return Err(CoreError::new("Voice model archive is empty."));
-    }
+    let reader = |file| flate2::read::GzDecoder::new(BufReader::new(file));
+    unpack(archive, &extracted, &model.name, None, |file, to| {
+        archive::unpack_tar(reader(file), to)
+    })?;
     let files = describe(&extracted.join(&model.name))
         .map_err(|cause| io_error("Could not record the voice model", cause))?;
     Ok(Marker {
@@ -758,52 +719,42 @@ fn unpack_legacy(archive: &Path, staging: &Path, model: &VoiceModel) -> Result<M
     })
 }
 
-/// Unpack the files under `name/` into `root`. Every member must be inside that folder, and links,
-/// unsafe paths and archives that expand beyond the budget fail with the invalid-archive message.
-/// Directory entries are created implicitly from the files beneath them.
-fn extract(zip: &Path, root: &Path, name: &str, cancel: &AtomicBool) -> Result<()> {
+/// Unpack the zip's files under `name/` into `root`.
+fn extract(zip: &Path, root: &Path, name: &str, cancel: &CancellationToken) -> Result<()> {
+    unpack(zip, root, name, Some(cancel), |file, to| {
+        archive::unpack_zip(BufReader::new(file), to)
+    })
+}
+
+/// Unpack `source` with `unpack` into `root`. Every file must be inside `name/`; links, unsafe
+/// paths and archives that expand beyond the budget fail with the invalid-archive message.
+fn unpack(
+    source: &Path,
+    root: &Path,
+    name: &str,
+    cancel: Option<&CancellationToken>,
+    unpack: impl FnOnce(File, &archive::Unpack) -> std::result::Result<usize, Refusal>,
+) -> Result<()> {
     fs::create_dir_all(root)
         .map_err(|cause| io_error("Could not unpack the voice model", cause))?;
-    let file = File::open(zip)
+    let file = File::open(source)
         .map_err(|cause| io_error("Could not read the voice model archive", cause))?;
-    let mut archive =
-        zip::ZipArchive::new(BufReader::new(file)).map_err(|_| CoreError::new(INVALID_MESSAGE))?;
     let folder = format!("{name}/");
-    let mut budget = MAX_EXTRACTED_BYTES;
-    let mut files = 0_usize;
-    for index in 0..archive.len() {
-        if cancel.load(Ordering::SeqCst) {
-            return Err(CoreError::aborted("Voice model preparation was cancelled."));
+    let to = archive::Unpack {
+        root,
+        budget: MAX_EXTRACTED_BYTES,
+        prefix: Some(&folder),
+        cancel,
+    };
+    match unpack(file, &to) {
+        Ok(0) => Err(CoreError::new("Voice model archive is empty.")),
+        Ok(_) => Ok(()),
+        Err(Refusal::Cancelled) => {
+            Err(CoreError::aborted("Voice model preparation was cancelled."))
         }
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|_| CoreError::new(INVALID_MESSAGE))?;
-        if entry.unix_mode().is_some_and(archive::is_symlink_mode) {
-            return Err(CoreError::new(INVALID_MESSAGE));
-        }
-        let member = entry
-            .name()
-            .map_err(|_| CoreError::new(INVALID_MESSAGE))?
-            .into_owned();
-        if !member.starts_with(&folder) {
-            return Err(CoreError::new(INVALID_MESSAGE));
-        }
-        if entry.is_dir() {
-            continue;
-        }
-        let relative =
-            archive::safe_relative(&member).ok_or_else(|| CoreError::new(INVALID_MESSAGE))?;
-        match archive::write_member(root, &relative, &mut entry, &mut budget)
-            .map_err(|cause| io_error("Could not unpack the voice model", cause))?
-        {
-            Member::Written => files += 1,
-            Member::OverBudget => return Err(CoreError::new(INVALID_MESSAGE)),
-        }
+        Err(Refusal::Io(cause)) => Err(io_error("Could not unpack the voice model", cause)),
+        Err(_) => Err(CoreError::new(INVALID_MESSAGE)),
     }
-    if files == 0 {
-        return Err(CoreError::new("Voice model archive is empty."));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

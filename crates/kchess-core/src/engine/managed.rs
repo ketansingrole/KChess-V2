@@ -12,7 +12,7 @@ mod tests;
 use std::collections::HashMap;
 use std::fs;
 use std::future::Future;
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -22,10 +22,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{Mutex as AsyncMutex, watch};
+use tokio::sync::Mutex as AsyncMutex;
+use tokio_util::sync::CancellationToken;
 
 use super::uci::{EngineHub, UciController};
-use crate::archive::{self, Member, hex};
+use crate::archive::{self, Refusal, hex};
+use crate::download;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 
@@ -191,8 +193,8 @@ pub struct ManagedLocation {
     pub target: Target,
     /// Suspends engine owners while the verified replacement is published.
     pub handoff: Option<Arc<dyn EngineHandoff>>,
-    /// Cancels a running install or delete (`true` cancels).
-    pub cancel: Option<watch::Receiver<bool>>,
+    /// Cancels a running install.
+    pub cancel: CancellationToken,
     /// How long the handoff may take to stop the owners before the install fails.
     pub exit_deadline: Duration,
     /// A release fixed in source (`SHIPPED`): only its tag and its digests are accepted.
@@ -207,7 +209,7 @@ impl ManagedLocation {
             github_token: None,
             target: Target::current(),
             handoff: None,
-            cancel: None,
+            cancel: CancellationToken::new(),
             exit_deadline: DEFAULT_EXIT_DEADLINE,
             pinned: None,
         }
@@ -403,12 +405,8 @@ async fn install(
         ));
     }
     let dir = location.dir.clone();
-    let mut cancel = location.cancel.clone();
-    let client = reqwest::Client::builder()
-        .user_agent(crate::USER_AGENT)
-        // Byte-exact: the digest and the progress total are of the file as published.
-        .no_gzip()
-        .build()
+    let cancel = &location.cancel;
+    let client = download::client(None)
         .map_err(|_| CoreError::new("Could not start the Stockfish download."))?;
 
     let release = fetch_release(
@@ -416,7 +414,7 @@ async fn install(
         &client,
         &location.release_url,
         location.github_token.as_deref(),
-        &mut cancel,
+        cancel,
     )
     .await?;
     let current = managed_engine(host, &dir).await;
@@ -483,10 +481,7 @@ async fn install(
         .tempdir()
         .map_err(|cause| CoreError::new(format!("Could not create a staging folder: {cause}")))?;
     let archive = staging.path().join(&asset.name);
-    let mut received = 0_u64;
-    let downloaded = download_archive(&client, &url, &archive, &mut cancel, &mut received).await;
-    usage(host, 0, received);
-    let digest = downloaded?;
+    let (digest, received) = download_archive(host, &client, &url, &archive, cancel).await?;
     if received as f64 != size {
         return Err(CoreError::new("Stockfish download was incomplete."));
     }
@@ -578,14 +573,49 @@ struct Release {
     assets: Vec<ReleaseAsset>,
 }
 
+/// How the release check words its failures.
+const RELEASE_WORDING: download::Wording = download::Wording {
+    network: |cause| {
+        if cause.is_timeout() {
+            "Could not check Stockfish releases (timed out).".into()
+        } else {
+            "Could not check Stockfish releases (network error).".into()
+        }
+    },
+    status: |status| format!("Could not check Stockfish releases ({status})."),
+    too_large: "Invalid Stockfish release metadata.",
+};
+
+/// How the download words its failures.
+const DOWNLOAD_WORDING: download::Wording = download::Wording {
+    network: |cause| {
+        if cause.is_timeout() {
+            "Stockfish download timed out.".into()
+        } else {
+            "Stockfish download failed (network error).".into()
+        }
+    },
+    status: |status| format!("Stockfish download failed ({status})."),
+    too_large: "Stockfish download is unexpectedly large.",
+};
+
+/// The most the release metadata may take.
+const MAX_RELEASE_BYTES: u64 = 10 * 1024 * 1024;
+
+fn usage(host: &dyn Host) -> download::Usage<'_> {
+    download::Usage {
+        host,
+        kind: kchess_contracts::types::UsageKind::Other,
+    }
+}
+
 async fn fetch_release(
     host: &dyn Host,
     client: &reqwest::Client,
     url: &str,
     token: Option<&str>,
-    cancel: &mut Option<watch::Receiver<bool>>,
+    cancel: &CancellationToken,
 ) -> Result<Release> {
-    let deadline = std::time::Instant::now() + RELEASE_TIMEOUT;
     let request = || {
         let request = client
             .get(url)
@@ -595,29 +625,22 @@ async fn fetch_release(
             None => request,
         }
     };
-    // A brief GitHub failure (a 504) is asked again rather than failing the install.
-    let response = until_cancelled(cancel, async {
-        crate::download::send_retrying(request, Some(deadline))
-            .await
-            .map_err(|cause| {
-                CoreError::new(if cause.is_timeout() {
-                    "Could not check Stockfish releases (timed out)."
-                } else {
-                    "Could not check Stockfish releases (network error)."
-                })
-            })
-    })
+    let limits = download::Limits {
+        max_bytes: MAX_RELEASE_BYTES,
+        deadline: Some(std::time::Instant::now() + RELEASE_TIMEOUT),
+    };
+    let body = download::open(
+        client,
+        request,
+        limits,
+        cancel,
+        usage(host),
+        &RELEASE_WORDING,
+    )
+    .await?
+    .bytes()
     .await?;
-    usage(host, 1, 0);
-    if !response.status().is_success() {
-        return Err(CoreError::new(format!(
-            "Could not check Stockfish releases ({}).",
-            response.status().as_u16()
-        )));
-    }
-    let value: Value = response
-        .json()
-        .await
+    let value: Value = serde_json::from_slice(&body)
         .map_err(|_| CoreError::new("Invalid Stockfish release metadata."))?;
     let tag = value.get("tag_name").and_then(Value::as_str);
     let assets = value.get("assets").and_then(Value::as_array);
@@ -634,55 +657,32 @@ async fn fetch_release(
     })
 }
 
-/// Stream the download into `archive`, hashing as it goes. `received` counts the bytes kept.
+/// Streams the download into `archive`, hashing as it goes: its digest and the bytes kept.
 async fn download_archive(
+    host: &dyn Host,
     client: &reqwest::Client,
     url: &str,
     archive: &Path,
-    cancel: &mut Option<watch::Receiver<bool>>,
-    received: &mut u64,
-) -> Result<String> {
-    let deadline = std::time::Instant::now() + DOWNLOAD_TIMEOUT;
-    let response = until_cancelled(cancel, async {
-        crate::download::send_retrying(|| client.get(url), Some(deadline))
-            .await
-            .map_err(|cause| {
-                CoreError::new(if cause.is_timeout() {
-                    "Stockfish download timed out."
-                } else {
-                    "Stockfish download failed (network error)."
-                })
-            })
-    })
+    cancel: &CancellationToken,
+) -> Result<(String, u64)> {
+    let limits = download::Limits {
+        max_bytes: MAX_DOWNLOAD_BYTES,
+        deadline: Some(std::time::Instant::now() + DOWNLOAD_TIMEOUT),
+    };
+    let mut body = download::open(
+        client,
+        || client.get(url),
+        limits,
+        cancel,
+        usage(host),
+        &DOWNLOAD_WORDING,
+    )
     .await?;
-    if !response.status().is_success() {
-        return Err(CoreError::new(format!(
-            "Stockfish download failed ({}).",
-            response.status().as_u16()
-        )));
-    }
     let mut file = tokio::fs::File::create(archive)
         .await
         .map_err(|cause| io_error("Could not stage the Stockfish download", cause))?;
     let mut hasher = Sha256::new();
-    // A dropped connection picks up at the byte it reached instead of starting over.
-    let mut body = crate::download::Resumable::new(client, response, Some(deadline));
-    loop {
-        let chunk = until_cancelled(cancel, async {
-            body.chunk().await.map_err(|cause| {
-                CoreError::new(if cause.is_timeout() {
-                    "Stockfish download timed out."
-                } else {
-                    "Stockfish download failed (network error)."
-                })
-            })
-        })
-        .await?;
-        let Some(chunk) = chunk else { break };
-        *received += chunk.len() as u64;
-        if *received > MAX_DOWNLOAD_BYTES {
-            return Err(CoreError::new("Stockfish download is unexpectedly large."));
-        }
+    while let Some(chunk) = body.next().await? {
         hasher.update(&chunk);
         file.write_all(&chunk)
             .await
@@ -691,43 +691,7 @@ async fn download_archive(
     file.flush()
         .await
         .map_err(|cause| io_error("Could not stage the Stockfish download", cause))?;
-    Ok(hex(&hasher.finalize()))
-}
-
-fn usage(host: &dyn Host, requests: u32, bytes: u64) {
-    crate::usage::report(
-        host,
-        "",
-        kchess_contracts::types::UsageKind::Other,
-        u64::from(requests),
-        bytes,
-    );
-}
-
-/// Run `work` unless the install is cancelled first; a cancelled install fails as an abort.
-async fn until_cancelled<T>(
-    cancel: &mut Option<watch::Receiver<bool>>,
-    work: impl Future<Output = Result<T>>,
-) -> Result<T> {
-    tokio::select! {
-        biased;
-        _ = cancelled(cancel) => Err(CoreError::aborted("This operation was aborted")),
-        result = work => result,
-    }
-}
-
-async fn cancelled(cancel: &mut Option<watch::Receiver<bool>>) {
-    if let Some(receiver) = cancel {
-        loop {
-            if *receiver.borrow() {
-                return;
-            }
-            if receiver.changed().await.is_err() {
-                break;
-            }
-        }
-    }
-    std::future::pending::<()>().await
+    Ok((hex(&hasher.finalize()), body.received()))
 }
 
 /// The lowercase hex digest from GitHub's `sha256:<hex>` form, or `None` if absent or malformed.
@@ -763,122 +727,69 @@ fn archive_kind(name: &str) -> Option<ArchiveKind> {
     }
 }
 
-/// Extract the archive and locate the engine executable inside it, off the async runtime.
+/// Extract the archive and locate the engine executable inside it, off the async runtime. On
+/// timeout the extraction is told to stop at its next member and awaited, so nothing writes to
+/// the staging folder once this returns.
 async fn extract_engine(
     kind: ArchiveKind,
     archive: PathBuf,
     extracted: PathBuf,
 ) -> Result<PathBuf> {
-    let work = tokio::task::spawn_blocking(move || -> Result<Option<PathBuf>> {
-        extract(kind, &archive, &extracted)?;
+    let stop = CancellationToken::new();
+    let flag = stop.clone();
+    let mut work = tokio::task::spawn_blocking(move || -> Result<Option<PathBuf>> {
+        extract(kind, &archive, &extracted, Some(&flag))?;
         find_binary(&extracted)
     });
-    let found = tokio::time::timeout(EXTRACT_TIMEOUT, work)
-        .await
-        .map_err(|_| CoreError::new("Stockfish archive could not be extracted."))?
-        .map_err(|_| CoreError::new("Stockfish archive could not be extracted."))??;
+    let failed = || CoreError::new("Stockfish archive could not be extracted.");
+    let found = match tokio::time::timeout(EXTRACT_TIMEOUT, &mut work).await {
+        Ok(joined) => joined.map_err(|_| failed())??,
+        Err(_) => {
+            stop.cancel();
+            let _ = work.await;
+            return Err(failed());
+        }
+    };
     found.ok_or_else(|| CoreError::new("Stockfish executable was missing from the release."))
 }
 
-/// Extract `archive` into `root`. Only regular files and directories are written, with paths
-/// kept strictly inside `root`; links, devices and absolute or `..` paths fail the extraction.
-fn extract(kind: ArchiveKind, archive: &Path, root: &Path) -> Result<()> {
+/// Extract `archive` into `root`: regular files and folders only, each strictly inside `root`.
+fn extract(
+    kind: ArchiveKind,
+    archive: &Path,
+    root: &Path,
+    cancel: Option<&CancellationToken>,
+) -> Result<()> {
     fs::create_dir_all(root)
         .map_err(|cause| io_error("Could not extract the Stockfish archive", cause))?;
     let file = fs::File::open(archive)
         .map_err(|cause| io_error("Could not read the Stockfish archive", cause))?;
-    let mut budget = MAX_EXTRACTED_BYTES;
-    match kind {
-        ArchiveKind::Zip => unpack_zip(BufReader::new(file), root, &mut budget),
-        ArchiveKind::TarGz => unpack_tar(
-            flate2::read::GzDecoder::new(BufReader::new(file)),
-            root,
-            &mut budget,
-        ),
-        ArchiveKind::Tar => unpack_tar(BufReader::new(file), root, &mut budget),
-    }
-}
-
-fn unpack_tar<R: Read>(reader: R, root: &Path, budget: &mut u64) -> Result<()> {
-    let mut archive = tar::Archive::new(reader);
-    archive.set_preserve_permissions(false);
-    archive.set_preserve_mtime(false);
-    let entries = archive.entries().map_err(|cause| extract_error(&cause))?;
-    for entry in entries {
-        let mut entry = entry.map_err(|cause| extract_error(&cause))?;
-        let name = entry
-            .path()
-            .map_err(|cause| extract_error(&cause))?
-            .to_string_lossy()
-            .into_owned();
-        let relative = safe_relative(&name)?;
-        let kind = entry.header().entry_type();
-        if kind.is_symlink() || kind.is_hard_link() {
-            return Err(CoreError::new("Stockfish archive contains a link."));
+    let to = archive::Unpack {
+        root,
+        budget: MAX_EXTRACTED_BYTES,
+        prefix: None,
+        cancel,
+    };
+    let unpacked = match kind {
+        ArchiveKind::Zip => archive::unpack_zip(BufReader::new(file), &to),
+        ArchiveKind::TarGz => {
+            archive::unpack_tar(flate2::read::GzDecoder::new(BufReader::new(file)), &to)
         }
-        if kind.is_dir() {
-            create_dir(root, &relative)?;
-        } else if kind.is_file() {
-            write_file(root, &relative, &mut entry, budget)?;
-        } else {
-            return Err(CoreError::new(
-                "Stockfish archive contains an unsupported entry.",
-            ));
+        ArchiveKind::Tar => archive::unpack_tar(BufReader::new(file), &to),
+    };
+    unpacked.map(|_| ()).map_err(|refusal| match refusal {
+        Refusal::Unreadable(cause) => {
+            CoreError::new(format!("Could not extract the Stockfish archive: {cause}"))
         }
-    }
-    Ok(())
-}
-
-fn unpack_zip<R: Read + io::Seek>(reader: R, root: &Path, budget: &mut u64) -> Result<()> {
-    let mut archive = zip::ZipArchive::new(reader).map_err(|cause| extract_error(&cause))?;
-    for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|cause| extract_error(&cause))?;
-        if entry.unix_mode().is_some_and(archive::is_symlink_mode) {
-            return Err(CoreError::new("Stockfish archive contains a link."));
+        Refusal::Link => CoreError::new("Stockfish archive contains a link."),
+        Refusal::UnsafePath | Refusal::Outside => {
+            CoreError::new("Stockfish archive has an unsafe path.")
         }
-        let name = entry.name().map_err(|cause| extract_error(&cause))?;
-        let relative = safe_relative(&name)?;
-        if entry.is_dir() {
-            create_dir(root, &relative)?;
-        } else {
-            write_file(root, &relative, &mut entry, budget)?;
-        }
-    }
-    Ok(())
-}
-
-/// A member name as a path inside the archive root (see `archive::safe_relative`).
-fn safe_relative(name: &str) -> Result<PathBuf> {
-    archive::safe_relative(name)
-        .ok_or_else(|| CoreError::new("Stockfish archive has an unsafe path."))
-}
-
-fn create_dir(root: &Path, relative: &Path) -> Result<()> {
-    fs::create_dir_all(root.join(relative))
-        .map_err(|cause| io_error("Could not extract the Stockfish archive", cause))
-}
-
-fn write_file(
-    root: &Path,
-    relative: &Path,
-    reader: &mut impl Read,
-    budget: &mut u64,
-) -> Result<()> {
-    if relative.as_os_str().is_empty() {
-        return Err(CoreError::new("Stockfish archive has an unsafe path."));
-    }
-    match archive::write_member(root, relative, reader, budget)
-        .map_err(|cause| io_error("Could not extract the Stockfish archive", cause))?
-    {
-        Member::Written => Ok(()),
-        Member::OverBudget => Err(CoreError::new("Stockfish archive is unexpectedly large.")),
-    }
-}
-
-fn extract_error(cause: &dyn std::fmt::Display) -> CoreError {
-    CoreError::new(format!("Could not extract the Stockfish archive: {cause}"))
+        Refusal::Unsupported => CoreError::new("Stockfish archive contains an unsupported entry."),
+        Refusal::TooLarge => CoreError::new("Stockfish archive is unexpectedly large."),
+        Refusal::Cancelled => CoreError::new("Stockfish archive could not be extracted."),
+        Refusal::Io(cause) => io_error("Could not extract the Stockfish archive", cause),
+    })
 }
 
 /// The executable inside an extracted release: the first `stockfish*` file that is not

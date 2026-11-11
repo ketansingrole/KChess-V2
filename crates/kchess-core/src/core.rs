@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as AsyncMutex;
-use tokio::sync::{OnceCell, watch};
+use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -79,8 +79,8 @@ pub struct Core {
     pub(crate) voice_model: crate::voice::VoiceModelCache,
     /// Network accounting counters, batched before they reach the database.
     pub(crate) usage: Arc<UsageBatch>,
-    /// Managed engine installs and deletes in progress, by request id; `true` cancels one.
-    installs: Mutex<HashMap<u64, watch::Sender<bool>>>,
+    /// Managed engine installs and deletes in progress, by request id.
+    installs: Mutex<HashMap<u64, CancellationToken>>,
     /// Whether a live online game (or its recovery) blocks the engines, as of the last state.
     busy: Arc<AtomicBool>,
     /// Set when `close` starts: later facade calls fail and events stop.
@@ -675,16 +675,11 @@ impl Core {
         mutation: Mutation,
         overridden: &LocationOverride,
     ) -> Result<Value> {
-        let (cancel_tx, cancel_rx) = watch::channel(false);
-        self.installs
-            .lock()
-            .map_err(|_| CoreError::new("The engine is unavailable."))?
-            .insert(id, cancel_tx);
+        let cancel = CancellationToken::new();
+        crate::tasks::lock(&self.installs).insert(id, cancel.clone());
         // Forgotten however the request ends, a cancelled call included.
         let _forget = crate::tasks::on_drop(|| {
-            if let Ok(mut installs) = self.installs.lock() {
-                installs.remove(&id);
-            }
+            crate::tasks::lock(&self.installs).remove(&id);
         });
         let mut location = ManagedLocation::new(self.managed_dir(overridden));
         if let Some(url) = &overridden.release_url {
@@ -696,7 +691,7 @@ impl Core {
             analysis: self.analysis.clone(),
             reviews: self.reviews.clone(),
         }));
-        location.cancel = Some(cancel_rx);
+        location.cancel = cancel;
         match mutation {
             Mutation::Install => install_managed_engine(self.host.as_ref(), &location)
                 .await
@@ -714,10 +709,8 @@ impl Core {
 
     /// Cancels the managed engine installs in progress.
     pub(crate) fn cancel_installs(&self) {
-        if let Ok(installs) = self.installs.lock() {
-            for sender in installs.values() {
-                sender.send_replace(true);
-            }
+        for cancel in crate::tasks::lock(&self.installs).values() {
+            cancel.cancel();
         }
     }
 }
