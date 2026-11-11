@@ -317,31 +317,39 @@ fn plan_outputs(count: usize) -> String {
 fn plan(args: &[String]) -> Result {
     let repo = root();
     let base = base_of(&repo, args)?;
-    let count = if write_diff(&repo, &base)? {
-        let mut list: Vec<String> = ["mutants", "--in-diff", DIFF, "--list"]
-            .map(String::from)
-            .to_vec();
-        list.extend(cargo_mutants_args(args));
-        let out = Command::new("cargo")
-            .args(&list)
-            .current_dir(&repo)
-            .output()
-            .map_err(|cause| format!("Could not run cargo mutants: {cause}"))?;
-        if !out.status.success() {
-            return Err(format!(
-                "cargo mutants --list failed: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            ));
-        }
-        count_listed(&String::from_utf8_lossy(&out.stdout))
-    } else {
-        0
-    };
+    let count = count_since(&repo, "cargo", &base, args)?;
     say(&format!(
         "{count} mutants on the lines changed since {base}."
     ));
     print!("{}", plan_outputs(count));
     Ok(())
+}
+
+/// How many mutants the lines of `repo` changed since `base` have, in the files `args` select
+/// (`files_of`), with `cargo` as the cargo to run (a stand-in in the tests): none without Rust
+/// changes. Listing them builds nothing.
+pub(crate) fn count_since(repo: &Path, cargo: &str, base: &str, args: &[String]) -> Result<usize> {
+    if !write_diff(repo, base)? {
+        return Ok(0);
+    }
+    let mut list: Vec<String> = ["mutants", "--in-diff", DIFF, "--list"]
+        .map(String::from)
+        .to_vec();
+    list.extend(cargo_mutants_args(args));
+    let mut command = Command::new(cargo);
+    // From the pre-push hook, Git's variables name the pushing checkout, not `repo`.
+    let out = without_git_location(&mut command)
+        .args(&list)
+        .current_dir(repo)
+        .output()
+        .map_err(|cause| format!("Could not run {cargo} mutants: {cause}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "cargo mutants --list failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(count_listed(&String::from_utf8_lossy(&out.stdout)))
 }
 
 fn count_listed(list: &str) -> usize {
@@ -868,6 +876,49 @@ mod tests {
         std::fs::write(&path, script).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path.display().to_string()
+    }
+
+    /// A stand-in cargo in `dir` that records its arguments, lists two mutants and exits with
+    /// `status`, saying why on standard error.
+    #[cfg(unix)]
+    fn fake_lister(dir: &Path, status: i32) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("fake-lister");
+        let script = format!(
+            "#!/bin/sh\necho \"$@\" > \"{calls}\"\nprintf 'a.rs:1:1: one\\nb.rs:2:2: two\\n'\n\
+             echo 'no such package' >&2\nexit {status}\n",
+            calls = dir.join("calls").display(),
+        );
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.display().to_string()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_changed_lines_mutants_are_counted_from_their_listing() {
+        let (dir, base) = repo();
+        let tools = tempfile::tempdir().unwrap();
+        let cargo = fake_lister(tools.path(), 0);
+        // Without Rust changes there is nothing to list.
+        assert_eq!(count_since(dir.path(), &cargo, &base, &[]).unwrap(), 0);
+        assert!(!tools.path().join("calls").exists());
+
+        std::fs::write(dir.path().join("new.rs"), "fn new() {}\n").unwrap();
+        assert_eq!(count_since(dir.path(), &cargo, &base, &[]).unwrap(), 2);
+        let calls = std::fs::read_to_string(tools.path().join("calls")).unwrap();
+        assert_eq!(
+            calls.trim(),
+            format!("mutants --in-diff {DIFF} --list --exclude {APP_FILES}")
+        );
+        let diff = std::fs::read_to_string(dir.path().join(DIFF)).unwrap();
+        assert!(diff.contains("+fn new() {}"), "{diff}");
+
+        let cargo = fake_lister(tools.path(), 1);
+        let failed = count_since(dir.path(), &cargo, &base, &[]).unwrap_err();
+        assert!(failed.contains("no such package"), "{failed}");
+        let missing = tools.path().join("no-cargo").display().to_string();
+        assert!(count_since(dir.path(), &missing, &base, &[]).is_err());
     }
 
     #[cfg(unix)]

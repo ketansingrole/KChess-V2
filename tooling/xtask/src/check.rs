@@ -620,8 +620,9 @@ pub fn pre_push() -> Result {
 /// A push of another branch: the mutants of the lines it sends, so a survivor stops the push here
 /// rather than failing CI's `mutants` job a quarter of an hour later. Only the lines new since the
 /// branch's last push, which was tested then; the app's are left out as in CI. They are tested in
-/// the checkout's own mutants tree (`mutants_tree`), set to the pushed commit, one at a time in
-/// place as in CI, so each push rebuilds only what changed since the last; a push of anything but
+/// the checkout's own mutants tree (`mutants_tree`), set to the pushed commit, so each push
+/// rebuilds only what changed since the last: one at a time in place as in CI, or a big push's
+/// several at once in copies of the built tree (`jobs_for`); a push of anything but
 /// a clean HEAD, or without cargo-mutants, skips it: CI still runs them all.
 fn branch_mutants(input: &str) -> Result {
     let head = output("git", &["rev-parse", "HEAD"])?;
@@ -664,8 +665,17 @@ fn branch_mutants(input: &str) -> Result {
     for message in crate::sweep::mutants_tree(&tree.target(), false) {
         say(&message);
     }
-    crate::mutants::run_in(&tree.path, "cargo", &branch_mutants_args(&base, &checkout))
-        .map_err(refused)
+    // The same lines and files as the run: the app's left out.
+    let count = crate::mutants::count_since(&tree.path, "cargo", &base, &[]).map_err(refused)?;
+    let cpus = std::thread::available_parallelism().map_or(1, |cpus| cpus.get());
+    let jobs = jobs_for(count, cpus);
+    if jobs > 1 {
+        say(&format!(
+            "{count} mutants: testing {jobs} at a time, each in a copy of the built tree."
+        ));
+    }
+    let args = branch_mutants_args(&base, &checkout, jobs);
+    crate::mutants::run_in(&tree.path, "cargo", &args).map_err(refused)
 }
 
 /// The remote's current commit for the pushed branch whose new commit is `head`, from the hook's
@@ -691,15 +701,48 @@ fn mutants_base(remote: &str, is_ancestor: impl Fn(&str) -> bool) -> Option<&str
 /// `cargo xtask mutants`' arguments for a branch push from `base`: CI's (the app left out), with
 /// the results in `checkout`'s `mutants.out`, where the pusher looks for them.
 ///
-/// One mutant at a time, in place, in a tree kept built, rather than four at once in copies built
-/// afresh: 2026-11-10, the 4 kchess-core mutants of 9e39cc7f took 92 s on the next push against
-/// 337 s (each build 8–19 s against 38–254 s), and 226 s against 409 s the first time, with the
-/// same outcomes.
-fn branch_mutants_args(base: &str, checkout: &Path) -> Vec<String> {
+/// One job (`jobs_for`) tests them one at a time, in place, in the tree kept built. More test
+/// that many at once, each in cargo-mutants' own copy of the tree with its build (`--copy-target`,
+/// which APFS and other copy-on-write file systems clone rather than copy), so no job starts cold.
+fn branch_mutants_args(base: &str, checkout: &Path, jobs: usize) -> Vec<String> {
     let out = checkout.to_string_lossy();
-    ["--base", base, "--in-place", "--", "--output", &out]
-        .map(String::from)
-        .to_vec()
+    if jobs <= 1 {
+        return ["--base", base, "--in-place", "--", "--output", &out]
+            .map(String::from)
+            .to_vec();
+    }
+    let jobs = jobs.to_string();
+    [
+        "--base",
+        base,
+        "--",
+        "--output",
+        &out,
+        "--jobs",
+        &jobs,
+        "--copy-target",
+        "true",
+    ]
+    .map(String::from)
+    .to_vec()
+}
+
+/// From how many mutants a branch push tests several at once (`jobs_for`). MEASUREMENT
+const PARALLEL_FROM: usize = 40;
+
+/// The most mutants a branch push tests at once: each job's builds and tests take several cores
+/// and a few gigabytes, and the machine is still in use.
+const MAX_JOBS: usize = 6;
+
+/// How many mutants a branch push of `count` tests at once on a machine of `cpus`: one, in place,
+/// up to `PARALLEL_FROM`, where a copy's first build costs more than it saves; then half the
+/// CPUs, leaving the rest to the jobs' own builds and to whoever uses the machine, up to
+/// `MAX_JOBS`.
+fn jobs_for(count: usize, cpus: usize) -> usize {
+    if count < PARALLEL_FROM {
+        return 1;
+    }
+    (cpus / 2).clamp(1, MAX_JOBS)
 }
 
 /// Point Git at the repository's hooks, unless the clone already uses others on purpose.
@@ -861,6 +904,48 @@ mod tests {
             None
         );
         assert_eq!(mutants_base("0a00", |_| true), Some("0a00"));
+    }
+
+    #[test]
+    fn a_push_tests_many_mutants_at_once_and_few_in_place() {
+        assert_eq!(jobs_for(0, 10), 1);
+        assert_eq!(jobs_for(PARALLEL_FROM - 1, 10), 1);
+        assert_eq!(jobs_for(PARALLEL_FROM, 10), 5);
+        assert_eq!(jobs_for(5282, 10), 5);
+        // Half the CPUs, at least one and at most `MAX_JOBS`.
+        assert_eq!(jobs_for(5282, 7), 3);
+        assert_eq!(jobs_for(5282, 1), 1);
+        assert_eq!(jobs_for(5282, 64), MAX_JOBS);
+    }
+
+    #[test]
+    fn a_push_s_mutants_land_in_the_checkout_one_job_in_place() {
+        let checkout = Path::new("/work/kchess");
+        assert_eq!(
+            branch_mutants_args("abc", checkout, 1),
+            [
+                "--base",
+                "abc",
+                "--in-place",
+                "--",
+                "--output",
+                "/work/kchess"
+            ]
+        );
+        assert_eq!(
+            branch_mutants_args("abc", checkout, 4),
+            [
+                "--base",
+                "abc",
+                "--",
+                "--output",
+                "/work/kchess",
+                "--jobs",
+                "4",
+                "--copy-target",
+                "true"
+            ]
+        );
     }
 
     #[test]
