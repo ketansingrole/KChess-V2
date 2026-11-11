@@ -143,6 +143,18 @@ impl Game {
         })
     }
 
+    /// The main line's nodes from the start, first move first.
+    pub fn main_line(&self) -> impl Iterator<Item = usize> + '_ {
+        std::iter::successors(self.children(0).next(), |&node| self.children(node).next())
+    }
+
+    /// The main line's moves, in SAN.
+    pub fn main_line_sans(&self) -> Vec<String> {
+        self.main_line()
+            .map(|node| self.node(node).san.as_str().to_string())
+            .collect()
+    }
+
     fn append_child(&mut self, parent: usize, child: usize) {
         match self.node(parent).last_child {
             Some(last) => self.node_mut(last).next_sibling = Some(child),
@@ -921,6 +933,15 @@ pub fn setup_pgn<S: AsRef<str>>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_main_line_follows_first_children_past_variations() {
+        let games = parse_pgn("1. e4 (1. d4 d5) 1... e5 (1... c5 2. Nf3) 2. Nf3 *");
+        let game = games.first().unwrap();
+        assert_eq!(game.main_line_sans(), ["e4", "e5", "Nf3"]);
+        assert_eq!(game.main_line().count(), 3);
+        assert_eq!(Game::empty().main_line().count(), 0);
+    }
+
     #[test]
     fn setup_pgns_name_their_variant_as_pgn_readers_know_it() {
         let koth = rules::make_fen(&rules::default_position(
