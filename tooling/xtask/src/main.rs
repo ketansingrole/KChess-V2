@@ -383,7 +383,45 @@ fn help() -> String {
     out
 }
 
+/// The variables `cargo run` sets for xtask's own package (`CARGO_MANIFEST_DIR`, `CARGO_PKG_*`…),
+/// which every Cargo xtask runs would inherit. ring's build script reruns when one changes, so a
+/// build under xtask and a plain one (a CLI test's nested build of the scripted engine) rebuilt
+/// ring, kchess-core and its binaries back and forth: the scripted engine kchess-core's tests
+/// were running changed on disk under them, and the warm engine restarted for the new
+/// executable (2026-11-11, `consecutive_moves_reuse_the_warm_engine_and_send_only_changed_options`
+/// under `check-fast`). `CARGO`, the Cargo that ran xtask, stays.
+fn is_package_variable(key: &str) -> bool {
+    key.starts_with("CARGO_PKG_")
+        || key.starts_with("CARGO_BIN_EXE_")
+        || matches!(
+            key,
+            "CARGO_MANIFEST_DIR"
+                | "CARGO_MANIFEST_PATH"
+                | "CARGO_CRATE_NAME"
+                | "CARGO_PRIMARY_PACKAGE"
+                | "CARGO_TARGET_TMPDIR"
+                | "CARGO_BIN_NAME"
+                | "OUT_DIR"
+        )
+}
+
+/// Removes xtask's package variables (`is_package_variable`) from its environment, so what it runs
+/// builds as a plain `cargo` does.
+#[allow(unsafe_code)]
+fn forget_package_variables() {
+    let keys: Vec<std::ffi::OsString> = std::env::vars_os()
+        .map(|(key, _)| key)
+        .filter(|key| key.to_str().is_some_and(is_package_variable))
+        .collect();
+    for key in keys {
+        // SAFETY: `main` calls this first, before xtask starts any thread, so nothing else reads
+        // or writes the environment meanwhile.
+        unsafe { std::env::remove_var(key) };
+    }
+}
+
 fn main() -> ExitCode {
+    forget_package_variables();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let rest = args.get(1..).unwrap_or_default();
     let result = match args.first().map(String::as_str) {
@@ -431,5 +469,33 @@ mod tests {
             );
         }
         assert!(help.lines().all(|line| line.len() <= WIDTH), "{help}");
+    }
+
+    #[test]
+    fn only_the_package_variables_of_cargo_run_are_forgotten() {
+        for key in [
+            "CARGO_MANIFEST_DIR",
+            "CARGO_MANIFEST_PATH",
+            "CARGO_PKG_NAME",
+            "CARGO_PKG_VERSION_MAJOR",
+            "CARGO_BIN_EXE_xtask",
+            "CARGO_CRATE_NAME",
+            "CARGO_PRIMARY_PACKAGE",
+            "CARGO_TARGET_TMPDIR",
+            "CARGO_BIN_NAME",
+            "OUT_DIR",
+        ] {
+            assert!(is_package_variable(key), "{key}");
+        }
+        for key in [
+            "CARGO",
+            "CARGO_HOME",
+            "CARGO_TARGET_DIR",
+            "CARGO_INCREMENTAL",
+            "CARGO_BUILD_JOBS",
+            "PATH",
+        ] {
+            assert!(!is_package_variable(key), "{key}");
+        }
     }
 }
