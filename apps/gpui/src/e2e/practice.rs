@@ -711,3 +711,62 @@ fn zen_mode_hides_the_sidebar_in_a_trainer(cx: &mut gpui_kit::TestAppContext) {
     app.with_window(|window, cx| crate::shell::open(Page::Dashboard, window, cx));
     app.find("sidebar");
 }
+
+/// Another window practised a repertoire: the open Openings tab has its misses. It read them
+/// only once, when the tab was first opened.
+#[gpui_kit::test]
+fn repertoire_misses_from_another_window_are_read_here(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_contracts::check::{Position, RepertoireKey};
+    let mut app = practice(cx);
+    let miss = |app: &mut Harness, key: &str| {
+        app.request(kchess_contracts::calls::RecordRepertoireMiss {
+            key: RepertoireKey(key.into()),
+            fen: Position("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1".into()),
+        });
+    };
+    miss(&mut app, "study1:white");
+    tab(&mut app, crate::pages::practice::Tab::Openings);
+    let trainer = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).repertoire())
+            .expect("the repertoire trainer")
+    });
+    app.wait_for("the misses read on opening", |_, cx| {
+        trainer.read(cx).missed_repertoires() == 1
+    });
+    miss(&mut app, "study2:black");
+    app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Repertoire]);
+    app.wait_for("the other window's miss", |_, cx| {
+        trainer.read(cx).missed_repertoires() == 2
+    });
+}
+
+/// Another window added or answered drills: the open Mistakes tab lists the profile's. It kept
+/// the drills it had until the tab was opened again.
+#[gpui_kit::test]
+fn drills_changed_in_another_window_show_here_too(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Mistakes);
+    app.find("review-a-game");
+    let mistakes = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).mistakes())
+            .expect("the mistakes trainer")
+    });
+    // A drill this window lists that the profile no longer has.
+    app.cx.update(|cx| {
+        mistakes.update(cx, |mistakes, cx| {
+            mistakes.seed(
+                vec![serde_json::json!({
+                    "id": "gone",
+                    "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                    "solution": ["h5f7"],
+                })],
+                cx,
+            )
+        })
+    });
+    app.find("practice-due");
+    app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Drills]);
+    app.wait_gone("practice-due");
+}

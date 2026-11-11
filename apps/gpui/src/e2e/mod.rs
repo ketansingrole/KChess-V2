@@ -668,6 +668,23 @@ impl Harness {
             .unwrap_or_else(|cause| panic!("{}: {}", C::METHOD, cause.message))
     }
 
+    /// What the core reports when another window wrote `areas` of the profile (that window's
+    /// write itself is the test's to make, with `request`).
+    pub fn changed_elsewhere(&mut self, areas: &[kchess_contracts::types::ProfileArea]) {
+        use crate::core::{AppCore, ClientEvent, CoreEvent};
+        let areas = areas.to_vec();
+        self.cx.update(|cx| {
+            let core = cx.global::<AppCore>().clone();
+            let change = serde_json::json!(kchess_contracts::types::ProfileChange {
+                areas,
+                origin: core.bridge.connection() + 1,
+            });
+            core.events.update(cx, |_, cx| {
+                cx.emit(ClientEvent::Event(CoreEvent::ProfileChanged(change)))
+            });
+        });
+    }
+
     /// Wait until the core has saved `key` as `value`.
     pub fn wait_for_saved(&mut self, key: &str, value: serde_json::Value) {
         let started = Instant::now();

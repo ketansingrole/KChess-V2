@@ -148,6 +148,31 @@ fn home_lists_recent_games_once_there_is_one(cx: &mut gpui_kit::TestAppContext) 
     app.find("home-view-all");
 }
 
+/// Another window left a game against the computer unfinished: the open Home offers to continue
+/// it. It kept offering a new game until it was opened again.
+#[gpui_kit::test]
+fn a_game_left_in_another_window_is_continued_from_home(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_domain::games::Host;
+    use kchess_domain::games::computer::ComputerGame;
+    let mut app = Harness::start(cx);
+    app.open("Home");
+    app.find("home-play");
+    let host = Host {
+        now: 0.,
+        allowed: true,
+        ready: false,
+    };
+    let session =
+        serde_json::json!({ "moves": ["e2e4", "e7e5"], "color": "white", "level": "club" });
+    let game = ComputerGame::resume(Some(&session), &host).expect("the computer game");
+    app.request(kchess_contracts::calls::SaveSession {
+        kind: kchess_contracts::types::SessionKind::Computer,
+        session: kchess_contracts::check::SessionObject(serde_json::json!(game.snapshot(host.now))),
+    });
+    app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Sessions]);
+    app.find("home-continue");
+}
+
 /// Home's _Review_ is in Quick Pick: the last game opens in Game history. Home adds no Sync games
 /// of its own there.
 #[gpui_kit::test]

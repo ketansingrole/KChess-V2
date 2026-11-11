@@ -656,7 +656,6 @@ fn lichess_stat_cards_are_one_height(cx: &mut gpui_kit::TestAppContext) {
 /// offering the deleted database until a page was opened again.
 #[gpui_kit::test]
 fn puzzles_deleted_in_another_window_are_gone_here_too(cx: &mut gpui_kit::TestAppContext) {
-    use crate::core::{AppCore, ClientEvent, CoreEvent};
     use crate::puzzle_db::PuzzleDbHandle;
     let mut app = Harness::start_with(cx, |profile| {
         let rows = vec![kchess_core::puzzles::queries::DbPuzzle {
@@ -676,16 +675,6 @@ fn puzzles_deleted_in_another_window_are_gone_here_too(cx: &mut gpui_kit::TestAp
     app.wait_for("the downloaded puzzles", |_, cx| installed(cx));
     // The other window's delete reaches the profile; its report names that window.
     app.request(kchess_contracts::calls::PuzzleDbDelete {});
-    app.cx.update(|cx| {
-        let core = cx.global::<AppCore>().clone();
-        let other = core.bridge.connection() + 1;
-        let change = serde_json::json!(kchess_contracts::types::ProfileChange {
-            areas: vec![kchess_contracts::types::ProfileArea::Puzzles],
-            origin: other,
-        });
-        core.events.update(cx, |_, cx| {
-            cx.emit(ClientEvent::Event(CoreEvent::ProfileChanged(change)))
-        });
-    });
+    app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Puzzles]);
     app.wait_for("the deleted puzzles", |_, cx| !installed(cx));
 }

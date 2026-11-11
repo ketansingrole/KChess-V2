@@ -180,6 +180,11 @@ impl PracticePage {
     }
 
     #[cfg(test)]
+    pub(crate) fn repertoire(&self) -> Option<Entity<repertoire::Repertoire>> {
+        self.repertoire.clone()
+    }
+
+    #[cfg(test)]
     pub(crate) fn guess(&self) -> Option<Entity<guess::GuessMoves>> {
         self.guess.clone()
     }

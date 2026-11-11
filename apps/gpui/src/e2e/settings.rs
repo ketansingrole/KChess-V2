@@ -274,3 +274,60 @@ fn a_setting_saved_elsewhere_is_shown(cx: &mut gpui_kit::TestAppContext) {
             .is_some_and(|sound| sound.checked() == Some(false))
     });
 }
+
+/// Another window logged a spoken phrase: the open voice history lists it. It stayed empty
+/// until Refresh or the category was opened again.
+#[gpui_kit::test]
+fn voice_practice_in_another_window_shows_in_the_history(cx: &mut gpui_kit::TestAppContext) {
+    use kchess_contracts::types::{
+        ProfileArea, VoiceAttemptInput, VoiceOutcome, VoiceSource, VoiceWord,
+    };
+    let mut app = Harness::start(cx);
+    app.open_settings("Voice input");
+    app.find("voice-history-clear");
+    assert!(!app.enabled("voice-history-clear"), "nothing logged yet");
+    app.request(kchess_contracts::calls::SaveVoiceAttempt {
+        attempt: VoiceAttemptInput {
+            source: VoiceSource::Coordinates,
+            heard: "e four".into(),
+            confidence: 0.9,
+            words: vec![VoiceWord {
+                word: "e".into(),
+                conf: 0.9,
+            }],
+            outcome: VoiceOutcome::Correct,
+            parsed: Some("e4".into()),
+            expected: Some("e4".into()),
+            fen: None,
+            retry_of: None,
+        },
+    });
+    app.changed_elsewhere(&[ProfileArea::VoiceHistory]);
+    app.wait_for("the logged phrase", |window, _| {
+        use gpui_kit::test::TestWindowExt as _;
+        window
+            .try_find(gpui_kit::ElementId::from("voice-history-clear"))
+            .is_some_and(|clear| clear.disabled() != Some(true))
+    });
+}
+
+/// Another window installed or deleted the engine: Engine shows what the core finds now.
+#[gpui_kit::test]
+fn an_engine_changed_in_another_window_is_read_again(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    app.open_settings("Chess engine");
+    let settings = || crate::shell::view::<crate::pages::settings::SettingsPage>;
+    app.wait_for("the engine's status", |_, cx| {
+        settings()(cx).is_some_and(|page| page.read(cx).engine_status().is_some())
+    });
+    // Forget it, as if it were stale: only a report of the change reads it again.
+    app.cx.update(|cx| {
+        settings()(cx)
+            .expect("the Settings page")
+            .update(cx, |page, _| page.forget_engine_status())
+    });
+    app.changed_elsewhere(&[kchess_contracts::types::ProfileArea::Engine]);
+    app.wait_for("the engine read again", |_, cx| {
+        settings()(cx).is_some_and(|page| page.read(cx).engine_status().is_some())
+    });
+}

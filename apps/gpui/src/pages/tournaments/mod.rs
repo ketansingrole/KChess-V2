@@ -144,8 +144,17 @@ impl TournamentsPage {
                 .placeholder("Entry code (if any)")
         });
         let accounts = crate::accounts::handle(cx);
+        let page = cx.entity().downgrade();
         let subscriptions = vec![
             cx.observe(&accounts, |_, _, cx| cx.notify()),
+            // Another window joined or left a tournament.
+            crate::core::profile_changes(
+                cx,
+                &[kchess_contracts::types::ProfileArea::Tournaments],
+                move |cx| {
+                    let _ = page.update(cx, |page, cx| page.reload_joined(cx));
+                },
+            ),
             // Return in the entry code joins, as the Join button beside it does.
             cx.subscribe_in(
                 &password,

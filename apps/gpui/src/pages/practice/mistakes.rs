@@ -11,7 +11,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::check::LibraryId;
-use kchess_contracts::types::{Drill, MistakeGame};
+use kchess_contracts::types::{Drill, MistakeGame, ProfileArea};
 use serde_json::{Value, json};
 
 use crate::assets::icon;
@@ -112,8 +112,9 @@ pub struct Mistakes {
 impl Mistakes {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Mistakes {
         let puzzle = cx.new(|cx| PuzzleBoard::new(false, window, cx));
-        let subscriptions =
-            vec![cx.subscribe(
+        let trainer = cx.entity().downgrade();
+        let subscriptions = vec![
+            cx.subscribe(
                 &puzzle,
                 |this, _, event: &PuzzleBoardEvent, cx| match event {
                     PuzzleBoardEvent::Outcome { win, .. } => {
@@ -127,7 +128,12 @@ impl Mistakes {
                     }
                     PuzzleBoardEvent::Move { .. } => {}
                 },
-            )];
+            ),
+            // Another window added or answered drills: the overview lists the profile's.
+            crate::core::profile_changes(cx, &[ProfileArea::Drills], move |cx| {
+                let _ = trainer.update(cx, |trainer, cx| trainer.reload(cx));
+            }),
+        ];
         let clock = crate::timer::every(CLOCK, cx, |this, cx| {
             this.now = kchess_games::now_ms();
             cx.notify();
@@ -158,6 +164,11 @@ impl Mistakes {
         self.current = None;
         self.done = false;
         self.show_all = false;
+        self.reload(cx);
+    }
+
+    /// The drills and games as they are now; a drill on the board stays.
+    fn reload(&mut self, cx: &mut Context<Self>) {
         self.now = kchess_games::now_ms();
         self.loading = true;
         self.load += 1;
