@@ -56,10 +56,8 @@ pub fn child_path(parent: &str, uci: &str) -> String {
     }
 }
 
-/// `analysisContext`: the position with the moves that led to it, for repetition.
-pub fn analysis_context(root_fen: &str, moves: &[String]) -> String {
-    text("analysisContext", &[json!(root_fen), json!(moves)])
-}
+/// The position with the moves that led to it, for repetition.
+pub use kchess_domain::records::context::analysis_context;
 
 /// "+0.34", "−1.20", "#3", as Lichess prints them; a dash for nothing.
 pub fn format_eval(line: Option<&Value>) -> String {

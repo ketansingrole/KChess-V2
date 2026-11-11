@@ -20,6 +20,8 @@ const RETIRED: &[&str] = &[
     "FILES",
     "RANKS",
     "START_SETUP",
+    "gameResult",
+    "hasScore",
     "materialBalance",
     "nearestEngineLevel",
     "pgnFromMoves",

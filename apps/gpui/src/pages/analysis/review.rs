@@ -103,14 +103,13 @@ impl AnalysisPage {
         moves_of(&self.root.line_end(""))
     }
 
-    /// `reviewKey`: the same moves from the same start (and in the same variant) share one review.
+    /// The same moves from the same start (and in the same variant) share one review.
     pub fn mainline_key(&self) -> String {
-        let mut args = vec![json!(self.root.fen), json!(self.mainline())];
-        args.extend(self.fairy_variant().map(|variant| json!(variant)));
-        rules("reviewKey", &args)
-            .ok()
-            .and_then(|key| key.as_str().map(str::to_string))
-            .unwrap_or_default()
+        kchess_domain::records::review::review_key(
+            &self.root.fen,
+            &self.mainline(),
+            self.fairy_variant(),
+        )
     }
 
     pub(super) fn review(&self, cx: &App) -> Option<Value> {

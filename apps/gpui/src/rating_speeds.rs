@@ -11,14 +11,16 @@ use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::chart::{ChartDate, LineChart, Series};
-use crate::game::rules;
 use crate::rating_history::{
-    DAY_MS, RATING_PAD, Retry, YEARS_SPAN_MS, array_or_empty, has_points, point_of,
+    DAY_MS, RATING_PAD, Retry, YEARS_SPAN_MS, entries, has_points, point_of,
 };
 use crate::theme::{Palette, radii};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
+use kchess_domain::records::ratings::{
+    is_puzzle_history, merge_rating_histories, normalize_rating_key, rating_display_name,
+};
 
 /// Colour follows the speed, never its rank: each keeps its slot when others are hidden. One
 /// variant, the most played, takes the last slot.
@@ -66,7 +68,7 @@ pub fn speeds(history: &Value) -> Vec<Speed> {
         .filter_map(|entry| {
             let name = entry["name"].clone();
             if name.as_str().is_none_or(str::is_empty)
-                || rules("isPuzzleHistory", std::slice::from_ref(&name)).ok() == Some(json!(true))
+                || name.as_str().is_some_and(is_puzzle_history)
             {
                 return None;
             }
@@ -78,15 +80,10 @@ pub fn speeds(history: &Value) -> Vec<Speed> {
             if points.is_empty() {
                 return None;
             }
-            let text = |method: &str| {
-                rules(method, std::slice::from_ref(&name))
-                    .ok()
-                    .and_then(|value| value.as_str().map(str::to_string))
-                    .unwrap_or_default()
-            };
+            let name = name.as_str().unwrap_or_default();
             Some(Speed {
-                key: text("normalizeRatingKey"),
-                name: text("ratingDisplayName"),
+                key: normalize_rating_key(name),
+                name: rating_display_name(name),
                 slot: 0,
                 points,
             })
@@ -207,16 +204,9 @@ impl RatingSpeeds {
         cx.notify();
     }
 
-    /// `mergeRatingHistories`: Lichess's own wins; games fill speeds it has no points for.
+    /// Lichess's own wins; games fill speeds it has no points for.
     fn history(&self) -> Value {
-        rules(
-            "mergeRatingHistories",
-            &[
-                array_or_empty(&self.official),
-                array_or_empty(&self.fallback),
-            ],
-        )
-        .unwrap_or(json!([]))
+        merge_rating_histories(entries(&self.official), entries(&self.fallback))
     }
 
     fn since(&self) -> f64 {

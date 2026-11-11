@@ -3,7 +3,6 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{Out, arg};
 use crate::js;
 
 /// The colour keys of one scheme, in their order.
@@ -12,7 +11,7 @@ const COLOR_KEYS: &[&str] = &["bg", "elevated", "text", "textMuted", "primary", 
 /// `APPEARANCES`.
 const APPEARANCES: &[&str] = &["system", "light", "dark"];
 
-/// `DEFAULT_OAUTH_LOOK`: KChess's default look, used until the app sends its own colours.
+/// KChess's default look, used until the app sends its own colours.
 pub fn default_look() -> Value {
     json!({
         "appearance": "system",
@@ -35,33 +34,20 @@ pub fn default_look() -> Value {
     })
 }
 
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    Some(match method {
-        "oauthLook" => Ok(look(arg(args, 0))),
-        "oauthLookDefault" => Ok(default_look()),
-        "oauthPage" => {
-            let authorized = arg(args, 0).and_then(Value::as_bool).unwrap_or(false);
-            let look = arg(args, 1).cloned().unwrap_or_else(default_look);
-            Ok(Value::String(callback_page(authorized, &look)))
-        }
-        _ => return None,
-    })
-}
-
-/// `oauthLook(value)`: the requested look when every colour and the appearance are valid, else
-/// null; the caller then answers with its default look.
-fn look(value: Option<&Value>) -> Value {
-    let Some(Value::Object(map)) = value else {
-        return Value::Null;
+/// The requested look when every colour and the appearance are valid; the caller otherwise
+/// answers with its default look.
+pub fn look(value: &Value) -> Option<Value> {
+    let Value::Object(map) = value else {
+        return None;
     };
     let appearance = map.get("appearance").and_then(Value::as_str);
     let light = colors(map.get("light"));
     let dark = colors(map.get("dark"));
     match (appearance, light, dark) {
         (Some(appearance), Some(light), Some(dark)) if APPEARANCES.contains(&appearance) => {
-            json!({ "appearance": appearance, "light": light, "dark": dark })
+            Some(json!({ "appearance": appearance, "light": light, "dark": dark }))
         }
-        _ => Value::Null,
+        _ => None,
     }
 }
 
@@ -118,7 +104,7 @@ fn colours(look: &Value) -> String {
     )
 }
 
-/// `oauthPage(authorized, look)`: a self-contained callback page. It loads nothing external and
+/// A self-contained callback page. It loads nothing external and
 /// carries no credentials or callback values.
 pub fn callback_page(authorized: bool, look: &Value) -> String {
     connection_page(authorized, look, "Lichess")
@@ -195,8 +181,8 @@ mod tests {
     #[test]
     fn a_malformed_look_is_declined() {
         let good = default_look();
-        assert_eq!(look(Some(&good)), good);
-        assert_eq!(look(Some(&json!({ "appearance": "neon" }))), Value::Null);
-        assert_eq!(look(None), Value::Null);
+        assert_eq!(look(&good), Some(good));
+        assert_eq!(look(&json!({ "appearance": "neon" })), None);
+        assert_eq!(look(&Value::Null), None);
     }
 }

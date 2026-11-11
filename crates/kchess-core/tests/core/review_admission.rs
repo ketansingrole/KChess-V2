@@ -54,11 +54,7 @@ async fn cancel_during_storage_admission_does_not_enqueue_later() {
     let reviews = Reviews::new(context, store.clone());
     let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
     let moves = vec!["e2e4".to_string()];
-    let key: String = serde_json::from_str(
-        &kchess_domain::api::call("reviewKey", &serde_json::json!([fen, moves]).to_string())
-            .unwrap(),
-    )
-    .unwrap();
+    let key = kchess_domain::records::review::review_key(fen, &moves, None);
     let pending = reviews.request_review(ReviewRequest {
         fen: fen.into(),
         moves,

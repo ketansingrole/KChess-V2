@@ -71,9 +71,7 @@ fn request(list: &[&str]) -> ReviewRequest {
 
 /// `reviewKey(fen, moves)`, as the store and the queue key a review.
 fn key_of(fen: &str, list: &[&str]) -> String {
-    let out =
-        kchess_domain::api::call("reviewKey", &json!([fen, list]).to_string()).expect("reviewKey");
-    serde_json::from_str::<String>(&out).expect("a key")
+    kchess_domain::records::review::review_key(fen, list, None)
 }
 
 fn now_ms() -> i64 {

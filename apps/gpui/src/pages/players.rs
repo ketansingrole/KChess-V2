@@ -869,7 +869,10 @@ impl PlayersPage {
                     rated: Some(json!(true)),
                 });
                 let rated = rated.await.unwrap_or(json!([]));
-                Some(crate::game::rules("ratingHistoryFromGames", &[rated]).unwrap_or(json!([])))
+                let games = rated.as_array().map_or(&[][..], Vec::as_slice);
+                Some(kchess_domain::records::ratings::rating_history_from_games(
+                    games,
+                ))
             };
             let _ = this.update(cx, |this, cx| {
                 if this.epoch != epoch {

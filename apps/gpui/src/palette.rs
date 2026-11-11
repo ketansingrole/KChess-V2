@@ -1284,19 +1284,10 @@ fn play_commands(cx: &App) -> Vec<Command> {
             (15., 10.),
             (30., 0.),
         ] {
-            let allowed = crate::game::rules(
-                "canPlayOnline",
-                &[json!(minutes), json!(increment), json!(false)],
-            )
-            .ok()
-                == Some(json!(true));
-            if !allowed {
+            if !kchess_domain::records::time_control::can_play_online(minutes, increment, false) {
                 continue;
             }
-            let perf = crate::game::rules("perfFor", &[json!(minutes), json!(increment)])
-                .ok()
-                .and_then(|perf| perf.as_str().map(str::to_string))
-                .unwrap_or_default();
+            let perf = kchess_domain::records::time_control::perf_for(minutes, increment);
             for rated in [false, true] {
                 list.push(
                     Command::new(

@@ -7,13 +7,13 @@ use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::assets::icon;
 use crate::chart::{ChartPoint, LineChart};
-use crate::game::rules;
 use crate::theme::Palette;
 use crate::widgets::{self, Choice};
+use kchess_domain::records::ratings::{merge_rating_histories, normalize_rating_key};
 
 /// `chartModes`, by perf key.
 const MODES: [(&str, &str); 6] = [
@@ -73,9 +73,7 @@ fn points_of(history: &Value, mode: &str) -> Vec<(f64, f64)> {
         .as_array()
         .into_iter()
         .flatten()
-        .find(|entry| {
-            rules("normalizeRatingKey", &[entry["name"].clone()]).ok() == Some(json!(mode))
-        })
+        .find(|entry| normalize_rating_key(entry["name"].as_str().unwrap_or_default()) == mode)
         .and_then(|entry| entry["points"].as_array())
         .map(|points| points.iter().filter_map(point_of).collect())
         .unwrap_or_default()
@@ -115,12 +113,8 @@ fn choices(items: impl IntoIterator<Item = (String, String)>) -> Vec<Choice> {
         .collect()
 }
 
-pub(crate) fn array_or_empty(value: &Value) -> Value {
-    if value.is_array() {
-        value.clone()
-    } else {
-        json!([])
-    }
+pub(crate) fn entries(value: &Value) -> &[Value] {
+    value.as_array().map_or(&[], Vec::as_slice)
 }
 
 impl RatingHistory {
@@ -232,16 +226,9 @@ impl RatingHistory {
         self.draw(cx);
     }
 
-    /// `mergeRatingHistories`: Lichess's own wins; games fill modes it has no points for.
+    /// Lichess's own wins; games fill modes it has no points for.
     fn history(&self) -> Value {
-        rules(
-            "mergeRatingHistories",
-            &[
-                array_or_empty(&self.official),
-                array_or_empty(&self.fallback),
-            ],
-        )
-        .unwrap_or(json!([]))
+        merge_rating_histories(entries(&self.official), entries(&self.fallback))
     }
 
     /// The chosen mode's points come from games (`chartFromGames`).

@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
+use kchess_domain::records::review::{Score, is_reviewable_perf};
 use kchess_domain::replay::{ReplayedPosition, replay_positions_in};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -25,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::status::{engine_identity, engine_status, fairy_variant, variant_engine_status};
 use super::uci::{UciController, lock, search_cancelled, signal_aborted};
-use super::{EngineContext, after, clear_timer, domain, now_ms, replace_timer};
+use super::{EngineContext, after, clear_timer, domain, now_ms, parse_info, replace_timer};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
 use kchess_domain::training::uci_info::parse_info;
@@ -391,7 +392,7 @@ impl Reviews {
             return Ok(None);
         }
         let upto = (positions.len() - 1).min(moves.len());
-        let key = review_key(&positions[0].fen, &moves[..upto], variant)?;
+        let key = review_key(&positions[0].fen, &moves[..upto], variant);
         self.shared.storage.read_review(&key).await
     }
 
@@ -575,16 +576,9 @@ fn fairy_key(variant: Option<&str>) -> &str {
         .unwrap_or("")
 }
 
-/// `reviewKey(fen, moves, variant)` for a list of moves.
-fn review_key(fen: &str, moves: &[String], variant: &str) -> Result<String> {
-    let mut args = vec![json!(fen), json!(moves)];
-    if !variant.is_empty() {
-        args.push(json!(variant));
-    }
-    let key = domain("reviewKey", args)?;
-    key.as_str()
-        .map(str::to_string)
-        .ok_or_else(|| CoreError::new("reviewKey returned no key"))
+/// The key a review of `moves` from `fen` is stored under; `variant` is empty for standard chess.
+fn review_key(fen: &str, moves: &[String], variant: &str) -> String {
+    kchess_domain::records::review::review_key(fen, moves, Some(variant).filter(|v| !v.is_empty()))
 }
 
 /// `jobFor(request, background)`: the job for a request, or None when its moves reach no position.
@@ -608,7 +602,7 @@ fn job_for(request: &ReviewRequest, background: bool, requested: u64) -> Result<
         }
         prefixes.push(format!(" moves {acc}"));
     }
-    let key = review_key(&fen, &moves, &variant)?;
+    let key = review_key(&fen, &moves, &variant);
     Ok(Some(Job {
         key,
         variant,
@@ -651,41 +645,35 @@ fn empty_review(job: &Job) -> StoredReview {
     }
 }
 
-/// `hasScore`: whether the evaluation carries a score (the rules decide).
+/// Whether the evaluation carries a score.
 fn has_score(score: Option<&ReviewEval>) -> bool {
-    let value = score.map_or(Value::Null, |score| {
-        serde_json::to_value(score).unwrap_or(Value::Null)
-    });
-    domain("hasScore", vec![value])
-        .ok()
-        .and_then(|result| result.as_bool())
-        .unwrap_or(false)
+    score.is_some_and(|score| score.cp.is_some() || score.mate.is_some())
 }
 
-/// `endEval(end, turn)`: the score of a finished game's last position.
-fn end_eval(end: &str, turn: &str) -> Result<ReviewEval> {
-    let score = domain("endEval", vec![json!(end), json!(turn)])?;
-    serde_json::from_value(score).map_err(|cause| CoreError::new(cause.to_string()))
+/// The score of a finished game's last position.
+fn end_eval(end: &str, turn: &str) -> ReviewEval {
+    let (cp, mate) = match kchess_domain::records::review::end_eval(end, turn) {
+        Score::Cp(cp) => (Some(cp), None),
+        Score::Mate(mate) => (None, Some(mate)),
+    };
+    ReviewEval {
+        cp,
+        mate,
+        ..ReviewEval::default()
+    }
 }
 
 /// The variant a synced game of `perf` is reviewed in, if it is reviewed automatically: standard
 /// chess for the standard speeds, else the variant its perf names (Stockfish reviews Chess960,
 /// Fairy-Stockfish the others).
-fn synced_variant(perf: &str) -> Result<Option<&str>> {
-    Ok(if is_reviewable_perf(perf)? {
+fn synced_variant(perf: &str) -> Option<&str> {
+    if is_reviewable_perf(perf) {
         Some("standard")
     } else if perf == "chess960" || fairy_variant(perf).is_some() {
         Some(perf)
     } else {
         None
-    })
-}
-
-/// `isReviewablePerf(perf)`: standard speeds only.
-fn is_reviewable_perf(perf: &str) -> Result<bool> {
-    Ok(domain("isReviewablePerf", vec![json!(perf)])?
-        .as_bool()
-        .unwrap_or(false))
+    }
 }
 
 fn host_of(s: &Shared) -> Option<Arc<dyn ReviewHost>> {
@@ -789,7 +777,7 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
         let skipped = lock(&s.state).skipped.clone();
         let mut games = Vec::new();
         for game in s.storage.games_to_review(&accounts, since).await? {
-            if !skipped.contains(&game.id) && synced_variant(&game.perf)?.is_some() {
+            if !skipped.contains(&game.id) && synced_variant(&game.perf).is_some() {
                 games.push(game);
             }
         }
@@ -842,7 +830,7 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
             continue;
         }
         for game in games {
-            let (fen, moves) = match synced_variant(&game.perf)? {
+            let (fen, moves) = match synced_variant(&game.perf) {
                 Some("standard") | None => {
                     kchess_domain::review::lichess_line(&game.moves, game.pgn.as_deref(), None)
                 }
@@ -1223,7 +1211,7 @@ async fn run_job(s: &Arc<Shared>, job: &Arc<Job>, review: &mut StoredReview) -> 
         for index in 0..total {
             let known = review.evals[index].clone();
             if let Some(end) = job.positions[index].end {
-                review.evals[index] = Some(end_eval(end, job.positions[index].turn)?);
+                review.evals[index] = Some(end_eval(end, job.positions[index].turn));
             } else if !has_score(known.as_ref())
                 || known.as_ref().and_then(|known| known.depth).unwrap_or(0.0) < f64::from(depth)
             {

@@ -615,7 +615,7 @@ impl AnalysisPage {
     /// The engine's search and its cache entry: the threat's position stands on its own.
     fn engine_context(&self) -> String {
         match self.threat_position() {
-            Some(fen) => analysis_context(&fen, &[]),
+            Some(fen) => analysis_context::<&str>(&fen, &[]),
             None => self.context(),
         }
     }
