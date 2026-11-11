@@ -4,6 +4,7 @@
 //! core's library as the app saves them, so either can carry the game on.
 
 use kchess_contracts::calls::{self, CoreCall};
+use kchess_contracts::check::LibraryId;
 use std::time::{Duration, Instant};
 
 use kchess_domain::games::Setup;
@@ -142,7 +143,7 @@ impl Session<'_> {
             match write {
                 Write::SaveGame(game) => self.save(calls::SaveArchivedGame { game }).await,
                 Write::RemoveGame(id) => {
-                    self.save(calls::RemoveArchivedGame { id: json!(id) }).await
+                    self.save(calls::RemoveArchivedGame { id: LibraryId(id) }).await
                 }
                 Write::SaveSession { kind, identity } => {
                     self.save(calls::SaveSession {

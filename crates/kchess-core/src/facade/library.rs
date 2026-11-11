@@ -1,5 +1,6 @@
 //! The library: studies, played games, drills, sessions and repertoire notes.
 
+use kchess_contracts::check::LibraryId;
 use kchess_contracts::core_api::LibraryApi;
 use kchess_domain::misc::documents;
 use kchess_domain::misc::value::J;
@@ -47,12 +48,10 @@ impl LibraryApi for Core {
         Ok(Value::Null)
     }
 
-    async fn remove_archived_game(&self, id: Value) -> Result<Value> {
-        let id = text(&id);
+    async fn remove_archived_game(&self, id: LibraryId) -> Result<()> {
         self.database
-            .write_async(move |ctx| library::remove_archived_game(ctx.db, &id))
-            .await?;
-        Ok(Value::Null)
+            .write_async(move |ctx| library::remove_archived_game(ctx.db, &id.0))
+            .await
     }
 
     async fn add_mistakes(&self, review_key: Value, color: Option<Value>) -> Result<Value> {

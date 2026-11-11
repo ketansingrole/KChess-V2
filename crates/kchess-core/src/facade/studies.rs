@@ -1,28 +1,31 @@
 //! Lichess studies, positions and the opening explorer.
 
+use kchess_contracts::check::{Fen, Username};
 use kchess_contracts::core_api::{Assist, StudiesApi};
+use kchess_contracts::types::{
+    LichessStudy, LookupOptions, PositionLookup, PositionLookupKind, Reply,
+};
 use kchess_domain::misc::checks;
 use serde_json::{Value, json};
 
 use super::args::{count, normal, parse, reply_json, text, to_json};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
-use crate::lichess::accounts::Reply;
 use crate::lichess::{lookups, studies};
 
 impl StudiesApi for Core {
     async fn position_lookup(
         &self,
-        kind: Value,
-        fen: Value,
-        options: Option<Value>,
-    ) -> Result<Value> {
+        kind: PositionLookupKind,
+        fen: Fen,
+        options: Option<LookupOptions>,
+    ) -> Result<PositionLookup> {
         let lookups = self.services.lookups();
-        to_json(lookups.lookup(&kind, &fen, options.as_ref()).await)
+        lookups.lookup(kind, &fen.0, options.as_ref()).await
     }
 
-    async fn lichess_studies(&self, account: Value) -> Result<Value> {
-        reply_json(studies::lichess_studies(self.services.lichess(), &text(&account)).await)
+    async fn lichess_studies(&self, account: Username) -> Result<Reply<Vec<LichessStudy>>> {
+        studies::lichess_studies(self.services.lichess(), &account.0).await
     }
 
     async fn lichess_study_chapters(&self, account: Value, id: Value) -> Result<Value> {

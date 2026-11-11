@@ -4,6 +4,8 @@ use kchess_domain::misc::constants::SESSION_KINDS;
 use kchess_domain::misc::value::J;
 use kchess_domain::misc::{self, checks, documents};
 
+use kchess_contracts::{check, types};
+
 use super::Out;
 
 const DOCUMENTS: &[&str] = &[
@@ -20,6 +22,15 @@ const DOCUMENTS: &[&str] = &[
     "assertSession",
     "assertWatchTarget",
 ];
+
+/// An argument's check that is its contract type (`kchess_contracts::check::Validate`): the value
+/// it normalized, as JSON.
+fn typed<T: check::Validate + serde::Serialize>(value: J) -> Out {
+    let checked = T::validate(value)?;
+    serde_json::to_value(checked)
+        .map(misc::value::integral)
+        .map_err(|error| error.to_string())
+}
 
 /// A validator of one argument, by the name the recorded suites called it.
 fn validator(method: &str) -> Option<fn(J) -> Out> {
@@ -42,10 +53,10 @@ fn validator(method: &str) -> Option<fn(J) -> Out> {
         "assertInsightsQuery" => checks::insights_query,
         "assertLadderQuery" => checks::ladder_query,
         "assertLevel" => checks::level,
-        "assertLibraryId" => checks::library_id,
+        "assertLibraryId" => typed::<check::LibraryId>,
         "assertLichessId" => checks::lichess_id,
         "assertLocalQuery" => checks::local_query,
-        "assertLookupOptions" => checks::lookup_options,
+        "assertLookupOptions" => typed::<types::LookupOptions>,
         "assertMessageText" => checks::message_text,
         "assertMoves" => checks::moves,
         "assertNewArena" => checks::new_arena,
@@ -71,7 +82,7 @@ fn validator(method: &str) -> Option<fn(J) -> Out> {
         "assertTournamentPassword" => checks::tournament_password,
         "assertTournamentSystem" => checks::tournament_system,
         "assertUci" => checks::uci,
-        "assertUsername" => checks::username,
+        "assertUsername" => typed::<check::Username>,
         "assertUsernames" => checks::usernames,
         "assertVoiceAttempt" => checks::voice_attempt,
         "assertVoiceId" => checks::voice_id,

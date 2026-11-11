@@ -267,10 +267,12 @@ fn the_dispatch_gates_assistance_before_and_after_and_reports_writes() {
     assert_eq!(api.calls(), ["reviewGet"]);
     api.0.blocked_after(&[false, false]);
     let answered = futures_lite_block_on(dispatch(&api, "reviewGet", vec![fen, json!([])]));
-    assert_eq!(answered, Ok(json!("reviewGet")));
+    assert_eq!(answered, Ok(Value::Null));
+    assert_eq!(api.calls(), ["reviewGet"]);
     // A write reports what it changed, and only once it succeeded.
     let saved = futures_lite_block_on(dispatch(&api, "removeArchivedGame", vec![json!("game-1")]));
-    assert_eq!(saved, Ok(json!("removeArchivedGame")));
+    assert_eq!(saved, Ok(Value::Null));
+    assert_eq!(api.calls(), ["removeArchivedGame"]);
     assert_eq!(
         api.0.changed.lock().unwrap().as_slice(),
         [&[ProfileArea::PlayedGames][..]]
@@ -301,9 +303,10 @@ mod recorder {
             std::mem::take(&mut self.1.lock().unwrap())
         }
 
+        /// Every method answers `null`, which reads as any answer that may be nothing.
         fn ran(&self, method: &str) -> Result<Value, CoreError> {
             self.1.lock().unwrap().push(method.into());
-            Ok(json!(method))
+            Ok(Value::Null)
         }
     }
 

@@ -14,6 +14,7 @@ use kchess_domain::misc::value::J;
 
 pub use crate::api::{Assist, Method, Param, as_checked};
 use crate::api::{Optional, Raw, answer, core_api, count_error, run_check, take};
+use crate::check::*;
 use crate::error::CoreError;
 use crate::types::*;
 
@@ -26,15 +27,16 @@ core_api! {
     /// Lichess studies, positions and the opening explorer.
     trait StudiesApi {
         #[assist(Lookups)]
+        #[check(crate::check::position_lookup)]
         PositionLookup = "positionLookup" fn position_lookup(
-            kind: Value = Raw(c::lookup_kind),
-            fen: Value = c::lookup_fen;
-            options: Option<Value> = Raw(c::lookup_options)
-        ) -> Value;
+            kind: PositionLookupKind,
+            fen: Fen;
+            options: Option<LookupOptions>
+        ) -> crate::types::PositionLookup;
         /// Studies an account owns or belongs to on Lichess.
         LichessStudies = "lichessStudies" fn lichess_studies(
-            account: Value = Raw(c::username)
-        ) -> Value;
+            account: Username
+        ) -> Reply<Vec<LichessStudy>>;
         LichessStudyChapters = "lichessStudyChapters" fn lichess_study_chapters(
             account: Value = Raw(c::username),
             id: Value = Raw(c::lichess_id)
@@ -502,9 +504,7 @@ core_api! {
             game: Value = c::archived_game_shape
         ) -> Value;
         #[writes(PlayedGames)]
-        RemoveArchivedGame = "removeArchivedGame" fn remove_archived_game(
-            id: Value = c::library_id
-        ) -> Value;
+        RemoveArchivedGame = "removeArchivedGame" fn remove_archived_game(id: LibraryId) -> ();
         /// Drills from a stored review's mistakes (one side's, when given); `added` counts new
         /// ones.
         #[writes(Drills)]

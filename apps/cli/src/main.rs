@@ -7,7 +7,8 @@ mod review;
 mod wait;
 
 use kchess_contracts::calls;
-use kchess_contracts::types::PositionLookupKind;
+use kchess_contracts::check::Fen;
+use kchess_contracts::types::{LookupOptions, PositionLookupKind};
 use kchess_domain::variant::Variant;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -399,20 +400,19 @@ async fn with_core(
             }
             Command::Explore => {
                 let (kind, fen, variant) = explore_request(rest)?;
-                let options = match variant {
-                    Some(variant) => json!({ "variant": variant.key() }),
-                    None => json!({}),
+                let options = LookupOptions {
+                    variant,
+                    ..LookupOptions::default()
                 };
                 core.request(calls::ResumeOnline {}).await?;
-                print(
-                    &core
-                        .request(calls::PositionLookup {
-                            kind: json!(kind),
-                            fen: json!(fen),
-                            options: Some(options),
-                        })
-                        .await?,
-                );
+                let lookup = core
+                    .request(calls::PositionLookup {
+                        kind,
+                        fen: Fen(fen),
+                        options: Some(options),
+                    })
+                    .await?;
+                print(json!(lookup));
             }
             Command::Help
             | Command::Version

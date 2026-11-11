@@ -65,11 +65,7 @@ pub struct CachedValue {
 
 /// What `asAccount` answers: the result, or that the account must connect again (no login, or
 /// one Lichess refuses).
-#[derive(Debug, PartialEq)]
-pub enum Reply<T> {
-    Done(T),
-    NeedsReconnect,
-}
+pub use kchess_contracts::types::Reply;
 
 /// The storage the Lichess services read and write, behind a trait so the wiring can plug the store in.
 /// Every method returns the store's result; `current` is the caller's "still signed in"

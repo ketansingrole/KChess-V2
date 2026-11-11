@@ -180,16 +180,23 @@ pub fn as_checked(args: Vec<Value>) -> Vec<J> {
         .collect()
 }
 
-/// A normalized argument in the type the method takes.
+/// An argument as its check normalized it, in the type the method takes.
 #[doc(hidden)]
-pub fn take<T: DeserializeOwned>(
-    method: &str,
-    at: usize,
-    value: Option<Value>,
-) -> Result<T, CoreError> {
-    serde_json::from_value(value.unwrap_or(Value::Null)).map_err(|cause| {
-        CoreError::new(format!("Invalid argument {} of {method}: {cause}", at + 1))
-    })
+pub fn take<T: DeserializeOwned>(method: &str, at: usize, value: Value) -> Result<T, String> {
+    serde_json::from_value(value)
+        .map_err(|cause| format!("Invalid argument {} of {method}: {cause}", at + 1))
+}
+
+/// The argument at `at` (`J::Undef` when absent) checked as its type.
+#[doc(hidden)]
+pub fn typed<T: crate::check::Validate>(args: &[J], at: usize) -> Result<T, String> {
+    T::validate(args.get(at).cloned().unwrap_or(J::Undef))
+}
+
+/// A checked argument as `check_arguments` lists it.
+#[doc(hidden)]
+pub fn listed(value: &impl Serialize) -> Result<Value, String> {
+    serde_json::to_value(value).map_err(|cause| cause.to_string())
 }
 
 /// A method's answer as it crosses to the caller.
@@ -199,14 +206,22 @@ pub fn answer(value: impl Serialize) -> Result<Value, CoreError> {
 }
 
 /// Declares the core's methods, grouped by area: each line names the typed call, the method,
-/// the function the core implements, each argument with its type and check (the optional ones
-/// after `;`), and the answer. `#[assist(Gate)]` refuses it during a live game and
-/// `#[writes(Area, …)]` reports the profile areas it changes.
+/// the function the core implements, each argument with its type (the optional ones after `;`),
+/// and the answer. An argument is checked by its type (`check::Validate`), or, until every method
+/// is typed, by the `kchess_domain::misc::checks` function named after `=`. `#[check(f)]` checks
+/// the arguments together once each passed (`f(&(a, b, …))`), `#[assist(Gate)]` refuses the method
+/// during a live game and `#[writes(Area, …)]` reports the profile areas it changes.
 macro_rules! core_api {
     (@assist) => { None };
     (@assist $gate:ident) => { Some(Assist::$gate) };
     (@count) => { 0usize };
     (@count $head:ident $($tail:ident)*) => { 1usize + core_api!(@count $($tail)*) };
+    (@arg $method:ident, $args:ident, $at:ident, $ty:ty) => {
+        crate::api::typed::<$ty>($args, $at)
+    };
+    (@arg $method:ident, $args:ident, $at:ident, $ty:ty, $check:expr) => {
+        run_check(&$check, $args, $at).and_then(|value| take::<$ty>($method, $at, value))
+    };
     ($(
         $(#[doc = $area_doc:literal])*
         trait $area:ident {
@@ -214,9 +229,10 @@ macro_rules! core_api {
                 $(#[doc = $doc:literal])*
                 $(#[assist($gate:ident)])?
                 $(#[writes($($written:ident),*)])?
+                $(#[check($together:path)])?
                 $call:ident = $method:literal fn $fn:ident(
-                    $($arg:ident : $ty:ty = $check:expr),*
-                    $(; $($opt:ident : $opt_ty:ty = $opt_check:expr),+)?
+                    $($arg:ident : $ty:ty $(= $check:expr)?),*
+                    $(; $($opt:ident : $opt_ty:ty $(= $opt_check:expr)?),+)?
                 ) -> $answer:ty;
             )*
         }
@@ -228,6 +244,8 @@ macro_rules! core_api {
             use serde_json::Value;
             #[allow(unused_imports)]
             use crate::types::*;
+            #[allow(unused_imports)]
+            use crate::check::*;
 
             pub use crate::api::{CoreCall, arg, decode};
 
@@ -248,6 +266,40 @@ macro_rules! core_api {
                             $($(crate::api::arg($method, self.$opt)?,)+)?
                         ]))
                     }
+                }
+            )*)*
+        }
+
+        /// Each method's arguments as it receives them: their count, then each in order (the
+        /// first refusal is the answer), then together.
+        mod arguments {
+            #[allow(unused_imports)]
+            use super::*;
+
+            $($(
+                #[allow(unused_assignments, unused_mut, unused_variables, clippy::unused_unit)]
+                pub fn $fn(
+                    method: &str,
+                    args: &[J],
+                ) -> Result<($($ty,)* $($($opt_ty,)+)?), String> {
+                    let required = core_api!(@count $($arg)*);
+                    let total = required $(+ core_api!(@count $($opt)+))?;
+                    if args.len() < required || args.len() > total {
+                        return Err(count_error(method));
+                    }
+                    let mut at = 0;
+                    $(
+                        let $arg: $ty = core_api!(@arg method, args, at, $ty $(, $check)?)?;
+                        at += 1;
+                    )*
+                    $($(
+                        let $opt: $opt_ty =
+                            core_api!(@arg method, args, at, $opt_ty $(, $opt_check)?)?;
+                        at += 1;
+                    )+)?
+                    let all = ($($arg,)* $($($opt,)+)?);
+                    $($together(&all)?;)?
+                    Ok(all)
                 }
             )*)*
         }
@@ -291,10 +343,9 @@ macro_rules! core_api {
                         $($arg: $ty,)*
                         $($($opt: $opt_ty,)+)?
                     ) -> impl ::std::future::Future<Output = Result<$answer, CoreError>> + Send {
-                        ::std::future::ready(
-                            self.answer_method($method)
-                                .and_then(|answer| take($method, 0, Some(answer))),
-                        )
+                        ::std::future::ready(self.answer_method($method).and_then(|answer| {
+                            take($method, 0, answer).map_err(CoreError::new)
+                        }))
                     }
                 )*
             }
@@ -316,28 +367,18 @@ macro_rules! core_api {
 
         /// The arguments of `method` checked: their count, then each in order (the first refusal
         /// is the answer), normalized. `None` for an unknown method.
-        #[allow(unused_assignments, unused_mut, unused_variables)]
+        #[allow(unused_variables)]
         pub fn check_arguments(method: &str, args: Vec<J>) -> Option<Result<Vec<Value>, String>> {
             Some(match method {
                 $($(
-                    $method => (|| {
-                        let required = core_api!(@count $($arg)*);
-                        let total = required $(+ core_api!(@count $($opt)+))?;
-                        if args.len() < required || args.len() > total {
-                            return Err(count_error(method));
-                        }
-                        let mut checked = Vec::with_capacity(total);
-                        let mut at = 0;
-                        $(
-                            checked.push(run_check(&$check, &args, at)?);
-                            at += 1;
-                        )*
-                        $($(
-                            checked.push(run_check(&$opt_check, &args, at)?);
-                            at += 1;
-                        )+)?
-                        Ok(checked)
-                    })(),
+                    $method => arguments::$fn(method, &args).and_then(
+                        |($($arg,)* $($($opt,)+)?)| {
+                            Ok(vec![
+                                $(crate::api::listed(&$arg)?,)*
+                                $($(crate::api::listed(&$opt)?,)+)?
+                            ])
+                        },
+                    ),
                 )*)*
                 _ => return None,
             })
@@ -345,33 +386,22 @@ macro_rules! core_api {
 
         /// Runs `method` on `api`: its arguments checked, the assistance gate before and after,
         /// the profile areas it changed reported, and its answer as JSON.
-        #[allow(unused_assignments, unused_mut, unused_variables)]
         pub async fn dispatch<A: CoreApi>(
             api: &A,
             method: &str,
             args: Vec<Value>,
         ) -> Result<Value, CoreError> {
-            let checked = match check_arguments(method, as_checked(args)) {
-                None => return Err(CoreError::new(format!("Unknown core method {method}."))),
-                Some(Err(cause)) => {
-                    api.refused_arguments(method, &cause);
-                    return Err(CoreError::new(cause));
-                }
-                Some(Ok(checked)) => checked,
-            };
-            let mut values = checked.into_iter();
-            let mut at = 0;
             match method {
                 $($(
                     $method => {
-                        $(
-                            let $arg: $ty = take(method, at, values.next())?;
-                            at += 1;
-                        )*
-                        $($(
-                            let $opt: $opt_ty = take(method, at, values.next())?;
-                            at += 1;
-                        )+)?
+                        let ($($arg,)* $($($opt,)+)?) =
+                            match arguments::$fn(method, &as_checked(args)) {
+                                Ok(checked) => checked,
+                                Err(cause) => {
+                                    api.refused_arguments(method, &cause);
+                                    return Err(CoreError::new(cause));
+                                }
+                            };
                         $(
                             if api.assistance_blocked() {
                                 return Err(CoreError::new(Assist::$gate.refusal()));

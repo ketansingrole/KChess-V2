@@ -3,6 +3,7 @@
 //! log levels that cross between them (`error`).
 
 mod api;
+pub mod check;
 pub mod core_api;
 pub mod defaults;
 pub mod error;

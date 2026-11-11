@@ -23,6 +23,18 @@ macro_rules! union {
         pub enum $name {
             $(#[serde(rename = $wire)] $variant,)+
         }
+
+        impl $name {
+            /// Every value, in declaration order.
+            pub const ALL: &[$name] = &[$($name::$variant),+];
+
+            /// Its wire value.
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $($name::$variant => $wire,)+
+                }
+            }
+        }
     };
 }
 
@@ -1338,6 +1350,46 @@ pub struct NeedsReconnect {
     pub needs_reconnect: bool,
 }
 
+/// What a call made as a Lichess account answers: its result, or `{ needsReconnect: true }` when
+/// the account has no login or Lichess refused it (it must connect again).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Reply<T> {
+    Done(T),
+    NeedsReconnect,
+}
+
+impl<T: Serialize> Serialize for Reply<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Reply::Done(value) => value.serialize(serializer),
+            Reply::NeedsReconnect => NeedsReconnect {
+                needs_reconnect: true,
+            }
+            .serialize(serializer),
+        }
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Reply<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire<T> {
+            Reconnect(NeedsReconnect),
+            Done(T),
+        }
+        match Wire::deserialize(deserializer)? {
+            Wire::Reconnect(NeedsReconnect {
+                needs_reconnect: true,
+            }) => Ok(Reply::NeedsReconnect),
+            Wire::Reconnect(_) => Err(serde::de::Error::custom(
+                "needsReconnect is only ever true",
+            )),
+            Wire::Done(value) => Ok(Reply::Done(value)),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleActivityEntry {
@@ -1809,68 +1861,131 @@ pub struct ReviewUpdate {
 }
 
 /// Filters of the opening explorer; each database uses the ones it understands.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct LookupOptions {
     /// Lichess and player databases.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speeds: Option<Vec<ExplorerSpeed>>,
     /// Lichess database: rating groups (each is the lower bound of its band).
-    pub ratings: Option<Vec<f64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ratings: Option<Vec<u32>>,
     /// Player database: whose games, and with which colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player: Option<String>,
-    #[serde(default, with = "kchess_domain::color::option_by_name")]
+    #[serde(
+        default,
+        with = "kchess_domain::color::option_by_name",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub color: Option<Color>,
     /// Player database: rated, casual or both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modes: Option<Vec<LookupMode>>,
     /// Games since this month (`YYYY-MM`; masters use a year).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<String>,
+    /// The Lichess and player databases' variant; standard chess when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<Variant>,
 }
 
 /// A game the explorer lists as notable for the position.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ExplorerGame {
     pub id: String,
     pub white: String,
     pub black: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub white_rating: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub black_rating: Option<f64>,
-    #[serde(default, with = "kchess_domain::color::option_by_name")]
+    #[serde(
+        default,
+        with = "kchess_domain::color::option_by_name",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub winner: Option<Color>,
-    pub year: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub month: Option<String>,
     /// The move played from this position, as SAN.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub san: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+/// One move of a lookup: the database's counts and the SAN checked against the position.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct LookupMove {
     pub uci: String,
     pub san: String,
-    pub white: Option<f64>,
-    pub draws: Option<f64>,
-    pub black: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub white: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draws: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub black: Option<i64>,
+    /// Tablebase: the move's outcome (`win`, `syzygy-loss`, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
-    pub dtz: Option<f64>,
+    /// Tablebase: absent for a database move, null when the tablebase gives no distance.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_or_null"
+    )]
+    pub dtz: Option<Option<i64>>,
 }
 
+/// A lookup as the profile keeps it: what `PositionLookup` answers, but where it came from.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedLookup {
+    pub kind: PositionLookupKind,
+    pub fen: String,
+    pub fetched_at: i64,
+    /// Games in the database reaching this position (opening databases).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opening: Option<String>,
+    /// Tablebase: the position's outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_or_null"
+    )]
+    pub dtz: Option<Option<i64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub games: Option<Vec<ExplorerGame>>,
+    pub moves: Vec<LookupMove>,
+}
+
+/// A position lookup: the saved one while it is fresh, or `stale` (with a `message`) when a
+/// refresh failed and the saved one is shown instead.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PositionLookup {
-    pub kind: PositionLookupKind,
-    pub fen: String,
-    /// Games in the database reaching this position (opening databases).
-    pub total: Option<f64>,
-    pub games: Option<Vec<ExplorerGame>>,
-    pub fetched_at: f64,
+    #[serde(flatten)]
+    pub saved: SavedLookup,
     pub cached: bool,
     pub stale: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-    pub opening: Option<String>,
-    pub category: Option<String>,
-    pub dtz: Option<f64>,
-    pub moves: Vec<LookupMove>,
+}
+
+/// A field that is absent (`None`), null (`Some(None)`) or a value.
+fn present_or_null<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -1878,7 +1993,7 @@ pub struct PositionLookup {
 pub struct LichessStudy {
     pub id: String,
     pub name: String,
-    pub updated_at: f64,
+    pub updated_at: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
