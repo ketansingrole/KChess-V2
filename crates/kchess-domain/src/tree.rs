@@ -1,11 +1,12 @@
 //! The analysis board's move tree.
 
 use serde::Serialize;
+use serde_json::{Map, Value};
 use shakmaty::Position;
 use shakmaty::variant::VariantPosition;
 
 use crate::js;
-use crate::pgn::{Game, parse_pgn};
+use crate::pgn::{Game, PgnNode, make_pgn, parse_pgn};
 use crate::rules;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -227,8 +228,236 @@ fn check(game: &Game, from: usize, pos: &VariantPosition, depth: usize, count: &
     true
 }
 
+/// The root of a new tree from `fen`, read under standard rules: its normalized FEN and ply, the
+/// usual start when the FEN is unusable.
+pub fn tree_root(fen: &str) -> (String, u32) {
+    let pos = rules::standard_from_fen(fen)
+        .unwrap_or_else(|| rules::default_position(shakmaty::variant::Variant::Chess));
+    (rules::make_fen(&pos), rules::ply_of(&pos))
+}
+
+/// One move of a principal variation.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PvMove {
+    pub san: String,
+    pub uci: String,
+    /// The SAN with its move number: "12. Nf6", "12… Nf6", or the SAN alone.
+    pub label: String,
+    /// The position after it.
+    pub fen: String,
+}
+
+/// "1.", "1…", or nothing: the number printed before the move at `ply`.
+fn move_number(ply: u32, always: bool) -> String {
+    let number = ply / 2 + 1;
+    if ply.is_multiple_of(2) {
+        format!("{number}.")
+    } else if always {
+        format!("{number}…")
+    } else {
+        String::new()
+    }
+}
+
+/// A principal variation in SAN with move numbers, at most `max` moves, stopping at the first
+/// illegal one. `variant` is a Lichess key, empty for standard chess.
+pub fn pv_san<S: AsRef<str>>(fen: &str, pv: &[S], max: usize, variant: &str) -> Vec<PvMove> {
+    let position = match variant {
+        "" => rules::standard_from_fen(fen),
+        variant => rules::setup_start(variant, fen),
+    };
+    let Some(mut pos) = position else {
+        return Vec::new();
+    };
+    let mut moves = Vec::new();
+    for (ply, uci) in (rules::ply_of(&pos)..).zip(pv.iter().take(max)) {
+        let uci = uci.as_ref();
+        let Some(m) = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u)) else {
+            break;
+        };
+        let number = move_number(ply, moves.is_empty());
+        let san = rules::san_and_play(&mut pos, m);
+        let label = if number.is_empty() {
+            san.clone()
+        } else {
+            format!("{number} {san}")
+        };
+        moves.push(PvMove {
+            san,
+            uci: uci.to_string(),
+            label,
+            fen: rules::make_fen(&pos),
+        });
+    }
+    moves
+}
+
+fn strings(value: Option<&Value>) -> Result<Option<Vec<String>>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|c| {
+                c.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| "comments must be strings".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+        Some(_) => Err("comments must be a list".to_string()),
+    }
+}
+
+fn nags(value: Option<&Value>) -> Result<Option<Vec<u32>>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|n| {
+                n.as_u64()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .ok_or_else(|| "nags must be whole numbers".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+        Some(_) => Err("nags must be a list".to_string()),
+    }
+}
+
+/// An analysis tree (`fen`, `children` of `san`, `comments`, `startingComments`, `nags`) as one
+/// PGN document with `headers`.
+pub fn tree_to_pgn(root: &Value, headers: Option<&Map<String, Value>>) -> Result<String, String> {
+    let mut game = Game::empty();
+    for (key, value) in headers.into_iter().flatten() {
+        let value = value
+            .as_str()
+            .ok_or_else(|| "header values must be strings".to_string())?;
+        game.put_header(key, value.to_string());
+    }
+    game.comments = strings(root.get("comments"))?;
+    let fen = root
+        .get("fen")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "root.fen".to_string())?;
+    // A variant game (Crazyhouse, Atomic…) keeps its Variant header, and its FEN unless it starts
+    // where that variant does.
+    let variant = rules::pgn_variant(game.header("Variant"))
+        .filter(|variant| *variant != shakmaty::variant::Variant::Chess);
+    if let Some(variant) = variant {
+        if let Some(pos) =
+            rules::parse_fen(fen).and_then(|setup| rules::setup_position(variant, setup))
+        {
+            let start = rules::make_fen(&pos);
+            if start == rules::make_fen(&rules::default_position(variant)) {
+                game.remove_header("FEN");
+            } else {
+                game.put_header("FEN", start);
+            }
+        }
+    } else if fen != rules::INITIAL_FEN
+        && let Some(pos) = rules::standard_from_fen(fen)
+    {
+        // Standard rules, so no Variant header; a FEN unless the usual start.
+        game.remove_header("Variant");
+        let start = rules::make_fen(&pos);
+        if start == rules::INITIAL_FEN {
+            game.remove_header("FEN");
+        } else {
+            game.put_header("FEN", start);
+        }
+    }
+    let mut stack: Vec<(&Value, usize)> = vec![(root, 0)];
+    while let Some((node, index)) = stack.pop() {
+        let children = node
+            .get("children")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "children".to_string())?;
+        let mut added = Vec::with_capacity(children.len());
+        for child in children {
+            let san = child
+                .get("san")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "san".to_string())?;
+            let move_node = PgnNode::with(
+                san,
+                strings(child.get("comments"))?,
+                strings(child.get("startingComments"))?,
+                nags(child.get("nags"))?,
+            );
+            added.push((child, game.add_move(index, move_node)));
+        }
+        // Children are written in order; their subtrees are independent of each other.
+        stack.extend(added.into_iter().rev());
+    }
+    Ok(make_pgn(&game))
+}
+
+/// Bytes of stack for work on a deep tree.
+const DEEP_STACK: usize = 32 * 1024 * 1024;
+
+/// `work` on a thread with a stack deep enough for the largest tree, whatever thread asked:
+/// building, walking, converting and dropping a tree recurse once a ply.
+pub fn on_large_stack<T: Send>(work: impl FnOnce() -> T + Send) -> Result<T, String> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("kchess-deep-tree".into())
+            .stack_size(DEEP_STACK)
+            .spawn_scoped(scope, work)
+            .map_err(|error| format!("could not start a thread: {error}"))?
+            .join()
+            .map_err(|_| "internal error".to_string())
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    /// A variant game's tree is written with its Variant header, and its FEN only when it starts
+    /// elsewhere than its variant does, so it reads back in that variant.
+    #[test]
+    fn a_variant_tree_is_written_in_its_variant() {
+        let written = |pgn: &str| {
+            let tree = serde_json::to_value(tree_from_pgn(pgn).unwrap()).unwrap();
+            tree_to_pgn(&tree, tree["headers"].as_object()).unwrap()
+        };
+        let pgn = written("[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 3. P@e3 *");
+        assert!(pgn.contains("[Variant \"Crazyhouse\"]"), "{pgn}");
+        assert!(!pgn.contains("[FEN"), "{pgn}");
+        assert!(pgn.contains("3. P@e3"), "{pgn}");
+        let held = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[Pp] w KQkq - 0 1";
+        let pgn = written(&format!(
+            "[Variant \"Crazyhouse\"]\n[FEN \"{held}\"]\n\n1. P@e4 *"
+        ));
+        assert!(pgn.contains(&format!("[FEN \"{held}\"]")), "{pgn}");
+        assert!(pgn.contains("[Variant \"Crazyhouse\"]"), "{pgn}");
+    }
+
+    /// A 1024-ply tree, the deepest the rules build, is built, written out and dropped on the
+    /// large stack whatever stack asked for it (it overflowed tokio's 2 MiB default in a debug
+    /// build).
+    #[test]
+    fn the_deepest_tree_round_trips_on_a_small_stack() {
+        let moves = ["Nf3", "Nf6", "Ng1", "Ng8"].repeat(256).join(" ");
+        let pgn = format!("{moves} *");
+        let small = std::thread::Builder::new().stack_size(256 * 1024);
+        let written = small
+            .spawn(move || {
+                on_large_stack(|| {
+                    let tree = serde_json::to_value(tree_from_pgn(&pgn).unwrap()).unwrap();
+                    tree_to_pgn(&tree, None)
+                })
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            written.trim_end().ends_with("512. Ng1 Ng8 *"),
+            "{}",
+            &written[written.len() - 80..]
+        );
+    }
+
     use super::*;
 
     #[test]

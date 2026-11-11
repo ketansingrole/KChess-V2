@@ -1002,6 +1002,11 @@ pub fn default_position(variant: Variant) -> VariantPosition {
     VariantPosition::new(variant)
 }
 
+/// The start of the variant a Lichess key names, as a FEN.
+pub fn default_fen(variant: &str) -> Option<String> {
+    lichess_variant(variant).map(|variant| make_fen(&default_position(variant)))
+}
+
 /// The Chess960 starting position numbered `n` in the Scharnagl scheme (any whole number, taken
 /// modulo 960; 518 is the standard start). Castling rights use X-FEN letters so every engine and
 /// Lichess can read it.
