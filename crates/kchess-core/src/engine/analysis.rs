@@ -22,7 +22,8 @@ use super::status::{
     EngineStatus, engine_identity, engine_status, fairy_variant, variant_engine_status,
 };
 use super::uci::{UciController, error_summary, lock, signal_aborted, truncate_for_log};
-use super::{EngineContext, after, clear_timer, domain, parse_info, replace_timer, validate};
+use super::{EngineContext, after, clear_timer, domain, replace_timer, validate};
+use kchess_domain::training::uci_info::parse_info;
 use crate::error::{CoreError, Result};
 use crate::host::Level;
 
@@ -296,7 +297,8 @@ impl Session {
             return;
         };
         let rank = parsed.line.rank;
-        if rank > f64::from(wanted) {
+        // A rank the engine did not write as a number is no line.
+        if !rank.is_finite() || rank > f64::from(wanted) {
             return;
         }
         let rank = rank as u32;

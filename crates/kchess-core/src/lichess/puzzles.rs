@@ -113,8 +113,7 @@ pub struct PuzzleActivityEntry {
 
 /// `puzzleFromApi(raw)`: a Lichess puzzle as KChess reads it.
 pub fn puzzle_from_api(raw: &Value) -> Option<Value> {
-    let result = training::call("puzzleFromApi", std::slice::from_ref(raw))?.ok()?;
-    if result.is_null() { None } else { Some(result) }
+    training::puzzle::from_api(raw)
 }
 
 fn readable_puzzle(raw: &Value) -> CoreResult<Value> {

@@ -627,9 +627,14 @@ pub fn normalize_settings(stored: &Map<String, Value>) -> Result<Map<String, Val
     let levels = present("engineLevels")
         .cloned()
         .unwrap_or_else(|| default("engineLevels"));
+    let levels: Vec<String> = serde_json::from_value(levels)
+        .map_err(|cause| CoreError::new(format!("levels: {cause}")))?;
     settings.insert(
         "engineLevels".into(),
-        domain("normalizeEngineLevels", vec![levels])?,
+        json!(
+            kchess_domain::training::engine_levels::normalize(&levels)
+                .map_err(CoreError::new)?
+        ),
     );
     let review = stored.get("reviewAuto").cloned().unwrap_or(Value::Null);
     settings.insert(
@@ -645,10 +650,6 @@ pub fn normalize_settings(stored: &Map<String, Value>) -> Result<Map<String, Val
         settings.insert("soundVolume".into(), number_json((volume / 100.0).min(1.0)));
     }
     Ok(settings)
-}
-
-fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
-    crate::engine::domain(method, args)
 }
 
 fn begin(db: &Connection) -> Result<()> {

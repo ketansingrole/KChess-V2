@@ -652,16 +652,19 @@ fn opening_name(words: &[String]) -> Result<Value, String> {
     if request.get("variant").is_some() {
         return Err("Opening names are for standard chess only.".into());
     }
-    let root = request.get("rootFen").unwrap_or(&request["fen"]).clone();
-    let moves = request.get("moves").cloned().unwrap_or_else(|| json!([]));
-    let named = kchess_domain::api::call_value(
-        "openingAt",
-        &[json!({ "variant": "standard", "fen": root }), moves],
-    )?;
-    if named.is_null() {
-        return Err("No named opening there.".into());
-    }
-    Ok(json!({ "eco": named["eco"], "name": named["name"], "fen": request["fen"] }))
+    let root = request
+        .get("rootFen")
+        .unwrap_or(&request["fen"])
+        .as_str()
+        .unwrap_or_default();
+    let moves: Vec<String> = match request.get("moves") {
+        Some(moves) => serde_json::from_value(moves.clone()).map_err(|e| format!("moves: {e}"))?,
+        None => Vec::new(),
+    };
+    let ply = moves.len() as f64;
+    let named = kchess_domain::training::openings::opening_at("standard", root, &moves, ply)
+        .ok_or("No named opening there.")?;
+    Ok(json!({ "eco": named.eco, "name": named.name, "fen": request["fen"] }))
 }
 
 /// The position a FEN or line reaches: whose turn, check and how the game stands, and every legal

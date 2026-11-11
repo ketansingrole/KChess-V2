@@ -1,29 +1,28 @@
-//! One puzzle on the board as every frontend plays it (`PuzzleState` in the rules,
-//! `kchess-domain/src/training/puzzle.rs`): the position, the solution move to find next, and
+//! One puzzle on the board as every frontend plays it (`kchess_domain::training::puzzle`): the
+//! position, the solution move to find next, and
 //! whether it is solved. The app's Puzzles page and the CLI's `puzzle` both play puzzles through
 //! it, so a move counts the same in each (any checkmate solves, as on Lichess).
 
-use serde_json::{Value, json};
+use kchess_domain::training::puzzle::{self, PuzzleState};
+use serde_json::Value;
 
-use crate::rules;
-
-/// One puzzle on the board (`PuzzleState`): the position, the next solution move to find, and
-/// whether it is still being played.
+/// One puzzle on the board: the position, the next solution move to find, and whether it is
+/// still being played.
 pub struct OnBoard {
     pub puzzle: Value,
-    pub state: Value,
+    pub state: PuzzleState,
 }
 
 impl OnBoard {
     pub fn start(puzzle: &Value) -> OnBoard {
         OnBoard {
             puzzle: puzzle.clone(),
-            state: rules("startPuzzle", std::slice::from_ref(puzzle)).unwrap_or(Value::Null),
+            state: puzzle::start_puzzle(puzzle),
         }
     }
 
     pub fn fen(&self) -> &str {
-        self.state["fen"].as_str().unwrap_or_default()
+        &self.state.fen
     }
 
     /// The variant it is played in: a drill from a variant game keeps the game's.
@@ -33,73 +32,54 @@ impl OnBoard {
 
     /// `playing`, `solved` or `failed`.
     pub fn status(&self) -> &str {
-        self.state["status"].as_str().unwrap_or("playing")
+        &self.state.status
     }
 
     /// The index in the solution of the move the player must make next.
     pub fn index(&self) -> usize {
-        crate::whole(&self.state["index"]) as usize
+        self.state.index.max(0.) as usize
     }
 
     pub fn player_color(&self) -> shakmaty::Color {
-        match rules("playerColor", std::slice::from_ref(&self.puzzle)) {
-            Ok(color) if color == "black" => shakmaty::Color::Black,
+        match puzzle::player_color(&self.puzzle) {
+            "black" => shakmaty::Color::Black,
             _ => shakmaty::Color::White,
         }
     }
 
     /// The last move's squares.
     pub fn last_move(&self) -> Option<(shakmaty::Square, shakmaty::Square)> {
-        let squares = self.state["lastMove"].as_array()?;
-        Some((
-            squares.first()?.as_str()?.parse().ok()?,
-            squares.get(1)?.as_str()?.parse().ok()?,
-        ))
+        squares(self.state.last_move.as_deref()?)
     }
 
     /// The SAN of the last move played.
     pub fn last_san(&self) -> String {
-        self.state["sans"]
-            .as_array()
-            .and_then(|sans| sans.last())
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string()
+        self.state.sans.last().cloned().unwrap_or_default()
     }
 
     /// The player's move: whether it was the solution's, and the opponent's reply to play next.
     pub fn player_move(&mut self, uci: &str) -> (bool, Option<String>) {
-        let Ok(result) = rules(
-            "playerMove",
-            &[self.puzzle.clone(), self.state.clone(), json!(uci)],
-        ) else {
-            return (false, None);
-        };
-        let correct = result["correct"].as_bool() == Some(true);
-        if correct {
-            self.state = result["state"].clone();
+        let played = puzzle::player_move(
+            &puzzle::solution_of(&self.puzzle),
+            self.state.clone(),
+            uci,
+        );
+        if played.correct {
+            self.state = played.state;
         }
-        (correct, result["reply"].as_str().map(str::to_string))
+        (played.correct, played.reply)
     }
 
     pub fn opponent_reply(&mut self, uci: &str) {
-        if let Ok(state) = rules("opponentReply", &[self.state.clone(), json!(uci)]) {
-            self.state = state;
-        }
+        self.state = puzzle::opponent_reply(self.state.clone(), uci);
     }
 
     /// The next solution move's squares (the hint, and the solution's arrow).
     pub fn next_squares(&self) -> Option<(shakmaty::Square, shakmaty::Square)> {
-        let squares = rules(
-            "nextSolutionSquares",
-            &[self.puzzle.clone(), self.state.clone()],
-        )
-        .ok()?;
-        let squares = squares.as_array()?;
-        Some((
-            squares.first()?.as_str()?.parse().ok()?,
-            squares.get(1)?.as_str()?.parse().ok()?,
-        ))
+        squares(&puzzle::next_solution_squares(
+            &puzzle::solution_of(&self.puzzle),
+            &self.state,
+        )?)
     }
 
     /// The solution's move at `index`.
@@ -116,9 +96,15 @@ impl OnBoard {
     }
 }
 
+/// A move's two squares, from and to.
+fn squares(names: &[String]) -> Option<(shakmaty::Square, shakmaty::Square)> {
+    Some((names.first()?.parse().ok()?, names.get(1)?.parse().ok()?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     const STANDARD_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 

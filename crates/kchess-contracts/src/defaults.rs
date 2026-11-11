@@ -4,7 +4,7 @@ use crate::types::{
     Appearance, CoordinateMode, CoreSettings, EngineLevel, FrontendPreferences, PieceAnimation,
     PromotionMode, ReviewAuto, Settings,
 };
-use kchess_domain::training;
+use kchess_domain::training::engine_levels;
 
 /// Minutes between correspondence-game polls.
 const DEFAULT_CORRESPONDENCE_POLL_MINUTES: f64 = 5.0;
@@ -13,13 +13,16 @@ const DEFAULT_SOUND_VOLUME: f64 = 0.7;
 
 /// The engine levels in `Settings`, from the domain's training data.
 fn default_engine_levels() -> Result<Vec<EngineLevel>, String> {
-    let Some(levels) = training::call("defaultEngineLevels", &[]) else {
-        return Err("defaultEngineLevels is not a training method".into());
-    };
-    let levels =
-        levels.map_err(|cause| format!("the bundled engine levels are unreadable: {cause}"))?;
-    serde_json::from_value(levels)
-        .map_err(|cause| format!("the bundled engine levels are not known levels: {cause}"))
+    let levels = engine_levels::default_levels()
+        .map_err(|cause| format!("the bundled engine levels are unreadable: {cause}"))?;
+    levels
+        .iter()
+        .map(|level| {
+            serde_json::from_value(serde_json::Value::String(level.clone())).map_err(|cause| {
+                format!("the bundled engine levels are not known levels: {cause}")
+            })
+        })
+        .collect()
 }
 
 /// The default preferences. The engine levels are the domain's data (`training` data).
@@ -86,7 +89,7 @@ mod tests {
         let settings = default_settings().unwrap();
         let levels = &settings.core.engine_levels;
         assert_eq!(levels.first(), Some(&EngineLevel::Beginner));
-        let from_domain = training::call("defaultEngineLevels", &[]).unwrap().unwrap();
-        assert_eq!(serde_json::to_value(levels).unwrap(), from_domain);
+        let from_domain = engine_levels::default_levels().unwrap();
+        assert_eq!(serde_json::to_value(levels).unwrap(), serde_json::json!(from_domain));
     }
 }
