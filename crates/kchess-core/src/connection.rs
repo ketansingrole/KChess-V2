@@ -196,6 +196,21 @@ mod tests {
     }
 
     #[test]
+    fn the_embedding_app_says_what_it_can_answer() {
+        let connections = Connections::new();
+        connections.set_app(ClientInfo {
+            kind: "cli".into(),
+            release: "2026.11.1".into(),
+            capabilities: Vec::new(),
+        });
+        assert_eq!(
+            connections.info(APP).map(|info| info.kind).as_deref(),
+            Some("cli")
+        );
+        assert_eq!(connections.route(Capability::Browser, Some(APP)), None);
+    }
+
+    #[test]
     fn the_window_focused_last_alerts_and_tools_never_do() {
         let connections = Connections::new();
         connections.without_app();

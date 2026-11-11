@@ -780,4 +780,105 @@ mod tests {
         assert_eq!(error.message, ABORTED);
         assert_eq!(*host.0.lock().unwrap(), (1, 0));
     }
+
+    /// A server sending `answer` (a whole HTTP response) on every connection, keeping the heads
+    /// of the requests it received.
+    async fn serving(answer: Vec<u8>) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/asset", listener.local_addr().unwrap());
+        let heads = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&heads);
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") && matches!(socket.read(&mut byte).await, Ok(1))
+                {
+                    head.push(byte[0]);
+                }
+                seen.lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&head).to_lowercase());
+                let _ = socket.write_all(&answer).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        (url, heads)
+    }
+
+    /// Reads `body` to its end through `Body::next`, failing when it does not end.
+    async fn read_to_end(body: &mut Body<'_>) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        for _ in 0..10_000 {
+            match body.next().await? {
+                Some(chunk) => bytes.extend_from_slice(&chunk),
+                None => return Ok(bytes),
+            }
+        }
+        panic!("the body never ended")
+    }
+
+    /// Opens `url` with `max_bytes` as the limit, counting into `host`.
+    async fn open_limited<'a>(
+        client: &reqwest::Client,
+        url: &str,
+        max_bytes: u64,
+        cancel: &'a CancellationToken,
+        host: &'a Metered,
+    ) -> Result<Body<'a>> {
+        let limits = Limits {
+            max_bytes,
+            deadline: None,
+        };
+        let usage = Usage {
+            meter: host,
+            kind: UsageKind::Database,
+        };
+        open(client, || client.get(url), limits, cancel, usage, &WORDING).await
+    }
+
+    #[tokio::test]
+    async fn the_client_names_kchess() {
+        let (url, heads) = serving(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_vec(),
+        )
+        .await;
+        super::client(None).unwrap().get(&url).send().await.unwrap();
+        let user_agent = format!("user-agent: {}", crate::USER_AGENT.to_lowercase());
+        assert!(heads.lock().unwrap()[0].contains(&user_agent));
+    }
+
+    #[tokio::test]
+    async fn the_announced_length_is_the_total_and_a_body_may_fill_the_limit() {
+        for (answer, total, expected) in [
+            ("Content-Length: 2\r\n\r\nok", Some(2), &b"ok"[..]),
+            ("Content-Length: 0\r\n\r\n", None, &b""[..]),
+        ] {
+            let host = Metered::default();
+            let raw = format!("HTTP/1.1 200 OK\r\nConnection: close\r\n{answer}");
+            let (url, _) = serving(raw.into_bytes()).await;
+            let (client, cancel) = (client(), CancellationToken::new());
+            let mut body = open_limited(&client, &url, 2, &cancel, &host)
+                .await
+                .unwrap();
+            assert_eq!(body.total(), total, "{answer}");
+            assert_eq!(read_to_end(&mut body).await.unwrap(), expected, "{answer}");
+            assert_eq!(body.received(), expected.len() as u64);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_body_without_a_length_is_cut_off_past_the_limit() {
+        let host = Metered::default();
+        let mut raw = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_vec();
+        raw.extend(file());
+        let (url, _) = serving(raw).await;
+        let (client, cancel) = (client(), CancellationToken::new());
+        let mut body = open_limited(&client, &url, 1001, &cancel, &host)
+            .await
+            .unwrap();
+        assert_eq!(body.total(), None);
+        let error = read_to_end(&mut body).await.unwrap_err();
+        assert_eq!(error.message, "too large");
+    }
 }

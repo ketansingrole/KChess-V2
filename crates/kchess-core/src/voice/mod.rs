@@ -801,4 +801,39 @@ mod tests {
         assert_eq!(model.name, "test-model");
         assert_eq!(model.sha256, "abc123");
     }
+
+    /// What is already gone counts as removed; any other failure is reported.
+    #[tokio::test]
+    async fn removing_what_is_gone_succeeds_and_other_failures_are_reported() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (file, folder) = (dir.path().join("file"), dir.path().join("folder"));
+        fs::write(&file, b"x").expect("file");
+        fs::create_dir(&folder).expect("folder");
+        let missing = dir.path().join("missing");
+        assert!(remove_if_present(&missing).await.is_ok());
+        assert!(remove_dir_if_present(&missing).await.is_ok());
+        assert!(remove_if_present(&folder).await.is_err(), "a folder");
+        assert!(remove_dir_if_present(&file).await.is_err(), "a file");
+    }
+
+    /// A listed file that is gone makes the model unverified; one that cannot be checked at all
+    /// is an error.
+    #[test]
+    fn a_missing_file_is_unverified_and_an_unreadable_one_an_error() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::write(dir.path().join("file"), b"x").expect("file");
+        let marker = |path: &str| Marker {
+            source: String::new(),
+            files: vec![MarkerFile {
+                path: path.into(),
+                size: 1,
+                sha256: String::new(),
+            }],
+        };
+        assert_eq!(
+            verify(dir.path(), &marker("missing")).expect("checked"),
+            None
+        );
+        assert!(verify(dir.path(), &marker("file/inside")).is_err());
+    }
 }

@@ -254,6 +254,10 @@ mod tests {
                         HostReply::Value(json!(format!("plain:{sealed}")))
                     }
                     HostRequest::OnBattery => HostReply::Value(json!(true)),
+                    HostRequest::SecretsAvailable => HostReply::Value(json!(false)),
+                    HostRequest::OpenExternal(url) if url == "https://kchess.test/" => {
+                        HostReply::Value(Value::Null)
+                    }
                     _ => HostReply::Error("Not supported.".into()),
                 };
                 caps.reply(ask.id, answer);
@@ -269,6 +273,15 @@ mod tests {
         assert_eq!(caps.decrypt("abc").await.unwrap(), "plain:abc");
         assert!(caps.on_battery().await.unwrap());
         assert_eq!(caps.focus().await.unwrap_err().message, "Not supported.");
+        assert!(!caps.secrets_available().await.unwrap());
+        caps.open_external("https://kchess.test/").await.unwrap();
+        assert_eq!(
+            caps.open_external("https://elsewhere.test/")
+                .await
+                .unwrap_err()
+                .message,
+            "Not supported."
+        );
         assert!(caps.pending.lock().unwrap().waiting.is_empty());
     }
 

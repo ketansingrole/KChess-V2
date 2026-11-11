@@ -309,4 +309,23 @@ mod tests {
                 .is_some_and(|accounts| accounts.is_empty())
         );
     }
+
+    /// Without a runtime to time a flush, a count is written at once.
+    #[test]
+    fn without_a_runtime_a_count_is_written_at_once() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let batch = batch(dir.path());
+        batch.record("Alice", "games", 2, 30);
+        assert!(lock(&batch.pending).cells.is_empty());
+        let report = json!(
+            batch
+                .database
+                .read(store::usage::usage_report)
+                .expect("report")
+        );
+        assert_eq!(
+            report["accounts"]["alice"]["total"],
+            json!({ "requests": 2, "bytesIn": 30 })
+        );
+    }
 }

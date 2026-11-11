@@ -194,7 +194,13 @@ async fn reports_a_helper_that_cannot_load_the_model() {
 async fn a_helper_slow_to_take_its_grammar_is_still_starting() {
     let folder = model("slow-grammar");
     let (voice, _) = recognizer(folder.path());
+    let started = std::time::Instant::now();
     voice.start(&grammar(), 16_000.0).await.expect("start");
+    // The grammar took longer than an audio chunk may (a second, `recognizer`).
+    assert!(
+        started.elapsed() > Duration::from_secs(1),
+        "the helper was slow"
+    );
     assert!(
         voice
             .accept(&pcm(&[5]))

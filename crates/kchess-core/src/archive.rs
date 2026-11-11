@@ -280,4 +280,34 @@ mod tests {
         ));
         assert!(!root.path().join("a").exists());
     }
+
+    #[test]
+    fn folders_are_made_inside_the_prefix_skipped_outside_it_and_refused_when_unsafe() {
+        let folders = |names: &[&str]| {
+            let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            for name in names {
+                writer
+                    .add_directory(*name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+            }
+            Cursor::new(writer.finish().unwrap().into_inner())
+        };
+        let root = tempfile::tempdir().unwrap();
+        let to = Unpack {
+            root: root.path(),
+            budget: 100,
+            prefix: Some("model/"),
+            cancel: None,
+        };
+        assert!(matches!(
+            unpack_zip(folders(&["model/empty/", "other/"]), &to),
+            Ok(0)
+        ));
+        assert!(root.path().join("model/empty").is_dir());
+        assert!(!root.path().join("other").exists());
+        assert!(matches!(
+            unpack_zip(folders(&["../up/"]), &to),
+            Err(Refusal::UnsafePath)
+        ));
+    }
 }

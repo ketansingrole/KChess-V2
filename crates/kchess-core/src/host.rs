@@ -165,6 +165,22 @@ mod tests {
         );
         assert_eq!(switches.chesscom_origin, None);
         assert_eq!(switches.voice_model, None, "a model needs all three");
+        let all_three = vars(&[
+            ("KCHESS_STORE_DEBUG", "1"),
+            ("KCHESS_TEST_VOICE_ARCHIVE", "/model.zip"),
+            ("KCHESS_TEST_VOICE_NAME", "model"),
+            ("KCHESS_TEST_VOICE_SHA256", "abc"),
+        ]);
+        assert_eq!(
+            TestSwitches::from_vars(true, all_three)
+                .expect("on")
+                .voice_model,
+            Some(TestVoiceModel {
+                archive: PathBuf::from("/model.zip"),
+                name: "model".into(),
+                sha256: "abc".into(),
+            })
+        );
         assert_eq!(TestSwitches::from_vars(false, &set), None);
         let off = vars(&[("KCHESS_TEST_LICHESS_BASE", "http://127.0.0.1:9")]);
         assert_eq!(TestSwitches::from_vars(true, off), None);

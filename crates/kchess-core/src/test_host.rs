@@ -96,3 +96,32 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kchess_contracts::{HostAsk, HostRequest};
+
+    #[test]
+    fn keeps_every_event_and_log_line_unless_quiet() {
+        let ask = || {
+            CoreEvent::HostRequest(HostAsk {
+                id: 1,
+                request: HostRequest::Focus,
+            })
+        };
+        let host = TestHost::new();
+        host.emit(ask());
+        host.log(Level::Info, "test", "kept");
+        assert_eq!(
+            host.events(),
+            vec![("host:request".into(), ask().into_payload())]
+        );
+        assert_eq!(host.requests("focus").len(), 1);
+        assert!(host.logged("kept"));
+        let quiet = TestHost::quiet();
+        quiet.emit(ask());
+        quiet.log(Level::Info, "test", "dropped");
+        assert!(quiet.events().is_empty() && quiet.logs().is_empty());
+    }
+}

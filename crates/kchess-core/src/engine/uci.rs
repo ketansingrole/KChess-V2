@@ -689,7 +689,7 @@ async fn read_lines(inner: Arc<Inner>, stdout: ChildStdout) {
             .await
         {
             Ok(0) => break,
-            Ok(read) if read as u64 == LINE_LIMIT && buffer.last() != Some(&b'\n') => {
+            Ok(read) if cut_off(read, &buffer) => {
                 inner.fail(CoreError::new("Invalid engine output."));
                 break;
             }
@@ -706,6 +706,11 @@ async fn read_lines(inner: Arc<Inner>, stdout: ChildStdout) {
             }
         }
     }
+}
+
+/// Whether a read of `read` bytes into `line` stopped at `LINE_LIMIT` before the line ended.
+fn cut_off(read: usize, line: &[u8]) -> bool {
+    read as u64 == LINE_LIMIT && line.last() != Some(&b'\n')
 }
 
 async fn read_stderr(inner: Arc<Inner>, mut stderr: ChildStderr) {
@@ -849,4 +854,22 @@ fn uci_command_name(command: &str) -> String {
         String::new()
     };
     truncate_for_log(&format!("{head}{moves}"), 40)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_line_cut_off_at_the_limit_is_invalid() {
+        let limit = LINE_LIMIT as usize;
+        for (read, line, cut) in [
+            (limit, &b"info\n"[..], false),
+            (limit, &b"info"[..], true),
+            (5, &b"info\n"[..], false),
+            (4, &b"info"[..], false),
+        ] {
+            assert_eq!(cut_off(read, line), cut, "{read} {line:?}");
+        }
+    }
 }
