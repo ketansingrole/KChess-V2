@@ -30,7 +30,7 @@ use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 
-/// `ENDINGS`: how a game ended, as Lichess names its status.
+/// How a game ended, as Lichess names its status.
 fn ending(status: &str) -> &str {
     match status {
         "mate" => "Checkmate",
@@ -110,7 +110,7 @@ pub fn result_line(frame: &Value) -> String {
     }
 }
 
-/// "1+0 · Rated · Bullet", the line Lichess shows above a TV game (`frameInfo`).
+/// "1+0 · Rated · Bullet", the line Lichess shows above a TV game.
 pub fn info_line(frame: &Value, channels: &[kchess_contracts::types::TvChannel]) -> String {
     let speed = frame["speed"].as_str().unwrap_or_default();
     let variant = if frame["source"] == json!("tv") {
@@ -1001,7 +1001,7 @@ impl WatchPage {
         }
     }
 
-    /// `analyseTv`: the game so far on the analysis board, at the move looked at.
+    /// The game so far on the analysis board, at the move looked at.
     fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(frame) = self.live.frame.clone() else {
             return;

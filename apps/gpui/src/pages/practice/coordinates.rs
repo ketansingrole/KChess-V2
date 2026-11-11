@@ -72,7 +72,7 @@ pub fn random_square(previous: Option<&str>, allowed: Option<&[String]>) -> Stri
 }
 
 /// White text over the board, readable on light and dark squares alike: GPUI text has no shadow,
-/// so dark copies set just around it stand in for `.coord-prompt`'s text shadow.
+/// so dark copies set just around it stand in for a text shadow.
 fn shadowed(text: String, size: Pixels, weight: FontWeight, opacity: f32) -> impl IntoElement {
     let copy = |dx: f32, dy: f32, alpha: f32| {
         div()

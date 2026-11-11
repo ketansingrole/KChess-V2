@@ -151,7 +151,7 @@ fn ask_resign(window: &mut Window, cx: &mut App) {
     });
 }
 
-/// An offer or a notice above the moves (`.offer-banner`).
+/// An offer or a notice above the moves.
 fn offer(glyph: &'static str, text: String, buttons: Vec<AnyElement>, palette: &Palette) -> Div {
     h_flex()
         .gap(px(8.))
@@ -168,8 +168,7 @@ fn offer(glyph: &'static str, text: String, buttons: Vec<AnyElement>, palette: &
         .children(buttons)
 }
 
-/// Connection quality from a round trip, in the bands Lichess uses for its signal bars
-/// (`signalFromLatency`).
+/// Connection quality from a round trip, in the bands Lichess uses for its signal bars.
 fn signal_from_latency(ms: f64) -> usize {
     match ms {
         ms if ms < 150. => 4,
@@ -181,7 +180,7 @@ fn signal_from_latency(ms: f64) -> usize {
 
 const QUALITY: [&str; 5] = ["", "Poor", "Fair", "Good", "Great"];
 
-/// The recent round trips to Lichess: the last, the average and the worst (`pingStats`).
+/// The recent round trips to Lichess: the last, the average and the worst.
 fn ping_stats(samples: &[f64]) -> Option<(f64, f64, f64)> {
     let current = *samples.last()?;
     let average = (samples.iter().sum::<f64>() / samples.len() as f64).round();

@@ -506,7 +506,7 @@ impl Repertoire {
         self.start_line(cx);
     }
 
-    /// `useOpeningDrill`: the named line, then the explorer's most played move for the player and
+    /// The named line, then the explorer's most played move for the player and
     /// its popular replies for the opponent. Without the explorer the named line alone is drilled,
     /// and the note says why.
     fn build_drill(&mut self, cx: &mut Context<Self>) {

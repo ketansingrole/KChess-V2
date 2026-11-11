@@ -122,7 +122,7 @@ fn merge(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
 const EXACT_LABEL: f64 = 100.;
 
 /// Every token must match the label or the extra text (keywords, details); only label matches are
-/// highlighted, and they score higher (`matchQuickPick`).
+/// highlighted, and they score higher.
 pub fn match_query(query: &str, label: &str, extra: &str) -> Option<Match> {
     let tokens: Vec<Vec<char>> = query
         .to_lowercase()
@@ -175,7 +175,7 @@ pub fn segments(label: &str, ranges: &[(usize, usize)]) -> Vec<(String, bool)> {
     out
 }
 
-/// Most recent first, without repeats, capped (`pushRecent`).
+/// Most recent first, without repeats, capped.
 pub fn push_recent(recent: &[String], id: &str, limit: usize) -> Vec<String> {
     std::iter::once(id.to_string())
         .chain(recent.iter().filter(|entry| *entry != id).cloned())

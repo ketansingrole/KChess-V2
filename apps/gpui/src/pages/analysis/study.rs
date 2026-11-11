@@ -5,7 +5,7 @@ use crate::game::tree::TreePgn as _;
 use kchess_contracts::types::{StudyCommand, StudyCommandResult};
 
 impl AnalysisPage {
-    /// Write the board to its study when it changed there (`persistStudy`); the answer, for a
+    /// Write the board to its study when it changed there; the answer, for a
     /// quit to wait on.
     pub(super) fn persist_study(&mut self, cx: &mut Context<Self>) -> Option<StudySave> {
         self.study_save = None;

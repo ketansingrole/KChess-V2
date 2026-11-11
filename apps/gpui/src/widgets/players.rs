@@ -2,9 +2,9 @@
 
 use super::*;
 
-/// `.player-line` height.
+/// A player line's height.
 pub const PLAYER_LINE: Pixels = px(36.);
-/// The gap between the player lines and the board (`.board-stack`).
+/// The gap between the player lines and the board.
 pub const STACK_GAP: Pixels = px(8.);
 
 /// Figures of one width, so clocks and move numbers hold still.
@@ -46,7 +46,7 @@ pub fn initials(name: &str, size: f32, palette: &Palette) -> Div {
         .child(name.chars().take(2).collect::<String>().to_uppercase())
 }
 
-/// `.player-avatar`: the player's icon, the side they play, and the outline while it is their turn.
+/// The player's icon, the side they play, and the outline while it is their turn.
 pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl IntoElement {
     div()
         .relative()
@@ -93,7 +93,7 @@ pub fn avatar(glyph: Icon, side: Side, active: bool, palette: &Palette) -> impl 
                 ),
         )
 }
-/// `.player-clock`: a side's time, highlighted while it runs, and red in its last ten seconds.
+/// A side's time, highlighted while it runs, and red in its last ten seconds.
 pub fn clock(text: SharedString, active: bool, palette: &Palette) -> Div {
     let low = low_time(&text);
     div()
@@ -120,7 +120,7 @@ pub fn clock(text: SharedString, active: bool, palette: &Palette) -> Div {
         .child(text)
 }
 
-/// `.player-line`: who plays a side, what is beside them, and their clock.
+/// Who plays a side, what is beside them, and their clock.
 pub fn player_line(
     identity: impl IntoElement,
     middle: Option<AnyElement>,

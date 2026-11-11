@@ -107,7 +107,7 @@ pub struct LocalPage {
     /// What the chess clock's faces showed at the last tick.
     clock_faces: Faces<[String; 2]>,
     layout: PlayLayout,
-    /// The side panel, measured for `.panel-actions`' narrow rule.
+    /// The side panel, measured for where its action buttons wrap.
     panel_area: Measured,
     /// The side panel beside the board, a cached view of its own (`render_panel`).
     panel: Entity<Part<LocalPage>>,
@@ -1629,7 +1629,7 @@ impl LocalPage {
             .when(!frontend.zen_mode, |panel| {
                 let analysable =
                     crate::game::analysable(self.setup()["variant"].as_str().unwrap_or("standard"));
-                // `.panel-actions`: Copy PGN, Export and Analyse share the row.
+                // Copy PGN, Export and Analyse share the row.
                 panel.child(widgets::panel_actions(
                     narrow,
                     [
@@ -1906,7 +1906,7 @@ impl NewGame {
         })
     }
 
-    /// The chosen start (`chosenSetup`), or `None` while the form has a problem.
+    /// The chosen start, or `None` while the form has a problem.
     fn setup(&self, cx: &App) -> Option<Value> {
         let variant = self.variant_key(cx);
         if variant == "chess960" {
@@ -1931,7 +1931,7 @@ impl NewGame {
         Some(json!({ "variant": variant, "fen": fen }))
     }
 
-    /// The chosen clock (`chosenClock`): equal times unless Black's minutes give odds.
+    /// The chosen clock: equal times unless Black's minutes give odds.
     fn clock(&self, cx: &App) -> Value {
         let row = self
             .clock
@@ -2089,7 +2089,7 @@ impl Render for NewGame {
     }
 }
 
-/// A clock face's text (`formatClock`), as the page shows it.
+/// A clock face's text, as the page shows it.
 /// White's or Black's place in `LocalPage::faces`.
 fn face(color: Color) -> usize {
     usize::from(color == Color::Black)

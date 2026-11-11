@@ -88,7 +88,7 @@ pub(crate) enum Action {
 }
 
 pub struct TournamentsPage {
-    /// Only what KChess can play (`playable`), or everything.
+    /// Only what KChess can play, or everything.
     playable_only: bool,
     list: Option<Value>,
     /// The list's request: an answer to an earlier one (another account's) is dropped.

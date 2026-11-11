@@ -102,7 +102,7 @@ pub fn session_id() -> &'static str {
     })
 }
 
-/// The log files, oldest first, redacted again (`DiagnosticLog.read`).
+/// The log files, oldest first, redacted again.
 pub fn read() -> Vec<String> {
     let Some(log) = LOG.get() else {
         return Vec::new();

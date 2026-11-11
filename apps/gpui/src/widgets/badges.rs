@@ -19,7 +19,7 @@ pub fn action_notification(
     })
 }
 
-/// `formatCount`: "100,000".
+/// "100,000".
 pub fn format_count(count: f64) -> String {
     let digits = (count.max(0.).round() as u64).to_string();
     let mut out = String::new();
@@ -38,7 +38,7 @@ pub fn format_counted(count: f64, one: &str, many: &str) -> String {
     format!("{shown} {}", if shown == "1" { one } else { many })
 }
 
-/// `formatBytes`: "312 MB", "1.5 GB".
+/// "312 MB", "1.5 GB".
 pub fn format_bytes(bytes: f64) -> String {
     if !bytes.is_finite() || bytes <= 0. {
         return "0 B".into();
@@ -53,7 +53,7 @@ pub fn format_bytes(bytes: f64) -> String {
     }
 }
 
-/// How a badge is drawn (`UBadge` color and variant).
+/// How a badge is drawn: its color and fill.
 #[derive(Clone, Copy)]
 pub enum Look {
     Success,
@@ -65,7 +65,7 @@ pub enum Look {
     NeutralSubtle,
 }
 
-/// `UBadge`: a short label in a soft color; callers add an icon, a width or a dot.
+/// A short label in a soft color; callers add an icon, a width or a dot.
 pub fn badge(label: impl Into<SharedString>, look: Look, palette: &Palette) -> Div {
     badge_box(look, palette).child(label.into())
 }
@@ -158,7 +158,7 @@ pub fn result_row(
                         })),
                 )
                 .child(
-                    // `.result-value`: the score at the row's weight, its unit 12px and muted.
+                    // The score at the row's weight, its unit 12px and muted.
                     h_flex()
                         .gap(px(4.))
                         .items_baseline()

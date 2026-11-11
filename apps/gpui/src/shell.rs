@@ -344,7 +344,6 @@ pub fn go(direction: crate::swipe::Direction, window: &mut Window, cx: &mut App)
     }
 }
 
-/// Whether the sidebar is shown.
 pub fn sidebar_open(cx: &App) -> bool {
     workspace(cx).is_none_or(|workspace| workspace.read(cx).shown())
 }
@@ -1319,8 +1318,7 @@ impl Workspace {
     }
 
     fn render_topbar_content(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Room for the toggle floating over the topbar beside the macOS rail
-        // (`.mac-toggle-spacer`): its 28px and 8px clear of it, less the rail and the padding.
+        // Room for the toggle floating over the topbar beside the macOS rail: its 28px and 8px clear of it, less the rail and the padding.
         let spacer = (toggle_left(window) + px(36.) - SIDEBAR_RAIL - px(20.)).max(px(0.));
         title_bar("topbar")
             .flex()
@@ -1328,8 +1326,8 @@ impl Workspace {
             .min_w_0()
             .items_center()
             .h_full()
-            // `.topbar`: `minmax(40px, 1fr) minmax(0, 600px) minmax(40px, 1fr)`, the search
-            // centred between equal sides; 12px padding below 560px.
+            // The search, up to 600px, centred between equal sides of at least 40px; 12px
+            // padding below 560px.
             .px(if window.viewport_size().width < px(560.) {
                 px(12.)
             } else {

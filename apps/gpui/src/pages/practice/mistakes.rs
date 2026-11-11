@@ -75,7 +75,7 @@ fn title(game: &MistakeGame) -> String {
     }
 }
 
-/// `judgmentCounts` over a game's drills.
+/// How many of a game's drills have each judgment.
 fn judgment_counts(items: &[&Value]) -> Vec<(&'static str, String)> {
     let count = |judgment: &str| {
         items
@@ -167,7 +167,7 @@ impl Mistakes {
         trainer
     }
 
-    /// The tab was opened (`onMounted`): the overview, with the drills and games as they are now.
+    /// The tab was opened: the overview, with the drills and games as they are now.
     pub fn shown(&mut self, cx: &mut Context<Self>) {
         self.current = None;
         self.done = false;

@@ -189,7 +189,7 @@ fn explain_and_quit(message: String, cx: &mut App) {
     }
 }
 
-/// The window, where and as it was left (`createWindow`).
+/// The window, where and as it was left.
 fn main_window_options(cx: &mut App) -> WindowOptions {
     let dir = profile::data_dir().unwrap_or_default();
     let (window_bounds, _) = window_state::bounds(&dir, cx);

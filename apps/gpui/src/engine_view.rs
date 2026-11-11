@@ -38,7 +38,7 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
             let dark = rgb(0x403d39);
             window.paint_quad(fill(bounds, dark).corner_radii(radii::XS));
             if !known {
-                // `repeating-linear-gradient(135deg, …)`: light stripes over the dark bar.
+                // Light stripes over the dark bar.
                 let step = 8.;
                 let height = bounds.size.height.as_f32();
                 let width = bounds.size.width.as_f32();

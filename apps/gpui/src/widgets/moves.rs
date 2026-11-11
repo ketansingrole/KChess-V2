@@ -35,7 +35,7 @@ pub struct MoveSheet<'a> {
     pub first: FirstMove,
 }
 
-/// `.moves-list`: the game's moves as a scoresheet, ruled numbered pairs on the panel itself, the
+/// The game's moves as a scoresheet, ruled numbered pairs on the panel itself, the
 /// one on the board highlighted. `select` is called with the ply to show (1 for the first move).
 pub fn moves_list(
     id: impl Into<ElementId>,
@@ -154,7 +154,7 @@ pub enum TurnButton {
     Named(SharedString, ClickHandler),
 }
 
-/// `.move-controls`: first, previous, next and last move, and the board's turn.
+/// First, previous, next and last move, and the board's turn.
 pub fn move_controls(
     ply: usize,
     count: usize,
@@ -282,7 +282,7 @@ pub fn fit(element: impl IntoElement) -> Action {
     Action(element.into_any_element(), false)
 }
 
-/// `.panel-actions`: the panel's buttons sharing one row equally; in a narrow panel two per row,
+/// The panel's buttons sharing one row equally; in a narrow panel two per row,
 /// an odd one out taking the whole row.
 pub fn panel_actions(narrow: bool, actions: impl IntoIterator<Item = Action>) -> Div {
     h_flex()
@@ -300,7 +300,7 @@ pub fn panel_actions(narrow: bool, actions: impl IntoIterator<Item = Action>) ->
         }))
 }
 
-/// `.board-input-row`: the move box and the controls a page adds (voice) on one line, kept to the
+/// The move box and the controls a page adds (voice) on one line, kept to the
 /// right, the controls at most 60% of the line.
 pub fn input_row(entry: Div, controls: impl IntoElement) -> Div {
     entry_line(entry, Some(controls.into_any_element()))
@@ -329,7 +329,7 @@ fn entry_line(entry: Div, controls: Option<AnyElement>) -> Div {
     )
 }
 
-/// `.player-middle` > `.move-entry`: the input row in a player's line.
+/// The input row in a player's line.
 pub fn move_row(entry: Div, controls: impl IntoElement) -> AnyElement {
     h_flex()
         .flex_1()
@@ -342,6 +342,8 @@ pub fn move_row(entry: Div, controls: impl IntoElement) -> AnyElement {
 mod tests {
     use super::{FirstMove, move_at};
 
+    /// The list numbered every game from 1: one set up at Black's 30th move showed "1. … Nf6"
+    /// where the scoresheet reads "30. … Nf6".
     #[test]
     fn moves_are_numbered_from_the_game_s_first_move() {
         let setup = serde_json::json!({

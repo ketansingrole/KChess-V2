@@ -30,7 +30,7 @@ pub fn setting_pills(
         palette,
     )
 }
-/// `UTabs variant="pill"`: a full-width row of choices, the chosen one a step up from the row: the
+/// A full-width row of choices, the chosen one a step up from the row: the
 /// accent is left to the page's main action. `choose` gets the index picked.
 pub fn pill_tabs(
     id: &'static str,
@@ -64,7 +64,7 @@ pub struct Pill {
     pub disabled: bool,
 }
 
-/// `UTabs variant="pill"`, full width or (`compact`, `size="sm"`) as wide as its choices.
+/// Pill tabs, full width or as wide as its choices.
 pub fn pills(
     id: &'static str,
     tabs: Vec<Pill>,
@@ -87,8 +87,7 @@ pub fn pills(
     )
 }
 
-/// A page header's tabs (`UTabs variant="pill"` in `PageHeader`): full-size pills, only as wide
-/// as their labels.
+/// A page header's tabs: full-size pills, only as wide as their labels.
 pub fn header_pills(
     id: &'static str,
     tabs: Vec<Pill>,

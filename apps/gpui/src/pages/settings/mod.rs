@@ -1,5 +1,5 @@
 //! Settings: one category at a time, picked in the sidebar while Settings is
-//! open (`SETTINGS_SECTIONS`). Every change saves itself (`settings.rs`).
+//! open. Every change saves itself (`settings.rs`).
 
 mod accounts;
 mod ai;
@@ -226,7 +226,7 @@ fn other_keywords(section: Section) -> &'static str {
     }
 }
 
-/// `pollItems`: minutes between correspondence checks.
+/// Minutes between correspondence checks.
 const POLL: [(f64, &str); 6] = [
     (0., "Off"),
     (2., "2 min"),
@@ -242,7 +242,7 @@ fn poll_row(minutes: f64) -> Option<IndexPath> {
         .map(IndexPath::new)
 }
 
-/// The theme pickers' and piece pickers' columns: `minmax(92px, 1fr)`, 8px apart.
+/// The theme pickers' and piece pickers' columns: at least 92px wide, 8px apart.
 const OPTION_MIN: Pixels = px(92.);
 const APP_THEME_MIN: Pixels = px(112.);
 const OPTION_GAP: Pixels = px(8.);
@@ -276,7 +276,7 @@ pub struct SettingsPage {
     ai_shown: Option<ai::Shown>,
     ladder: Vec<Rung>,
     default_levels: Vec<EngineLevel>,
-    /// The engine the core finds (`engineInfo`), and whether it is being downloaded or deleted.
+    /// The engine the core finds, and whether it is being downloaded or deleted.
     engine: Option<EngineStatus>,
     engine_busy: bool,
     /// What the notification test says, and whether it is counting down.
@@ -516,7 +516,7 @@ impl SettingsPage {
         self.section
     }
 
-    /// Show one category, from the top (`jumpToSection`).
+    /// Show one category, from the top.
     pub fn show(&mut self, section: Section, cx: &mut Context<Self>) {
         if section != Section::Voice {
             self.stop_mic_test(cx);
@@ -595,12 +595,12 @@ impl SettingsPage {
     }
 }
 
-/// A row's title and its optional hint (`.setting-info`).
+/// A row's title and its optional hint.
 fn info(title: impl Into<SharedString>, hint: Option<SharedString>, palette: &Palette) -> Div {
     widgets::setting_info(title, hint, palette)
 }
 
-/// The category's rows (`.settings-list`), with dividers between them.
+/// The category's rows, with dividers between them.
 struct Rows {
     narrow: bool,
     rows: Vec<AnyElement>,
@@ -672,7 +672,7 @@ impl Rows {
         self
     }
 
-    /// `.setting-row.stacked`: a control that needs the full width goes under its title.
+    /// A control that needs the full width goes under its title.
     fn stacked(
         mut self,
         title: &'static str,
@@ -694,9 +694,9 @@ impl Rows {
         self.card_under(None, palette)
     }
 
-    /// The rows in a card that opens with `header` (`.card-header`: a title and its status).
+    /// The rows in a card that opens with `header` (a title and its status).
     fn card_under(self, header: Option<AnyElement>, palette: &Palette) -> Div {
-        // `.settings-list` keeps 4px above and below: the rows bring their own padding.
+        // 4px above and below: the rows bring their own padding.
         widgets::card(palette)
             .py(px(4.))
             .children(header.map(|header| div().pt(px(14.)).pb(px(4.)).px(px(4.)).child(header)))
@@ -712,7 +712,7 @@ impl Rows {
     }
 }
 
-/// A segmented choice (`UTabs variant="pill"`) that changes one setting.
+/// A segmented choice that changes one setting.
 fn choice<T: Copy + PartialEq + 'static>(
     id: &'static str,
     items: &[(T, &'static str, Option<Icon>)],
@@ -742,7 +742,7 @@ fn choice<T: Copy + PartialEq + 'static>(
     )
 }
 
-/// `.theme-option`: a picture and its name; the chosen one is ringed in the primary color.
+/// A picture and its name; the chosen one is ringed in the primary color.
 #[expect(
     clippy::too_many_arguments,
     reason = "one argument per part of the option"
@@ -810,7 +810,7 @@ fn option(
         }))
 }
 
-/// Lay pickers out in rows of `count`, `OPTION_GAP` apart (`.theme-grid`).
+/// Lay pickers out in rows of `count`, `OPTION_GAP` apart.
 fn grid(count: usize, options: Vec<AnyElement>) -> impl IntoElement {
     let mut rows = Vec::new();
     let mut options = options.into_iter().peekable();
@@ -870,7 +870,7 @@ fn board_swatch(image: &str, width: Pixels) -> impl IntoElement {
         .object_fit(ObjectFit::Cover)
 }
 
-/// `previewColors`: the theme's background, a raised card, its text and primary colors. A scale
+/// The theme's background, a raised card, its text and primary colors. A scale
 /// model of a page, so its corners are scaled down with it rather than taken from `radii`.
 fn theme_preview(theme: &str, custom: &[AppTheme], dark: bool, width: Pixels) -> impl IntoElement {
     let colors = crate::theme::colors(theme, custom, dark);
@@ -916,7 +916,7 @@ fn theme_preview(theme: &str, custom: &[AppTheme], dark: bool, width: Pixels) ->
         )
 }
 
-/// `allThemes`: the default look, the presets, then the user's own (replacing a preset's id).
+/// The default look, the presets, then the user's own (replacing a preset's id).
 fn theme_list(custom: &[AppTheme]) -> Vec<AppTheme> {
     let mut themes = vec![AppTheme {
         id: "kchess".into(),
@@ -1165,7 +1165,7 @@ impl SettingsPage {
         let frontend = &settings.frontend;
         let levels = settings.core.engine_levels.clone();
         let ladder_ids: Vec<EngineLevel> = self.ladder.iter().map(|rung| rung.id).collect();
-        // `.engine-levels`: `repeat(auto-fill, minmax(12rem, 1fr))`, 12px by 24px apart.
+        // As many columns as fit, each at least 192px, 12px by 24px apart.
         let (count, width) = columns(self.inner_width(window), px(192.), px(24.));
         let checkboxes =
             h_flex()
@@ -1306,7 +1306,7 @@ impl SettingsPage {
     }
 
     /// Delayed so there is time to switch to another app: macOS shows no banners for the app in
-    /// front (`sendTest`).
+    /// front.
     fn send_test(&mut self, cx: &mut Context<Self>) {
         const DELAY: u64 = 5;
         self.test_pending = true;

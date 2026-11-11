@@ -1,7 +1,7 @@
 //! Openings: the browser with a search, the
 //! openings opened lately, popular ones and every family by first move; and one opening
 //! on a board to explore, with its moves, its Wikibooks description and
-//! the ways to train it. The names and the tree are the shared rules' (`openingTree`).
+//! the ways to train it. The names and the tree are the shared rules'.
 
 use kchess_contracts::calls;
 use kchess_contracts::check::Moves;
@@ -42,7 +42,7 @@ const RECENT_LIMIT: usize = 6;
 /// Search results shown at once.
 const LIMIT: usize = 60;
 const SEARCH_DELAY: Duration = Duration::from_millis(120);
-/// The popular cards' columns (`.popular-grid`).
+/// The popular cards' columns.
 const CARD_MIN: Pixels = px(150.);
 const CARD_GAP: Pixels = px(16.);
 
@@ -114,7 +114,7 @@ fn line_of(moves: &[String]) -> Vec<(String, String, String)> {
         .collect()
 }
 
-/// `openingAt`: the name and code of the line.
+/// The name and code of the line.
 fn opening_at(moves: &[String]) -> Option<(String, String)> {
     let named = kchess_domain::training::openings::opening_at(
         "standard",
@@ -488,7 +488,7 @@ impl OpeningsPage {
         self.redraw(cx);
     }
 
-    /// `popularityPoints`: each month's share of games, once there is a year of them.
+    /// Each month's share of games, once there is a year of them.
     fn show_popularity(&mut self, months: &[PopularityMonth], san: &str, cx: &mut Context<Self>) {
         let points: Vec<ChartPoint> = months
             .iter()
@@ -611,7 +611,7 @@ impl OpeningsPage {
         self.redraw(cx);
     }
 
-    /// `useTrainOpening`: Practice → Repertoire on an opening.
+    /// Practice → Repertoire on an opening.
     fn train(choice: OpeningChoice, window: &mut Window, cx: &mut App) {
         crate::pages::practice::repertoire::train_opening(&choice, window, cx);
     }

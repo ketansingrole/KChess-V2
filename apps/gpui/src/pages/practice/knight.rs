@@ -232,7 +232,6 @@ impl KnightPaths {
         self.redraw(cx);
     }
 
-    /// Take the jump when it is one.
     fn jump(&mut self, to: &str, cx: &mut Context<Self>) {
         if self.stage != Stage::Running
             || self.knight == self.goal

@@ -65,7 +65,7 @@ impl RunClock {
         !self.untimed && self.started.is_some() && self.left().is_zero()
     }
 
-    /// What the clock shows: time left, or time spent when untimed (`formatRunClock`).
+    /// What the clock shows: time left, or time spent when untimed.
     pub fn text(&self) -> String {
         let ms = if self.untimed {
             self.elapsed()
@@ -159,7 +159,7 @@ pub fn input(kind: RunKind, variant: impl Into<String>, score: f64, detail: Valu
     }
 }
 
-/// `.field` with its label above the control.
+/// A form field: its label above the control.
 pub fn field(
     label: &'static str,
     control: impl IntoElement,
@@ -177,7 +177,6 @@ pub fn field(
         .child(control)
 }
 
-/// The run-length picker.
 pub fn length_picker(
     id: &'static str,
     seconds: u32,
@@ -210,7 +209,7 @@ pub fn length_picker(
     )
 }
 
-/// `.run-hud`: the clock, and the score with what it counts.
+/// The clock, and the score with what it counts.
 pub fn hud(
     clock: &RunClock,
     score: f64,

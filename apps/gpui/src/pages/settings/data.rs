@@ -177,8 +177,7 @@ impl SettingsPage {
         .detach();
     }
 
-    /// The redacted logs and this build's facts, saved where the player chooses
-    /// (`exportDiagnostics`).
+    /// The redacted logs and this build's facts, saved where the player chooses.
     fn export_diagnostics(&mut self, cx: &mut Context<Self>) {
         self.exporting = true;
         self.diagnostics_note = None;
@@ -253,7 +252,7 @@ impl SettingsPage {
                 .text_color(palette.text_muted)
                 .child(text)
         };
-        // `.data-totals > div`: a bordered tile, at least 200px.
+        // A bordered tile, at least 200px.
         let tile = |label: &'static str, value: String, note: Option<String>| {
             v_flex()
                 .flex_1()

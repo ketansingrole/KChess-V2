@@ -17,11 +17,11 @@ pub(crate) fn is_escape(event: &KeyDownEvent) -> bool {
     event.keystroke.key == "escape" && !event.keystroke.modifiers.modified()
 }
 
-/// A clock's last ten seconds, which `formatClock` alone shows with tenths ("0:09.4").
+/// A clock's last ten seconds, which alone show tenths ("0:09.4").
 pub(crate) fn low_time(text: &str) -> bool {
     text.starts_with("0:0") && text.contains('.')
 }
-/// The kind of a status banner (`.status-banner.win`, `.loss`, `.alert`).
+/// The kind of a status banner.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
     Plain,
@@ -30,7 +30,7 @@ pub enum Tone {
     Alert,
 }
 
-/// `.status-banner.steady`: the game's state, its icon, and optionally a detail line, with
+/// The game's state, its icon, and optionally a detail line, with
 /// controls at the end of the row. Whose turn it is goes on a plain line of its own instead (`turn`).
 #[derive(IntoElement)]
 pub struct StatusBanner {

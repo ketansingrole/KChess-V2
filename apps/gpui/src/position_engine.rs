@@ -1,4 +1,4 @@
-//! One visible position's engine search (`usePositionEngine`), for boards that are not the
+//! One visible position's engine search, for boards that are not the
 //! analysis board: a new request replaces the search running (stopping it in the engine, not only
 //! dropping its answers), and only updates for the request asked last are kept.
 
@@ -25,7 +25,7 @@ fn next_client() -> u64 {
     NEXT_CLIENT.fetch_add(1, Ordering::Relaxed) + 1
 }
 
-/// The context an update must carry to belong to a request (`analysisContext`).
+/// The context an update must carry to belong to a request.
 fn context_of(request: &Value) -> String {
     let fen = request["fen"].as_str().unwrap_or_default();
     let root = request["rootFen"].as_str().unwrap_or(fen);

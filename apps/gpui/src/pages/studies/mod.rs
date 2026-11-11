@@ -42,7 +42,7 @@ use crate::widgets::{self, Pill};
 const TAB: &str = "kchess:studies-tab";
 const SORT: &str = "kchess:studies-sort";
 const SORTS: [(&str, &str); 2] = [("recent", "Recently edited"), ("name", "Name")];
-/// The cards' columns (`.card-grid`).
+/// The cards' columns.
 const CARD_MIN: Pixels = px(210.);
 const CARD_GAP: Pixels = px(16.);
 /// "Edited 2 min ago" is redrawn this often.
@@ -154,7 +154,7 @@ fn rows_in_view(
     (first..last, above, below)
 }
 
-/// `localeCompare` with numbers read as numbers ("Study 2" before "Study 10"), ignoring case.
+/// Alphabetical, with numbers read as numbers ("Study 2" before "Study 10"), ignoring case.
 fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
     loop {
@@ -193,7 +193,7 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 const INVALID_IMPORT: &str = "Paste valid PGN with up to 64 chapters";
 const VARIANT_IMPORT: &str = "A chapter is in a variant KChess doesn't play";
 
-/// An import's chapters (`pgnGames`): each game named by its `ChapterName`, or numbered.
+/// An import's chapters: each game named by its `ChapterName`, or numbered.
 fn import_chapters(text: &str) -> Result<Vec<(String, String)>, &'static str> {
     let chapters: Vec<(String, String)> = kchess_domain::position::pgn_games(text)
         .into_iter()

@@ -122,7 +122,7 @@ const DIFFICULTIES: [(&str, &str); 5] = [
 ];
 const COLORS: [(&str, &str); 3] = [("random", "Random"), ("white", "White"), ("black", "Black")];
 
-/// `MODE_HINTS`: what each mode means for the result, where the choice is made.
+/// What each mode means for the result, where the choice is made.
 fn mode_hint(mode: &str) -> &'static str {
     match mode {
         "offline" => "Puzzles downloaded to this computer",
@@ -163,7 +163,7 @@ fn themes() -> Vec<Theme> {
 
 type ThemeChoices = SearchableVec<SearchableGroup<Choice>>;
 
-/// `themeItems`: the mix (and an opening chosen for puzzles), then every theme under its group.
+/// The mix (and an opening chosen for puzzles), then every theme under its group.
 fn theme_choices(cx: &App) -> ThemeChoices {
     let mut first = vec![mix()];
     if let Some(opening) = crate::prefs::get::<Option<OpeningAngle>>(cx, OPENING, None) {
@@ -188,7 +188,7 @@ fn theme_choices(cx: &App) -> ThemeChoices {
     )
 }
 
-/// An opening chosen for puzzles (`openingAngle`).
+/// An opening chosen for puzzles.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct OpeningAngle {
     key: String,
@@ -210,7 +210,7 @@ fn theme_items(cx: &App) -> Vec<Theme> {
     list
 }
 
-/// `themeName`: the name Lichess gives a theme key; unknown keys split into words.
+/// The name Lichess gives a theme key; unknown keys split into words.
 fn theme_name(key: &str, themes: &[Theme]) -> String {
     if let Some(theme) = themes.iter().find(|theme| theme.key == key) {
         return theme.name.clone();
@@ -439,7 +439,7 @@ impl PuzzlesPage {
         }
     }
 
-    /// The page was shown (`onMounted`): read the accounts, the database and the log, and find a
+    /// The page was shown: read the accounts, the database and the log, and find a
     /// puzzle if there is none.
     pub fn shown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_accounts(window, cx);
@@ -489,12 +489,12 @@ impl PuzzlesPage {
         });
     }
 
-    /// The connected accounts (`connectedAccounts`).
+    /// The connected accounts.
     fn accounts(&self, cx: &App) -> Vec<String> {
         crate::accounts::handle(cx).read(cx).connected()
     }
 
-    /// The connected account rated puzzles go to (`pickConnectedAccount`).
+    /// The connected account rated puzzles go to.
     fn account(&self, cx: &App) -> String {
         let preferred = crate::prefs::get::<String>(cx, ACCOUNT, String::new());
         let connected = self.accounts(cx);
@@ -644,7 +644,7 @@ impl PuzzlesPage {
 
     /* ── The board ────────────────────────────────────────────────────── */
 
-    /// A new puzzle (a new key) starts the board afresh (`begin`).
+    /// A new puzzle (a new key) starts the board afresh.
     fn sync_board(&mut self, cx: &mut Context<Self>) {
         let ready = self.session.phase() == "ready";
         let key = self.session.puzzle_key();
@@ -738,7 +738,7 @@ impl PuzzlesPage {
         cx.notify();
     }
 
-    /// `startTheme('mix', 'offline')`: train any theme from the downloaded puzzles.
+    /// Train any theme from the downloaded puzzles.
     fn use_downloaded(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         Tab::Train.store(cx);
         crate::prefs::set(cx, MODE, "offline");
@@ -781,7 +781,7 @@ impl PuzzlesPage {
         self.load_next(cx);
     }
 
-    /// `startOpening`: remember the opening an opening page asked for puzzles of, as the theme to
+    /// Remember the opening an opening page asked for puzzles of, as the theme to
     /// train; a page made after this starts with it.
     pub fn choose_opening(key: &str, name: &str, cx: &mut App) {
         crate::prefs::set(
@@ -1066,7 +1066,7 @@ pub(crate) fn status_panel(
             cx,
             palette,
         ))
-        // `.panel-actions`: Hint, Solution, Flip and Next share the row; once the puzzle is over,
+        // Hint, Solution, Flip and Next share the row; once the puzzle is over,
         // Hint and Solution give way to the analysis board, its wrong tries as side lines.
         .child(widgets::panel_actions(
             false,
@@ -1444,7 +1444,7 @@ impl PuzzlesPage {
                             .collect::<Vec<Value>>(),
                     );
                     let page = cx.entity().downgrade();
-                    // `attemptActions.menu`: try it again, or study it on the board.
+                    // Try it again, or study it on the board.
                     Button::new(("attempt", index))
                         .custom(
                             ButtonCustomVariant::new(cx)

@@ -24,7 +24,7 @@ const VIEW: &str = "kchess:endgame-view";
 const COURSES: &str = "courses";
 const DRILLS: &str = "drills";
 const COURSE_GROUPS: [&str; 3] = ["Checkmates", "Pawn endgames", "Rook endgames"];
-/// The cards' columns (`.course-grid`).
+/// The cards' columns.
 const CARD_MIN: Pixels = px(300.);
 const CARD_GAP: Pixels = px(12.);
 
@@ -48,7 +48,6 @@ pub fn finished(summary: Option<&RunSummary>, id: &str) -> bool {
 
 /// What a course or the drills tell the hub.
 pub enum TrainerEvent {
-    /// Back to the courses.
     Back,
     /// A chapter was finished: the lessons' summary as the core now keeps it.
     Saved(RunSummary),
@@ -166,7 +165,7 @@ impl Endgames {
         }
     }
 
-    /// `.course-card`: a course, or the drills, with how much of it is done; it opens `view`.
+    /// A course, or the drills, with how much of it is done; it opens `view`.
     fn card(
         view: &str,
         glyph: Icon,

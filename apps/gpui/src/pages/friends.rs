@@ -60,7 +60,7 @@ fn sync_all(window: &mut Window, cx: &mut App) {
 
 pub struct FriendsPage {
     input: Entity<InputState>,
-    /// Profiles by lowercase name (`LichessUser`), and presence (`UserPresence`).
+    /// Profiles by lowercase name, and presence (`UserPresence`).
     profiles: HashMap<String, Value>,
     /// When every profile was last asked for.
     profiles_asked: Option<std::time::Instant>,
@@ -281,7 +281,7 @@ impl FriendsPage {
         .detach();
     }
 
-    /// `refreshStatus`: who is online or playing, fifty names a request.
+    /// Who is online or playing, fifty names a request.
     fn refresh_status(&mut self, cx: &mut Context<Self>) {
         let names: Vec<String> = Self::friends(cx)
             .into_iter()
@@ -723,7 +723,7 @@ impl Render for FriendsPage {
         let header = h_flex()
             .flex_wrap()
             .gap(px(8.))
-            // `.friends-add-input`: 10rem to 22rem, with its user-plus icon.
+            // 10rem to 22rem, with its user-plus icon.
             .child(
                 div().flex_1().min_w(px(160.)).max_w(px(352.)).child(
                     Input::new(&self.input)
@@ -813,7 +813,7 @@ impl Render for FriendsPage {
                                 .gap(px(12.))
                                 .px(px(12.))
                                 .py(px(8.))
-                                // `.friends-table thead th`: 12px, medium, as written.
+                                // 12px, medium, as written.
                                 .text_size(px(12.))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(palette.text_muted)
@@ -942,7 +942,7 @@ impl ImportDialog {
         dialog
     }
 
-    /// `loadFollowing`: ask Lichess afresh each time.
+    /// Ask Lichess afresh each time.
     fn load(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
         self.error = None;

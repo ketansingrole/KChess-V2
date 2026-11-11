@@ -24,7 +24,6 @@ use crate::widgets::{self, Choice, Look, Pill};
 const FILTER: &str = "kchess:puzzle-history-filter";
 /// Whether the list shows only the puzzles not solved, to try again.
 const UNSOLVED: &str = "kchess:puzzle-history-unsolved";
-/// `HISTORY_FILTERS`.
 const FILTERS: [(&str, &str); 5] = [
     ("all", "All"),
     ("practice", "Practice"),
@@ -53,17 +52,17 @@ pub enum HistoryEvent {
 
 impl EventEmitter<HistoryEvent> for PuzzleHistory {}
 
-/// One row: an attempt kept here, or one Lichess recorded (`PuzzleHistoryRow`).
+/// One row: an attempt kept here, or one Lichess recorded.
 struct Row {
     at: f64,
-    /// `ATTEMPT_BADGES`' label and look.
+    /// The outcome's label and look.
     badge: (&'static str, Look),
     /// Solved, with or without a hint.
     solved: bool,
     moves: Option<String>,
     puzzle: Value,
     wrong: Vec<Value>,
-    /// `HISTORY_MODES`: the mode shown, and the one the filter matches.
+    /// The mode shown, and the one the filter matches.
     mode: &'static str,
     played_in: &'static str,
 }
@@ -88,7 +87,7 @@ fn mode_of(mode: &str) -> &'static str {
     }
 }
 
-/// `HISTORY_MODES`' label, icon and tip.
+/// A mode's label, icon and tip.
 fn mode_look(mode: &str) -> (&'static str, Icon, &'static str) {
     match mode {
         "offline" => (
@@ -111,7 +110,7 @@ fn mode_look(mode: &str) -> (&'static str, Icon, &'static str) {
     }
 }
 
-/// `puzzleHistoryRows`: local attempts and Lichess activity, newest first, each attempt once.
+/// Local attempts and Lichess activity, newest first, each attempt once.
 fn rows_of(local: &[PuzzleAttempt], lichess: &[PuzzleActivityEntry]) -> Vec<Row> {
     let mut rows: Vec<Row> = local
         .iter()
@@ -174,7 +173,7 @@ fn rows_of(local: &[PuzzleAttempt], lichess: &[PuzzleActivityEntry]) -> Vec<Row>
     rows
 }
 
-/// `playedText`: the time today, "Yesterday" and the time, else the date.
+/// The time today, "Yesterday" and the time, else the date.
 fn played_text(at: f64, now: chrono::DateTime<chrono::Local>) -> String {
     use chrono::TimeZone as _;
     let Some(played) = chrono::Local.timestamp_millis_opt(at as i64).single() else {
@@ -270,7 +269,7 @@ impl PuzzleHistory {
         self.load_activity(false, cx);
     }
 
-    /// `loadActivity`: what Lichess recorded (`force` asks again).
+    /// What Lichess recorded (`force` asks again).
     fn load_activity(&mut self, force: bool, cx: &mut Context<Self>) {
         let who = self.account.clone();
         if who.is_empty() {

@@ -48,7 +48,7 @@ const WEEKDAYS: [&str; 7] = [
     "Saturday",
 ];
 
-/// `ENDINGS`: how games ended, in words.
+/// How games ended, in words.
 fn ending(status: &str) -> &str {
     match status {
         "mate" => "Checkmate",
@@ -645,7 +645,7 @@ fn headline(report: &Value, palette: &Palette) -> Div {
         .children(accuracy.map(|(average, sub)| figure("Accuracy", average, Some(sub), palette)))
 }
 
-/// `USelect size="sm"`: a filter only as wide as its choice, so the four fit beside the figures.
+/// A filter only as wide as its choice, so the four fit beside the figures.
 fn fit(select: &Choices, choices: &[(&str, &str)], cx: &App) -> Div {
     let chosen = select.read(cx).selected_value().cloned();
     let label = choices

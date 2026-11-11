@@ -21,8 +21,8 @@ fn a_count_of_one_takes_the_singular() {
 }
 
 /// The large ticking times (the chess clock's faces, Puzzle Rush, timed practice runs) used
-/// proportional figures, so their digits shifted sideways on every tick; all draw through
-/// `timer`.
+/// proportional figures, so their digits shifted sideways on every tick; a `timer` has
+/// tabular ones (xtask's `boundaries` checks those clocks draw through it).
 #[test]
 fn large_ticking_times_hold_still() {
     use gpui_kit::Styled as _;
@@ -150,8 +150,6 @@ impl Render for Page {
     }
 }
 
-/// The list numbered every game from 1: one set up at Black's 30th move showed "1. … Nf6"
-/// where the scoresheet reads "30. … Nf6".
 /// GPUI announces nothing by itself: a move or a result was heard only when the reader went
 /// back to the board. Each adapter speaks a live node's text when it changes: macOS its value,
 /// Windows and Linux its name.

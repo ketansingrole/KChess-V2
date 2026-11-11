@@ -26,7 +26,7 @@ enum Source {
     Custom,
 }
 
-/// `engineSource`: the bundled one (no path), the one KChess downloaded, or a chosen file.
+/// The bundled one (no path), the one KChess downloaded, or a chosen file.
 fn source(settings: &Settings, status: Option<&EngineStatus>) -> Source {
     let path = &settings.core.engine_path;
     if path.is_empty() {
@@ -38,7 +38,7 @@ fn source(settings: &Settings, status: Option<&EngineStatus>) -> Source {
     }
 }
 
-/// `engineName`: which Stockfish is in use, in words; empty until it is found ready.
+/// Which Stockfish is in use, in words; empty until it is found ready.
 pub fn engine_name(status: Option<&EngineStatus>) -> String {
     let Some(status) = status.filter(|status| status.ready) else {
         return String::new();
@@ -55,7 +55,7 @@ pub fn engine_name(status: Option<&EngineStatus>) -> String {
     }
 }
 
-/// `reviewStatusText`: what the background review is doing.
+/// What the background review is doing.
 fn review_text(status: &ReviewStatus, auto: ReviewAuto) -> String {
     let waiting = status.waiting;
     if let Some(current) = &status.current {
@@ -84,7 +84,7 @@ fn review_text(status: &ReviewStatus, auto: ReviewAuto) -> String {
 }
 
 impl SettingsPage {
-    /// Ask the core which engine it finds (`refreshEngine`).
+    /// Ask the core which engine it finds.
     pub(super) fn refresh_engine(&mut self, cx: &mut Context<Self>) {
         let status = cx
             .global::<AppCore>()
@@ -136,7 +136,7 @@ impl SettingsPage {
         .detach();
     }
 
-    /// `chooseEngine`: any file may be picked; the core trusts it as an engine path.
+    /// Any file may be picked; the core trusts it as an engine path.
     fn choose_engine(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let chosen = cx.prompt_for_paths(PathPromptOptions {
             files: true,

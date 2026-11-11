@@ -176,7 +176,7 @@ impl PuzzleBoard {
         }
     }
 
-    /// A puzzle, from its start (`begin`); `outcome` is a verdict its page kept from before.
+    /// A puzzle, from its start; `outcome` is a verdict its page kept from before.
     pub fn start(&mut self, puzzle: &Value, outcome: Option<bool>, cx: &mut Context<Self>) {
         self.generation += 1;
         self.timers.clear();
@@ -309,7 +309,7 @@ impl PuzzleBoard {
         self.viewing
     }
 
-    /// Runs (`retry: false`, `reply-delay`): a wrong move fails the puzzle, replies come faster.
+    /// Runs: a wrong move fails the puzzle, replies come faster.
     pub fn for_runs(&mut self, reply_delay: Duration) {
         self.retry = false;
         self.reply_delay = reply_delay;

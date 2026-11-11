@@ -286,7 +286,7 @@ pub fn set<T: Serialize>(cx: &mut App, key: &str, value: T) {
     cx.refresh_windows();
 }
 
-/// Forget a preference (`forgetViewPreference`): its default applies again in both apps.
+/// Forget a preference: its default applies again.
 pub fn forget(cx: &mut App, key: &str) {
     let prefs = cx.default_global::<ViewPreferences>();
     if prefs.values.remove(key).is_none() && !prefs.unsaved(key) {

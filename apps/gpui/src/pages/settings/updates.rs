@@ -159,7 +159,7 @@ fn bytes(count: u64) -> String {
     widgets::format_bytes(count as f64)
 }
 
-/// `timeAgo` for a check: "just now", "5 minutes ago", "3 hours ago".
+/// How long ago a check was: "just now", "5 minutes ago", "3 hours ago".
 fn ago(millis: i64) -> String {
     let minutes = (chrono::Utc::now().timestamp_millis() - millis).max(0) / 60_000;
     match minutes {

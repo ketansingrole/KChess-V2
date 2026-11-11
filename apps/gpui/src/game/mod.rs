@@ -86,7 +86,7 @@ pub fn engine_level_label(level: &str) -> String {
     })
 }
 
-/// `formatGameDate`: "Oct 22, 2026" in local time.
+/// "Oct 22, 2026" in local time.
 pub fn game_date(millis: f64) -> String {
     use chrono::TimeZone as _;
     chrono::Local

@@ -28,7 +28,7 @@ impl Drop for Capture {
     }
 }
 
-/// Why the microphone did not open, in words the player can act on (`describeMicError`).
+/// Why the microphone did not open, in words the player can act on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CaptureError {
     Missing,
@@ -282,7 +282,7 @@ fn parse_wav(bytes: &[u8]) -> Result<(Vec<f32>, u32), String> {
     Err(invalid())
 }
 
-/// Samples as base64 16-bit little-endian PCM, as the core's recognizer takes them (`pcmBase64`).
+/// Samples as base64 16-bit little-endian PCM, as the core's recognizer takes them.
 pub fn pcm_base64(audio: &[f32]) -> String {
     use base64::Engine as _;
     let bytes: Vec<u8> = audio
@@ -292,7 +292,7 @@ pub fn pcm_base64(audio: &[f32]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-/// How loud a chunk is, 0 to 1, for the level meter (`reportLevel`).
+/// How loud a chunk is, 0 to 1, for the level meter.
 pub fn level(audio: &[f32]) -> f32 {
     if audio.is_empty() {
         return 0.;

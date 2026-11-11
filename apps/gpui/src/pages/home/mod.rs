@@ -33,7 +33,7 @@ fn variant_of(game: &Value) -> Option<String> {
         .map(crate::game::variant_label)
 }
 
-/// Recent games on Home (`localGames`).
+/// Recent games on Home.
 const RECENT: usize = 6;
 /// A tile's narrowest width; two of them share a row when they fit, else one.
 const TILE: Pixels = px(200.);
@@ -314,7 +314,7 @@ fn arrangement(width: Pixels) -> (bool, usize) {
     (stacked, per_row)
 }
 
-/// `.home-tile`: a place to start, beside the board.
+/// A place to start, beside the board.
 fn tile(
     id: &'static str,
     glyph: Icon,
@@ -645,7 +645,7 @@ impl Render for HomePage {
                     .mb(px(4.))
                     .child(widgets::heading("Recent games", &palette))
                     .child(
-                        // The arrow trails the label (`trailing-icon`).
+                        // The arrow trails the label.
                         widgets::text_button("home-view-all")
                             .accessibility_label("View all")
                             .child(

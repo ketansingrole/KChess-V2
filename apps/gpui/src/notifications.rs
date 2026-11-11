@@ -343,7 +343,7 @@ fn category(settings: &Settings, kind: &str) -> bool {
     }
 }
 
-/// The page that shows the game an alert is about (`GAME_PAGE`).
+/// The page that shows the game an alert is about.
 fn game_page(kind: &str) -> Option<Page> {
     match kind {
         "opponentMove" | "lowTime" | "gameEvents" => Some(Page::Online),
@@ -403,7 +403,7 @@ fn sender() -> String {
 #[cfg(target_os = "macos")]
 const DEV_SENDER: &str = "com.kchess.app.dev";
 
-/// Alert the player about `kind` (`notifyDesktop`).
+/// Alert the player about `kind`.
 pub fn desktop(kind: &str, title: &str, body: &str, cx: &mut App) -> Outcome {
     alert(kind, None, title, body, cx)
 }

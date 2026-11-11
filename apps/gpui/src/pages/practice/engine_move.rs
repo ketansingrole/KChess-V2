@@ -30,7 +30,7 @@ pub trait HasEngine: 'static + Sized {
 }
 
 impl EngineMove {
-    /// Ask whether Stockfish is installed (`engineReady`).
+    /// Ask whether Stockfish is installed.
     pub fn check<V: HasEngine>(cx: &mut Context<V>) {
         let status = cx
             .global::<AppCore>()

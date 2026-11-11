@@ -1,4 +1,4 @@
-//! The playing surface every board page shares (`.play-layout` in `main.css`): the board as large
+//! The playing surface every board page shares: the board as large
 //! as the window's height and the page's width allow, and a side panel beside it, centred. A
 //! narrow page (620px or less, or a portrait window up to 900px, which a large interface size
 //! makes common) stacks the panel under the board instead.
@@ -11,7 +11,8 @@ use gpui_kit::*;
 
 use crate::widgets;
 
-/// The page's padding: 24px above, 40px below, and `clamp(14px, 2.6vw, 36px)` at the sides.
+/// The page's padding: 24px above, 40px below, and 2.6% of the width at the sides, from 14px
+/// to 36px.
 pub const PAGE_TOP: Pixels = px(24.);
 pub const PAGE_BOTTOM: Pixels = px(40.);
 pub const PANEL_MIN: Pixels = px(300.);
@@ -35,7 +36,7 @@ pub fn panel_style(height: Pixels, max_width: Pixels) -> StyleRefinement {
     style
 }
 
-/// `clamp(14px, 2.6vw, 36px)`: 2.6% of the window's width.
+/// 2.6% of the window's width.
 pub fn side_padding(window: &Window) -> Pixels {
     (window.viewport_size().width * 0.026)
         .max(px(14.))
@@ -96,7 +97,7 @@ const STACK_WIDTH: f32 = 620.;
 /// A portrait window stacks up to this width (`@media (max-width: 900px) and (orientation:
 /// portrait)`).
 const PORTRAIT_STACK_WIDTH: f32 = 900.;
-/// What a stacked board leaves of the window's height for the rest (`100dvh - 260px`).
+/// What a stacked board leaves of the window's height for the rest.
 const STACKED_CHROME: f32 = 260.;
 const STACKED_BOARD_MAX: f32 = 760.;
 
@@ -109,8 +110,9 @@ pub struct PlayLayout {
 }
 
 impl PlayLayout {
-    /// The board's side (`--board-size`): the height left after the page's padding and the player
-    /// lines, or the width left beside a 344px panel, between 260px and `--board-max`.
+    /// The board's side: the height left after the page's padding and the player
+    /// lines, or the width left beside a 344px panel, between 260px and the largest board
+    /// size.
     pub fn board_size(&self, window: &Window) -> Pixels {
         self.board_size_beside(px(0.), window)
     }
@@ -150,8 +152,8 @@ impl PlayLayout {
         )
     }
 
-    /// The board's side when its column holds `around` besides the board (`v-board-fit`'s
-    /// measured chrome): nothing for a bare board, a material row and the move box for a puzzle.
+    /// The board's side when its column holds `around` besides the board: nothing for a bare
+    /// board, a material row and the move box for a puzzle.
     pub fn board_size_around(
         &self,
         extra_width: Pixels,

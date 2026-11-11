@@ -2,7 +2,7 @@
 //! keeps their state, makes the calls they ask for, and runs their effects (clock, sounds,
 //! notices). Beside it: the challenges, the lobby stream and the games in progress.
 //! Engine help stays off while a game is live or being looked for, and
-//! until the core has said whether one was left running (`assistanceAllowed`).
+//! until the core has said whether one was left running.
 
 use kchess_contracts::calls;
 use kchess_contracts::check::OptionalAccount;
@@ -140,7 +140,7 @@ impl OnlineState {
         matches!(self.phase, Phase::Idle | Phase::Finished)
     }
 
-    /// A game of the account's is using the connection (`playingOwnGame`).
+    /// A game of the account's is using the connection.
     pub fn busy_with_game(&self) -> bool {
         match self.phase {
             Phase::Playing | Phase::Seeking => true,
@@ -399,7 +399,7 @@ impl OnlineState {
         })
     }
 
-    /// `run`: an operation that shows the app busy until it settles.
+    /// An operation that shows the app busy until it settles.
     fn run_busy(&mut self, op: Op, cx: &mut Context<Self>) -> Task<Option<bool>> {
         self.busy = true;
         cx.notify();
@@ -537,7 +537,7 @@ impl OnlineState {
         self.run_busy(Op::Reconnect, cx).detach();
     }
 
-    /// `openOngoing`: one of the account's games in progress on the board.
+    /// One of the account's games in progress on the board.
     pub fn open(&mut self, account: &str, id: &str, cx: &mut Context<Self>) {
         let op = Op::Open {
             account: account.to_string(),
@@ -989,7 +989,7 @@ pub fn active_account(accounts: &[kchess_contracts::types::Account], cx: &App) -
     listed[index].username.map(str::to_string)
 }
 
-/// Which connected account plays (`setOnlineAccount`).
+/// Which connected account plays.
 pub fn set_active_account(account: &str, cx: &mut App) {
     crate::prefs::set(cx, crate::accounts::ONLINE_ACCOUNT, account.to_string());
 }

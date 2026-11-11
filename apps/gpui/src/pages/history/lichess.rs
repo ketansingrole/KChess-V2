@@ -63,7 +63,7 @@ pub struct LichessTab {
     pub open: Option<(LichessGame, Entity<GameReplay>)>,
 }
 
-/// `gameResult`: the game from the account's side.
+/// The game from the account's side.
 fn result_of(game: &LichessGame) -> &'static str {
     match game.winner {
         None => "draw",
@@ -313,7 +313,7 @@ impl HistoryPage {
         self.load_lichess(cx);
     }
 
-    /// `openReview`: read the game's PGN (list rows carry none) and go through it.
+    /// Read the game's PGN (list rows carry none) and go through it.
     pub fn open_lichess(&mut self, game: LichessGame, window: &mut Window, cx: &mut Context<Self>) {
         let read = if game.pgn.is_some() {
             None
@@ -792,7 +792,7 @@ impl HistoryPage {
                         this.load_lichess(cx);
                     }))
             };
-        // The first, the last, and the pages around the current one (`sibling-count="1"`).
+        // The first, the last, and the pages around the current one.
         let shown: Vec<usize> = (0..pages)
             .filter(|page| *page == 0 || *page + 1 == pages || page.abs_diff(current) <= 1)
             .collect();
@@ -874,7 +874,7 @@ pub fn game_row(
             .truncate()
             .child(text)
     };
-    // `.game-row`: 11px by 12px, 13px text.
+    // 11px by 12px, 13px text.
     h_flex()
         .id(id)
         .test_support()
@@ -1004,8 +1004,7 @@ pub fn game_row(
         .into_any_element()
 }
 
-/// Review a synced game on the analysis board, opened at the move being looked at
-/// (`openGameReview`).
+/// Review a synced game on the analysis board, opened at the move being looked at.
 pub(super) fn open_review(game: LichessGame, ply: usize, window: &mut Window, cx: &mut App) {
     let Some(pgn) = game.pgn else {
         return;

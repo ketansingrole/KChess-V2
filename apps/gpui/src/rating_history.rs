@@ -1,5 +1,5 @@
 //! A player's rating history by mode and range (Home's activity and Players): Lichess's own
-//! history, with modes it has no points for filled from games (`mergeRatingHistories`).
+//! history, with modes it has no points for filled from games.
 
 use std::rc::Rc;
 
@@ -31,9 +31,9 @@ fn fit_select(label: &str) -> Pixels {
     px(label.chars().count() as f32 * 7. + 40.)
 }
 pub(crate) const DAY_MS: f64 = 86_400_000.;
-/// Ratings are padded by this much above and below (`ratingYDomain`).
+/// Ratings are padded by this much above and below.
 const RATING_PAD: f64 = 15.;
-/// Longer than this, dates read as month and year (`spansRatingYears`).
+/// Longer than this, dates read as month and year.
 const YEARS_SPAN_MS: f64 = 400. * DAY_MS;
 
 /// A rating chart's date, short under the axis and long in its tooltip: with the year once the
@@ -83,7 +83,7 @@ pub struct RatingHistory {
     _subscriptions: Vec<Subscription>,
 }
 
-/// `[year, month0, day, rating]` as a UTC time and a rating (`toRatingPoint`).
+/// `[year, month0, day, rating]` as a UTC time and a rating.
 pub(crate) fn point_of(raw: &Value) -> Option<(f64, f64)> {
     let parts = raw.as_array()?;
     let number = |index: usize| parts.get(index)?.as_f64().filter(|n| n.is_finite());
@@ -233,7 +233,6 @@ impl RatingHistory {
         cx.notify();
     }
 
-    /// The mode on the chart.
     pub fn mode(&self) -> &str {
         &self.mode
     }
@@ -260,7 +259,7 @@ impl RatingHistory {
         merge_rating_histories(entries(&self.official), entries(&self.fallback))
     }
 
-    /// The chosen mode's points come from games (`chartFromGames`).
+    /// The chosen mode's points come from games.
     fn chart_from_games(&self) -> bool {
         points_of(&self.official, &self.mode).is_empty()
             && !points_of(&self.history(), &self.mode).is_empty()
@@ -377,7 +376,7 @@ impl Render for RatingHistory {
                                     .child("over range")
                             })),
                     )
-                    // `USelect size="sm"`: each only as wide as its choice and chevron.
+                    // Each only as wide as its choice and chevron.
                     .child(
                         h_flex()
                             .gap(px(8.))

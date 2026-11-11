@@ -662,7 +662,6 @@ impl PageHandle {
         self.0.has_role(role, cx)
     }
 
-    /// New on the page.
     pub fn new_here(&self, window: &mut Window, cx: &mut App) {
         self.0.new_here(window, cx);
     }

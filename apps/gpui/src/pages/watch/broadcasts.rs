@@ -76,7 +76,7 @@ impl Clocks {
     }
 }
 
-/// "Live", "Finished", "in 20 min", or the day it starts (`BroadcastCard`'s timing).
+/// "Live", "Finished", "in 20 min", or the day it starts.
 fn timing(item: &BroadcastSummary, now: f64) -> String {
     if item.ongoing {
         return "Live".into();
@@ -104,7 +104,6 @@ fn timing(item: &BroadcastSummary, now: f64) -> String {
     }
 }
 
-/// `resultText`.
 fn result_text(game: &Value) -> String {
     if game["ongoing"] == json!(true) {
         return "Live".into();
@@ -427,7 +426,7 @@ impl WatchPage {
         self.broadcasts.round.clone()
     }
 
-    /// `openTour`: the tournament, at its default round (or the live one, or the last).
+    /// The tournament, at its default round (or the live one, or the last).
     fn open_tour(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.open_tour_at(id, None, String::new(), window, cx);
     }
@@ -493,7 +492,7 @@ impl WatchPage {
         .detach();
     }
 
-    /// `openRound`: a round's live feed; `game` stays selected once its board arrives.
+    /// A round's live feed; `game` stays selected once its board arrives.
     pub(super) fn open_round(
         &mut self,
         round: String,
@@ -568,8 +567,8 @@ impl WatchPage {
         self.stop(cx);
     }
 
-    /// A swipe steps out of a broadcast's board, then its tournament, before leaving the page
-    /// (`useBroadcastNav`); forward returns to what it left while that is still there.
+    /// A swipe steps out of a broadcast's board, then its tournament, before leaving the page;
+    /// forward returns to what it left while that is still there.
     pub fn can_step(&self, direction: crate::swipe::Direction) -> bool {
         if self.tab != super::Tab::Broadcasts {
             return false;

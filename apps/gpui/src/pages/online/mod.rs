@@ -28,7 +28,7 @@ mod chat;
 pub(crate) mod game;
 pub(crate) mod lists;
 
-/// The time controls offered (`timeControls`).
+/// The time controls offered.
 const TIME_CONTROLS: [(f64, &str); 6] = [
     (3., "Blitz"),
     (5., "Blitz"),
@@ -245,7 +245,7 @@ impl OnlinePage {
         self.challenge_keeping_rated(username, window, cx);
     }
 
-    /// Send the form's game, rated or not as it is set, to `username` (`challengeFriend`).
+    /// Send the form's game, rated or not as it is set, to `username`.
     pub fn challenge_keeping_rated(
         &mut self,
         username: &str,
@@ -272,7 +272,7 @@ impl OnlinePage {
         });
         self.target
             .update(cx, |input, cx| input.set_value(username, window, cx));
-        // The challenge goes out at once, as `challengeFriend` sends it.
+        // The challenge goes out at once.
         online.update(cx, |online, cx| online.start(None, cx));
     }
 
@@ -429,7 +429,7 @@ impl OnlinePage {
         .detach();
     }
 
-    /// The find-a-game form (`.online-form`).
+    /// The find-a-game form.
     fn form(&self, online: &OnlineState, cx: &App, palette: &Palette) -> Div {
         let form = online.form.clone();
         let connected = crate::accounts::handle(cx).read(cx).connected();
@@ -502,14 +502,13 @@ impl OnlinePage {
                 )
                 .child(control)
         };
-        // `.tc-grid`: the six presets in rows of three (the form's card is never under 340px).
+        // The six presets in rows of three (the form's card is never under 340px).
         let columns = 3;
         let cells: Vec<AnyElement> = TIME_CONTROLS
             .iter()
             .enumerate()
             .map(|(index, (minutes, label))| {
                 let chosen = form.minutes == *minutes;
-                // `.tc-option`.
                 v_flex()
                     .id(("time-control", index))
                     .role(Role::Button)

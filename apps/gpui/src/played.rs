@@ -1,4 +1,4 @@
-//! The games played in this app, as Game history lists them (`useGameArchiveStore`): one list for
+//! The games played in this app, as Game history lists them: one list for
 //! every page, changed at once and written to the profile in order by one writer, off the UI
 //! thread so the app can wait for it while it quits. A write the core refuses shows what the
 //! profile keeps again, and is tried again before the app quits.
@@ -204,7 +204,6 @@ impl PlayedGames {
         self.revision
     }
 
-    /// The games changed.
     fn changed(&mut self) {
         self.revision += 1;
     }

@@ -327,7 +327,7 @@ impl PuzzleRush {
         cx.notify();
     }
 
-    /// `onDone`: score a solve, then the next puzzle after a pause.
+    /// Score a solve, then the next puzzle after a pause.
     fn on_done(&mut self, cx: &mut Context<Self>) {
         if self.stage != Stage::Running || self.over() {
             return;
@@ -383,7 +383,7 @@ impl PuzzleRush {
         cx.notify();
     }
 
-    /// `endRun`: stop, then save the score here.
+    /// Stop, then save the score here.
     fn end_run(&mut self, cx: &mut Context<Self>) {
         if self.stage != Stage::Running {
             return;

@@ -5,7 +5,7 @@
 pub use kchess_domain::trainer::puzzle_session::{PuzzleSession, Selection, Step};
 pub use kchess_games::puzzle::OnBoard;
 
-/// `localDay`: the local calendar day, `YYYY-MM-DD`, which the day streak counts.
+/// The local calendar day, `YYYY-MM-DD`, which the day streak counts.
 pub fn local_day() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
 }

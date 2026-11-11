@@ -150,7 +150,7 @@ impl VoiceMoves {
         self.control.is_on(cx)
     }
 
-    /// Record a phrase in the voice history, when Settings keep one (`logVoice`). `track`: the
+    /// Record a phrase in the voice history, when Settings keep one. `track`: the
     /// phrase was about this position's move, so it learns which move was then played.
     fn record(
         &mut self,

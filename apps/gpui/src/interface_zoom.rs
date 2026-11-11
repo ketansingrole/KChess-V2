@@ -51,7 +51,7 @@ impl Setting {
 }
 
 /// What `auto` picks for a work area: 100% up to a 1440p-sized workspace, then the largest step
-/// that keeps the interface's share of the screen; never below 100% (`autoZoomPercent`).
+/// that keeps the interface's share of the screen; never below 100%.
 pub fn auto_percent(width: f32, height: f32) -> u16 {
     let (long, short) = (width.max(height), width.min(height));
     let ratio = (long / DESIGN_LONG_SIDE).min(short / DESIGN_SHORT_SIDE) * 100.;
@@ -63,7 +63,7 @@ pub fn auto_percent(width: f32, height: f32) -> u16 {
         .unwrap_or(100)
 }
 
-/// The next step from `percent` in `direction`, held at the ends (`stepZoom`).
+/// The next step from `percent` in `direction`, held at the ends.
 pub fn step(percent: u16, direction: i8) -> u16 {
     if direction > 0 {
         PERCENTS

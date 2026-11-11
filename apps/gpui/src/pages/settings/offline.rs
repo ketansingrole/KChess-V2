@@ -48,7 +48,7 @@ impl SettingsPage {
         .detach();
     }
 
-    /// Download and prepare the model now (`ensureVoiceModel`).
+    /// Download and prepare the model now.
     fn download_voice_model(&mut self, cx: &mut Context<Self>) {
         if self.voice_downloading || self.voice_model.as_ref().is_some_and(|status| status.busy) {
             return;

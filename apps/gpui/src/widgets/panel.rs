@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// `.card.side-panel`: the panel beside a board.
+/// The panel beside a board.
 pub fn side_panel(palette: &Palette) -> Div {
     v_flex()
         .min_w_0()
@@ -16,7 +16,7 @@ pub fn side_panel(palette: &Palette) -> Div {
         .bg(palette.elevated)
 }
 
-/// `.section-title`: a panel's or section's heading.
+/// A panel's or section's heading.
 pub fn heading(text: impl Into<SharedString>, palette: &Palette) -> Div {
     div()
         .text_size(px(14.))
@@ -25,7 +25,7 @@ pub fn heading(text: impl Into<SharedString>, palette: &Palette) -> Div {
         .child(text.into())
 }
 
-/// `.section-hint`: a short muted line under a heading.
+/// A short muted line under a heading.
 pub fn hint(text: impl Into<SharedString>, palette: &Palette) -> Div {
     div()
         .text_size(px(12.))
@@ -34,7 +34,7 @@ pub fn hint(text: impl Into<SharedString>, palette: &Palette) -> Div {
         .child(text.into())
 }
 
-/// A button that reads as text (`variant="link"`): small, but still a 24 px target (WCAG 2.5.8),
+/// A button that reads as text: small, but still a 24 px target (WCAG 2.5.8),
 /// which its text alone is not.
 pub fn text_button(id: impl Into<ElementId>) -> Button {
     Button::new(id).text().xsmall().min_h(px(24.))
@@ -95,7 +95,7 @@ pub fn dotted(parts: impl IntoIterator<Item = impl Into<SharedString>>) -> Div {
         }))
 }
 
-/// `.section-title` with a muted note beside it, cut short when it does not fit.
+/// A section title with a muted note beside it, cut short when it does not fit.
 pub fn section_title(
     title: &'static str,
     count: Option<String>,
@@ -124,7 +124,7 @@ pub fn section_title(
                 .child(count)
         }))
 }
-/// A grid's columns for a width (`repeat(auto-fill, minmax(min, 1fr))`): as many as fit at
+/// A grid's columns for a width: as many as fit at
 /// `min`, `gap` apart, sharing the width.
 pub fn columns(width: Pixels, min: Pixels, gap: Pixels) -> (usize, Pixels) {
     let count = ((width + gap) / (min + gap)).floor().max(1.) as usize;
@@ -141,7 +141,7 @@ pub fn bar_segment(segment: Div, (first, last): (bool, bool), radius: Pixels) ->
         .when(last, |segment| segment.rounded_r(radius))
 }
 
-/// `.card`: a bordered, raised box with the page's standard padding.
+/// A bordered, raised box with the page's standard padding.
 pub fn card(palette: &Palette) -> Div {
     v_flex()
         .p(px(20.))
@@ -150,7 +150,7 @@ pub fn card(palette: &Palette) -> Div {
         .border_color(palette.border)
         .bg(palette.elevated)
 }
-/// `UEmpty`: an icon, a title and an optional line under it; the caller adds the actions.
+/// An icon, a title and an optional line under it; the caller adds the actions.
 pub fn empty_state(
     glyph: Icon,
     title: impl Into<SharedString>,
@@ -178,7 +178,7 @@ pub fn empty_state(
         }))
 }
 
-/// `.side-dot`: a piece colour, the same light or dark disc in either theme.
+/// A piece colour, the same light or dark disc in either theme.
 pub fn side_dot(color: shakmaty::Color) -> Div {
     div()
         .size(px(9.))

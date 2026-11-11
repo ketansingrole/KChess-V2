@@ -265,7 +265,7 @@ pub struct AnalysisPage {
     /// Spoken moves, and “back”, “next”, “best move”, “flip board”.
     voice: VoiceMoves,
     /// Moves tried instead of a studied puzzle's solution, waiting for their reviews to be
-    /// labelled (`usePuzzleAnalysis().label`).
+    /// labelled.
     tried_labels: Vec<Subscription>,
     /// The tried moves already labelled, by path.
     tried_done: Vec<String>,
@@ -539,13 +539,11 @@ impl AnalysisPage {
         self.root.node_at(&self.path)
     }
 
-    /// The FEN of the position shown.
     #[cfg(test)]
     pub(crate) fn shown_fen(&self) -> String {
         self.node().fen.clone()
     }
 
-    /// The engine's status line.
     #[cfg(test)]
     pub(crate) fn engine_text(&self, cx: &App) -> String {
         self.engine_status(cx)
@@ -745,7 +743,7 @@ impl AnalysisPage {
         self.changed(cx);
     }
 
-    /// Analyse a position set up in the board editor, facing as it did there (`analyseSetup`).
+    /// Analyse a position set up in the board editor, facing as it did there.
     /// The board editor's position (`{ variant, fen }`), in its variant. False when the board
     /// cannot take it.
     pub fn analyse_setup(
@@ -773,7 +771,7 @@ impl AnalysisPage {
         loaded
     }
 
-    /// Load a game (`loadPgn`), opened at its start; refused for a variant this board cannot play.
+    /// Load a game, opened at its start; refused for a variant this board cannot play.
     fn load_pgn(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
         if !crate::game::pgn_analysable(text) {
             return false;
@@ -805,7 +803,7 @@ impl AnalysisPage {
 
     /* ── Studies ──────────────────────────────────────────────────────── */
 
-    /// The whole tree as PGN (`analysis.pgn()`).
+    /// The whole tree as PGN.
     pub fn pgn(&self) -> String {
         self.root.pgn_text()
     }
@@ -862,7 +860,7 @@ impl AnalysisPage {
         self.navigation
     }
 
-    /// The board holds moves no study keeps (`useReplaceAnalysis`), so replacing it asks first.
+    /// The board holds moves no study keeps, so replacing it asks first.
     pub fn unsaved(&self) -> bool {
         self.study.is_empty() && !self.root.children.is_empty()
     }
@@ -1351,7 +1349,7 @@ impl AnalysisPage {
 /* ── Rendering ────────────────────────────────────────────────────────── */
 
 impl AnalysisPage {
-    /// `.panel-tabs`: the tool under the engine, one at a time.
+    /// The tool under the engine, one at a time.
     fn render_tabs(&self, tool: Tool, palette: &Palette) -> impl IntoElement {
         let tabs = [
             (Tool::Moves, "Moves", icon("list-tree")),
@@ -1443,8 +1441,8 @@ impl AnalysisPage {
             .into_any_element()
     }
 
-    /// The opening the moves up to the one shown reached, as the game pages name it
-    /// (`openingAt`): only in standard chess, and while Settings show opening names.
+    /// The opening the moves up to the one shown reached, as the game pages name it:
+    /// only in standard chess, and while Settings show opening names.
     fn opening(&self, cx: &App) -> Option<String> {
         let shown = cx
             .global::<SettingsHandle>()
@@ -1681,7 +1679,7 @@ impl AnalysisPage {
                     div()
                         .id("analysis-moves")
                         .flex_1()
-                        // Under the board the list has a height of its own (`.moves-wrap`).
+                        // Under the board the list has a height of its own.
                         .min_h(if self.layout.is_stacked() {
                             px(240.)
                         } else {
@@ -1831,7 +1829,7 @@ impl Render for AnalysisPage {
             .filter(|position| game_over(Some(position)).is_some())
             .map(result_of);
         // The column always keeps the eval bar's width beside the board.
-        // The column holds the board and the move box under it (`.analysis-surface`).
+        // The column holds the board and the move box under it.
         let board_size = self.board_size(window);
         let entry = widgets::move_entry(&self.move_input, true, &palette);
         let (voice, voice_line) = board_bar(

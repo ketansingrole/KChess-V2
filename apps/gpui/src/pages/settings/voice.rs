@@ -74,7 +74,7 @@ impl SettingsPage {
         }
     }
 
-    /// The system's own request for access (`askForMediaAccess`).
+    /// The system's own request for access.
     fn ask_microphone(&mut self, cx: &mut Context<Self>) {
         self.mic_asking = true;
         let (sender, answer) = futures::channel::oneshot::channel();

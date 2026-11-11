@@ -994,7 +994,7 @@ impl Render for CommandPalette {
                                 .into_any_element()
                         })
                         .collect();
-                    // `.kchess-quickpick-group`: a rule between groups.
+                    // A rule between groups.
                     v_flex()
                         .py(px(4.))
                         .when(at_group > 0, |group| {
@@ -1055,7 +1055,7 @@ impl Render for CommandPalette {
                 );
             (list, footer)
         });
-        // `.quickpick-keys` hides below 560px.
+        // The shortcut hides below 560px.
         let shortcut = !open && window.viewport_size().width >= px(560.);
         let input = self.input.clone();
         let field = h_flex()
@@ -1091,7 +1091,7 @@ impl Render for CommandPalette {
                     .flatten(),
                 |field, keys| field.child(kbd(&keys, &palette)),
             );
-        // `.quickpick-panel`: one bordered box, the input on top; open, it grows down over the
+        // One bordered box, the input on top; open, it grows down over the
         // page with the results and keys beneath, up to 560px.
         let tall = (window.viewport_size().height - px(16.)).min(px(560.));
         let panel = v_flex()

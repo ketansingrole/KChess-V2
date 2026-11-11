@@ -39,7 +39,7 @@ enum Write {
 }
 
 /// The moves each chapter held when this window last opened or saved it, by study and chapter.
-/// Chapter saves are based on them (`basedOn`), so they never overwrite another window's newer
+/// Chapter saves are based on them, so they never overwrite another window's newer
 /// moves; a library refresh leaves them. Only the writer keeps them, in the order of its queue.
 type Bases = HashMap<(String, String), String>;
 
@@ -249,7 +249,7 @@ fn write_in_order(
     .detach();
 }
 
-/// `timeAgo`: "just now", "5 min ago", "3 h ago", "2 days ago", else the date.
+/// "just now", "5 min ago", "3 h ago", "2 days ago", else the date.
 pub fn time_ago(timestamp: f64, now: f64) -> String {
     if timestamp <= 0. {
         return "never".into();
@@ -270,7 +270,7 @@ pub fn time_ago(timestamp: f64, now: f64) -> String {
     if days < 31. {
         return format!("{days} day{} ago", if days == 1. { "" } else { "s" });
     }
-    // `toLocaleDateString()`: the numeric date, 12/30/2025.
+    // The numeric date, 12/30/2025.
     use chrono::TimeZone as _;
     chrono::Local
         .timestamp_millis_opt(timestamp as i64)
@@ -306,7 +306,7 @@ pub fn chapter_items(study: &Value) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The whole study as one PGN, a game per chapter (`studyDocumentPgn`).
+/// The whole study as one PGN, a game per chapter.
 pub fn document_pgn(study: &Value) -> String {
     let chapters: Option<Vec<(&str, &str)>> = study["chapters"].as_array().and_then(|chapters| {
         chapters
@@ -340,7 +340,7 @@ impl StudyLibrary {
         let _ = self.writes.unbounded_send(Write::Track { key, pgn });
     }
 
-    /// A name no study has yet (`freshName`).
+    /// A name no study has yet.
     pub fn fresh_name(&self, base: &str) -> String {
         (1..)
             .map(|n| {
@@ -492,7 +492,7 @@ mod tests {
         assert_eq!(time_ago(now - 3. * 3_600_000., now), "3 h ago");
         assert_eq!(time_ago(now - 86_400_000., now), "1 day ago");
         assert_eq!(time_ago(0., now), "never");
-        // Older than a month: the numeric date, as `toLocaleDateString()` writes it.
+        // Older than a month: the numeric date.
         let old = time_ago(now - 90. * 86_400_000., now);
         assert_eq!(old.matches('/').count(), 2, "{old}");
     }

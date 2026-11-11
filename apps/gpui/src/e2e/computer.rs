@@ -297,7 +297,6 @@ fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::Test
     assert_eq!(variant.as_deref(), Some("chess960"));
 }
 
-/// Once the game is over, Quick Pick reviews it on the analysis board, as the banner's button does.
 /// Until the saved game is restored the board takes no move: on a slow profile (Windows CI) the
 /// restore once landed between a player's two clicks and dropped the move.
 #[gpui_kit::test]
@@ -315,6 +314,7 @@ fn no_move_is_taken_before_the_saved_game_is_restored(cx: &mut gpui_kit::TestApp
     assert_eq!(app.moves(), Vec::<String>::new());
 }
 
+/// Once the game is over, Quick Pick reviews it on the analysis board, as the banner's button does.
 #[gpui_kit::test]
 fn a_finished_game_is_reviewed_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
@@ -334,8 +334,6 @@ fn a_finished_game_is_reviewed_from_quick_pick(cx: &mut gpui_kit::TestAppContext
     });
 }
 
-/// Game options start a game in another variant, which the engine plays by its rules: the
-/// variant's start, and the computer's move from it.
 /// A variant game starts from a FEN read by that variant's rules (a Crazyhouse position with
 /// its pockets), and a FEN it refuses keeps the game from starting.
 #[gpui_kit::test]
@@ -403,6 +401,8 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
     });
     assert!(typed(&mut app).is_none_or(|value| value.is_empty()));
     assert!(app.enabled("start-game"));
+/// Game options start a game in another variant, which the engine plays by its rules: the
+/// variant's start, and the computer's move from it.
 }
 
 #[gpui_kit::test]

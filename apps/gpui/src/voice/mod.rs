@@ -25,7 +25,7 @@ pub mod moves;
 
 pub use bar::voice_bar;
 
-/// What voice input is doing (`VoiceState`).
+/// What voice input is doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
     Off,
@@ -35,7 +35,7 @@ pub enum State {
     Error,
 }
 
-/// Why it stopped, so the bar can offer the right fix (`VoiceErrorKind`).
+/// Why it stopped, so the bar can offer the right fix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
     Denied,
@@ -51,7 +51,7 @@ pub struct Word {
     pub conf: f64,
 }
 
-/// A finished phrase (`VoiceResult`).
+/// A finished phrase.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Heard {
     /// The words, noise markers (`[unk]`) left out.
@@ -300,7 +300,7 @@ impl Voice {
         self.held = false;
     }
 
-    /// Another page was opened: voice stops, and the microphone is released (`dispose`).
+    /// Another page was opened: voice stops, and the microphone is released.
     pub fn release(&mut self, cx: &mut Context<Self>) {
         if self.owner.is_some() {
             self.disable_now(cx);
@@ -436,7 +436,7 @@ impl Voice {
         cx.notify();
     }
 
-    /// A fresh utterance with the current grammar (`resetRecognizer`).
+    /// A fresh utterance with the current grammar.
     fn reset(&mut self, cx: &mut Context<Self>) {
         // Nothing is heard yet while the model or the microphone is still opening: a new epoch
         // would only drop that opening's answer and leave voice loading for good.
@@ -574,7 +574,7 @@ impl Voice {
         cx.notify();
     }
 
-    /// Turn it off and on again after an error (`retryVoice`).
+    /// Turn it off and on again after an error.
     pub fn retry(&mut self, cx: &mut Context<Self>) {
         if let Some(owner) = self.owner {
             let (grammar, active, push) = (self.grammar.clone(), self.active, self.push_to_talk);
@@ -634,7 +634,7 @@ pub struct Attempt<'a> {
     pub fen: Option<&'a str>,
 }
 
-/// Save a phrase to the voice history, when Settings keep one (`logVoice`); `retry` is the
+/// Save a phrase to the voice history, when Settings keep one; `retry` is the
 /// phrase it tries again.
 pub fn log(attempt: &Attempt, retry: Option<Entry>, cx: &App) -> Option<Entry> {
     let keep = cx
@@ -721,7 +721,7 @@ pub fn wire<T: serde::de::DeserializeOwned>(name: &str) -> Option<T> {
     serde_json::from_value(Value::String(name.to_string())).ok()
 }
 
-/// A saved phrase's new outcome or meant move (`updateVoice`).
+/// A saved phrase's new outcome or meant move.
 pub fn amend(entry: Entry, update: VoiceUpdate, cx: &App) {
     let core = cx.global::<AppCore>().clone();
     cx.foreground_executor()

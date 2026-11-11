@@ -268,8 +268,8 @@ fn a_game_in_progress_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
 }
 
 /// A moment after the window shows, Over the board and the analysis board are made ahead of
-/// being opened (`shell::prewarm`): the page then opened is the one made, resuming its game, and
-/// neither is shown until it is chosen.
+/// being opened (`shell::prewarm`, which tests call themselves): the page then opened is the one
+/// made, resuming its game, and neither is shown until it is chosen.
 #[gpui_kit::test]
 fn a_page_made_ahead_opens_with_its_game(cx: &mut gpui_kit::TestAppContext) {
     use crate::pages::analysis::AnalysisPage;

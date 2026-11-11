@@ -63,7 +63,7 @@ fn engine_of(page: &mut WatchPage) -> &mut PositionEngine {
     &mut page.broadcasts.engine.engine
 }
 
-/// The context a board's live position is analysed in (`analysisContext`).
+/// The context a board's live position is analysed in.
 fn context_of(game: &Value) -> String {
     analysis_context(
         game["startFen"].as_str().unwrap_or_default(),
@@ -423,7 +423,7 @@ impl WatchPage {
         })
     }
 
-    /// The engine section above the moves (`.broadcast-engine`).
+    /// The engine section above the moves.
     pub(super) fn broadcast_engine_panel(
         &self,
         cx: &mut Context<Self>,

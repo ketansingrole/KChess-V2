@@ -190,7 +190,7 @@ impl ReviewStore {
     }
 }
 
-/// `judgmentCounts`: "2 blunders", worst first, leaving out the kinds that did not happen, from a
+/// "2 blunders", worst first, leaving out the kinds that did not happen, from a
 /// side's counts (`ReviewSide`: `blunder`, `mistake`, `inaccuracy`).
 pub fn judgment_counts(side: &Value) -> Vec<(&'static str, String)> {
     [

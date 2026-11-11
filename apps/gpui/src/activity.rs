@@ -44,7 +44,7 @@ fn today() -> chrono::NaiveDate {
     chrono::Local::now().date_naive()
 }
 
-/// `activityGroups`: a player's activity (`ActivityDay`s), one heading per day.
+/// A player's activity (`ActivityDay`s), one heading per day.
 pub fn activity_groups(days: &[ActivityDay]) -> Vec<ActivityGroup> {
     let today = today();
     days.iter()
@@ -62,7 +62,7 @@ pub fn activity_groups(days: &[ActivityDay]) -> Vec<ActivityGroup> {
         .collect()
 }
 
-/// `timelineGroups`: timeline entries (newest first) under the day they happened.
+/// Timeline entries (newest first) under the day they happened.
 pub fn timeline_groups(entries: &[TimelineEntry]) -> Vec<ActivityGroup> {
     timeline_groups_on(entries, today())
 }

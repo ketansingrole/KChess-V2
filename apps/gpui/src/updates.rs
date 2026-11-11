@@ -31,7 +31,7 @@ const IDLE: Duration = if cfg!(test) {
 } else {
     Duration::from_secs(30)
 };
-/// `checkAutomatically`: on startup and every six hours.
+/// On startup and every six hours.
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

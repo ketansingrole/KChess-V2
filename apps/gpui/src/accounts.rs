@@ -19,7 +19,7 @@ use crate::core::{Answer, AppCore, Reads};
 mod menu;
 pub use menu::{MenuInputs, menu_button};
 
-/// The account chosen for online play (`onlineAccountPreference`).
+/// The account chosen for online play.
 pub const ONLINE_ACCOUNT: &str = "kchess:online-account";
 
 pub struct Accounts {
@@ -99,7 +99,7 @@ impl Accounts {
         &self.chesscom
     }
 
-    /// The usernames signed in through OAuth (`connectedAccounts`).
+    /// The usernames signed in through OAuth.
     pub fn connected(&self) -> Vec<String> {
         self.all()
             .iter()
@@ -108,7 +108,7 @@ impl Accounts {
             .collect()
     }
 
-    /// The players followed (`trackedAccounts`): accounts kept here that are not signed in.
+    /// The players followed: accounts kept here that are not signed in.
     pub fn tracked(&self) -> Vec<Account> {
         self.all()
             .iter()
@@ -117,12 +117,12 @@ impl Accounts {
             .collect()
     }
 
-    /// The account that plays online (`activeOnlineAccount`).
+    /// The account that plays online.
     pub fn active(&self, cx: &App) -> Option<String> {
         crate::online::active_account(self.all(), cx)
     }
 
-    /// `usageOf(username).total.bytesIn`.
+    /// The bytes downloaded for `username`.
     pub fn downloaded(&self, username: &str) -> f64 {
         self.usage
             .accounts
@@ -130,7 +130,7 @@ impl Accounts {
             .map_or(0.0, |account| account.total.bytes_in as f64)
     }
 
-    /// `storageOf(username)`: games kept, and their bytes with the account's cache.
+    /// Games kept, and their bytes with the account's cache.
     pub fn stored(&self, username: &str) -> (f64, f64) {
         let storage = self
             .usage
@@ -454,7 +454,7 @@ impl Accounts {
             .any(|name| name.eq_ignore_ascii_case(username))
     }
 
-    /// `setLichessRelation`: follow, unfollow, block or unblock `username` on Lichess as the
+    /// Follow, unfollow, block or unblock `username` on Lichess as the
     /// online account. Without one there is nothing to do; a login from before the permission is
     /// asked to reconnect. `done` hears whether Lichess took it.
     pub fn set_relation(
@@ -511,7 +511,7 @@ impl Accounts {
         .detach();
     }
 
-    /// `clearSyncedData`: free a followed player's games and profile, still following them.
+    /// Free a followed player's games and profile, still following them.
     pub fn clear_data(&mut self, username: String, window: &mut Window, cx: &mut Context<Self>) {
         let cleared = cx.global::<AppCore>().request(calls::ClearAccountData {
             username: Username(username.clone()),
@@ -537,7 +537,7 @@ impl Accounts {
         .detach();
     }
 
-    /// `importFriends`: follow players without downloading their games.
+    /// Follow players without downloading their games.
     pub fn import(&mut self, names: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
         let count = names.len();
         self.busy = true;
@@ -622,7 +622,7 @@ impl Accounts {
         self.after_sign_out(call, note, window, cx);
     }
 
-    /// `signedOut`: take the answer in, forget the account's choices, and start the pages afresh
+    /// Take the answer in, forget the account's choices, and start the pages afresh
     /// so nothing kept for the account outlives it.
     fn after_sign_out(
         &mut self,

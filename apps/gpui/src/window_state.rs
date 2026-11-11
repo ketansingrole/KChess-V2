@@ -36,7 +36,7 @@ fn file(dir: &Path) -> PathBuf {
     dir.join("window-state.json")
 }
 
-/// A saved state, or `None` when it is missing, damaged or empty (`parseWindowState`).
+/// A saved state, or `None` when it is missing, damaged or empty.
 pub fn parse(text: &str) -> Option<WindowState> {
     let state: WindowState = serde_json::from_str(text).ok()?;
     let finite = [state.x, state.y, state.width, state.height]
@@ -62,7 +62,7 @@ fn grabbable(state: &WindowState, areas: &[Area]) -> Option<Area> {
 }
 
 /// Where to open: the saved place, shrunk and slid onto its display; else the default size,
-/// centred (`restoredBounds`). `None` for the position means centred.
+/// centred. `None` for the position means centred.
 pub fn restored(
     saved: Option<&WindowState>,
     areas: &[Area],
@@ -155,7 +155,7 @@ pub fn bounds(dir: &Path, cx: &App) -> (Option<WindowBounds>, WindowState) {
     (Some(bounds), state)
 }
 
-/// Saves the window's bounds and mode shortly after each change (`trackWindowState`).
+/// Saves the window's bounds and mode shortly after each change.
 pub fn track<V: 'static>(dir: PathBuf, window: &mut Window, cx: &mut Context<V>) -> Subscription {
     // The newest save replaces the one waiting, which is dropped and so never runs.
     let pending: std::rc::Rc<std::cell::RefCell<Option<Task<()>>>> = Default::default();

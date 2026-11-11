@@ -218,7 +218,6 @@ impl Link {
     }
 }
 
-/// The side to move in a FEN.
 pub(crate) fn side_to_move(fen: &str) -> shakmaty::Color {
     if fen.split(' ').nth(1) == Some("b") {
         shakmaty::Color::Black

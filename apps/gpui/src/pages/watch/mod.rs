@@ -112,7 +112,7 @@ enum Pending {
     Round,
 }
 
-/// `TvChannel`'s icon (`CHANNEL_ICONS`).
+/// `TvChannel`'s icon.
 pub fn channel_icon(key: &str) -> gpui_kit::component::Icon {
     match key {
         "best" => icon("crown"),
@@ -452,7 +452,7 @@ impl WatchPage {
         }
     }
 
-    /// Watch a live game (`watchGame`): the Following tab, streaming it.
+    /// Watch a live game: the Following tab, streaming it.
     pub fn watch_game(&mut self, id: &str, cx: &mut Context<Self>) {
         self.tab = Tab::Friends;
         crate::prefs::set(cx, TAB_KEY, "friends");

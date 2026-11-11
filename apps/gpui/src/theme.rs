@@ -160,7 +160,7 @@ impl Palette {
     }
 }
 
-/// A review judgment's colour (`--judgment-*`, Lichess's): inaccuracy, mistake or blunder.
+/// A review judgment's colour, as Lichess draws it: inaccuracy, mistake or blunder.
 pub fn judgment_color(judgment: &str, dark: bool) -> Hsla {
     let hex = match (judgment, dark) {
         ("inaccuracy", false) => 0x3d9ad6,
@@ -204,7 +204,7 @@ pub fn colors(id: &str, custom: &[AppTheme], dark: bool) -> Map<String, Value> {
     if id != DEFAULT_THEME {
         let presets: Vec<AppTheme> =
             serde_json::from_value(theme::presets().clone()).unwrap_or_default();
-        // A custom theme replaces a preset with the same id, as `allThemes` does.
+        // A custom theme replaces a preset with the same id.
         let chosen = custom
             .iter()
             .rev()
@@ -257,8 +257,6 @@ pub fn apply(window: &mut Window, cx: &mut App) {
     }
 }
 
-/// GPUI Kit's theme: the colors, controls rounded to `radii::SM` and dialogs to `radii::MD`
-/// (whole pixels, as the kit reads them).
 /// What a dialog lays over the page, light and dark: the kit's own (5% and 20% black) left a
 /// dialog hard to tell from a board or list under it.
 pub const OVERLAY: [&str; 2] = ["#00000059", "#00000099"];

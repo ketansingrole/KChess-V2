@@ -422,7 +422,7 @@ impl AnalysisPage {
         format!("{threat}{depth}{speed}{tail}")
     }
 
-    /// The engine's head row, the cloud's line and the engine lines (`.ceval`).
+    /// The engine's head row, the cloud's line and the engine lines.
     pub(super) fn render_engine(
         &self,
         cx: &mut Context<Self>,
@@ -752,7 +752,7 @@ pub(super) fn prefs_lines(cx: &App) -> usize {
     crate::prefs::get::<usize>(cx, ENGINE_LINES, 3).clamp(1, 5)
 }
 
-/// `stopAnalysisSafe`: stop the search; `release` also closes the engine.
+/// Stop the search; `release` also closes the engine.
 pub(super) fn stop_analysis(release: bool, cx: &mut App) {
     let stop = cx.global::<AppCore>().request(calls::StopAnalysis {
         kill: release.then_some(true),

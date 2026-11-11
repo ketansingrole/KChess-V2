@@ -134,7 +134,7 @@ impl AnalysisPage {
         self.run_import(window, cx);
     }
 
-    /// `runImport`: a FEN starts a new analysis there; a Lichess game link fetches that game;
+    /// A FEN starts a new analysis there; a Lichess game link fetches that game;
     /// otherwise the text is read as one PGN game.
     pub(super) fn run_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.import.read(cx).value().trim().to_string();

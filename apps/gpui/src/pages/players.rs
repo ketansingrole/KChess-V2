@@ -79,7 +79,7 @@ fn perf_type(key: &str) -> PerfType {
         .unwrap_or(PerfType::Blitz)
 }
 
-/// `playedPerfs`: the speeds a player has games in, most played first.
+/// The speeds a player has games in, most played first.
 fn played_perfs(profile: &Value) -> Vec<(&'static str, &'static str)> {
     let games = |key: &str| profile["perfs"][key]["games"].as_f64().unwrap_or_default();
     let mut perfs: Vec<_> = perfs().filter(|(key, _)| games(key) > 0.).collect();
@@ -800,7 +800,7 @@ impl PlayersPage {
         .detach();
     }
 
-    /// `loadStats`: their record in the chosen speed.
+    /// Their record in the chosen speed.
     fn load_stats(&mut self, cx: &mut Context<Self>) {
         let Some(username) = self.username() else {
             return;
@@ -830,7 +830,7 @@ impl PlayersPage {
         .detach();
     }
 
-    /// `loadHistory` and `loadGames`: Lichess's rating history (or one rebuilt from their recent
+    /// Lichess's rating history (or one rebuilt from their recent
     /// rated games when it sends none) and their recent games.
     fn load_activity(&mut self, cx: &mut Context<Self>) {
         let Some(username) = self.username() else {

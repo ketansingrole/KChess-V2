@@ -715,7 +715,6 @@ fn quick_pick_saves_a_study_adds_a_chapter_and_closes_it(cx: &mut gpui_kit::Test
     assert!(!app.shows("chapter-actions"));
 }
 
-/// With an account, Studies' Lichess tab opens from Quick Pick.
 #[gpui_kit::test]
 fn lichess_studies_open_from_quick_pick_with_an_account(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _lichess) = Harness::signed_in(cx, false);

@@ -36,11 +36,11 @@ const SORTS: [(&str, &str); 3] = [
 const MIN_ATTEMPTS: u64 = 3;
 
 pub enum StatsEvent {
-    /// Train a theme (`startTheme`).
+    /// Train a theme.
     Train(String),
     Connect,
     Reconnect,
-    /// Another connected account's numbers (`setAccount`).
+    /// Another connected account's numbers.
     Account(String),
 }
 
@@ -213,7 +213,7 @@ impl PuzzleStats {
         self.load(cx);
     }
 
-    /// `loadStats`: profile, rating history, dashboard and Storm results together.
+    /// Profile, rating history, dashboard and Storm results together.
     pub fn load(&mut self, cx: &mut Context<Self>) {
         let who = self.account.clone();
         if who.is_empty() {
@@ -353,7 +353,6 @@ fn point_of(raw: &Value) -> Option<(f64, f64)> {
     ))
 }
 
-/// `.stat-card`.
 fn stat(
     index: usize,
     label: &str,

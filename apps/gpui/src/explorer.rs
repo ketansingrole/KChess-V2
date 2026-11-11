@@ -1,7 +1,7 @@
 //! The opening explorer and tablebases: the Lichess, Masters and Player
 //! databases and the tablebase for a position, as the core looks them up (`positionLookup`), as a
 //! list on the analysis board or as a grid of boards beside an opening's line. Its settings are
-//! the view preference both apps keep (`kchess:explorer`).
+//! a view preference (`kchess:explorer`).
 
 use futures::FutureExt as _;
 use kchess_contracts::calls;
@@ -41,7 +41,7 @@ use kchess_domain::misc::constants::EXPLORER_RATINGS;
 const PREFS: &str = "kchess:explorer";
 /// Following moves waits for the board to settle.
 const FOLLOW_DELAY: Duration = Duration::from_millis(350);
-/// The grid's tiles (`.explorer-grid`).
+/// The grid's tiles.
 const TILE_MIN: Pixels = px(120.);
 const TILE_GAP: Pixels = px(10.);
 
@@ -66,7 +66,7 @@ const SPEEDS: [(&str, &str); 6] = [
     ("correspondence", "Corr"),
 ];
 
-/// The explorer's settings, as both apps keep them.
+/// The explorer's settings, as the profile keeps them.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct Prefs {

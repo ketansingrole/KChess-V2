@@ -25,7 +25,7 @@ use crate::settings::SettingsHandle;
 use crate::theme::radii;
 use crate::widgets::Pressable as _;
 
-/// Chessground's square colors (`chessground.brown.css`).
+/// Chessground's square colors.
 const LAST_MOVE: u32 = 0x9bc70069; // rgba(155, 199, 0, 0.41)
 const SELECTED: u32 = 0x14551e80; // rgba(20, 85, 30, 0.5)
 const DEST_DOT: u32 = 0x14551e80; // rgba(20, 85, 30, 0.5)
@@ -34,7 +34,7 @@ const DEST_CORNER: u32 = 0x1455004d; // rgba(20, 85, 0, 0.3)
 /// board's own bounds so the controls beside it cannot cover them.
 const OUTSIDE_GUTTER: Pixels = px(16.);
 const DEST_HOVER: u32 = 0x14551e4d; // rgba(20, 85, 30, 0.3)
-/// Chessground's queued premove and its targets (`current-premove`, `premove-dest`).
+/// Chessground's queued premove and its targets.
 const PREMOVE: u32 = 0x141e5580; // rgba(20, 30, 85, 0.5)
 const PREMOVE_DOT: u32 = 0x141e5580;
 /// A press moves this far before it is a drag rather than a click.
@@ -50,7 +50,6 @@ pub struct BoardState {
     /// Each piece's destinations, as `position::dests` lists them for a board.
     pub dests: HashMap<Square, Vec<Square>>,
     pub last_move: Option<(Square, Square)>,
-    /// The king in check.
     pub check: Option<Square>,
     /// Hide the pieces (blindfold play); highlights and moves stay.
     pub blindfold: bool,
@@ -64,7 +63,7 @@ pub struct BoardState {
     pub circles: Vec<Circle>,
     /// Coordinates other than Settings' (the coordinate drills hide or show them themselves).
     pub coordinates: Option<CoordinateMode>,
-    /// Every square's name on it (`coordinatesOnSquares`).
+    /// Every square's name on it.
     pub square_names: bool,
     /// The board editor's tool: pieces move anywhere, are put down or taken off.
     pub edit: Option<EditTool>,
@@ -89,7 +88,7 @@ pub struct Badge {
     pub color: Hsla,
 }
 
-/// The board editor's tools (`EditorTool`): move pieces (dragged off the board, they are gone),
+/// The board editor's tools: move pieces (dragged off the board, they are gone),
 /// put one piece down (or take it off again where it already stands), or take pieces off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditTool {
@@ -173,8 +172,8 @@ impl Arrow {
         Arrow::brush("blue", from, to)
     }
 
-    /// The analysis board's arrows (`paleBlue` for the best line, `paleGrey` for the rest):
-    /// the best one bold, the others thinner.
+    /// The analysis board's arrows: the best line pale blue and bold, the others pale grey and
+    /// thinner.
     pub fn engine(from: Square, to: Square, rank: usize) -> Arrow {
         let (color, opacity) = if rank == 0 {
             (0x003088, 0.4)
@@ -302,7 +301,7 @@ pub enum BoardEvent {
     /// A move the player made, in UCI (`e2e4`, `e7e8q`, castling as king to rook or two squares,
     /// a Crazyhouse drop as `N@f3`).
     Move(String),
-    /// A square was clicked (`select`): the coordinate drills' answers.
+    /// A square was clicked: the coordinate drills' answers.
     Select(Square),
     /// The editor's pieces changed: their placement (a FEN's first field).
     Edited(String),
@@ -437,7 +436,7 @@ struct Drawn {
     brush: &'static str,
 }
 
-/// Chessground's brush for a right-button drawing (`eventBrush`): Shift or Ctrl red, Alt or ⌘
+/// Chessground's brush for a right-button drawing: Shift or Ctrl red, Alt or ⌘
 /// blue, both yellow, else green.
 fn drawing_brush(modifiers: &Modifiers) -> &'static str {
     let a = modifiers.shift || modifiers.control;
@@ -446,7 +445,7 @@ fn drawing_brush(modifiers: &Modifiers) -> &'static str {
 }
 
 /// Draw `shape`: the same shape again takes it off, the same squares in another brush recolour
-/// it (Chessground's `addShape`).
+/// it.
 fn toggle_shape(shapes: &mut Vec<Drawn>, shape: Drawn) {
     match shapes
         .iter()
@@ -742,7 +741,7 @@ impl ChessBoard {
         if self.promotion.is_some() || self.state.preview {
             return;
         }
-        // A left click clears the drawings (`eraseOnClick`); Shift keeps them.
+        // A left click clears the drawings; Shift keeps them.
         if !event.modifiers.shift && !self.drawn.is_empty() {
             self.drawn.clear();
             cx.notify();
@@ -783,7 +782,7 @@ impl ChessBoard {
             self.selected = None;
             return Press::Drop(role);
         }
-        // A press while a premove waits takes it back (Chessground's `cancelPremove`).
+        // A press while a premove waits takes it back.
         if self.queued.take().is_some() {
             self.selected = None;
             return Press::Queued;
@@ -1639,7 +1638,7 @@ fn paint_pieces(
     }
 }
 
-/// Chessground's circle (`renderCircle`): a ring 4/64 of a square wide, 0.47 of a square from
+/// Chessground's circle: a ring 4/64 of a square wide, 0.47 of a square from
 /// its centre.
 fn paint_circle(circle: &Circle, cell: Bounds<Pixels>, window: &mut Window) {
     let side = cell.size.width;
@@ -1661,7 +1660,7 @@ fn paint_circle(circle: &Circle, cell: Bounds<Pixels>, window: &mut Window) {
     );
 }
 
-/// The puzzle hint (`HINT_MARK`): a thick green ring on a soft white halo,
+/// The puzzle hint: a thick green ring on a soft white halo,
 /// over a faint green tint, in a square's 100 units: radius 42, halo 14 wide, ring 9 wide.
 fn paint_hint(cell: Bounds<Pixels>, window: &mut Window) {
     let unit = cell.size.width / 100.;
@@ -1702,7 +1701,7 @@ fn paint_hint(cell: Bounds<Pixels>, window: &mut Window) {
     ring(42., 9., Hsla::transparent_black(), green.into(), window);
 }
 
-/// Chessground's arrow (`svg.js`, `renderArrow`), in one fill so its overlaps are not darker: a
+/// Chessground's arrow, in one fill so its overlaps are not darker: a
 /// shaft with a round tail, stopping 10/64 of a square short of the target's centre, and a head
 /// 4 widths wide and 3 long whose point sits 0.95 widths past that end.
 fn paint_arrow(
@@ -2073,7 +2072,7 @@ impl Render for ChessBoard {
                     .on_key_down(cx.listener(Self::key))
             })
             // Pictures in a list are named by what holds them; a board to play on is a grid of
-            // squares, and says each move as it is played (an `aria-live` line).
+            // squares, and says each move as it is played (a live region).
             .when_some(description, |board, description| {
                 board
                     .role(gpui_kit::Role::Grid)

@@ -120,7 +120,7 @@ impl LichessActivity {
         self.loaded && self.recent.is_empty()
     }
 
-    /// Show `account`, or read it again (`loadProfile` and the game history's account data).
+    /// Show `account`, or read its profile and game history again.
     pub fn load(&mut self, account: &str, cx: &mut Context<Self>) {
         if self.account != account {
             self.account = account.to_string();

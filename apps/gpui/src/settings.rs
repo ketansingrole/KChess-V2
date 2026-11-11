@@ -345,7 +345,7 @@ pub fn frontend(cx: &App) -> &kchess_contracts::types::FrontendPreferences {
     &cx.global::<SettingsHandle>().0.read(cx).settings.frontend
 }
 
-/// Change settings from a view (`toggleSetting`, the Settings page); they save themselves.
+/// Change settings from a view; they save themselves.
 pub fn change(cx: &mut App, change: impl FnOnce(&mut Settings) + 'static) {
     let handle = cx.global::<SettingsHandle>().0.clone();
     handle.update(cx, |settings, cx| settings.update(change, cx));

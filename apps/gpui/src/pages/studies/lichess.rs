@@ -94,7 +94,7 @@ impl StudiesPage {
             .get(&self.lichess.account.to_lowercase())
     }
 
-    /// `refresh`: the account's studies, unless fetched (or failed) a moment ago.
+    /// The account's studies, unless fetched (or failed) a moment ago.
     pub(super) fn load_lichess(&mut self, force: bool, cx: &mut Context<Self>) {
         let account = self.lichess.account.clone();
         if account.is_empty() {
@@ -271,7 +271,7 @@ impl StudiesPage {
             .detach();
     }
 
-    /// `openRemote`: open the offline copy, or keep the study offline first.
+    /// Open the offline copy, or keep the study offline first.
     fn open_remote(&mut self, item: LichessStudy, window: &mut Window, cx: &mut Context<Self>) {
         let id = item.id.clone();
         if let Some(saved) = self.offline_copy(&id, cx) {

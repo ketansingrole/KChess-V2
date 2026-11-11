@@ -50,7 +50,7 @@ const CASTLING: [(&str, &str); 4] = [
     ("q", "Black O-O-O"),
 ];
 
-/// `START_SETUP`.
+/// The standard starting position, as the editor holds it.
 fn start_setup() -> Value {
     json!({
         "board": STANDARD_FEN.split(' ').next().unwrap_or_default(),
@@ -60,7 +60,7 @@ fn start_setup() -> Value {
     })
 }
 
-/// `setupFen`: the position as a FEN, with only the castling rights the pieces allow.
+/// The position as a FEN, with only the castling rights the pieces allow.
 fn setup_fen(setup: &Value) -> String {
     crate::game::setup_fen(setup).unwrap_or_default()
 }
@@ -296,7 +296,7 @@ impl EditorPage {
         page
     }
 
-    /// `editPosition`: the editor on a position (the analysis board's, in its variant), facing
+    /// The editor on a position (the analysis board's, in its variant), facing
     /// the same way.
     pub fn set_position(
         &mut self,
@@ -713,7 +713,7 @@ impl EditorPage {
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> impl IntoElement {
-        // `.spare`: eight cells across the row (4px padding and gaps, a 1px border), square up to
+        // Eight cells across the row (4px padding and gaps, a 1px border), square up to
         // 56px tall.
         let across = (width - px(10.) - px(4.) * 7.) / 8.;
         let cell = across.min(SPARE_ROWS);
@@ -809,7 +809,7 @@ impl EditorPage {
                 })
                 .child(
                     // A stable light square keeps both piece colors legible in every theme.
-                    // `.spare-piece`: 86% of the cell, the piece contained in it.
+                    // 86% of the cell, the piece contained in it.
                     h_flex()
                         .w(across * 0.86)
                         .h(cell * 0.86)
@@ -923,7 +923,7 @@ impl Render for EditorPage {
                     .gap(px(8.))
                     .child(
                         div().flex_1().min_w_0().child(
-                            // `.fen-input`: 12px monospace, set on the input, whose size
+                            // 12px monospace, set on the input, whose size
                             // would otherwise make it 14px.
                             Input::new(&self.fen_input)
                                 .small()

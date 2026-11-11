@@ -27,7 +27,7 @@ use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
 
-/// What a move's label looks like (`MOVE_CLASSIFICATIONS`): its name, glyph and colour.
+/// What a move's label looks like: its name, glyph and colour.
 /// The NAG of a review's judgment: ?! dubious, ? mistake, ?? blunder.
 fn tried_nag(judgment: &str) -> Option<i64> {
     match judgment {
@@ -51,7 +51,7 @@ pub fn classification_look(classification: &str, dark: bool) -> (&'static str, &
     }
 }
 
-/// `analyseReview` of a review, and `reviewClassifications`: each move's label.
+/// A review's analysis, and each move's label.
 pub type Analysed = (Value, Vec<Option<String>>);
 /// The evaluation chart: White's chances per position (the start first), and each move's label.
 pub type Chart = (Vec<Option<f64>>, Vec<Option<String>>);
@@ -78,7 +78,6 @@ pub struct Opening {
     pub review: bool,
 }
 
-/// The review state of the board.
 #[derive(Default)]
 pub struct ReviewState {
     /// Where the game on the board came from: its players, your side, its Lichess game. Nothing
@@ -99,7 +98,7 @@ pub struct ReviewState {
     pub practice_feedback: Option<String>,
     /// The positions in practice (`MistakeExercise`), as the core keeps them.
     pub mistakes: Vec<Value>,
-    /// The last `analyseReview` and `reviewClassifications`, by review and its last update.
+    /// The last review analysed, by review and its last update.
     analysed: RefCell<Option<(String, f64, Analysed)>>,
 }
 
@@ -310,7 +309,7 @@ impl AnalysisPage {
             .cloned()
     }
 
-    /// Review the main line now (`requestReview`); the engine makes way for it.
+    /// Review the main line now; the engine makes way for it.
     pub fn request_review(&mut self, cx: &mut Context<Self>) {
         crate::prefs::set(cx, TOOL, "review");
         self.review.request_error = None;
@@ -574,7 +573,7 @@ impl AnalysisPage {
         self.open_pgn(&pgn, opening, cx)
     }
 
-    /// Study a puzzle (`usePuzzleAnalysis().open`): its solution is the line, each move tried
+    /// Study a puzzle: its solution is the line, each move tried
     /// instead in that attempt a variation beside it marked "Your move", and the solution is
     /// reviewed like a game.
     pub fn open_puzzle(
@@ -724,7 +723,7 @@ impl AnalysisPage {
         true
     }
 
-    /// Practise a reviewed game's positions on the board (`usePracticeGame`): `game` is a
+    /// Practise a reviewed game's positions on the board: `game` is a
     /// `MistakeGame`, `items` the positions in practice. A game already on the board is kept as
     /// it is, variations and all.
     pub fn practise_game(
@@ -813,7 +812,6 @@ impl AnalysisPage {
         }
     }
 
-    /// The Review tab.
     pub(super) fn render_review(&self, cx: &mut Context<Self>, palette: &Palette) -> AnyElement {
         let key = self.mainline_key();
         let review = self.review(cx);
@@ -1383,7 +1381,7 @@ mod tests {
     use super::tried_nag;
     use kchess_domain::trainer::analysis_tree::move_glyph;
 
-    /// A tried move is labelled as the app labels it (`NAGS`), and
+    /// A tried move is labelled as the app labels it, and
     /// the glyph the rules give that NAG is the one the move list shows.
     #[test]
     fn a_judged_tried_move_gets_its_glyph() {

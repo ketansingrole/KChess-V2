@@ -1,6 +1,6 @@
 //! Exporting a game: the Export menu under a game's moves, for an animated GIF
 //! of the game, a PNG of the position shown, a PGN file, or the PGN or position's FEN copied; and
-//! saving an export (`saveExport`), where the person picks the place, starting in Downloads.
+//! saving an export, where the person picks the place, starting in Downloads.
 
 use kchess_contracts::calls;
 use kchess_contracts::check::{OptionalAccount, PgnText};
@@ -101,7 +101,7 @@ impl Kind {
     }
 }
 
-/// The game as a PGN file: its own document, else `setupPgn` of its moves, dated today.
+/// The game as a PGN file: its own document, else one written from its moves, dated today.
 fn game_pgn(game: &PlayedGame) -> Option<String> {
     if let Some(pgn) = &game.pgn {
         return Some(pgn.clone());

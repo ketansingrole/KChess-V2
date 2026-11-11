@@ -312,7 +312,7 @@ impl Render for SquareColors {
                 .text_size(px(11.))
                 .child(key)
         };
-        // The answers in the squares' own colors (`.answer-light`, and a solid neutral button):
+        // The answers in the squares' own colors (the light one a solid neutral button):
         // GPUI Kit's custom buttons only tint, so these are drawn here.
         let answer =
             |id: &'static str, label: &'static str, shortcut: &'static str, light: bool| {

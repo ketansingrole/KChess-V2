@@ -53,7 +53,7 @@ enum Filter {
     Unfinished,
 }
 
-/// The filter a game falls under (`filterOf`); clock-only sessions show only under All.
+/// The filter a game falls under; clock-only sessions show only under All.
 fn filter_of(outcome: &str) -> Option<Filter> {
     Some(match outcome {
         "win" => Filter::Win,
@@ -91,7 +91,6 @@ pub(crate) fn outcome(game: &Value) -> String {
     kchess_domain::records::games::archived_outcome(game).to_string()
 }
 
-/// The played game with this id, as it is now.
 fn played_game(id: &str, cx: &App) -> Option<Value> {
     cx.global::<PlayedHandle>()
         .0
@@ -114,7 +113,7 @@ fn text<'a>(game: &'a Value, key: &str) -> &'a str {
     game[key].as_str().unwrap_or_default()
 }
 
-/// `ARCHIVED_BADGES`: the label, look and winning side of an outcome.
+/// The label, look and winning side of an outcome.
 fn badge_of(outcome: &str) -> (&'static str, Look, Option<Color>) {
     match outcome {
         "win" => ("Win", Look::Success, None),
@@ -271,7 +270,7 @@ pub struct HistoryPage {
     /// for; blank is none.
     search: String,
     search_input: Entity<InputState>,
-    /// Each game's opening (`openingAt`), by its id and length, worked out once.
+    /// Each game's opening, by its id and length, worked out once.
     openings: std::cell::RefCell<std::collections::HashMap<(String, usize), Option<String>>>,
     /// Each played game's outcome by id, as of a revision of the played games: the list, its
     /// filters' counts and the pages ask for every game's outcome on every frame.
@@ -973,7 +972,7 @@ fn source_tabs(
     )
 }
 
-/// An empty list's message and the action that fills it (`UEmpty`).
+/// An empty list's message and the action that fills it.
 fn empty(glyph: Icon, title: &'static str, action: Button, palette: &Palette) -> impl IntoElement {
     widgets::card(palette)
         .items_center()
@@ -1395,7 +1394,7 @@ impl HistoryPage {
             .into_any_element()
     }
 
-    /// `UPagination`: the previous page, every page by number, and the next.
+    /// The previous page, every page by number, and the next.
     fn pager(&self, current: usize, pages: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let go = |label: SharedString,
                   target: usize,
