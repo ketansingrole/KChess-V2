@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::process::Command;
 use tokio::task::AbortHandle;
 
@@ -101,9 +101,10 @@ pub(crate) fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
     serde_json::from_str(&output).map_err(|cause| CoreError::new(cause.to_string()))
 }
 
-/// A `kchess_domain` `assert*` validator: the sidecar of values JSON cannot carry is empty.
+/// A `kchess_domain` `assert*` validator of one JSON value.
 pub(crate) fn validate(method: &str, value: &Value) -> Result<Value> {
-    domain(method, vec![json!([]), value.clone()])
+    kchess_domain::misc::validate_values(method, std::slice::from_ref(value))
+        .map_err(CoreError::new)
 }
 
 /// `parseInfo`: one UCI `info` line, with its scored principal variation from White's side.
