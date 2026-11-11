@@ -590,8 +590,8 @@ impl WatchPage {
         let names: Vec<String> = crate::accounts::handle(cx)
             .read(cx)
             .tracked()
-            .iter()
-            .filter_map(|friend| friend["username"].as_str().map(str::to_string))
+            .into_iter()
+            .map(|friend| friend.username)
             .collect();
         let core = cx.global::<AppCore>().clone();
         self.presence_error = None;
@@ -750,17 +750,15 @@ impl WatchPage {
         let online = friends
             .iter()
             .filter(|friend| {
-                friend["username"].as_str().is_some_and(|name| {
-                    self.presence
-                        .get(&name.to_lowercase())
-                        .is_some_and(|p| p["online"] == json!(true))
-                })
+                self.presence
+                    .get(&friend.username.to_lowercase())
+                    .is_some_and(|p| p["online"] == json!(true))
             })
             .count();
         let playing: Vec<(String, Option<String>)> = friends
             .iter()
             .filter_map(|friend| {
-                let name = friend["username"].as_str()?;
+                let name = friend.username.as_str();
                 let presence = self.presence.get(&name.to_lowercase())?;
                 (presence["playing"] == json!(true)).then(|| {
                     (

@@ -24,8 +24,9 @@ use crate::host::{Host, Level};
 use crate::store::Database;
 use crate::store::StoreContext;
 use crate::store::chesscom as store;
-use crate::store::games::{MAX_GAMES, as_json};
+use crate::store::games::MAX_GAMES;
 use crate::tasks::lock;
+use kchess_contracts::types::ChesscomAccount;
 use kchess_domain::chesscom::{archive_month, game_row};
 
 /// Chess.com's public API.
@@ -274,7 +275,7 @@ impl Chesscom {
 
     /// `addChesscomAccount`: adds a player Chess.com knows, then syncs their games. A removal
     /// of the player before it ends wins: the player is not added back, and the add fails.
-    pub async fn add(&self, name: &str) -> Result<Value> {
+    pub async fn add(&self, name: &str) -> Result<Vec<ChesscomAccount>> {
         let epoch = self.epoch(name);
         let current = || self.current(name, epoch);
         let spelled = self.player(name, &current).await?;
@@ -292,36 +293,30 @@ impl Chesscom {
         // The player stays added when their games cannot be read yet: Sync tries again. The
         // player synced is the one just added, never a re-read list a removal has changed since.
         self.sync_logged(&spelled, epoch).await?;
-        self.accounts_json().await
+        self.accounts().await
     }
 
-    async fn accounts(&self) -> Result<Vec<store::ChesscomAccount>> {
+    async fn accounts(&self) -> Result<Vec<ChesscomAccount>> {
         self.database
             .read_async(|ctx| store::accounts(ctx.db))
             .await
     }
 
-    async fn accounts_json(&self) -> Result<Value> {
-        as_json(self.accounts().await?)
-    }
-
     /// `removeChesscomAccount`: stops an add or sync in flight, then deletes the player.
-    pub async fn remove(&self, name: &str) -> Result<Value> {
+    pub async fn remove(&self, name: &str) -> Result<Vec<ChesscomAccount>> {
         let key = name.to_lowercase();
         *lock(&self.epochs).entry(key.clone()).or_insert(0) += 1;
         self.removals.send_replace(());
         lock(&self.syncs).remove(&key);
         let name = name.to_string();
-        let accounts = self
-            .database
+        self.database
             .write_async(move |ctx| store::remove_account(ctx.db, &name))
-            .await?;
-        as_json(accounts)
+            .await
     }
 
     /// `syncChesscomGames`: one player's games, or every player's in turn. Every player still
     /// syncs when one fails; the first failure is reported afterwards.
-    pub async fn sync(&self, name: Option<&str>) -> Result<Value> {
+    pub async fn sync(&self, name: Option<&str>) -> Result<Vec<ChesscomAccount>> {
         // Taken before the players are read: a removal after this stops that player's sync.
         let epochs = lock(&self.epochs).clone();
         let names: Vec<String> = self
@@ -340,7 +335,7 @@ impl Chesscom {
         }
         match first_error {
             Some(error) => Err(error),
-            None => self.accounts_json().await,
+            None => self.accounts().await,
         }
     }
 

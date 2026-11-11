@@ -80,7 +80,7 @@ impl Profile {
     }
 
     fn insights(&self, account: &str) -> Value {
-        let query = json!({ "account": account });
+        let query = support::store::insights_query(&json!({ "account": account }));
         self.read(|c| insights::insights(c.host, c.db, &query, kchess_core::time::now_ms() as f64))
     }
 

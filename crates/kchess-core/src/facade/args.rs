@@ -1,4 +1,3 @@
-use kchess_domain::misc::value::J;
 use serde_json::{Value, json};
 
 use crate::error::{CoreError, Result};
@@ -7,14 +6,6 @@ use crate::lichess::accounts::Reply;
 /// A normalized string value; anything else is empty.
 pub(crate) fn text(value: &Value) -> String {
     value.as_str().unwrap_or_default().to_string()
-}
-
-/// `value` as `check` (`kchess_domain::misc::checks`) normalizes it.
-pub(crate) fn normal(
-    check: fn(J) -> std::result::Result<Value, String>,
-    value: &Value,
-) -> Result<Value> {
-    check(J::from(value)).map_err(CoreError::new)
 }
 
 /// An argument the check passed, read as the service takes it.

@@ -3,6 +3,7 @@
 //! saving an export (`saveExport`), where the person picks the place, starting in Downloads.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::{OptionalAccount, PgnText};
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -216,8 +217,8 @@ impl Exporter {
             Err(cx
                 .global::<crate::core::AppCore>()
                 .request(calls::ImportGame {
-                    account: json!(account),
-                    pgn: json!(pgn),
+                    account: OptionalAccount(account),
+                    pgn: PgnText(pgn),
                 }))
         };
         self.uploading = true;
@@ -225,12 +226,7 @@ impl Exporter {
         cx.spawn_in(window, async move |this, cx| {
             let url = match link {
                 Ok(url) => Ok(url),
-                Err(upload) => upload.await.and_then(|game| {
-                    game["url"]
-                        .as_str()
-                        .map(str::to_string)
-                        .ok_or_else(|| kchess_contracts::CoreError::new("Lichess sent no link"))
-                }),
+                Err(upload) => upload.await.map(|game| game.url),
             };
             let _ = this.update_in(cx, |this, window, cx| {
                 this.uploading = false;

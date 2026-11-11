@@ -12,11 +12,13 @@ use fixtures::{
     MemoryStore, MemoryTokens, Recording, Reply, capabilities_for, game_json, http_client, ndjson,
     serve,
 };
+use kchess_contracts::types::{LichessGame, PerfType, RelationAction};
 use kchess_core::lichess::accounts::{
-    AccountRow, CachedValue, Lichess, LichessGame, LichessStore, Reply as Outcome,
+    AccountRow, CachedValue, Lichess, LichessStore, Reply as Outcome,
 };
 use kchess_core::lichess::client::LichessClient;
 use kchess_core::lichess::policy::Policy;
+use kchess_domain::color::Color;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -549,7 +551,7 @@ async fn recent_games_are_newest_first_and_capped() {
     let games = lichess.recent_games("Alice", false).await.unwrap();
     assert_eq!(games.len(), 10);
     assert_eq!(games[0].id, "Game0000");
-    assert_eq!(games[0].color, "white");
+    assert_eq!(games[0].color, Color::White);
     assert_eq!(
         fixture.to("/api/games/user/Alice")[0]
             .query("max")
@@ -585,7 +587,7 @@ async fn a_player_record_is_read_from_the_perf_endpoint() {
         MemoryStore::with_accounts(&[]),
         MemoryTokens::with(&[]),
     );
-    let stats = lichess.player_perf("Alice", "blitz").await.unwrap();
+    let stats = lichess.player_perf("Alice", PerfType::Blitz).await.unwrap();
     assert_eq!(stats.rating, Some(1612.5));
     assert_eq!(stats.rank, Some(1200));
     assert_eq!(stats.highest.as_ref().map(|mark| mark.rating), Some(1700.0));
@@ -967,21 +969,18 @@ async fn following_with_a_login_that_lacks_the_permission_asks_to_reconnect() {
     );
 
     let done = lichess
-        .set_relation("Alice", "Carol", "follow")
+        .set_relation("Alice", "Carol", RelationAction::Follow)
         .await
         .unwrap();
     assert_eq!(done, Outcome::Done(()));
     let call = fixture.to("/api/rel/follow/Carol").remove(0);
     assert_eq!(call.method, "POST");
-    let refused = lichess.set_relation("Bob", "Carol", "block").await.unwrap();
+    let refused = lichess
+        .set_relation("Bob", "Carol", RelationAction::Block)
+        .await
+        .unwrap();
     assert_eq!(refused, Outcome::NeedsReconnect);
     assert_eq!(fixture.to("/api/rel/block/Carol").len(), 1);
-    assert!(
-        lichess
-            .set_relation("Alice", "Carol", "mute")
-            .await
-            .is_err()
-    );
 }
 
 /// Many profiles go to Lichess 300 names a request, as one comma-separated body each.

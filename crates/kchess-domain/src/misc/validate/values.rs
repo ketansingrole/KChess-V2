@@ -7,16 +7,6 @@ pub fn assert_username(value: J) -> Checked<String> {
     username(&text, "")
 }
 
-pub(super) fn assert_game_account(value: J) -> Checked<String> {
-    let text: String = decode(value, always!(USERNAME))?;
-    game_account(&text, "")
-}
-
-pub(super) fn assert_chesscom_username(value: J) -> Checked<String> {
-    let text: String = decode(value, always!("Enter a valid Chess.com username."))?;
-    chesscom_username(&text)
-}
-
 pub(super) fn assert_game_id(value: J) -> Checked<String> {
     let text: String = decode(value, always!("Invalid game id."))?;
     game_id(&text)?;
@@ -74,16 +64,8 @@ pub(super) fn assert_usernames(value: J) -> Checked<Vec<String>> {
     usernames(value, None, 50)
 }
 
-pub(super) fn assert_friend_list(value: J) -> Checked<Vec<String>> {
-    usernames(value, Some("Choose at least one player."), 1000)
-}
-
 pub(super) fn assert_action(value: J) -> Checked<String> {
     picked(value, ONLINE_ACTIONS, Some("Invalid game action."))
-}
-
-pub(super) fn assert_relation_action(value: J) -> Checked<String> {
-    picked(value, RELATION_ACTIONS, Some("Invalid action."))
 }
 
 pub(super) fn assert_chat_room(value: J) -> Checked<String> {
@@ -101,10 +83,6 @@ pub(super) fn message_text(value: J, max: usize, too_long: &'static str) -> Chec
 
 pub(super) fn assert_chat_text(value: J) -> Checked<String> {
     message_text(value, 140, "Chat messages are limited to 140 characters.")
-}
-
-pub(super) fn assert_message_text(value: J) -> Checked<String> {
-    message_text(value, 8000, "Messages are limited to 8,000 characters.")
 }
 
 pub(super) fn assert_decline_reason(value: J) -> Checked<String> {

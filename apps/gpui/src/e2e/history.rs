@@ -393,16 +393,16 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
         window.try_find_by_label("Variant").is_some()
     });
     assert_eq!(
-        app.cx.update(|cx| insights.read(cx).query(cx))["variant"],
-        serde_json::Value::Null,
+        app.cx.update(|cx| insights.read(cx).query(cx)).variant,
+        None,
         "standard chess until a variant is chosen"
     );
     app.with_window(|window, cx| {
         insights.update(cx, |page, cx| page.choose_variant("chess960", window, cx))
     });
     assert_eq!(
-        app.cx.update(|cx| insights.read(cx).query(cx))["variant"],
-        "chess960"
+        app.cx.update(|cx| insights.read(cx).query(cx)).variant,
+        Some(kchess_domain::variant::Variant::Chess960)
     );
 
     fn page_loaded(cx: &gpui_kit::App) -> bool {

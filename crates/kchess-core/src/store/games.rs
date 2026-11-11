@@ -7,15 +7,23 @@ use std::collections::{BTreeMap, HashMap};
 
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::StoreContext;
 use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_contracts::check::{Username, check};
+use kchess_contracts::types::{
+    Account, AppData, Appearance, CoordinateMode, CoreSettings, FrontendPreferences,
+    GameLibraryOverview, GamePage, GamePageQuery, GameRecord, LichessGame, PieceAnimation,
+    PromotionMode, RatingSeries, ReviewAuto, Settings,
+};
 use kchess_domain::calendar::civil_from_days;
-use kchess_domain::misc::{validate, value::J};
+use kchess_domain::color::Color;
+use kchess_domain::misc::value::J;
 
 /// Games kept per account.
 pub const MAX_GAMES: i64 = 5000;
@@ -95,193 +103,12 @@ pub(super) const GAME_KEYS: [&str; 17] = [
 /// The list view never shows the PGN; it is fetched per game when reviewed.
 const LIST_COLUMNS: &str = "account, id, createdAt, lastMoveAt, rated, speed, perf, status, winner, color, opponent, opponentRating, playerRating, ratingDiff, opening, moves";
 
-const PIECE_ANIMATIONS: [&str; 4] = ["none", "fast", "normal", "slow"];
-const REVIEW_AUTO: [&str; 3] = ["off", "recent", "all"];
-
 /// `DEFAULT_SETTINGS`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Settings {
-    pub appearance: String,
-    pub board_theme: String,
-    pub light_theme: String,
-    pub dark_theme: String,
-    pub piece_set: String,
-    pub piece_animation: String,
-    pub coordinates: String,
-    pub sound_enabled: bool,
-    pub sound_volume: f64,
-    pub engine_path: String,
-    pub premove: bool,
-    pub promotion: String,
-    pub show_legal_moves: bool,
-    pub notifications_enabled: bool,
-    pub notify_active: bool,
-    pub notify_background: bool,
-    pub notify_opponent_move: bool,
-    pub notify_low_time: bool,
-    pub notify_game_events: bool,
-    pub notify_computer_move: bool,
-    pub notify_sound: bool,
-    pub voice_push_to_talk: bool,
-    pub voice_confirm_moves: bool,
-    pub voice_history: bool,
-    pub update_auto_check: bool,
-    pub update_auto_download: bool,
-    pub update_install_on_quit: bool,
-    pub engine_levels: Vec<String>,
-    pub review_auto: String,
-    pub review_on_battery: bool,
-    pub receive_challenges: bool,
-    pub notify_challenges: bool,
-    pub online_chat: bool,
-    pub correspondence_poll: f64,
-    pub zen_mode: bool,
-    pub blindfold: bool,
-    pub cloud_eval: bool,
-    pub show_opening_name: bool,
-    pub swipe_navigation: bool,
-    pub swipe_indicator: bool,
-    pub puzzle_auto_next: bool,
-    pub confirm_correspondence: bool,
-    pub figurine_notation: bool,
-}
-
-pub(super) fn default_settings() -> Settings {
-    Settings {
-        appearance: "system".into(),
-        board_theme: "brown".into(),
-        light_theme: "kchess".into(),
-        dark_theme: "kchess".into(),
-        piece_set: "cburnett".into(),
-        piece_animation: "normal".into(),
-        coordinates: "inside".into(),
-        sound_enabled: true,
-        sound_volume: 0.7,
-        engine_path: String::new(),
-        premove: true,
-        promotion: "ask".into(),
-        show_legal_moves: true,
-        notifications_enabled: true,
-        notify_active: false,
-        notify_background: true,
-        notify_opponent_move: true,
-        notify_low_time: true,
-        notify_game_events: true,
-        notify_computer_move: true,
-        notify_sound: false,
-        voice_push_to_talk: false,
-        voice_confirm_moves: true,
-        voice_history: true,
-        update_auto_check: true,
-        update_auto_download: true,
-        update_install_on_quit: true,
-        engine_levels: ["beginner", "club", "expert", "fm", "im", "gm", "max"]
-            .map(String::from)
-            .to_vec(),
-        review_auto: "recent".into(),
-        review_on_battery: false,
-        receive_challenges: true,
-        notify_challenges: true,
-        online_chat: true,
-        correspondence_poll: 5.0,
-        zen_mode: false,
-        blindfold: false,
-        cloud_eval: false,
-        show_opening_name: true,
-        swipe_navigation: true,
-        swipe_indicator: true,
-        puzzle_auto_next: false,
-        confirm_correspondence: true,
-        figurine_notation: false,
-    }
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AppData {
-    pub settings: Settings,
-    pub accounts: Vec<Account>,
-    pub game_count: i64,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Account {
-    pub username: String,
-    pub connected: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_synced_at: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub synced_play_time: Option<i64>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LichessGame {
-    pub id: String,
-    pub account: String,
-    pub created_at: i64,
-    pub last_move_at: i64,
-    pub rated: bool,
-    pub speed: String,
-    pub perf: String,
-    pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub winner: Option<String>,
-    pub color: String,
-    pub opponent: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub opponent_rating: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub player_rating: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rating_diff: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub opening: Option<String>,
-    pub moves: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pgn: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GamePage {
-    pub games: Vec<LichessGame>,
-    pub total: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GameRecord {
-    pub total: i64,
-    pub win: i64,
-    pub loss: Option<i64>,
-    pub draw: Option<i64>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GameLibraryOverview {
-    pub by_account: BTreeMap<String, GameRecord>,
-    pub versus: BTreeMap<String, GameRecord>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RatingSeries {
-    pub name: String,
-    pub points: Vec<[i64; 4]>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GamePageQuery {
-    account: Option<String>,
-    result: Option<String>,
-    rated: Option<bool>,
-    search: Option<String>,
-    // Validated whole numbers; the validator hands them back as JSON numbers, which may be floats.
-    offset: f64,
-    limit: f64,
+/// The default settings, as the contracts define them.
+pub fn default_settings() -> Settings {
+    // The contracts' defaults read the domain's bundled engine levels, which are known levels.
+    kchess_contracts::defaults::default_settings()
+        .unwrap_or_else(|cause| unreachable!("the bundled default settings are valid: {cause}"))
 }
 
 pub fn as_json<T: Serialize>(value: T) -> Result<Value> {
@@ -403,6 +230,12 @@ fn settings_select() -> String {
 }
 
 /// `rowToSettings` followed by `normalizeSettings`.
+/// A stored choice as its wire enum; one no longer offered (or never valid) is `fallback`.
+fn choice<T: DeserializeOwned>(text: String, fallback: T) -> T {
+    serde_json::from_value(Value::String(text)).unwrap_or(fallback)
+}
+
+/// `rowToSettings` followed by `normalizeSettings`.
 fn settings_from_values(values: &[SqlValue]) -> Result<Settings> {
     let by_key: HashMap<&str, &SqlValue> =
         SETTINGS_KEYS.iter().copied().zip(values.iter()).collect();
@@ -415,76 +248,63 @@ fn settings_from_values(values: &[SqlValue]) -> Result<Settings> {
     // `Number(x) || 0` turns NaN into 0, then the value is clamped to 0..=120.
     let poll = if poll.is_nan() { 0.0 } else { poll };
     let levels: Vec<String> = text("engineLevels").split(',').map(str::to_owned).collect();
-    let engine_levels = kchess_domain::training::engine_levels::normalize(&levels);
-    let coordinates = text("coordinates");
-    let promotion = text("promotion");
-    let piece_animation = text("pieceAnimation");
-    let review_auto = text("reviewAuto");
-    let mut settings = Settings {
-        appearance: text("appearance"),
-        board_theme: text("boardTheme"),
-        light_theme: text("lightTheme"),
-        dark_theme: text("darkTheme"),
-        piece_set: text("pieceSet"),
-        piece_animation: if PIECE_ANIMATIONS.contains(&piece_animation.as_str()) {
-            piece_animation
-        } else {
-            "normal".into()
-        },
-        coordinates: if matches!(coordinates.as_str(), "none" | "outside") {
-            coordinates
-        } else {
-            "inside".into()
-        },
-        sound_enabled: is_one(&column("soundEnabled")),
-        sound_volume: number_of(&column("soundVolume")).unwrap_or(f64::NAN),
-        engine_path: text("enginePath"),
-        premove: is_one(&column("premove")),
-        promotion: if matches!(promotion.as_str(), "queen" | "premove") {
-            promotion
-        } else {
-            "ask".into()
-        },
-        show_legal_moves: is_one(&column("showLegalMoves")),
-        notifications_enabled: is_one(&column("notificationsEnabled")),
-        notify_active: is_one(&column("notifyActive")),
-        notify_background: is_one(&column("notifyBackground")),
-        notify_opponent_move: is_one(&column("notifyOpponentMove")),
-        notify_low_time: is_one(&column("notifyLowTime")),
-        notify_game_events: is_one(&column("notifyGameEvents")),
-        notify_computer_move: is_one(&column("notifyComputerMove")),
-        notify_sound: is_one(&column("notifySound")),
-        voice_push_to_talk: is_one(&column("voicePushToTalk")),
-        voice_confirm_moves: is_not_zero(&column("voiceConfirmMoves")),
-        voice_history: is_not_zero(&column("voiceHistory")),
-        update_auto_check: is_not_zero(&column("updateAutoCheck")),
-        update_auto_download: is_not_zero(&column("updateAutoDownload")),
-        update_install_on_quit: is_not_zero(&column("updateInstallOnQuit")),
-        engine_levels,
-        review_auto: if REVIEW_AUTO.contains(&review_auto.as_str()) {
-            review_auto
-        } else {
-            "recent".into()
-        },
-        review_on_battery: is_one(&column("reviewOnBattery")),
-        receive_challenges: is_not_zero(&column("receiveChallenges")),
-        notify_challenges: is_not_zero(&column("notifyChallenges")),
-        online_chat: is_not_zero(&column("onlineChat")),
-        correspondence_poll: poll.clamp(0.0, 120.0),
-        zen_mode: is_one(&column("zenMode")),
-        blindfold: is_one(&column("blindfold")),
-        cloud_eval: is_one(&column("cloudEval")),
-        show_opening_name: is_not_zero(&column("showOpeningName")),
-        swipe_navigation: is_not_zero(&column("swipeNavigation")),
-        swipe_indicator: is_not_zero(&column("swipeIndicator")),
-        puzzle_auto_next: is_not_zero(&column("puzzleAutoNext")),
-        confirm_correspondence: is_not_zero(&column("confirmCorrespondence")),
-        figurine_notation: is_one(&column("figurineNotation")),
-    };
-    if settings.sound_volume > 1.0 {
-        settings.sound_volume = (settings.sound_volume / 100.0).min(1.0);
+    let engine_levels = kchess_domain::training::engine_levels::normalize(&levels)
+        .into_iter()
+        .filter_map(|level| serde_json::from_value(Value::String(level)).ok())
+        .collect();
+    let mut sound_volume = number_of(&column("soundVolume")).unwrap_or(f64::NAN);
+    if sound_volume > 1.0 {
+        sound_volume = (sound_volume / 100.0).min(1.0);
     }
-    Ok(settings)
+    Ok(Settings {
+        core: CoreSettings {
+            engine_path: text("enginePath"),
+            voice_history: is_not_zero(&column("voiceHistory")),
+            engine_levels,
+            review_auto: choice(text("reviewAuto"), ReviewAuto::Recent),
+            review_on_battery: is_one(&column("reviewOnBattery")),
+            receive_challenges: is_not_zero(&column("receiveChallenges")),
+            online_chat: is_not_zero(&column("onlineChat")),
+            correspondence_poll: poll.clamp(0.0, 120.0),
+            cloud_eval: is_one(&column("cloudEval")),
+        },
+        frontend: FrontendPreferences {
+            appearance: choice(text("appearance"), Appearance::System),
+            board_theme: text("boardTheme"),
+            light_theme: text("lightTheme"),
+            dark_theme: text("darkTheme"),
+            piece_set: text("pieceSet"),
+            piece_animation: choice(text("pieceAnimation"), PieceAnimation::Normal),
+            coordinates: choice(text("coordinates"), CoordinateMode::Inside),
+            sound_enabled: is_one(&column("soundEnabled")),
+            sound_volume,
+            premove: is_one(&column("premove")),
+            promotion: choice(text("promotion"), PromotionMode::Ask),
+            show_legal_moves: is_one(&column("showLegalMoves")),
+            notifications_enabled: is_one(&column("notificationsEnabled")),
+            notify_active: is_one(&column("notifyActive")),
+            notify_background: is_one(&column("notifyBackground")),
+            notify_opponent_move: is_one(&column("notifyOpponentMove")),
+            notify_low_time: is_one(&column("notifyLowTime")),
+            notify_game_events: is_one(&column("notifyGameEvents")),
+            notify_computer_move: is_one(&column("notifyComputerMove")),
+            notify_sound: is_one(&column("notifySound")),
+            voice_push_to_talk: is_one(&column("voicePushToTalk")),
+            voice_confirm_moves: is_not_zero(&column("voiceConfirmMoves")),
+            update_auto_check: is_not_zero(&column("updateAutoCheck")),
+            update_auto_download: is_not_zero(&column("updateAutoDownload")),
+            update_install_on_quit: is_not_zero(&column("updateInstallOnQuit")),
+            notify_challenges: is_not_zero(&column("notifyChallenges")),
+            zen_mode: is_one(&column("zenMode")),
+            blindfold: is_one(&column("blindfold")),
+            show_opening_name: is_not_zero(&column("showOpeningName")),
+            swipe_navigation: is_not_zero(&column("swipeNavigation")),
+            swipe_indicator: is_not_zero(&column("swipeIndicator")),
+            puzzle_auto_next: is_not_zero(&column("puzzleAutoNext")),
+            confirm_correspondence: is_not_zero(&column("confirmCorrespondence")),
+            figurine_notation: is_one(&column("figurineNotation")),
+        },
+    })
 }
 
 fn read_settings(db: &Connection) -> Result<Option<Settings>> {
@@ -502,10 +322,9 @@ fn read_settings(db: &Connection) -> Result<Option<Settings>> {
 }
 
 /// Stores every setting; the settings as stored.
-pub fn save_settings(db: &Connection, settings: &Settings) -> Result<Value> {
-    let object = as_json(settings)?;
-    write_settings_json(db, &object)?;
-    Ok(object)
+pub fn save_settings(db: &Connection, settings: &Settings) -> Result<Settings> {
+    write_settings_json(db, &as_json(settings)?)?;
+    Ok(settings.clone())
 }
 
 /// `writeSettings`: every persisted setting of a settings object, as `toSql` binds it.
@@ -523,8 +342,8 @@ pub(super) fn write_settings_json(db: &Connection, object: &Value) -> Result<()>
     Ok(())
 }
 
-pub fn get_settings(db: &Connection) -> Result<Value> {
-    as_json(read_settings(db)?.unwrap_or_else(default_settings))
+pub fn get_settings(db: &Connection) -> Result<Settings> {
+    Ok(read_settings(db)?.unwrap_or_else(default_settings))
 }
 
 pub fn load_app_data(db: &Connection) -> Result<AppData> {
@@ -549,7 +368,7 @@ pub fn load_app_data(db: &Connection) -> Result<AppData> {
         .query_row("SELECT COUNT(*) AS total FROM games", [], |row| row.get(0))
         .sql()?;
     Ok(AppData {
-        settings: read_settings(db)?.unwrap_or_else(default_settings),
+        settings: get_settings(db)?.core,
         accounts,
         game_count,
     })
@@ -612,11 +431,12 @@ fn game_from_row(row: &Row<'_>) -> rusqlite::Result<LichessGame> {
         status: row.get("status")?,
         winner: row
             .get::<_, Option<String>>("winner")?
-            .filter(|winner| winner == "white" || winner == "black"),
+            .as_deref()
+            .and_then(kchess_domain::color::from_name),
         color: if row.get::<_, String>("color")? == "black" {
-            "black".into()
+            Color::Black
         } else {
-            "white".into()
+            Color::White
         },
         opponent: row.get("opponent")?,
         opponent_rating: row.get("opponentRating")?,
@@ -629,10 +449,8 @@ fn game_from_row(row: &Row<'_>) -> rusqlite::Result<LichessGame> {
 }
 
 /// `gamePage`: a bounded page of list rows, with the total for the same filters.
-pub fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
+pub fn game_page(ctx: &StoreContext, query: &GamePageQuery) -> Result<GamePage> {
     let db = ctx.db;
-    let query: GamePageQuery =
-        crate::engine::validated(validate::assert_game_page_query(J::from(&input)))?;
     let mut clauses: Vec<String> = Vec::new();
     let mut params: Vec<SqlValue> = Vec::new();
     if let Some(account) = query
@@ -643,9 +461,9 @@ pub fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
         clauses.push("account = ? COLLATE NOCASE".into());
         params.push(SqlValue::Text(account.to_owned()));
     }
-    if let Some(result) = query.result.as_deref().filter(|result| !result.is_empty()) {
+    if let Some(result) = query.result {
         clauses.push(format!("({RESULT_SQL}) = ?"));
-        params.push(SqlValue::Text(result.to_owned()));
+        params.push(SqlValue::Text(result.as_str().to_owned()));
     }
     if let Some(rated) = query.rated {
         clauses.push("rated = ?".into());
@@ -679,11 +497,7 @@ pub fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
             .as_deref()
             .filter(|account| !account.is_empty())
             .unwrap_or(""),
-        query
-            .result
-            .as_deref()
-            .filter(|result| !result.is_empty())
-            .unwrap_or(""),
+        query.result.map_or("", |result| result.as_str()),
         query
             .rated
             .map_or("any".to_string(), |rated| rated.to_string()),
@@ -716,7 +530,7 @@ pub fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
         .sql()?
         .collect::<rusqlite::Result<Vec<_>>>()
         .sql()?;
-    as_json(GamePage { games, total })
+    Ok(GamePage { games, total })
 }
 
 fn game_record(row: &Row<'_>) -> rusqlite::Result<(String, GameRecord)> {
@@ -725,8 +539,8 @@ fn game_record(row: &Row<'_>) -> rusqlite::Result<(String, GameRecord)> {
         GameRecord {
             total: row.get("total")?,
             win: row.get::<_, Option<i64>>("win")?.unwrap_or(0),
-            loss: row.get("loss")?,
-            draw: row.get("draw")?,
+            loss: row.get::<_, Option<i64>>("loss")?.unwrap_or(0),
+            draw: row.get::<_, Option<i64>>("draw")?.unwrap_or(0),
         },
     ))
 }
@@ -741,7 +555,7 @@ fn game_records(db: &Connection, sql: &str) -> Result<BTreeMap<String, GameRecor
     Ok(records.into_iter().collect())
 }
 
-pub fn game_library_overview(ctx: &StoreContext) -> Result<Value> {
+pub fn game_library_overview(ctx: &StoreContext) -> Result<GameLibraryOverview> {
     if let Some(cached) = ctx.cache.overview() {
         return Ok(cached);
     }
@@ -771,9 +585,8 @@ pub fn game_library_overview(ctx: &StoreContext) -> Result<Value> {
             ),
         )?,
     };
-    let value = as_json(overview)?;
-    ctx.cache.remember_overview(&value);
-    Ok(value)
+    ctx.cache.remember_overview(&overview);
+    Ok(overview)
 }
 
 /// `gameRatingHistory`: the last rated rating each day, per variant. A Chess.com game records the
@@ -892,9 +705,15 @@ pub fn write_api_cache(db: &Connection, key: &str, value: &Value) -> Result<()> 
     Ok(())
 }
 
-pub fn add_account(db: &Connection, username: &str, connected: bool) -> Result<AppData> {
-    let normalized =
-        validate::assert_username(J::Str(username.to_owned())).map_err(CoreError::new)?;
+/// A Lichess username as the accounts keep it (trimmed), or why it is not one.
+fn username(name: &str) -> Result<String> {
+    check::<Username>(J::Str(name.to_owned()))
+        .map(|Username(name)| name)
+        .map_err(CoreError::new)
+}
+
+pub fn add_account(db: &Connection, username_: &str, connected: bool) -> Result<AppData> {
+    let normalized = username(username_)?;
     let existing = db
         .query_row(
             "SELECT username, connected FROM accounts WHERE username = ? COLLATE NOCASE",
@@ -931,10 +750,10 @@ pub fn add_account(db: &Connection, username: &str, connected: bool) -> Result<A
 }
 
 /// Follows many players at once; validation failure rolls the whole batch back.
-pub fn add_friends(db: &Connection, usernames: &[Value]) -> Result<AppData> {
+pub fn add_friends(db: &Connection, usernames: &[String]) -> Result<AppData> {
     transaction(db, || {
         for raw in usernames {
-            let name = validate::assert_username(J::from(raw)).map_err(CoreError::new)?;
+            let name = username(raw)?;
             let exists = db
                 .query_row(
                     "SELECT 1 FROM accounts WHERE username = ? COLLATE NOCASE",
@@ -1266,6 +1085,7 @@ pub fn save_synced_play_time(db: &Connection, username: &str, play_time: i64) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kchess_contracts::types::EngineLevel;
 
     fn database() -> Connection {
         let db = Connection::open_in_memory().unwrap();
@@ -1362,11 +1182,11 @@ mod tests {
             serde_json::to_value(&defaults).unwrap()["engineLevels"],
             json!(["beginner", "club", "expert", "fm", "im", "gm", "max"])
         );
-        assert_eq!(get_settings(&db).unwrap(), json!(defaults));
+        assert_eq!(get_settings(&db).unwrap(), defaults);
         // A solved puzzle stays on the board until Next (or Return), as on Lichess.
-        assert!(!defaults.puzzle_auto_next);
+        assert!(!defaults.frontend.puzzle_auto_next);
         // A correspondence move cannot be taken back, so it waits for Confirm, as on Lichess.
-        assert!(defaults.confirm_correspondence);
+        assert!(defaults.frontend.confirm_correspondence);
     }
 
     #[test]
@@ -1378,12 +1198,12 @@ mod tests {
         )
         .unwrap();
         let settings = read_settings(&db).unwrap().unwrap();
-        assert_eq!(settings.coordinates, "inside");
-        assert_eq!(settings.promotion, "ask");
-        assert_eq!(settings.piece_animation, "normal");
-        assert_eq!(settings.review_auto, "recent");
-        assert_eq!(settings.sound_volume, 0.8);
-        assert_eq!(settings.correspondence_poll, 120.0);
-        assert_eq!(settings.engine_levels, ["club"]);
+        assert_eq!(settings.frontend.coordinates, CoordinateMode::Inside);
+        assert_eq!(settings.frontend.promotion, PromotionMode::Ask);
+        assert_eq!(settings.frontend.piece_animation, PieceAnimation::Normal);
+        assert_eq!(settings.core.review_auto, ReviewAuto::Recent);
+        assert_eq!(settings.frontend.sound_volume, 0.8);
+        assert_eq!(settings.core.correspondence_poll, 120.0);
+        assert_eq!(settings.core.engine_levels, [EngineLevel::Club]);
     }
 }

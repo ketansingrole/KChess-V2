@@ -3,7 +3,10 @@
 //! a channel's earlier games, and Analyse.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::Username;
+use kchess_contracts::types::Crosstable;
 use kchess_domain::training::clock::format_clock;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -201,7 +204,7 @@ pub struct Live {
     flipped: bool,
     board: Entity<ChessBoard>,
     /// The head-to-head of the pairing shown (`white|black`).
-    head_to_head: Option<(String, Value)>,
+    head_to_head: Option<(String, Crosstable)>,
     pairing: String,
     past: HashMap<String, Entity<ChessBoard>>,
 }
@@ -271,13 +274,13 @@ impl Live {
             return;
         }
         let call = cx.global::<AppCore>().request(calls::Crosstable {
-            a: json!(white),
-            b: json!(black),
+            a: Username(white.to_string()),
+            b: Username(black.to_string()),
         });
         cx.spawn(async move |this, cx| {
             // Optional context: the game is watchable without it.
             if let Ok(table) = call.await
-                && table["nbGames"].as_f64().is_some_and(|games| games > 0.)
+                && table.nb_games > 0
             {
                 let _ = this.update(cx, |page, cx| {
                     if page.live.pairing == pairing {
@@ -436,23 +439,20 @@ impl Live {
             .as_str()
             .unwrap_or_default()
             .to_lowercase();
-        let score = |users: &Value| {
+        let score = |users: &BTreeMap<String, f64>| {
             format!(
                 "{}–{}",
-                points(users[&white].as_f64().unwrap_or_default()),
-                points(users[&black].as_f64().unwrap_or_default())
+                points(users.get(&white).copied().unwrap_or_default()),
+                points(users.get(&black).copied().unwrap_or_default())
             )
         };
-        let mut lines = vec![(
-            "All time",
-            score(&table["users"]),
-            table["nbGames"].as_f64().unwrap_or_default(),
-        )];
-        if let Some(games) = table["matchup"]["nbGames"]
-            .as_f64()
-            .filter(|games| *games > 0.)
-        {
-            lines.push(("Current match", score(&table["matchup"]["users"]), games));
+        let mut lines = vec![("All time", score(&table.users), table.nb_games as f64)];
+        if let Some(matchup) = table.matchup.as_ref().filter(|today| today.nb_games > 0) {
+            lines.push((
+                "Current match",
+                score(&matchup.users),
+                matchup.nb_games as f64,
+            ));
         }
         lines
     }

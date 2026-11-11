@@ -13,7 +13,6 @@ use kchess_contracts::types::{
 };
 use serde_json::json;
 
-use super::args::text;
 use crate::core::{Core, LocationOverride, Mutation};
 use crate::engine::status::{engine_identity, engine_status, variant_engine_status};
 use crate::error::{CoreError, Result};
@@ -24,7 +23,7 @@ impl Core {
         let settings = self.get_settings().await?;
         // A game can start while the settings were read.
         self.assistance_allowed(gate.refusal_after())?;
-        Ok(text(&settings["enginePath"]))
+        Ok(settings.core.engine_path)
     }
 }
 
@@ -34,7 +33,7 @@ impl EngineApi for Core {
         let mut status = if variant.and_then(Variant::fairy_name).is_some() {
             variant_engine_status(host, &self.ctx.locations).await
         } else {
-            let configured = text(&self.get_settings().await?["enginePath"]);
+            let configured = self.get_settings().await?.core.engine_path;
             engine_status(host, &self.ctx.locations, &configured).await
         };
         if status.ready {

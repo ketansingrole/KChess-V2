@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use kchess_core::store::{games, import, lookups};
 use rusqlite::Connection;
 use serde_json::{Value, json};
-use support::store::{Secrets, Store, encrypt};
+use support::store::{Secrets, Store, encrypt, game_page};
 
 /// An earlier release's database: the current schema, with the legacy tables and rows written
 /// on top, as the test's `earlierDatabase` created it. Returns the store that owns the file and
@@ -115,7 +115,7 @@ fn the_json_backup_is_taken_with_its_tokens_and_both_files_are_archived() {
     assert_eq!(data["accounts"][0]["connected"], json!(true));
     assert_eq!(data["gameCount"], json!(1));
     let page = store
-        .read(|c| games::game_page(c, json!({ "offset": 0, "limit": 10 })))
+        .read(|c| game_page(c, &json!({ "offset": 0, "limit": 10 })))
         .expect("gamePage");
     assert_eq!(ids(&page), ["Old0001"]);
     assert_eq!(store.token("Alice").as_deref(), Some("lip_alice"));
@@ -162,7 +162,7 @@ fn an_earlier_main_database_is_imported_once_with_its_plaintext_tokens_encrypted
     assert_eq!(usernames(&data), ["Carol"]);
     assert_eq!(data["accounts"][0]["connected"], json!(true));
     let page = store
-        .read(|c| games::game_page(c, json!({ "offset": 0, "limit": 10 })))
+        .read(|c| game_page(c, &json!({ "offset": 0, "limit": 10 })))
         .expect("gamePage");
     assert_eq!(page["games"][0]["id"], json!("Legacy01"));
     assert_eq!(page["games"][0]["opponentRating"], json!(1500));
@@ -329,7 +329,7 @@ fn a_backup_with_invalid_times_and_nameless_accounts_still_imports_and_loads() {
     // Games without a readable time are left out rather than breaking every page.
     assert_eq!(data["gameCount"], json!(26));
     let page = store
-        .read(|c| games::game_page(c, json!({ "offset": 0, "limit": 1 })))
+        .read(|c| game_page(c, &json!({ "offset": 0, "limit": 1 })))
         .expect("gamePage");
     assert_eq!(ids(&page), ["Game0038"]);
 }

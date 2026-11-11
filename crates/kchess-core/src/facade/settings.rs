@@ -1,47 +1,36 @@
 //! The settings and the stored data.
 
+use kchess_contracts::check::check;
 use kchess_contracts::core_api::SettingsApi;
-use kchess_contracts::types::Settings;
-use kchess_domain::misc::checks;
+use kchess_contracts::types::{AppData, CoreSettings, Settings};
+use kchess_domain::misc::value::J;
 use serde_json::Value;
 
-use super::args::normal;
-use super::{core_data, core_settings};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
-
-/// Settings as the contracts read them.
-fn typed(settings: Value) -> Result<Settings> {
-    serde_json::from_value(settings).map_err(|cause| CoreError::wrap("settings", cause))
-}
 
 fn untyped(settings: &Settings) -> Result<Value> {
     serde_json::to_value(settings).map_err(|cause| CoreError::wrap("settings", cause))
 }
 
 impl SettingsApi for Core {
-    async fn load_data(&self) -> Result<Value> {
-        core_data(&self.app_data().await?)
+    async fn load_data(&self) -> Result<AppData> {
+        self.app_data().await
     }
 
-    async fn stored_settings(&self) -> Result<Value> {
-        core_settings(&self.get_settings().await?)
+    async fn stored_settings(&self) -> Result<CoreSettings> {
+        Ok(self.get_settings().await?.core)
     }
 
     async fn desktop_settings(&self) -> Result<Settings> {
-        typed(self.get_settings().await?)
+        self.get_settings().await
     }
 
-    async fn save_settings(&self, settings: Value) -> Result<Value> {
+    async fn save_settings(&self, settings: CoreSettings) -> Result<CoreSettings> {
         let _writing = self.settings_writes.lock().await;
         let mut merged = self.get_settings().await?;
-        if let (Some(target), Some(changes)) = (merged.as_object_mut(), settings.as_object()) {
-            for (key, value) in changes {
-                target.insert(key.clone(), value.clone());
-            }
-        }
-        let saved = self.persist_settings(merged).await?;
-        core_settings(&saved)
+        merged.core = settings;
+        Ok(self.persist_settings(merged).await?.core)
     }
 
     // With `base`, the settings the window's edits started from, only what the window changed
@@ -51,24 +40,22 @@ impl SettingsApi for Core {
         settings: Settings,
         base: Option<Settings>,
     ) -> Result<Settings> {
-        let settings = untyped(&settings)?;
-        let base = base.as_ref().map(untyped).transpose()?;
         let _writing = self.settings_writes.lock().await;
         let settings = match base {
             Some(base) => {
-                let mut merged = self.get_settings().await?;
-                if let (Some(target), Some(edited)) = (merged.as_object_mut(), settings.as_object())
-                {
+                let (edited, base) = (untyped(&settings)?, untyped(&base)?);
+                let mut merged = untyped(&self.get_settings().await?)?;
+                if let (Some(target), Some(edited)) = (merged.as_object_mut(), edited.as_object()) {
                     for (key, value) in edited {
                         if base.get(key) != Some(value) {
                             target.insert(key.clone(), value.clone());
                         }
                     }
                 }
-                normal(checks::settings, &merged)?
+                check::<Settings>(J::from(&merged)).map_err(CoreError::new)?
             }
             None => settings,
         };
-        typed(self.persist_settings(settings).await?)
+        self.persist_settings(settings).await
     }
 }

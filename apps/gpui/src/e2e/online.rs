@@ -320,7 +320,7 @@ fn following_works_while_games_sync(cx: &mut gpui_kit::TestAppContext) {
             .read(cx)
             .tracked()
             .iter()
-            .any(|friend| friend["username"].as_str() == Some("dana"))
+            .any(|friend| friend.username == "dana")
     });
     app.wait_for("Sync all to wait for the sync", |window, _| {
         use gpui_kit::test::TestWindowExt as _;
@@ -348,7 +348,7 @@ fn players_with_games_to_sync_are_marked(cx: &mut gpui_kit::TestAppContext) {
             && accounts
                 .tracked()
                 .iter()
-                .any(|friend| friend["syncedPlayTime"].is_number())
+                .any(|friend| friend.synced_play_time.is_some())
     });
     assert!(!app.shows(new_games), "the sync downloaded everything");
     assert_eq!(app.find("friends-sync").label(), Some("Sync all"));

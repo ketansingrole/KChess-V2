@@ -10,8 +10,10 @@ use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
-use kchess_contracts::check::GameIds;
-use kchess_contracts::types::{ByGame, ReviewSummary};
+use kchess_contracts::check::{GameAccount, GameId, GameIds};
+use kchess_contracts::types::{
+    ByGame, GamePageQuery, GameResultFilter, LichessGame, ReviewSummary,
+};
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -49,7 +51,7 @@ pub struct LichessTab {
     pub search: String,
     pub page: usize,
     pub page_size: usize,
-    pub games: Vec<Value>,
+    pub games: Vec<LichessGame>,
     pub total: usize,
     pub loading: bool,
     pub error: Option<String>,
@@ -60,14 +62,14 @@ pub struct LichessTab {
     pub size_select: Entity<SelectState<Vec<Choice>>>,
     pub search_input: Entity<InputState>,
     /// The game open, its review's side, and its board.
-    pub open: Option<(Value, Entity<GameReplay>)>,
+    pub open: Option<(LichessGame, Entity<GameReplay>)>,
 }
 
 /// `gameResult`: the game from the account's side.
-fn result_of(game: &Value) -> &'static str {
-    match game["winner"].as_str() {
+fn result_of(game: &LichessGame) -> &'static str {
+    match game.winner {
         None => "draw",
-        Some(winner) if game["color"].as_str() == Some(winner) => "win",
+        Some(winner) if winner == game.color => "win",
         Some(_) => "loss",
     }
 }
@@ -201,37 +203,25 @@ impl HistoryPage {
         let epoch = tab.epoch;
         tab.loading = true;
         tab.error = None;
-        let mut query = json!({
-            "offset": tab.page * tab.page_size,
-            "limit": tab.page_size,
-        });
         // Filters left at "all" are left out.
-        if tab.account != "all" {
-            query["account"] = json!(tab.account);
-        }
-        if tab.result != "all" {
-            query["result"] = json!(tab.result);
-        }
-        if tab.rated != "all" {
-            query["rated"] = json!(tab.rated == "rated");
-        }
-        if !tab.search.is_empty() {
-            query["search"] = json!(tab.search);
-        }
+        let query = GamePageQuery {
+            account: (tab.account != "all").then(|| tab.account.clone()),
+            result: GameResultFilter::ALL
+                .iter()
+                .copied()
+                .find(|result| result.as_str() == tab.result),
+            rated: (tab.rated != "all").then_some(tab.rated == "rated"),
+            search: (!tab.search.is_empty()).then(|| tab.search.clone()),
+            offset: (tab.page * tab.page_size) as u64,
+            limit: tab.page_size as u64,
+        };
         let core = cx.global::<AppCore>().clone();
         let page = core.request(calls::GamePage { query });
         cx.spawn(async move |this, cx| {
             let page = page.await;
             let ids: Vec<String> = page
                 .as_ref()
-                .ok()
-                .and_then(|page| page["games"].as_array())
-                .map(|games| {
-                    games
-                        .iter()
-                        .filter_map(|game| game["id"].as_str().map(str::to_string))
-                        .collect()
-                })
+                .map(|page| page.games.iter().map(|game| game.id.clone()).collect())
                 .unwrap_or_default();
             let summaries = if ids.is_empty() {
                 None
@@ -248,8 +238,8 @@ impl HistoryPage {
                 tab.loading = false;
                 match page {
                     Ok(page) => {
-                        tab.total = page["total"].as_f64().unwrap_or_default() as usize;
-                        tab.games = page["games"].as_array().cloned().unwrap_or_default();
+                        tab.total = usize::try_from(page.total).unwrap_or_default();
+                        tab.games = page.games;
                         let pages = tab.total.div_ceil(tab.page_size).max(1);
                         if tab.page >= pages {
                             tab.page = pages - 1;
@@ -326,22 +316,19 @@ impl HistoryPage {
     }
 
     /// `openReview`: read the game's PGN (list rows carry none) and go through it.
-    pub fn open_lichess(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
-        let read = if game["pgn"].is_string() {
+    pub fn open_lichess(&mut self, game: LichessGame, window: &mut Window, cx: &mut Context<Self>) {
+        let read = if game.pgn.is_some() {
             None
         } else {
             Some(cx.global::<AppCore>().request(calls::GamePgn {
-                account: game["account"].clone(),
-                id: game["id"].clone(),
+                account: GameAccount(game.account.clone()),
+                id: GameId(game.id.clone()),
             }))
         };
         cx.spawn_in(window, async move |this, cx| {
             let pgn = match read {
-                Some(read) => read
-                    .await
-                    .ok()
-                    .and_then(|pgn| pgn.as_str().map(str::to_string)),
-                None => game["pgn"].as_str().map(str::to_string),
+                Some(read) => read.await.ok().flatten(),
+                None => game.pgn.clone(),
             };
             let _ = this.update_in(cx, |this, window, cx| {
                 let Some((setup, moves)) = pgn.as_deref().and_then(line_of) else {
@@ -349,18 +336,14 @@ impl HistoryPage {
                     cx.notify();
                     return;
                 };
-                let color = if game["color"] == json!("black") {
-                    Color::Black
-                } else {
-                    Color::White
-                };
-                let account = game["account"].as_str().unwrap_or_default().to_string();
-                let opponent = game["opponent"].as_str().unwrap_or_default().to_string();
+                let color = game.color;
+                let account = game.account.clone();
+                let opponent = game.opponent.clone();
                 let replay =
                     cx.new(|cx| GameReplay::new(setup, moves, color, account, opponent, cx));
                 window.focus(&replay.read(cx).focus_handle(cx), cx);
                 let mut game = game.clone();
-                game["pgn"] = json!(pgn);
+                game.pgn = pgn;
                 this.lichess.open = Some((game, replay));
                 this.message = None;
                 this.redo = None;
@@ -371,10 +354,10 @@ impl HistoryPage {
     }
 
     /// The game `step` rows from the open one on the list's page (-1 the one above, newer).
-    fn lichess_neighbour(&self, step: isize) -> Option<Value> {
+    fn lichess_neighbour(&self, step: isize) -> Option<LichessGame> {
         let (open, _) = self.lichess.open.as_ref()?;
         let games = &self.lichess.games;
-        let at = games.iter().position(|game| game["id"] == open["id"])?;
+        let at = games.iter().position(|game| game.id == open.id)?;
         games
             .get(usize::try_from(at as isize + step).ok()?)
             .cloned()
@@ -394,14 +377,11 @@ impl HistoryPage {
     }
 
     /// The review of a game, from its account's side (`ReviewSide`).
-    fn side_of(&self, game: &Value) -> Option<Value> {
-        let id = game["id"].as_str()?;
-        let color = game["color"].as_str()?;
-        let summary = self.lichess.summaries.get(id)?;
-        let side = match color {
-            "white" => &summary.white,
-            "black" => &summary.black,
-            _ => return None,
+    fn side_of(&self, game: &LichessGame) -> Option<Value> {
+        let summary = self.lichess.summaries.get(&game.id)?;
+        let side = match game.color {
+            Color::White => &summary.white,
+            Color::Black => &summary.black,
         };
         serde_json::to_value(side).ok()
     }
@@ -412,12 +392,13 @@ impl HistoryPage {
         let accounts: Vec<String> = store
             .all()
             .iter()
-            .filter_map(|account| account["username"].as_str().map(str::to_string))
-            .chain(store.chesscom().iter().filter_map(|player| {
-                player["username"]
-                    .as_str()
-                    .map(kchess_domain::chesscom::account_of)
-            }))
+            .map(|account| account.username.clone())
+            .chain(
+                store
+                    .chesscom()
+                    .iter()
+                    .map(|player| kchess_domain::chesscom::account_of(&player.username)),
+            )
             .collect();
         let mut items = vec![Choice::new("all", "All accounts")];
         items.extend(
@@ -434,17 +415,17 @@ impl HistoryPage {
 
     pub(super) fn render_lichess_open(
         &self,
-        game: &Value,
+        game: &LichessGame,
         replay: &Entity<GameReplay>,
         window: &Window,
         cx: &mut Context<Self>,
         palette: &Palette,
     ) -> AnyElement {
         let outcome = result_of(game);
-        let account = game["account"].as_str().unwrap_or_default().to_string();
-        let opponent = game["opponent"].as_str().unwrap_or_default().to_string();
-        let date = crate::game::game_date(game["createdAt"].as_f64().unwrap_or_default());
-        let opening = game["opening"].as_str().map(str::to_string);
+        let account = game.account.clone();
+        let opponent = game.opponent.clone();
+        let date = crate::game::game_date(game.created_at as f64);
+        let opening = game.opening.clone();
         let side = self.side_of(game);
         let review_line = side.map(|side| {
             let mut parts = Vec::new();
@@ -459,7 +440,7 @@ impl HistoryPage {
             parts.join(" · ")
         });
         let reviewed = game.clone();
-        let pgn = game["pgn"].as_str().unwrap_or_default();
+        let pgn = game.pgn.as_deref().unwrap_or_default();
         let replay_handle = replay.clone();
         v_flex()
             .size_full()
@@ -552,7 +533,7 @@ impl HistoryPage {
         let (count, has_accounts, busy) = {
             let accounts = accounts.read(cx);
             (
-                accounts.data["gameCount"].as_f64().unwrap_or_default() as usize,
+                usize::try_from(accounts.game_count()).unwrap_or_default(),
                 !accounts.all().is_empty() || !accounts.chesscom().is_empty(),
                 accounts.busy,
             )
@@ -857,7 +838,7 @@ pub enum RowDetail {
 /// A game from its account's side, in as much detail as asked for.
 pub fn game_row(
     id: impl Into<ElementId>,
-    game: &Value,
+    game: &LichessGame,
     side: Option<Value>,
     detail: RowDetail,
     select: impl Fn(&mut Window, &mut App) + 'static,
@@ -865,24 +846,19 @@ pub fn game_row(
 ) -> AnyElement {
     let detailed = detail != RowDetail::Brief;
     let outcome = result_of(game);
-    let opponent = game["opponent"].as_str().unwrap_or("?").to_string();
-    let mut sub = game["opening"]
-        .as_str()
-        .or(game["account"].as_str())
-        .unwrap_or_default()
-        .to_string();
-    if let Some(rating) = game["opponentRating"].as_f64() {
+    let opponent = game.opponent.clone();
+    let mut sub = game.opening.clone().unwrap_or_else(|| game.account.clone());
+    if let Some(rating) = game.opponent_rating {
         sub.push_str(&format!(" · {rating}"));
     }
-    let speed = game["speed"].as_str().unwrap_or_default();
     let speed = {
-        let mut chars = speed.chars();
+        let mut chars = game.speed.chars();
         chars
             .next()
             .map(|first| first.to_uppercase().chain(chars).collect::<String>())
             .unwrap_or_default()
     };
-    let diff = game["ratingDiff"].as_f64().filter(|diff| *diff != 0.);
+    let diff = game.rating_diff.filter(|diff| *diff != 0);
     let accuracy = match &side {
         Some(side) => side["accuracy"]
             .as_f64()
@@ -938,7 +914,7 @@ pub fn game_row(
                         )
                         // A brief row keeps the opponent's rating on the name's line.
                         .when(!detailed, |name| {
-                            name.children(game["opponentRating"].as_f64().map(|rating| {
+                            name.children(game.opponent_rating.map(|rating| {
                                 div()
                                     .flex_none()
                                     .text_size(px(12.))
@@ -958,12 +934,12 @@ pub fn game_row(
                     .text_size(px(12.))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(match diff {
-                        Some(diff) if diff > 0. => palette.win,
+                        Some(diff) if diff > 0 => palette.win,
                         Some(_) => palette.loss,
                         None => muted,
                     })
                     .child(match diff {
-                        Some(diff) if diff > 0. => format!("+{diff}"),
+                        Some(diff) if diff > 0 => format!("+{diff}"),
                         Some(diff) => format!("−{}", diff.abs()),
                         None => String::new(),
                     }),
@@ -976,7 +952,7 @@ pub fn game_row(
                 .when(!detailed, |column| column.text_color(muted))
                 .child(speed)
                 .when(detailed, |column| {
-                    column.child(line(if game["rated"] == json!(true) {
+                    column.child(line(if game.rated {
                         "Rated".into()
                     } else {
                         "Casual".into()
@@ -988,12 +964,12 @@ pub fn game_row(
                 div()
                     .w(px(60.))
                     .text_color(match diff {
-                        Some(diff) if diff > 0. => palette.win,
+                        Some(diff) if diff > 0 => palette.win,
                         Some(_) => palette.loss,
                         None => muted,
                     })
                     .child(match diff {
-                        Some(diff) if diff > 0. => format!("+{diff}"),
+                        Some(diff) if diff > 0 => format!("+{diff}"),
                         Some(diff) => format!("{diff}"),
                         None => "—".into(),
                     }),
@@ -1022,9 +998,9 @@ pub fn game_row(
                 .when(!detailed, |date| date.text_right())
                 .text_color(muted)
                 .child(if detailed {
-                    crate::game::game_date(game["createdAt"].as_f64().unwrap_or_default())
+                    crate::game::game_date(game.created_at as f64)
                 } else {
-                    crate::game::short_game_date(game["createdAt"].as_f64().unwrap_or_default())
+                    crate::game::short_game_date(game.created_at as f64)
                 }),
         )
         .into_any_element()
@@ -1032,26 +1008,23 @@ pub fn game_row(
 
 /// Review a synced game on the analysis board, opened at the move being looked at
 /// (`openGameReview`).
-pub(super) fn open_review(game: Value, ply: usize, window: &mut Window, cx: &mut App) {
-    let Some(pgn) = game["pgn"].as_str().map(str::to_string) else {
+pub(super) fn open_review(game: LichessGame, ply: usize, window: &mut Window, cx: &mut App) {
+    let Some(pgn) = game.pgn else {
         return;
     };
-    let color = if game["color"] == json!("black") {
-        Color::Black
-    } else {
-        Color::White
-    };
-    let (account, opponent) = (&game["account"], &game["opponent"]);
+    let color = game.color;
+    let (account, opponent) = (game.account, game.opponent);
     let (white, black) = if color == Color::White {
-        (account, opponent)
+        (account.clone(), opponent)
     } else {
-        (opponent, account)
+        (opponent, account.clone())
     };
     let origin = GameOrigin {
-        player: crate::game::played::color_of(&game["color"]),
-        game_id: game["id"].as_str().map(str::to_string),
-        account: account.as_str().map(str::to_string),
-        ..GameOrigin::named(white, black)
+        player: Some(color),
+        game_id: Some(game.id),
+        account: Some(account),
+        white: Some(white),
+        black: Some(black),
     };
     crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
         let opening = Opening {
@@ -1067,19 +1040,25 @@ pub(super) fn open_review(game: Value, ply: usize, window: &mut Window, cx: &mut
 #[cfg(test)]
 mod tests {
     use super::{line_of, result_of};
+    use kchess_contracts::types::LichessGame;
     use serde_json::json;
 
     #[test]
     fn a_game_reads_from_its_accounts_side() {
-        assert_eq!(
-            result_of(&json!({ "color": "white", "winner": "white" })),
-            "win"
-        );
-        assert_eq!(
-            result_of(&json!({ "color": "black", "winner": "white" })),
-            "loss"
-        );
-        assert_eq!(result_of(&json!({ "color": "black" })), "draw");
+        let game = |color: &str, winner: Option<&str>| -> LichessGame {
+            let mut game = json!({
+                "id": "g", "account": "a", "createdAt": 0, "lastMoveAt": 0, "rated": true,
+                "speed": "blitz", "perf": "blitz", "status": "mate", "color": color,
+                "opponent": "b", "moves": "",
+            });
+            if let Some(winner) = winner {
+                game["winner"] = json!(winner);
+            }
+            serde_json::from_value(game).unwrap()
+        };
+        assert_eq!(result_of(&game("white", Some("white"))), "win");
+        assert_eq!(result_of(&game("black", Some("white"))), "loss");
+        assert_eq!(result_of(&game("black", None)), "draw");
     }
 
     #[test]

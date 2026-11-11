@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::task::AbortHandle;
 
-use crate::error::{CoreError, Result};
+use crate::error::Result;
 use crate::host::Host;
 use scheduler::{Priority, Scheduler};
 use status::{EngineLocations, EngineStatus, engine_command};
@@ -75,15 +75,6 @@ impl EngineContext {
         self.hub.assert_available()?;
         UciController::start(&self.hub, (self.command)(status), uci::DEFAULT_DEADLINE)
     }
-}
-
-/// A typed validator's answer read as the core's own request type.
-pub(crate) fn validated<T: serde::Serialize, U: serde::de::DeserializeOwned>(
-    checked: std::result::Result<T, String>,
-) -> Result<U> {
-    let value = serde_json::to_value(checked.map_err(CoreError::new)?)
-        .map_err(|cause| CoreError::new(cause.to_string()))?;
-    serde_json::from_value(value).map_err(|cause| CoreError::new(cause.to_string()))
 }
 
 /// Runs `action` after `ms`, unless the returned handle is aborted first (`setTimeout`). Without

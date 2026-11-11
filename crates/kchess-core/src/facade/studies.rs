@@ -90,7 +90,7 @@ impl StudiesApi for Core {
 
     async fn cloud_eval(&self, fen: Position, lines: Bounded<1, 5>) -> Result<Option<CloudEval>> {
         // Each request sends the position to Lichess, so it needs the setting turned on.
-        if self.get_settings().await?["cloudEval"].as_bool() != Some(true) {
+        if !self.get_settings().await?.core.cloud_eval {
             return Err(CoreError::new(
                 "Turn on cloud evaluation in Settings → Analysis first.",
             ));

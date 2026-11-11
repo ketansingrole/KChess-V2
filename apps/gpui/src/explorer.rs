@@ -372,12 +372,11 @@ impl PositionExplorer {
         let data = cx.global::<AppCore>().request(calls::LoadData {});
         cx.spawn_in(window, async move |this, cx| {
             let Ok(data) = data.await else { return };
-            let accounts: Vec<String> = data["accounts"]
-                .as_array()
+            let accounts: Vec<String> = data
+                .accounts
                 .into_iter()
-                .flatten()
-                .filter(|account| account["connected"] == json!(true))
-                .filter_map(|account| account["username"].as_str().map(str::to_string))
+                .filter(|account| account.connected)
+                .map(|account| account.username)
                 .collect();
             let _ = this.update_in(cx, |this, window, cx| {
                 if Self::prefs(cx).player.is_empty()

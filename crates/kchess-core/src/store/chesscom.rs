@@ -13,17 +13,8 @@ use super::games::{GAME_KEYS, MAX_GAMES, as_json, purge_account_data, to_sql, up
 use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
 use crate::time::now_ms;
+use kchess_contracts::types::ChesscomAccount;
 use kchess_domain::chesscom::account_of;
-
-/// A synced Chess.com player.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChesscomAccount {
-    pub username: String,
-    pub added_at: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_synced_at: Option<i64>,
-}
 
 /// What was last read of one month's archive.
 #[derive(Debug, Serialize)]

@@ -9,7 +9,6 @@ use kchess_domain::{js, replay};
 use super::*;
 use crate::types::ReviewRequest;
 
-const USERNAME: &str = "Enter a valid Lichess username.";
 const REVIEW: &str = "Invalid review.";
 const HISTORY: &str = "Invalid game position or move history.";
 

@@ -18,12 +18,14 @@ use kchess_domain::misc::value::{self, J};
 use kchess_domain::variant::Variant;
 use kchess_domain::{js, replay};
 
+mod accounts;
 mod ai;
 mod engine;
 mod lookups;
 mod reviews;
 mod studies;
 
+pub use accounts::*;
 pub use ai::*;
 pub use lookups::*;
 pub use reviews::*;
@@ -261,6 +263,38 @@ impl Validate for Username {
         let trimmed = js::trim(&text);
         matches(trimmed, patterns::username, Some(USERNAME), "", "")?;
         Ok(Username(trimmed.to_owned()))
+    }
+}
+
+/* ── Games ── */
+
+const GAME_ID: &str = "Invalid game id.";
+
+/// A game's id: a Lichess game, or a Chess.com one as KChess keeps it (`cc-l…`, `cc-d…`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct GameId(pub String);
+
+impl Validate for GameId {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        let text: String = decode(value, |_| Some(GAME_ID))?;
+        matches(&text, patterns::game_id, Some(GAME_ID), "", "")?;
+        Ok(GameId(text))
+    }
+}
+
+/// A game or study as PGN text: 1 to 500,000 characters, not all blank. As sent.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct PgnText(pub String);
+
+impl Validate for PgnText {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        let text: String = decode(value, plain)?;
+        min_chars(&text, 1, None, "")?;
+        max_chars(&text, 500_000, None, "")?;
+        ensure(!text.trim().is_empty(), None, "", || "some text".into())?;
+        Ok(PgnText(text))
     }
 }
 

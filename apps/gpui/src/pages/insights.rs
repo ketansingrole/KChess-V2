@@ -8,7 +8,9 @@ use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
-use serde_json::{Value, json};
+use kchess_contracts::types::{ExplorerSpeed, InsightsQuery};
+use kchess_domain::variant::Variant;
+use serde_json::Value;
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -347,12 +349,13 @@ impl InsightsPage {
         accounts
             .all()
             .iter()
-            .filter_map(|account| account["username"].as_str().map(str::to_string))
-            .chain(accounts.chesscom().iter().filter_map(|player| {
-                player["username"]
-                    .as_str()
-                    .map(kchess_domain::chesscom::account_of)
-            }))
+            .map(|account| account.username.clone())
+            .chain(
+                accounts
+                    .chesscom()
+                    .iter()
+                    .map(|player| kchess_domain::chesscom::account_of(&player.username)),
+            )
             .collect()
     }
 
@@ -391,25 +394,23 @@ impl InsightsPage {
     }
 
     /// `InsightsQuery`: unset filters are left out.
-    pub(crate) fn query(&self, cx: &App) -> Value {
-        let mut query = json!({ "account": self.account });
+    pub(crate) fn query(&self, cx: &App) -> InsightsQuery {
         let speed = Self::chosen(&self.speed, cx);
-        if speed != "all" {
-            query["speed"] = json!(speed);
+        InsightsQuery {
+            account: self.account.clone(),
+            speed: ExplorerSpeed::ALL
+                .iter()
+                .copied()
+                .find(|choice| choice.as_str() == speed),
+            rated: match Self::chosen(&self.rated, cx).as_str() {
+                "rated" => Some(true),
+                "casual" => Some(false),
+                _ => None,
+            },
+            days: Self::chosen(&self.period, cx).parse().ok(),
+            variant: Variant::from_key(&Self::chosen(&self.variant, cx))
+                .filter(|variant| !variant.is_standard()),
         }
-        match Self::chosen(&self.rated, cx).as_str() {
-            "rated" => query["rated"] = json!(true),
-            "casual" => query["rated"] = json!(false),
-            _ => {}
-        }
-        if let Ok(days) = Self::chosen(&self.period, cx).parse::<f64>() {
-            query["days"] = json!(days);
-        }
-        let variant = Self::chosen(&self.variant, cx);
-        if variant != "standard" && variant != "all" {
-            query["variant"] = json!(variant);
-        }
-        query
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
@@ -508,7 +509,7 @@ impl InsightsPage {
     #[cfg(test)]
     pub(crate) fn show_report_variants(&mut self, variants: &[&str], cx: &mut Context<Self>) {
         if let Some(report) = &mut self.report {
-            report["variants"] = json!(variants);
+            report["variants"] = serde_json::json!(variants);
         }
         cx.notify();
     }

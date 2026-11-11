@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use kchess_contracts::core_api::CoreApi;
-use kchess_contracts::types::{CoreSettings, ProfileArea};
+use kchess_contracts::types::{AppData, ProfileArea, Settings};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -69,23 +69,6 @@ impl Host for GatedHost {
             self.inner.emit_to(connection, event);
         }
     }
-}
-
-/// The core's settings as a headless client sees them (`coreSettings`).
-pub fn core_settings(settings: &Value) -> Result<Value> {
-    let core: CoreSettings = serde_json::from_value(settings.clone())
-        .map_err(|cause| CoreError::wrap("core settings", cause))?;
-    serde_json::to_value(core).map_err(|cause| CoreError::wrap("core settings", cause))
-}
-
-/// The data with its settings reduced to the core's (`coreData`).
-pub fn core_data(data: &Value) -> Result<Value> {
-    let mut out = data.as_object().cloned().unwrap_or_default();
-    out.insert(
-        "settings".into(),
-        core_settings(data.get("settings").unwrap_or(&Value::Null))?,
-    );
-    Ok(Value::Object(out))
 }
 
 impl CoreApi for Core {
@@ -195,16 +178,16 @@ impl Core {
     }
 
     /// The saved settings.
-    pub(crate) async fn get_settings(&self) -> Result<Value> {
+    pub(crate) async fn get_settings(&self) -> Result<Settings> {
         self.database
             .read_async(|ctx| store::games::get_settings(ctx.db))
             .await
     }
 
     /// Settings, accounts and the library size.
-    pub(crate) async fn app_data(&self) -> Result<Value> {
+    pub(crate) async fn app_data(&self) -> Result<AppData> {
         self.database
-            .read_async(|ctx| store::games::as_json(store::games::load_app_data(ctx.db)?))
+            .read_async(|ctx| store::games::load_app_data(ctx.db))
             .await
     }
 
@@ -255,7 +238,7 @@ impl Core {
 
     /// Signs `username` (or every account) out: sessions, logins kept by Lichess and the stored
     /// connection.
-    pub(crate) async fn sign_out(&self, username: Option<String>) -> Result<Value> {
+    pub(crate) async fn sign_out(&self, username: Option<String>) -> Result<AppData> {
         self.end_sessions(username.as_deref()).await?;
         self.services
             .lichess()
@@ -274,36 +257,34 @@ impl Core {
     }
 
     /// Settings changed: store them, and stop what the new settings change (`persistSettings`).
-    pub(crate) async fn persist_settings(&self, settings: Value) -> Result<Value> {
+    pub(crate) async fn persist_settings(&self, settings: Settings) -> Result<Settings> {
         let previous = self.get_settings().await?;
         // Only a path the user picked (`trustEnginePath`, sent when they choose one in a file
         // dialog), downloaded by KChess, or already saved is accepted, so a stray or confused
         // settings write cannot point the core at an executable. It is no boundary against a
         // client holding the profile's `core.token`: that client is this user, trusted like them
         // (`docs/shared-core.md`).
-        let path = settings["enginePath"].as_str().unwrap_or_default();
-        let previous_path = previous["enginePath"].as_str();
+        let path = settings.core.engine_path.as_str();
         if !path.is_empty()
-            && previous_path != Some(path)
+            && previous.core.engine_path != path
             && !self.search.is_trusted_engine_path(&PathBuf::from(path))
         {
             return Err(CoreError::new(
                 "Choose the Stockfish executable with the file picker.",
             ));
         }
-        let settings: store::games::Settings = serde_json::from_value(settings)
-            .map_err(|cause| CoreError::new(format!("Invalid settings: {cause}")))?;
         let saved = self
             .database
             .write_async(move |ctx| store::games::save_settings(ctx.db, &settings))
             .await?;
-        if previous["enginePath"] != saved["enginePath"] {
+        if previous.core.engine_path != saved.core.engine_path {
             self.search.stop_engine(true);
             self.analysis.stop_analysis(true);
             self.reviews.restart_review_engine();
         }
-        self.host
-            .emit(CoreEvent::SettingsSaved(core_settings(&saved)?));
+        let core = serde_json::to_value(&saved.core)
+            .map_err(|cause| CoreError::wrap("core settings", cause))?;
+        self.host.emit(CoreEvent::SettingsSaved(core));
         self.reviews.reviews_changed();
         Ok(saved)
     }
@@ -322,12 +303,10 @@ impl Core {
     }
 
     /// Logs a user's logout result after the sessions have ended (`logoutAccounts`).
-    pub(crate) async fn logout_accounts(&self, username: Option<&str>) -> Result<Value> {
+    pub(crate) async fn logout_accounts(&self, username: Option<&str>) -> Result<AppData> {
         let username = username.map(str::to_string);
         self.database
-            .write_async(move |ctx| {
-                store::games::as_json(store::games::logout_accounts(ctx.db, username.as_deref())?)
-            })
+            .write_async(move |ctx| store::games::logout_accounts(ctx.db, username.as_deref()))
             .await
     }
 

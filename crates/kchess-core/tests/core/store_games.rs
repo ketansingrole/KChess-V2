@@ -8,7 +8,9 @@ use kchess_core::store::{
     reviews,
 };
 use serde_json::{Value, json};
-use support::store::{Secrets, Store, canonical, check_page_query, library_game, list, profile};
+use support::store::{
+    Secrets, Store, canonical, check_page_query, game_page, library_game, list, profile,
+};
 
 const SYNCED_AT: i64 = 1_790_812_800_000;
 
@@ -35,9 +37,7 @@ fn save_page(store: &Store, account: &str, games: &[Value]) -> Value {
 }
 
 fn page(store: &Store, query: Value) -> Value {
-    store
-        .read(|c| games::game_page(c, query))
-        .expect("gamePage")
+    store.read(|c| game_page(c, &query)).expect("gamePage")
 }
 
 fn ids(page: &Value) -> Vec<String> {
@@ -734,7 +734,7 @@ fn filtered_page_totals_are_cached_until_the_games_change() {
     let query = json!({ "account": "Alice", "result": "win", "offset": 0, "limit": 10 });
     let total = |store: &Store| {
         store
-            .read_direct(|c| games::game_page(c, query.clone()))
+            .read_direct(|c| game_page(c, &query.clone()))
             .expect("gamePage")["total"]
             .clone()
     };
@@ -783,7 +783,7 @@ fn library_overview_is_cached_until_the_games_change() {
     assert_eq!(overview(&store)["byAccount"]["alice"]["total"], json!(1));
     assert_eq!(
         store
-            .read_direct(|c| games::game_page(c, json!({ "offset": 0, "limit": 10 })))
+            .read_direct(|c| game_page(c, &json!({ "offset": 0, "limit": 10 })))
             .expect("gamePage")["total"],
         json!(1)
     );

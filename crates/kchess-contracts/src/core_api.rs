@@ -85,97 +85,97 @@ core_api! {
 
     /// The settings and the stored data.
     trait SettingsApi {
-        LoadData = "loadData" fn load_data() -> Value;
+        LoadData = "loadData" fn load_data() -> AppData;
         /// The core settings as stored.
-        StoredSettings = "settings" fn stored_settings() -> Value;
+        StoredSettings = "settings" fn stored_settings() -> CoreSettings;
         /// Every setting as stored: the core's preferences and the desktop's.
         DesktopSettings = "desktopSettings" fn desktop_settings() -> Settings;
-        SaveSettings = "saveSettings" fn save_settings(settings: Value = c::core_settings) -> Value;
+        SaveSettings = "saveSettings" fn save_settings(settings: CoreSettings) -> CoreSettings;
         /// Store `settings`, edited from `base`: only what changed since `base` is written, so
         /// another window's changes stay. Answers the settings as stored.
         #[writes(DesktopSettings)]
         SaveDesktopSettings = "saveDesktopSettings" fn save_desktop_settings(
-            settings: Settings = c::settings;
-            base: Option<Settings> = Optional(c::settings)
+            settings: Settings;
+            base: Option<Settings>
         ) -> Settings;
     }
 
     /// Lichess accounts.
     trait AccountsApi {
         #[writes(Accounts)]
-        AddAccount = "addAccount" fn add_account(username: Value = c::username) -> Value;
+        AddAccount = "addAccount" fn add_account(username: Username) -> AppData;
         #[writes(Accounts)]
-        Logout = "logout" fn logout(username: Value = c::username) -> Value;
+        Logout = "logout" fn logout(username: Username) -> AppData;
         #[writes(Accounts)]
-        LogoutAll = "logoutAll" fn logout_all() -> Value;
+        LogoutAll = "logoutAll" fn logout_all() -> AppData;
         #[writes(Accounts)]
-        RemoveAccount = "removeAccount" fn remove_account(username: Value = c::username) -> Value;
+        RemoveAccount = "removeAccount" fn remove_account(username: Username) -> AppData;
     }
 
     /// Chess.com players, whose games sync like Lichess games.
     trait ChesscomApi {
         /// The Chess.com players whose games are synced, with when each last synced.
-        ChesscomAccounts = "chesscomAccounts" fn chesscom_accounts() -> Value;
+        ChesscomAccounts = "chesscomAccounts" fn chesscom_accounts() -> Vec<ChesscomAccount>;
         /// Sync a Chess.com player's games (by username; Chess.com needs no login).
         #[writes(LichessGames, Accounts)]
         AddChesscomAccount = "addChesscomAccount" fn add_chesscom_account(
-            username: Value = c::chesscom_username
-        ) -> Value;
+            username: ChesscomUsername
+        ) -> Vec<ChesscomAccount>;
         /// Stop syncing a Chess.com player and delete their games.
         #[writes(LichessGames, Accounts)]
         RemoveChesscomAccount = "removeChesscomAccount" fn remove_chesscom_account(
-            username: Value = c::chesscom_username
-        ) -> Value;
+            username: ChesscomUsername
+        ) -> Vec<ChesscomAccount>;
         /// Download new games of one Chess.com player, or of every one.
         #[writes(LichessGames, Accounts)]
         SyncChesscomGames = "syncChesscomGames" fn sync_chesscom_games(;
-            username: Option<Value> = Optional(c::chesscom_username)
-        ) -> Value;
+            username: Option<ChesscomUsername>
+        ) -> Vec<ChesscomAccount>;
     }
 
     /// Synced games, profiles and friends.
     trait GamesApi {
         #[writes(LichessGames, Accounts)]
-        SyncGames = "syncGames" fn sync_games(;
-            username: Option<Value> = Optional(c::username)
-        ) -> Value;
+        SyncGames = "syncGames" fn sync_games(; username: Option<Username>) -> AppData;
         /// Filtered, bounded library rows; full PGN is fetched separately.
-        GamePage = "gamePage" fn game_page(query: Value = c::game_page_query) -> Value;
-        GameLibraryOverview = "gameLibraryOverview" fn game_library_overview() -> Value;
+        GamePage = "gamePage" fn game_page(
+            query: crate::types::GamePageQuery
+        ) -> crate::types::GamePage;
+        GameLibraryOverview = "gameLibraryOverview" fn game_library_overview(
+        ) -> crate::types::GameLibraryOverview;
         /// Patterns in an account's synced games, worked out on this computer.
-        Insights = "insights" fn insights(query: Value = c::insights_query) -> Value;
+        Insights = "insights" fn insights(query: InsightsQuery) -> Value;
         GameRatingHistory = "gameRatingHistory" fn game_rating_history(
-            account: Value = c::game_account
-        ) -> Value;
+            account: GameAccount
+        ) -> Vec<RatingSeries>;
         /// Full PGN of one game; list rows omit it to keep the payload small.
-        GamePgn = "gamePgn" fn game_pgn(
-            account: Value = c::game_account,
-            id: Value = c::game_id
-        ) -> Value;
+        GamePgn = "gamePgn" fn game_pgn(account: GameAccount, id: GameId) -> Option<String>;
         /// Last profile data saved locally (no network); null fields when never fetched.
-        CachedProfile = "cachedProfile" fn cached_profile(username: Value = c::username) -> Value;
-        Profile = "profile" fn profile(username: Value = c::username) -> Value;
-        RatingHistory = "ratingHistory" fn rating_history(username: Value = c::username) -> Value;
+        CachedProfile = "cachedProfile" fn cached_profile(
+            username: Username
+        ) -> crate::types::CachedProfile;
+        /// A Lichess user as Lichess sent it.
+        Profile = "profile" fn profile(username: Username) -> Value;
+        /// A player's rating history as Lichess sent it.
+        RatingHistory = "ratingHistory" fn rating_history(username: Username) -> Value;
         /// Sign in through the browser. `username` is the account Lichess authorised.
         #[writes(Accounts)]
         ConnectLichess = "connectLichess" fn connect_lichess(;
-            look: Option<Value> = c::any
-        ) -> Value;
+            look: Option<Value>
+        ) -> ConnectedLichess;
         /// Keep this connected account's Lichess event stream open while no game is being
         /// played, so challenges and tournament pairings arrive; empty closes it.
-        StayConnected = "stayConnected" fn stay_connected(
-            account: Value = c::optional_account
-        ) -> Value;
+        StayConnected = "stayConnected" fn stay_connected(account: OptionalAccount) -> ();
         /// Delete the games and cached profile downloaded for one account, keeping the account.
         #[writes(LichessGames, Accounts, Usage)]
         ClearAccountData = "clearAccountData" fn clear_account_data(
-            username: Value = c::username
-        ) -> Value;
+            username: Username
+        ) -> AppData;
         /// Players the connected accounts follow on Lichess (needs the follow permission).
-        Following = "following" fn following() -> Value;
+        Following = "following" fn following() -> FollowingReport;
         /// Add players as friends without downloading their games.
         #[writes(Accounts)]
-        AddFriends = "addFriends" fn add_friends(usernames: Value = c::friend_list) -> Value;
+        AddFriends = "addFriends" fn add_friends(usernames: FriendList) -> AppData;
     }
 
     /// ChatGPT explanations.
@@ -304,52 +304,57 @@ core_api! {
 
     /// Lichess players: profiles, ratings, messages and relations.
     trait SocialApi {
-        PlayerPerf = "playerPerf" fn player_perf(
-            username: Value = c::username,
-            perf: Value = c::perf_type
-        ) -> Value;
-        Crosstable = "crosstable" fn crosstable(a: Value = c::username, b: Value = c::username) -> Value;
+        PlayerPerf = "playerPerf" fn player_perf(username: Username, perf: PerfType) -> PerfStats;
+        Crosstable = "crosstable" fn crosstable(
+            a: Username,
+            b: Username
+        ) -> crate::types::Crosstable;
         /// A player's latest public games, from their side; `rated` returns more of their rated
         /// ones.
         RecentGames = "recentGames" fn recent_games(
-            username: Value = c::username;
-            rated: Option<Value> = Optional(c::boolean)
-        ) -> Value;
+            username: Username;
+            rated: Option<bool>
+        ) -> Vec<LichessGame>;
         /// A Lichess private message from one of the connected accounts.
         SendMessage = "sendMessage" fn send_message(
-            account: Value = c::username,
-            username: Value = c::username,
-            text: Value = c::message_text
-        ) -> Value;
+            account: Username,
+            username: Username,
+            text: MessageText
+        ) -> Reply<MessageSent>;
         /// Whether a connected account follows or blocks a player on Lichess.
         Relation = "relation" fn relation(
-            account: Value = c::username,
-            username: Value = c::username
-        ) -> Value;
+            account: Username,
+            username: Username
+        ) -> Reply<LichessRelation>;
         /// Follow, unfollow, block or unblock a player on Lichess as a connected account.
+        /// Answers `true` once done.
         SetRelation = "setRelation" fn set_relation(
-            account: Value = c::username,
-            username: Value = c::username,
-            action: Value = c::relation_action
-        ) -> Value;
+            account: Username,
+            username: Username,
+            action: RelationAction
+        ) -> Reply<bool>;
         /// Many players' Lichess profiles at once (fewer details than `profile`), unknown names
-        /// left out.
-        Profiles = "profiles" fn profiles(usernames: Value = c::friend_list) -> Value;
+        /// left out, as Lichess sent them.
+        Profiles = "profiles" fn profiles(usernames: FriendList) -> Vec<Value>;
         /// The top players of a rating category.
-        Leaderboard = "leaderboard" fn leaderboard(perf: Value = c::perf_type) -> Value;
+        Leaderboard = "leaderboard" fn leaderboard(perf: PerfType) -> Vec<LeaderboardEntry>;
         /// Players whose names start with `term` (three characters or more).
-        SearchPlayers = "searchPlayers" fn search_players(term: Value = c::username) -> Value;
+        SearchPlayers = "searchPlayers" fn search_players(
+            term: Username
+        ) -> Vec<PlayerSuggestion>;
         /// A player's recent Lichess activity, by day.
-        Activity = "activity" fn activity(username: Value = c::username) -> Value;
+        Activity = "activity" fn activity(username: Username) -> Vec<ActivityDay>;
         /// What the players on the Following list did lately, newest first.
-        Timeline = "timeline" fn timeline() -> Value;
+        Timeline = "timeline" fn timeline() -> Vec<TimelineEntry>;
         /// Upload a PGN game to Lichess (as `account`, or anonymously when empty) for its page.
         ImportGame = "importGame" fn import_game(
-            account: Value = c::optional_account,
-            pgn: Value = c::pgn_text
-        ) -> Value;
+            account: OptionalAccount,
+            pgn: PgnText
+        ) -> ImportedGame;
         /// The games a connected account bookmarked on Lichess, from its side.
-        BookmarkedGames = "bookmarkedGames" fn bookmarked_games(account: Value = c::username) -> Value;
+        BookmarkedGames = "bookmarkedGames" fn bookmarked_games(
+            account: Username
+        ) -> Reply<Vec<LichessGame>>;
     }
 
     /// Lichess TV and broadcasts.

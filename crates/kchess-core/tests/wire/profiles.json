@@ -1,0 +1,1 @@
+[{"id":"bob","username":"Bob","title":"FM","playTime":{"total":5000,"tv":0},"perfs":{"blitz":{"games":10,"rating":1500,"rd":60,"prog":12}}},{"id":"alice","username":"Alice","playTime":{"total":300,"tv":0}}]

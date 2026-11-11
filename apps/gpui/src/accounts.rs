@@ -8,6 +8,8 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, SharedString, Window};
 use kchess_contracts::Level;
 use kchess_contracts::calls;
+use kchess_contracts::check::{ChesscomUsername, FriendList, Username};
+use kchess_contracts::types::{Account, AppData, ChesscomAccount, RelationAction, Reply};
 use serde_json::{Value, json};
 
 use crate::core::{Answer, AppCore, Reads};
@@ -19,12 +21,12 @@ pub use menu::{MenuInputs, menu_button};
 pub const ONLINE_ACCOUNT: &str = "kchess:online-account";
 
 pub struct Accounts {
-    /// `loadData`'s answer: the accounts and their sync state.
-    pub data: Value,
+    /// `loadData`'s answer: the accounts and their sync state; `None` until it is read.
+    pub data: Option<AppData>,
     /// `usage`: bytes downloaded per account, and what each keeps (`UsageReport`).
     pub usage: Value,
     /// `chesscomAccounts`: the Chess.com players synced, with when each last synced.
-    pub chesscom: Value,
+    pub chesscom: Vec<ChesscomAccount>,
     /// An account action runs: connecting, following, importing, signing out or removing.
     pub busy: bool,
     /// Game syncs running. They take minutes on a big account and run beside the actions: the
@@ -41,9 +43,9 @@ impl Global for AccountsHandle {}
 
 pub fn init(cx: &mut App) {
     let accounts = cx.new(|_| Accounts {
-        data: Value::Null,
+        data: None,
         usage: Value::Null,
-        chesscom: Value::Null,
+        chesscom: Vec::new(),
         busy: false,
         syncs: 0,
         reads: Reads::default(),
@@ -81,38 +83,41 @@ impl Accounts {
     }
 
     /// Every account KChess keeps (connected or only tracked).
-    pub fn all(&self) -> Vec<Value> {
-        self.data["accounts"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
+    pub fn all(&self) -> &[Account] {
+        self.data.as_ref().map_or(&[], |data| &data.accounts)
+    }
+
+    /// The games synced, of every account.
+    pub fn game_count(&self) -> i64 {
+        self.data.as_ref().map_or(0, |data| data.game_count)
     }
 
     /// The Chess.com players whose games are synced.
-    pub fn chesscom(&self) -> Vec<Value> {
-        self.chesscom.as_array().cloned().unwrap_or_default()
+    pub fn chesscom(&self) -> &[ChesscomAccount] {
+        &self.chesscom
     }
 
     /// The usernames signed in through OAuth (`connectedAccounts`).
     pub fn connected(&self) -> Vec<String> {
         self.all()
             .iter()
-            .filter(|account| account["connected"] == json!(true))
-            .filter_map(|account| account["username"].as_str().map(str::to_string))
+            .filter(|account| account.connected)
+            .map(|account| account.username.clone())
             .collect()
     }
 
     /// The players followed (`trackedAccounts`): accounts kept here that are not signed in.
-    pub fn tracked(&self) -> Vec<Value> {
+    pub fn tracked(&self) -> Vec<Account> {
         self.all()
-            .into_iter()
-            .filter(|account| account["connected"] != json!(true))
+            .iter()
+            .filter(|account| !account.connected)
+            .cloned()
             .collect()
     }
 
     /// The account that plays online (`activeOnlineAccount`).
     pub fn active(&self, cx: &App) -> Option<String> {
-        crate::online::active_account(&self.all(), cx)
+        crate::online::active_account(self.all(), cx)
     }
 
     /// `usageOf(username).total.bytesIn`.
@@ -133,8 +138,8 @@ impl Accounts {
     }
 
     /// Show the accounts a change made here answered with: a read started before it is read again.
-    fn adopt(&mut self, data: Value) {
-        self.data = data;
+    fn adopt(&mut self, data: AppData) {
+        self.data = Some(data);
         self.reads.edited();
     }
 
@@ -158,7 +163,7 @@ impl Accounts {
                     Answer::Superseded => return,
                 }
                 if let Ok(data) = data {
-                    this.data = data;
+                    this.data = Some(data);
                 }
                 if let Ok(usage) = usage {
                     this.usage = usage;
@@ -204,12 +209,8 @@ impl Accounts {
                         return false;
                     }
                 };
-                if result["data"].is_object() {
-                    this.adopt(result["data"].clone());
-                }
-                let Some(username) = result["username"].as_str().map(str::to_string) else {
-                    return false;
-                };
+                this.adopt(result.data);
+                let username = result.username;
                 if known.contains(&username.to_lowercase()) {
                     // Lichess authorises whoever is signed in to the browser: the same account.
                     say(
@@ -250,7 +251,7 @@ impl Accounts {
         let core = cx.global::<AppCore>().clone();
         let before: f64 = self.total_downloaded();
         let synced = core.request(calls::SyncGames {
-            username: username.map(|name| json!(name)),
+            username: username.map(Username),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = synced.await;
@@ -295,7 +296,7 @@ impl Accounts {
         cx.notify();
         let core = cx.global::<AppCore>().clone();
         let added = core.request(calls::AddChesscomAccount {
-            username: json!(name.trim()),
+            username: ChesscomUsername(name.trim().to_string()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = added.await;
@@ -334,7 +335,7 @@ impl Accounts {
         cx.notify();
         let core = cx.global::<AppCore>().clone();
         let synced = core.request(calls::SyncChesscomGames {
-            username: username.map(|name| json!(name)),
+            username: username.map(ChesscomUsername),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = synced.await;
@@ -368,7 +369,7 @@ impl Accounts {
         let removed = cx
             .global::<AppCore>()
             .request(calls::RemoveChesscomAccount {
-                username: json!(username),
+                username: ChesscomUsername(username.clone()),
             });
         cx.spawn_in(window, async move |this, cx| {
             let result = removed.await;
@@ -399,7 +400,7 @@ impl Accounts {
         self.busy = true;
         cx.notify();
         let added = cx.global::<AppCore>().request(calls::AddAccount {
-            username: json!(name),
+            username: Username(name),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = added.await;
@@ -411,7 +412,7 @@ impl Accounts {
                         let username = this
                             .all()
                             .iter()
-                            .filter_map(|account| account["username"].as_str())
+                            .map(|account| account.username.as_str())
                             .find(|username| username.to_lowercase() == typed)
                             .map(str::to_string);
                         // After this update: the caller reads the accounts again.
@@ -419,7 +420,13 @@ impl Accounts {
                         // A connected account follows them on Lichess too.
                         if let Some(name) = username.clone().filter(|name| !this.is_connected(name))
                         {
-                            this.set_relation(name, "follow", window, cx, |_, _, _| {});
+                            this.set_relation(
+                                name,
+                                RelationAction::Follow,
+                                window,
+                                cx,
+                                |_, _, _| {},
+                            );
                         }
                         this.sync(username, window, cx);
                     }
@@ -446,7 +453,7 @@ impl Accounts {
     pub fn set_relation(
         &mut self,
         username: String,
-        action: &'static str,
+        action: RelationAction,
         window: &mut Window,
         cx: &mut Context<Self>,
         done: impl FnOnce(bool, &mut Window, &mut App) + 'static,
@@ -455,16 +462,17 @@ impl Accounts {
             return;
         };
         let call = cx.global::<AppCore>().request(calls::SetRelation {
-            account: json!(account),
-            username: json!(username),
-            action: json!(action),
+            account: Username(account.clone()),
+            username: Username(username),
+            action,
         });
+        let action = action.as_str();
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;
             let _ = this.update_in(cx, |_, window, cx| {
                 let took = match answer {
-                    Ok(Value::Bool(true)) => true,
-                    Ok(_) => {
+                    Ok(Reply::Done(took)) => took,
+                    Ok(Reply::NeedsReconnect) => {
                         let note = gpui_kit::component::notification::Notification::warning(
                             format!("Connect @{account} again to {action} players on Lichess"),
                         )
@@ -499,7 +507,7 @@ impl Accounts {
     /// `clearSyncedData`: free a followed player's games and profile, still following them.
     pub fn clear_data(&mut self, username: String, window: &mut Window, cx: &mut Context<Self>) {
         let cleared = cx.global::<AppCore>().request(calls::ClearAccountData {
-            username: json!(username),
+            username: Username(username.clone()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = cleared.await;
@@ -528,7 +536,7 @@ impl Accounts {
         self.busy = true;
         cx.notify();
         let added = cx.global::<AppCore>().request(calls::AddFriends {
-            usernames: json!(names),
+            usernames: FriendList(names),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = added.await;
@@ -579,7 +587,7 @@ impl Accounts {
             core.request(calls::LogoutAll {}).boxed_local()
         } else {
             core.request(calls::Logout {
-                username: json!(account),
+                username: Username(account.unwrap_or_default()),
             })
             .boxed_local()
         };
@@ -593,14 +601,20 @@ impl Accounts {
             .iter()
             .any(|name| name.eq_ignore_ascii_case(&username));
         let call = cx.global::<AppCore>().request(calls::RemoveAccount {
-            username: json!(username),
+            username: Username(username.clone()),
         });
         let note = (!connected).then(|| {
             format!("@{username} removed. Their stored games were deleted from this device.")
         });
         // A friend leaves Following on Lichess too.
         if !connected {
-            self.set_relation(username.clone(), "unfollow", window, cx, |_, _, _| {});
+            self.set_relation(
+                username.clone(),
+                RelationAction::Unfollow,
+                window,
+                cx,
+                |_, _, _| {},
+            );
         }
         self.after_sign_out(call, note, window, cx);
     }
@@ -609,7 +623,7 @@ impl Accounts {
     /// so nothing kept for the account outlives it.
     fn after_sign_out(
         &mut self,
-        call: impl std::future::Future<Output = Result<Value, kchess_contracts::CoreError>> + 'static,
+        call: impl std::future::Future<Output = Result<AppData, kchess_contracts::CoreError>> + 'static,
         note: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -655,22 +669,35 @@ impl Accounts {
 mod tests {
     use super::Accounts;
     use crate::core::{Answer, Reads};
+    use kchess_contracts::types::{Account, AppData};
     use serde_json::json;
 
     /// A refresh started before a sign-in (or sync, or removal) here answers with the accounts
     /// as they were: it reads again rather than replacing the newer ones.
     #[test]
     fn a_read_from_before_a_local_change_is_read_again() {
+        let settings = kchess_contracts::defaults::default_settings()
+            .expect("the default settings")
+            .core;
         let mut accounts = Accounts {
-            data: json!({ "accounts": [] }),
+            data: None,
             usage: json!({}),
-            chesscom: json!([]),
+            chesscom: Vec::new(),
             busy: false,
             syncs: 0,
             reads: Reads::default(),
         };
         let read = accounts.reads.start();
-        accounts.adopt(json!({ "accounts": [{ "username": "new", "connected": true }] }));
+        accounts.adopt(AppData {
+            settings,
+            accounts: vec![Account {
+                username: "new".into(),
+                connected: true,
+                last_synced_at: None,
+                synced_play_time: None,
+            }],
+            game_count: 0,
+        });
         assert_eq!(accounts.reads.answer(read), Answer::Again);
         assert_eq!(accounts.connected(), ["new"]);
     }

@@ -3,16 +3,17 @@
 //! games.
 //! Activity and timeline lines are written here, so every frontend shows the same text.
 
-use serde::Serialize;
 use serde_json::Value;
 
 use super::accounts::{
-    Lichess, LichessGame, Reply, no_such_user, normalize_game, parse_game, path_segment,
-    profile_key,
+    Lichess, Reply, no_such_user, normalize_game, parse_game, path_segment, profile_key,
 };
 use super::client::Lane;
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
-use kchess_contracts::types::UsageKind;
+use kchess_contracts::types::{
+    ActivityDay, ActivityItem, ImportedGame, LeaderboardEntry, LichessGame, LichessRelation,
+    PerfType, PlayerSuggestion, RatingChange, RelationAction, TimelineEntry, UsageKind,
+};
 use kchess_domain::records::RATING_DISPLAY_NAMES;
 
 /// `/api/users` takes at most this many names a request.
@@ -25,80 +26,6 @@ const TIMELINE_SIZE: usize = 30;
 /// How many players of the Following list the timeline reads, at most.
 const TIMELINE_PLAYERS: usize = 15;
 const BOOKMARKS_MAX: usize = 100;
-
-/// `LichessRelation` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub struct LichessRelation {
-    pub following: bool,
-    pub blocking: bool,
-}
-
-/// `LeaderboardEntry` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct LeaderboardEntry {
-    pub username: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    pub rating: f64,
-    pub progress: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub online: Option<bool>,
-}
-
-/// `PlayerSuggestion` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub struct PlayerSuggestion {
-    pub username: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub online: Option<bool>,
-}
-
-/// `ActivityItem` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ActivityItem {
-    pub kind: String,
-    pub text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub game_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rating: Option<RatingChange>,
-}
-
-/// `RatingChange` of the contracts: a rating over the line's games or puzzles.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub struct RatingChange {
-    pub before: f64,
-    pub after: f64,
-}
-
-/// `ActivityDay` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub struct ActivityDay {
-    pub start: f64,
-    pub items: Vec<ActivityItem>,
-}
-
-/// `TimelineEntry` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub struct TimelineEntry {
-    pub date: f64,
-    /// Who on the Following list the line is about.
-    pub player: String,
-    pub item: ActivityItem,
-}
-
-/// `ImportedGame` of the contracts.
-#[derive(Serialize, Debug, Clone, PartialEq)]
-pub struct ImportedGame {
-    pub id: String,
-    pub url: String,
-}
 
 impl Lichess {
     /// `relation`: whether `account` follows or blocks `username` (the profile as `account` sees
@@ -129,11 +56,9 @@ impl Lichess {
         &self,
         account: &str,
         username: &str,
-        action: &str,
+        action: RelationAction,
     ) -> CoreResult<Reply<()>> {
-        if !matches!(action, "follow" | "unfollow" | "block" | "unblock") {
-            return Err(CoreError::new("Invalid action."));
-        }
+        let action = action.as_str();
         self.as_account(account, UsageKind::Profile, |auth| async move {
             self.client()
                 .post(
@@ -165,7 +90,8 @@ impl Lichess {
     }
 
     /// `leaderboard`: the top players of `perf`.
-    pub async fn leaderboard(&self, perf: &str) -> CoreResult<Vec<LeaderboardEntry>> {
+    pub async fn leaderboard(&self, perf: PerfType) -> CoreResult<Vec<LeaderboardEntry>> {
+        let perf = perf.as_str();
         if perf == "correspondence" {
             return Err(CoreError::new("Lichess has no correspondence leaderboard."));
         }

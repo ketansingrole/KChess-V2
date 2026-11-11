@@ -10,6 +10,10 @@ use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
+use kchess_contracts::check::{GameAccount, Username};
+use kchess_contracts::types::{
+    GameLibraryOverview, GamePage, GamePageQuery, InsightsQuery, LichessGame, RatingSeries,
+};
 use serde_json::{Value, json};
 
 use crate::assets::icon;
@@ -21,7 +25,7 @@ use crate::widgets;
 use crate::widgets::Pressable as _;
 
 /// Synced games shown.
-const RECENT: usize = 6;
+const RECENT: u64 = 6;
 
 /// Under a chart drawn from games, as each source has them.
 const LICHESS_HINT: &str =
@@ -75,8 +79,8 @@ pub struct LichessActivity {
     profile: Value,
     history: Entity<RatingHistory>,
     /// `gameLibraryOverview`: wins, losses and draws by account.
-    overview: Value,
-    recent: Vec<Value>,
+    overview: Option<GameLibraryOverview>,
+    recent: Vec<LichessGame>,
     /// The saved games have been read once for this account, so an empty list means none.
     loaded: bool,
     epoch: u64,
@@ -102,7 +106,7 @@ impl LichessActivity {
             profile: Value::Null,
             history: cx
                 .new(|cx| RatingHistory::new(LICHESS_HINT, window, cx).without_mode_picker()),
-            overview: Value::Null,
+            overview: None,
             recent: Vec::new(),
             loaded: false,
             epoch: 0,
@@ -133,18 +137,28 @@ impl LichessActivity {
         self.epoch += 1;
         let epoch = self.epoch;
         let core = cx.global::<AppCore>().clone();
-        let name = json!(account);
         let overview = core.request(calls::GameLibraryOverview {});
         let recent = core.request(calls::GamePage {
-            query: json!({ "account": account, "offset": 0, "limit": RECENT }),
+            query: GamePageQuery {
+                account: Some(account.to_string()),
+                offset: 0,
+                limit: RECENT,
+                ..GamePageQuery::default()
+            },
         });
         let fallback = core.request(calls::GameRatingHistory {
-            account: name.clone(),
+            account: GameAccount(account.to_string()),
         });
         if let Source::Chesscom(_) = self.source {
             // No profile to ask for: each speed's games come from the synced games' report.
             let speeds = core.request(calls::Insights {
-                query: json!({ "account": account }),
+                query: InsightsQuery {
+                    account: account.to_string(),
+                    speed: None,
+                    rated: None,
+                    days: None,
+                    variant: None,
+                },
             });
             cx.spawn(async move |this, cx| {
                 let (overview, recent, fallback, speeds) =
@@ -163,6 +177,7 @@ impl LichessActivity {
             .detach();
             return;
         }
+        let name = Username(account.to_string());
         let saved = core.request(calls::CachedProfile {
             username: name.clone(),
         });
@@ -180,9 +195,9 @@ impl LichessActivity {
                     return;
                 }
                 if let Ok(saved) = saved {
-                    this.profile = saved["profile"].clone();
+                    this.profile = saved.profile.unwrap_or(Value::Null);
                     this.history.update(cx, |history, cx| {
-                        history.set_official(saved["ratingHistory"].clone(), cx)
+                        history.set_official(saved.rating_history.unwrap_or(Value::Null), cx)
                     });
                 }
                 let (overview, recent, fallback) = local;
@@ -214,21 +229,21 @@ impl LichessActivity {
     /// What is kept here: the record by account, the latest games and the history from games.
     fn show_local(
         &mut self,
-        overview: Option<Value>,
-        recent: Option<Value>,
-        fallback: Option<Value>,
+        overview: Option<GameLibraryOverview>,
+        recent: Option<GamePage>,
+        fallback: Option<Vec<RatingSeries>>,
         cx: &mut Context<Self>,
     ) {
         if let Some(overview) = overview {
-            self.overview = overview;
+            self.overview = Some(overview);
         }
         if let Some(recent) = recent {
-            self.recent = recent["games"].as_array().cloned().unwrap_or_default();
+            self.recent = recent.games;
         }
         self.loaded = true;
         if let Some(fallback) = fallback {
             self.history
-                .update(cx, |history, cx| history.set_fallback(fallback, cx));
+                .update(cx, |history, cx| history.set_fallback(json!(fallback), cx));
         }
         cx.notify();
     }
@@ -236,15 +251,14 @@ impl LichessActivity {
 
 /// A profile's `perfs` from the games synced here (a Chess.com player's): each speed's latest
 /// rating from `gameRatingHistory`, and its games from the `insights` report's `bySpeed`.
-fn local_profile(history: &Value, report: &Value) -> Value {
+fn local_profile(history: &[RatingSeries], report: &Value) -> Value {
     let mut perfs = serde_json::Map::new();
     for (key, _) in PERFS {
         let rating = history
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|series| series["name"] == key)
-            .and_then(|series| series["points"].as_array()?.last()?.get(3).cloned());
+            .iter()
+            .find(|series| series.name == key)
+            .and_then(|series| series.points.last())
+            .map(|point| json!(point[3]));
         let games = report["bySpeed"]
             .as_array()
             .into_iter()
@@ -291,20 +305,18 @@ fn shown_perfs(profile: &Value) -> Vec<(&'static str, &'static str)> {
 
 impl LichessActivity {
     /// The games, wins, losses and draws: Lichess's lifetime counts, else the synced games'.
-    fn counts(&self) -> &Value {
-        if self.profile["count"]["all"].is_number() {
-            &self.profile["count"]
-        } else {
-            &self.overview["byAccount"][self.account.to_lowercase()]
+    fn counts(&self) -> [f64; 4] {
+        let count = &self.profile["count"];
+        if count["all"].is_number() {
+            let of = |key: &str| count[key].as_f64().unwrap_or_default();
+            return [of("all"), of("win"), of("loss"), of("draw")];
         }
-    }
-
-    fn games(&self) -> f64 {
-        let counts = self.counts();
-        counts["all"]
-            .as_f64()
-            .or_else(|| counts["total"].as_f64())
-            .unwrap_or_default()
+        self.overview
+            .as_ref()
+            .and_then(|overview| overview.by_account.get(&self.account.to_lowercase()))
+            .map_or([0.; 4], |record| {
+                [record.total, record.win, record.loss, record.draw].map(|count| count as f64)
+            })
     }
 
     /// The name shown: a Chess.com player's without the account's suffix.
@@ -321,7 +333,7 @@ impl LichessActivity {
         (
             self.source.heading(),
             format!("@{}", self.handle()),
-            self.games(),
+            self.counts()[0],
         )
     }
 }
@@ -329,9 +341,7 @@ impl LichessActivity {
 impl Render for LichessActivity {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let counts = self.counts();
-        let count = |key: &str| counts[key].as_f64().unwrap_or_default();
-        let games = self.games();
+        let [games, wins, losses, draws] = self.counts();
         let chart_mode = self.history.read(cx).mode().to_string();
         let tally = |value: f64, letter: &'static str, color: Hsla| {
             h_flex()
@@ -364,9 +374,9 @@ impl Render for LichessActivity {
                             .id("home-record")
                             .test_support()
                             .gap(px(8.))
-                            .child(tally(count("win"), "W", palette.win))
-                            .child(tally(count("loss"), "L", palette.loss))
-                            .child(tally(count("draw"), "D", palette.text)),
+                            .child(tally(wins, "W", palette.win))
+                            .child(tally(losses, "L", palette.loss))
+                            .child(tally(draws, "D", palette.text)),
                     )
             });
         let header = h_flex()
@@ -583,10 +593,11 @@ mod tests {
     /// A Chess.com player's cards: each speed's latest rating, its games, most played first.
     #[test]
     fn games_kept_here_make_the_cards() {
-        let history = json!([
+        let history: Vec<kchess_contracts::types::RatingSeries> = serde_json::from_value(json!([
             { "name": "rapid", "points": [[2020, 0, 11, 1480], [2020, 0, 12, 1500]] },
             { "name": "blitz", "points": [[2020, 0, 11, 1300]] },
-        ]);
+        ]))
+        .unwrap();
         let report = json!({ "bySpeed": [
             { "speed": "rapid", "record": { "total": 2 } },
             { "speed": "blitz", "record": { "total": 5 } },

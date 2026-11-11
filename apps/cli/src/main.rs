@@ -305,7 +305,7 @@ async fn with_core(
             })
             .await?;
             let mut settings = core.request(calls::StoredSettings {}).await?;
-            settings["enginePath"] = json!(engine);
+            settings.engine_path = engine;
             core.request(calls::SaveSettings { settings }).await?;
         }
         match command {
@@ -317,7 +317,9 @@ async fn with_core(
             }
             Command::Login => {
                 // The sign-in page is opened (or printed) while the core waits for it.
-                print(&core.request(calls::ConnectLichess { look: None }).await?);
+                print(json!(
+                    core.request(calls::ConnectLichess { look: None }).await?
+                ));
             }
             Command::Call => {
                 let method = rest.first().map(String::as_str).unwrap_or_default();

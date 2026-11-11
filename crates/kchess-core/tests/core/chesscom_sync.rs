@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use kchess_contracts::types::ChesscomAccount;
 use kchess_core::Config;
 use kchess_core::chesscom::Chesscom;
 use kchess_core::store::{Database, chesscom, games, reviews};
@@ -16,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::fixtures::{Fixture, Reply, Seen, serve};
 use crate::support::Recording;
+use crate::support::store::game_page;
 
 const PAST: &str = "2020/01";
 
@@ -79,7 +81,7 @@ impl Profile {
         let page = self
             .database
             .read_async(move |c| {
-                games::game_page(c, json!({ "account": account, "offset": 0, "limit": 100 }))
+                game_page(c, &json!({ "account": account, "offset": 0, "limit": 100 }))
             })
             .await
             .unwrap();
@@ -135,8 +137,8 @@ async fn a_player_is_synced_and_a_second_sync_asks_only_for_this_month_if_change
     .await;
     let profile = profile(&fixture);
     let accounts = profile.chesscom.add("ALICE").await.expect("added");
-    assert_eq!(accounts[0]["username"], "Alice", "{accounts}");
-    assert!(accounts[0]["lastSyncedAt"].is_i64(), "{accounts}");
+    assert_eq!(accounts[0].username, "Alice", "{accounts:?}");
+    assert!(accounts[0].last_synced_at.is_some(), "{accounts:?}");
     let games = profile.games("Alice@chess.com").await;
     let ids: Vec<&str> = games.iter().map(|g| g["id"].as_str().unwrap()).collect();
     assert_eq!(ids.len(), 3, "bughouse is not kept: {ids:?}");
@@ -199,10 +201,10 @@ async fn a_rate_limited_month_is_asked_again_after_the_wait() {
 /// without waiting for Chess.com to answer (`open` is never sent).
 async fn removed_during_add(
     profile: &Profile,
-    adding: tokio::task::JoinHandle<Result<Value, kchess_core::error::CoreError>>,
+    adding: tokio::task::JoinHandle<Result<Vec<ChesscomAccount>, kchess_core::error::CoreError>>,
 ) {
     let left = profile.chesscom.remove("alice").await.expect("removed");
-    assert_eq!(left, json!([]));
+    assert!(left.is_empty());
     let outcome = tokio::time::timeout(Duration::from_secs(10), adding)
         .await
         .expect("the removal stops the request in flight")

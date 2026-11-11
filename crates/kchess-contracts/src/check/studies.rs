@@ -39,21 +39,6 @@ impl Validate for StudyId {
     }
 }
 
-/// A Lichess game's id.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
-#[serde(transparent)]
-pub struct GameId(pub String);
-
-const GAME_ID: &str = "Invalid game id.";
-
-impl Validate for GameId {
-    fn validate(value: J) -> Result<Self, Refusal> {
-        let text: String = decode(value, |_| Some(GAME_ID))?;
-        matches(&text, patterns::game_id, Some(GAME_ID), "", "")?;
-        Ok(GameId(text))
-    }
-}
-
 /// A chapter's name, trimmed: 1 to 100 characters.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[serde(transparent)]
@@ -66,21 +51,6 @@ impl Validate for ChapterName {
         min_chars(text, 1, None, "")?;
         max_chars(text, 100, None, "")?;
         Ok(ChapterName(text.to_owned()))
-    }
-}
-
-/// PGN text to upload: 1 to 500,000 characters, not all blank.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
-#[serde(transparent)]
-pub struct PgnText(pub String);
-
-impl Validate for PgnText {
-    fn validate(value: J) -> Result<Self, Refusal> {
-        let text: String = decode(value, plain)?;
-        min_chars(&text, 1, None, "")?;
-        max_chars(&text, 500_000, None, "")?;
-        ensure(!text.trim().is_empty(), None, "", || "some text".into())?;
-        Ok(PgnText(text))
     }
 }
 
@@ -120,7 +90,6 @@ impl Validate for Moves {
 
 const STUDY_SYNC: &str = "Invalid study synchronization.";
 const STUDY_TEXT: &str = "The study is empty or too large to upload.";
-const USERNAME: &str = "Enter a valid Lichess username.";
 
 /// The upload as sent: every field checked for its own message.
 #[derive(Deserialize)]

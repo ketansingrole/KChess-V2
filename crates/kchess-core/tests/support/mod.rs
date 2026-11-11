@@ -93,8 +93,7 @@ pub fn save_engine_path(core: &kchess_core::Core, path: &str) {
     let mut settings = database
         .read(|c| games::get_settings(c.db))
         .expect("settings");
-    settings["enginePath"] = serde_json::json!(path);
-    let settings: games::Settings = serde_json::from_value(settings).expect("valid settings");
+    settings.core.engine_path = path.to_string();
     database
         .write(|c| games::save_settings(c.db, &settings))
         .expect("save settings");
