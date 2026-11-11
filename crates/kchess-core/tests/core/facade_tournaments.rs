@@ -71,7 +71,7 @@ async fn a_joined_tournament_is_kept_until_it_is_left_withdrawn_or_finished() {
     let profile = signed_in::open(&fixture.base).await;
     let core = &profile.core;
     let joined = || async {
-        core.call("store.library.joinedTournaments", vec![json!(0)])
+        core.call("joinedTournaments", vec![])
             .await
             .unwrap()
             .as_array()

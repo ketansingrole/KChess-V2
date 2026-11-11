@@ -1084,13 +1084,13 @@ mod tests {
 
         let id = drill["id"].as_str().expect("id");
         let day = 86_400_000.0;
-        let solved = answer_mistake(&db, &id, true, 10.0).expect("answer");
+        let solved = answer_mistake(&db, id, true, 10.0).expect("answer");
         assert_eq!(solved[0]["streak"], json!(1));
         assert_eq!(solved[0]["attempts"], json!(1));
         assert_eq!(solved[0]["dueAt"].as_f64(), Some(10.0 + day));
-        let twice = answer_mistake(&db, &id, true, 10.0).expect("answer");
+        let twice = answer_mistake(&db, id, true, 10.0).expect("answer");
         assert_eq!(twice[0]["dueAt"].as_f64(), Some(10.0 + 2.0 * day));
-        let missed = answer_mistake(&db, &id, false, 10.0).expect("answer");
+        let missed = answer_mistake(&db, id, false, 10.0).expect("answer");
         assert_eq!(missed[0]["streak"], json!(0));
         assert_eq!(missed[0]["attempts"], json!(3));
         assert_eq!(missed[0]["dueAt"].as_f64(), Some(10.0 + 600_000.0));
@@ -1209,7 +1209,7 @@ mod tests {
     fn repertoire_misses_are_counted_per_line_and_cleared() {
         let db = drills_db();
         let miss =
-            |key: &str, fen: &str| record_repertoire_miss(&Quiet, &db, &key, &fen).expect("miss");
+            |key: &str, fen: &str| record_repertoire_miss(&Quiet, &db, key, fen).expect("miss");
         miss("white", "fen1");
         miss("white", "fen1");
         let misses = miss("black", "fen2");
@@ -1328,7 +1328,7 @@ mod tests {
 
         // Answering a line schedules it; the misses stay as they were.
         let review = |line: &str, correct: bool, at: f64| {
-            review_repertoire_line(&Quiet, &db, "study:white", &line, correct, at)
+            review_repertoire_line(&Quiet, &db, "study:white", line, correct, at)
         };
         let schedule = review("e2e4 e7e5", true, now).expect("review");
         assert_eq!(schedule["study:white"]["e2e4 e7e5"]["interval"], json!(1.0));
@@ -1453,7 +1453,7 @@ mod tests {
         let db = drills_db();
         let now = 1_700_000_000_000.0;
         let library = || super::library(&Quiet, &db, now).expect("library");
-        let session = |kind: &str| session(&Quiet, &db, &kind).expect(kind);
+        let session = |kind: &str| session(&Quiet, &db, kind).expect(kind);
         let mistakes = || read_mistakes(&db).map(Value::Array).expect("mistakes");
         assert_eq!(session("analysis"), Value::Null, "none kept yet");
         assert_eq!(mistakes(), json!([]));

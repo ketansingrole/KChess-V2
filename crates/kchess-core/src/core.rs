@@ -571,6 +571,12 @@ impl Core {
         self.database.hold_execution().await
     }
 
+    /// Tests only: the profile's database, to seed and read it with the store's typed calls.
+    #[doc(hidden)]
+    pub fn database_for_tests(&self) -> &Arc<Database> {
+        &self.database
+    }
+
     /// Run one synchronous method: the engine state that a synchronous caller reads
     /// or changes without starting work (`engine.threads`, `analysis.running`,
     /// `reviews.status`, ...). Unknown methods and malformed arguments are errors.

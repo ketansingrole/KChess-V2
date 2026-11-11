@@ -1,5 +1,5 @@
-//! A temporary profile's `kchess.db` driven through the storage methods (`store.*`). The fixture's own duties are here too: the one-time import of an earlier profile runs
-//! before each call, its plaintext tokens are encrypted with the fake secret store, and login
+//! A temporary profile's `kchess.db` driven through the store's typed calls. The fixture's own
+//! duties are here too: the one-time import of an earlier profile runs before each call, its plaintext tokens are encrypted with the fake secret store, and login
 //! and token calls check the OS encryption and the logout race. The fake store "encrypts" by
 //! prefixing `enc:`, so a test can see the stored ciphertext without a keychain.
 #![allow(dead_code)]
@@ -7,11 +7,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use kchess_core::store::Database;
+use kchess_core::store::{Database, StoreContext, games, import};
 use kchess_core::{Config, CoreError};
 use kchess_domain::misc::validate_arguments;
 use rusqlite::Connection;
 use rusqlite::types::ValueRef;
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 use tempfile::TempDir;
 
@@ -92,51 +93,60 @@ impl Store {
         Store::in_dir(dir, legacy, secrets)
     }
 
-    /// The one-time import, then the storage method (the fixture's `storeCall`).
-    pub fn call(&self, method: &str, args: Vec<Value>) -> Result<Value, CoreError> {
+    /// The one-time import, then a read, its answer as the JSON a frontend sees.
+    pub fn read<T: Serialize>(
+        &self,
+        work: impl FnOnce(&StoreContext) -> Result<T, CoreError>,
+    ) -> Result<Value, CoreError> {
         self.migrate();
-        self.db.call(method, &args)
+        self.db.read(work).and_then(games::as_json)
     }
 
-    /// `call`, which must succeed.
-    pub fn ok(&self, method: &str, args: Vec<Value>) -> Value {
-        self.call(method, args)
-            .unwrap_or_else(|cause| panic!("{method} failed: {cause}"))
+    /// The one-time import, then a write, its answer as the JSON a frontend sees.
+    pub fn write<T: Serialize>(
+        &self,
+        work: impl FnOnce(&StoreContext) -> Result<T, CoreError>,
+    ) -> Result<Value, CoreError> {
+        self.migrate();
+        self.db.write(work).and_then(games::as_json)
     }
 
-    /// `call`, which must fail: its message.
-    pub fn err(&self, method: &str, args: Vec<Value>) -> String {
-        match self.call(method, args) {
-            Ok(value) => panic!("{method} unexpectedly returned {value}"),
-            Err(cause) => cause.message,
-        }
+    /// A read straight to the database. `read` runs the one-time import first, a write that
+    /// clears the cache on every call; the app imports once, so cache tests must skip it.
+    pub fn read_direct<T: Serialize>(
+        &self,
+        work: impl FnOnce(&StoreContext) -> Result<T, CoreError>,
+    ) -> Result<Value, CoreError> {
+        self.db.read(work).and_then(games::as_json)
     }
 
-    /// The one-time import (`store.games.migrate`); its plaintext tokens are stored encrypted
-    /// with the fake secret store, as the fixture did. Failed token imports are skipped.
+    /// A write straight to the database, as `read_direct`.
+    pub fn write_direct<T: Serialize>(
+        &self,
+        work: impl FnOnce(&StoreContext) -> Result<T, CoreError>,
+    ) -> Result<Value, CoreError> {
+        self.db.write(work).and_then(games::as_json)
+    }
+
+    /// The one-time import, as the facade's `migrate` runs it: its plaintext tokens are stored
+    /// encrypted with the fake secret store. Failed token imports are skipped.
     fn migrate(&self) {
         let available = self.secrets.available;
-        let Ok(result) = self.db.call("store.games.migrate", &[json!(available)]) else {
+        let Ok(tokens) = self.db.write(|c| import::migrate(c, available)) else {
             return;
         };
         if !available {
             return;
         }
-        let tokens = result["legacyTokens"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
         for entry in &tokens {
-            let account = entry["account"].clone();
-            let token = entry["token"].as_str().unwrap_or_default();
-            let _ = self.db.call(
-                "store.games.importTokenCiphertext",
-                &[account, json!(encrypt(token))],
-            );
+            let sealed = encrypt(&entry.token);
+            let _ = self
+                .db
+                .write(|c| games::import_token_ciphertext(c.db, entry.account.as_deref(), &sealed));
         }
-        // As the facade's `migrate`: the earlier database's plaintext copies go once sealed.
+        // The earlier database's plaintext copies go once sealed.
         if !tokens.is_empty() {
-            let _ = self.db.call("store.games.scrubLegacyTokens", &[]);
+            let _ = self.db.write(import::scrub_legacy_tokens);
         }
     }
 
@@ -157,20 +167,19 @@ impl Store {
         if !still_current {
             return Err("Login was cancelled by logout.".to_string());
         }
-        self.call(
-            "store.games.saveTokenCiphertext",
-            vec![json!(name), json!(encrypt(token))],
-        )
-        .map_err(|cause| cause.message)
+        let sealed = encrypt(token);
+        self.write(|c| games::save_login(c.db, name, &sealed))
+            .map_err(|cause| cause.message)
     }
 
     /// The stored token of an account, decrypted; `None` when none is stored, encryption is off,
     /// or the ciphertext cannot be read (`getToken` in the fixture).
     pub fn token(&self, username: &str) -> Option<String> {
-        let stored = self
-            .call("store.games.tokenCiphertext", vec![json!(username)])
-            .ok()?;
-        let encrypted = stored.as_str()?;
+        self.migrate();
+        let encrypted = self
+            .db
+            .read(|c| games::token_ciphertext(c.db, username))
+            .ok()??;
         if !self.secrets.available || !self.secrets.decrypts {
             return None;
         }
@@ -220,9 +229,20 @@ impl Store {
     fn connection(&self) -> Connection {
         // Opening (and migrating) the file through the core comes first, so the second connection
         // finds the schema in place.
-        self.db.call("store.open", &[]).expect("the database opens");
+        self.db.read(|_| Ok(())).expect("the database opens");
         Connection::open(self.dir.path().join("kchess.db")).expect("the database file opens")
     }
+}
+
+/// A JSON array argument.
+pub fn list(value: &Value) -> &[Value] {
+    value.as_array().map(Vec::as_slice).expect("an array")
+}
+
+/// Settings as the facade reads them from a frontend.
+pub fn parse_settings(value: Value) -> Result<games::Settings, CoreError> {
+    serde_json::from_value(value)
+        .map_err(|cause| CoreError::new(format!("Invalid settings: {cause}")))
 }
 
 fn config(dir: &Path, legacy: Option<PathBuf>) -> Config {

@@ -230,12 +230,7 @@ async fn with_engine(dir: &Path) -> Core {
     let engine = support::engine_copy(dir, "search");
     core.call_sync("engine.trust", vec![json!(engine)])
         .expect("trusted engine");
-    let mut settings = core
-        .call_sync("store.games.getSettings", vec![])
-        .expect("settings");
-    settings["enginePath"] = json!(engine);
-    core.call_sync("store.games.saveSettings", vec![settings])
-        .expect("save settings");
+    support::save_engine_path(&core, &engine);
     core
 }
 

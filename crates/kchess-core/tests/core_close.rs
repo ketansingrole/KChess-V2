@@ -43,12 +43,7 @@ fn open(dir: &Path, host: &Arc<Wire>) -> Arc<Core> {
 fn configure_engine(core: &Core, path: &str) {
     core.call_sync("engine.trust", vec![json!(path)])
         .expect("trusted engine");
-    let mut settings = core
-        .call_sync("store.games.getSettings", vec![])
-        .expect("settings");
-    settings["enginePath"] = json!(path);
-    core.call_sync("store.games.saveSettings", vec![settings])
-        .expect("save settings");
+    support::save_engine_path(core, path);
 }
 
 /// Waits until the spawned call has started its work.
@@ -160,12 +155,12 @@ async fn a_closed_core_refuses_internal_calls() {
     let dir = tempfile::tempdir().expect("profile");
     let host = Arc::new(Wire::default());
     let core = open(dir.path(), &host);
-    core.call("store.open", vec![]).await.expect("opened");
+    core.call("loadData", vec![]).await.expect("opened");
     core.close().await;
     let db = dir.path().join("kchess.db");
     std::fs::remove_file(&db).expect("database removed");
     let later = core
-        .call("store.games.loadData", vec![])
+        .call("loadData", vec![])
         .await
         .expect_err("a closed core refuses");
     assert_eq!(later.message, CLOSED);

@@ -18,10 +18,7 @@ async fn prepared(dir: &Path, host: &Arc<support::Recording>) -> Core {
         json!(false)
     );
     let engine = support::engine_copy(dir, "search");
-    let mut settings = core.call_sync("store.games.getSettings", vec![]).unwrap();
-    settings["enginePath"] = json!(engine);
-    core.call_sync("store.games.saveSettings", vec![settings])
-        .unwrap();
+    support::save_engine_path(&core, &engine);
     core
 }
 

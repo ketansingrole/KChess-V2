@@ -3,9 +3,14 @@
 
 use crate::support;
 
-use kchess_core::store::games::MAX_GAMES;
+use kchess_core::store::{
+    games::{self, MAX_GAMES},
+    reviews,
+};
 use serde_json::{Value, json};
-use support::store::{Secrets, Store, canonical, check_page_query, library_game, profile};
+use support::store::{
+    Secrets, Store, canonical, check_page_query, library_game, list, profile,
+};
 
 const SYNCED_AT: i64 = 1_790_812_800_000;
 
@@ -13,29 +18,28 @@ const SYNCED_AT: i64 = 1_790_812_800_000;
 fn fresh() -> Store {
     let store = profile();
     store.exec("INSERT INTO accounts (username, connected) VALUES ('Alice', 1), ('Bob', 0)");
-    store.ok(
-        "store.games.saveGames",
-        vec![json!("Alice"), json!([]), json!(1), json!(true)],
-    );
+    store
+        .write(|c| games::save_games(c.host, c.db, "Alice", &[], Some(1)))
+        .expect("saveGames");
     store
 }
 
 fn save_games(store: &Store, account: &str, games: &[Value], synced_at: i64) -> Value {
-    store.ok(
-        "store.games.saveGames",
-        vec![json!(account), json!(games), json!(synced_at), json!(true)],
-    )
+    store
+        .write(|c| games::save_games(c.host, c.db, account, list(&json!(games)), Some(synced_at)))
+        .expect("saveGames")
 }
 
 fn save_page(store: &Store, account: &str, games: &[Value]) -> Value {
-    store.ok(
-        "store.games.saveGamesPage",
-        vec![json!(account), json!(games), json!([]), json!(true)],
-    )
+    store
+        .write(|c| games::save_games_page(c.host, c.db, account, list(&json!(games)), &[]))
+        .expect("saveGamesPage")
 }
 
 fn page(store: &Store, query: Value) -> Value {
-    store.ok("store.games.gamePage", vec![query])
+    store
+        .read(|c| games::game_page(c, query))
+        .expect("gamePage")
 }
 
 fn ids(page: &Value) -> Vec<String> {
@@ -97,7 +101,9 @@ fn logging_out_every_connected_account_erases_their_data_and_keeps_public_follow
          INSERT INTO game_reviews VALUES ('Private1', 'private'), ('Private2', 'shared'), ('Public01', 'shared')",
     );
 
-    let result = store.ok("store.games.logoutAccounts", vec![Value::Null]);
+    let result = store
+        .write(|c| games::logout_accounts(c.db, None))
+        .expect("logoutAccounts");
     assert_eq!(usernames(&result), ["Bob"]);
     assert_eq!(result["accounts"][0]["connected"], json!(false));
     assert_eq!(result["gameCount"], json!(1));
@@ -126,7 +132,9 @@ fn logging_out_every_connected_account_erases_their_data_and_keeps_public_follow
         ids(&page(&store, json!({ "offset": 0, "limit": 20 })))[0],
         "Public01"
     );
-    let again = store.ok("store.games.logoutAccounts", vec![Value::Null]);
+    let again = store
+        .write(|c| games::logout_accounts(c.db, None))
+        .expect("logoutAccounts");
     assert_eq!(usernames(&again), ["Bob"]);
     assert_eq!(again["accounts"][0]["connected"], json!(false));
 }
@@ -152,7 +160,9 @@ fn logging_out_one_account_keeps_another_connected_account_and_a_followed_player
         &[library_game("Public01", &[("account", json!("Bob"))])],
         SYNCED_AT,
     );
-    let result = store.ok("store.games.logoutAccounts", vec![json!("aLiCe")]);
+    let result = store
+        .write(|c| games::logout_accounts(c.db, Some("aLiCe")))
+        .expect("logoutAccounts");
     let mut names = usernames(&result);
     names.sort();
     assert_eq!(names, ["Bob", "Carol"]);
@@ -172,9 +182,16 @@ fn logging_out_one_account_keeps_another_connected_account_and_a_followed_player
         rows(&store, "SELECT key FROM api_cache"),
         [json!({ "key": "carol:profile" })]
     );
-    store.ok("store.games.logoutAccounts", vec![json!("Bob")]);
+    store
+        .write(|c| games::logout_accounts(c.db, Some("Bob")))
+        .expect("logoutAccounts");
     assert_eq!(
-        usernames(&store.ok("store.games.loadData", vec![])).len(),
+        usernames(
+            &store
+                .read(|c| games::load_app_data(c.db))
+                .expect("loadData")
+        )
+        .len(),
         2
     );
 }
@@ -195,7 +212,9 @@ fn bounded_pages_transfer_with_combined_filters_and_pgn_is_read_on_demand() {
         })
         .collect();
     save_games(&store, "Alice", &games, SYNCED_AT);
-    let data = store.ok("store.games.loadData", vec![]);
+    let data = store
+        .read(|c| games::load_app_data(c.db))
+        .expect("loadData");
     assert_eq!(data["gameCount"], json!(240));
     assert!(data.get("games").is_none());
 
@@ -216,7 +235,9 @@ fn bounded_pages_transfer_with_combined_filters_and_pgn_is_read_on_demand() {
     }
     let first_id = ids(&first)[0].clone();
     assert_eq!(
-        store.ok("store.games.gamePgn", vec![json!("ALICE"), json!(first_id)]),
+        store
+            .read(|c| games::game_pgn(c.db, "ALICE", &first_id))
+            .expect("gamePgn"),
         json!("1. e4 e5 *")
     );
 
@@ -275,7 +296,9 @@ fn stable_tie_ordering_and_aggregates_match_the_daily_rating_fallback() {
     ];
     save_games(&store, "Alice", &games[..3], SYNCED_AT);
     save_games(&store, "Bob", &games[3..], SYNCED_AT);
-    let overview = store.ok("store.games.gameLibraryOverview", vec![]);
+    let overview = store
+        .read(games::game_library_overview)
+        .expect("gameLibraryOverview");
     assert_eq!(
         overview["byAccount"]["alice"],
         json!({ "total": 3, "win": 1, "loss": 1, "draw": 1 })
@@ -296,7 +319,11 @@ fn stable_tie_ordering_and_aggregates_match_the_daily_rating_fallback() {
     )
     .expect("the history is JSON");
     assert_eq!(
-        canonical(&store.ok("store.games.gameRatingHistory", vec![json!("alice")])),
+        canonical(
+            &store
+                .read(|c| games::rating_history(c.db, "alice"))
+                .expect("gameRatingHistory")
+        ),
         canonical(&expected)
     );
 
@@ -319,13 +346,19 @@ fn stable_tie_ordering_and_aggregates_match_the_daily_rating_fallback() {
     keys.dedup();
     assert_eq!(keys.len(), 4);
 
-    store.ok("store.games.clearAccountData", vec![json!("Alice")]);
+    store
+        .write(|c| games::clear_account_data(c.db, "Alice"))
+        .expect("clearAccountData");
     assert_eq!(
-        store.ok("store.games.loadData", vec![])["gameCount"],
+        store
+            .read(|c| games::load_app_data(c.db))
+            .expect("loadData")["gameCount"],
         json!(1)
     );
     assert!(
-        store.ok("store.games.gameLibraryOverview", vec![])["byAccount"]
+        store
+            .read(games::game_library_overview)
+            .expect("gameLibraryOverview")["byAccount"]
             .get("alice")
             .is_none()
     );
@@ -340,27 +373,35 @@ fn pending_changes_are_saved_atomically_live_games_are_excluded_and_cleaned_up_w
         &[library_game("Pending1", &[("status", json!("started"))])],
     );
     assert_eq!(
-        store.ok("store.games.pendingGameIds", vec![json!("alice")]),
+        store
+            .read(|c| games::pending_game_ids(c.db, "alice"))
+            .expect("pendingGameIds"),
         json!(["Pending1"])
     );
     assert_eq!(
-        store.ok("store.games.loadData", vec![])["gameCount"],
+        store
+            .read(|c| games::load_app_data(c.db))
+            .expect("loadData")["gameCount"],
         json!(0)
     );
 
     // A broken row rolls back the whole page, including removal from pending.
     let broken = library_game("Broken01", &[("createdAt", Value::Null)]);
-    store.err(
-        "store.games.saveGamesPage",
-        vec![
-            json!("Alice"),
-            json!([library_game("Pending1", &[]), broken]),
-            json!([]),
-            json!(true),
-        ],
-    );
+    store
+        .write(|c| {
+            games::save_games_page(
+                c.host,
+                c.db,
+                "Alice",
+                list(&json!([library_game("Pending1", &[]), broken])),
+                &[],
+            )
+        })
+        .expect_err("saveGamesPage");
     assert_eq!(
-        store.ok("store.games.pendingGameIds", vec![json!("Alice")]),
+        store
+            .read(|c| games::pending_game_ids(c.db, "Alice"))
+            .expect("pendingGameIds"),
         json!(["Pending1"])
     );
     assert_eq!(
@@ -368,9 +409,13 @@ fn pending_changes_are_saved_atomically_live_games_are_excluded_and_cleaned_up_w
         Vec::<String>::new()
     );
 
-    store.ok("store.games.clearAccountData", vec![json!("Alice")]);
+    store
+        .write(|c| games::clear_account_data(c.db, "Alice"))
+        .expect("clearAccountData");
     assert_eq!(
-        store.ok("store.games.pendingGameIds", vec![json!("Alice")]),
+        store
+            .read(|c| games::pending_game_ids(c.db, "Alice"))
+            .expect("pendingGameIds"),
         json!([])
     );
     save_page(
@@ -378,20 +423,27 @@ fn pending_changes_are_saved_atomically_live_games_are_excluded_and_cleaned_up_w
         "Alice",
         &[library_game("Pending2", &[("status", json!("created"))])],
     );
-    store.ok("store.games.removeAccount", vec![json!("Alice")]);
+    store
+        .write(|c| games::remove_account(c.db, "Alice"))
+        .expect("removeAccount");
     assert_eq!(
-        store.ok("store.games.pendingGameIds", vec![json!("Alice")]),
+        store
+            .read(|c| games::pending_game_ids(c.db, "Alice"))
+            .expect("pendingGameIds"),
         json!([])
     );
-    let refused = store.err(
-        "store.games.saveGamesPage",
-        vec![
-            json!("Alice"),
-            json!([library_game("Pending2", &[])]),
-            json!([]),
-            json!(true),
-        ],
-    );
+    let refused = store
+        .write(|c| {
+            games::save_games_page(
+                c.host,
+                c.db,
+                "Alice",
+                list(&json!([library_game("Pending2", &[])])),
+                &[],
+            )
+        })
+        .expect_err("saveGamesPage")
+        .message;
     assert!(refused.contains("removed"), "{refused}");
 }
 
@@ -408,12 +460,16 @@ fn pending_ids_survive_closing_and_reopening_the_database() {
     store.close();
     let store = store.reopen_with(Secrets::ON);
     assert_eq!(
-        store.ok("store.games.pendingGameIds", vec![json!("Alice")]),
+        store
+            .read(|c| games::pending_game_ids(c.db, "Alice"))
+            .expect("pendingGameIds"),
         json!(["Pending1"])
     );
     save_games(&store, "Alice", &[library_game("Pending1", &[])], 2000);
     assert_eq!(
-        store.ok("store.games.pendingGameIds", vec![json!("Alice")]),
+        store
+            .read(|c| games::pending_game_ids(c.db, "Alice"))
+            .expect("pendingGameIds"),
         json!([])
     );
     assert_eq!(
@@ -430,19 +486,22 @@ fn the_retention_cap_is_applied_once_per_completed_sync_not_on_every_page() {
         .collect();
     save_page(&store, "Alice", &games);
     assert_eq!(
-        store.ok("store.games.loadData", vec![])["gameCount"],
+        store
+            .read(|c| games::load_app_data(c.db))
+            .expect("loadData")["gameCount"],
         json!(MAX_GAMES + 1)
     );
     save_games(&store, "Alice", &[], 3000);
     assert_eq!(
-        store.ok("store.games.loadData", vec![])["gameCount"],
+        store
+            .read(|c| games::load_app_data(c.db))
+            .expect("loadData")["gameCount"],
         json!(MAX_GAMES)
     );
     assert_eq!(
-        store.ok(
-            "store.games.gamePgn",
-            vec![json!("Alice"), json!("T0000000")]
-        ),
+        store
+            .read(|c| games::game_pgn(c.db, "Alice", "T0000000"))
+            .expect("gamePgn"),
         Value::Null
     );
 }
@@ -529,14 +588,18 @@ fn others() -> Value {
 fn removing_an_account_deletes_its_reviews_checks_lookups_and_usage_but_spares_shared_games() {
     let store = fresh();
     seed_shared_and_private(&store);
-    store.ok("store.games.removeAccount", vec![json!("alice")]);
+    store
+        .write(|c| games::remove_account(c.db, "alice"))
+        .expect("removeAccount");
     assert_eq!(kept(&store), others());
     assert_eq!(
         rows(&store, "SELECT account FROM usage"),
         [json!({ "account": "bob" })]
     );
     assert_eq!(
-        store.ok("store.reviewStore.hasAccount", vec![json!("Alice")]),
+        store
+            .read(|c| reviews::has_account(c.db, "Alice"))
+            .expect("hasAccount"),
         json!(false)
     );
 }
@@ -545,7 +608,9 @@ fn removing_an_account_deletes_its_reviews_checks_lookups_and_usage_but_spares_s
 fn logging_out_deletes_the_same_data() {
     let store = fresh();
     seed_shared_and_private(&store);
-    store.ok("store.games.logoutAccounts", vec![json!("Alice")]);
+    store
+        .write(|c| games::logout_accounts(c.db, Some("Alice")))
+        .expect("logoutAccounts");
     assert_eq!(kept(&store), others());
 }
 
@@ -553,14 +618,18 @@ fn logging_out_deletes_the_same_data() {
 fn clearing_data_deletes_it_too_but_keeps_the_account_and_its_usage_history() {
     let store = fresh();
     seed_shared_and_private(&store);
-    store.ok("store.games.clearAccountData", vec![json!("Alice")]);
+    store
+        .write(|c| games::clear_account_data(c.db, "Alice"))
+        .expect("clearAccountData");
     assert_eq!(kept(&store), others());
     assert_eq!(
         rows(&store, "SELECT account FROM usage WHERE account = 'alice'").len(),
         1
     );
     assert_eq!(
-        store.ok("store.reviewStore.hasAccount", vec![json!("Alice")]),
+        store
+            .read(|c| reviews::has_account(c.db, "Alice"))
+            .expect("hasAccount"),
         json!(true)
     );
 }
@@ -568,23 +637,15 @@ fn clearing_data_deletes_it_too_but_keeps_the_account_and_its_usage_history() {
 #[test]
 fn keeps_the_newest_exported_games_and_every_other_cache_entry() {
     let store = fresh();
-    store.ok(
-        "store.games.writeApiCache",
-        vec![
-            json!("alice:profile"),
-            json!({ "username": "Alice" }),
-            json!(true),
-        ],
-    );
+    store
+        .write(|c| games::write_api_cache(c.db, "alice:profile", &json!({ "username": "Alice" })))
+        .expect("writeApiCache");
     for n in 0..205 {
-        store.ok(
-            "store.games.writeApiCache",
-            vec![
-                json!(format!("exportGame:g{n:04}")),
-                json!("1. e4 *"),
-                json!(true),
-            ],
-        );
+        store
+            .write(|c| {
+                games::write_api_cache(c.db, &format!("exportGame:g{n:04}"), &json!("1. e4 *"))
+            })
+            .expect("writeApiCache");
     }
     let kept = rows(
         &store,
@@ -606,23 +667,6 @@ fn keeps_the_newest_exported_games_and_every_other_cache_entry() {
 }
 
 #[test]
-fn no_profile_data_is_cached_once_its_login_has_ended() {
-    let store = fresh();
-    store.ok(
-        "store.games.writeApiCache",
-        vec![
-            json!("alice:profile"),
-            json!({ "username": "Alice" }),
-            json!(false),
-        ],
-    );
-    assert_eq!(
-        rows(&store, "SELECT key FROM api_cache"),
-        Vec::<Value>::new()
-    );
-}
-
-#[test]
 fn with_os_encryption_a_login_and_its_account_are_stored_together_or_neither_after_a_logout() {
     let mut store = fresh();
     store.secrets = Secrets::ON;
@@ -636,7 +680,9 @@ fn with_os_encryption_a_login_and_its_account_are_stored_together_or_neither_aft
         Vec::<Value>::new()
     );
     assert_eq!(
-        store.ok("store.reviewStore.hasAccount", vec![json!("Carol")]),
+        store
+            .read(|c| reviews::has_account(c.db, "Carol"))
+            .expect("hasAccount"),
         json!(false)
     );
     let data = store.save_login("Carol", "lip_carol", true).expect("login");
@@ -660,19 +706,13 @@ fn with_os_encryption_a_login_and_its_account_are_stored_together_or_neither_aft
 #[test]
 fn a_legacy_token_that_cannot_be_stored_disconnects_its_account_but_keeps_its_games() {
     // The migration's fallback when re-encrypting a token fails; a logout here deleted the
-    // imported games, and with a NULL account name every account's.
+    // imported games. A token with no account name disconnects nothing (`facade::migrate`).
     let store = fresh();
     save_page(&store, "Alice", &[library_game("Private1", &[])]);
     store.exec("INSERT INTO tokens (username, encrypted) VALUES ('Alice', 'x')");
-    assert_eq!(
-        store.ok("store.games.disconnectAccount", vec![Value::Null]),
-        Value::Null
-    );
-    assert_eq!(
-        page(&store, json!({ "offset": 0, "limit": 20 }))["total"],
-        json!(1)
-    );
-    store.ok("store.games.disconnectAccount", vec![json!("aLiCe")]);
+    store
+        .write(|c| games::disconnect_account(c.db, "aLiCe"))
+        .expect("disconnectAccount");
     assert_eq!(
         page(&store, json!({ "offset": 0, "limit": 20 }))["total"],
         json!(1)
@@ -684,17 +724,10 @@ fn a_legacy_token_that_cannot_be_stored_disconnects_its_account_but_keeps_its_ga
     assert_eq!(store.rows("SELECT * FROM tokens"), Vec::<Value>::new());
 }
 
-/// A storage call straight to the database. `Store::call` runs the one-time import first, which
-/// clears the cache on every call; the app imports once, so cache tests must skip it.
-fn direct(store: &Store, method: &str, args: Vec<Value>) -> Value {
-    store
-        .db
-        .call(method, &args)
-        .unwrap_or_else(|cause| panic!("{method} failed: {cause}"))
-}
-
 fn overview(store: &Store) -> Value {
-    direct(store, "store.games.gameLibraryOverview", vec![])
+    store
+        .read_direct(games::game_library_overview)
+        .expect("gameLibraryOverview")
 }
 
 #[test]
@@ -708,23 +741,28 @@ fn filtered_page_totals_are_cached_until_the_games_change() {
     save_games(&store, "Alice", &[win("Win1"), loss], SYNCED_AT);
 
     let query = json!({ "account": "Alice", "result": "win", "offset": 0, "limit": 10 });
-    let total =
-        |store: &Store| direct(store, "store.games.gamePage", vec![query.clone()])["total"].clone();
+    let total = |store: &Store| {
+        store
+            .read_direct(|c| games::game_page(c, query.clone()))
+            .expect("gamePage")["total"]
+            .clone()
+    };
     assert_eq!(total(&store), json!(1));
     // A second connection's write is not one the core makes, so the total is served from the cache.
     store.exec("UPDATE games SET winner = 'white' WHERE id = 'Loss1'");
     assert_eq!(total(&store), json!(1));
     // A write through the core clears it.
-    direct(
-        &store,
-        "store.games.saveGames",
-        vec![
-            json!("Alice"),
-            json!([win("Win2")]),
-            json!(SYNCED_AT + 1),
-            json!(true),
-        ],
-    );
+    store
+        .write_direct(|c| {
+            games::save_games(
+                c.host,
+                c.db,
+                "Alice",
+                list(&json!([win("Win2")])),
+                Some(SYNCED_AT + 1),
+            )
+        })
+        .expect("saveGames");
     assert_eq!(total(&store), json!(3));
 }
 
@@ -740,23 +778,22 @@ fn library_overview_is_cached_until_the_games_change() {
     assert_eq!(overview(&store)["byAccount"]["alice"]["total"], json!(1));
     store.exec("DELETE FROM games WHERE id = 'Overview1'");
     assert_eq!(overview(&store)["byAccount"]["alice"]["total"], json!(1));
-    direct(
-        &store,
-        "store.games.saveGames",
-        vec![
-            json!("Alice"),
-            json!([library_game("Overview2", &[])]),
-            json!(SYNCED_AT + 1),
-            json!(true),
-        ],
-    );
+    store
+        .write_direct(|c| {
+            games::save_games(
+                c.host,
+                c.db,
+                "Alice",
+                list(&json!([library_game("Overview2", &[])])),
+                Some(SYNCED_AT + 1),
+            )
+        })
+        .expect("saveGames");
     assert_eq!(overview(&store)["byAccount"]["alice"]["total"], json!(1));
     assert_eq!(
-        direct(
-            &store,
-            "store.games.gamePage",
-            vec![json!({ "offset": 0, "limit": 10 })]
-        )["total"],
+        store
+            .read_direct(|c| games::game_page(c, json!({ "offset": 0, "limit": 10 })))
+            .expect("gamePage")["total"],
         json!(1)
     );
 }
@@ -777,11 +814,9 @@ fn library_overview_is_recomputed_after_a_login_connects_an_account() {
     assert!(overview(&store)["versus"].get("alice").is_none());
 
     // A login only touches `accounts` and `tokens`; the cached overview must not survive it.
-    direct(
-        &store,
-        "store.games.saveTokenCiphertext",
-        vec![json!("Bob"), json!("ciphertext")],
-    );
+    store
+        .write_direct(|c| games::save_login(c.db, "Bob", "ciphertext"))
+        .expect("saveTokenCiphertext");
     assert_eq!(overview(&store)["versus"]["alice"]["total"], json!(1));
 }
 

@@ -405,4 +405,33 @@ mod tests {
         cache.write("opening:fen", &saved).await.expect("write");
         assert_eq!(cache.read("opening:fen").await.expect("read"), Some(saved));
     }
+
+    /// A sync's writes check that the sync still runs once the database admits them, so a logout
+    /// while they waited their turn leaves nothing behind.
+    #[tokio::test]
+    async fn a_sync_write_admitted_after_its_sync_was_cancelled_is_refused() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let database = Arc::new(Database::new(
+            Config::new(dir.path().to_path_buf()),
+            Arc::new(Quiet),
+        ));
+        database
+            .write(|ctx| games::add_account(ctx.db, "Alice", true))
+            .expect("account");
+        let store = DbLichessStore::new(Arc::clone(&database));
+        let cancelled = || false;
+        let refused = store
+            .save_games_page("Alice", &[], &[json!({ "key": "k" })], &cancelled)
+            .await
+            .expect_err("cancelled");
+        assert_eq!(refused.message, "Sync was cancelled.");
+        let refused = store
+            .save_games_cursor("Alice", 1, &cancelled)
+            .await
+            .expect_err("cancelled");
+        assert_eq!(refused.message, "Sync was cancelled.");
+        let accounts = store.accounts().await.expect("accounts");
+        assert_eq!(accounts[0].last_synced_at, None);
+        database.close_async().await;
+    }
 }
