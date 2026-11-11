@@ -324,7 +324,6 @@ fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
             // Each group of moved rules dispatches its own methods.
             let moved = [
                 crate::voice::call,
-                crate::training::call,
                 crate::records::call,
                 crate::misc::call,
                 crate::games::call,

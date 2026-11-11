@@ -3,13 +3,12 @@
 //! (the first on a tie, like Lichess), and the names form the family tree the openings page browses.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use shakmaty::Position;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use super::{Out, js_slice_end, to_value, value_arg};
-use crate::{js, position, rules};
+use super::js_slice_end;
+use crate::{position, rules};
 
 const OPENINGS_JSON: &str = include_str!("../../data/openings.json");
 use crate::rules::INITIAL_FEN as START;
@@ -391,40 +390,6 @@ pub fn opening_replies(moves: &[ExplorerMove], yours: bool) -> Vec<String> {
         picked.push(entry.uci.clone());
     }
     picked
-}
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "openingAt" => opening_at_call(args),
-        "openingTree" => to_value(opening_tree()),
-        "openingReplies" => opening_replies_call(args),
-        "openingKey" => {
-            super::text_arg(args, 0, "name").and_then(|name| to_value(opening_key(name)))
-        }
-        _ => return None,
-    };
-    Some(result)
-}
-
-fn opening_at_call(args: &[Value]) -> Out {
-    let setup: Value = value_arg(args, 0, "setup")?;
-    let variant = setup.get("variant").and_then(Value::as_str).unwrap_or("");
-    let fen = setup.get("fen").and_then(Value::as_str).unwrap_or("");
-    let moves: Vec<String> = value_arg(args, 1, "moves")?;
-    // `ply` defaults to the number of moves; a non-finite one arrives as its text.
-    let ply = match args.get(2).filter(|v| !v.is_null()) {
-        Some(_) => js::to_number(args.get(2)),
-        None => moves.len() as f64,
-    };
-    to_value(opening_at(variant, fen, &moves, ply))
-}
-
-fn opening_replies_call(args: &[Value]) -> Out {
-    let moves: Vec<ExplorerMove> = value_arg(args, 0, "moves")?;
-    let yours = super::arg(args, 1)
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    to_value(opening_replies(&moves, yours))
 }
 
 #[cfg(test)]
