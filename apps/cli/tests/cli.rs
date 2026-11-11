@@ -379,6 +379,24 @@ fn is_cargo_test_var(key: &str) -> bool {
         )
 }
 
+/// What `child` printed once it finished, which it must within `limit`: a command that never
+/// ends is stopped and fails its test there, rather than hang it.
+#[cfg(unix)]
+fn finished_within(child: std::process::Child, limit: std::time::Duration) -> Output {
+    let pid = child.id().to_string();
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(child.wait_with_output());
+    });
+    match finished.recv_timeout(limit) {
+        Ok(output) => output.expect("kchess-cli finishes"),
+        Err(_) => {
+            let _ = Command::new("kill").args(["-KILL", &pid]).status();
+            panic!("kchess-cli did not finish within {limit:?}");
+        }
+    }
+}
+
 /// The scripted engine (`kchess-fake-uci`, built first) as the copy `engine-quick`: its
 /// streaming `search` mode, with every timed search cut to a few milliseconds.
 #[cfg(unix)]
@@ -567,7 +585,7 @@ fn a_computer_game_is_played_saved_and_resumed() {
             .expect("stdin")
             .write_all(input.as_bytes())
             .expect("input");
-        let output = child.wait_with_output().expect("kchess-cli finishes");
+        let output = finished_within(child, std::time::Duration::from_secs(10));
         let states: Vec<Value> = String::from_utf8_lossy(&output.stdout)
             .lines()
             .filter_map(|line| serde_json::from_str(line).ok())
@@ -1075,7 +1093,7 @@ fn a_resumed_clock_runs_out() {
     });
     let mut states = Vec::new();
     loop {
-        let Ok(line) = states_shown.recv_timeout(std::time::Duration::from_secs(30)) else {
+        let Ok(line) = states_shown.recv_timeout(std::time::Duration::from_secs(10)) else {
             let _ = child.kill();
             panic!("the clock did not run out: {states:?}");
         };
