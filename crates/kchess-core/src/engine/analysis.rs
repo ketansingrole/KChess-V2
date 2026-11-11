@@ -22,9 +22,10 @@ use super::status::{
     EngineStatus, engine_identity, engine_status, fairy_variant, variant_engine_status,
 };
 use super::uci::{UciController, error_summary, lock, signal_aborted, truncate_for_log};
-use super::{EngineContext, after, clear_timer, domain, parse_info, replace_timer, validate};
+use super::{EngineContext, after, clear_timer, replace_timer, validated};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use kchess_domain::misc::{validate, value::J};
 use kchess_domain::training::uci_info::parse_info;
 
 /// The event analysis updates are delivered as (`engine:analysis`).
@@ -415,8 +416,7 @@ impl AnalysisEngine {
     }
 
     fn reserve(&self, raw: Value) -> Result<PendingAnalysis> {
-        let request: Request = serde_json::from_value(validate("assertAnalysisRequest", &raw)?)
-            .map_err(|cause| CoreError::new(cause.to_string()))?;
+        let request: Request = validated(validate::assert_analysis_request(J::from(&raw)))?;
         let (id, token, prev, done) = {
             let mut state = lock(&self.shared.state);
             state.next_id += 1;

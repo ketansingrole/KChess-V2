@@ -16,7 +16,6 @@ use serde_json::{Value, json};
 use shakmaty::Color;
 
 use crate::assets::icon;
-use crate::game::rules;
 use crate::pages::Page;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::{PlayedGames, PlayedHandle};

@@ -52,7 +52,7 @@ use crate::game::tree::{
     TreeNode, analysis_context, child_path, comment_text, format_eval, move_glyph, move_number,
     moves_of, path_of, pv_san,
 };
-use crate::game::{STANDARD_FEN, rules, view};
+use crate::game::{STANDARD_FEN, view};
 use crate::online::OnlineHandle;
 use crate::pages::study_bar::{STUDY_BAR, StudyBar};
 use crate::part::Part;

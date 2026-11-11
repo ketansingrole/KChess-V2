@@ -8,8 +8,6 @@ use serde_json::{Map, Value, json};
 
 use kchess_domain::trainer::analysis_tree::{self, Score};
 
-use super::rules;
-
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TreeNode {
@@ -29,13 +27,6 @@ pub struct TreeNode {
     pub starting_comments: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nags: Option<Vec<i64>>,
-}
-
-fn text(method: &str, args: &[Value]) -> String {
-    rules(method, args)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_string))
-        .unwrap_or_default()
 }
 
 pub use analysis_tree::{comment_text, moves_of, path_of};

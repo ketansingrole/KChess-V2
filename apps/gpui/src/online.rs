@@ -11,13 +11,12 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use kchess_contracts::Level;
+use kchess_domain::online_game;
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use kchess_domain::training::clock::{ClockState, SetData, format_clock};
-use kchess_domain::online_game;
 use serde_json::{Value, json};
 
 use crate::core::{AppCore, CoreEvent};
-use crate::game::rules;
 
 /// Clocks and the low-time alert are read this often during a game.
 const TICK: Duration = Duration::from_millis(250);

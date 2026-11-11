@@ -95,11 +95,10 @@ fn ended(pos: &VariantPosition) -> bool {
 
 /// Threefold repetition or the fifty-move rule over `moves` from `pos`, reading each move
 /// trimmed when `trim`; the count stops at the first move that is not legal.
-fn repetition(mut pos: VariantPosition, moves: &[&str], trim: bool) -> Option<&'static str> {
+fn repetition(mut pos: VariantPosition, moves: &[&str]) -> Option<&'static str> {
     let mut seen: HashMap<String, u32> = HashMap::new();
     seen.insert(rules::repetition_key(&rules::make_fen(&pos)).to_string(), 1);
     for &uci in moves {
-        let uci = if trim { js::trim(uci) } else { uci };
         let Some(m) = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u)) else {
             break;
         };
@@ -115,16 +114,8 @@ fn repetition(mut pos: VariantPosition, moves: &[&str], trim: bool) -> Option<&'
     (!ended(&pos) && pos.halfmoves() >= 100).then_some("Fifty-move rule")
 }
 
-/// Repetition or the fifty-move rule reached by UCI `moves` from the standard start.
-pub fn draw_reason(moves: &[&str]) -> Option<&'static str> {
-    repetition(
-        rules::default_position(shakmaty::variant::Variant::Chess),
-        moves,
-        true,
-    )
-}
-
-/// The same from a setup, for the variants where those rules apply.
+/// Repetition or the fifty-move rule reached by UCI `moves` from a setup, for the variants where
+/// those rules apply.
 pub fn setup_draw_reason(variant: &str, fen: &str, moves: &[&str]) -> Option<&'static str> {
     let replayed = replay::replay_setup(variant, fen, moves)?;
     if ![
@@ -141,7 +132,7 @@ pub fn setup_draw_reason(variant: &str, fen: &str, moves: &[&str]) -> Option<&'s
     let start = rules::setup_start(variant, fen)?;
     // Replayed moves are read as given, so a padded move ends the count there.
     let played: Vec<&str> = replayed.played.iter().map(|m| m.uci.as_str()).collect();
-    repetition(start, &played, false)
+    repetition(start, &played)
 }
 
 /// Whether a Lichess game's `status` is live: none, or a game started (`created` is before its

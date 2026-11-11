@@ -8,13 +8,11 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_domain::training::clock::format_clock;
-use serde_json::{Value, json};
 
 use super::AnalysisPage;
 use crate::assets::icon;
 use kchess_domain::trainer::analysis_tree;
 
-use crate::game::rules;
 use crate::game::tree::{comment_text, move_number};
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::KeyboardFocus as _;
@@ -29,13 +27,6 @@ pub const MOVE_GLYPHS: [(i64, &str, &str); 6] = [
     (5, "!?", "Interesting move"),
     (6, "?!", "Dubious move"),
 ];
-
-fn text(method: &str, args: &[Value]) -> String {
-    rules(method, args)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_string))
-        .unwrap_or_default()
-}
 
 /// The NAGs with `nag` as the move's annotation (or none); `None` when nothing is left.
 pub(super) fn with_glyph(nags: Option<&[i64]>, nag: Option<i64>) -> Option<Vec<i64>> {

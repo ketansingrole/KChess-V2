@@ -20,7 +20,7 @@ use shakmaty::{ByColor, ByRole, Color, Piece, RemainingChecks, Role};
 use crate::assets::icon;
 use crate::board::looks;
 use crate::board::{BoardEvent, BoardState, ChessBoard, EditTool, PieceGhost, SparePiece};
-use crate::game::{STANDARD_FEN, editor_setup, position_problem, rules, standard_rules, variants};
+use crate::game::{STANDARD_FEN, editor_setup, position_problem, standard_rules, variants};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii, tint};

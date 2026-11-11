@@ -13,7 +13,6 @@ mod support;
 
 mod chesscom_sync;
 mod core_startup;
-mod domain_dispatch;
 mod engine_admission;
 mod engine_analysis;
 mod engine_options;

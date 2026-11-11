@@ -18,7 +18,7 @@ use super::{WatchPage, label, live_badge};
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
-use crate::game::{rules, view};
+use crate::game::view;
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, panel_style};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};

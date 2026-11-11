@@ -30,6 +30,7 @@ use super::uci::{
 use super::{EngineContext, after, clear_timer, js_number, now_ms, random_unit, replace_timer};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use kchess_domain::misc::{validate, value::J};
 
 /// The message a superseded search rejects with (`SUPERSEDED`).
 pub const SUPERSEDED: &str = "Engine search superseded.";
@@ -355,16 +356,14 @@ impl Search {
 /// Validates the untrusted arguments the way `bestMove` does, then checks the moves reach a
 /// position.
 fn prepare(moves: Value, options: Value, level: &str, configured: &str) -> Result<Request> {
-    let moves: Vec<String> = serde_json::from_value(super::domain_client::assert_moves(&moves)?)
-        .map_err(|cause| CoreError::wrap("Invalid moves for the engine search", cause))?;
+    let moves: Vec<String> = validate::assert_moves(J::from(&moves)).map_err(CoreError::new)?;
     let options = if options.is_null() {
         json!({})
     } else {
         options
     };
     let options: MoveOptions =
-        serde_json::from_value(super::domain_client::assert_best_move_options(&options)?)
-            .map_err(|cause| CoreError::new(cause.to_string()))?;
+        super::validated(validate::assert_best_move_options(J::from(&options)))?;
     let start = options.fen.as_deref().unwrap_or(INITIAL_FEN);
     let invalid = || CoreError::new("Invalid computer position or move history.");
     let variant = options.variant.as_deref().and_then(fairy_variant);

@@ -9,7 +9,6 @@ use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::types::{Appearance, CoordinateMode, Settings};
-use serde_json::json;
 
 use crate::assets::icon;
 use crate::online::Phase;

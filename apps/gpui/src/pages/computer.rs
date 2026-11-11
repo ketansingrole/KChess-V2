@@ -26,7 +26,6 @@ use crate::core::AppCore;
 use crate::export::{Exporter, GameExport};
 use crate::game::computer::{ComputerGame, Effect, Host, SearchRequest};
 use crate::game::history::HistoryPlace;
-use crate::game::rules;
 use crate::pages::computer_options::{Chosen, Current, GameOptions};
 use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
 use crate::settings::SettingsHandle;

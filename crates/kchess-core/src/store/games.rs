@@ -21,6 +21,7 @@ use super::StoreContext;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::calendar::civil_from_days;
+use kchess_domain::misc::{validate, value::J};
 
 /// Games kept per account.
 pub const MAX_GAMES: i64 = 5000;
@@ -459,17 +460,6 @@ pub(super) fn now_ms() -> i64 {
         })
 }
 
-/// A validator or domain rule from `kchess-domain`, by its TypeScript name.
-fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
-    crate::engine::domain(method, args)
-}
-
-/// A `kchess_domain` `assert*` validator of one JSON value.
-fn validate(method: &str, value: &Value) -> Result<Value> {
-    kchess_domain::misc::validate_values(method, std::slice::from_ref(value))
-        .map_err(CoreError::new)
-}
-
 /// Runs `work` inside `BEGIN IMMEDIATE`, committing on success and rolling back on any failure.
 pub(super) fn transaction<T>(
     host: &dyn Host,
@@ -806,8 +796,8 @@ fn game_from_row(row: &Row<'_>) -> rusqlite::Result<LichessGame> {
 /// `gamePage`: a bounded page of list rows, with the total for the same filters.
 fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
     let db = ctx.db;
-    let query: GamePageQuery = serde_json::from_value(validate("assertGamePageQuery", &input)?)
-        .map_err(|cause| CoreError::new(cause.to_string()))?;
+    let query: GamePageQuery =
+        crate::engine::validated(validate::assert_game_page_query(J::from(&input)))?;
     let mut clauses: Vec<String> = Vec::new();
     let mut params: Vec<SqlValue> = Vec::new();
     if let Some(account) = query
@@ -1076,8 +1066,8 @@ fn write_api_cache(
 }
 
 fn add_account(db: &Connection, username: &str, connected: bool) -> Result<Value> {
-    let normalized: String = serde_json::from_value(validate("assertUsername", &json!(username))?)
-        .map_err(|cause| CoreError::new(cause.to_string()))?;
+    let normalized =
+        validate::assert_username(J::Str(username.to_owned())).map_err(CoreError::new)?;
     let existing = db
         .query_row(
             "SELECT username, connected FROM accounts WHERE username = ? COLLATE NOCASE",
@@ -1117,8 +1107,7 @@ fn add_account(db: &Connection, username: &str, connected: bool) -> Result<Value
 fn add_friends(host: &dyn Host, db: &Connection, usernames: &[Value]) -> Result<AppData> {
     transaction(host, db, || {
         for raw in usernames {
-            let name: String = serde_json::from_value(validate("assertUsername", raw)?)
-                .map_err(|cause| CoreError::new(cause.to_string()))?;
+            let name = validate::assert_username(J::from(raw)).map_err(CoreError::new)?;
             let exists = db
                 .query_row(
                     "SELECT 1 FROM accounts WHERE username = ? COLLATE NOCASE",

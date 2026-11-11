@@ -4313,7 +4313,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "shakmaty",
- "thiserror 2.0.21",
 ]
 
 [[package]]

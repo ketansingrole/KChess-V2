@@ -22,7 +22,6 @@ use shakmaty::Color;
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::puzzle::{PuzzleSession, Step, Transition, local_day, transitions};
-use crate::game::rules;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::puzzle_db::PuzzleDbHandle;

@@ -17,7 +17,6 @@ use shakmaty::Color;
 use super::{AnalysisPage, TOOL, stop_analysis};
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::rules;
 use crate::game::tree::{moves_of, path_of};
 use crate::reviews::ReviewHandle;
 use crate::theme::{Palette, judgment_color, radii};

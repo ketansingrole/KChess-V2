@@ -21,6 +21,7 @@ const RETIRED: &[&str] = &[
     "RANKS",
     "START_SETUP",
     "computerDispose",
+    "drawReason",
     "gameResult",
     "hasScore",
     "materialBalance",
@@ -142,6 +143,6 @@ fn check_the_corpus() {
         out.finish().unwrap();
         return;
     }
-    assert!(cases > 20_000, "the corpus checks {cases} cases");
+    assert_eq!(cases, 30_232, "the corpus checks {cases} cases");
     assert!(differ.is_empty(), "answers changed:\n{}", differ.join("\n"));
 }

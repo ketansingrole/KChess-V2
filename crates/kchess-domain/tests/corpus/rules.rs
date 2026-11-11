@@ -136,7 +136,6 @@ fn answer(method: &str, args: &[Value]) -> Result<Option<Value>, String> {
                 &headers,
             ))
         }
-        "drawReason" => to_value(records::games::draw_reason(&texts(args, 0, "moves")?))?,
         "setupDrawReason" => {
             let (variant, fen) = setup(args, 0)?;
             to_value(records::games::setup_draw_reason(

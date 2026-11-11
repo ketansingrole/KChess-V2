@@ -780,7 +780,7 @@ pub(super) fn assert_puzzle_progress_query(value: J) -> Checked<PuzzleProgressQu
 
 #[derive(Deserialize, Serialize, Default)]
 #[serde(expecting = "an object")]
-pub(super) struct BestMoveOptions {
+pub struct BestMoveOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     fen: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -791,7 +791,7 @@ pub(super) struct BestMoveOptions {
     variant: Option<String>,
 }
 
-pub(super) fn assert_best_move_options(value: J) -> Checked<BestMoveOptions> {
+pub fn assert_best_move_options(value: J) -> Checked<BestMoveOptions> {
     if matches!(value, J::Undef) {
         return Ok(BestMoveOptions::default());
     }
@@ -832,8 +832,8 @@ pub(super) fn assert_best_move_options(value: J) -> Checked<BestMoveOptions> {
 #[derive(Deserialize, Serialize)]
 #[serde(expecting = "an object")]
 #[serde(rename_all = "camelCase")]
-pub(super) struct AnalysisRequest {
-    fen: String,
+pub struct AnalysisRequest {
+    pub fen: String,
     lines: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     infinite: Option<bool>,
@@ -870,7 +870,7 @@ pub(super) fn variant_analysis_position(request: &AnalysisRequest, variant: &str
 }
 
 /// `assertAnalysisRequest`: the request's shape, and a position its moves reach.
-pub(super) fn assert_analysis_request(value: J) -> Checked<AnalysisRequest> {
+pub fn assert_analysis_request(value: J) -> Checked<AnalysisRequest> {
     let request: AnalysisRequest = decode(value, |keys| match keys {
         [] | ["infinite"] => Some("Invalid engine options."),
         ["fen"] => Some("Invalid position."),
@@ -1069,7 +1069,7 @@ pub(super) fn assert_voice_update(value: J) -> Checked<VoiceUpdate> {
 
 #[derive(Deserialize, Serialize)]
 #[serde(expecting = "an object")]
-pub(super) struct GamePageQuery {
+pub struct GamePageQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     account: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1093,7 +1093,7 @@ pub(super) enum GameResult {
 
 pub(super) const GAME_SEARCH: &str = "Invalid game search.";
 
-pub(super) fn assert_game_page_query(value: J) -> Checked<GamePageQuery> {
+pub fn assert_game_page_query(value: J) -> Checked<GamePageQuery> {
     let mut query: GamePageQuery = decode(value, |keys| match keys {
         ["account"] => Some(USERNAME),
         ["offset"] => Some("Invalid game offset."),
@@ -1160,7 +1160,7 @@ pub(super) fn assert_study_sync_request(value: J) -> Checked<StudySyncRequest> {
 
 #[derive(Deserialize, Serialize, Default)]
 #[serde(expecting = "an object")]
-pub(super) struct LookupOptions {
+pub struct LookupOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     speeds: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1191,7 +1191,7 @@ pub(super) enum GameMode {
     Casual,
 }
 
-pub(super) fn assert_lookup_options(value: J) -> Checked<LookupOptions> {
+pub fn assert_lookup_options(value: J) -> Checked<LookupOptions> {
     if matches!(value, J::Undef) {
         return Ok(LookupOptions::default());
     }

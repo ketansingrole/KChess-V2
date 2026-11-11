@@ -8,7 +8,6 @@ pub mod computer;
 pub mod local;
 pub mod puzzle;
 
-use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 /// A random number in [0, 1), like `Math.random()`, for the rules that draw from them.
@@ -24,38 +23,6 @@ pub fn whole(value: &Value) -> u64 {
         .as_u64()
         .or_else(|| value.as_f64().filter(|n| *n >= 0.).map(|n| n as u64))
         .unwrap_or_default()
-}
-
-/// A rules method by name (`kchess_domain::api::call`), with its JSON answer.
-pub fn rules(method: &str, args: &[Value]) -> Result<Value, String> {
-    // `call_value` answers as `call` does without writing the arguments out and reading the answer
-    // back, and takes trees and deep arguments to the large stack itself.
-    kchess_domain::api::call_value(method, args)
-}
-
-/// A rules method's answer read straight into `T`. A deep answer (a game tree nests once a ply,
-/// some 2,000 levels at the 1024-ply limit) is called, parsed and read on the domain's large
-/// stack, so no deep intermediate `Value` is walked or dropped on the caller's thread: a crafted
-/// 800-ply PGN overflowed a 1 MiB thread (Windows' main thread) doing that.
-pub fn rules_as<T: DeserializeOwned + Send>(method: &str, args: &[Value]) -> Result<T, String> {
-    if !kchess_domain::api::needs_large_stack(method, args) {
-        let value = kchess_domain::api::call_value(method, args)?;
-        return serde_json::from_value(value)
-            .map_err(|e| format!("{method} answered something unreadable: {e}"));
-    }
-    let call = Value::Array(args.to_vec()).to_string();
-    kchess_domain::api::on_large_stack(|| {
-        let text = kchess_domain::api::call(method, &call)?;
-        // Past JSON's usual limit of 128 once a tree runs some 64 plies; `call` bounds the depth.
-        let mut reader = serde_json::Deserializer::from_str(&text);
-        reader.disable_recursion_limit();
-        let answer = T::deserialize(&mut reader)
-            .map_err(|e| format!("{method} answered something unreadable: {e}"))?;
-        reader
-            .end()
-            .map_err(|e| format!("{method} answered something unreadable: {e}"))?;
-        Ok(answer)
-    })
 }
 
 /// A session transition (`kchess_domain::games`): its inputs followed by the host reads supplied
@@ -139,18 +106,11 @@ mod tests {
     }
 
     #[test]
-    fn whole_reads_integers_and_whole_floats() {
+    fn whole_reads_integers_and_floats_alike() {
         assert_eq!(whole(&json!(2)), 2);
         assert_eq!(whole(&json!(2.0)), 2);
         assert_eq!(whole(&json!(0.0)), 0);
         assert_eq!(whole(&json!(-3.0)), 0);
-        assert_eq!(whole(&json!("2")), 0);
-    }
-
-    #[test]
-    fn whole_reads_integers_and_floats_alike() {
-        assert_eq!(whole(&json!(2)), 2);
-        assert_eq!(whole(&json!(2.0)), 2);
         assert_eq!(whole(&json!(-1)), 0);
         assert_eq!(whole(&json!("2")), 0);
         assert_eq!(whole(&Value::Null), 0);
@@ -162,11 +122,6 @@ mod tests {
             let n = random_unit();
             assert!((0. ..1.).contains(&n), "{n}");
         }
-    }
-
-    #[test]
-    fn an_unknown_rules_method_is_an_error() {
-        assert!(rules("noSuchMethod", &[]).is_err());
     }
 
     #[test]

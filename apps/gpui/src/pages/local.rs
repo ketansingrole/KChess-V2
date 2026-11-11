@@ -27,7 +27,7 @@ use crate::core::AppCore;
 use crate::export::{Exporter, GameExport};
 use crate::game::history::HistoryPlace;
 use crate::game::local::{Flagged, LocalGame};
-use crate::game::{STANDARD_FEN, chess960, position_problem, rules, view};
+use crate::game::{STANDARD_FEN, chess960, position_problem, view};
 use crate::part::Part;
 use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout, panel_style};
 use crate::settings::{SettingsChanged, SettingsHandle};

@@ -16,7 +16,7 @@ pub use kchess_domain::links::{
     BroadcastLink, GameLink, broadcast_link, game_link, is_username, pgn_orientation, profile_link,
     study_link,
 };
-pub use kchess_games::{archive, computer, local, random_unit, rules, whole};
+pub use kchess_games::{archive, computer, local, random_unit, whole};
 
 /// A `{ variant, fen }` setup's UCI moves as PGN, as far as they are legal, after `headers` (a
 /// JSON object of strings). `None` when the setup or a header is not one.
