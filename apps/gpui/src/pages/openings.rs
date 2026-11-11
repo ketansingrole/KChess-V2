@@ -24,7 +24,7 @@ use crate::board::{BoardEvent, BoardState, ChessBoard};
 use crate::chart::{ChartPoint, LineChart};
 use crate::core::AppCore;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
-use crate::game::{STANDARD_FEN, rules, view};
+use crate::game::{STANDARD_FEN, view};
 use crate::pages::Page;
 use crate::play_layout::{
     Measured, PAGE_BOTTOM, PAGE_TOP, PANEL_MAX, PANEL_MIN, PlayLayout, side_padding,
@@ -109,19 +109,13 @@ fn line_of(moves: &[String]) -> Vec<(String, String, String)> {
 
 /// `openingAt`: the name and code of the line.
 fn opening_at(moves: &[String]) -> Option<(String, String)> {
-    let named = rules(
-        "openingAt",
-        &[
-            json!({ "variant": "standard", "fen": STANDARD_FEN }),
-            json!(moves),
-            json!(moves.len()),
-        ],
-    )
-    .ok()?;
-    Some((
-        named["name"].as_str()?.to_string(),
-        named["eco"].as_str().unwrap_or_default().to_string(),
-    ))
+    let named = kchess_domain::training::openings::opening_at(
+        "standard",
+        STANDARD_FEN,
+        moves,
+        moves.len() as f64,
+    )?;
+    Some((named.name, named.eco))
 }
 
 fn entry(moves: &[String], name: Option<&str>) -> Option<Entry> {

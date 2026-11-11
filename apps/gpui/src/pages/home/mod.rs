@@ -14,7 +14,7 @@ use crate::assets::icon;
 use crate::board::ChessBoard;
 use crate::core::AppCore;
 use crate::game::computer::{ComputerGame, Host};
-use crate::game::{rules, view};
+use crate::game::view;
 use crate::pages::Page;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::PlayedHandle;
@@ -118,10 +118,7 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
         .get(5)
         .and_then(|number| number.parse::<usize>().ok())
         .unwrap_or(moves / 2 + 1);
-    let level = rules("engineLevelLabel", &[session["level"].clone()])
-        .ok()
-        .and_then(|label| label.as_str().map(str::to_string))
-        .unwrap_or_default();
+    let level = crate::game::engine_level_label(session["level"].as_str().unwrap_or_default());
     let (name, strength) = match level.rsplit_once(" · ") {
         Some((name, strength)) => (name, Some(strength.to_string())),
         None => (level.as_str(), None),

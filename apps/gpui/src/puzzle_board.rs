@@ -427,7 +427,7 @@ impl PuzzleBoard {
             self.decide(false, cx);
             if !self.retry {
                 if let Some(board) = &mut self.on_board {
-                    board.state["status"] = json!("failed");
+                    board.state.status = "failed".into();
                 }
                 cx.emit(PuzzleBoardEvent::Done);
             }

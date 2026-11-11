@@ -2,6 +2,7 @@
 //! under the move list (and shown in it), so annotating never means leaving the board. A game's
 //! clock times (`[%clk …]`) ride along in the comment unseen.
 
+use kchess_domain::training::clock::format_clock;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::input::{Textarea, TextareaState};
 use gpui_kit::component::{h_flex, v_flex};
@@ -145,7 +146,7 @@ impl AnalysisPage {
         let clock = rules("commentClock", &[json!(self.raw_comment())])
             .ok()
             .and_then(|seconds| seconds.as_f64())
-            .map(|seconds| text("formatClock", &[json!(seconds * 1000.)]));
+            .map(|seconds| format_clock(seconds * 1000.));
         let current = self.glyph_of(&self.path);
         let open = self.notes.editing || !self.shown_comment().is_empty();
         let glyphs = (!self.path.is_empty()).then(|| {

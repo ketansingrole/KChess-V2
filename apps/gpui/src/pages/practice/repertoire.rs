@@ -19,6 +19,7 @@ use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_domain::training::openings::{self, ExplorerMove};
 use kchess_domain::training::repetition;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -29,7 +30,7 @@ use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::tree::{TreeNode, child_path, comment_text};
-use crate::game::{STANDARD_FEN, random_unit, rules, view};
+use crate::game::{STANDARD_FEN, random_unit, view};
 use crate::pages::Page;
 use crate::pages::openings::OpeningChoice;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
@@ -560,24 +561,19 @@ impl Repertoire {
                         break;
                     }
                 };
-                let counts: Vec<Value> = moves
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|entry| {
-                        json!({
-                            "uci": entry["uci"],
-                            "white": entry["white"],
-                            "draws": entry["draws"],
-                            "black": entry["black"],
-                        })
-                    })
-                    .collect();
+                let counts = match serde_json::from_value::<Option<Vec<ExplorerMove>>>(moves) {
+                    Ok(counts) => counts.unwrap_or_default(),
+                    Err(cause) => {
+                        crate::log::write(
+                            Level::Warn,
+                            "repertoire",
+                            &format!("Explorer moves unreadable: {cause}"),
+                        );
+                        Vec::new()
+                    }
+                };
                 let yours = turn_of(&fen) == color;
-                let replies: Vec<String> = rules("openingReplies", &[json!(counts), json!(yours)])
-                    .ok()
-                    .and_then(|replies| serde_json::from_value(replies).ok())
-                    .unwrap_or_default();
+                let replies = openings::opening_replies(&counts, yours);
                 for uci in replies {
                     if let Some(child) = root.add_move(&path, &uci)
                         && depth + 1 < EXTRA_PLIES

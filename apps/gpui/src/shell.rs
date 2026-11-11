@@ -989,12 +989,7 @@ pub fn open_analysis_line(moves: Vec<String>, window: &mut Window, cx: &mut App)
 
 /// Puzzles from one opening (`startOpening`), by the key Lichess names its puzzles by.
 pub fn open_opening_puzzles(name: &str, window: &mut Window, cx: &mut App) {
-    let Some(key) = crate::game::rules("openingKey", &[serde_json::json!(name)])
-        .ok()
-        .and_then(|key| key.as_str().map(str::to_string))
-    else {
-        return;
-    };
+    let key = kchess_domain::training::openings::opening_key(name);
     PuzzlesPage::choose_opening(&key, name, cx);
     // A page made now starts with the opening; one made before is told.
     if let Some(puzzles) = view_of::<PuzzlesPage>(Page::Puzzles, cx) {

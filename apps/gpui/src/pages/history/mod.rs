@@ -80,12 +80,9 @@ pub(crate) fn opening_name(game: &Value) -> Option<String> {
     if game["setup"]["variant"].as_str().unwrap_or("standard") != "standard" {
         return None;
     }
-    let opening = rules("openingAt", &[game["setup"].clone(), game["moves"].clone()]).ok()?;
-    Some(format!(
-        "{} {}",
-        opening["eco"].as_str()?,
-        opening["name"].as_str()?
-    ))
+    let moves: Vec<String> = serde_json::from_value(game["moves"].clone()).ok()?;
+    let opening = crate::game::opening_at(&game["setup"], &moves, moves.len())?;
+    Some(format!("{} {}", opening.eco, opening.name))
 }
 
 /// What `archivedOutcome` and `archivedPlayerSide` read of a played game: the rules check every

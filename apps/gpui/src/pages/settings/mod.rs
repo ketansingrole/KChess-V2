@@ -10,6 +10,7 @@ pub mod updates;
 mod voice;
 mod voice_history;
 
+use kchess_domain::training::engine_levels;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -22,16 +23,15 @@ use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{Disableable as _, Icon, IndexPath, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::Level;
 use kchess_contracts::types::{
     AppTheme, Appearance, CoordinateMode, EngineLevel, EngineStatus, PieceAnimation, PromotionMode,
     Settings,
 };
-use serde::Deserialize;
 use shakmaty::{Color, Piece, Role};
 
 use crate::assets::icon;
 use crate::board::looks;
-use crate::game::rules;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
@@ -168,11 +168,16 @@ const OPTION_GAP: Pixels = px(8.);
 const NARROW: Pixels = px(640.);
 
 /// A rung of the engine ladder, as Settings lists it.
-#[derive(Deserialize)]
 struct Rung {
     id: EngineLevel,
     label: String,
     elo: Option<f64>,
+}
+
+/// A ladder level's id as Settings stores it.
+fn level_id(id: &str) -> Result<EngineLevel, String> {
+    serde_json::from_value(serde_json::Value::String(id.into()))
+        .map_err(|cause| format!("engine level {id}: {cause}"))
 }
 
 pub struct SettingsPage {
@@ -370,14 +375,29 @@ impl SettingsPage {
                 },
             ),
         ];
-        let ladder = rules("engineLadder", &[])
-            .ok()
-            .and_then(|ladder| serde_json::from_value(ladder).ok())
-            .unwrap_or_default();
-        let default_levels = rules("defaultEngineLevels", &[])
-            .ok()
-            .and_then(|levels| serde_json::from_value(levels).ok())
-            .unwrap_or_default();
+        let ladder = engine_levels::ladder()
+            .and_then(|ladder| {
+                ladder
+                    .iter()
+                    .map(|rung| {
+                        Ok(Rung {
+                            id: level_id(&rung.id)?,
+                            label: rung.label.clone(),
+                            elo: rung.elo,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|cause| {
+                crate::log::write(Level::Warn, "settings", &cause);
+                Vec::new()
+            });
+        let default_levels = engine_levels::default_levels()
+            .and_then(|levels| levels.iter().map(|id| level_id(id)).collect())
+            .unwrap_or_else(|cause| {
+                crate::log::write(Level::Warn, "settings", &cause);
+                Vec::new()
+            });
         SettingsPage {
             section: Section::Appearance,
             area: Measured::default(),

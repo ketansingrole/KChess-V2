@@ -1422,19 +1422,14 @@ impl AnalysisPage {
         if !shown || self.root.variant() != "standard" {
             return None;
         }
-        let opening = rules(
-            "openingAt",
-            &[
-                json!({ "variant": "standard", "fen": self.root.fen }),
-                json!(moves_of(&self.path)),
-            ],
-        )
-        .ok()?;
-        Some(format!(
-            "{} {}",
-            opening["eco"].as_str()?,
-            opening["name"].as_str()?
-        ))
+        let moves = moves_of(&self.path);
+        let opening = kchess_domain::training::openings::opening_at(
+            "standard",
+            &self.root.fen,
+            &moves,
+            moves.len() as f64,
+        )?;
+        Some(format!("{} {}", opening.eco, opening.name))
     }
 
     /// First, previous, next and last move, flip, import, and the rest in a menu.
