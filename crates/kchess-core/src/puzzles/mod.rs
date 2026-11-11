@@ -24,7 +24,6 @@ use crate::usage::Meter;
 use kchess_domain::puzzle::{Random, Sampler};
 use queries::{LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleDbStatus};
 
-pub const PUZZLE_DB_URL: &str = "https://database.lichess.org/lichess_db_puzzle.csv.zst";
 /// How long the puzzle database download may go without a byte before it fails.
 const DOWNLOAD_SILENCE: std::time::Duration = std::time::Duration::from_secs(60);
 /// The most the download may bring: the compressed database is some 300 MB (2026).

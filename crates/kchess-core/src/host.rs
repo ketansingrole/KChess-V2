@@ -102,13 +102,8 @@ pub struct TestVoiceModel {
 }
 
 impl TestSwitches {
-    /// The switches as this process's environment sets them (`crate::env`): `None` unless this
-    /// build honours them and `KCHESS_STORE_DEBUG=1`. A host reads them once, as it starts.
-    pub fn from_env() -> Option<TestSwitches> {
-        TestSwitches::from_vars(crate::dev_overrides(), crate::env::var)
-    }
-
-    /// `from_env` with the variables read through `var` (empty ones count as unset).
+    /// The switches the variables `var` reads set (empty ones count as unset): `None` unless
+    /// `honoured` and `KCHESS_STORE_DEBUG=1`.
     pub fn from_vars(honoured: bool, var: impl Fn(&str) -> Option<String>) -> Option<TestSwitches> {
         let var = |name: &str| var(name).filter(|value| !value.is_empty());
         if !honoured || var("KCHESS_STORE_DEBUG").as_deref() != Some("1") {

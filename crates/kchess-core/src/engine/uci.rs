@@ -238,10 +238,6 @@ impl UciController {
         self.inner.write(command)
     }
 
-    pub async fn sync(&self) -> Result<String> {
-        self.inner.sync().await
-    }
-
     /// Sends `command` and waits for the first line matching `matches`. `on_line` sees every
     /// line while the wait lasts. A `timeout` that elapses fails the whole engine.
     pub async fn command(
@@ -266,11 +262,6 @@ impl UciController {
         self.inner.search(command, on_line, timeout, cancel).await
     }
 
-    /// Asks the active search (if any) to stop, as cancelling its token does.
-    pub fn stop(&self) {
-        self.inner.stop();
-    }
-
     /// Fails the engine with `search_cancelled()`, terminates the process and forgets its options.
     pub fn close(&self) {
         self.inner.close();
@@ -285,11 +276,6 @@ impl UciController {
     /// once when anything changed. Order follows `options`.
     pub async fn ensure_options(&self, options: &[(&str, &str)]) -> Result<()> {
         self.inner.ensure_options(options).await
-    }
-
-    /// Forgets which options this process has confirmed; the next `ensure_options` resends them.
-    pub fn clear_engine_options(&self) {
-        self.inner.clear_engine_options();
     }
 }
 
@@ -531,13 +517,6 @@ impl Inner {
             return Err(search_cancelled());
         }
         Ok(line)
-    }
-
-    fn stop(&self) {
-        let token = lock(&self.state).stop.clone();
-        if let Some(token) = token {
-            token.cancel();
-        }
     }
 
     fn close(&self) {

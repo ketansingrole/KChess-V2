@@ -2,7 +2,6 @@
 //! name and its JSON payload (`docs/shared-core.md`, "Frames"). The payload's shape is the type
 //! each line names; it travels as JSON, as the core wrote it.
 
-use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 #[allow(unused_imports)]
@@ -86,11 +85,6 @@ core_events! {
 }
 
 impl CoreEvent {
-    /// The payload in its shape, `None` when it is not.
-    pub fn payload_as<T: DeserializeOwned>(&self) -> Option<T> {
-        serde_json::from_value(self.payload().clone()).ok()
-    }
-
     /// A progress update a slow client may miss: the next one carries the whole state.
     pub fn coalesced(&self) -> bool {
         matches!(
