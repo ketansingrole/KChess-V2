@@ -211,7 +211,9 @@ impl Spectator {
                     Some("The feed ended. Retry to reconnect."),
                 ),
                 Some(Err(cause)) => {
-                    let kind = cause.kind.unwrap_or(kchess_contracts::error::ErrorKind::Offline);
+                    let kind = cause
+                        .kind
+                        .unwrap_or(kchess_contracts::error::ErrorKind::Offline);
                     let message = said_or(cause, "The feed disconnected.");
                     inner.report_failure(session, &token, &message, kind);
                 }

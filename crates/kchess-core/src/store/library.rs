@@ -884,12 +884,18 @@ mod tests {
         )
         .expect_err("removed");
         assert_eq!(removed.message, super::super::studies::STALE_STUDY);
-        assert_eq!(removed.kind, Some(kchess_contracts::error::ErrorKind::Conflict));
+        assert_eq!(
+            removed.kind,
+            Some(kchess_contracts::error::ErrorKind::Conflict)
+        );
         check_based_on(&db, &save("1. d4 *"), "1. e4 *").expect("based on the current chapter");
         study_command(&db, &save("1. d4 *"), 1.0, true).expect("first window saves");
         let stale = check_based_on(&db, &save("1. e4 e5 *"), "1. e4 *").expect_err("second window");
         assert_eq!(stale.message, super::super::studies::STALE_STUDY);
-        assert_eq!(stale.kind, Some(kchess_contracts::error::ErrorKind::Conflict));
+        assert_eq!(
+            stale.kind,
+            Some(kchess_contracts::error::ErrorKind::Conflict)
+        );
         check_based_on(&db, &save("1. c4 *"), "1. d4 *").expect("after reloading");
         study_command(
             &db,
