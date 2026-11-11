@@ -27,9 +27,9 @@ The goal is to keep **exactly one core per profile** and let **any number of cli
   not an always-on OS service (installation, updates and uninstall on three platforms, and it would
   run when nobody uses KChess).
 - **The socket is internal.** Only clients shipped in the same KChess release connect to it. There
-  is no public extension API and no compatibility promise. Every method stays in
-  `CoreApi`/`CORE_METHODS` and the types stay generated from `kchess-contracts`, so a public subset
-  could be cut later without redesign.
+  is no public extension API and no compatibility promise. Every method stays in `CoreApi`
+  (`METHODS`) and its types in `kchess-contracts`, so a public subset could be cut later without
+  redesign.
 
 ## Overview
 
@@ -65,13 +65,12 @@ The goal is to keep **exactly one core per profile** and let **any number of cli
 
 - Everything `Core` owns today: the profile database, library, `puzzles.db`, settings, accounts and
   credentials, Lichess streams, engines (`EngineContext::lease`), reviews and voice recognition.
-- Host capabilities the service can answer itself: `onBattery` (the GPUI app already reads it
-  natively in `power.rs`).
-
 ### What stays in the apps
 
 - Windows, menus, the Dock, desktop notifications, the browser, the microphone permission prompt.
-- Host capabilities that need a window: `openExternal` and `focus`. See
+- Host capabilities that need a window: `focus` and the battery state (both
+  `Capability::Focus`; the app reads the battery in `power.rs`). Opening the browser
+  (`Capability::Browser`) is the app's and the CLI's. See
   [Routing host requests](#routing-host-requests).
 
 ## The socket
@@ -111,7 +110,8 @@ The goal is to keep **exactly one core per profile** and let **any number of cli
   frame. Library documents are already bounded (`store/library.rs`), so no reply comes close.
 - Messages:
   - `hello` (client to service): token, client kind (`gpui`, `cli`, `mcp`), release,
-    protocol hash, capabilities it can answer (`openExternal`, `focus`, `secrets`).
+    protocol hash, capabilities it can answer (`browser`, `focus`, `secrets`; `Capability` in
+    `kchess-contracts/src/host.rs`).
   - `welcome` / `refuse` (service): the connection id, or why not (see
     [Version check](#version-check)).
   - `call`: `{ id, method, args }`, exactly what `Core::call` takes today.
@@ -119,8 +119,8 @@ The goal is to keep **exactly one core per profile** and let **any number of cli
   - `cancel`: `{ id }`. Cancellation must reach the work (the repository rule for `UciController`
     and `RequestScope`), so the service maps it to the task's cancellation, not to dropping the
     reply.
-  - `event`: `{ name, payload }`, the `CoreEvents` names unchanged, plus the new change events
-    below.
+  - `event`: `{ name, payload }`, a `CoreEvent` (`kchess-contracts/src/events.rs`), including the
+    change events below.
   - `host:request` / `host:reply`: the core's capability round trip (`HostAsk` and `HostReply`
     in `kchess-contracts/src/host.rs`), addressed to one connection.
   - `focus`: `{ focused }`, the client's window gained or lost focus.
@@ -168,7 +168,7 @@ with backoff for up to 5 seconds.
 - When the last client disconnects, the service waits 10 seconds (a window reloading, an app
   restarting after an update, a CLI command run twice), then runs the core's existing `close` and
   releases the profile.
-- Before a window closes it still flushes its unsaved work through the core (`core::on_quit`).
+- Before a window closes it still flushes its unsaved work through the core (`quit::on_quit`).
   Closing the core is no longer the window's job.
 - An online game when the last window closes: the same as quitting the app today, because the
   core closes after the grace period. Keeping a live game alive with no window to show it would
@@ -267,7 +267,8 @@ window can do.
 - A request caused by a call goes to the connection that made the call (signing in to Lichess
   opens the browser from the window that asked).
 - `focus` goes to the alert owner.
-- A CLI or MCP client declares no window capabilities and never receives these requests.
+- A request goes only to a client that declared its capability: the CLI declares `browser` (it
+  opens or prints the sign-in page) and receives no other.
 
 ## Version check
 
@@ -300,8 +301,8 @@ older one; nothing tries to make two versions work together.
   the service binary and the test switches, read once as the frontend starts.
 - **GPUI.** `CoreBridge` (`apps/gpui/src/core.rs`) runs the handle on its runtime; views do not
   change. `answer_host` answers routed `host:request`s on the UI thread.
-- **CLI** (`apps/cli`), **and MCP (later).** Socket clients with no window capabilities, whose host
-  requests the handle answers as they arrive. If no service runs, they start one; it stops 10
+- **CLI** (`apps/cli`), **and MCP (later).** Socket clients without a window: the CLI declares
+  only `browser`, whose requests the handle answers as they arrive. If no service runs, they start one; it stops 10
   seconds after they disconnect.
 - **Embedded mode for tests.** `KCHESS_CORE_MODE=embedded` keeps an in-process core for tests that
   need no second process (the app's end-to-end tests).
@@ -371,7 +372,7 @@ sibling of it, never inside it: a profile can be copied, backed up or pointed at
 
 ## Testing
 
-- Two clients on one profile: a change in one reaches the other (`library:changed`), sessions stay
+- Two clients on one profile: a change in one reaches the other (`profile:changed`), sessions stay
   separate, and live play is shared.
 - Two clients starting at the same moment end with one service.
 - The service killed mid-call: reads retry, mutations report the failure, clients reconnect.
@@ -393,7 +394,7 @@ sibling of it, never inside it: a profile can be copied, backed up or pointed at
 All shipped: connection-scoped sessions in `Core`; the service, socket, version check and
 per-release copy; the app as a client; windows kept in sync by the change events; and the CLI as
 a plain socket client. What remains is an MCP client, and a public extension API (a chosen subset
-of `CORE_METHODS` with its own version) if one is ever wanted. The stage-by-stage plan, including
+of `METHODS` with its own version) if one is ever wanted. The stage-by-stage plan, including
 the Electron app's move onto the service, is in Git history.
 
 ## Open questions

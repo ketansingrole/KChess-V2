@@ -32,8 +32,8 @@ while a mutant survives; it skips a push that is not a
 clean HEAD, or when cargo-mutants is not installed. Skip either only on purpose:
 `KCHESS_SKIP_PRE_PUSH=1 git push …`.
 
-Code reaches `main` through a pull request, whose CI runs `cargo xtask check` on Linux and the
-app's tests on macOS and Windows before it lands; run `check-fast` before opening it. GitHub's rulesets
+Code reaches `main` through a pull request, whose CI (below) tests it before it lands; run
+`check-fast` before opening it. GitHub's rulesets
 refuse direct pushes to `main`: a pull request merges once CI's `ci-passed` check is green. The
 check is `cargo fmt --check`, clippy over every target with
 warnings denied (and `unwrap`/`expect` denied in libraries and shipped binaries), the notices
@@ -41,7 +41,8 @@ check, the workspace hack (`crates/kchess-hack`: one feature set for every depen
 packages a command selects; after a dependency change run `cargo hakari generate`, with
 `cargo install cargo-hakari`), the release metadata, and every test, under the coverage gate when `cargo-llvm-cov` is
 installed. Packaging changes also need `cargo xtask package` on the platform they touch. CI runs
-`check`, `cargo deny`, and the app's tests on macOS, Windows and Linux. It also packages for macOS
+`check` and `cargo deny` on Linux, the app's tests on macOS, Windows and Linux, and every other
+member's lints and tests on macOS and Windows (`.github/actions/headless-tests`). It also packages for macOS
 and Linux, builds the Snap and runs the Windows upgrade workflow, which packages for Windows, on a
 pull request that may change packaging, on a release commit, and nightly when packaging may have
 changed since `main` last packaged successfully; a push to `main` otherwise does not, since its
@@ -54,9 +55,8 @@ whose CI did not run and pass every job, and every push to `main` runs CI to the
 
 ## Ownership
 
-- The core (`crates/kchess-core`) never depends on a frontend. Frontends reach it by `CoreApi`
-  method name, through the profile's core service or an embedded core; host capabilities they
-  answer (`openExternal`, `focus`, `onBattery`) arrive as `host:request` events.
+- The core (`crates/kchess-core`) never depends on a frontend; how frontends reach it is in
+  `CORE_FRONTENDS.md`.
 - Every core method is declared once in `core_api!` (`crates/kchess-contracts/src/core_api.rs`),
   naming a check for every argument, including optional ones; a call with too few or too many
   arguments is refused before any check runs. Domain and service validation still runs after. The
@@ -100,8 +100,10 @@ reduced motion, so dialogs and popovers are at rest when a test clicks them.
   floors up when the totals rise; lower them only with a measurement that explains the drop.
 - `crates/kchess-domain/tests/rules_corpus.rs` replays 32k rules calls recorded from the former
   TypeScript suites; regenerate it only for an intended behaviour change.
-- `fuzz/` holds cargo-fuzz targets for PGN, FEN, UCI output, online events and the rules API
-  (`.github/workflows/fuzz.yml`).
+- `fuzz/` holds cargo-fuzz targets for PGN, FEN, UCI output, online events and the game tree,
+  over the typed rules; `check` builds them when the rules change, and
+  `.github/workflows/fuzz.yml` runs them.
 - Mutation testing (`cargo mutants -p <package>`, `docs/mutation-testing.md`) shows code no test
-  pins; `.github/workflows/mutants.yml` runs it weekly in shards. A missed mutant is a test to
+  pins; `.github/workflows/mutants.yml` runs it in shards, weekly for the rules and by hand for
+  any member. A missed mutant is a test to
   write, or an equivalent mutant to exclude in `.cargo/mutants.toml` with its reason.

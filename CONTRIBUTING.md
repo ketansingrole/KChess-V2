@@ -19,8 +19,8 @@ KCHESS_USER_DATA_DIR=/tmp/kchess-dev cargo run -p kchess-gpui
 ```
 
 While editing, `cargo xtask check-fast` checks what changed and what depends on it; run it before
-opening a pull request. CI runs the full check on every pull request, on macOS, Windows and Linux,
-and `main` accepts only pull requests whose CI passed. To run it locally as well:
+opening a pull request. CI runs the full check on every pull request (what runs where is in
+[GUARDRAILS.md](GUARDRAILS.md)), and `main` accepts only pull requests whose CI passed. To run it locally as well:
 
 ```bash
 cargo xtask check
@@ -41,8 +41,9 @@ To reproduce CI's Linux build locally, start Docker (on macOS, `brew install col
 - New settings need three things: the `Settings` type, the `SETTINGS_KEYS` list in
   `crates/kchess-core/src/store/games.rs`, and a new entry at the end of `MIGRATIONS` in
   `crates/kchess-core/src/store/migrations.rs` (never edit an earlier migration).
-- Be gentle with Lichess. Bulk downloads run one request at a time, and requests should be
-  attributed for the data-usage counters (`with_usage` in `crates/kchess-core/src/lichess`).
+- Be gentle with Lichess. Bulk downloads run one request at a time, and every request names its
+  account and kind for the data-usage counters (`Policy::usage` in
+  `crates/kchess-core/src/lichess/policy.rs`).
 
 ## Licensing of contributions
 

@@ -153,7 +153,9 @@ check and the checksum files are tried three times after a dropped connection or
 
 Each package also comes as **update patches** (`KChess-<version>-<platform>-<arch>.from-<old>.delta`),
 from each of the three newest published releases before it, written by `cargo xtask deltas` in
-each package job (`crates/kchess-delta`). The release tooling compares the old and new
+each package job (`crates/kchess-delta`, the crate a release and the installed app agree
+through: versions, release notes, asset and install names, the signed checksums and the
+patches). The release tooling compares the old and new
 releases' files by SHA-256: unchanged ones are taken from the installation, changed ones are
 bsdiff patches, new ones come whole, so a release that replaces Stockfish carries it. A patch that
 saves less than a quarter of the package is left out. The updater uses the patch for its own

@@ -66,9 +66,9 @@ moved code still is a change. Commit a move first: an untracked file is compared
    CLI or service test over a scratch profile, or a local fixture (the CLI's tests serve a
    stand-in Lichess and use the core's scripted engine, `kchess-fake-uci`).
 2. When the code is hard to observe, make it observable rather than test around it: the voice
-   helper binds libvosk from any symbol source, so its tests bind in-process fakes; the CLI's
-   configuration takes the environment as a parameter, and its host answers take the browser
-   opener.
+   helper binds libvosk from any symbol source, so its tests bind in-process fakes; the profile's
+   layout (`kchess_service::Layout`) takes the environment as a parameter, and the CLI's host
+   answers take the browser opener.
 3. When no test can tell the mutant apart because the program behaves the same (an *equivalent*
    mutant), exclude it in `.cargo/mutants.toml` with the reason. Never exclude one because a
    test is missing. Prefer exclusions by function name to line numbers, which move.
@@ -88,8 +88,9 @@ These stay in the reports on purpose; each is listed with the reason.
 
 - **Windows-only code** (`kchess-service`'s named pipes and owner checks, `launch`'s creation
   flags): not compiled on Linux or macOS, so a mutant there builds and passes on them. They can
-  only be caught by a run on Windows. Likewise the CLI's import of the old Mac database
-  (`config_from`'s `legacy_database_path`) is caught only on macOS, where its test checks it.
+  only be caught by a run on Windows. Likewise the import of the old Mac database
+  (`Layout::config`'s `legacy_database_path`, kchess-service) is caught only on macOS, where its
+  test checks it.
 - **Stack sizes** (`kchess-service`'s and the CLI's 8 MiB core threads): a smaller stack changes
   nothing until a call overflows it, and no deterministic test overflows a 1 MiB stack on
   Linux or macOS (the case it guards, an embedded sign-in in a Windows debug build, needs
