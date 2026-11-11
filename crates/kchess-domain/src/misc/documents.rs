@@ -8,6 +8,7 @@ use super::value::{J, own_entries};
 use crate::js;
 use crate::replay;
 use crate::tree::{self, TreeNode};
+use crate::variant::VARIANTS;
 
 /// A document check: the arguments, normalized, or the message it rejected them with.
 pub type Check = fn(Vec<J>) -> Result<J, String>;

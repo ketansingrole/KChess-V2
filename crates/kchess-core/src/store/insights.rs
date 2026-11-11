@@ -11,8 +11,8 @@ use super::sql::Sql as _;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::js;
-use kchess_domain::misc::constants::VARIANTS;
 use kchess_domain::time_use::{PHASES, TimeUse, time_use};
+use kchess_domain::variant::VARIANTS;
 
 const NEG_INF: f64 = f64::NEG_INFINITY;
 const INF: f64 = f64::INFINITY;

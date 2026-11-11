@@ -417,7 +417,7 @@ pub type Choices = (Option<String>, Option<String>, Option<String>);
 pub fn choices(words: &[String]) -> Result<Choices, String> {
     let (mut level, mut color, mut variant) = (None, None, None);
     for word in words {
-        let known = kchess_domain::misc::constants::VARIANTS
+        let known = kchess_domain::variant::VARIANTS
             .iter()
             .find(|key| key.eq_ignore_ascii_case(word));
         match (word.as_str(), known) {
@@ -485,14 +485,14 @@ fn playable_fen(variant: &str, fen: &str) -> Result<String, String> {
 pub fn local_variant(words: &[String]) -> Result<Option<String>, String> {
     match words {
         [] => Ok(None),
-        [word] => kchess_domain::misc::constants::VARIANTS
+        [word] => kchess_domain::variant::VARIANTS
             .iter()
             .find(|key| key.eq_ignore_ascii_case(word))
             .map(|key| Some((*key).to_string()))
             .ok_or_else(|| {
                 format!(
                     "Unknown variant {word}. Choose one of {}.",
-                    kchess_domain::misc::constants::VARIANTS.join(", ")
+                    kchess_domain::variant::VARIANTS.join(", ")
                 )
             }),
         [_, other, ..] => Err(format!("Unexpected argument {other}.")),

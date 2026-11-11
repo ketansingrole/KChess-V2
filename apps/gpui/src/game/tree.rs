@@ -97,7 +97,7 @@ impl TreeNode {
             .as_ref()
             .and_then(|headers| headers.get("Variant"))
             .and_then(Value::as_str);
-        super::variant_key(name).unwrap_or("standard")
+        kchess_domain::variant::Variant::from_pgn_name(name).map_or("standard", |v| v.key())
     }
 
     /// One bounded PGN document, or `None` when it cannot be imported without loss.

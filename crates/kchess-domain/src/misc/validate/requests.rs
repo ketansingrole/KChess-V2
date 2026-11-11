@@ -61,7 +61,7 @@ pub(super) fn assert_new_arena(value: J) -> Checked<NewArena> {
     }
     one_of(
         &arena.variant,
-        ARENA_VARIANTS,
+        VARIANTS,
         Some("Invalid variant."),
         "variant",
     )?;

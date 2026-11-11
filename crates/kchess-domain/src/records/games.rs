@@ -118,15 +118,7 @@ fn repetition(mut pos: VariantPosition, moves: &[&str]) -> Option<&'static str> 
 /// those rules apply.
 pub fn setup_draw_reason(variant: &str, fen: &str, moves: &[&str]) -> Option<&'static str> {
     let replayed = replay::replay_setup(variant, fen, moves)?;
-    if ![
-        "standard",
-        "chess960",
-        "kingOfTheHill",
-        "threeCheck",
-        "atomic",
-    ]
-    .contains(&variant)
-    {
+    if !crate::variant::Variant::from_key(variant).is_some_and(|v| v.counts_repetition()) {
         return None;
     }
     let start = rules::setup_start(variant, fen)?;

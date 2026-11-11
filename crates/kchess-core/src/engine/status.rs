@@ -95,16 +95,7 @@ pub async fn engine_status(
 /// Fairy-Stockfish's `UCI_Variant` for a Lichess variant key; `None` for standard chess and
 /// Chess960, which Stockfish analyses.
 pub fn fairy_variant(variant: &str) -> Option<&'static str> {
-    Some(match variant {
-        "crazyhouse" => "crazyhouse",
-        "atomic" => "atomic",
-        "antichess" => "antichess",
-        "horde" => "horde",
-        "kingOfTheHill" => "kingofthehill",
-        "racingKings" => "racingkings",
-        "threeCheck" => "3check",
-        _ => return None,
-    })
+    kchess_domain::variant::Variant::from_key(variant)?.fairy_name()
 }
 
 /// The bundled Fairy-Stockfish, which analyses the other variants: ready when it is executable.

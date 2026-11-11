@@ -911,17 +911,7 @@ pub fn setup_pgn<S: AsRef<str>>(
     }
     if variant != "standard" {
         // The PGN `Variant` header takes the names other PGN readers know, not the Lichess keys.
-        let name = match variant {
-            "chess960" => "Chess960",
-            "kingOfTheHill" => "King of the Hill",
-            "threeCheck" => "Three-check",
-            "antichess" => "Antichess",
-            "atomic" => "Atomic",
-            "horde" => "Horde",
-            "racingKings" => "Racing Kings",
-            "crazyhouse" => "Crazyhouse",
-            other => other,
-        };
+        let name = crate::variant::Variant::from_key(variant).map_or(variant, |v| v.label());
         game.put_header("Variant", name.to_string());
     }
     if fen != rules::INITIAL_FEN || variant == "chess960" {

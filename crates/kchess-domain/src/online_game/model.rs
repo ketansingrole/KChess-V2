@@ -12,8 +12,6 @@ use crate::rules::{default_position, lichess_variant, make_fen};
 /// The standard start.
 use crate::rules::INITIAL_FEN;
 
-use crate::misc::constants::VARIANTS;
-
 /// `GameSetup`: the rules and the position before the first move.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -521,7 +519,7 @@ pub fn turn_of(fen: &str) -> &'static str {
 pub fn variant_from_lichess(key: Option<&str>) -> Option<&'static str> {
     match key {
         None | Some("") | Some("fromPosition") => Some("standard"),
-        Some(key) => VARIANTS.iter().copied().find(|variant| *variant == key),
+        Some(key) => crate::variant::Variant::from_key(key).map(|variant| variant.key()),
     }
 }
 

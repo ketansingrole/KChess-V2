@@ -13,7 +13,7 @@ pub const MAX_STUDIES: usize = 50;
 pub const MAX_CHAPTERS: usize = 64;
 pub const MAX_MISTAKES: usize = 500;
 
-use crate::misc::constants::VARIANTS;
+use crate::variant::VARIANTS;
 
 fn is_variant(v: Option<&Value>) -> Option<&str> {
     string(v).filter(|s| VARIANTS.contains(s))

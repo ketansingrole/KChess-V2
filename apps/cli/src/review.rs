@@ -23,12 +23,8 @@ pub struct Line {
 
 /// The Lichess key of a PGN `Variant` header's variant.
 pub fn variant_key(name: &str) -> Result<&'static str, String> {
-    let variant = kchess_domain::rules::pgn_variant(Some(name))
-        .ok_or_else(|| format!("Unknown variant {name}."))?;
-    kchess_domain::misc::constants::VARIANTS
-        .iter()
-        .copied()
-        .find(|key| kchess_domain::rules::lichess_variant(key) == Some(variant))
+    kchess_domain::variant::Variant::from_pgn_name(Some(name))
+        .map(|variant| variant.key())
         .ok_or_else(|| format!("Unknown variant {name}."))
 }
 

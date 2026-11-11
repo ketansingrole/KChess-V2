@@ -1,6 +1,7 @@
 //! Rating-history keys, display names, histories rebuilt from
 //! games and the merge of Lichess's own histories with them.
 
+use crate::variant::Variant;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
@@ -12,6 +13,10 @@ const DAY_MS: f64 = 86_400_000.0;
 /// `ms` for `Date`'s range: beyond it a JavaScript Date is invalid.
 const MAX_DATE_MS: f64 = 8.64e15;
 
+const fn named(variant: Variant) -> (&'static str, &'static str) {
+    (variant.key(), variant.label())
+}
+
 /// The label for each rating-history key.
 pub const DISPLAY_NAMES: &[(&str, &str)] = &[
     ("ultraBullet", "UltraBullet"),
@@ -20,14 +25,14 @@ pub const DISPLAY_NAMES: &[(&str, &str)] = &[
     ("rapid", "Rapid"),
     ("classical", "Classical"),
     ("correspondence", "Correspondence"),
-    ("chess960", "Chess960"),
-    ("crazyhouse", "Crazyhouse"),
-    ("antichess", "Antichess"),
-    ("atomic", "Atomic"),
-    ("horde", "Horde"),
-    ("kingOfTheHill", "King of the Hill"),
-    ("racingKings", "Racing Kings"),
-    ("threeCheck", "Three-check"),
+    named(Variant::Chess960),
+    named(Variant::Crazyhouse),
+    named(Variant::Antichess),
+    named(Variant::Atomic),
+    named(Variant::Horde),
+    named(Variant::KingOfTheHill),
+    named(Variant::RacingKings),
+    named(Variant::ThreeCheck),
     ("puzzle", "Puzzles"),
 ];
 
@@ -67,6 +72,14 @@ pub fn normalize_rating_key(name: &str) -> String {
         .filter(|c| !js::is_space(*c) && *c != '_' && *c != '-')
         .collect();
     lookup(KEY_BY_NORMALIZED, &key).map_or_else(|| name.to_string(), str::to_string)
+}
+
+/// The label of a rating category's key ("kingOfTheHill" is "King of the Hill").
+pub fn perf_label(key: &str) -> Option<&'static str> {
+    DISPLAY_NAMES
+        .iter()
+        .find(|(known, _)| *known == key)
+        .map(|(_, label)| *label)
 }
 
 /// The label of a rating history, or the name itself when it has none.

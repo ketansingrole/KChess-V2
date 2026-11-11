@@ -56,32 +56,19 @@ const BOARD_PERFS: [&str; 13] = [
     "threeCheck",
 ];
 
-/// `PERF_LABELS`, in `PERF_TYPES` order.
-const PERFS: [(&str, &str); 14] = [
-    ("ultraBullet", "UltraBullet"),
-    ("bullet", "Bullet"),
-    ("blitz", "Blitz"),
-    ("rapid", "Rapid"),
-    ("classical", "Classical"),
-    ("correspondence", "Correspondence"),
-    ("chess960", "Chess960"),
-    ("kingOfTheHill", "King of the Hill"),
-    ("threeCheck", "Three-check"),
-    ("antichess", "Antichess"),
-    ("atomic", "Atomic"),
-    ("horde", "Horde"),
-    ("racingKings", "Racing Kings"),
-    ("crazyhouse", "Crazyhouse"),
-];
+/// The rating categories with their names, in `PERF_TYPES` order.
+fn perfs() -> impl Iterator<Item = (&'static str, &'static str)> {
+    use kchess_domain::misc::constants::PERF_TYPES;
+    use kchess_domain::records::ratings::perf_label;
+    PERF_TYPES
+        .iter()
+        .map(|key| (*key, perf_label(key).unwrap_or(key)))
+}
 
 /// `playedPerfs`: the speeds a player has games in, most played first.
 fn played_perfs(profile: &Value) -> Vec<(&'static str, &'static str)> {
     let games = |key: &str| profile["perfs"][key]["games"].as_f64().unwrap_or_default();
-    let mut perfs: Vec<_> = PERFS
-        .iter()
-        .copied()
-        .filter(|(key, _)| games(key) > 0.)
-        .collect();
+    let mut perfs: Vec<_> = perfs().filter(|(key, _)| games(key) > 0.).collect();
     perfs.sort_by(|a, b| games(b.0).total_cmp(&games(a.0)));
     perfs
 }
@@ -304,10 +291,7 @@ impl PlayersPage {
         let board_items: Vec<Choice> = BOARD_PERFS
             .iter()
             .map(|key| {
-                let label = PERFS
-                    .iter()
-                    .find(|(k, _)| k == key)
-                    .map_or(*key, |(_, l)| l);
+                let label = perfs().find(|(k, _)| k == key).map_or(*key, |(_, l)| l);
                 Choice::new(*key, label)
             })
             .collect();
