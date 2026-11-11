@@ -557,3 +557,45 @@ async fn one_exported_game_does_not_wait_for_a_running_bulk_export() {
     sync.cancel();
     let _ = syncing.await;
 }
+
+/// A web page is refused only when Lichess redirected the request to it: a page at the path asked
+/// for is the answer (a study's or a game's HTML export).
+#[tokio::test]
+async fn a_page_at_the_path_asked_for_is_the_answer() {
+    let fixture = serve(|_| Reply::Text(200, "text/html", "<html>The page</html>".into())).await;
+    let client = client_for(&fixture.base, Arc::new(Recording::default()));
+    let text = client
+        .get("/page", &nobody(&client))
+        .accept("text/html")
+        .read_text(None)
+        .await
+        .unwrap();
+    assert_eq!(text, "<html>The page</html>");
+}
+
+/// NDJSON is read for as long as Lichess keeps sending it, whatever the lane: the deadline of an
+/// ordinary body would cut a long export short.
+#[tokio::test]
+async fn an_ndjson_body_outlives_the_ordinary_deadline() {
+    let (send, receive) = mpsc::unbounded_channel::<String>();
+    let mut receive = Some(receive);
+    let fixture =
+        serve(move |_| Reply::StreamText(200, "application/x-ndjson", receive.take().unwrap()))
+            .await;
+    let client = client_with_timeout(
+        &fixture.base,
+        Arc::new(Recording::default()),
+        Duration::from_millis(100),
+    );
+    let reading = client
+        .get("/api/games/user/alice", &nobody(&client))
+        .read_text(None);
+    let writing = async move {
+        send.send("{\"id\":\"a\"}\n".into()).unwrap();
+        // Three deadlines pass before the export ends.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        send.send("{\"id\":\"b\"}\n".into()).unwrap();
+    };
+    let (text, ()) = tokio::join!(reading, writing);
+    assert_eq!(text.unwrap(), "{\"id\":\"a\"}\n{\"id\":\"b\"}\n");
+}

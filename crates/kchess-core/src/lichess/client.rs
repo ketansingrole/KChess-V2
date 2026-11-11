@@ -207,15 +207,6 @@ impl Auth {
             token: None,
         }
     }
-
-    pub fn signed_in(&self) -> bool {
-        self.token.is_some()
-    }
-
-    /// The account the traffic is counted against (lowercase; empty when nobody's).
-    pub fn account(&self) -> &str {
-        &self.usage.account
-    }
 }
 
 /// A request's body.
