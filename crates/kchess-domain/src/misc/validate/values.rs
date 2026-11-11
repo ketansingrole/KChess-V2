@@ -214,59 +214,6 @@ pub(super) fn assert_review_key(value: J) -> Checked<String> {
     Ok(text)
 }
 
-/// A model the account listed, or null for its first.
-pub(super) fn assert_ai_model(value: J) -> Checked<Option<String>> {
-    let model: Option<String> = decode(value, always!("Invalid model."))?;
-    if model
-        .as_deref()
-        .is_some_and(|model| model.is_empty() || model.len() > 100)
-    {
-        return Err("Invalid model.".into());
-    }
-    Ok(model)
-}
-
-pub(super) fn assert_ai_effort(value: J) -> Checked<String> {
-    picked(value, AI_EFFORTS, Some("Invalid effort."))
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct AiRequest {
-    kind: String,
-    fen: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    played: Option<String>,
-    #[serde(default)]
-    moves: Vec<String>,
-    #[serde(default)]
-    best: Vec<String>,
-    #[serde(default)]
-    refutation: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    mate_before: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    mate_after: Option<f64>,
-}
-
-pub(super) fn assert_ai_request(value: J) -> Checked<AiRequest> {
-    const INVALID: &str = "That position cannot be explained.";
-    let request: AiRequest = decode(value, always!(INVALID))?;
-    let lines = [&request.moves, &request.best, &request.refutation];
-    let long = lines.iter().any(|line| line.len() > 64);
-    if !["move", "nudge", "solution", "wrong"].contains(&request.kind.as_str())
-        || request.fen.len() > 100
-        || long
-        || request
-            .played
-            .as_ref()
-            .is_some_and(|played| played.len() > 5)
-    {
-        return Err(INVALID.into());
-    }
-    Ok(request)
-}
-
 pub(super) fn assert_voice_id(value: J) -> Checked<u64> {
     integer(value, 1, MAX_SAFE, VOICE)
 }

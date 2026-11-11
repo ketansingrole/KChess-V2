@@ -181,21 +181,21 @@ core_api! {
     /// ChatGPT explanations.
     trait AiApi {
         /// The ChatGPT connection, and the model and effort every AI feature uses.
-        AiStatus = "aiStatus" fn ai_status() -> Value;
+        AiStatus = "aiStatus" fn ai_status() -> AiConnection;
         /// Sign a ChatGPT account in through the browser.
-        AiConnect = "aiConnect" fn ai_connect() -> Value;
+        AiConnect = "aiConnect" fn ai_connect() -> AiConnection;
         /// Forget the ChatGPT sign-in on this profile.
-        AiDisconnect = "aiDisconnect" fn ai_disconnect() -> Value;
+        AiDisconnect = "aiDisconnect" fn ai_disconnect() -> AiConnection;
         /// The models the connected account may use.
-        AiModels = "aiModels" fn ai_models() -> Value;
+        AiModels = "aiModels" fn ai_models() -> AiModelList;
         /// Choose the model (null: the account's first) and effort every AI feature uses.
         AiSetOptions = "aiSetOptions" fn ai_set_options(
-            model: Value = c::ai_model,
-            effort: Value = c::ai_effort
-        ) -> Value;
+            model: Option<AiModelName>,
+            effort: AiEffort
+        ) -> AiConnection;
         /// Explain a move or puzzle from checked facts; refused during a live game.
         #[assist(Explain)]
-        AiExplain = "aiExplain" fn ai_explain(request: Value = c::ai_request) -> Value;
+        AiExplain = "aiExplain" fn ai_explain(request: AiRequest) -> AiExplanation;
     }
 
     /// The computer's engine, analysis and game review.

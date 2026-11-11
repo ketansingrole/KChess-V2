@@ -18,9 +18,11 @@ use kchess_domain::misc::value::{self, J};
 use kchess_domain::variant::Variant;
 use kchess_domain::{js, replay};
 
+mod ai;
 mod lookups;
 mod studies;
 
+pub use ai::*;
 pub use lookups::*;
 pub use studies::*;
 

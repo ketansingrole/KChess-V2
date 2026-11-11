@@ -7,7 +7,11 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tokio::net::TcpListener;
 
+use kchess_contracts::check::AiModelName;
 use kchess_contracts::core_api::{AiApi, Assist, EngineApi};
+use kchess_contracts::types::{
+    AiConnection, AiEffort, AiExplanation, AiKind, AiModelList, AiRequest,
+};
 use kchess_domain::misc::checks;
 
 use super::args::normal;
@@ -40,43 +44,13 @@ struct Connection {
     /// `Tokens` as JSON, sealed.
     sealed: Option<String>,
     model: Option<String>,
-    effort: Option<String>,
+    effort: Option<AiEffort>,
     /// The chosen model refused an effort; requests leave it out.
     effort_refused: bool,
 }
 
-/// What kind of explanation is wanted.
-#[derive(Deserialize, Clone, Copy)]
-#[serde(rename_all = "camelCase")]
-enum Kind {
-    Move,
-    Nudge,
-    Solution,
-    Wrong,
-}
-
-/// What `aiExplain` is asked to explain.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Request {
-    kind: Kind,
-    fen: String,
-    #[serde(default)]
-    played: Option<String>,
-    #[serde(default)]
-    moves: Vec<String>,
-    #[serde(default)]
-    best: Vec<String>,
-    #[serde(default)]
-    refutation: Vec<String>,
-    #[serde(default)]
-    mate_before: Option<f64>,
-    #[serde(default)]
-    mate_after: Option<f64>,
-}
-
-fn problem(refusal: Problem) -> Value {
-    json!({ "problem": refusal })
+fn problem(refusal: Problem) -> AiExplanation {
+    AiExplanation::Refused { problem: refusal }
 }
 
 impl Core {
@@ -169,7 +143,7 @@ impl Core {
     }
 
     /// Signs a ChatGPT account in through the browser.
-    async fn ai_sign_in(&self) -> Result<Value> {
+    async fn ai_sign_in(&self) -> Result<AiConnection> {
         let mut connection = self.ai_connection().await?;
         if !valid_host_id(&connection.host_id) {
             connection.host_id = new_host_id()?;
@@ -270,16 +244,16 @@ impl Core {
         self.ai.models(&access).await
     }
 
-    async fn ai_state(&self) -> Result<Value> {
+    async fn ai_state(&self) -> Result<AiConnection> {
         let connection = self.ai_connection().await?;
-        Ok(json!({
-            "connected": connection.sealed.is_some(),
-            "registered": connection.client_id.is_some(),
-            "email": connection.email,
-            "model": connection.model,
-            "effort": connection.effort.as_deref().unwrap_or("auto"),
-            "effortRefused": connection.effort_refused,
-        }))
+        Ok(AiConnection {
+            connected: connection.sealed.is_some(),
+            registered: connection.client_id.is_some(),
+            email: connection.email,
+            model: connection.model,
+            effort: connection.effort.unwrap_or(AiEffort::Auto),
+            effort_refused: connection.effort_refused,
+        })
     }
 
     /// The answer of `brief`, checked, with one more try after a reply outside the facts.
@@ -294,15 +268,15 @@ impl Core {
         for _ in 0..2 {
             let effort = connection
                 .effort
-                .as_deref()
-                .filter(|effort| *effort != "auto" && !connection.effort_refused);
+                .filter(|effort| *effort != AiEffort::Auto && !connection.effort_refused)
+                .map(AiEffort::as_str);
             let reply = self
                 .ai
                 .respond(&access, model, effort, brief.instructions, &input)
                 .await;
             let text = match reply {
                 Err(refusal) if refusal.problem == Problem::Unsupported && effort.is_some() => {
-                    let (chosen, refused) = (connection.model.clone(), connection.effort.clone());
+                    let (chosen, refused) = (connection.model.clone(), connection.effort);
                     connection.effort_refused = true;
                     if let Err(cause) = self.refuse_ai_effort(chosen, refused).await {
                         self.host.log(
@@ -339,7 +313,11 @@ impl Core {
     /// Records that the plan refused the effort chosen with `model`, on the connection as saved
     /// now: the copy an explanation read before it may hold tokens a refresh has since replaced.
     /// A model or effort chosen since is not marked refused.
-    async fn refuse_ai_effort(&self, model: Option<String>, effort: Option<String>) -> Result<()> {
+    async fn refuse_ai_effort(
+        &self,
+        model: Option<String>,
+        effort: Option<AiEffort>,
+    ) -> Result<()> {
         let _renewing = self.ai.refreshing.lock().await;
         let mut connection = self.ai_connection().await?;
         if connection.model != model || connection.effort != effort {
@@ -383,11 +361,11 @@ impl Core {
         }
     }
 
-    async fn ai_brief(&self, request: &Request) -> Result<Brief> {
+    async fn ai_brief(&self, request: &AiRequest) -> Result<Brief> {
         let invalid = || CoreError::new("That position cannot be explained.");
         let (fen, moves) = (request.fen.as_str(), &request.moves);
         match request.kind {
-            Kind::Move => {
+            AiKind::Move => {
                 let played = request.played.as_deref().ok_or_else(invalid)?;
                 let mates = Mates {
                     before: request.mate_before.map(|mate| mate as i32),
@@ -396,9 +374,9 @@ impl Core {
                 coach::move_brief(fen, played, &request.best, &request.refutation, mates)
                     .map(|(_, brief)| brief)
             }
-            Kind::Nudge => coach::nudge_brief(fen, moves),
-            Kind::Solution => coach::solution_brief(fen, moves),
-            Kind::Wrong => {
+            AiKind::Nudge => coach::nudge_brief(fen, moves),
+            AiKind::Solution => coach::solution_brief(fen, moves),
+            AiKind::Wrong => {
                 let played = request.played.as_deref().ok_or_else(invalid)?;
                 let refutation = self.ai_refutation(fen, played).await;
                 coach::wrong_brief(fen, moves, played, &refutation)
@@ -407,9 +385,7 @@ impl Core {
         .ok_or_else(invalid)
     }
 
-    async fn explain(&self, raw: Value) -> Result<Value> {
-        let request: Request = serde_json::from_value(raw)
-            .map_err(|_| CoreError::new("That position cannot be explained."))?;
+    async fn explain(&self, request: AiRequest) -> Result<AiExplanation> {
         let brief = self.ai_brief(&request).await?;
         let mut connection = self.ai_connection().await?;
         if connection.sealed.is_none() {
@@ -431,8 +407,8 @@ impl Core {
             .database
             .read_async(move |ctx| crate::store::ai::explanation(ctx, &lookup))
             .await?;
-        if cached.is_string() {
-            return Ok(json!({ "text": cached }));
+        if let Value::String(text) = cached {
+            return Ok(AiExplanation::Told { text });
         }
         match self.ai_answer(&mut connection, &model, &brief).await {
             Ok(text) => {
@@ -445,7 +421,7 @@ impl Core {
                     self.host
                         .log(Level::Warn, "ai", &format!("Not saved: {}", cause.message));
                 }
-                Ok(json!({ "text": text }))
+                Ok(AiExplanation::Told { text })
             }
             Err(refusal) => {
                 self.host
@@ -457,15 +433,15 @@ impl Core {
 }
 
 impl AiApi for Core {
-    async fn ai_status(&self) -> Result<Value> {
+    async fn ai_status(&self) -> Result<AiConnection> {
         self.ai_state().await
     }
 
-    async fn ai_connect(&self) -> Result<Value> {
+    async fn ai_connect(&self) -> Result<AiConnection> {
         self.ai_sign_in().await
     }
 
-    async fn ai_disconnect(&self) -> Result<Value> {
+    async fn ai_disconnect(&self) -> Result<AiConnection> {
         let _renewing = self.ai.refreshing.lock().await;
         let mut connection = self.ai_connection().await?;
         connection.sealed = None;
@@ -474,22 +450,28 @@ impl AiApi for Core {
         self.ai_state().await
     }
 
-    async fn ai_models(&self) -> Result<Value> {
+    async fn ai_models(&self) -> Result<AiModelList> {
         match self.ai_model_list().await {
-            Ok(models) => Ok(json!({ "models": models })),
+            Ok(models) => Ok(AiModelList::Listed { models }),
             Err(refusal) => {
                 self.host
                     .log(Level::Warn, "ai", &format!("Refused: {}", refusal.detail));
-                Ok(problem(refusal.problem))
+                Ok(AiModelList::Refused {
+                    problem: refusal.problem,
+                })
             }
         }
     }
 
-    async fn ai_set_options(&self, model: Value, effort: Value) -> Result<Value> {
+    async fn ai_set_options(
+        &self,
+        model: Option<AiModelName>,
+        effort: AiEffort,
+    ) -> Result<AiConnection> {
         let _renewing = self.ai.refreshing.lock().await;
         let mut connection = self.ai_connection().await?;
-        let model = model.as_str().map(str::to_string);
-        let effort = effort.as_str().map(str::to_string);
+        let model = model.map(|AiModelName(model)| model);
+        let effort = Some(effort);
         connection.effort_refused &= connection.model == model && connection.effort == effort;
         connection.model = model;
         connection.effort = effort;
@@ -498,7 +480,7 @@ impl AiApi for Core {
     }
 
     // Assistance: the dispatch refuses it during a live game, before and after.
-    async fn ai_explain(&self, request: Value) -> Result<Value> {
+    async fn ai_explain(&self, request: AiRequest) -> Result<AiExplanation> {
         self.explain(request).await
     }
 }

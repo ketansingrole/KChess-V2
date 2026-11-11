@@ -9,16 +9,17 @@ use super::{Rows, SettingsPage};
 use crate::ai::{self, USAGE_SETTINGS};
 use crate::assets::icon;
 use crate::theme::Palette;
+use kchess_contracts::types::AiEffort;
 
 /// What the pickers show: the models, and the chosen model and effort.
-pub(super) type Shown = (Vec<(String, String)>, Option<String>, String);
+pub(super) type Shown = (Vec<(String, String)>, Option<String>, AiEffort);
 
-/// The efforts on offer, as the core names them, with their labels.
-pub const EFFORTS: [(&str, &str); 4] = [
-    ("auto", "Auto"),
-    ("low", "Low"),
-    ("medium", "Medium"),
-    ("high", "High"),
+/// The efforts on offer, with their labels.
+pub const EFFORTS: [(AiEffort, &str); 4] = [
+    (AiEffort::Auto, "Auto"),
+    (AiEffort::Low, "Low"),
+    (AiEffort::Medium, "Medium"),
+    (AiEffort::High, "High"),
 ];
 
 impl SettingsPage {
@@ -27,13 +28,9 @@ impl SettingsPage {
         let ai = ai::handle(cx);
         let (models, model, effort) = {
             let ai = ai.read(cx);
-            (
-                ai.models.clone(),
-                ai.status["model"].as_str().map(str::to_string),
-                ai.status["effort"].as_str().unwrap_or("auto").to_string(),
-            )
+            (ai.models.clone(), ai.status.model.clone(), ai.status.effort)
         };
-        let shown = (models.clone(), model.clone(), effort.clone());
+        let shown = (models.clone(), model.clone(), effort);
         if self.ai_shown.as_ref() == Some(&shown) {
             return;
         }
@@ -74,9 +71,7 @@ impl SettingsPage {
         let model = model_row
             .and_then(|row| ai.read(cx).models.get(row))
             .map(|(slug, _)| slug.clone());
-        let effort = EFFORTS[effort_row.unwrap_or(0).min(EFFORTS.len() - 1)]
-            .0
-            .to_string();
+        let effort = EFFORTS[effort_row.unwrap_or(0).min(EFFORTS.len() - 1)].0;
         ai.update(cx, |ai, cx| ai.choose(model, effort, cx));
     }
 
@@ -84,8 +79,8 @@ impl SettingsPage {
         let handle = ai::handle(cx);
         let ai = handle.read(cx);
         let connected = ai.connected();
-        let email = ai.status["email"].as_str().map(str::to_string);
-        let refused = ai.status["effortRefused"] == serde_json::json!(true);
+        let email = ai.status.email.clone();
+        let refused = ai.status.effort_refused;
         let busy = ai.busy;
         let connect = handle.clone();
         let disconnect = handle.clone();

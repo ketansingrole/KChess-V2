@@ -92,31 +92,7 @@ pub struct Identity {
     pub email: Option<String>,
 }
 
-/// A model on offer, as the picker shows it.
-#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Model {
-    pub slug: String,
-    pub name: String,
-}
-
-/// Why a request came to nothing. Each asks something different of the person.
-#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum Problem {
-    /// Sign in again: the token was refused for good.
-    Connect,
-    /// The plan's or this app's allowance ran out: pause, and offer usage settings.
-    Limit,
-    /// This plan, workspace or region cannot use it.
-    Ineligible,
-    /// The effort asked for is refused by the model; the same body will not work.
-    Unsupported,
-    /// Temporary: the credentials stay.
-    Unavailable,
-    /// The answer named something outside the facts, twice.
-    Unverified,
-}
+pub use kchess_contracts::types::{AiModel as Model, AiProblem as Problem};
 
 /// A failed request: what kind, and the code that said so.
 #[derive(Debug, Clone, PartialEq, Eq)]

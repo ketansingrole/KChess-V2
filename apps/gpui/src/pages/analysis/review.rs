@@ -1012,6 +1012,7 @@ impl AnalysisPage {
         }
         let moment = kchess_domain::coach::review_moment(&review, index)?;
         let reason = moment["reason"].as_str().map(str::to_string);
+        let request = serde_json::from_value(moment["request"].clone()).ok()?;
         Some(
             v_flex()
                 .gap(px(6.))
@@ -1020,7 +1021,7 @@ impl AnalysisPage {
                     "review",
                     "Explain",
                     &self.explainer,
-                    moment["request"].clone(),
+                    request,
                     None,
                     cx,
                     palette,

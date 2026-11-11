@@ -3,6 +3,7 @@
 //! they ask for, plays the puzzle on the board and keeps the attempt log up to date.
 
 use kchess_contracts::calls;
+use kchess_contracts::types::{AiKind, AiRequest};
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
@@ -822,27 +823,36 @@ fn coach_block(
     }
     let shown = board_entity.read(cx);
     let on_board = shown.puzzle()?;
-    let solution = puzzle["solution"].as_array()?;
+    let solution: Vec<String> = puzzle["solution"]
+        .as_array()?
+        .iter()
+        .filter_map(|played| played.as_str().map(str::to_string))
+        .collect();
     // While solving, from where the board stands: a long puzzle may be several moves in.
-    let current = json!({
-        "fen": on_board.fen(),
-        "moves": solution.get(on_board.index()..)?,
-    });
-    let whole = json!({ "fen": puzzle["fen"], "moves": solution });
-    let merged = |from: &Value, kind: &str, played: Option<&str>| {
-        let mut request = from.clone();
-        request["kind"] = json!(kind);
-        if let Some(played) = played {
-            request["played"] = json!(played);
-        }
-        request
+    let current = (
+        on_board.fen().to_string(),
+        solution.get(on_board.index()..)?.to_vec(),
+    );
+    let whole = (
+        puzzle["fen"].as_str().unwrap_or_default().to_string(),
+        solution.clone(),
+    );
+    let merged = |(fen, moves): &(String, Vec<String>), kind, played: Option<&str>| AiRequest {
+        kind,
+        fen: fen.clone(),
+        played: played.map(str::to_string),
+        moves: moves.clone(),
+        best: Vec::new(),
+        refutation: Vec::new(),
+        mate_before: None,
+        mate_after: None,
     };
     let (id, label, request, on_answer): (_, _, _, Option<crate::ai::OnAnswer>) =
         if let (true, Some(wrong)) = (playing, shown.last_wrong()) {
             (
                 "puzzle-wrong",
                 "Why not?",
-                merged(&current, "wrong", Some(wrong)),
+                merged(&current, AiKind::Wrong, Some(wrong)),
                 None,
             )
         } else if playing {
@@ -853,14 +863,14 @@ fn coach_block(
             (
                 "puzzle-nudge",
                 "Nudge · not counted",
-                merged(&current, "nudge", None),
+                merged(&current, AiKind::Nudge, None),
                 Some(nudged),
             )
         } else if status != "playing" {
             (
                 "puzzle-why",
                 "Explain",
-                merged(&whole, "solution", None),
+                merged(&whole, AiKind::Solution, None),
                 None,
             )
         } else {
