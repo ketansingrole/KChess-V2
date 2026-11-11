@@ -2,12 +2,12 @@
 //! under the move list (and shown in it), so annotating never means leaving the board. A game's
 //! clock times (`[%clk …]`) ride along in the comment unseen.
 
-use kchess_domain::training::clock::format_clock;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::input::{Textarea, TextareaState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_domain::training::clock::format_clock;
 use serde_json::{Value, json};
 
 use super::AnalysisPage;

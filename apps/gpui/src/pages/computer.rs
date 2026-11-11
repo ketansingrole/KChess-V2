@@ -3,8 +3,8 @@
 //! reads, runs the engine searches the game asks for, keeps the clocks moving and saves the
 //! unfinished game in the profile, to resume it.
 
-use kchess_domain::training::clock::format_clock;
 use kchess_contracts::calls;
+use kchess_domain::training::clock::format_clock;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -1245,7 +1245,8 @@ impl ComputerPage {
 
     /// The opening the moves on the board reached, as `(eco, name)` (`openingAt`).
     fn opening(&self) -> Option<(SharedString, SharedString)> {
-        let opening = crate::game::opening_at(&self.game.state["setup"], &self.moves(), self.ply())?;
+        let opening =
+            crate::game::opening_at(&self.game.state["setup"], &self.moves(), self.ply())?;
         Some((opening.eco.into(), opening.name.into()))
     }
 
@@ -1381,11 +1382,9 @@ fn level_choices(cx: &App) -> (Vec<String>, Vec<SharedString>) {
         .collect();
     let labels = ids
         .iter()
-        .map(|id| {
-            match crate::game::engine_level_label(id) {
-                label if label.is_empty() => id.clone().into(),
-                label => SharedString::from(label),
-            }
+        .map(|id| match crate::game::engine_level_label(id) {
+            label if label.is_empty() => id.clone().into(),
+            label => SharedString::from(label),
         })
         .collect();
     (ids, labels)

@@ -23,9 +23,9 @@ use super::status::{
 };
 use super::uci::{UciController, error_summary, lock, signal_aborted, truncate_for_log};
 use super::{EngineContext, after, clear_timer, domain, replace_timer, validate};
-use kchess_domain::training::uci_info::parse_info;
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use kchess_domain::training::uci_info::parse_info;
 
 /// The event analysis updates are delivered as (`engine:analysis`).
 pub const ANALYSIS_EVENT: &str = "engine:analysis";

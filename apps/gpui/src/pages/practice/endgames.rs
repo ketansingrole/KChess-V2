@@ -3,13 +3,11 @@
 //! (`data/lessons.json`, `data/training.json`); finished chapters and drills are runs the core keeps.
 
 use kchess_contracts::calls;
-use std::sync::OnceLock;
 
 use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::endgame_drills::EndgameDrills;
@@ -30,87 +28,29 @@ const COURSE_GROUPS: [&str; 3] = ["Checkmates", "Pawn endgames", "Rook endgames"
 const CARD_MIN: Pixels = px(300.);
 const CARD_GAP: Pixels = px(12.);
 
-/// An endgame to convert or hold against Stockfish, from a position checked to be won or drawn.
-#[derive(Clone, Deserialize)]
-pub struct Drill {
-    pub id: String,
-    pub title: String,
-    pub group: String,
-    pub fen: String,
-    /// The side you play.
-    pub player: String,
-    /// `win` or `draw`.
-    pub goal: String,
-    pub level: String,
-    /// What to aim for, in a sentence.
-    pub idea: String,
-}
+pub use kchess_domain::training::endgames::EndgameDrill as Drill;
+pub use kchess_domain::training::lessons::{Chapter, Course, Step};
 
-#[derive(Clone, Deserialize)]
-pub struct Shape {
-    pub orig: String,
-    pub dest: Option<String>,
-    pub brush: String,
-}
-
-#[derive(Clone, Deserialize)]
-pub struct LessonStep {
-    pub fen: String,
-    pub text: String,
-    #[serde(default)]
-    pub shapes: Vec<Shape>,
-    /// What the step asks (`LessonTask`), as the rules read it.
-    pub task: Value,
-}
-
-#[derive(Clone, Deserialize)]
-pub struct LessonChapter {
-    /// Unique across all courses: the saved run's variant.
-    pub id: String,
-    pub title: String,
-    pub steps: Vec<LessonStep>,
-}
-
-#[derive(Clone, Deserialize)]
-pub struct Course {
-    pub id: String,
-    pub group: String,
-    pub title: String,
-    pub subtitle: String,
-    pub chapters: Vec<LessonChapter>,
-}
-
-/// `ENDGAME_DRILLS`.
+/// The endgame drills against Stockfish.
 pub fn drills() -> &'static [Drill] {
-    static DRILLS: OnceLock<Vec<Drill>> = OnceLock::new();
-    DRILLS.get_or_init(|| {
-        #[derive(Deserialize)]
-        struct Training {
-            #[serde(rename = "endgameDrills")]
-            endgame_drills: Vec<Drill>,
+    match kchess_domain::training::data::data() {
+        Ok(data) => &data.endgame_drills,
+        Err(cause) => {
+            crate::log::write(Level::Warn, "endgame-training", &cause);
+            &[]
         }
-        serde_json::from_str::<Training>(include_str!(
-            "../../../../../crates/kchess-domain/data/training.json"
-        ))
-        .map(|training| training.endgame_drills)
-        .unwrap_or_default()
-    })
+    }
 }
 
-/// `LESSON_COURSES`.
+/// The checkmate and endgame courses.
 pub fn courses() -> &'static [Course] {
-    static COURSES: OnceLock<Vec<Course>> = OnceLock::new();
-    COURSES.get_or_init(|| {
-        #[derive(Deserialize)]
-        struct Lessons {
-            courses: Vec<Course>,
+    match kchess_domain::training::lessons::data() {
+        Ok(data) => &data.courses,
+        Err(cause) => {
+            crate::log::write(Level::Warn, "endgame-training", &cause);
+            &[]
         }
-        serde_json::from_str::<Lessons>(include_str!(
-            "../../../../../crates/kchess-domain/data/lessons.json"
-        ))
-        .map(|lessons| lessons.courses)
-        .unwrap_or_default()
-    })
+    }
 }
 
 /// A drill or chapter finished at least once.

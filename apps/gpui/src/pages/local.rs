@@ -2,8 +2,8 @@
 //! board, any variant, with or without a clock; or a chess clock for a real board. Both keep their
 //! place in Game history, and the board game resumes in either app.
 
-use kchess_domain::training::clock::format_clock;
 use kchess_contracts::calls;
+use kchess_domain::training::clock::format_clock;
 use std::time::{Duration, Instant};
 
 use gpui_kit::base::TestSupportExt as _;

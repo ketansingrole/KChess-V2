@@ -18,9 +18,8 @@ fn default_engine_levels() -> Result<Vec<EngineLevel>, String> {
     levels
         .iter()
         .map(|level| {
-            serde_json::from_value(serde_json::Value::String(level.clone())).map_err(|cause| {
-                format!("the bundled engine levels are not known levels: {cause}")
-            })
+            serde_json::from_value(serde_json::Value::String(level.clone()))
+                .map_err(|cause| format!("the bundled engine levels are not known levels: {cause}"))
         })
         .collect()
 }
@@ -90,6 +89,9 @@ mod tests {
         let levels = &settings.core.engine_levels;
         assert_eq!(levels.first(), Some(&EngineLevel::Beginner));
         let from_domain = engine_levels::default_levels().unwrap();
-        assert_eq!(serde_json::to_value(levels).unwrap(), serde_json::json!(from_domain));
+        assert_eq!(
+            serde_json::to_value(levels).unwrap(),
+            serde_json::json!(from_domain)
+        );
     }
 }

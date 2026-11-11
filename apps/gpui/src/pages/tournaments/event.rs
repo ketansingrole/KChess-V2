@@ -1,12 +1,12 @@
 //! One tournament: joining, its details, the standings, the top game,
 //! the games in progress and the totals.
 
-use kchess_domain::training::clock::format_clock;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_domain::training::clock::format_clock;
 use serde_json::{Value, json};
 use shakmaty::Color;
 

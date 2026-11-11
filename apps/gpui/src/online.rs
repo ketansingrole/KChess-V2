@@ -610,20 +610,19 @@ impl OnlineState {
         }
         if self.model["onlineClockConfig"].is_object()
             && let Some(turn) = self.clock_running().map(str::to_string)
+            && self.clock.low_time_alert(&turn, now())
         {
-            if self.clock.low_time_alert(&turn, now()) {
-                crate::sound::play(crate::sound::Sound::LowTime, cx);
-                let mine = self.model["onlineColor"] == json!(turn);
-                if mine {
-                    let left = self.clock_text(&turn);
-                    let opponent = self.model["onlineOpponent"].as_str().unwrap_or_default();
-                    crate::notifications::desktop(
-                        "lowTime",
-                        "Low on time",
-                        &format!("{left} left against {opponent}"),
-                        cx,
-                    );
-                }
+            crate::sound::play(crate::sound::Sound::LowTime, cx);
+            let mine = self.model["onlineColor"] == json!(turn);
+            if mine {
+                let left = self.clock_text(&turn);
+                let opponent = self.model["onlineOpponent"].as_str().unwrap_or_default();
+                crate::notifications::desktop(
+                    "lowTime",
+                    "Low on time",
+                    &format!("{left} left against {opponent}"),
+                    cx,
+                );
             }
         }
         // Redraw only when something the game shows by the clock changes: a clock face (each

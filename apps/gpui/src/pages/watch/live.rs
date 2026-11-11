@@ -2,8 +2,8 @@
 //! board with ticking clocks, the moves once Lichess's delayed export lines up, the head-to-head,
 //! a channel's earlier games, and Analyse.
 
-use kchess_domain::training::clock::format_clock;
 use kchess_contracts::calls;
+use kchess_domain::training::clock::format_clock;
 use std::collections::HashMap;
 use std::time::Instant;
 

@@ -59,11 +59,8 @@ impl OnBoard {
 
     /// The player's move: whether it was the solution's, and the opponent's reply to play next.
     pub fn player_move(&mut self, uci: &str) -> (bool, Option<String>) {
-        let played = puzzle::player_move(
-            &puzzle::solution_of(&self.puzzle),
-            self.state.clone(),
-            uci,
-        );
+        let played =
+            puzzle::player_move(&puzzle::solution_of(&self.puzzle), self.state.clone(), uci);
         if played.correct {
             self.state = played.state;
         }

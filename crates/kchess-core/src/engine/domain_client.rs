@@ -11,10 +11,7 @@ use super::validate;
 use crate::error::Result;
 
 /// Every domain method the core calls through the generic bridge. Pinned by test.
-pub const DOMAIN_METHODS: &[&str] = &[
-    "assertMoves",
-    "assertBestMoveOptions",
-];
+pub const DOMAIN_METHODS: &[&str] = &["assertMoves", "assertBestMoveOptions"];
 
 /// `assertMoves(moves)`: validated move list.
 pub fn assert_moves(moves: &Value) -> Result<Value> {

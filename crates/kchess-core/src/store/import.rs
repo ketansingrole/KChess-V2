@@ -631,10 +631,7 @@ pub fn normalize_settings(stored: &Map<String, Value>) -> Result<Map<String, Val
         .map_err(|cause| CoreError::new(format!("levels: {cause}")))?;
     settings.insert(
         "engineLevels".into(),
-        json!(
-            kchess_domain::training::engine_levels::normalize(&levels)
-                .map_err(CoreError::new)?
-        ),
+        json!(kchess_domain::training::engine_levels::normalize(&levels).map_err(CoreError::new)?),
     );
     let review = stored.get("reviewAuto").cloned().unwrap_or(Value::Null);
     settings.insert(

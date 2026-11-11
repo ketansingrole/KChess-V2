@@ -2,8 +2,8 @@
 //! relays, searchable; a tournament's rounds and boards with their clocks; one board followed
 //! move by move, and Analyse.
 
-use kchess_domain::training::clock::format_clock;
 use kchess_contracts::calls;
+use kchess_domain::training::clock::format_clock;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 

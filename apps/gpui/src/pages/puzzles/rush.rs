@@ -539,7 +539,9 @@ impl PuzzleRush {
             .and_then(|summary| summary["recent"].as_array())
             .map(|recent| recent.iter().take(6).cloned().collect())
             .unwrap_or_default();
-        let title = config.map(|config| config.title.clone()).unwrap_or_default();
+        let title = config
+            .map(|config| config.title.clone())
+            .unwrap_or_default();
         let recent_table = (!recent.is_empty()).then(|| {
             let cell = |text: String, width: f32| div().w(px(width)).child(text);
             v_flex()
@@ -604,7 +606,11 @@ impl PuzzleRush {
                     .text_size(px(13.))
                     .line_height(relative(1.55))
                     .text_color(palette.toned)
-                    .child(config.map(|config| config.rules.clone()).unwrap_or_default()),
+                    .child(
+                        config
+                            .map(|config| config.rules.clone())
+                            .unwrap_or_default(),
+                    ),
             )
             .children(self.error.clone().map(|error| {
                 div()
@@ -677,7 +683,9 @@ impl PuzzleRush {
                     .font_weight(FontWeight::MEDIUM)
                     .child(format!("+{}s", bonus / 1000.))
             }));
-        let title = config.map(|config| config.title.clone()).unwrap_or_default();
+        let title = config
+            .map(|config| config.title.clone())
+            .unwrap_or_default();
         let mut panel = widgets::side_panel(palette)
             .h(board_size)
             .flex_1()
@@ -779,19 +787,16 @@ impl PuzzleRush {
                 .child(
                     h_flex()
                         .gap(px(8.))
-                        .when(
-                            config.is_some_and(|config| config.skips > 0.),
-                            |row| {
-                                row.child(
-                                    Button::new("rush-skip")
-                                        .outline()
-                                        .icon(icon("skip-forward"))
-                                        .label(format!("Skip ({skips})"))
-                                        .disabled(skips <= 0. || self.locked)
-                                        .on_click(cx.listener(|this, _, _, cx| this.skip(cx))),
-                                )
-                            },
-                        )
+                        .when(config.is_some_and(|config| config.skips > 0.), |row| {
+                            row.child(
+                                Button::new("rush-skip")
+                                    .outline()
+                                    .icon(icon("skip-forward"))
+                                    .label(format!("Skip ({skips})"))
+                                    .disabled(skips <= 0. || self.locked)
+                                    .on_click(cx.listener(|this, _, _, cx| this.skip(cx))),
+                            )
+                        })
                         .child(
                             Button::new("rush-end")
                                 .outline()

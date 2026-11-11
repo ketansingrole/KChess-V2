@@ -20,7 +20,8 @@ pub struct EndgameDrill {
     pub idea: String,
 }
 
-/// `EndgameStatus` with the turn and FEN the TypeScript result carries alongside it.
+/// Where a drill stands: whether it is over and won, what to tell the player, and the turn and FEN
+/// after the moves.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
