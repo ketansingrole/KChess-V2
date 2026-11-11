@@ -264,11 +264,7 @@ impl EngineHandoff for EngineOwners {
         Box::pin(async move {
             let hold = self
                 .hub
-                .suspend(|| {
-                    self.search.stop_engine(true);
-                    self.analysis.stop_analysis(true);
-                    self.reviews.restart_review_engine();
-                })
+                .suspend(|| super::stop_engines(&self.search, &self.analysis, &self.reviews, true))
                 .await?;
             // The engines have exited; the stopped analysis also ends (its final `interrupted`
             // update sent, no longer running) before the executable changes. Waiting only for

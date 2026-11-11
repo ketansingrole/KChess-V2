@@ -165,11 +165,7 @@ impl Core {
         // A live game stops the computer, the analysis and the review engine before it is reported.
         let game_stops: Arc<dyn Fn() + Send + Sync> = {
             let (search, analysis, reviews) = (search.clone(), analysis.clone(), reviews.clone());
-            Arc::new(move || {
-                search.stop_engine(false);
-                analysis.stop_analysis(false);
-                reviews.restart_review_engine();
-            })
+            Arc::new(move || crate::engine::stop_engines(&search, &analysis, &reviews, false))
         };
         let usage = UsageBatch::new(
             Arc::clone(&database),

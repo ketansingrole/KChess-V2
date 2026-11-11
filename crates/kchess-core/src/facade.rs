@@ -277,9 +277,7 @@ impl Core {
             .write_async(move |ctx| store::games::save_settings(ctx.db, &settings))
             .await?;
         if previous.core.engine_path != saved.core.engine_path {
-            self.search.stop_engine(true);
-            self.analysis.stop_analysis(true);
-            self.reviews.restart_review_engine();
+            crate::engine::stop_engines(&self.search, &self.analysis, &self.reviews, true);
         }
         let core = serde_json::to_value(&saved.core)
             .map_err(|cause| CoreError::wrap("core settings", cause))?;
@@ -325,8 +323,8 @@ impl Core {
         self.ai.lifetime().cancel();
         self.services.spectator().stop();
         self.services.online().close();
-        self.search.stop_engine(true);
         self.analysis.stop_analysis(true);
+        // Stops and closes the computer's engine too.
         self.search.reset_engine();
         self.reviews.stop_reviews().await;
         self.voice.stop().await;
