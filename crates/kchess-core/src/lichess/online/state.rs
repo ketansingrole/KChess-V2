@@ -10,8 +10,6 @@ use tokio_util::sync::CancellationToken;
 
 use super::super::accounts::Lichess;
 use super::super::challenges::{ChallengeInbox, PlayerRef};
-use super::super::client::{Failure, TokenSource};
-use crate::error::CoreError;
 use crate::host::Host;
 
 /// `MAX_RECONNECTS`: how many times a dropped game or event stream is re-opened without progress.
@@ -26,9 +24,6 @@ pub(crate) const ANNOUNCED_MAX: usize = 200;
 pub(crate) const SEEK_REJECTED: &str = "Lichess rejected this public seek. The Board API allows Rapid and slower for matchmaking (Blitz and faster need a direct challenge). Pick a longer control or add a username.";
 pub(crate) const LOST_CONNECTION: &str =
     "Lost connection to Lichess. Check your network and reopen the game.";
-
-/// A failed call or stream, as the session reports it.
-pub type Res<T> = std::result::Result<T, Failure>;
 
 /// The session's streams (`lane`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -314,8 +309,6 @@ pub(crate) type StateHook = Arc<dyn Fn(bool, bool) + Send + Sync>;
 
 pub(crate) struct Inner {
     pub(crate) lichess: Arc<Lichess>,
-    pub(crate) tokens: Arc<dyn TokenSource>,
-    pub(crate) http: reqwest::Client,
     pub(crate) host: Arc<dyn Host>,
     pub(crate) challenges: ChallengeInbox,
     pub(crate) state: Mutex<State>,
@@ -331,14 +324,6 @@ pub struct OnlineSession {
 }
 
 pub(crate) use crate::tasks::lock;
-
-pub(crate) fn aborted(message: &str) -> Failure {
-    Failure::Core(CoreError::aborted(message))
-}
-
-pub(crate) fn core(message: impl Into<String>) -> Failure {
-    Failure::Core(CoreError::new(message))
-}
 
 /// `Number(x)` as JavaScript writes it into a URL or form: integers without a fraction.
 pub fn js_number(value: f64) -> String {

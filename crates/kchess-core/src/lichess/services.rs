@@ -30,7 +30,6 @@ use crate::usage::UsageBatch;
 /// The Lichess services of one core.
 pub struct Services {
     lichess: Arc<Lichess>,
-    tokens: Arc<dyn TokenSource>,
     online: OnlineSession,
     spectator: Spectators,
     lookups: PositionLookups,
@@ -78,11 +77,11 @@ impl Services {
         // A test origin replaces Lichess for every request (`origin` is only set by the tests).
         let (client, endpoints) = match &origin {
             Some(base) => (
-                LichessClient::with_base(base, Arc::clone(&policy), http.clone()),
+                LichessClient::with_base(base, Arc::clone(&policy)),
                 Endpoints::at(base),
             ),
             None => (
-                LichessClient::new(Arc::clone(&policy), http.clone()),
+                LichessClient::new(Arc::clone(&policy)),
                 Endpoints::default(),
             ),
         };
@@ -99,7 +98,7 @@ impl Services {
             Arc::clone(&host),
             lifetime.clone(),
         ));
-        let online = OnlineSession::new(Arc::clone(&lichess), Arc::clone(&tokens), http.clone());
+        let online = OnlineSession::new(Arc::clone(&lichess));
         let spectator = Spectators::new(Arc::clone(&lichess), host.clone());
         // Before each state is reported: a live game (or the startup check) stops the engines and the
         // watch, and the engines' busy state is taken from the session as it now is.
@@ -114,6 +113,7 @@ impl Services {
             }));
         }
         let lookups = PositionLookups::new(
+            Arc::clone(&host),
             http,
             endpoints,
             Arc::new(DbLookups::new(Arc::clone(&database))),
@@ -122,11 +122,10 @@ impl Services {
         .with_lifetime(lifetime.clone())
         .with_login(Arc::new(DbExplorerLogin::new(
             Arc::clone(&database),
-            Arc::clone(&tokens),
+            tokens,
         )));
         Services {
             lichess,
-            tokens,
             online,
             spectator,
             lookups,
@@ -512,7 +511,6 @@ impl Services {
                 (Ok(system), Ok(id), Ok(account), Ok(page)) => to_json(
                     super::tournaments::tournament(
                         &self.lichess,
-                        self.tokens.as_ref(),
                         &system,
                         &id,
                         &account,

@@ -7,10 +7,10 @@
 
 use serde::Deserialize;
 use serde_json::{Map, Number, Value, json};
-use tokio_util::sync::CancellationToken;
 
 use super::accounts::{Lichess, now_ms};
-use super::client::{Failure, LichessClient, Ndjson};
+use super::client::Lane;
+use kchess_contracts::types::UsageKind;
 use super::decode::{Loose, read};
 use crate::error::{CoreError, Result as CoreResult};
 use kchess_domain::{js, records, replay, review as domain_review};
@@ -208,33 +208,21 @@ pub async fn fetch_lichess_reviews(
         ("evals", "true".to_string()),
         ("accuracy", "true".to_string()),
     ];
-    let cancel = lichess.lifetime().clone();
     let lines = lichess
-        .client()
-        .policy()
-        .with_usage(account, "games", async {
-            lichess
-                .as_owner(account, |auth| {
-                    let body = body.clone();
-                    let cancel = cancel.clone();
-                    let query = query.clone();
-                    async move {
-                        collect_lines(
-                            lichess.client(),
-                            reqwest::Method::POST,
-                            "/api/games/export/_ids",
-                            &query,
-                            Some(body),
-                            auth.as_deref(),
-                            &cancel,
-                        )
-                        .await
-                    }
-                })
-                .await
+        .as_owner(account, UsageKind::Games, |auth| {
+            let (body, query) = (body.clone(), &query);
+            async move {
+                lichess
+                    .client()
+                    .post("/api/games/export/_ids", &auth)
+                    .query(query)
+                    .text(body)
+                    .lane(Lane::Export)
+                    .read_lines()
+                    .await
+            }
         })
-        .await
-        .map_err(CoreError::from)?;
+        .await?;
     let mut parsed = Vec::new();
     for line in &lines {
         let raw = parse_record(line)?;
@@ -259,36 +247,6 @@ pub async fn fetch_lichess_reviews(
 pub(crate) fn parse_record(line: &str) -> CoreResult<Value> {
     serde_json::from_str(line)
         .map_err(|cause| CoreError::new(format!("Lichess sent an unreadable game record: {cause}")))
-}
-
-/// The lines of an NDJSON response, read to the end (the request is admitted by the policy).
-pub(crate) async fn collect_lines(
-    client: &LichessClient,
-    method: reqwest::Method,
-    path: &str,
-    query: &[(&str, String)],
-    body: Option<String>,
-    auth: Option<&str>,
-    cancel: &CancellationToken,
-) -> Result<Vec<String>, Failure> {
-    let mut lines = Vec::new();
-    client
-        .ndjson(
-            Ndjson {
-                method,
-                path,
-                query,
-                body,
-                auth,
-            },
-            cancel,
-            |line| {
-                lines.push(line.to_string());
-                Ok(())
-            },
-        )
-        .await?;
-    Ok(lines)
 }
 
 /// `split(/\s+/)` of JavaScript: runs of whitespace separate words, and a leading or trailing run

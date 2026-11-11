@@ -9,16 +9,20 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use kchess_contracts::types::UsageKind;
+
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use super::client::Failure;
+use super::client::{Auth, Lane, LichessClient};
+use super::policy::{Clock, Policy, timed_out};
 use super::decode::{Loose, Text, read};
 use super::reviews::split_whitespace;
-use crate::error::{CoreError, Result as CoreResult};
+use crate::error::{CoreError, ErrorKind, Result as CoreResult};
+use crate::host::Host;
 use kchess_domain::{js, misc, position, replay};
 
 mod opening_info;
@@ -44,6 +48,11 @@ const PENDING_MAX: usize = 16;
 const DEFAULT_OPENING: &str = r#"{"speeds":["blitz","rapid","classical"]}"#;
 const MAX_CACHED_GAMES: usize = 30;
 const MAX_MOVES: usize = 256;
+/// How long a lookup's answer may take (the player database's stream excepted).
+const LOOKUP_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long the player database may take to finish its stream of ever more complete results.
+const PLAYER_TIMEOUT: Duration = Duration::from_secs(60);
+const CONNECT_EXPLORER: &str = "Connect a Lichess account in Settings to use the opening explorer.";
 
 /* ── Cloud evaluation ── */
 
@@ -140,25 +149,19 @@ pub async fn cloud_eval(
     if let Some(hit) = cache.get(&key) {
         return Ok(hit);
     }
-    let cancel = lichess.lifetime().clone();
-    let query = [("fen", fen.to_string()), ("multiPv", lines.to_string())];
     let raw = lichess
         .client()
-        .policy()
-        .with_usage("", "analysis", async {
-            lichess
-                .client()
-                .get_json::<Value>("/api/cloud-eval", &query, None, &cancel)
-                .await
-        })
+        .get("/api/cloud-eval", &lichess.anonymous(UsageKind::Analysis))
+        .query(&[("fen", fen.to_string()), ("multiPv", lines.to_string())])
+        .read_json::<Value>()
         .await;
     let raw = match raw {
         Ok(raw) => raw,
-        Err(Failure::Lichess(error)) if error.status == 404 => {
+        Err(cause) if cause.kind == Some(ErrorKind::NotFound) => {
             cache.set(key, None);
             return Ok(None);
         }
-        Err(failure) => return Err(failure.into()),
+        Err(cause) => return Err(cause),
     };
     let data = decode_cloud(&raw)?;
     let mut result_lines = Vec::new();
@@ -395,28 +398,25 @@ impl Kind {
     }
 }
 
-/// Where the lookups are sent. Production uses the Lichess explorer and tablebase.
+/// The origins the lookups are sent to. Production uses the Lichess explorer and tablebase.
 #[derive(Clone, Debug)]
 pub struct Endpoints {
-    pub opening: String,
-    pub masters: String,
-    pub player: String,
+    /// The opening explorer: `/lichess`, `/masters`, `/player`, `/masters/pgn/{id}` and
+    /// `/lichess/history` under it.
+    pub explorer: String,
+    /// The tablebase: `/standard` under it.
     pub tablebase: String,
-    pub masters_game: String,
     /// The Wikibooks API, for opening descriptions.
     pub wikibooks: String,
 }
 
 impl Endpoints {
-    /// The explorer and tablebase endpoints under a test origin (`KCHESS_TEST_LICHESS_BASE`), with
-    /// the same paths as production.
+    /// The endpoints under a test origin (`KCHESS_TEST_LICHESS_BASE`), with the same paths as
+    /// production.
     pub fn at(origin: &str) -> Endpoints {
         Endpoints {
-            opening: format!("{origin}/explorer/lichess"),
-            masters: format!("{origin}/explorer/masters"),
-            player: format!("{origin}/explorer/player"),
-            tablebase: format!("{origin}/tablebase/standard"),
-            masters_game: format!("{origin}/explorer/masters/pgn"),
+            explorer: format!("{origin}/explorer"),
+            tablebase: format!("{origin}/tablebase"),
             wikibooks: format!("{origin}/wikibooks/w/api.php"),
         }
     }
@@ -425,11 +425,8 @@ impl Endpoints {
 impl Default for Endpoints {
     fn default() -> Endpoints {
         Endpoints {
-            opening: "https://explorer.lichess.org/lichess".into(),
-            masters: "https://explorer.lichess.org/masters".into(),
-            player: "https://explorer.lichess.org/player".into(),
-            tablebase: "https://tablebase.lichess.org/standard".into(),
-            masters_game: "https://explorer.lichess.org/masters/pgn".into(),
+            explorer: "https://explorer.lichess.org".into(),
+            tablebase: "https://tablebase.lichess.org".into(),
             wikibooks: "https://en.wikibooks.org/w/api.php".into(),
         }
     }
@@ -440,16 +437,18 @@ type Pending = watch::Receiver<Option<Result<PositionLookup, CoreError>>>;
 /// The position explorer: deduplicated and bounded lookups with validated legal moves, stale
 /// recovery when a refresh fails, and the master game PGNs.
 pub struct PositionLookups {
+    host: Arc<dyn Host>,
     http: reqwest::Client,
     endpoints: Endpoints,
+    /// The explorer and the tablebase, each with its own policy: a 429 from one pauses only it.
+    explorer: LichessClient,
+    tablebase: LichessClient,
     cache: Arc<dyn LookupCache>,
-    now: Arc<dyn Fn() -> i64 + Send + Sync>,
+    now: Clock,
     pending: Mutex<HashMap<String, Pending>>,
     /// The login the explorer is asked with; None sends no login (tests).
     login: Option<Arc<dyn ExplorerLogin>>,
     lifetime: CancellationToken,
-    /// Per origin, when (by `now`) a 429's cooldown ends; until then that origin is not asked.
-    cooldowns: Mutex<HashMap<String, i64>>,
 }
 
 /// Removing a pending lookup must also happen when its caller is cancelled or dropped.
@@ -472,22 +471,27 @@ pub trait ExplorerLogin: Send + Sync {
 }
 
 impl PositionLookups {
-    /// `now` is the clock in ms since the epoch (`Date.now`).
+    /// `now` is the clock in ms since the epoch; it also times the origins' 429 cooldowns.
     pub fn new(
+        host: Arc<dyn Host>,
         http: reqwest::Client,
         endpoints: Endpoints,
         cache: Arc<dyn LookupCache>,
-        now: Arc<dyn Fn() -> i64 + Send + Sync>,
+        now: Clock,
     ) -> PositionLookups {
+        let lifetime = CancellationToken::new();
+        let (explorer, tablebase) = clients(&host, &http, &endpoints, &lifetime, &now);
         PositionLookups {
+            host,
             http,
             endpoints,
+            explorer,
+            tablebase,
             cache,
             now,
             pending: Mutex::new(HashMap::new()),
             login: None,
-            lifetime: CancellationToken::new(),
-            cooldowns: Mutex::new(HashMap::new()),
+            lifetime,
         }
     }
 
@@ -500,44 +504,23 @@ impl PositionLookups {
 
     /// Share the core's lifetime so close stops login, HTTP, cache waits and deduplicated callers.
     pub fn with_lifetime(mut self, lifetime: CancellationToken) -> PositionLookups {
+        (self.explorer, self.tablebase) =
+            clients(&self.host, &self.http, &self.endpoints, &lifetime, &self.now);
         self.lifetime = lifetime;
         self
     }
 
-    /// A request to the explorer (not the tablebase), with the explorer's login when one is set.
-    async fn explorer_request(&self, url: reqwest::Url) -> CoreResult<reqwest::RequestBuilder> {
+    /// Who the explorer (not the tablebase) is asked as: the explorer's login when one is set.
+    async fn explorer_auth(&self) -> CoreResult<Auth> {
+        let auth = self.explorer.anonymous(UsageKind::Analysis);
         let Some(login) = &self.login else {
-            return Ok(self.http.get(url));
+            return Ok(auth);
         };
-        let token = login.token().await?.ok_or_else(|| {
-            CoreError::new("Connect a Lichess account in Settings to use the opening explorer.")
-        })?;
-        Ok(self.http.get(url).bearer_auth(token))
-    }
-
-    /// Refuses a request to an origin that answered 429 until its cooldown ends, so the saved
-    /// lookup (or the error) comes back at once instead of prolonging the rate limit.
-    fn paced(&self, url: &reqwest::Url) -> CoreResult<()> {
-        let origin = url.origin().ascii_serialization();
-        let until = lock(&self.cooldowns).get(&origin).copied();
-        match until {
-            Some(until) if until > (self.now)() => Err(slow_down(until - (self.now)())),
-            _ => Ok(()),
-        }
-    }
-
-    /// After a 429, starts its origin's cooldown (`Retry-After`, as the Lichess API's policy
-    /// reads it) and fails the request.
-    fn note_rate_limit(&self, url: &reqwest::Url, response: &reqwest::Response) -> CoreResult<()> {
-        if response.status().as_u16() != 429 {
-            return Ok(());
-        }
-        let wait = i64::try_from(super::policy::cooldown_for(response.headers()).as_millis())
-            .unwrap_or(i64::MAX);
-        let until = (self.now)().saturating_add(wait);
-        let origin = url.origin().ascii_serialization();
-        lock(&self.cooldowns).insert(origin, until);
-        Err(slow_down(wait))
+        let token = login
+            .token()
+            .await?
+            .ok_or_else(|| CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login))?;
+        Ok(auth.with_token(token))
     }
 
     /// `lookup(kind, fen, options)`.
@@ -653,14 +636,7 @@ impl PositionLookups {
         saved: Option<&Cached>,
     ) -> CoreResult<PositionLookup> {
         let attempt = async {
-            let timeout = if kind == Kind::Player {
-                Duration::from_secs(60)
-            } else {
-                Duration::from_secs(15)
-            };
-            let text = tokio::time::timeout(timeout, self.fetch(kind, fen, options))
-                .await
-                .map_err(|_| CoreError::new("The operation was aborted due to timeout"))??;
+            let text = self.fetch(kind, fen, options).await?;
             let body = if kind == Kind::Player {
                 // The player database answers with a stream of ever more complete results.
                 text.split('\n')
@@ -713,18 +689,10 @@ impl PositionLookups {
         }
     }
 
-    /// The URL of a lookup, with the filters the database understands.
-    fn url(&self, kind: Kind, fen: &str, options: &LookupOptions) -> CoreResult<reqwest::Url> {
-        let base = match kind {
-            Kind::Opening => &self.endpoints.opening,
-            Kind::Masters => &self.endpoints.masters,
-            Kind::Player => &self.endpoints.player,
-            Kind::Tablebase => &self.endpoints.tablebase,
-        };
-        let mut url = reqwest::Url::parse(base)
-            .map_err(|cause| CoreError::new(format!("Invalid explorer URL: {cause}")))?;
+    /// The query of a lookup, with the filters the database understands.
+    fn query(kind: Kind, fen: &str, options: &LookupOptions) -> Vec<(&'static str, String)> {
+        let mut query = Pairs::default();
         {
-            let mut query = url.query_pairs_mut();
             query.append_pair("fen", fen);
             if kind != Kind::Tablebase {
                 query.append_pair("moves", "12");
@@ -772,52 +740,36 @@ impl PositionLookups {
                 Kind::Tablebase => {}
             }
         }
-        Ok(url)
+        query.0
     }
 
     /// Requests a lookup and reads its body, bounded by the kind's size limit.
     async fn fetch(&self, kind: Kind, fen: &str, options: &LookupOptions) -> CoreResult<String> {
-        let url = self.url(kind, fen, options)?;
-        self.paced(&url)?;
-        let request = if kind == Kind::Tablebase {
-            self.http.get(url.clone())
-        } else {
-            self.explorer_request(url.clone()).await?
+        let query = PositionLookups::query(kind, fen, options);
+        let failed = |cause: CoreError| lookup_error(cause, kind, options);
+        let (client, auth, path) = match kind {
+            Kind::Tablebase => (
+                &self.tablebase,
+                self.tablebase.anonymous(UsageKind::Analysis),
+                "/standard",
+            ),
+            Kind::Opening => (&self.explorer, self.explorer_auth().await?, "/lichess"),
+            Kind::Masters => (&self.explorer, self.explorer_auth().await?, "/masters"),
+            Kind::Player => (&self.explorer, self.explorer_auth().await?, "/player"),
         };
-        let mut response = request.send().await.map_err(|_| {
-            CoreError::new("Position lookup failed. Check your connection and retry.")
-        })?;
-        self.note_rate_limit(&url, &response)?;
-        let status = response.status().as_u16();
-        if status == 401 || status == 403 {
-            return Err(CoreError::new(
-                "Connect a Lichess account in Settings to use the opening explorer.",
-            ));
+        let request = client
+            .get(path, &auth)
+            .query(&query)
+            .max_bytes(kind.max_bytes(), "Position lookup returned too much data.");
+        if kind != Kind::Player {
+            return request.read_text(None).await.map_err(failed);
         }
-        if status == 404 && kind == Kind::Player {
-            return Err(CoreError::new(format!(
-                "No Lichess player named \"{}\".",
-                options.player.as_deref().unwrap_or("")
-            )));
+        // The player database streams its answer, so only the whole of it is bounded.
+        let read = request.lane(Lane::Feed).read_text(None);
+        match tokio::time::timeout(PLAYER_TIMEOUT, read).await {
+            Ok(text) => text.map_err(failed),
+            Err(_) => Err(timed_out()),
         }
-        if !response.status().is_success() {
-            return Err(CoreError::new(format!(
-                "Position lookup returned {status}. Try again shortly."
-            )));
-        }
-        let limit = kind.max_bytes();
-        let mut bytes: Vec<u8> = Vec::new();
-        loop {
-            let chunk = response.chunk().await.map_err(|_| {
-                CoreError::new("Position lookup failed. Check your connection and retry.")
-            })?;
-            let Some(chunk) = chunk else { break };
-            if bytes.len() + chunk.len() > limit {
-                return Err(CoreError::new("Position lookup returned too much data."));
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// `mastersGame(id)`: a master game's PGN; master games never change.
@@ -830,40 +782,23 @@ impl PositionLookups {
     }
 
     async fn masters_game_inner(&self, id: &str) -> CoreResult<String> {
-        let valid = id.len() == 8 && id.bytes().all(|b| b.is_ascii_alphanumeric());
-        if !valid {
+        if !super::is_lichess_id(id) {
             return Err(CoreError::new("Invalid id."));
         }
-        let url = reqwest::Url::parse(&format!("{}/{id}", self.endpoints.masters_game))
-            .map_err(|_| CoreError::new("Invalid id."))?;
-        self.paced(&url)?;
-        let attempt = async {
-            let response = self
-                .explorer_request(url.clone())
-                .await?
-                .send()
-                .await
-                .map_err(|_| CoreError::new("The master game could not be loaded."))?;
-            self.note_rate_limit(&url, &response)?;
-            let status = response.status().as_u16();
-            if status == 401 || status == 403 {
-                return Err(CoreError::new(
-                    "Connect a Lichess account in Settings to use the opening explorer.",
-                ));
-            }
-            if !response.status().is_success() {
-                return Err(CoreError::new(format!(
-                    "The master game could not be loaded ({status})."
-                )));
-            }
-            response
-                .text()
-                .await
-                .map_err(|_| CoreError::new("The master game could not be loaded."))
-        };
-        let text = tokio::time::timeout(Duration::from_secs(15), attempt)
+        let text = self
+            .explorer
+            .get(&format!("/masters/pgn/{id}"), &self.explorer_auth().await?)
+            .read_text(None)
             .await
-            .map_err(|_| CoreError::new("The operation was aborted due to timeout"))??;
+            .map_err(|cause| match cause.kind {
+                Some(ErrorKind::Login) => CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login),
+                Some(ErrorKind::RateLimited | ErrorKind::TimedOut) => cause,
+                _ if cause.aborted => cause,
+                _ => CoreError {
+                    message: "The master game could not be loaded.".into(),
+                    ..cause
+                },
+            })?;
         if js::utf16_len(&text) > 200_000 || !text.contains('[') {
             return Err(CoreError::new("That game is not a PGN."));
         }
@@ -871,15 +806,59 @@ impl PositionLookups {
     }
 }
 
-/// The error while an origin's 429 cooldown of `wait_ms` runs.
-fn slow_down(wait_ms: i64) -> CoreError {
-    let seconds = (wait_ms.max(1) + 999) / 1000;
-    let unit = if seconds == 1 { "second" } else { "seconds" };
-    CoreError::new(format!("Too many lookups. Try again in {seconds} {unit}."))
+/// What a person is told when a lookup fails: never Lichess's status, and a refused login asks to
+/// connect an account only for the explorer, which needs one.
+fn lookup_error(cause: CoreError, kind: Kind, options: &LookupOptions) -> CoreError {
+    match cause.kind {
+        Some(ErrorKind::Login) if kind != Kind::Tablebase => {
+            CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login)
+        }
+        Some(ErrorKind::Offline) => CoreError {
+            message: "Position lookup failed. Check your connection and retry.".into(),
+            ..cause
+        },
+        Some(ErrorKind::NotFound) if kind == Kind::Player => CoreError {
+            message: format!(
+                "No Lichess player named \"{}\".",
+                options.player.as_deref().unwrap_or("")
+            ),
+            ..cause
+        },
+        _ => cause,
+    }
 }
 
-/// The lossless sidecar of a validator call whose arguments are plain JSON (no `undefined`, NaN or
-/// binary values to record).
+/// Query pairs in the order they are added.
+#[derive(Default)]
+struct Pairs(Vec<(&'static str, String)>);
+
+impl Pairs {
+    fn append_pair(&mut self, key: &'static str, value: &str) {
+        self.0.push((key, value.to_string()));
+    }
+}
+
+/// The explorer's and the tablebase's clients, stopped by `lifetime`.
+fn clients(
+    host: &Arc<dyn Host>,
+    http: &reqwest::Client,
+    endpoints: &Endpoints,
+    lifetime: &CancellationToken,
+    now: &Clock,
+) -> (LichessClient, LichessClient) {
+    let client = |base: &str| {
+        let policy = Policy::for_lookups(
+            Arc::clone(host),
+            http.clone(),
+            lifetime.clone(),
+            LOOKUP_TIMEOUT,
+            Arc::clone(now),
+        );
+        LichessClient::with_base(base, policy)
+    };
+    (client(&endpoints.explorer), client(&endpoints.tablebase))
+}
+
 fn no_lossless() -> Value {
     json!([])
 }

@@ -9,18 +9,16 @@ use tokio_util::sync::CancellationToken;
 
 use super::super::accounts::{Lichess, now_ms};
 use super::super::challenges::ChallengeInbox;
-use super::super::client::{
-    Failure, LichessError, TokenSource, authorize, lichess_error, read_with_deadline,
-};
-use super::super::stream::{LineOptions, read_lines};
-use crate::error::{CoreError, ErrorKind};
+use super::super::client::{Auth, Lane as RequestLane};
+use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Level;
+use kchess_contracts::types::UsageKind;
 
 use super::events::{is_challenge_event, validate_online_event};
-use super::requests::{Emitter, Listen, Quiet, StreamRequest, body_value, refs};
+use super::requests::{Emitter, Listen, Quiet, StreamRequest};
 use super::state::{
     ANNOUNCED_MAX, Handle, Inner, LOST_CONNECTION, Lane, MAX_RECONNECTS, ONGOING_DEBOUNCE,
-    OnlineSession, Res, SEEK_REJECTED, State, core, lock,
+    OnlineSession, State, lock,
 };
 
 mod lobby;
@@ -41,20 +39,13 @@ struct StateUpdate<'a> {
 }
 
 impl OnlineSession {
-    /// A session over `lichess` (its client, store and host), reading tokens from `tokens`.
-    /// `http` must be the client `lichess` was built with, so the streams share its settings.
-    pub fn new(
-        lichess: Arc<Lichess>,
-        tokens: Arc<dyn TokenSource>,
-        http: reqwest::Client,
-    ) -> OnlineSession {
+    /// A session over `lichess` (its client, logins, store and host).
+    pub fn new(lichess: Arc<Lichess>) -> OnlineSession {
         let host = Arc::clone(lichess.host());
         let challenges = ChallengeInbox::new(Arc::clone(&host), Arc::new(now_ms));
         OnlineSession {
             inner: Arc::new(Inner {
                 lichess,
-                tokens,
-                http,
                 host,
                 challenges,
                 state: Mutex::new(State::new()),
@@ -135,46 +126,32 @@ impl OnlineSession {
         self.emit("online:state", payload);
     }
 
-    /// `report(cause)`: an error the user should see, unless it is a cancellation.
-    fn report(&self, cause: &Failure) {
-        if cause.is_aborted() {
+    /// An error the user should see, unless it is a cancellation; a refusal of a request
+    /// whose listen names its own message shows that instead.
+    fn report(&self, cause: &CoreError, refused: Option<&str>) {
+        if cause.aborted {
             return;
         }
-        match cause {
-            Failure::Lichess(LichessError {
-                status: 400,
-                endpoint,
-                ..
-            }) if endpoint == "POST /api/board/seek" => self.emit_error(SEEK_REJECTED),
-            _ => self.emit_error(&cause.message()),
+        match refused {
+            Some(message) if cause.kind == Some(ErrorKind::Refused) => self.emit_error(message),
+            _ => self.emit_error(&cause.message),
         }
     }
 
-    /// The token of `account`, if it has a login (`getToken`).
-    async fn token(&self, account: &str) -> Res<Option<String>> {
-        self.inner
-            .tokens
-            .token(account)
-            .await
-            .map_err(Failure::from)
+    /// `account`'s login for play, when it has one.
+    async fn login(&self, account: &str) -> CoreResult<Option<Auth>> {
+        let lichess = &self.inner.lichess;
+        Ok(lichess.stored_login(account).await?.map(|token| {
+            lichess
+                .client()
+                .counted(account, UsageKind::Play)
+                .with_token(token)
+        }))
     }
 
-    fn policy(&self) -> Arc<crate::lichess::policy::Policy> {
-        Arc::clone(self.inner.lichess.client().policy())
-    }
-
-    /// Runs `work` with the usage of `account` (`withUsage`), on a spawned task.
-    fn spawn_for(
-        &self,
-        account: &str,
-        kind: &'static str,
-        work: impl std::future::Future<Output = ()> + Send + 'static,
-    ) {
-        let policy = self.policy();
-        let account = account.to_string();
-        tokio::spawn(async move {
-            policy.with_usage(&account, kind, work).await;
-        });
+    /// `account`'s login for play, or the error asking to reconnect it.
+    async fn required_login(&self, account: &str) -> CoreResult<Auth> {
+        self.inner.lichess.signed_in(account, UsageKind::Play).await
     }
 
     fn next_handle(&self, st: &mut State) -> Handle {
@@ -188,70 +165,26 @@ impl OnlineSession {
     /* ── Streams ───────────────────────────────────────────────────────── */
 
     /// Opens one request of a stream and feeds every line to `on_line` as it arrives. `on_open`
-    /// runs once the answer's status is good. A failed answer is a Lichess error naming the
-    /// request; a stream ends with the body or with cancellation.
+    /// runs once the answer's status is good. A stream ends with the body or with cancellation.
     async fn read_stream(
         &self,
         request: &StreamRequest,
         cancel: &CancellationToken,
         on_open: &mut (dyn FnMut() + Send),
-        on_line: &mut (dyn FnMut(&str) -> Result<(), CoreError> + Send),
-    ) -> Res<()> {
-        let client = self.inner.lichess.client();
-        let mut url = reqwest::Url::parse(&format!("{}{}", client.base(), request.path))
-            .map_err(|cause| core(format!("Invalid Lichess URL: {cause}")))?;
-        if !request.query.is_empty() {
-            url.query_pairs_mut().extend_pairs(
-                request
-                    .query
-                    .iter()
-                    .map(|(key, value)| (*key, value.as_str())),
-            );
-        }
-        let mut builder = self
+        on_line: &mut (dyn FnMut(&str) -> CoreResult<()> + Send),
+    ) -> CoreResult<()> {
+        let mut built = self
             .inner
-            .http
-            .request(request.method.clone(), url)
-            .header(reqwest::header::ACCEPT, "application/x-ndjson");
-        if let Some(auth) = &request.auth {
-            builder = builder.header(reqwest::header::AUTHORIZATION, auth.as_str());
-        }
+            .lichess
+            .client()
+            .request(request.method.clone(), &request.path, &request.auth)
+            .query(&request.query)
+            .lane(RequestLane::Live)
+            .cancel(cancel);
         if let Some(form) = &request.form {
-            builder = builder
-                .header(
-                    reqwest::header::CONTENT_TYPE,
-                    "application/x-www-form-urlencoded",
-                )
-                .body(crate::lichess::client::urlencoded(&refs(form)));
+            built = built.form(form);
         }
-        let built = builder
-            .build()
-            .map_err(|cause| core(format!("Invalid Lichess request: {cause}")))?;
-        let crate::lichess::policy::Admitted { response, hold } =
-            self.policy().send(built, cancel).await?;
-        let status = response.status();
-        if !status.is_success() {
-            let text =
-                read_with_deadline(response, cancel, false, self.policy().timeout(), None).await?;
-            drop(hold);
-            return Err(Failure::Lichess(lichess_error(
-                status.as_u16(),
-                body_value(&text),
-                &format!("{} {}", request.method, request.path),
-            )));
-        }
-        on_open();
-        let policy = self.policy();
-        let body = policy.metered(response.bytes_stream());
-        let outcome = read_lines(
-            Box::pin(body),
-            Some(cancel),
-            &LineOptions::default(),
-            |line| on_line(line),
-        )
-        .await;
-        drop(hold);
-        outcome.map_err(Failure::from)
+        built.lines(on_open, on_line).await
     }
 
     /// The state report of a listen: the quiet lobby's own report, or the game connection's when
@@ -286,14 +219,14 @@ impl OnlineSession {
         options: &Listen,
         cancel: &CancellationToken,
         phase: OnlinePhase,
-        cause: &Failure,
+        cause: &CoreError,
     ) {
         if cancel.is_cancelled() {
             return;
         }
-        let message = cause.message();
+        let message = &cause.message;
         if let Some(quiet) = &options.quiet {
-            quiet(phase, Some(&message));
+            quiet(phase, Some(message));
         } else if options.session == self.st().epoch {
             self.emit_state_update(StateUpdate {
                 session: options.session,
@@ -301,12 +234,8 @@ impl OnlineSession {
                 game_id: &options.game_id,
                 lane: options.lane,
                 phase,
-                message: Some(&message),
-                kind: Some(
-                    CoreError::from(cause.clone())
-                        .kind
-                        .unwrap_or(ErrorKind::Unavailable),
-                ),
+                message: Some(message),
+                kind: Some(cause.kind.unwrap_or(ErrorKind::Unavailable)),
             });
         }
     }
@@ -354,7 +283,7 @@ impl OnlineSession {
                     self.listen_state(options, cancel, OnlinePhase::Connected, None);
                 }
             };
-            let mut on_line = |line: &str| -> Result<(), CoreError> {
+            let mut on_line = |line: &str| -> CoreResult<()> {
                 if cancel.is_cancelled() || line_error.is_some() {
                     return Ok(());
                 }
@@ -384,7 +313,7 @@ impl OnlineSession {
             // or the stream would reconnect about once a second forever.
             let malformed = line_error.is_some();
             let outcome = match line_error.take() {
-                Some(message) => Err(core(message)),
+                Some(message) => Err(CoreError::new(message)),
                 None => outcome,
             };
             let account = options.account.clone();
@@ -397,19 +326,22 @@ impl OnlineSession {
                     }
                     self.log(
                         Level::Debug,
-                        format!("Stream failed: {account} {game_id} {}", cause.message()),
+                        format!("Stream failed: {account} {game_id} {}", cause.message),
                     );
-                    let status = cause.status();
-                    let permanent = status.is_some_and(|code| code < 500 && code != 429);
+                    // Lichess refused the stream for a reason reconnecting does not change.
+                    let permanent = matches!(
+                        cause.kind,
+                        Some(ErrorKind::Login | ErrorKind::Refused | ErrorKind::NotFound)
+                    );
                     if !options.reconnect || permanent {
-                        let phase = if matches!(status, Some(401) | Some(403)) {
+                        let phase = if cause.kind == Some(ErrorKind::Login) {
                             OnlinePhase::AuthRequired
                         } else {
                             OnlinePhase::Disconnected
                         };
                         self.listen_failed(options, cancel, phase, &cause);
                         if options.quiet.is_none() {
-                            self.report(&cause);
+                            self.report(&cause, options.refused);
                         }
                         return;
                     }
@@ -489,34 +421,28 @@ impl OnlineSession {
             session: st.epoch,
             account: st.current_account.clone(),
             game_id: st.lane_game(lane).to_string(),
+            refused: None,
         }
     }
 
-    fn events_request(token: &str) -> StreamRequest {
-        StreamRequest {
-            method: reqwest::Method::GET,
-            path: "/api/stream/event".into(),
-            query: Vec::new(),
-            auth: Some(authorize(token)),
-            form: None,
-        }
+    fn events_request(auth: &Auth) -> StreamRequest {
+        StreamRequest::get("/api/stream/event", auth)
     }
 
     /// The event stream of the account being played (`eventStream`): challenges go to the inbox,
     /// a real-time game starting opens it on the board, and the rest is passed on.
-    fn start_event_stream(&self, token: String, handle: Handle) {
+    fn start_event_stream(&self, auth: Auth, handle: Handle) {
         let account = self.st().current_account.clone();
         let options = self.listen_options(Lane::Events, true, None, None);
         let this = self.clone();
-        let (for_account, for_token, cancel) =
-            (account.clone(), token.clone(), handle.token.clone());
+        let request = Self::events_request(&auth);
+        let cancel = handle.token.clone();
         let emit: Emitter = Arc::new(move |event| {
-            this.on_event_stream(&for_account, &for_token, &cancel, event);
+            this.on_event_stream(&account, &auth, &cancel, event);
         });
         let this = self.clone();
-        let request = Self::events_request(&token);
         let cancel = handle.token;
-        self.spawn_for(&account, "play", async move {
+        tokio::spawn(async move {
             this.listen(request, cancel, emit, options).await;
         });
     }
@@ -524,7 +450,7 @@ impl OnlineSession {
     fn on_event_stream(
         &self,
         account: &str,
-        token: &str,
+        auth: &Auth,
         cancel: &CancellationToken,
         event: Value,
     ) {
@@ -554,7 +480,7 @@ impl OnlineSession {
                 }
                 super::state::Started::Opens => {
                     self.st().pending_challenge = None;
-                    self.begin_game(&game_id, token);
+                    self.begin_game(&game_id, auth);
                 }
             }
             self.announce(&game_id, event);

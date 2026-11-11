@@ -1,16 +1,14 @@
-//! Cancelling, attaching to, resuming and listing the online session's games (moved from
-//! `session.rs` without changes).
+//! Cancelling, attaching to, resuming and listing the online session's games.
 
 use kchess_contracts::types::OnlinePhase;
 use serde_json::Value;
 
+use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Level;
-use crate::lichess::client::{Failure, authorize};
+use crate::lichess::client::Auth;
 
 use crate::lichess::online::ongoing::{Checking, ongoing_game};
-use crate::lichess::online::state::{
-    Lane, OngoingGame, OnlineSession, Res, Resumed, aborted, core,
-};
+use crate::lichess::online::state::{Lane, OngoingGame, OnlineSession, Resumed};
 
 impl OnlineSession {
     /* ── Sessions ─────────────────────────────────────────────────────── */
@@ -77,12 +75,12 @@ impl OnlineSession {
                 if this.st().epoch != epoch_at_cancel {
                     return;
                 }
-                match this.token(&account).await {
-                    Ok(Some(token)) => this.cancel_challenge(&id, &token).await,
+                match this.login(&account).await {
+                    Ok(Some(auth)) => this.cancel_challenge(&id, &auth).await,
                     Ok(None) => {}
                     Err(cause) => this.log(
                         Level::Debug,
-                        format!("Pending challenge cancel failed: {id} {}", cause.message()),
+                        format!("Pending challenge cancel failed: {id} {}", cause.message),
                     ),
                 }
             });
@@ -108,7 +106,7 @@ impl OnlineSession {
     }
 
     /// Open a known game of `account` on the board: its event stream, then its game stream.
-    pub async fn attach(&self, account: &str, id: &str) -> Res<()> {
+    pub async fn attach(&self, account: &str, id: &str) -> CoreResult<()> {
         if self.st().is_live(id) {
             return Ok(());
         }
@@ -126,7 +124,7 @@ impl OnlineSession {
         match outcome {
             Err(cause) if !current => {
                 let _ = cause;
-                Err(aborted("Attachment cancelled."))
+                Err(CoreError::aborted("Attachment cancelled."))
             }
             outcome => outcome,
         }
@@ -136,15 +134,13 @@ impl OnlineSession {
         self.st().attach_generation == generation
     }
 
-    async fn attach_inner(&self, account: &str, id: &str, generation: u64) -> Res<()> {
-        let token = self.token(account).await?;
+    async fn attach_inner(&self, account: &str, id: &str, generation: u64) -> CoreResult<()> {
+        let auth = self.login(account).await?;
         if !self.attachment_current(generation) {
-            return Err(aborted("Attachment cancelled."));
+            return Err(CoreError::aborted("Attachment cancelled."));
         }
-        let Some(token) = token else {
-            return Err(core(format!(
-                "@{account}'s Lichess login is unavailable. Reconnect it in Settings."
-            )));
+        let Some(auth) = auth else {
+            return Err(crate::lichess::accounts::login_unavailable(account));
         };
         // Another caller may have attached this game while credentials were loading.
         if self.st().is_live(id) {
@@ -158,13 +154,13 @@ impl OnlineSession {
             st.controller = Some(handle.clone());
             handle
         };
-        self.start_event_stream(token.clone(), handle);
-        self.begin_game(id, &token);
+        self.start_event_stream(auth.clone(), handle);
+        self.begin_game(id, &auth);
         Ok(())
     }
 
     /// Reattach to a real-time game in progress on any connected account (`resume`).
-    pub async fn resume(&self) -> Res<Option<Resumed>> {
+    pub async fn resume(&self) -> CoreResult<Option<Resumed>> {
         let attempt = {
             let mut st = self.st();
             st.attach_generation += 1;
@@ -209,8 +205,9 @@ impl OnlineSession {
                     } else {
                         protected_account
                     };
-                    let phase = if checking.auth_required
-                        || matches!(cause.status(), Some(401) | Some(403))
+                    // Only a refused login asks to reconnect: a 403 for another reason did,
+                    // and reconnecting changed nothing.
+                    let phase = if checking.auth_required || cause.kind == Some(ErrorKind::Login)
                     {
                         OnlinePhase::AuthRequired
                     } else {
@@ -222,7 +219,7 @@ impl OnlineSession {
                         &protected_game,
                         Lane::Game,
                         phase,
-                        Some(&cause.message()),
+                        Some(&cause.message),
                     );
                 }
                 Err(cause)
@@ -230,7 +227,7 @@ impl OnlineSession {
         }
     }
 
-    async fn resume_body(&self, attempt: u64, checking: &mut Checking) -> Res<Option<Resumed>> {
+    async fn resume_body(&self, attempt: u64, checking: &mut Checking) -> CoreResult<Option<Resumed>> {
         let mut accounts: Vec<String> = self
             .inner
             .lichess
@@ -242,7 +239,7 @@ impl OnlineSession {
             .map(|row| row.username)
             .collect();
         if attempt != self.st().resume_attempt {
-            return Err(aborted("Recovery cancelled."));
+            return Err(CoreError::aborted("Recovery cancelled."));
         }
         // A protected game's account is checked first.
         let protected_account = {
@@ -257,7 +254,7 @@ impl OnlineSession {
             accounts.retain(|name| !name.eq_ignore_ascii_case(&protected_account));
             accounts.insert(0, protected_account.clone());
         }
-        let mut first_error: Option<Failure> = None;
+        let mut first_error: Option<CoreError> = None;
         for account in accounts {
             checking.account = account.clone();
             match self
@@ -274,7 +271,7 @@ impl OnlineSession {
             }
         }
         if attempt != self.st().resume_attempt {
-            return Err(aborted("Recovery cancelled."));
+            return Err(CoreError::aborted("Recovery cancelled."));
         }
         if let Some(error) = first_error {
             return Err(error);
@@ -300,13 +297,13 @@ impl OnlineSession {
         account: &str,
         protected_account: &str,
         checking: &mut Checking,
-    ) -> Res<Option<Resumed>> {
-        let checked: Res<Option<Resumed>> = async {
-            let token = self.token(account).await?;
+    ) -> CoreResult<Option<Resumed>> {
+        let checked: CoreResult<Option<Resumed>> = async {
+            let auth = self.login(account).await?;
             if attempt != self.st().resume_attempt {
-                return Err(aborted("Recovery cancelled."));
+                return Err(CoreError::aborted("Recovery cancelled."));
             }
-            let Some(token) = token else {
+            let Some(auth) = auth else {
                 checking.auth_required = true;
                 let (session, game) = {
                     let st = self.st();
@@ -320,30 +317,17 @@ impl OnlineSession {
                     OnlinePhase::AuthRequired,
                     Some("Lichess login is unavailable. Reconnect in Settings."),
                 );
-                return Err(core(format!(
-                    "@{account}'s Lichess login is unavailable. Reconnect in Settings."
-                )));
+                return Err(crate::lichess::accounts::login_unavailable(account));
             };
             let playing: Value = self
                 .inner
                 .lichess
                 .client()
-                .policy()
-                .with_usage(account, "play", async {
-                    self.inner
-                        .lichess
-                        .client()
-                        .get_json::<Value>(
-                            "/api/account/playing",
-                            &[],
-                            Some(&authorize(&token)),
-                            self.inner.lichess.lifetime(),
-                        )
-                        .await
-                })
+                .get("/api/account/playing", &auth)
+                .read_json()
                 .await?;
             let Some(now_playing) = playing.get("nowPlaying").and_then(Value::as_array) else {
-                return Err(core("Lichess returned an invalid ongoing-game response."));
+                return Err(CoreError::new("Lichess returned an invalid ongoing-game response."));
             };
             // Correspondence games last for days: they open only when the player picks one. A
             // game the Board API cannot play stays where it was started.
@@ -356,7 +340,7 @@ impl OnlineSession {
                 .and_then(|game| game["gameId"].as_str())
                 .map(str::to_string);
             if attempt != self.st().resume_attempt {
-                return Err(aborted("Recovery cancelled."));
+                return Err(CoreError::aborted("Recovery cancelled."));
             }
             let Some(id) = id else {
                 return Ok(None);
@@ -373,8 +357,8 @@ impl OnlineSession {
                 st.controller = Some(handle.clone());
                 handle
             };
-            self.start_event_stream(token.clone(), handle);
-            self.begin_game(&id, &token);
+            self.start_event_stream(auth.clone(), handle);
+            self.begin_game(&id, &auth);
             Ok(Some(Resumed {
                 id,
                 account: account.to_string(),
@@ -384,7 +368,7 @@ impl OnlineSession {
         match checked {
             Ok(found) => Ok(found),
             Err(cause) => {
-                if attempt != self.st().resume_attempt || cause.is_aborted() {
+                if attempt != self.st().resume_attempt || cause.aborted {
                     return Err(cause);
                 }
                 let protected = !protected_account.is_empty()
@@ -394,7 +378,7 @@ impl OnlineSession {
                 }
                 self.log(
                     Level::Warn,
-                    format!("Game recovery check failed: {account} {}", cause.message()),
+                    format!("Game recovery check failed: {account} {}", cause.message),
                 );
                 checking.error = Some(cause);
                 Ok(None)
@@ -403,7 +387,7 @@ impl OnlineSession {
     }
 
     /// Every game the connected accounts are playing, most urgent first (`ongoing`).
-    pub async fn ongoing(&self) -> Res<Vec<OngoingGame>> {
+    pub async fn ongoing(&self) -> CoreResult<Vec<OngoingGame>> {
         let accounts: Vec<String> = self
             .inner
             .lichess
@@ -423,26 +407,19 @@ impl OnlineSession {
             .await
             .unwrap_or(false);
         let mut games = Vec::new();
-        let mut first_error: Option<Failure> = None;
+        let mut first_error: Option<CoreError> = None;
         for account in accounts {
-            let loaded: Res<()> = async {
-                let Some(token) = self.token(&account).await? else {
+            let loaded: CoreResult<()> = async {
+                let Some(auth) = self.login(&account).await? else {
                     return Ok(());
                 };
                 let playing: Value = self
-                    .policy()
-                    .with_usage(&account, "play", async {
-                        self.inner
-                            .lichess
-                            .client()
-                            .get_json::<Value>(
-                                "/api/account/playing",
-                                &[("nb", "50".to_string())],
-                                Some(&authorize(&token)),
-                                self.inner.lichess.lifetime(),
-                            )
-                            .await
-                    })
+                    .inner
+                    .lichess
+                    .client()
+                    .get("/api/account/playing", &auth)
+                    .query(&[("nb", "50")])
+                    .read_json()
                     .await?;
                 for game in playing
                     .get("nowPlaying")
@@ -453,20 +430,20 @@ impl OnlineSession {
                     games.push(ongoing_game(game, &account));
                 }
                 if challenges_wanted && !self.has_event_stream(&account) {
-                    self.sync_challenges(&account, &token).await;
+                    self.sync_challenges(&account, &auth).await;
                 }
                 Ok(())
             }
             .await;
             if let Err(cause) = loaded {
-                if cause.is_aborted() {
+                if cause.aborted {
                     continue;
                 }
                 self.log(
                     Level::Warn,
                     format!(
                         "Could not load ongoing games: {account} {}",
-                        cause.message()
+                        cause.message
                     ),
                 );
                 first_error.get_or_insert(cause);
@@ -480,14 +457,14 @@ impl OnlineSession {
     }
 
     /// Open one of `ongoing()`'s games; a live real-time game on the board is never replaced.
-    pub async fn open(&self, account: &str, id: &str) -> Res<()> {
+    pub async fn open(&self, account: &str, id: &str) -> CoreResult<()> {
         {
             let st = self.st();
             if st.is_live(id) {
                 return Ok(());
             }
             if st.realtime_live() {
-                return Err(core(
+                return Err(CoreError::new(
                     "Finish the live game on the board before opening another.",
                 ));
             }
@@ -497,7 +474,7 @@ impl OnlineSession {
                 && st.protected_game != id
                 && st.protected_game != st.live_id()
             {
-                return Err(core(
+                return Err(CoreError::new(
                     "Reconnect to your current game before opening another.",
                 ));
             }
@@ -517,29 +494,21 @@ impl OnlineSession {
 
     /// Bring `account`'s challenges in the inbox up to date from `GET /api/challenge`; a failure
     /// leaves them as they were.
-    async fn sync_challenges(&self, account: &str, token: &str) {
+    async fn sync_challenges(&self, account: &str, auth: &Auth) {
         let listed = self
-            .policy()
-            .with_usage(account, "play", async {
-                self.inner
-                    .lichess
-                    .client()
-                    .get_json::<Value>(
-                        "/api/challenge",
-                        &[],
-                        Some(&authorize(token)),
-                        self.inner.lichess.lifetime(),
-                    )
-                    .await
-            })
+            .inner
+            .lichess
+            .client()
+            .get("/api/challenge", auth)
+            .read_json::<Value>()
             .await;
         let listed = match listed {
             Ok(listed) => listed,
             Err(cause) => {
-                if !cause.is_aborted() {
+                if !cause.aborted {
                     self.log(
                         Level::Warn,
-                        format!("Could not load challenges: {account} {}", cause.message()),
+                        format!("Could not load challenges: {account} {}", cause.message),
                     );
                 }
                 return;

@@ -1,23 +1,23 @@
-//! The live online game: its stream, moves, chat, presence, actions, logout and close (moved
-//! from `session.rs` without changes).
+//! The live online game: its stream, moves, chat, presence, actions, logout and close.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use kchess_contracts::types::OnlinePhase;
+use kchess_contracts::types::{OnlinePhase, UsageKind};
 use serde_json::{Value, json};
 
+use crate::error::{CoreError, Result as CoreResult};
 use crate::lichess::accounts::path_segment;
 use crate::lichess::challenges::is_game_id;
-use crate::lichess::client::authorize;
+use crate::lichess::client::{Auth, Lane as RequestLane};
 
 use crate::lichess::online::events::{game_in_progress, truncate};
 use crate::lichess::online::requests::{Emitter, Listen, StreamRequest};
 use crate::lichess::online::state::{
     ChatLine, Lane, LiveGame, OnlineAction, OnlineSession, PRESENCE_MAX, PRESENCE_TTL,
-    PresenceReport, Res, UserPresence, core,
+    PresenceReport, UserPresence,
 };
 
 /// The one move being sent; released when its answer arrives or the call is dropped.
@@ -26,10 +26,10 @@ struct MoveInFlight<'a> {
 }
 
 impl<'a> MoveInFlight<'a> {
-    fn claim(session: &'a OnlineSession) -> Res<MoveInFlight<'a>> {
+    fn claim(session: &'a OnlineSession) -> CoreResult<MoveInFlight<'a>> {
         let mut st = session.st();
         if st.move_in_flight {
-            return Err(core("A move is already being sent."));
+            return Err(CoreError::new("A move is already being sent."));
         }
         st.move_in_flight = true;
         Ok(MoveInFlight { session })
@@ -45,7 +45,7 @@ impl Drop for MoveInFlight<'_> {
 impl OnlineSession {
     /// Start the board's stream of game `id` (`openGame`). The state is set before this returns,
     /// so the game counts as played at once; the stream itself runs on a task.
-    pub(super) fn begin_game(&self, id: &str, token: &str) {
+    pub(super) fn begin_game(&self, id: &str, auth: &Auth) {
         let (handle, account, session) = {
             let mut st = self.st();
             if let Some(previous) = st.game_controller.take() {
@@ -73,27 +73,18 @@ impl OnlineSession {
             finished: Some(Arc::clone(&finished)),
             quiet: None,
             session,
-            account: account.clone(),
+            account,
             game_id: id.to_string(),
+            refused: None,
         };
-        let request = StreamRequest {
-            method: reqwest::Method::GET,
-            path: format!("/api/board/game/stream/{}", path_segment(id)),
-            query: Vec::new(),
-            auth: Some(authorize(token)),
-            form: None,
-        };
+        let request =
+            StreamRequest::get(format!("/api/board/game/stream/{}", path_segment(id)), auth);
         let this = self.clone();
         let game_id = id.to_string();
-        let policy = self.policy();
         let cancel = handle.token.clone();
         let handle_id = handle.id;
         tokio::spawn(async move {
-            policy
-                .with_usage(&account, "play", async {
-                    this.listen(request, cancel, emit, options).await;
-                })
-                .await;
+            this.listen(request, cancel, emit, options).await;
             // `.finally`: the live game ends when its stream ended for a finished game, and this
             // stream is still the game's controller.
             this.st()
@@ -174,20 +165,31 @@ impl OnlineSession {
         st.recovery_unverified || st.live.is_some() || !st.protected_game.is_empty()
     }
 
-    /// The token and account of the live game (`liveToken`).
-    async fn live_token(&self, id: &str, what: &str) -> Res<(String, String)> {
+    /// The login of the live game's account.
+    async fn live_login(&self, id: &str, what: &str) -> CoreResult<Auth> {
         let account = {
             let st = self.st();
             if !st.is_live(id) {
-                return Err(core(format!("Reconnect to this game before {what}.")));
+                return Err(CoreError::new(format!(
+                    "Reconnect to this game before {what}."
+                )));
             }
             st.current_account.clone()
         };
-        let token = self
-            .token(&account)
-            .await?
-            .ok_or_else(|| core("Lichess login unavailable."))?;
-        Ok((account, token))
+        self.required_login(&account).await
+    }
+
+    /// Sends a game action (a move, a resignation…) as `auth`, ahead of background requests.
+    async fn send_action(&self, auth: &Auth, path: &str, form: &[(&str, &str)]) -> CoreResult<()> {
+        self.inner
+            .lichess
+            .client()
+            .post(path, auth)
+            .form(form)
+            .lane(RequestLane::Interactive)
+            .read_json::<Value>()
+            .await
+            .map(|_| ())
     }
 
     /// Send one move (`move`). The move is sent once: an ambiguous answer is an error, never a
@@ -195,25 +197,15 @@ impl OnlineSession {
     ///
     /// Moves are serialised across every window: while one is unanswered, another is refused,
     /// never queued, so it cannot land on a later position nobody chose it for.
-    pub async fn move_uci(&self, id: &str, uci: &str) -> Res<()> {
+    pub async fn move_uci(&self, id: &str, uci: &str) -> CoreResult<()> {
         let _sending = MoveInFlight::claim(self)?;
-        let (account, token) = self.live_token(id, "sending a move").await?;
+        let auth = self.live_login(id, "sending a move").await?;
         let path = format!(
             "/api/board/game/{}/move/{}",
             path_segment(id),
             path_segment(uci)
         );
-        let cancel = self.inner.lichess.lifetime().clone();
-        self.policy()
-            .with_usage(&account, "play", async {
-                self.inner
-                    .lichess
-                    .client()
-                    .post_form::<Value>(&path, &[], Some(&authorize(&token)), &cancel)
-                    .await
-            })
-            .await?;
-        Ok(())
+        self.send_action(&auth, &path, &[]).await
     }
 
     /// Send one move to a correspondence game that is not on the board: a reply typed into its
@@ -227,27 +219,16 @@ impl OnlineSession {
         id: &str,
         fen: &str,
         uci: &str,
-    ) -> Res<()> {
+    ) -> CoreResult<()> {
         let _sending = MoveInFlight::claim(self)?;
-        let token = self
-            .token(account)
-            .await?
-            .ok_or_else(|| core("Lichess login unavailable."))?;
-        let cancel = self.inner.lichess.lifetime().clone();
+        let auth = self.required_login(account).await?;
         let playing: Value = self
-            .policy()
-            .with_usage(account, "play", async {
-                self.inner
-                    .lichess
-                    .client()
-                    .get_json::<Value>(
-                        "/api/account/playing",
-                        &[("nb", "50".to_string())],
-                        Some(&authorize(&token)),
-                        &cancel,
-                    )
-                    .await
-            })
+            .inner
+            .lichess
+            .client()
+            .get("/api/account/playing", &auth)
+            .query(&[("nb", "50")])
+            .read_json()
             .await?;
         let game = playing
             .get("nowPlaying")
@@ -255,7 +236,7 @@ impl OnlineSession {
             .into_iter()
             .flatten()
             .find(|game| game.get("gameId").and_then(Value::as_str) == Some(id))
-            .ok_or_else(|| core("This game is no longer in progress."))?;
+            .ok_or_else(|| CoreError::new("This game is no longer in progress."))?;
         let placement = |fen: &str| {
             fen.split_whitespace()
                 .next()
@@ -266,7 +247,7 @@ impl OnlineSession {
         if game.get("isMyTurn").and_then(Value::as_bool) != Some(true)
             || placement(current) != placement(fen)
         {
-            return Err(core(
+            return Err(CoreError::new(
                 "The game has moved on. Open it to see where it stands.",
             ));
         }
@@ -275,32 +256,19 @@ impl OnlineSession {
             path_segment(id),
             path_segment(uci)
         );
-        self.policy()
-            .with_usage(account, "play", async {
-                self.inner
-                    .lichess
-                    .client()
-                    .post_form::<Value>(&path, &[], Some(&authorize(&token)), &cancel)
-                    .await
-            })
-            .await?;
-        Ok(())
+        self.send_action(&auth, &path, &[]).await
     }
 
     /// The private chat between the two players so far (the last 200 lines).
-    pub async fn chat(&self, id: &str) -> Res<Vec<ChatLine>> {
-        let (account, token) = self.live_token(id, "reading the chat").await?;
+    pub async fn chat(&self, id: &str) -> CoreResult<Vec<ChatLine>> {
+        let auth = self.live_login(id, "reading the chat").await?;
         let path = format!("/api/board/game/{}/chat", path_segment(id));
-        let cancel = self.inner.lichess.lifetime().clone();
         let lines: Value = self
-            .policy()
-            .with_usage(&account, "play", async {
-                self.inner
-                    .lichess
-                    .client()
-                    .get_json::<Value>(&path, &[], Some(&authorize(&token)), &cancel)
-                    .await
-            })
+            .inner
+            .lichess
+            .client()
+            .get(&path, &auth)
+            .read_json()
             .await?;
         let all = lines.as_array().cloned().unwrap_or_default();
         let start = all.len().saturating_sub(200);
@@ -319,30 +287,22 @@ impl OnlineSession {
     }
 
     /// Send a chat line to a room of the live game.
-    pub async fn send_chat(&self, id: &str, room: &str, text: &str) -> Res<()> {
-        let (account, token) = self.live_token(id, "chatting").await?;
+    pub async fn send_chat(&self, id: &str, room: &str, text: &str) -> CoreResult<()> {
+        let auth = self.live_login(id, "chatting").await?;
         let path = format!("/api/board/game/{}/chat", path_segment(id));
-        let cancel = self.inner.lichess.lifetime().clone();
-        self.policy()
-            .with_usage(&account, "play", async {
-                self.inner
-                    .lichess
-                    .client()
-                    .post_form::<Value>(
-                        &path,
-                        &[("room", room), ("text", text)],
-                        Some(&authorize(&token)),
-                        &cancel,
-                    )
-                    .await
-            })
+        self.inner
+            .lichess
+            .client()
+            .post(&path, &auth)
+            .form(&[("room", room), ("text", text)])
+            .read_json::<Value>()
             .await?;
         Ok(())
     }
 
     /// Lichess's online/playing/signal flags for some users, plus how long the request took. Works
     /// with no game in progress too (the Friends page), just without a login.
-    pub async fn presence(&self, usernames: &[String]) -> Res<PresenceReport> {
+    pub async fn presence(&self, usernames: &[String]) -> CoreResult<PresenceReport> {
         let account = self.st().current_account.clone();
         let mut ids: Vec<String> = usernames.iter().map(|name| name.to_lowercase()).collect();
         ids.sort();
@@ -366,33 +326,24 @@ impl OnlineSession {
         Ok(report)
     }
 
-    async fn fetch_presence(&self, ids: &[String], account: &str) -> Res<PresenceReport> {
-        let token = if account.is_empty() {
-            None
-        } else {
-            self.token(account).await?
-        };
+    async fn fetch_presence(&self, ids: &[String], account: &str) -> CoreResult<PresenceReport> {
+        let client = self.inner.lichess.client();
+        let mut auth = client.counted(account, UsageKind::Presence);
+        if !account.is_empty()
+            && let Some(token) = self.inner.lichess.stored_login(account).await?
+        {
+            auth = auth.with_token(token);
+        }
         let started = Instant::now();
         let query = [
             ("ids", ids.join(",")),
             ("withSignal", "true".to_string()),
             ("withGameIds", "true".to_string()),
         ];
-        let cancel = self.inner.lichess.lifetime().clone();
-        let rows: Value = self
-            .policy()
-            .with_usage(account, "presence", async {
-                self.inner
-                    .lichess
-                    .client()
-                    .get_json::<Value>(
-                        "/api/users/status",
-                        &query,
-                        token.as_deref().map(authorize).as_deref(),
-                        &cancel,
-                    )
-                    .await
-            })
+        let rows: Value = client
+            .get("/api/users/status", &auth)
+            .query(&query)
+            .read_json()
             .await?;
         let latency_ms = (started.elapsed().as_secs_f64() * 1000.0).round() as u64;
         let mut users = BTreeMap::new();
@@ -419,8 +370,8 @@ impl OnlineSession {
 
     /// An action on the live game: resign, abort, draw, takeback, claim, berserk. Each is sent
     /// once.
-    pub async fn action(&self, id: &str, action: OnlineAction) -> Res<()> {
-        let (account, token) = self.live_token(id, "sending an action").await?;
+    pub async fn action(&self, id: &str, action: OnlineAction) -> CoreResult<()> {
+        let auth = self.live_login(id, "sending an action").await?;
         let game = path_segment(id);
         let (path, form): (String, Vec<(&str, &str)>) = match action {
             OnlineAction::Resign => (format!("/api/board/game/{game}/resign"), vec![]),
@@ -451,17 +402,7 @@ impl OnlineSession {
                 vec![],
             ),
         };
-        let cancel = self.inner.lichess.lifetime().clone();
-        self.policy()
-            .with_usage(&account, "play", async {
-                self.inner
-                    .lichess
-                    .client()
-                    .post_form::<Value>(&path, &form, Some(&authorize(&token)), &cancel)
-                    .await
-            })
-            .await?;
-        Ok(())
+        self.send_action(&auth, &path, &form).await
     }
 
     /// Forget the session after an explicit logout, including recovery and game identity. With

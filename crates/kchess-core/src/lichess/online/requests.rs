@@ -5,16 +5,30 @@ use kchess_contracts::types::OnlinePhase;
 use serde_json::Value;
 
 use super::state::{Lane, OnlineOptions};
+use crate::lichess::client::Auth;
 
-/// One request of a stream: the method, the path, the query, the `Authorization` header value
-/// and a form body (for the seek).
+/// One request of a stream: the method, the path, the query, who makes it, and a form body (for
+/// the seek).
 #[derive(Clone)]
 pub(crate) struct StreamRequest {
     pub(crate) method: reqwest::Method,
     pub(crate) path: String,
     pub(crate) query: Vec<(&'static str, String)>,
-    pub(crate) auth: Option<String>,
+    pub(crate) auth: Auth,
     pub(crate) form: Option<Vec<(&'static str, String)>>,
+}
+
+impl StreamRequest {
+    /// A GET stream of `path` as `auth`.
+    pub(crate) fn get(path: impl Into<String>, auth: &Auth) -> StreamRequest {
+        StreamRequest {
+            method: reqwest::Method::GET,
+            path: path.into(),
+            query: Vec::new(),
+            auth: auth.clone(),
+            form: None,
+        }
+    }
 }
 
 pub(crate) type Emitter = Arc<dyn Fn(Value) + Send + Sync>;
@@ -32,14 +46,8 @@ pub(crate) struct Listen {
     pub(crate) session: u64,
     pub(crate) account: String,
     pub(crate) game_id: String,
-}
-
-/// The body of a Lichess error response, as `throwLichessErrors` reads it.
-pub(crate) fn body_value(text: &str) -> Option<Value> {
-    if text.is_empty() {
-        return None;
-    }
-    Some(serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_string())))
+    /// What the player is told when Lichess refuses the request (the seek's rules).
+    pub(crate) refused: Option<&'static str>,
 }
 
 /// `gameBody(options)`: the form fields of a seek or challenge.
@@ -62,10 +70,4 @@ pub(crate) fn game_body(options: &OnlineOptions) -> Vec<(&'static str, String)> 
         body.push(("fen", fen.clone()));
     }
     body
-}
-
-pub(crate) fn refs<'a>(form: &'a [(&'static str, String)]) -> Vec<(&'a str, &'a str)> {
-    form.iter()
-        .map(|(key, value)| (*key, value.as_str()))
-        .collect()
 }
