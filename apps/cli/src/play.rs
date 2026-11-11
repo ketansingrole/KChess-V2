@@ -3,19 +3,20 @@
 //! The rules run both (`kchess-games`); the session and Game history entry are saved in the
 //! core's library as the app saves them, so either can carry the game on.
 
-use kchess_contracts::calls;
-use std::time::Instant;
+use kchess_contracts::calls::{self, CoreCall};
+use std::time::{Duration, Instant};
 
 use kchess_domain::games::Setup;
+use kchess_domain::variant::Variant;
 use kchess_games::Outcome;
 use kchess_games::computer::{self, ComputerGame, SearchRequest};
 use kchess_games::history::{self, HistoryPlace, Write};
 use kchess_games::local::{self, LocalGame};
 use serde_json::{Value, json};
-use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::core::{ClientEvent, CoreClient};
+use crate::wait::{Next, Wait};
 
 enum Game {
     Computer(ComputerGame),
@@ -32,7 +33,7 @@ struct Session<'a> {
 }
 
 impl Session<'_> {
-    /// Monotonic milliseconds, as `performance.now()`.
+    /// The games' clock: milliseconds since the session started.
     fn now(&self) -> f64 {
         self.started.elapsed().as_secs_f64() * 1000.0
     }
@@ -124,14 +125,11 @@ impl Session<'_> {
     }
 
     fn show(&self) {
-        println!(
-            "{}",
-            json!({ "fen": self.fen(), "moves": self.moves(), "result": self.result() })
-        );
+        crate::print(json!({ "fen": self.fen(), "moves": self.moves(), "result": self.result() }));
     }
 
-    async fn save(&mut self, method: &str, args: Vec<Value>) {
-        if let Err(cause) = self.core.call(method, args).await {
+    async fn save<C: CoreCall>(&mut self, call: C) {
+        if let Err(cause) = self.core.request(call).await {
             eprintln!("[cli] Saving failed: {cause}");
             self.failed = true;
         }
@@ -142,10 +140,16 @@ impl Session<'_> {
         history::apply_to(&mut self.games, &writes);
         for write in writes {
             match write {
-                Write::SaveGame(game) => self.save("saveArchivedGame", vec![game]).await,
-                Write::RemoveGame(id) => self.save("removeArchivedGame", vec![json!(id)]).await,
+                Write::SaveGame(game) => self.save(calls::SaveArchivedGame { game }).await,
+                Write::RemoveGame(id) => {
+                    self.save(calls::RemoveArchivedGame { id: json!(id) }).await
+                }
                 Write::SaveSession { kind, identity } => {
-                    self.save("saveSession", vec![json!(kind), identity]).await
+                    self.save(calls::SaveSession {
+                        kind: json!(kind),
+                        session: identity,
+                    })
+                    .await
                 }
             }
         }
@@ -166,8 +170,11 @@ impl Session<'_> {
             Game::Computer(game) => game.snapshot(&self.host()),
             Game::Local(game) => game.snapshot(self.now()),
         };
-        self.save("saveSession", vec![json!(self.kind()), snapshot])
-            .await;
+        self.save(calls::SaveSession {
+            kind: json!(self.kind()),
+            session: snapshot,
+        })
+        .await;
         let (source, has_play) = self.archive_host();
         let finished = self.over();
         let writes = self.history.save(finished, source, has_play, &self.games);
@@ -202,12 +209,11 @@ impl Session<'_> {
         Ok(())
     }
 
-    /// Start a game over the board in `variant`, as the app's New game does: Chess960 from a
+    /// Start a game in `variant` from `fen`, else as the app's New game does: Chess960 from a
     /// random position, the others from their usual start, the clock as it was.
-    /// Start a game in `variant`, from its usual start or from `fen`.
-    async fn choose_setup(&mut self, variant: &str, fen: Option<&str>) -> Result<(), String> {
+    async fn choose_setup(&mut self, variant: Variant, fen: Option<&str>) -> Result<(), String> {
         let now = self.now();
-        if fen.is_none() && self.setup().variant == variant && !self.over() {
+        if fen.is_none() && self.setup().variant == variant.key() && !self.over() {
             return Ok(());
         }
         if !self.moves().is_empty() && !self.over() {
@@ -217,14 +223,14 @@ impl Session<'_> {
         }
         let fen = if let Some(fen) = fen {
             playable_fen(variant, fen)?
-        } else if variant == "chess960" {
+        } else if variant == Variant::Chess960 {
             kchess_domain::rules::chess960_fen(kchess_games::random_chess960())
         } else {
-            kchess_domain::rules::default_fen(variant).ok_or("variant")?
+            kchess_domain::rules::default_fen(variant.key()).ok_or("variant")?
         };
         self.reset_history().await;
         let setup = Setup {
-            variant: variant.to_string(),
+            variant: variant.key().to_string(),
             fen,
         };
         let host = self.host();
@@ -255,11 +261,14 @@ impl Session<'_> {
         for effect in effects {
             match effect {
                 computer::Effect::StopEngine => {
-                    let _ = self.core.request(calls::StopEngine {}).await;
+                    crate::told_if_failed(
+                        "Stopping the engine",
+                        self.core.request(calls::StopEngine {}).await,
+                    );
                 }
                 computer::Effect::Moved { san, computer } => {
                     if computer {
-                        println!("Stockfish: {san}");
+                        crate::print(format_args!("Stockfish: {san}"));
                     }
                     self.persist().await;
                 }
@@ -391,18 +400,22 @@ impl Session<'_> {
 }
 
 /// What `play` was given: a level, a colour and a variant.
-pub type Choices = (Option<String>, Option<String>, Option<String>);
+pub type Choices = (Option<String>, Option<String>, Option<Variant>);
 
-/// `play`'s level, colour and variant, in any order: `play 5 black`, `play black crazyhouse`.
+/// The variant a word names by its Lichess key, in any case (`crazyhouse`, `KingOfTheHill`).
+fn variant_named(word: &str) -> Option<Variant> {
+    Variant::ALL
+        .into_iter()
+        .find(|variant| variant.key().eq_ignore_ascii_case(word))
+}
+
+/// `play`'s level, colour and variant, in any order: `play club black`, `play black crazyhouse`.
 pub fn choices(words: &[String]) -> Result<Choices, String> {
     let (mut level, mut color, mut variant) = (None, None, None);
     for word in words {
-        let known = kchess_domain::variant::VARIANTS
-            .iter()
-            .find(|key| key.eq_ignore_ascii_case(word));
-        match (word.as_str(), known) {
+        match (word.as_str(), variant_named(word)) {
             ("white" | "black" | "random", _) if color.is_none() => color = Some(word.clone()),
-            (_, Some(key)) if variant.is_none() => variant = Some((*key).to_string()),
+            (_, Some(named)) if variant.is_none() => variant = Some(named),
             (other, Some(_)) => return Err(format!("Unexpected argument {other}.")),
             _ if level.is_none() => level = Some(word.clone()),
             (other, _) => return Err(format!("Unexpected argument {other}.")),
@@ -447,12 +460,12 @@ pub fn take_fen(words: &[String]) -> Result<(Option<String>, Vec<String>), Strin
 }
 
 /// A position a game can start from in `variant`, as the app's "Play from here" checks it.
-fn playable_fen(variant: &str, fen: &str) -> Result<String, String> {
+fn playable_fen(variant: Variant, fen: &str) -> Result<String, String> {
     let fen = fen.trim();
-    let playable = if matches!(variant, "standard" | "chess960") {
+    let playable = if variant.standard_rules() {
         kchess_domain::position::fen_problem(fen).is_none()
     } else {
-        kchess_domain::rules::setup_start(variant, fen).is_some()
+        kchess_domain::rules::setup_start(variant.key(), fen).is_some()
     };
     if playable {
         Ok(fen.to_string())
@@ -461,20 +474,16 @@ fn playable_fen(variant: &str, fen: &str) -> Result<String, String> {
     }
 }
 
-/// `local [variant]`: a variant as Lichess keys it, in any case (`crazyhouse`, `kingOfTheHill`).
-pub fn local_variant(words: &[String]) -> Result<Option<String>, String> {
+/// `local [variant]`.
+pub fn local_variant(words: &[String]) -> Result<Option<Variant>, String> {
     match words {
         [] => Ok(None),
-        [word] => kchess_domain::variant::VARIANTS
-            .iter()
-            .find(|key| key.eq_ignore_ascii_case(word))
-            .map(|key| Some((*key).to_string()))
-            .ok_or_else(|| {
-                format!(
-                    "Unknown variant {word}. Choose one of {}.",
-                    kchess_domain::variant::VARIANTS.join(", ")
-                )
-            }),
+        [word] => variant_named(word).map(Some).ok_or_else(|| {
+            format!(
+                "Unknown variant {word}. Choose one of {}.",
+                kchess_domain::variant::VARIANTS.join(", ")
+            )
+        }),
         [_, other, ..] => Err(format!("Unexpected argument {other}.")),
     }
 }
@@ -484,15 +493,11 @@ async fn computer_game(
     core: &CoreClient,
     saved: &Value,
     level: Option<String>,
-    variant: Option<&str>,
+    variant: Option<Variant>,
 ) -> Result<Game, String> {
     let mut saved = saved.clone();
     if let Some(level) = level {
-        let checked = kchess_contracts::core_api::check_arguments(
-            "bestMove",
-            kchess_contracts::core_api::as_checked(vec![json!([]), json!(level)]),
-        );
-        if !matches!(checked, Some(Ok(_))) {
+        if !kchess_contracts::types::ENGINE_LEVELS.contains(&level.as_str()) {
             return Err(format!("Unknown level {level}."));
         }
         if !saved.is_object() {
@@ -504,7 +509,7 @@ async fn computer_game(
     // The core still refuses engine help during a live game on every search.
     core.request(calls::ResumeOnline {}).await?;
     // Fairy-Stockfish plays the other variants; the core says so if it is missing.
-    let fairy = variant.is_some_and(|variant| !matches!(variant, "standard" | "chess960"));
+    let fairy = variant.is_some_and(|variant| !variant.standard_rules());
     let engine = core.request(calls::EngineStatus { variant: None }).await?;
     if !fairy && engine["ready"] != json!(true) {
         return Err("Stockfish is unavailable. Install an engine or pass --engine.".into());
@@ -538,7 +543,7 @@ impl Session<'_> {
             "status" => Typed::Refresh,
             "pgn" => {
                 match self.pgn() {
-                    Ok(pgn) => println!("{}", json!({ "pgn": pgn })),
+                    Ok(pgn) => crate::print(json!({ "pgn": pgn })),
                     Err(cause) => eprintln!("{cause}"),
                 }
                 Typed::Skip
@@ -557,27 +562,19 @@ impl Session<'_> {
     /// Plays typed lines, clock ticks and core events until the player quits, stdin ends, the
     /// core closes or Ctrl-C.
     async fn play(&mut self, events: &mut UnboundedReceiver<ClientEvent>) {
-        let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
-        let mut ticks = tokio::time::interval(std::time::Duration::from_millis(100));
-        let interrupted = tokio::signal::ctrl_c();
-        tokio::pin!(interrupted);
+        let mut wait = Wait::new(events)
+            .typed()
+            .ticking(Duration::from_millis(100));
         loop {
-            tokio::select! {
-                _ = &mut interrupted => break,
-                _ = ticks.tick() => {
+            match wait.next().await {
+                Next::Tick => {
                     if self.expire().await {
                         self.persist().await;
                         self.show();
                     }
                 }
-                Some(event) = events.recv() => {
-                    if event == ClientEvent::Closed {
-                        break;
-                    }
-                }
-                line = lines.next_line() => {
-                    let Ok(Some(line)) = line else { break };
-                    match self.typed(line.trim()).await {
+                Next::Line(line) => {
+                    match self.typed(&line).await {
                         Typed::Quit => break,
                         Typed::Skip => continue,
                         Typed::Refresh => {}
@@ -586,6 +583,8 @@ impl Session<'_> {
                     self.persist().await;
                     self.show();
                 }
+                Next::Event(_) => {}
+                Next::Interrupted | Next::Closed | Next::InputEnded => break,
             }
         }
     }
@@ -597,14 +596,14 @@ pub async fn interactive(
     computer: bool,
     level: Option<String>,
     color: Option<String>,
-    variant: Option<String>,
+    variant: Option<Variant>,
     fen: Option<String>,
 ) -> Result<(), String> {
     let library = core.request(calls::Library {}).await?;
     let sessions = &library["sessions"];
     let started = Instant::now();
     let game = if computer {
-        computer_game(core, &sessions["computer"], level, variant.as_deref()).await?
+        computer_game(core, &sessions["computer"], level, variant).await?
     } else {
         Game::Local(LocalGame::new(
             Some(&sessions["local"]).filter(|s| s.is_object()),
@@ -638,7 +637,7 @@ pub async fn interactive(
         session.choose_color(&color).await?;
     }
     if variant.is_some() || fen.is_some() {
-        let variant = variant.as_deref().unwrap_or("standard");
+        let variant = variant.unwrap_or(Variant::Standard);
         session.choose_setup(variant, fen.as_deref()).await?;
     }
     session.show();
@@ -646,7 +645,10 @@ pub async fn interactive(
 
     session.play(events).await;
     if let Game::Computer(_) = session.game {
-        let _ = core.request(calls::StopEngine {}).await;
+        crate::told_if_failed(
+            "Stopping the engine",
+            core.request(calls::StopEngine {}).await,
+        );
     }
     session.persist().await;
     if session.failed {
@@ -657,7 +659,7 @@ pub async fn interactive(
 
 #[cfg(test)]
 mod tests {
-    use super::choices;
+    use super::{Variant, choices};
 
     fn words(list: &[&str]) -> Vec<String> {
         list.iter().map(|word| (*word).to_string()).collect()
@@ -669,11 +671,11 @@ mod tests {
         assert_eq!(local_variant(&[]), Ok(None));
         assert_eq!(
             local_variant(&words(&["CrazyHouse"])),
-            Ok(Some("crazyhouse".into()))
+            Ok(Some(Variant::Crazyhouse))
         );
         assert_eq!(
             local_variant(&words(&["kingofthehill"])),
-            Ok(Some("kingOfTheHill".into()))
+            Ok(Some(Variant::KingOfTheHill))
         );
         assert!(local_variant(&words(&["bughouse"])).is_err());
         assert!(local_variant(&words(&["atomic", "horde"])).is_err());
@@ -716,11 +718,11 @@ mod tests {
             take_fen(&words(&["--fen", board, "w", "-", "d66"])),
             Ok((Some(format!("{board} w -")), words(&["d66"])))
         );
-        assert_eq!(playable_fen("standard", fen).as_deref(), Ok(fen));
-        assert!(playable_fen("standard", "8/8/8/8/8/8/8/8 w - - 0 1").is_err());
+        assert_eq!(playable_fen(Variant::Standard, fen).as_deref(), Ok(fen));
+        assert!(playable_fen(Variant::Standard, "8/8/8/8/8/8/8/8 w - - 0 1").is_err());
         let zh = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
-        assert!(playable_fen("crazyhouse", zh).is_ok());
-        assert!(playable_fen("horde", zh).is_err());
+        assert!(playable_fen(Variant::Crazyhouse, zh).is_ok());
+        assert!(playable_fen(Variant::Horde, zh).is_err());
     }
 
     #[test]
@@ -736,7 +738,7 @@ mod tests {
         // A variant, in any case and anywhere among them, is played by Fairy-Stockfish.
         assert_eq!(
             choices(&words(&["CrazyHouse", "black", "club"])),
-            Ok((some("club"), some("black"), some("crazyhouse")))
+            Ok((some("club"), some("black"), Some(Variant::Crazyhouse)))
         );
         assert!(choices(&words(&["club", "black", "extra"])).is_err());
         // A second colour is no colour: it is read as the level, which `play` then refuses.

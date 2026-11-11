@@ -3,6 +3,7 @@
 //! and hand its effects to the frontend, in order. The GPUI app and the CLI share them.
 
 pub mod archive;
+pub mod broadcast;
 pub mod computer;
 pub mod history;
 pub mod local;
@@ -76,19 +77,20 @@ impl Outcome {
     }
 }
 
-/// A move typed as SAN ("Nf3", "O-O", "exd8=Q") or UCI ("g1f3") in the position `fen` of
-/// `variant`, as UCI when it is legal there.
+/// A move typed as SAN ("Nf3", "O-O", "exd8=Q") or UCI ("g1f3", in any case) in the position
+/// `fen` of `variant`, as UCI when it is legal there.
 pub fn typed_uci(variant: &str, fen: &str, text: &str) -> Option<String> {
     let text = text.trim();
     let position = kchess_domain::rules::setup_start(variant, fen)?;
-    let bytes = text.as_bytes();
+    let lower = text.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
     let is_uci = bytes.len() >= 4
         && bytes[0].is_ascii_lowercase()
         && bytes[1].is_ascii_digit()
         && bytes[2].is_ascii_lowercase()
         && bytes[3].is_ascii_digit();
     if is_uci {
-        kchess_domain::position::play_uci(&position, text).map(|_| text.to_lowercase())
+        kchess_domain::position::play_uci(&position, &lower).map(|_| lower)
     } else {
         kchess_domain::position::play_san(&position, text).map(|played| played.uci)
     }
@@ -118,6 +120,10 @@ mod tests {
             Some("g1f3")
         );
         assert_eq!(typed_uci("standard", start, "e2e5"), None);
+        assert_eq!(
+            typed_uci("standard", start, "G1F3").as_deref(),
+            Some("g1f3")
+        );
         assert_eq!(typed_uci("standard", start, "Nf6"), None);
         let castle = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
         assert_eq!(

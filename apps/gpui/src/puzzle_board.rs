@@ -506,7 +506,7 @@ impl PuzzleBoard {
                         let Some(board) = &mut this.on_board else {
                             return Err(());
                         };
-                        if board.status() != "playing" {
+                        if !board.playing() {
                             return Err(());
                         }
                         // The opponent's reply to the last move is still on its way: the
@@ -514,13 +514,9 @@ impl PuzzleBoard {
                         if this.waiting {
                             return Ok(None);
                         }
-                        let Some(uci) = board.solution(board.index()) else {
+                        let Some(reply) = board.reveal_next() else {
                             return Err(());
                         };
-                        let (correct, reply) = board.player_move(&uci);
-                        if !correct {
-                            return Err(());
-                        }
                         crate::sound::move_sound(&board.last_san(), cx);
                         this.redraw(cx);
                         Ok(reply)

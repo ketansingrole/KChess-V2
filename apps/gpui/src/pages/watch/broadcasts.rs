@@ -460,9 +460,7 @@ impl WatchPage {
                             rounds.iter().find(|r| r["id"].as_str() == Some(wanted))
                         });
                         let round = linked
-                            .or_else(|| rounds.iter().find(|r| r["id"] == tour["defaultRoundId"]))
-                            .or_else(|| rounds.iter().find(|r| r["ongoing"] == json!(true)))
-                            .or(rounds.last())
+                            .or_else(|| kchess_games::broadcast::opening_round(&tour))
                             .and_then(|r| r["id"].as_str().map(str::to_string));
                         let items: Vec<Choice> = rounds
                             .iter()

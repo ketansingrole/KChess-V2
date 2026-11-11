@@ -35,6 +35,15 @@ impl OnBoard {
         &self.state.status
     }
 
+    /// Whether the solution is still being looked for.
+    pub fn playing(&self) -> bool {
+        self.status() == "playing"
+    }
+
+    pub fn solved(&self) -> bool {
+        self.status() == "solved"
+    }
+
     /// The index in the solution of the move the player must make next.
     pub fn index(&self) -> usize {
         self.state.index.max(0.) as usize
@@ -82,6 +91,18 @@ impl OnBoard {
     /// The solution's move at `index`.
     pub fn solution(&self, index: usize) -> Option<String> {
         self.puzzle["solution"][index].as_str().map(str::to_string)
+    }
+
+    /// Play the solution's next move for the player, as Solution shows it: the opponent's reply
+    /// to play next, if any; none when nothing was played (the puzzle is over, or its solution
+    /// has no further move the rules accept).
+    pub fn reveal_next(&mut self) -> Option<Option<String>> {
+        if !self.playing() {
+            return None;
+        }
+        let uci = self.solution(self.index())?;
+        let (correct, reply) = self.player_move(&uci);
+        correct.then_some(reply)
     }
 
     /// Player moves in the solution.
@@ -135,6 +156,23 @@ mod tests {
 
     /// The rules write the solution index as a JavaScript number (`2.0`): read as an integer it
     /// was 0, and Solution stopped after the opponent's first reply.
+    #[test]
+    fn the_solution_is_revealed_a_move_at_a_time() {
+        let mut board = OnBoard::start(&json!({
+            "id": "line",
+            "fen": STANDARD_FEN,
+            "solution": ["e2e4", "e7e5", "g1f3"],
+        }));
+        assert!(board.playing());
+        assert_eq!(board.reveal_next(), Some(Some("e7e5".into())));
+        assert_eq!(board.last_san(), "e4");
+        board.opponent_reply("e7e5");
+        assert_eq!(board.reveal_next(), Some(None));
+        assert_eq!(board.last_san(), "Nf3");
+        assert!(board.solved() && !board.playing());
+        assert_eq!(board.reveal_next(), None);
+    }
+
     #[test]
     fn the_solution_index_moves_on_after_a_reply() {
         let mut board = OnBoard::start(&json!({

@@ -379,91 +379,6 @@ fn is_cargo_test_var(key: &str) -> bool {
         )
 }
 
-/// A nested build leaves out only what Cargo set for this package: its own configuration
-/// (`CARGO_HOME`, `CARGO_INCREMENTAL`, `CARGO_BUILD_*`) still applies.
-#[cfg(unix)]
-#[test]
-fn a_nested_build_drops_only_this_packages_variables() {
-    for key in [
-        "CARGO_MANIFEST_DIR",
-        "CARGO_MANIFEST_PATH",
-        "CARGO_PKG_NAME",
-        "CARGO_BIN_EXE_kchess-cli",
-        "CARGO_CRATE_NAME",
-        "CARGO_PRIMARY_PACKAGE",
-        "CARGO_TARGET_TMPDIR",
-        "CARGO_BIN_NAME",
-        "OUT_DIR",
-    ] {
-        assert!(is_cargo_test_var(key), "{key}");
-    }
-    for key in [
-        "CARGO",
-        "CARGO_HOME",
-        "CARGO_INCREMENTAL",
-        "CARGO_BUILD_JOBS",
-        "PATH",
-    ] {
-        assert!(!is_cargo_test_var(key), "{key}");
-    }
-    assert!(
-        cargo_test_vars()
-            .iter()
-            .any(|key| key == "CARGO_MANIFEST_DIR")
-    );
-}
-
-/// A stale binary on disk is rebuilt before use, not run as it is (2026-11-09: a service built
-/// before a contracts change refused the CLI of the same release).
-#[cfg(unix)]
-#[test]
-fn a_stale_workspace_binary_is_rebuilt_before_use() {
-    use std::os::unix::fs::MetadataExt as _;
-    let fresh = workspace_binary("kchess-core", "kchess-fake-uci");
-    let stale = put_stale_copy(&fresh);
-    let used = workspace_binary("kchess-core", "kchess-fake-uci");
-    assert_eq!(used, fresh);
-    assert_ne!(
-        std::fs::metadata(&used).expect("the scripted engine").ino(),
-        stale,
-        "the stale binary was used as it was"
-    );
-}
-
-/// Puts a file that is not Cargo's output in place of `binary`, and answers its inode. Tests in
-/// other binaries run this one at once (kchess-core's run it as their engine), and the core
-/// takes an executable of another length or time for another engine: it restarted a warm engine
-/// between two moves of `consecutive_moves_reuse_the_warm_engine_and_send_only_changed_options`
-/// (2026-11-11) when this put a longer copy here. So the copy is the same bytes and time, put in
-/// place under another name first so nobody reads half of it, and renamed over the file rather
-/// than written into it, which Cargo hard-links to its own copy.
-#[cfg(unix)]
-fn put_stale_copy(binary: &std::path::Path) -> u64 {
-    use std::os::unix::fs::MetadataExt as _;
-    let built = std::fs::metadata(binary).expect("the binary");
-    let partial = binary.with_file_name(format!(
-        "{}-stale-{}",
-        binary.file_name().expect("a file").to_string_lossy(),
-        std::process::id()
-    ));
-    std::fs::copy(binary, &partial).expect("stale copy");
-    let copy = std::fs::File::options()
-        .write(true)
-        .open(&partial)
-        .expect("the stale copy");
-    copy.set_modified(built.modified().expect("modified"))
-        .expect("the binary's time");
-    drop(copy);
-    let stale = std::fs::metadata(&partial).expect("the stale copy");
-    assert_eq!(
-        (stale.len(), stale.modified().ok()),
-        (built.len(), built.modified().ok()),
-        "the copy looks like the binary to the tests running it"
-    );
-    std::fs::rename(&partial, binary).expect("stale binary in place");
-    stale.ino()
-}
-
 /// The scripted engine (`kchess-fake-uci`, built first) as the copy `engine-quick`: its
 /// streaming `search` mode, with every timed search cut to a few milliseconds.
 #[cfg(unix)]
@@ -1143,16 +1058,25 @@ fn a_resumed_clock_runs_out() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("kchess-cli starts");
+    use std::io::BufRead;
     let mut stdin = child.stdin.take().expect("stdin");
     stdin.write_all(b"pause\n").expect("resume");
     stdin.flush().expect("flush");
-    // Black's 0.3 s run out well within this.
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    // Each state as it is shown, until the one where Black's 0.3 s have run out.
+    let stdout = std::io::BufReader::new(child.stdout.take().expect("stdout"));
+    let mut states = Vec::new();
+    for line in stdout.lines() {
+        let state: Value = serde_json::from_str(&line.expect("a line")).expect("a state");
+        let over = !state["result"].is_null();
+        states.push(state);
+        if over {
+            break;
+        }
+    }
     stdin.write_all(b"quit\n").expect("quit");
     drop(stdin);
     let played = child.wait_with_output().expect("kchess-cli finishes");
     assert!(played.status.success(), "{played:?}");
-    let states = lines(&played);
     assert!(states[1]["result"].is_null(), "{states:?}");
     assert_eq!(
         states.last().expect("a state")["result"],

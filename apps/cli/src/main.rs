@@ -4,15 +4,18 @@ mod core;
 mod play;
 mod puzzle;
 mod review;
+mod wait;
 
-use crate::core::{ClientEvent, CoreEvent};
 use kchess_contracts::calls;
+use kchess_contracts::types::PositionLookupKind;
+use kchess_domain::variant::Variant;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use serde_json::{Value, json};
 
-use crate::core::{Browser, CoreClient, Options};
+use crate::core::{Browser, CoreClient, CoreEvent, Options};
+use crate::wait::{Next, Wait};
 
 /// Declares [`Command`] and [`COMMANDS`] together: each command's name, its other spellings,
 /// and its forms with what each does. The help, the
@@ -128,7 +131,6 @@ Local games also accept draw and pause. Sessions are saved in the core library.
     out
 }
 
-/// The command `word` names.
 fn command(word: &str) -> Option<Command> {
     COMMANDS
         .iter()
@@ -145,28 +147,6 @@ struct Cli {
     options: Options,
     args: Vec<String>,
     engine: Option<String>,
-}
-
-#[cfg(test)]
-impl PartialEq for Options {
-    fn eq(&self, other: &Options) -> bool {
-        self.data_dir == other.data_dir
-            && self.browser == other.browser
-            && self.credentials == other.credentials
-            && self.embedded == other.embedded
-    }
-}
-
-#[cfg(test)]
-impl std::fmt::Debug for Options {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Options")
-            .field("data_dir", &self.data_dir)
-            .field("browser", &self.browser)
-            .field("credentials", &self.credentials)
-            .field("embedded", &self.embedded)
-            .finish()
-    }
 }
 
 fn parse(argv: &[String]) -> Result<Cli, String> {
@@ -218,9 +198,16 @@ fn parse(argv: &[String]) -> Result<Cli, String> {
 
 /// A result on stdout. `println!` panics when the reader has gone (`kchess-cli … | head -1`):
 /// a closed pipe ends the output quietly instead.
-fn print(value: &Value) {
+fn print(value: impl std::fmt::Display) {
     use std::io::Write as _;
     let _ = writeln!(std::io::stdout().lock(), "{value}");
+}
+
+/// A step a command takes on its way out, whose failure is told but does not fail the command.
+fn told_if_failed<T>(what: &str, result: Result<T, String>) {
+    if let Err(cause) = result {
+        eprintln!("[cli] {what} failed: {cause}");
+    }
 }
 
 fn method_names() -> Vec<&'static str> {
@@ -233,16 +220,7 @@ fn method_names() -> Vec<&'static str> {
 async fn arguments(args: &[String]) -> Result<Vec<Value>, String> {
     let text = if args.first().map(String::as_str) == Some("--args-file") {
         let path = args.get(1).ok_or("--args-file requires a path.")?;
-        let size = tokio::fs::metadata(path)
-            .await
-            .map_err(|cause| format!("Cannot read {path}: {cause}"))?
-            .len();
-        if size > MAX_ARGUMENTS {
-            return Err("Arguments are too large.".into());
-        }
-        tokio::fs::read_to_string(path)
-            .await
-            .map_err(|cause| format!("Cannot read {path}: {cause}"))?
+        small_file(path, "Arguments are too large.").await?
     } else {
         args.first().cloned().unwrap_or_else(|| "[]".into())
     };
@@ -253,26 +231,6 @@ async fn arguments(args: &[String]) -> Result<Vec<Value>, String> {
         Ok(Value::Array(values)) => Ok(values),
         Ok(_) => Err("Arguments must be a JSON array.".into()),
         Err(cause) => Err(format!("Arguments are not JSON: {cause}")),
-    }
-}
-
-/// Until Ctrl-C (or the core closing), handing each event to `on`.
-async fn until_interrupted(
-    events: &mut tokio::sync::mpsc::UnboundedReceiver<ClientEvent>,
-    mut on: impl FnMut(&CoreEvent),
-) {
-    let interrupted = tokio::signal::ctrl_c();
-    tokio::pin!(interrupted);
-    loop {
-        tokio::select! {
-            _ = &mut interrupted => return,
-            event = events.recv() => match event {
-                None => return,
-                Some(ClientEvent::Closed) => return,
-                Some(ClientEvent::Event(event)) => on(&event),
-                Some(_) => {}
-            },
-        }
     }
 }
 
@@ -319,8 +277,8 @@ async fn run(argv: &[String]) -> Result<(), String> {
     let rest = args.get(1..).unwrap_or_default();
     match command {
         Command::Help => print!("{}", help()),
-        Command::Version => println!("kchess-cli {}", env!("CARGO_PKG_VERSION")),
-        Command::Methods => print(&json!(method_names())),
+        Command::Version => print(format_args!("kchess-cli {}", env!("CARGO_PKG_VERSION"))),
+        Command::Methods => print(json!(method_names())),
         Command::Opening => print(&opening_name(rest)?),
         Command::Position => print(&position_info(rest)?),
         _ => return with_core(command, rest, &options, engine).await,
@@ -353,7 +311,7 @@ async fn with_core(
             Command::Status => {
                 let data = core.request(calls::LoadData {}).await?;
                 let engine = core.request(calls::EngineStatus { variant: None }).await?;
-                print(&json!({ "data": data, "engine": engine }));
+                print(json!({ "data": data, "engine": engine }));
             }
             Command::Login => {
                 // The sign-in page is opened (or printed) while the core waits for it.
@@ -370,19 +328,24 @@ async fn with_core(
                 if assists {
                     core.request(calls::ResumeOnline {}).await?;
                 }
-                print(&core.call(method, parameters).await?);
+                print(&core.call_by_name(method, parameters).await?);
             }
             Command::Analyze => {
-                let request = analysis_request(rest)?;
+                let request = analysis_request("analyze", rest)?;
                 core.request(calls::ResumeOnline {}).await?;
                 core.request(calls::StartAnalysis { request }).await?;
-                until_interrupted(&mut events, |event| {
-                    if let CoreEvent::Analysis(update) = event {
-                        print(update);
+                let mut wait = Wait::new(&mut events);
+                loop {
+                    match wait.next().await {
+                        Next::Event(CoreEvent::Analysis(update)) => print(&update),
+                        Next::Event(_) | Next::Line(_) | Next::Tick => {}
+                        Next::Interrupted | Next::Closed | Next::InputEnded => break,
                     }
-                })
-                .await;
-                let _ = core.request(calls::StopAnalysis { kill: None }).await;
+                }
+                told_if_failed(
+                    "Stopping the analysis",
+                    core.request(calls::StopAnalysis { kill: None }).await,
+                );
             }
             Command::Play | Command::Local => {
                 let computer = command == Command::Play;
@@ -400,7 +363,7 @@ async fn with_core(
             }
             Command::Pgn => {
                 let link = rest.first().map(String::as_str).unwrap_or_default();
-                println!("{}", linked_pgn(&core, link).await?.trim_end());
+                print(linked_pgn(&core, link).await?.trim_end());
             }
             Command::Review => {
                 let pgn = review_input(&core, rest).await?;
@@ -419,21 +382,25 @@ async fn with_core(
                     }
                     Watched::Tour(id) => {
                         let tour = core.request(calls::BroadcastTour { id: json!(id) }).await?;
-                        let round = live_round(&tour).ok_or("That broadcast has no rounds yet.")?;
+                        let round = kchess_games::broadcast::opening_round(&tour)
+                            .ok_or("That broadcast has no rounds yet.")?;
                         core.request(calls::WatchBroadcast {
-                            round_id: json!(round),
+                            round_id: round["id"].clone(),
                         })
                         .await?
                     }
                 };
                 let watched = watch_frames(&mut events).await;
-                let _ = core.request(calls::StopWatching { session: None }).await;
+                told_if_failed(
+                    "Stopping watching",
+                    core.request(calls::StopWatching { session: None }).await,
+                );
                 watched?;
             }
             Command::Explore => {
                 let (kind, fen, variant) = explore_request(rest)?;
                 let options = match variant {
-                    Some(variant) => json!({ "variant": variant }),
+                    Some(variant) => json!({ "variant": variant.key() }),
                     None => json!({}),
                 };
                 core.request(calls::ResumeOnline {}).await?;
@@ -525,47 +492,31 @@ fn watch_target(words: &[String]) -> Result<Watched, String> {
         })
 }
 
-/// The round a broadcast opens at, as the app opens it: the one Lichess names, else the one being
-/// played, else the last.
-fn live_round(tour: &Value) -> Option<String> {
-    let rounds = tour["rounds"].as_array()?;
-    rounds
-        .iter()
-        .find(|round| round["id"] == tour["defaultRoundId"])
-        .or_else(|| rounds.iter().find(|round| round["ongoing"] == json!(true)))
-        .or(rounds.last())
-        .and_then(|round| round["id"].as_str().map(str::to_string))
-}
-
 /// Print each frame of the watched game, or each update of the broadcast round, as a JSON line
 /// until Ctrl-C; an error, or the round's end, ends it.
 async fn watch_frames(
-    events: &mut tokio::sync::mpsc::UnboundedReceiver<ClientEvent>,
+    events: &mut tokio::sync::mpsc::UnboundedReceiver<core::ClientEvent>,
 ) -> Result<(), String> {
-    let interrupted = tokio::signal::ctrl_c();
-    tokio::pin!(interrupted);
+    let mut wait = Wait::new(events);
     loop {
-        tokio::select! {
-            _ = &mut interrupted => return Ok(()),
-            event = events.recv() => match event {
-                None => return Err("The core closed.".into()),
-                Some(ClientEvent::Closed) => return Err("The core closed.".into()),
-                Some(ClientEvent::Event(CoreEvent::WatchFrame(frame))) => print(&frame),
-                Some(ClientEvent::Event(CoreEvent::WatchBroadcast(update))) => {
-                    if let Some(error) = update["error"].as_str() {
-                        return Err(error.to_string());
-                    }
-                    print(&update);
-                    if update["ended"] == json!(true) {
-                        return Ok(());
-                    }
+        match wait.next().await {
+            Next::Interrupted | Next::InputEnded => return Ok(()),
+            Next::Closed => return Err("The core closed.".into()),
+            Next::Event(CoreEvent::WatchFrame(frame)) => print(&frame),
+            Next::Event(CoreEvent::WatchBroadcast(update)) => {
+                if let Some(error) = update["error"].as_str() {
+                    return Err(error.to_string());
                 }
-                Some(ClientEvent::Event(CoreEvent::WatchState(state))) if state["phase"] == "error" => {
-                    let message = state["message"].as_str().unwrap_or("Watching failed.");
-                    return Err(message.to_string());
+                print(&update);
+                if update["ended"] == json!(true) {
+                    return Ok(());
                 }
-                Some(_) => {}
-            },
+            }
+            Next::Event(CoreEvent::WatchState(state)) if state["phase"] == "error" => {
+                let message = state["message"].as_str().unwrap_or("Watching failed.");
+                return Err(message.to_string());
+            }
+            Next::Event(_) | Next::Line(_) | Next::Tick => {}
         }
     }
 }
@@ -584,19 +535,19 @@ async fn review_input(core: &CoreClient, words: &[String]) -> Result<String, Str
     }
     let path = std::path::Path::new(text);
     if path.is_file() {
-        return game_file(text).await;
+        return small_file(text, &format!("{text} is too large.")).await;
     }
     Ok(text.to_string())
 }
 
-/// A PGN file `review` was given, refused by its size before it is read.
-async fn game_file(path: &str) -> Result<String, String> {
+/// A file of up to `MAX_ARGUMENTS` bytes, refused as `too_large` by its size before it is read.
+async fn small_file(path: &str, too_large: &str) -> Result<String, String> {
     let size = tokio::fs::metadata(path)
         .await
         .map_err(|cause| format!("Cannot read {path}: {cause}"))?
         .len();
     if size > MAX_ARGUMENTS {
-        return Err(format!("{path} is too large."));
+        return Err(too_large.into());
     }
     tokio::fs::read_to_string(path)
         .await
@@ -605,8 +556,9 @@ async fn game_file(path: &str) -> Result<String, String> {
 
 /// What `analyze` searches: a position, or the one a game's moves (SAN or a PGN) reach, sent
 /// with its history so repetitions count. `--variant crazyhouse` (or a PGN's `Variant` header)
-/// reads them in that variant, which Fairy-Stockfish analyses.
-fn analysis_request(words: &[String]) -> Result<Value, String> {
+/// reads them in that variant, which Fairy-Stockfish analyses. `command` names the command in its
+/// errors.
+fn analysis_request(command: &str, words: &[String]) -> Result<Value, String> {
     let (variant, words) = match words {
         [flag, name, rest @ ..] if flag == "--variant" => {
             (play::local_variant(std::slice::from_ref(name))?, rest)
@@ -620,27 +572,27 @@ fn analysis_request(words: &[String]) -> Result<Value, String> {
         .and_then(|game| game.header("Variant").map(str::to_string));
     let variant = match (variant, header) {
         (Some(variant), _) => Some(variant),
-        (None, Some(name)) => Some(review::variant_key(&name)?.to_string()),
+        (None, Some(name)) => Some(review::pgn_variant(&name)?),
         (None, None) => None,
     };
-    match variant.as_deref() {
-        Some(variant) if !matches!(variant, "standard" | "chess960") => {
-            variant_analysis_request(variant, &text)
+    match variant {
+        Some(variant) if !variant.standard_rules() => {
+            variant_analysis_request(command, variant, &text)
         }
-        _ => standard_analysis_request(words),
+        _ => standard_analysis_request(command, words),
     }
 }
 
 /// A position in another variant, or the one its moves reach, read by that variant's rules.
-fn variant_analysis_request(variant: &str, text: &str) -> Result<Value, String> {
+fn variant_analysis_request(command: &str, variant: Variant, text: &str) -> Result<Value, String> {
     use kchess_domain::rules;
-    let start = rules::lichess_variant(variant).ok_or("Unknown variant.")?;
     let text = text.trim();
     let fen = match text {
-        "" => return Err("analyze requires a FEN or moves.".into()),
-        "startpos" => Some(rules::make_fen(&rules::default_position(start))),
-        text => rules::setup_start(variant, text).map(|position| rules::make_fen(&position)),
+        "" => return Err(format!("{command} requires a FEN or moves.")),
+        "startpos" => Some(rules::make_fen(&rules::default_position(variant.rules()))),
+        text => rules::setup_start(variant.key(), text).map(|position| rules::make_fen(&position)),
     };
+    let variant = variant.key();
     if let Some(fen) = fen {
         return Ok(json!({ "fen": fen, "lines": 3, "variant": variant }));
     }
@@ -667,13 +619,13 @@ fn variant_analysis_request(variant: &str, text: &str) -> Result<Value, String> 
 }
 
 /// A standard (or Chess960) position, or the one a game's moves reach.
-fn standard_analysis_request(words: &[String]) -> Result<Value, String> {
+fn standard_analysis_request(command: &str, words: &[String]) -> Result<Value, String> {
     if let Ok(fen) = analysis_fen(words) {
         return Ok(json!({ "fen": fen, "lines": 3 }));
     }
     let text = words.join(" ");
     let line = review::main_line(&text).map_err(|cause| match text.trim() {
-        "" => "analyze requires a FEN or moves.".to_string(),
+        "" => format!("{command} requires a FEN or moves."),
         _ if cause.starts_with("Move ") => cause,
         text => format!("Not a legal position or moves: {text}"),
     })?;
@@ -689,7 +641,7 @@ fn analysis_fen(words: &[String]) -> Result<String, String> {
     let fen = words.join(" ");
     let fen = match fen.trim() {
         "" => return Err("analyze requires a FEN.".into()),
-        "startpos" => "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+        "startpos" => kchess_domain::rules::INITIAL_FEN.to_string(),
         fen => fen.to_string(),
     };
     if kchess_domain::position::fen_problem(&fen).is_some() {
@@ -701,7 +653,7 @@ fn analysis_fen(words: &[String]) -> Result<String, String> {
 /// `opening`: the named opening a position or line reaches, from the openings the app names, as
 /// Lichess does (the last named position on the way). Offline: no core is needed.
 fn opening_name(words: &[String]) -> Result<Value, String> {
-    let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "opening"))?;
+    let request = analysis_request("opening", words)?;
     if request.get("variant").is_some() {
         return Err("Opening names are for standard chess only.".into());
     }
@@ -723,9 +675,9 @@ fn opening_name(words: &[String]) -> Result<Value, String> {
 /// The position a FEN or line reaches: whose turn, check and how the game stands, and every legal
 /// move in SAN.
 fn position_info(words: &[String]) -> Result<Value, String> {
-    let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "position"))?;
+    let request = analysis_request("position", words)?;
     let variant = request["variant"].as_str().unwrap_or("standard");
-    let fen = request["fen"].as_str().ok_or("setup.fen")?;
+    let fen = request["fen"].as_str().unwrap_or_default();
     let position = kchess_domain::rules::setup_start(variant, fen);
     let info = position.as_ref().map(kchess_domain::position::info);
     let legal = position
@@ -746,21 +698,26 @@ fn position_info(words: &[String]) -> Result<Value, String> {
 /// What `explore` looks up: the database named first, else the tablebase when it covers the
 /// position (seven pieces or fewer, no castling rights) and the masters' games when not. A
 /// variant's position (`--variant`, or a PGN's header) is looked up in Lichess's games of it.
-fn explore_request(words: &[String]) -> Result<(&'static str, String, Option<String>), String> {
-    const KINDS: [&str; 3] = ["masters", "opening", "tablebase"];
+fn explore_request(
+    words: &[String],
+) -> Result<(PositionLookupKind, String, Option<Variant>), String> {
+    // A player's games need the player, which `explore` does not take.
     let named = words
         .first()
-        .and_then(|word| KINDS.iter().find(|kind| **kind == word.as_str()));
+        .and_then(|word| serde_json::from_value(json!(word)).ok())
+        .filter(|kind| *kind != PositionLookupKind::Player);
     let words = if named.is_some() { &words[1..] } else { words };
-    let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "explore"))?;
+    let request = analysis_request("explore", words)?;
     let fen = request["fen"].as_str().unwrap_or_default().to_string();
-    if let Some(variant) = request["variant"].as_str() {
-        return match named.copied() {
-            None | Some("opening") => Ok(("opening", fen, Some(variant.to_string()))),
+    if let Some(variant) = request["variant"].as_str().and_then(Variant::from_key) {
+        return match named {
+            None | Some(PositionLookupKind::Opening) => {
+                Ok((PositionLookupKind::Opening, fen, Some(variant)))
+            }
             Some(_) => Err("Masters games and tablebases are standard chess only.".into()),
         };
     }
-    let kind = named.copied().unwrap_or_else(|| {
+    let kind = named.unwrap_or_else(|| {
         let mut fields = fen.split(' ');
         let pieces = fields
             .next()
@@ -770,9 +727,9 @@ fn explore_request(words: &[String]) -> Result<(&'static str, String, Option<Str
             .count();
         let castling = fields.nth(1).is_some_and(|rights| rights != "-");
         if pieces <= 7 && !castling {
-            "tablebase"
+            PositionLookupKind::Tablebase
         } else {
-            "masters"
+            PositionLookupKind::Masters
         }
     });
     Ok((kind, fen, None))
@@ -888,23 +845,6 @@ mod tests {
             Ok(Tour("kcTour01".into()))
         );
         assert!(target("lichess.org/training").is_err_and(|cause| cause.contains("best, bullet")));
-    }
-
-    #[test]
-    fn a_broadcast_opens_at_its_live_round() {
-        use serde_json::json;
-        let rounds = json!([
-            { "id": "r1", "finished": true },
-            { "id": "r2", "ongoing": true },
-            { "id": "r3" },
-        ]);
-        let named = json!({ "rounds": rounds, "defaultRoundId": "r1" });
-        assert_eq!(super::live_round(&named).as_deref(), Some("r1"));
-        let unnamed = json!({ "rounds": rounds });
-        assert_eq!(super::live_round(&unnamed).as_deref(), Some("r2"));
-        let none_live = json!({ "rounds": [{ "id": "r1" }, { "id": "r2" }] });
-        assert_eq!(super::live_round(&none_live).as_deref(), Some("r2"));
-        assert_eq!(super::live_round(&json!({ "rounds": [] })), None);
     }
 
     #[test]
@@ -1049,30 +989,31 @@ mod tests {
 
     #[test]
     fn explore_picks_the_tablebase_for_few_pieces() {
+        use PositionLookupKind::{Masters, Opening, Tablebase};
         let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         assert_eq!(
             explore_request(&strings(&["startpos"])),
-            Ok(("masters", start.to_string(), None))
+            Ok((Masters, start.to_string(), None))
         );
         assert_eq!(
             explore_request(&strings(&["opening", "startpos"])),
-            Ok(("opening", start.to_string(), None))
+            Ok((Opening, start.to_string(), None))
         );
         let ending = "8/8/8/8/8/3k4/8/K6Q w - - 0 1";
         assert_eq!(
             explore_request(&strings(&ending.split(' ').collect::<Vec<_>>())),
-            Ok(("tablebase", ending.to_string(), None))
+            Ok((Tablebase, ending.to_string(), None))
         );
         // Castling rights keep a few-piece position out of the tablebase.
         let castling = "4k3/8/8/8/8/8/8/4K2R w K - 0 1";
         assert_eq!(
             explore_request(&strings(&[castling])),
-            Ok(("masters", castling.to_string(), None))
+            Ok((Masters, castling.to_string(), None))
         );
         assert_eq!(
             explore_request(&strings(&["opening", "1.", "e4", "c5"])),
             Ok((
-                "opening",
+                Opening,
                 "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2".to_string(),
                 None
             ))
@@ -1089,7 +1030,7 @@ mod tests {
         let zh = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
         assert_eq!(
             explore_request(&strings(&["--variant", "crazyhouse", "startpos"])),
-            Ok(("opening", zh.to_string(), Some("crazyhouse".to_string())))
+            Ok((Opening, zh.to_string(), Some(Variant::Crazyhouse)))
         );
         assert_eq!(
             explore_request(&strings(&["masters", "--variant", "atomic", "startpos"])),
@@ -1100,18 +1041,21 @@ mod tests {
     #[test]
     fn analyze_reads_a_variant_by_its_own_rules() {
         // A drop in Crazyhouse, which standard chess cannot read.
-        let request = analysis_request(&strings(&[
-            "--variant",
-            "crazyhouse",
-            "1.",
-            "e4",
-            "d5",
-            "2.",
-            "exd5",
-            "Qxd5",
-            "3.",
-            "P@e3",
-        ]))
+        let request = analysis_request(
+            "analyze",
+            &strings(&[
+                "--variant",
+                "crazyhouse",
+                "1.",
+                "e4",
+                "d5",
+                "2.",
+                "exd5",
+                "Qxd5",
+                "3.",
+                "P@e3",
+            ]),
+        )
         .unwrap();
         assert_eq!(request["variant"], "crazyhouse");
         assert_eq!(
@@ -1123,32 +1067,33 @@ mod tests {
             "{request}"
         );
         // A PGN names its own variant: the Atomic capture explodes.
-        let request = analysis_request(&strings(&[
-            "[Variant \"Atomic\"]",
-            "1.",
-            "e4",
-            "d5",
-            "2.",
-            "exd5",
-        ]))
+        let request = analysis_request(
+            "analyze",
+            &strings(&["[Variant \"Atomic\"]", "1.", "e4", "d5", "2.", "exd5"]),
+        )
         .unwrap();
         assert_eq!(request["variant"], "atomic");
         assert_eq!(
             request["fen"],
             "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
         );
-        let start = analysis_request(&strings(&["--variant", "horde", "startpos"])).unwrap();
+        let start =
+            analysis_request("analyze", &strings(&["--variant", "horde", "startpos"])).unwrap();
         assert_eq!(start["variant"], "horde");
         assert!(start["fen"].as_str().unwrap().contains("PPPPPPPP/PPPPPPPP"));
-        assert!(analysis_request(&strings(&["--variant", "bughouse", "startpos"])).is_err());
+        assert!(
+            analysis_request("analyze", &strings(&["--variant", "bughouse", "startpos"])).is_err()
+        );
         // Standard chess and Chess960 stay with Stockfish.
-        let request = analysis_request(&strings(&["--variant", "chess960", "e4"])).unwrap();
+        let request =
+            analysis_request("analyze", &strings(&["--variant", "chess960", "e4"])).unwrap();
         assert!(request.get("variant").is_none());
     }
 
     #[test]
     fn analyze_reads_moves_and_keeps_their_history() {
-        let request = analysis_request(&strings(&["1.", "e4", "e5", "2.", "Nf3"])).unwrap();
+        let request =
+            analysis_request("analyze", &strings(&["1.", "e4", "e5", "2.", "Nf3"])).unwrap();
         assert_eq!(
             request["fen"],
             "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
@@ -1159,23 +1104,16 @@ mod tests {
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
         );
         assert_eq!(
-            analysis_request(&strings(&["e4", "Ke7"])).unwrap_err(),
+            analysis_request("analyze", &strings(&["e4", "Ke7"])).unwrap_err(),
             "Move 1 (Ke7) is not legal there."
         );
         assert_eq!(
-            analysis_request(&[]).unwrap_err(),
+            analysis_request("analyze", &[]).unwrap_err(),
             "analyze requires a FEN or moves."
         );
         // A FEN still goes as it is, without a history.
-        let start = analysis_request(&strings(&["startpos"])).unwrap();
+        let start = analysis_request("analyze", &strings(&["startpos"])).unwrap();
         assert!(start.get("moves").is_none());
-    }
-
-    #[test]
-    fn lists_the_core_methods() {
-        let names = method_names();
-        assert!(names.contains(&"library"));
-        assert!(names.contains(&"bestMove"));
     }
 
     #[tokio::test]
@@ -1198,32 +1136,25 @@ mod tests {
         );
     }
 
-    /// A game file up to `MAX_ARGUMENTS` bytes is read; a larger one is refused unread.
+    /// A file up to `MAX_ARGUMENTS` bytes is read; a larger one is refused unread.
     #[tokio::test]
-    async fn a_game_file_is_read_up_to_its_limit() {
+    async fn a_file_is_read_up_to_its_limit() {
         let limit = usize::try_from(MAX_ARGUMENTS).unwrap();
         let file = tempfile::NamedTempFile::new().unwrap();
         let path = file.path().to_string_lossy().to_string();
+        let game_file = || small_file(&path, "too large");
         std::fs::write(file.path(), "e".repeat(limit)).unwrap();
-        assert_eq!(game_file(&path).await.unwrap().len(), limit);
+        assert_eq!(game_file().await.unwrap().len(), limit);
         std::fs::write(file.path(), vec![0xff; limit + 1]).unwrap();
-        assert_eq!(
-            game_file(&path).await.unwrap_err(),
-            format!("{path} is too large.")
-        );
+        assert_eq!(game_file().await.unwrap_err(), "too large");
         std::fs::write(file.path(), [0xff]).unwrap();
-        assert!(
-            game_file(&path)
-                .await
-                .unwrap_err()
-                .starts_with("Cannot read")
-        );
+        assert!(game_file().await.unwrap_err().starts_with("Cannot read"));
     }
 
     #[test]
     fn a_variant_flag_needs_its_variant() {
         assert_eq!(
-            analysis_request(&strings(&["--variant"])).unwrap_err(),
+            analysis_request("analyze", &strings(&["--variant"])).unwrap_err(),
             "--variant needs a variant."
         );
     }

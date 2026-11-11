@@ -22,6 +22,7 @@ pub enum Browser {
     Print,
 }
 
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct Options {
     pub data_dir: PathBuf,
     pub browser: Browser,
@@ -76,8 +77,9 @@ impl CoreClient {
         Ok((CoreClient { handle }, events))
     }
 
-    /// A `CoreApi` method by name.
-    pub async fn call(&self, method: &str, args: Vec<Value>) -> Result<Value, String> {
+    /// A `CoreApi` method by name: only for `call`, which takes any method; every other command
+    /// makes a typed call (`request`).
+    pub async fn call_by_name(&self, method: &str, args: Vec<Value>) -> Result<Value, String> {
         self.handle
             .call(method, args)
             .await
@@ -154,7 +156,6 @@ fn open_browser(url: &str) -> std::io::Result<()> {
         .map(|_| ())
 }
 
-/// A `--data-dir` as given, made absolute.
 pub fn absolute(path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()

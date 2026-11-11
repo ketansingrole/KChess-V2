@@ -6,10 +6,10 @@ use kchess_domain::position::{play_san, play_uci};
 use kchess_domain::rules::setup_start;
 use kchess_games::puzzle::OnBoard;
 use serde_json::{Value, json};
-use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::core::{ClientEvent, CoreClient};
+use crate::wait::{Next, Wait};
 
 /// A puzzle being solved, on the board as the Puzzles page plays it
 /// (`kchess_games::puzzle::OnBoard`): the rules decide whether a move is the solution's (any
@@ -41,7 +41,7 @@ impl Solving {
     }
 
     pub fn solved(&self) -> bool {
-        self.board.status() == "solved"
+        self.board.solved()
     }
 
     /// The position now, as FEN.
@@ -61,7 +61,7 @@ impl Solving {
     /// Play `text` (SAN or UCI). As on Lichess, any checkmate solves the puzzle, not only the
     /// one in its solution.
     pub fn answer(&mut self, text: &str) -> Answer {
-        if self.board.status() != "playing" {
+        if !self.board.playing() {
             return Answer::Illegal;
         }
         let Some(position) = setup_start(self.board.variant(), self.board.fen()) else {
@@ -98,14 +98,7 @@ impl Solving {
     /// The moves left, in SAN; the puzzle ends shown.
     pub fn give_up(&mut self) -> Vec<String> {
         let mut shown = Vec::new();
-        while self.board.status() == "playing" {
-            let Some(uci) = self.board.solution(self.board.index()) else {
-                break;
-            };
-            let (correct, reply) = self.board.player_move(&uci);
-            if !correct {
-                break;
-            }
+        while let Some(reply) = self.board.reveal_next() {
             shown.push(self.board.last_san());
             if let Some(reply) = reply {
                 self.board.opponent_reply(&reply);
@@ -137,57 +130,46 @@ pub async fn interactive(
     };
     let mut solving =
         Solving::new(&puzzle).ok_or("Lichess sent a puzzle KChess could not read.")?;
-    println!(
-        "{}",
-        json!({
-            "puzzle": puzzle["id"],
-            "rating": puzzle["rating"],
-            "themes": puzzle["themes"],
-            "fen": solving.fen(),
-            "toMove": solving.solver(),
-        })
-    );
-    let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
-    let interrupted = tokio::signal::ctrl_c();
-    tokio::pin!(interrupted);
+    crate::print(json!({
+        "puzzle": puzzle["id"],
+        "rating": puzzle["rating"],
+        "themes": puzzle["themes"],
+        "fen": solving.fen(),
+        "toMove": solving.solver(),
+    }));
+    let mut wait = Wait::new(events).typed();
     loop {
-        tokio::select! {
-            _ = &mut interrupted => break,
-            Some(event) = events.recv() => {
-                if event == ClientEvent::Closed {
-                    break;
-                }
+        let line = match wait.next().await {
+            Next::Line(line) => line,
+            Next::Event(_) | Next::Tick => continue,
+            Next::Interrupted | Next::Closed | Next::InputEnded => break,
+        };
+        let shown = match line.as_str() {
+            "" => continue,
+            "quit" => break,
+            "hint" => json!({ "hint": solving.hint() }),
+            "solution" => {
+                let moves = solving.give_up();
+                json!({ "solution": moves, "fen": solving.fen() })
             }
-            line = lines.next_line() => {
-                let Ok(Some(line)) = line else { break };
-                let shown = match line.trim() {
-                    "" => continue,
-                    "quit" => break,
-                    "hint" => json!({ "hint": solving.hint() }),
-                    "solution" => {
-                        let moves = solving.give_up();
-                        json!({ "solution": moves, "fen": solving.fen() })
-                    }
-                    text => match solving.answer(text) {
-                        Answer::Illegal => {
-                            eprintln!("Illegal move.");
-                            continue;
-                        }
-                        Answer::Wrong { san } => json!({ "move": san, "correct": false }),
-                        Answer::Right { san, reply, solved } => json!({
-                            "move": san,
-                            "correct": true,
-                            "reply": reply,
-                            "solved": solved,
-                            "fen": solving.fen(),
-                        }),
-                    },
-                };
-                println!("{shown}");
-                if solving.solved() {
-                    break;
+            text => match solving.answer(text) {
+                Answer::Illegal => {
+                    eprintln!("Illegal move.");
+                    continue;
                 }
-            }
+                Answer::Wrong { san } => json!({ "move": san, "correct": false }),
+                Answer::Right { san, reply, solved } => json!({
+                    "move": san,
+                    "correct": true,
+                    "reply": reply,
+                    "solved": solved,
+                    "fen": solving.fen(),
+                }),
+            },
+        };
+        crate::print(shown);
+        if solving.solved() {
+            break;
         }
     }
     Ok(())
