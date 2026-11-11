@@ -5,11 +5,14 @@
 
 pub mod events;
 pub mod model;
+pub mod server;
 
 use serde_json::Value;
 
 use crate::js;
-use model::{Call, Ctx, Left, Model, Op, Outcome, Pending, Reply, Run, View, at, string_or};
+use model::{Call, ChatEntry, Ctx, Left, Model, Op, Outcome, Pending, Reply, Run, View};
+use serde::Deserialize as _;
+use server::{ConnectionReport, ServerEvent};
 
 impl Model {
     /// The live position, the SAN history, the moves this side made, whether it is a
@@ -26,7 +29,7 @@ impl Model {
     }
 
     /// A server event of the game stream.
-    pub fn event(&mut self, event: &Value, ctx: &Ctx) -> Outcome {
+    pub fn event(&mut self, event: &ServerEvent, ctx: &Ctx) -> Outcome {
         let mut run = Run::new(self, ctx);
         run.read_event(event);
         run.done()
@@ -124,10 +127,11 @@ fn start(mut run: Run, options: Value) -> Outcome {
     // What `checking` (and the core's report of the check) leaves; a report left over once the
     // phase moved on (a finished game, idle) does not hold seeks back.
     let checking = phase == "disconnected"
-        && run.m.online_connection.as_ref().is_some_and(|connection| {
-            js::string(connection.get("lane")) == Some("game")
-                && js::string(connection.get("phase")) == Some("checking")
-        });
+        && run
+            .m
+            .online_connection
+            .as_ref()
+            .is_some_and(|connection| ConnectionReport::read(connection).checking());
     let refused = (phase == "disconnected" && !run.m.online_id.is_empty())
         || (phase == "playing" && !run.m.correspondence())
         || phase == "seeking"
@@ -145,7 +149,10 @@ fn start(mut run: Run, options: Value) -> Outcome {
     });
     if !correspondence {
         run.m.online_id.clear();
-        run.m.online_account = string_or(options.get("account"), &run.ctx.active_account);
+        run.m.online_account = options
+            .get("account")
+            .and_then(Value::as_str)
+            .map_or_else(|| run.ctx.active_account.clone(), str::to_string);
         run.m.online_phase = "seeking".into();
         run.m.online_status = "Looking for an opponent…".into();
     }
@@ -274,7 +281,7 @@ fn settle_start(
         return run.answer(false);
     }
     if !correspondence && run.m.online_phase == "seeking" {
-        run.m.online_status = if js::truthy(at(Some(value), "url")) {
+        run.m.online_status = if js::truthy(value.get("url")) {
             "Challenge sent. Waiting for acceptance…"
         } else {
             "Looking for an opponent…"
@@ -374,14 +381,8 @@ fn settle_chat(mut run: Run, id: &str, value: Option<&Value>) -> Outcome {
         return run.done();
     };
     if run.m.online_id == id {
-        let mut chat: Vec<Value> = value.as_array().cloned().unwrap_or_default();
-        chat.extend(
-            run.m
-                .chat
-                .iter()
-                .filter(|line| line.get("room") != Some(&Value::from("player")))
-                .cloned(),
-        );
+        let mut chat: Vec<ChatEntry> = Vec::deserialize(value).unwrap_or_default();
+        chat.extend(run.m.chat.iter().filter(|line| !line.players()).cloned());
         run.m.chat = chat;
     }
     run.done()
@@ -392,6 +393,7 @@ mod tests {
     use serde_json::json;
 
     use super::model::{ClockConfig, Effect, Setup};
+    use super::server::ServerEvent;
     use super::*;
 
     fn ctx(now: f64) -> Ctx {
@@ -574,13 +576,13 @@ mod tests {
         model.online_color = "white".into();
         let mut ticking_after = |moves: &str| {
             let result = model.event(
-                &json!({
+                &ServerEvent::read(&json!({
                     "type": "gameState",
                     "moves": moves,
                     "wtime": 300_000,
                     "btime": 300_000,
                     "status": "started",
-                }),
+                })),
                 &ctx(0.0),
             );
             result
@@ -602,13 +604,13 @@ mod tests {
         let mut model = playing();
         model.online_account = "Alice".into();
         model.event(
-            &json!({
+            &ServerEvent::read(&json!({
                 "type": "gameFull",
                 "id": "AbCd1234",
                 "white": { "id": "bob", "name": "Bob", "rating": 1590 },
                 "black": { "id": "alice", "name": "Alice", "rating": 1580 },
                 "state": { "moves": "" },
-            }),
+            })),
             &ctx(0.0),
         );
         assert_eq!(model.online_color, "black");

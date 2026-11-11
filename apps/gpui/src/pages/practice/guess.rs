@@ -1127,7 +1127,6 @@ pub(super) fn loaded(pgn: &str) -> Result<(Vec<String>, Value), &'static str> {
 mod tests {
     use super::{EngineLine, Game, eval_of};
     use kchess_domain::training::guess::Eval;
-    use serde_json::json;
     use shakmaty::Color;
 
     #[test]
