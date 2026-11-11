@@ -24,9 +24,9 @@ use tokio_util::sync::CancellationToken;
 use super::client::{Auth, Lane, LichessClient, TokenSource};
 use super::reviews::review_from_lichess;
 use crate::capabilities::Capabilities;
-use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::{Host, Level};
 use crate::store::games::EXPORTED_GAME_CACHE;
+use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
 use kchess_contracts::types::{
     CachedProfile, Crosstable, CrosstableMatchup, FollowedRatings, FollowedUser, FollowingProblem,
     FollowingReport, LichessGame, PerfMark, PerfResult, PerfStats, PerfStreak, PerfType, UsageKind,

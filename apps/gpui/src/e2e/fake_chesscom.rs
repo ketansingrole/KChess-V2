@@ -3,9 +3,9 @@
 //! (`KCHESS_TEST_CHESSCOM_BASE`). Players whose names start with `e2e` exist and have played two
 //! games in January 2020; every other player is unknown.
 
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
 use std::sync::OnceLock;
+
+use kchess_testkit::Server;
 
 use serde_json::{Value, json};
 
@@ -14,20 +14,17 @@ const MONTH: &str = "2020/01";
 
 /// The origin the core is pointed at.
 pub fn base() -> String {
-    static BASE: OnceLock<String> = OnceLock::new();
-    BASE.get_or_init(|| {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("a port for Chess.com");
-        let base = format!("http://{}", listener.local_addr().expect("its address"));
-        std::thread::spawn(move || {
-            for socket in listener.incoming().flatten() {
-                std::thread::spawn(move || {
-                    let _ = serve(socket);
-                });
-            }
-        });
-        base
-    })
-    .clone()
+    static SERVER: OnceLock<Server> = OnceLock::new();
+    SERVER
+        .get_or_init(|| {
+            Server::start(|request, out| {
+                let (status, body) = answer(request.path());
+                kchess_testkit::json(out, status, &body)
+            })
+            .expect("a port for Chess.com")
+        })
+        .base()
+        .to_string()
 }
 
 /// The games `name` played, rated 1500 in both: a win as White and a loss as Black.
@@ -88,34 +85,4 @@ fn answer(path: &str) -> (u16, Value) {
         Some(month) if month == format!("games/{MONTH}") => (200, games(name)),
         Some(_) => (404, json!({ "code": 0 })),
     }
-}
-
-fn serve(socket: TcpStream) -> std::io::Result<()> {
-    let mut reader = BufReader::new(socket.try_clone()?);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    let path = line
-        .split_whitespace()
-        .nth(1)
-        .unwrap_or_default()
-        .to_string();
-    // The headers, up to the blank line.
-    loop {
-        let mut header = String::new();
-        if reader.read_line(&mut header)? == 0 || header == "\r\n" {
-            break;
-        }
-    }
-    let (status, body) = answer(&path);
-    let body = body.to_string();
-    let reason = if status == 200 { "OK" } else { "Not Found" };
-    let mut out = socket;
-    write!(
-        out,
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )?;
-    out.flush()?;
-    out.set_read_timeout(Some(kchess_core::loopback::HANG_UP_WAIT))?;
-    std::io::copy(&mut out, &mut std::io::sink()).map(|_| ())
 }

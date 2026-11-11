@@ -6,12 +6,13 @@
 //! cannot be reached, as if nothing listened.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
+use kchess_testkit::Request;
 use serde_json::{Value, json};
 
 const OPPONENT: &str = "Opponent";
@@ -105,7 +106,7 @@ impl Handle {
 }
 
 struct Server {
-    base: String,
+    http: kchess_testkit::Server,
     next: AtomicUsize,
     /// By the code the sign-in returns with, which is also the end of the login.
     sessions: Mutex<HashMap<String, Handle>>,
@@ -115,22 +116,11 @@ struct Server {
 
 fn server() -> &'static Server {
     static SERVER: OnceLock<Server> = OnceLock::new();
-    SERVER.get_or_init(|| {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("a port for Lichess");
-        let base = format!("http://{}", listener.local_addr().expect("its address"));
-        std::thread::spawn(move || {
-            for socket in listener.incoming().flatten() {
-                std::thread::spawn(move || {
-                    let _ = serve(socket);
-                });
-            }
-        });
-        Server {
-            base,
-            next: AtomicUsize::new(0),
-            sessions: Mutex::new(HashMap::new()),
-            played: Mutex::new(HashMap::new()),
-        }
+    SERVER.get_or_init(|| Server {
+        http: kchess_testkit::Server::start(serve).expect("a port for Lichess"),
+        next: AtomicUsize::new(0),
+        sessions: Mutex::new(HashMap::new()),
+        played: Mutex::new(HashMap::new()),
     })
 }
 
@@ -146,7 +136,7 @@ pub fn play(name: &str, seconds: u64) {
 
 /// The origin the core is pointed at.
 pub fn base() -> String {
-    server().base.clone()
+    server().http.base().to_string()
 }
 
 /// A new session, and the code that signs in to it.
@@ -213,93 +203,47 @@ fn response_complete(response: &[u8]) -> bool {
     response.len() >= end + 4 + length
 }
 
-struct Request {
-    method: String,
-    path: String,
-    /// The query, still percent-encoded.
-    query: String,
-    login: Option<String>,
-    body: String,
+/// The session a request signs in as: the code its `Bearer lip_e2e_<code>` token was made from.
+fn login(request: &Request) -> Option<String> {
+    request
+        .header("authorization")?
+        .strip_prefix("Bearer lip_e2e_")
+        .map(str::to_string)
 }
 
-fn read_request(socket: &mut BufReader<TcpStream>) -> Option<Request> {
-    let mut line = String::new();
-    socket.read_line(&mut line).ok()?;
-    let mut parts = line.split_whitespace();
-    let method = parts.next()?.to_string();
-    let (path, query) = {
-        let target = parts.next()?;
-        let (path, query) = target.split_once('?').unwrap_or((target, ""));
-        (path.to_string(), query.to_string())
-    };
-    let (mut length, mut login) = (0usize, None);
-    loop {
-        let mut header = String::new();
-        socket.read_line(&mut header).ok()?;
-        let header = header.trim_end();
-        if header.is_empty() {
-            break;
-        }
-        if let Some((name, value)) = header.split_once(':') {
-            if name.eq_ignore_ascii_case("content-length") {
-                length = value.trim().parse().unwrap_or(0);
-            } else if name.eq_ignore_ascii_case("authorization") {
-                login = value
-                    .trim()
-                    .strip_prefix("Bearer lip_e2e_")
-                    .map(str::to_string);
-            }
-        }
-    }
-    let mut body = vec![0; length];
-    socket.read_exact(&mut body).ok()?;
-    Some(Request {
-        method,
-        path,
-        query,
-        login,
-        body: String::from_utf8_lossy(&body).into_owned(),
-    })
-}
-
-fn serve(socket: TcpStream) -> std::io::Result<()> {
-    let mut reader = BufReader::new(socket.try_clone()?);
-    let Some(request) = read_request(&mut reader) else {
-        return Ok(());
-    };
-    let mut out = socket;
-    if (request.method.as_str(), request.path.as_str()) == ("POST", "/api/token") {
+fn serve(request: Request, out: &mut TcpStream) -> std::io::Result<()> {
+    if (request.method.as_str(), request.path()) == ("POST", "/api/token") {
         let code = request
             .body
             .split('&')
             .find_map(|pair| pair.strip_prefix("code="))
             .unwrap_or_default();
         return reply(
-            &mut out,
+            out,
             &json!({ "token_type": "Bearer", "access_token": format!("lip_e2e_{code}"), "expires_in": 31_536_000 }),
         );
     }
-    let session = request.login.as_ref().and_then(|login| {
+    let session = login(&request).and_then(|login| {
         let sessions = server()
             .sessions
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        sessions.get(login).cloned()
+        sessions.get(&login).cloned()
     });
     // A player's activity is public too: a few weeks of it, which each name staggers. Frank's
     // fails while `FRANK_FAILS` is set (a failed timeline tried again).
     if let Some(name) = request
-        .path
+        .path()
         .strip_prefix("/api/user/")
         .and_then(|rest| rest.strip_suffix("/activity"))
     {
         if name == "frank" && FRANK_FAILS.load(Ordering::SeqCst) {
-            return refuse(&mut out, &json!({ "error": "Not now" }));
+            return refuse(out, &json!({ "error": "Not now" }));
         }
-        return reply(&mut out, &activity(name));
+        return reply(out, &activity(name));
     }
     // Profiles are public: many at once, by the comma-separated names in the body.
-    if request.method == "POST" && request.path == "/api/users" {
+    if request.method == "POST" && request.path() == "/api/users" {
         let played = server()
             .played
             .lock()
@@ -319,23 +263,25 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 user
             })
             .collect();
-        return reply(&mut out, &json!(users));
+        return reply(out, &json!(users));
     }
     // A followed player's games are public too: they have none.
-    if request.method == "GET" && request.path.starts_with("/api/games/user/") && session.is_none()
+    if request.method == "GET"
+        && request.path().starts_with("/api/games/user/")
+        && session.is_none()
     {
-        return ndjson(&mut out);
+        return ndjson(out);
     }
     // Name search is public: a few players whatever is typed, one of them online.
     // The opening explorer's Lichess database: a Crazyhouse position's drop, or the usual 1. e4.
-    if request.path == "/explorer/lichess" {
+    if request.path() == "/explorer/lichess" {
         let crazyhouse = request
-            .query
+            .query_string()
             .split('&')
             .any(|pair| pair == "variant=crazyhouse");
         let uci = if crazyhouse { "P@e3" } else { "e2e4" };
         return reply(
-            &mut out,
+            out,
             &json!({
                 "white": 70, "draws": 10, "black": 20,
                 "moves": [{ "uci": uci, "white": 70, "draws": 10, "black": 20 }],
@@ -343,9 +289,9 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             }),
         );
     }
-    if request.path == "/api/player/autocomplete" {
+    if request.path() == "/api/player/autocomplete" {
         return reply(
-            &mut out,
+            out,
             &json!({ "result": [
                 { "id": "magnuscarlsen", "name": "MagnusCarlsen", "title": "GM", "online": true },
                 { "id": "magicmike", "name": "MagicMike" },
@@ -354,14 +300,14 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         );
     }
     // Presence is public: nobody asked about is online.
-    if request.path == "/api/users/status" {
-        return reply(&mut out, &json!([]));
+    if request.path() == "/api/users/status" {
+        return reply(out, &json!([]));
     }
     // Leaderboards are public, so they are asked for without the login. Racing Kings' fails
     // while `RACING_KINGS_FAILS` is set (a failed load tried again).
-    if let Some(perf) = request.path.strip_prefix("/api/player/top/100/") {
+    if let Some(perf) = request.path().strip_prefix("/api/player/top/100/") {
         if perf == "racingKings" && RACING_KINGS_FAILS.load(Ordering::SeqCst) {
-            return refuse(&mut out, &json!({ "error": "Not now" }));
+            return refuse(out, &json!({ "error": "Not now" }));
         }
         let user = |username: &str, title: Option<&str>, rating: u32, progress: i32| {
             json!({
@@ -371,7 +317,7 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             })
         };
         return reply(
-            &mut out,
+            out,
             &json!({ "users": [
                 user("FirstGm", Some("GM"), 3004, 3),
                 user("Untitled", None, 2974, 16),
@@ -381,51 +327,51 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         );
     }
     // A showcase account's profile, rating history and games are public, as on Lichess.
-    if let Some(reply_to) = showcase_public(&request.path) {
+    if let Some(reply_to) = showcase_public(request.path()) {
         return match reply_to {
-            Showcase::Profile(name) => reply(&mut out, &showcase_account(&name)),
-            Showcase::History => reply(&mut out, &showcase_history()),
+            Showcase::Profile(name) => reply(out, &showcase_account(&name)),
+            Showcase::History => reply(out, &showcase_history()),
             Showcase::Games(name) => {
                 // The download's own login holds it: tests share the server, and several sign in
                 // as the showcase player at once, each with its own `hold_games`.
                 if let Some(session) = &session {
                     hold_games(session);
                 }
-                ndjson_lines(&mut out, &showcase_games(&name))
+                ndjson_lines(out, &showcase_games(&name))
             }
         };
     }
     // The same game behind a slow link: its answer waits until a test lets it go.
-    if (request.method.as_str(), request.path.as_str()) == ("POST", "/api/games/export/_ids")
+    if (request.method.as_str(), request.path()) == ("POST", "/api/games/export/_ids")
         && request.body.trim() == HELD_GAME
     {
         HELD_GAME_ASKED.store(true, Ordering::SeqCst);
         while !HELD_GAME_RELEASED.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(5));
         }
-        return pgn(&mut out, LINKED_PGN);
+        return pgn(out, LINKED_PGN);
     }
     // The showcase account's games are public too, as the single export sends one (without
     // an account, so named for the showcase test's player).
-    if (request.method.as_str(), request.path.as_str()) == ("POST", "/api/games/export/_ids")
+    if (request.method.as_str(), request.path()) == ("POST", "/api/games/export/_ids")
         && let Some(game) = showcase_games("Showcase")
             .into_iter()
             .find(|game| game["id"].as_str() == Some(request.body.trim()))
     {
-        return pgn(&mut out, game["pgn"].as_str().unwrap_or_default());
+        return pgn(out, game["pgn"].as_str().unwrap_or_default());
     }
     // Games are public: the one a pasted link can fetch here.
-    if (request.method.as_str(), request.path.as_str()) == ("POST", "/api/games/export/_ids")
+    if (request.method.as_str(), request.path()) == ("POST", "/api/games/export/_ids")
         && request.body.trim() == LINKED_GAME
     {
-        return pgn(&mut out, LINKED_PGN);
+        return pgn(out, LINKED_PGN);
     }
     // Puzzles are public too: the one a pasted training link names.
-    if (request.method.as_str(), request.path.as_str())
+    if (request.method.as_str(), request.path())
         == ("GET", format!("/api/puzzle/{LINKED_PUZZLE}").as_str())
     {
         return reply(
-            &mut out,
+            out,
             &json!({
                 "game": { "id": LINKED_GAME },
                 "puzzle": {
@@ -441,13 +387,15 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
     }
     // Anonymous training draws a puzzle, numbered on each draw; only for one theme, so the pages
     // other tests open still find Lichess out of reach.
-    if (request.method.as_str(), request.path.as_str()) == ("GET", "/api/puzzle/next")
-        && request.query.contains(&format!("angle={TRAINED_THEME}"))
+    if (request.method.as_str(), request.path()) == ("GET", "/api/puzzle/next")
+        && request
+            .query_string()
+            .contains(&format!("angle={TRAINED_THEME}"))
     {
         static DRAWN: AtomicUsize = AtomicUsize::new(0);
         let drawn = DRAWN.fetch_add(1, Ordering::Relaxed);
         return reply(
-            &mut out,
+            out,
             &json!({
                 "game": { "id": LINKED_GAME },
                 "puzzle": {
@@ -464,14 +412,14 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
     // Lichess TV is public: a Rapid game two moves in and an Atomic one at its start, each
     // channel's feed open until the app hangs up. Other channels and the channel list send
     // nothing, as a test of TV out of reach needs.
-    if let Some(answer) = tv(&mut out, &request) {
+    if let Some(answer) = tv(out, &request) {
         return answer;
     }
     // Broadcasts are public: a tournament of two rounds, which a round's link finds.
-    match (request.method.as_str(), request.path.as_str()) {
+    match (request.method.as_str(), request.path()) {
         ("GET", path) if path == format!("/api/broadcast/{BROADCAST_TOUR}") => {
             return reply(
-                &mut out,
+                out,
                 &json!({
                     "tour": { "id": BROADCAST_TOUR, "name": "KChess Open" },
                     "rounds": [
@@ -489,7 +437,7 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         {
             let round = path.rsplit('/').next().unwrap_or_default();
             return reply(
-                &mut out,
+                out,
                 &json!({ "tour": { "id": BROADCAST_TOUR }, "round": { "id": round } }),
             );
         }
@@ -518,7 +466,7 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 std::thread::sleep(Duration::from_millis(5));
             }
             return reply(
-                &mut out,
+                out,
                 &json!({
                     "id": id,
                     "fullName": name,
@@ -533,7 +481,7 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         // A public arena about to start, which its link opens.
         ("GET", path) if path == format!("/api/tournament/{ARENA}") => {
             return reply(
-                &mut out,
+                out,
                 &json!({
                     "id": ARENA,
                     "fullName": "KChess Rapid Arena",
@@ -550,20 +498,20 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             if path == format!("/api/study/{STUDY}/{STUDY_CHAPTER}.pgn")
                 || path == format!("/api/study/{STUDY}.pgn") =>
         {
-            return pgn(&mut out, STUDY_PGN);
+            return pgn(out, STUDY_PGN);
         }
         ("GET", path) if path == format!("/api/study/{VARIANT_STUDY}.pgn") => {
             return pgn(
-                &mut out,
+                out,
                 "[Event \"Drops\"]\n[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 *\n\n\n",
             );
         }
         // The finished first round has one board; the live one has none yet.
         ("GET", path) if path.starts_with("/api/stream/broadcast/round/") => {
             if path.contains(BROADCAST_ROUNDS[0]) {
-                return pgn(&mut out, BROADCAST_BOARD);
+                return pgn(out, BROADCAST_BOARD);
             }
-            return pgn(&mut out, "");
+            return pgn(out, "");
         }
         _ => {}
     }
@@ -572,28 +520,28 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         return Ok(());
     };
     if session.lock().revoked {
-        return unauthorized(&mut out);
+        return unauthorized(out);
     }
-    let path = request.path.as_str();
+    let path = request.path();
     let stream_path = format!("/api/board/game/stream/{GAME}");
     if session.lock().showcase {
         let username = session.lock().username.clone();
         let name = username.to_lowercase();
         let user = format!("/api/user/{name}");
         if path == "/api/account" || path.to_lowercase() == user {
-            return reply(&mut out, &showcase_account(&username));
+            return reply(out, &showcase_account(&username));
         }
         if path.to_lowercase() == format!("{user}/rating-history") {
-            return reply(&mut out, &showcase_history());
+            return reply(out, &showcase_history());
         }
         if path.to_lowercase() == format!("/api/games/user/{name}") {
-            return ndjson_lines(&mut out, &showcase_games(&username));
+            return ndjson_lines(out, &showcase_games(&username));
         }
     }
     match (request.method.as_str(), path) {
         ("GET", "/api/account") => {
             let username = session.lock().username.clone();
-            reply(&mut out, &account(&username))
+            reply(out, &account(&username))
         }
         ("GET", "/api/account/playing") => {
             while session.lock().hold_playing {
@@ -615,7 +563,7 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 game["secondsLeft"] = json!(259_200);
                 playing.push(game);
             }
-            reply(&mut out, &json!({ "nowPlaying": playing }))
+            reply(out, &json!({ "nowPlaying": playing }))
         }
         ("GET", "/api/stream/event") => {
             let (start, elsewhere, variant) = {
@@ -650,7 +598,7 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             let queued = session.clone();
             // Until the app hangs up (a keep-alive fails to send) or the login is revoked; the
             // events a test queues go out as they come.
-            let ended = stream(&mut out, first.into_iter().collect(), open, move |_| {
+            let ended = stream(out, first.into_iter().collect(), open, move |_| {
                 let mut session = queued.lock();
                 (!session.events.is_empty()).then(|| session.events.remove(0))
             });
@@ -667,14 +615,14 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             if elsewhere {
                 session.lock().refusals += 1;
                 return refuse(
-                    &mut out,
+                    out,
                     &json!({ "error": "This game cannot be played with the Board API." }),
                 );
             }
             let mut seen = seen;
             let watched = session.clone();
             stream(
-                &mut out,
+                out,
                 vec![first],
                 // Refusing the game later ends its open stream; the app's reconnect gets the 400.
                 move || !watched.lock().board_refused,
@@ -691,11 +639,11 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
         ("POST", p) if p == format!("/api/tournament/{ARENA}/join") => {
             let mut session = session.lock();
             session.writes.push(format!("POST {p} {}", request.body));
-            reply(&mut out, &json!({ "ok": true }))
+            reply(out, &json!({ "ok": true }))
         }
         ("POST", p) if p.starts_with("/api/board/game/") => {
             write_game(&session, p);
-            reply(&mut out, &json!({ "ok": true }))
+            reply(out, &json!({ "ok": true }))
         }
         // A seek is recorded with what it asks for; nobody takes it up. As on Lichess, it lasts
         // while its request stays open, until the app cancels it by hanging up.
@@ -705,25 +653,25 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
                 .writes
                 .push(format!("POST /api/board/seek {}", request.body));
             let open = move || !session.lock().revoked;
-            stream(&mut out, Vec::new(), open, |_| None)
+            stream(out, Vec::new(), open, |_| None)
         }
-        ("GET", "/api/challenge") => reply(&mut out, &json!({ "in": [], "out": [] })),
+        ("GET", "/api/challenge") => reply(out, &json!({ "in": [], "out": [] })),
         ("POST", p) if p.starts_with("/api/challenge/") => {
             session.lock().writes.push(format!("POST {p}"));
-            reply(&mut out, &json!({ "ok": true }))
+            reply(out, &json!({ "ok": true }))
         }
         ("GET", p) if p.ends_with("/chat") || p.starts_with("/api/team/of/") => {
-            reply(&mut out, &json!([]))
+            reply(out, &json!([]))
         }
         ("GET", p) if p.starts_with("/api/crosstable/") => {
-            reply(&mut out, &json!({ "users": {}, "nbGames": 0 }))
+            reply(out, &json!({ "users": {}, "nbGames": 0 }))
         }
         ("GET", p) if p.starts_with("/api/games/user/") => {
             hold_games(&session);
-            ndjson(&mut out)
+            ndjson(out)
         }
-        ("POST", "/api/games/export/_ids") => ndjson(&mut out),
-        _ => not_found(&mut out),
+        ("POST", "/api/games/export/_ids") => ndjson(out),
+        _ => not_found(out),
     }
 }
 
@@ -769,43 +717,19 @@ fn write_game(session: &Handle, path: &str) {
 }
 
 fn reply(out: &mut TcpStream, body: &Value) -> std::io::Result<()> {
-    let body = body.to_string();
-    write!(
-        out,
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )?;
-    answered(out)
+    kchess_testkit::json(out, 200, body)
 }
 
 fn refuse(out: &mut TcpStream, body: &Value) -> std::io::Result<()> {
-    let body = body.to_string();
-    write!(
-        out,
-        "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )?;
-    answered(out)
+    kchess_testkit::json(out, 400, body)
 }
 
 fn unauthorized(out: &mut TcpStream) -> std::io::Result<()> {
-    let body = json!({ "error": "No such token" }).to_string();
-    write!(
-        out,
-        "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )?;
-    answered(out)
+    kchess_testkit::json(out, 401, &json!({ "error": "No such token" }))
 }
 
 fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
-    let body = json!({ "error": "Not found" }).to_string();
-    write!(
-        out,
-        "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )?;
-    answered(out)
+    kchess_testkit::json(out, 404, &json!({ "error": "Not found" }))
 }
 
 /// The games Lichess TV features on its Rapid and Atomic channels.
@@ -829,7 +753,7 @@ fn tv(out: &mut TcpStream, request: &Request) -> Option<std::io::Result<()>> {
         { "color": "white", "user": { "name": "A" }, "rating": 2000, "seconds": 600 },
         { "color": "black", "user": { "name": "B" }, "rating": 2000, "seconds": 600 },
     ]);
-    let path = request.path.as_str();
+    let path = request.path();
     if request.method == "GET"
         && let Some(channel) = path
             .strip_prefix("/api/tv/")
@@ -894,30 +818,15 @@ const LINKED_PGN: &str = "[Event \"Rated rapid game\"]\n[Site \"https://lichess.
 [White \"alice\"]\n[Black \"Tester\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0\n";
 
 fn pgn(out: &mut TcpStream, body: &str) -> std::io::Result<()> {
-    write!(
-        out,
-        "HTTP/1.1 200 OK\r\nContent-Type: application/x-chess-pgn\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )?;
-    answered(out)
+    kchess_testkit::respond(out, 200, "application/x-chess-pgn", body.as_bytes())
 }
 
 fn ndjson(out: &mut TcpStream) -> std::io::Result<()> {
-    write!(
-        out,
-        "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-    )?;
-    answered(out)
+    kchess_testkit::ndjson(out, &[])
 }
 
 fn ndjson_lines(out: &mut TcpStream, lines: &[Value]) -> std::io::Result<()> {
-    let body: String = lines.iter().map(|line| format!("{line}\n")).collect();
-    write!(
-        out,
-        "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )?;
-    answered(out)
+    kchess_testkit::ndjson(out, lines)
 }
 
 /// An ndjson stream: `first`'s lines at once, then `next`'s whenever it has one, with keep-alives
@@ -926,50 +835,9 @@ fn stream(
     out: &mut TcpStream,
     first: Vec<Value>,
     open: impl Fn() -> bool,
-    mut next: impl FnMut(usize) -> Option<Value>,
+    next: impl FnMut(usize) -> Option<Value>,
 ) -> std::io::Result<()> {
-    write!(
-        out,
-        "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
-    )?;
-    let mut sent = 0;
-    for line in first {
-        chunk(out, &format!("{line}\n"))?;
-        sent += 1;
-    }
-    let mut quiet = Instant::now();
-    // A hang-up is seen at once, not at the next keep-alive: the app does not send on a stream,
-    // so a read that ends means it has gone.
-    out.set_read_timeout(Some(Duration::from_millis(1)))?;
-    while open() {
-        if matches!(out.peek(&mut [0u8; 1]), Ok(0)) {
-            return Ok(());
-        }
-        if let Some(line) = next(sent) {
-            chunk(out, &format!("{line}\n"))?;
-            sent += 1;
-            quiet = Instant::now();
-        } else if quiet.elapsed() >= KEEP_ALIVE {
-            chunk(out, "\n")?;
-            quiet = Instant::now();
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    chunk(out, "")?;
-    answered(out)
-}
-
-/// A response is written in full: the app hangs up first, or it can read a reset instead
-/// (`kchess_core::loopback::close_after_client`).
-fn answered(out: &mut TcpStream) -> std::io::Result<()> {
-    out.flush()?;
-    out.set_read_timeout(Some(kchess_core::loopback::HANG_UP_WAIT))?;
-    std::io::copy(out, &mut std::io::sink()).map(|_| ())
-}
-
-fn chunk(out: &mut TcpStream, text: &str) -> std::io::Result<()> {
-    write!(out, "{:x}\r\n{text}\r\n", text.len())?;
-    out.flush()
+    kchess_testkit::ndjson_stream(out, first, KEEP_ALIVE, open, next)
 }
 
 fn account(username: &str) -> Value {

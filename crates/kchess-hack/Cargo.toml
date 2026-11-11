@@ -38,6 +38,7 @@ digest = { version = "0.11", features = ["alloc", "oid"] }
 either = { version = "1", default-features = false, features = ["use_std"] }
 flate2 = { version = "1", features = ["zlib-rs"] }
 foldhash = { version = "0.2" }
+form_urlencoded = { version = "1" }
 futures-core = { version = "0.3" }
 futures-io = { version = "0.3" }
 futures-sink = { version = "0.3" }

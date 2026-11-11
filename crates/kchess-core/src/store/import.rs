@@ -17,9 +17,9 @@ use super::games::{
     to_sql,
 };
 use super::sql::{Sql as _, transaction};
-use crate::error::{CoreError, Result};
 use crate::host::Level;
 use kchess_contracts::types::Settings;
+use kchess_contracts::error::{CoreError, Result};
 use kchess_domain::js;
 
 /// A plaintext token from an earlier release, for the caller to encrypt and store.

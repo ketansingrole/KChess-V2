@@ -8,8 +8,8 @@ use kchess_contracts::types::{
 };
 use rusqlite::{Connection, Row, params};
 
-use crate::error::Result;
 use crate::store::sql::Sql as _;
+use kchess_contracts::error::Result;
 
 use kchess_domain::trainer::puzzle_progress::{Outcome, Verdict, classify, day_streak, moves};
 

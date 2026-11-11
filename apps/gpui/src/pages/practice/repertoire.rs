@@ -33,7 +33,7 @@ use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::tree::{TreeNode, child_path, comment_text};
-use crate::game::{STANDARD_FEN, random_unit, view};
+use crate::game::{STANDARD_FEN, view};
 use crate::pages::Page;
 use crate::pages::openings::OpeningChoice;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
@@ -41,6 +41,7 @@ use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::studies::StudyHandle;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice, Pill, Tone};
+use kchess_games::random_unit;
 
 const STUDY: &str = "kchess:repertoire-study";
 const OPENING_CHOICE: &str = "kchess:repertoire-opening";
@@ -188,12 +189,6 @@ fn leads_to(path: &str, line: &str) -> bool {
         || line
             .strip_prefix(path)
             .is_some_and(|rest| rest.starts_with(' '))
-}
-
-fn now_ms() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0., |elapsed| elapsed.as_millis() as f64)
 }
 
 /// When a line is next due, from now: "in 5 min", "in 3 h", "in 2 days".
@@ -632,7 +627,11 @@ impl Repertoire {
     fn summary(&self, cx: &App) -> repetition::Summary {
         let lines = self.lines();
         let table = &self.schedule[self.miss_key(cx)];
-        repetition::summary(lines.iter().map(|(_, _, id)| id.as_str()), table, now_ms())
+        repetition::summary(
+            lines.iter().map(|(_, _, id)| id.as_str()),
+            table,
+            kchess_games::now_ms(),
+        )
     }
 
     /// The most overdue line, if any is due.
@@ -640,7 +639,7 @@ impl Repertoire {
         let lines = self.lines();
         let ids: Vec<&str> = lines.iter().map(|(_, _, id)| id.as_str()).collect();
         let table = &self.schedule[self.miss_key(cx)];
-        let index = repetition::most_overdue(&ids, table, now_ms())?;
+        let index = repetition::most_overdue(&ids, table, kchess_games::now_ms())?;
         let (root, path, _) = lines.into_iter().nth(index)?;
         Some((root, path))
     }
@@ -906,7 +905,9 @@ impl Repertoire {
         let (key, line, correct) = (self.miss_key(cx), line_id(tree, &path), !self.line_missed);
         // At once here, so the next line is chosen by it; the core's answer replaces it.
         let mut schedule = self.schedule.as_object().cloned().unwrap_or_default();
-        if let Err(cause) = repetition::record(&mut schedule, &key, &line, correct, now_ms()) {
+        if let Err(cause) =
+            repetition::record(&mut schedule, &key, &line, correct, kchess_games::now_ms())
+        {
             crate::log::write(
                 Level::Warn,
                 "repertoire",
@@ -1236,7 +1237,7 @@ impl Render for Repertoire {
             });
         let chapters = self.study(cx).map_or(0, |study| study.chapters.len());
         let summary = self.summary(cx);
-        let schedule = schedule_text(&summary, now_ms());
+        let schedule = schedule_text(&summary, kchess_games::now_ms());
         let total = self.correct + self.wrong;
         let comment = self.node().map(|node| {
             node.comments

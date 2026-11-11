@@ -7,8 +7,8 @@ use rusqlite::{Connection, params_from_iter, types::Value as Sql};
 use serde_json::{Map, Value, json};
 
 use super::sql::Sql as _;
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::InsightsQuery;
 use kchess_domain::js;
 use kchess_domain::js::{number_to_json as num, truthy};

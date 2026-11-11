@@ -133,17 +133,6 @@ fn started_at(game: &Game) -> Option<i64> {
     Some(((days * 24 + hours) * 60 + minutes) * 60_000 + seconds * 1000)
 }
 
-/// The main line's moves, in SAN.
-fn main_line(game: &Game) -> Vec<String> {
-    let mut sans = Vec::new();
-    let mut node = 0;
-    while let Some(next) = game.children(node).next() {
-        sans.push(game.node(next).san.as_str().to_string());
-        node = next;
-    }
-    sans
-}
-
 /// The opening a standard game reaches, named from the bundled list as Lichess names it.
 fn opening(start: &str, sans: &[String]) -> Option<String> {
     let fen = rules::parse_fen(start).map(|setup| rules::make_setup_fen(&setup))?;
@@ -185,7 +174,7 @@ pub fn game_row(username: &str, game: &Value) -> Option<Value> {
     } else {
         variant
     };
-    let sans = main_line(&parsed);
+    let sans = parsed.main_line_sans();
     let start = parsed.header("FEN").unwrap_or(crate::rules::INITIAL_FEN);
     let opening = (variant == "standard")
         .then(|| opening(start, &sans))

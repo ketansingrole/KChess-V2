@@ -10,8 +10,8 @@ use serde_json::Value;
 
 use super::games::{GameRows, as_json, purge_account_data, trim_games};
 use super::sql::{Sql as _, transaction};
-use crate::error::{CoreError, Result};
 use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::ChesscomAccount;
 use kchess_domain::chesscom::account_of;
 

@@ -20,7 +20,7 @@ use super::scheduler::Priority;
 use super::slot::EngineSlot;
 use super::status::fairy_variant;
 use super::uci::truncate_for_log;
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 use crate::tasks::{aborted as signal_aborted, lock};
 use kchess_contracts::check::check;
 use kchess_contracts::types::AnalysisRequest;

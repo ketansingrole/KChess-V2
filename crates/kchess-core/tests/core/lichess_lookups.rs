@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use fixtures::{
-    MemoryStore, MemoryTokens, Recording, Reply, Seen, http_client, lichess_service, serve,
+    MemoryStore, MemoryTokens, Recording, Reply, Request, http_client, lichess_service, serve,
 };
 use kchess_contracts::types::{LookupOptions, PositionLookupKind as Kind};
 use kchess_core::lichess::accounts::Lichess;
@@ -31,7 +31,7 @@ impl LookupCache for MemoryCache {
     fn read<'a>(
         &'a self,
         key: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Option<Value>>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Option<Value>>> {
         Box::pin(async move { Ok(self.values.lock().unwrap().get(key).cloned()) })
     }
 
@@ -39,7 +39,7 @@ impl LookupCache for MemoryCache {
         &'a self,
         key: &'a str,
         value: &'a Value,
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
         Box::pin(async move {
             self.values
                 .lock()
@@ -438,7 +438,7 @@ async fn loads_a_master_game_and_refuses_a_refused_failed_or_non_pgn_answer() {
     let error = lookups.service.masters_game("abcdefgh").await.unwrap_err();
     // A server error says what failed, never Lichess's status.
     assert_eq!(error.message, "The master game could not be loaded.");
-    assert_eq!(error.kind, Some(kchess_core::ErrorKind::Unavailable));
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::Unavailable));
     assert!(lookups.service.masters_game("not an id").await.is_err());
 }
 
@@ -540,7 +540,7 @@ async fn asks_the_masters_database_and_lists_its_top_games() {
 async fn reads_the_last_snapshot_of_the_player_database_and_keys_its_cache_by_filters() {
     let snapshot =
         |n: i64| json!({ "moves": [{ "uci": "d2d4", "white": n, "draws": 0, "black": 0 }] });
-    let fixture = serve(move |seen: &Seen| {
+    let fixture = serve(move |seen: &Request| {
         // The player database streams snapshots; the last one is the answer.
         let n = if seen.query("player").as_deref() == Some("Bob") {
             3
@@ -605,7 +605,7 @@ async fn reads_the_last_snapshot_of_the_player_database_and_keys_its_cache_by_fi
 #[tokio::test]
 async fn asks_the_lichess_database_in_a_variant_and_checks_its_moves_by_that_variant() {
     const ZH: &str = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[P] w KQkq - 0 3";
-    let fixture = serve(|seen: &Seen| {
+    let fixture = serve(|seen: &Request| {
         let body = if seen.query("variant").as_deref() == Some("crazyhouse") {
             json!({
                 "moves": [
@@ -708,7 +708,7 @@ async fn asks_the_lichess_database_in_a_variant_and_checks_its_moves_by_that_var
 
 #[tokio::test]
 async fn cloud_evaluation_keeps_legal_lines_and_remembers_unknown_positions() {
-    let fixture = serve(|seen: &Seen| {
+    let fixture = serve(|seen: &Request| {
         // The query text is not decoded, so the FEN's letters identify the position.
         if seen.target.contains("rnbqkbnr") {
             Reply::Json(
@@ -765,7 +765,7 @@ struct FixedLogin(Option<String>);
 impl kchess_core::lichess::lookups::ExplorerLogin for FixedLogin {
     fn token(
         &self,
-    ) -> futures_util::future::BoxFuture<'_, kchess_core::error::Result<Option<String>>> {
+    ) -> futures_util::future::BoxFuture<'_, kchess_contracts::error::Result<Option<String>>> {
         Box::pin(async move { Ok(self.0.clone()) })
     }
 }
@@ -840,7 +840,7 @@ async fn a_failed_lookup_shows_no_status() {
             .await
             .unwrap_err();
         assert!(!error.message.contains("500"), "{}", error.message);
-        assert_eq!(error.kind, Some(kchess_core::ErrorKind::Unavailable));
+        assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::Unavailable));
     }
     let error = lookups
         .service
@@ -866,7 +866,7 @@ async fn a_lookup_that_never_answers_times_out_as_a_timeout() {
         .lookup(Kind::Opening, INITIAL, None)
         .await
         .unwrap_err();
-    assert_eq!(error.kind, Some(kchess_core::ErrorKind::TimedOut));
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::TimedOut));
     assert!(!error.message.contains("aborted"), "{}", error.message);
 }
 

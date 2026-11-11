@@ -14,7 +14,7 @@ use kchess_contracts::types::{
 
 use crate::core::{Core, LocationOverride, Mutation};
 use crate::engine::status::{engine_identity, engine_status, variant_engine_status};
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 
 impl Core {
     /// The engine path the settings name.

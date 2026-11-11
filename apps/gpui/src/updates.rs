@@ -508,25 +508,7 @@ impl Part {
     /// The SHA-256 of everything written, once it is on disk.
     fn finish(&mut self) -> std::io::Result<String> {
         std::io::Write::flush(&mut self.file)?;
-        Ok(hex(&self.hasher.clone().finalize()))
-    }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// The SHA-256 of the file at `path`, if it can be read.
-fn file_digest(path: &Path) -> Option<String> {
-    use std::io::Read as _;
-    let mut file = std::fs::File::open(path).ok()?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 1 << 20];
-    loop {
-        match file.read(&mut buffer).ok()? {
-            0 => return Some(hex(&hasher.finalize())),
-            read => hasher.update(&buffer[..read]),
-        }
+        Ok(kchess_delta::hex(&self.hasher.clone().finalize()))
     }
 }
 
@@ -741,7 +723,7 @@ async fn download_signed(
         .map_err(fail)?;
     lock.lock().map_err(fail)?;
     let file_path = folder.join(&asset.name);
-    if file_digest(&file_path).is_some_and(|digest| digest == expected) {
+    if kchess_delta::file_digest(&file_path).is_ok_and(|digest| digest == expected) {
         log(&format!("{} was already downloaded", asset.name));
         let size = std::fs::metadata(&file_path).map_or(asset.size, |meta| meta.len());
         let _ = progress.unbounded_send((size, size));
@@ -1528,7 +1510,7 @@ fn last_install_error(install: Option<&Install>, root: Option<&Path>) -> Option<
 }
 
 pub fn init(cx: &mut App) {
-    let store = kchess_core::app_store();
+    let store = kchess_host::app_store();
     let install = (!cfg!(debug_assertions) && !store)
         .then(installed)
         .flatten();
@@ -1543,7 +1525,7 @@ pub fn init(cx: &mut App) {
         }
     }
     let failed = last_install_error(install.as_ref(), root.as_deref());
-    let feed = kchess_core::dev_override("KCHESS_UPDATE_FEED")
+    let feed = kchess_host::dev_override("KCHESS_UPDATE_FEED")
         .map(|feed| feed.to_string_lossy().into_owned())
         .filter(|_| !store)
         .or_else(|| install.is_some().then(|| FEED.to_string()));

@@ -8,7 +8,7 @@ use kchess_contracts::types::{
 };
 
 use crate::core::Core;
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 
 impl Core {
     /// The open challenge `id`, or the error it is no longer open.

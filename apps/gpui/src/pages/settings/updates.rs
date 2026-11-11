@@ -159,18 +159,6 @@ fn bytes(count: u64) -> String {
     widgets::format_bytes(count as f64)
 }
 
-/// How long ago a check was: "just now", "5 minutes ago", "3 hours ago".
-fn ago(millis: i64) -> String {
-    let minutes = (chrono::Utc::now().timestamp_millis() - millis).max(0) / 60_000;
-    match minutes {
-        0 => "just now".into(),
-        1 => "1 minute ago".into(),
-        2..60 => format!("{minutes} minutes ago"),
-        60..120 => "1 hour ago".into(),
-        _ => format!("{} hours ago", minutes / 60),
-    }
-}
-
 /// The badge beside the version (`badge`).
 fn badge(phase: Phase) -> Option<(&'static str, Look, &'static str)> {
     Some(match phase {
@@ -242,7 +230,10 @@ impl SettingsPage {
             if !line.is_empty() {
                 line.push_str(" · ");
             }
-            line.push_str(&format!("Checked {}", ago(checked)));
+            line.push_str(&format!(
+                "Checked {}",
+                widgets::time_ago(checked as f64, kchess_games::now_ms())
+            ));
         }
         let page = updates.release_page();
         let act = |run: fn(&mut Updates, &mut Context<Updates>)| {

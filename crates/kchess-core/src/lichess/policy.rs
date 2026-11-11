@@ -23,9 +23,9 @@ use reqwest::header::HeaderMap;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, ErrorKind, Result};
 use crate::host::{Host, Level};
 use crate::usage::{Meter, Unmetered};
+use kchess_contracts::error::{CoreError, ErrorKind, Result};
 
 /// A request may take this long to answer (its headers, and its body unless it is a stream).
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);

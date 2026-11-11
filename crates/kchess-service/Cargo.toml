@@ -13,6 +13,7 @@ path = "src/bin/kchess-service.rs"
 [dependencies]
 kchess-contracts = { path = "../kchess-contracts" }
 kchess-core = { path = "../kchess-core" }
+kchess-host = { path = "../kchess-host" }
 # The names packages install programs under.
 kchess-delta = { path = "../kchess-delta" }
 serde.workspace = true

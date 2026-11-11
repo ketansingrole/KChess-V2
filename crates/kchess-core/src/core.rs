@@ -31,7 +31,6 @@ use crate::engine::scheduler::Scheduler;
 use crate::engine::search::Search;
 use crate::engine::status::EngineLocations;
 use crate::engine::uci::EngineHub;
-use crate::error::{CoreError, Result};
 use crate::facade::GatedHost;
 use crate::host::{Config, Host};
 use crate::lichess::services::{LiveGame, Services};
@@ -41,6 +40,7 @@ use crate::secrets::Credentials;
 use crate::store::Database;
 use crate::usage::UsageBatch;
 use crate::voice::recognizer::VoiceRecognizer;
+use kchess_contracts::error::{CoreError, Result};
 
 /// A managed engine change that replaces or removes the downloaded executable.
 #[derive(Clone, Copy)]

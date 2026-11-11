@@ -7,9 +7,10 @@ use crate::support;
 use std::path::Path;
 use std::sync::Arc;
 
+use kchess_contracts::CoreError;
 use kchess_core::engine::review::GameToReview;
 use kchess_core::store::{StoreContext, insights, reviews};
-use kchess_core::{Config, Core, CoreError};
+use kchess_core::{Config, Core};
 use rusqlite::Connection;
 use serde_json::{Value, json};
 use support::{Recording, wire};

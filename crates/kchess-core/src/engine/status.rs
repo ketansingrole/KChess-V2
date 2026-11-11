@@ -11,8 +11,8 @@ use std::time::UNIX_EPOCH;
 use tokio::process::Command;
 
 use super::managed::{Target, can_download, executable_name, managed_engine};
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_contracts::error::{CoreError, Result};
 
 /// The identity of the bundled engine, the official Stockfish shipped beside the app. It never
 /// changes within a build, and differs from the WebAssembly build's (`stockfish-19-lite`) that early
@@ -43,7 +43,7 @@ pub async fn engine_status(
 ) -> EngineStatus {
     let managed = managed_engine(host, &locations.managed_dir).await;
     let can_download =
-        !crate::app_store() && can_download(locations.target.platform, locations.target.arch);
+        !kchess_host::app_store() && can_download(locations.target.platform, locations.target.arch);
     if !configured.is_empty() && is_executable_file(host, Path::new(configured)).await {
         return EngineStatus {
             ready: true,

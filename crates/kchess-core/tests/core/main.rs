@@ -46,6 +46,7 @@ mod lichess_online;
 mod lichess_policy;
 mod lichess_puzzles;
 mod lichess_reviews;
+mod lichess_store_fake;
 mod lichess_studies;
 mod lichess_tournaments;
 mod lichess_watch;

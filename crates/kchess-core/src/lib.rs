@@ -2,33 +2,6 @@
 
 pub use kchess_contracts::USER_AGENT;
 
-/// Whether this is the Mac App Store's KChess. Only that build runs in the App Sandbox, which
-/// sets `APP_SANDBOX_CONTAINER_ID` for the app and every program it starts. The App Store updates
-/// it and forbids downloading programs, so its updater and the Stockfish download stay off.
-pub fn app_store() -> bool {
-    cfg!(target_os = "macos") && std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some()
-}
-
-/// Whether this build honours the development overrides: the test switches (`Config::test`), and
-/// the frontends' `KCHESS_ENGINE_PATH`, `KCHESS_VARIANT_ENGINE_PATH`, `KCHESS_VOICE_HELPER`,
-/// `KCHESS_SERVICE_BINARY`, `KCHESS_CORE_MODE`, `KCHESS_RUNTIME_DIR` and `KCHESS_UPDATE_FEED`,
-/// and the programs `cargo xtask` built in this repository's `target` folder. A packaged build
-/// (`cargo xtask package` builds with the `packaged` feature) never does, so software that can
-/// set the user's environment cannot make a signed KChess start its programs or send its logins
-/// elsewhere.
-pub const fn dev_overrides() -> bool {
-    !cfg!(feature = "packaged")
-}
-
-/// The development override `name` (see `dev_overrides`), when this build honours it and it is
-/// set to something.
-pub fn dev_override(name: &str) -> Option<std::ffi::OsString> {
-    if !dev_overrides() {
-        return None;
-    }
-    env::var_os(name).filter(|value| !value.is_empty())
-}
-
 pub mod ai;
 pub mod archive;
 pub mod capabilities;
@@ -37,8 +10,6 @@ pub mod connection;
 pub mod core;
 pub mod download;
 pub mod engine;
-pub mod env;
-pub mod error;
 pub mod facade;
 pub mod host;
 pub mod ids;
@@ -48,7 +19,6 @@ mod panics;
 mod process;
 pub mod profile_lock;
 pub mod puzzles;
-pub mod redact;
 pub mod secrets;
 pub mod store;
 pub mod tasks;
@@ -60,5 +30,4 @@ pub mod usage;
 pub mod voice;
 
 pub use crate::core::Core;
-pub use error::{CoreError, ErrorKind, Result};
 pub use host::{Config, Host, Level, TestSwitches, TestVoiceModel};

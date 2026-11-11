@@ -10,8 +10,8 @@ use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use super::uci::search_cancelled;
-use crate::error::Result;
 use crate::tasks::{aborted as signal_aborted, lock};
+use kchess_contracts::error::Result;
 
 /// Who holds the engine budget. A higher priority preempts a lower one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

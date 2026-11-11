@@ -168,6 +168,25 @@ fn the_square_colour_drill_scores_keys_and_buttons(cx: &mut gpui_kit::TestAppCon
     wait_for_label(&mut app, "square-score", "2 correct");
 }
 
+/// Regression: each answer's flash timer was kept until the next run, as in Coordinates.
+#[gpui_kit::test]
+fn a_square_colour_run_keeps_one_flash_timer(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Colors);
+    app.click("square-colors-start");
+    for _ in 0..10 {
+        app.click("answer-light");
+    }
+    let timers = app.cx.update(|cx| {
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).colors())
+            .expect("the square colours drill")
+            .read(cx)
+            .timer_count()
+    });
+    assert_eq!(timers, 2, "the clock and the last flash");
+}
+
 #[gpui_kit::test]
 fn a_knight_run_asks_for_a_path_and_a_skip_shows_the_shortest(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);

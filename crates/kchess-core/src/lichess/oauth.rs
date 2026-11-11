@@ -15,8 +15,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 
 use super::accounts::Lichess;
-use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
+use kchess_contracts::error::{CoreError, Result as CoreResult};
 use kchess_contracts::types::UsageKind;
 
 /// The OAuth client id KChess sends to Lichess.

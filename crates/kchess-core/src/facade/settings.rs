@@ -7,7 +7,7 @@ use kchess_domain::misc::value::J;
 use serde_json::Value;
 
 use crate::core::Core;
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 
 fn untyped(settings: &Settings) -> Result<Value> {
     serde_json::to_value(settings).map_err(|cause| CoreError::wrap("settings", cause))

@@ -6,9 +6,9 @@ use serde_json::{Map, Value, json};
 
 use super::library::js_json;
 use super::sql::{Sql as _, transaction};
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{Keyed, ReviewSummary};
 use kchess_domain::js::truthy;
 

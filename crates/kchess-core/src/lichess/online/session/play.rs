@@ -9,12 +9,11 @@ use std::time::Instant;
 use kchess_contracts::types::{OnlinePhase, UsageKind};
 use serde_json::{Value, json};
 
-use crate::error::{CoreError, Result as CoreResult};
 use crate::lichess::accounts::path_segment;
 use crate::lichess::challenges::is_game_id;
 use crate::lichess::client::{Auth, Lane as RequestLane};
+use kchess_contracts::error::{CoreError, Result as CoreResult};
 
-use crate::lichess::online::events::game_in_progress;
 use crate::lichess::online::requests::{Emitter, Listen, StreamRequest};
 use crate::lichess::online::state::{
     ChatLine, Lane, LiveGame, OnlineAction, OnlineSession, PRESENCE_MAX, PRESENCE_TTL,
@@ -109,7 +108,10 @@ impl OnlineSession {
             "gameState" => event["status"].as_str(),
             _ => None,
         };
-        let over = status.is_some_and(|status| !status.is_empty() && !game_in_progress(status));
+        let over = status.is_some_and(|status| {
+            !status.is_empty()
+                && !kchess_domain::records::games::is_game_in_progress(Some(&Value::from(status)))
+        });
         if over {
             finished.store(true, Ordering::SeqCst);
             {

@@ -869,17 +869,24 @@ impl Render for EditorPage {
             .child(crate::board::cached(&self.board))
             .child(self.render_spares(bottom, &set, board_size, cx, &palette))
             // Voice sits at the end of its row.
-            .child(h_flex().justify_end().child(self.voice.bar(
-                cx.entity().downgrade(),
-                |this: &mut Self| &mut this.voice,
-                BarSpec {
-                    id: "editor-voice",
-                    hint: "Say “white knight F three”, “remove E four” or “clear board”",
-                    active: true,
-                    grammar: crate::voice::grammar(crate::voice::Grammar::Editor),
-                },
-                cx,
-            )));
+            .child(
+                h_flex().justify_end().child(
+                    self.voice.bar(
+                        cx.entity().downgrade(),
+                        |this: &mut Self| &mut this.voice,
+                        BarSpec {
+                            id: "editor-voice",
+                            hint: "Say “white knight F three”, “remove E four” or “clear board”",
+                            active: true,
+                            grammar: kchess_domain::voice::grammar(
+                                kchess_domain::voice::Grammar::Editor,
+                            )
+                            .to_vec(),
+                        },
+                        cx,
+                    ),
+                ),
+            );
         let label = |text: &'static str| {
             div()
                 .text_size(px(12.))

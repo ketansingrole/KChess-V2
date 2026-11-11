@@ -9,7 +9,7 @@ use super::accounts::{
     Lichess, Reply, no_such_user, normalize_game, parse_game, path_segment, profile_key,
 };
 use super::client::Lane;
-use crate::error::{CoreError, ErrorKind, Result as CoreResult};
+use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
 use kchess_contracts::types::{
     ActivityDay, ActivityItem, ImportedGame, LeaderboardEntry, LichessGame, LichessRelation,
     PerfType, PlayerSuggestion, RatingChange, RelationAction, TimelineEntry, UsageKind,

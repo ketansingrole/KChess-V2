@@ -27,9 +27,9 @@ use super::scheduler::Power;
 use super::search::Search;
 use super::uci::EngineHub;
 use crate::capabilities::Capabilities;
-use crate::error::Result;
 use crate::host::{Host, Level};
 use crate::store::{Database, chesscom, games};
+use kchess_contracts::error::Result;
 
 /// How often the battery reading is refreshed while the core runs.
 const REFRESH_EVERY: Duration = Duration::from_secs(15);

@@ -7,10 +7,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use kchess_contracts::CoreError;
 use kchess_contracts::check::{Username, check};
 use kchess_contracts::types::{GamePageQuery, InsightsQuery, Settings};
+use kchess_core::Config;
 use kchess_core::store::{Database, StoreContext, games, import};
-use kchess_core::{Config, CoreError};
 use kchess_domain::misc::value::J;
 use rusqlite::Connection;
 use rusqlite::types::ValueRef;

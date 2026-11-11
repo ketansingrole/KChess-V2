@@ -12,9 +12,9 @@ use serde_json::Value;
 
 use super::PUZZLE_DB_URL;
 use crate::core::Core;
-use crate::error::Result;
 use crate::lichess::puzzles as lichess;
 use crate::store::{runs, voice_log};
+use kchess_contracts::error::Result;
 
 impl PuzzlesApi for Core {
     async fn puzzle_next(&self, request: PuzzleRequest) -> Result<Reply<PuzzleDraw>> {

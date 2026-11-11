@@ -252,7 +252,7 @@ async fn an_unreadable_connection_is_kept_rather_than_replaced() {
                     "INSERT INTO documents (key, body, updatedAt) VALUES ('ai:connection', ?1, 0)",
                     [damaged],
                 )
-                .map_err(|cause| kchess_core::CoreError::new(cause.to_string()))
+                .map_err(|cause| kchess_contracts::CoreError::new(cause.to_string()))
         })
     })
     .unwrap();

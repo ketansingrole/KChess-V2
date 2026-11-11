@@ -22,7 +22,7 @@ use super::slot::EngineSlot;
 use super::status::{EngineTrust, computer_playing, fairy_variant};
 use super::uci::{UciController, truncate_for_log};
 use super::{EngineContext, random_unit};
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 use crate::tasks::{aborted as signal_aborted, lock};
 use crate::time::now_ms;
 use kchess_contracts::check::{Moves, check};

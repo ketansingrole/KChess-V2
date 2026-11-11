@@ -125,7 +125,7 @@ pub fn digest(bytes: &[u8]) -> String {
 }
 
 /// The SHA-256 of the file at `path`, read a piece at a time.
-pub fn file_digest(path: &Path) -> Result<String> {
+pub fn file_digest(path: &Path) -> std::io::Result<String> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 1 << 20];
@@ -139,7 +139,8 @@ pub fn file_digest(path: &Path) -> Result<String> {
     Ok(hex(&hasher.finalize()))
 }
 
-fn hex(bytes: &[u8]) -> String {
+/// Lowercase hexadecimal of `bytes`.
+pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

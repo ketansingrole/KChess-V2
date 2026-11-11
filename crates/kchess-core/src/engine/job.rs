@@ -8,7 +8,7 @@ use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use super::uci::{error_summary, search_cancelled};
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use crate::tasks::aborted as signal_aborted;
 

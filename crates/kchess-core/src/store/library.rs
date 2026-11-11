@@ -10,8 +10,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
 
 use super::sql::Sql as _;
-use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_contracts::error::{CoreError, Result};
 use kchess_domain::js::{self, utf16_len};
 use kchess_domain::library::{MAX_ARCHIVED_GAMES, MAX_MISTAKES};
 use kchess_domain::misc::MAX_DOCUMENT;
@@ -884,12 +884,12 @@ mod tests {
         )
         .expect_err("removed");
         assert_eq!(removed.message, super::super::studies::STALE_STUDY);
-        assert_eq!(removed.kind, Some(crate::error::ErrorKind::Conflict));
+        assert_eq!(removed.kind, Some(kchess_contracts::error::ErrorKind::Conflict));
         check_based_on(&db, &save("1. d4 *"), "1. e4 *").expect("based on the current chapter");
         study_command(&db, &save("1. d4 *"), 1.0, true).expect("first window saves");
         let stale = check_based_on(&db, &save("1. e4 e5 *"), "1. e4 *").expect_err("second window");
         assert_eq!(stale.message, super::super::studies::STALE_STUDY);
-        assert_eq!(stale.kind, Some(crate::error::ErrorKind::Conflict));
+        assert_eq!(stale.kind, Some(kchess_contracts::error::ErrorKind::Conflict));
         check_based_on(&db, &save("1. c4 *"), "1. d4 *").expect("after reloading");
         study_command(
             &db,

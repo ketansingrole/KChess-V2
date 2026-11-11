@@ -50,7 +50,6 @@ use crate::assets::icon;
 use crate::board::{BoardEvent, ChessBoard};
 use crate::export::Exporter;
 use crate::game::history::HistoryPlace;
-use crate::game::local::{self, LocalGame};
 use crate::game::played::PlayedGame;
 use crate::game::session::{Resumes, SessionSaver, Sessions};
 use crate::game::surface::{self, Faces, MoveBox, Steps};
@@ -61,6 +60,7 @@ use crate::played::PlayedHandle;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, KeyboardFocus as _, Side as PieceSide, Tone};
+use kchess_domain::games::local::{self, LocalGame};
 
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -473,7 +473,7 @@ impl LocalPage {
         self.voice.sync(
             &context,
             Some(line),
-            crate::voice::grammar(crate::voice::Grammar::Move),
+            kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Move).to_vec(),
             taking,
             cx,
         );
@@ -1353,7 +1353,8 @@ impl Render for LocalPage {
                 hint: "Either player can say “E four” or “Knight F three”",
                 active: self.voice_taking(),
                 listening: self.voice_taking(),
-                grammar: crate::voice::grammar(crate::voice::Grammar::Move),
+                grammar: kchess_domain::voice::grammar(kchess_domain::voice::Grammar::Move)
+                    .to_vec(),
             },
             cx,
         );
@@ -1805,7 +1806,7 @@ impl NewGame {
         let number = cx.new(|cx| {
             let mut input = InputState::new(window, cx);
             let n = current_number
-                .or_else(|| crate::game::drawn(crate::game::random_chess960()))
+                .or_else(|| crate::game::drawn(kchess_games::random_chess960()))
                 .unwrap_or(518);
             input.set_value(n.to_string(), window, cx);
             input
@@ -1997,7 +1998,7 @@ impl Render for NewGame {
                                 .label("Random")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     let Some(n) =
-                                        crate::game::drawn(crate::game::random_chess960())
+                                        crate::game::drawn(kchess_games::random_chess960())
                                     else {
                                         return;
                                     };

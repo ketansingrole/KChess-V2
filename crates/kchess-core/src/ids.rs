@@ -1,11 +1,6 @@
 //! Random ids and their text.
 
-use crate::error::{CoreError, Result};
-
-/// Lowercase hexadecimal of `bytes`.
-pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
+use kchess_contracts::error::{CoreError, Result};
 
 /// A version 4 UUID over `bytes` (16 random bytes).
 fn uuid_of(bytes: [u8; 16]) -> String {
@@ -34,6 +29,5 @@ mod tests {
         assert!(matches!(&id[19..20], "8" | "9" | "a" | "b"), "{id}");
         assert_ne!(id, random_uuid().expect("random bytes"));
         assert_eq!(uuid_of([0xff; 16]), "ffffffff-ffff-4fff-bfff-ffffffffffff");
-        assert_eq!(hex(&[0, 15, 255]), "000fff");
     }
 }

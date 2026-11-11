@@ -115,7 +115,7 @@ async fn a_failed_export_does_not_move_the_cursor() {
         error.message,
         "Lichess isn’t working right now. Try again shortly."
     );
-    assert_eq!(error.kind, Some(kchess_core::ErrorKind::Unavailable));
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::Unavailable));
     assert!(store.cursors.lock().unwrap().is_empty());
     assert!(store.games.lock().unwrap().is_empty());
 }
@@ -482,7 +482,7 @@ async fn a_missing_user_is_named_in_the_error() {
     );
     let error = lichess.profile("nobody").await.unwrap_err();
     assert_eq!(error.message, r#"No such Lichess user "nobody"."#);
-    assert_eq!(error.kind, Some(kchess_core::ErrorKind::NotFound));
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::NotFound));
 }
 
 #[tokio::test]
@@ -628,18 +628,18 @@ struct PageOnly(Arc<MemoryStore>);
 impl LichessStore for PageOnly {
     fn accounts<'a>(
         &'a self,
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Vec<AccountRow>>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Vec<AccountRow>>> {
         Box::pin(async move { self.0.accounts().await })
     }
     fn dismissed_friends<'a>(
         &'a self,
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Vec<String>>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Vec<String>>> {
         Box::pin(async move { self.0.dismissed_friends().await })
     }
     fn pending_game_ids<'a>(
         &'a self,
         account: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Vec<String>>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Vec<String>>> {
         Box::pin(async move { self.0.pending_game_ids(account).await })
     }
     fn save_games_page<'a>(
@@ -648,7 +648,7 @@ impl LichessStore for PageOnly {
         games: &'a [LichessGame],
         reviews: &'a [Value],
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
         Box::pin(async move {
             self.0
                 .save_games_page(account, games, reviews, current)
@@ -660,13 +660,14 @@ impl LichessStore for PageOnly {
         account: &'a str,
         synced_at: i64,
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
         Box::pin(async move { self.0.save_games_cursor(account, synced_at, current).await })
     }
     fn read_api_cache<'a>(
         &'a self,
         key: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Option<CachedValue>>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Option<CachedValue>>>
+    {
         Box::pin(async move { self.0.read_api_cache(key).await })
     }
     fn write_api_cache<'a>(
@@ -674,7 +675,7 @@ impl LichessStore for PageOnly {
         key: &'a str,
         value: &'a Value,
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
         Box::pin(async move { self.0.write_api_cache(key, value, current).await })
     }
     fn save_login<'a>(
@@ -682,7 +683,7 @@ impl LichessStore for PageOnly {
         username: &'a str,
         ciphertext: &'a str,
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
         Box::pin(async move { self.0.save_login(username, ciphertext, current).await })
     }
     fn save_reviews<'a>(
@@ -690,9 +691,9 @@ impl LichessStore for PageOnly {
         _account: &'a str,
         _reviews: &'a [Value],
         _current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<Vec<Value>>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Vec<Value>>> {
         Box::pin(async move {
-            Err(kchess_core::error::CoreError::new(
+            Err(kchess_contracts::error::CoreError::new(
                 "Reviews are saved with their page.",
             ))
         })
@@ -701,7 +702,7 @@ impl LichessStore for PageOnly {
         &'a self,
         ids: &'a [String],
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, kchess_core::error::Result<()>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
         Box::pin(async move { self.0.mark_checked(ids, current).await })
     }
 }

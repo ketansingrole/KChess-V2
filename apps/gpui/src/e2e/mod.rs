@@ -728,9 +728,9 @@ impl Drop for Harness {
 }
 
 /// The process-wide switches every test shares: the same values for all, set once
-/// (`kchess_core::env`, which the app and its embedded core read in place of the environment).
+/// (`kchess_host::env`, which the app and its embedded core read in place of the environment).
 fn environment() {
-    use kchess_core::env::set;
+    use kchess_host::env::set;
     static SET: OnceLock<()> = OnceLock::new();
     SET.get_or_init(|| {
         let engine = engine();
@@ -753,7 +753,7 @@ fn environment() {
         set("KCHESS_TEST_VOICE_SHA256", "0");
         // No update feed from the shell the tests run in: Settings → Updates shows one state
         // everywhere.
-        kchess_core::env::unset("KCHESS_UPDATE_FEED");
+        kchess_host::env::unset("KCHESS_UPDATE_FEED");
     });
 }
 

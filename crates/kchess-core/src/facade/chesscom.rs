@@ -5,8 +5,8 @@ use kchess_contracts::core_api::ChesscomApi;
 use kchess_contracts::types::ChesscomAccount;
 
 use crate::core::Core;
-use crate::error::Result;
 use crate::store::chesscom;
+use kchess_contracts::error::Result;
 
 impl ChesscomApi for Core {
     async fn chesscom_accounts(&self) -> Result<Vec<ChesscomAccount>> {

@@ -14,8 +14,8 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, Result};
 use crate::lichess::client::http_client_builder;
+use kchess_contracts::error::{CoreError, Result};
 
 const AUTH: &str = "https://auth.openai.com";
 const API: &str = "https://api.openai.com";

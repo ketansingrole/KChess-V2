@@ -127,7 +127,7 @@ impl Host for ServiceHost {
             && let Some(file) = log.as_mut()
         {
             let at = kchess_core::time::now_ms();
-            let message = kchess_core::redact::redact(message);
+            let message = kchess_host::redact(message);
             // One write per line: `writeln!` on an unbuffered file writes each piece separately.
             let line = format!("{at} {} [{scope}] {message}\n", level.name());
             let _ = file.write_all(line.as_bytes());

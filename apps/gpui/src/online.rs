@@ -748,7 +748,7 @@ impl OnlineState {
         let core = cx.global::<AppCore>().clone();
         cx.spawn(async move |this, cx| {
             let joined = joined.await.unwrap_or_default();
-            let now = chrono::Utc::now().timestamp_millis() as f64;
+            let now = kchess_games::now_ms();
             let current: Vec<&Value> = joined
                 .iter()
                 .filter(|entry| entry["until"].as_f64().is_some_and(|until| until > now))

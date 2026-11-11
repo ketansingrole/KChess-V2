@@ -6,11 +6,11 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Level;
 use crate::lichess::accounts::path_segment;
 use crate::lichess::challenges::{ChallengeInfo, TimeControl};
 use crate::lichess::client::Auth;
+use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
 
 use crate::lichess::online::requests::{Emitter, StreamRequest, game_body};
 use crate::lichess::online::state::{

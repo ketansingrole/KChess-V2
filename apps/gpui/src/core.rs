@@ -328,13 +328,11 @@ fn answer_host(ask: HostAsk, cx: &mut App) {
                 Err(cause) => HostReply::Error(cause.to_string()),
             }
         }
-        HostRequest::OpenExternal(url) if kchess_core::capabilities::opens_in_browser(&url) => {
+        HostRequest::OpenExternal(url) if kchess_host::opens_in_browser(&url) => {
             cx.open_url(&url);
             HostReply::done()
         }
-        HostRequest::OpenExternal(_) => {
-            HostReply::Error("Only web addresses open in the browser".into())
-        }
+        HostRequest::OpenExternal(_) => HostReply::Error(kchess_host::NOT_A_WEB_PAGE.into()),
         HostRequest::Focus => {
             cx.activate(true);
             HostReply::done()

@@ -14,7 +14,6 @@
 //!
 //! Bodyless POSTs send an empty form body; the presence cache keeps finished answers only.
 
-pub mod events;
 pub mod ongoing;
 pub mod requests;
 pub mod session;

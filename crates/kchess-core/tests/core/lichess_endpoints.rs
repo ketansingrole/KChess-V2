@@ -202,5 +202,5 @@ async fn storm_dashboard_needs_no_login_and_names_an_unknown_user() {
 
     let error = storm_dashboard(&lichess, "Nobody", 30).await.unwrap_err();
     assert_eq!(error.message, "No such Lichess user \"Nobody\".");
-    assert_eq!(error.kind, Some(kchess_core::ErrorKind::NotFound));
+    assert_eq!(error.kind, Some(kchess_contracts::ErrorKind::NotFound));
 }

@@ -25,15 +25,7 @@ use crate::widgets::{self, Tone};
 
 const GROUPS: [&str; 3] = ["Basic mates", "Pawn endings", "Rook endings"];
 
-pub fn color_of(name: &str) -> Color {
-    if name == "black" {
-        Color::Black
-    } else {
-        Color::White
-    }
-}
-
-pub use kchess_domain::training::endgames::san_from;
+use kchess_domain::training::endgames::san_from;
 
 /// A move's squares as the board marks them (castling king to its square).
 pub fn move_squares(fen: &str, uci: &str) -> Option<(shakmaty::Square, shakmaty::Square)> {
@@ -160,7 +152,7 @@ impl EndgameDrills {
     }
 
     fn player(&self) -> Color {
-        color_of(&self.drill.player)
+        kchess_domain::color::from_name(&self.drill.player).unwrap_or(Color::White)
     }
 
     fn your_turn(&self) -> bool {

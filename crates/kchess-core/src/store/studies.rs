@@ -9,7 +9,7 @@ use super::json_codec::{clean_name, js_json};
 use super::library::{STUDIES, STUDY_LIBRARY_MAX_TEXT, object};
 use super::library_import::{StudyBodies, migrate_studies, read_studies, read_study_rows};
 use super::sql::{Sql as _, transaction};
-use crate::error::{CoreError, ErrorKind, Result};
+use kchess_contracts::error::{CoreError, ErrorKind, Result};
 use crate::ids::random_uuid;
 use kchess_domain::js;
 use kchess_domain::js::{number_to_json as num, truthy, utf16_len};

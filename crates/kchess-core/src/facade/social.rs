@@ -9,7 +9,7 @@ use kchess_contracts::types::{
 use serde_json::Value;
 
 use crate::core::Core;
-use crate::error::Result;
+use kchess_contracts::error::Result;
 
 impl SocialApi for Core {
     async fn player_perf(&self, username: Username, perf: PerfType) -> Result<PerfStats> {

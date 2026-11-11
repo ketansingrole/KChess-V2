@@ -551,12 +551,7 @@ pub fn pgn_mainline(text: &str, limit: usize) -> Option<Mainline> {
         .unwrap_or_else(|| rules::default_position(shakmaty::variant::Variant::Chess));
     let start_check = pos.is_check();
     let mut moves = Vec::new();
-    let mut node = 0;
-    while let Some(child) = game.children(node).next() {
-        if moves.len() >= limit {
-            break;
-        }
-        node = child;
+    for child in game.main_line().take(limit) {
         let data = &game.nodes[child];
         let Some(m) = rules::parse_san(&pos, data.san.as_str()) else {
             break;

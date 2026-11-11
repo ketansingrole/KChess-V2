@@ -6,7 +6,7 @@ use kchess_contracts::core_api::SystemApi;
 use kchess_contracts::types::{CustomThemeReport, UsageReport};
 
 use crate::core::Core;
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 
 impl SystemApi for Core {
     async fn usage(&self) -> Result<UsageReport> {

@@ -48,12 +48,7 @@ pub fn main_line(pgn: &str) -> Result<Line, String> {
         Some(name) => Some(pgn_variant(name)?).filter(|variant| !variant.standard_rules()),
         None => None,
     };
-    let mut sans = Vec::new();
-    let mut node = 0;
-    while let Some(next) = game.children(node).next() {
-        sans.push(game.node(next).san.as_str().to_string());
-        node = next;
-    }
+    let sans = game.main_line_sans();
     if sans.is_empty() {
         return Err("That game has no moves to review.".into());
     }

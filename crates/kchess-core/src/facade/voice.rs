@@ -11,7 +11,7 @@ use kchess_contracts::core_api::VoiceApi;
 use kchess_contracts::voice::{Heard, Status};
 
 use crate::core::Core;
-use crate::error::{CoreError, Result};
+use kchess_contracts::error::{CoreError, Result};
 
 /// Another client's audio while one has voice input: one microphone at a time.
 const ELSEWHERE: &str = "Voice input is in use in another KChess window.";

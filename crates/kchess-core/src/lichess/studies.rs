@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use super::accounts::{Lichess, Reply, path_segment};
 use super::client::TextLimit;
-use crate::error::{CoreError, Result as CoreResult};
+use kchess_contracts::error::{CoreError, Result as CoreResult};
 use kchess_contracts::types::{ChapterInput, LichessStudy, StudySyncRequest, UsageKind};
 use kchess_domain::{js, position};
 

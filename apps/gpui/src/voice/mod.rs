@@ -744,16 +744,9 @@ pub fn amend(entry: Entry, update: VoiceUpdate, cx: &App) {
         .detach();
 }
 
-pub use kchess_domain::voice::Grammar;
-
-/// The words a voice grammar listens for.
-pub fn grammar(which: Grammar) -> Vec<String> {
-    kchess_domain::voice::grammar(which).to_vec()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{ErrorKind, Grammar, grammar, handle, heard_of, model, progress_of};
+    use super::{ErrorKind, handle, heard_of, model, progress_of};
     use crate::e2e::Harness;
     use kchess_contracts::CoreError;
     use serde_json::json;
@@ -838,12 +831,5 @@ mod tests {
         .unwrap();
         assert!(noise.text.is_empty() && noise.unclear);
         assert!(heard_of(&utterance(json!({ "text": " ", "words": [] }))).is_none());
-    }
-
-    #[test]
-    fn the_rules_supply_the_grammars() {
-        let moves = grammar(Grammar::Move);
-        assert!(moves.contains(&"e four".to_string()) && moves.contains(&"knight".to_string()));
-        assert!(grammar(Grammar::Game).contains(&"take back".to_string()));
     }
 }

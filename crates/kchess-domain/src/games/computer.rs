@@ -278,11 +278,6 @@ impl ComputerGame {
         self.state.level = level.to_string();
     }
 
-    /// Play on `clock` from the next game on.
-    pub fn set_clock(&mut self, clock: Option<Clock>) {
-        self.state.clock = clock;
-    }
-
     fn set_board(&mut self, board: Board) {
         self.state.moves = board.moves().to_vec();
         self.board = board;

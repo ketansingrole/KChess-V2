@@ -66,11 +66,11 @@ impl Config {
         }
     }
 
-    /// The test switches this build honours: none in a packaged build (`crate::dev_overrides`),
+    /// The test switches this build honours: none in a packaged build (`kchess_host::dev_overrides`),
     /// so software that can set what a signed KChess is started with cannot send its logins
     /// elsewhere.
     pub fn test_switches(&self) -> Option<&TestSwitches> {
-        self.test.as_ref().filter(|_| crate::dev_overrides())
+        self.test.as_ref().filter(|_| kchess_host::dev_overrides())
     }
 }
 

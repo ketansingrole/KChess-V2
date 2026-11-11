@@ -28,9 +28,9 @@ use std::future::Future;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::error::Result;
 use crate::host::{Config, Host, Level};
 use crate::tasks::lock;
+use kchess_contracts::error::Result;
 use kchess_contracts::types::GameLibraryOverview;
 use sql::{Lane, LaneMessages, Sql as _};
 
@@ -286,7 +286,7 @@ pub(crate) fn in_memory<T>(work: impl FnOnce(&StoreContext) -> T) -> T {
 /// cache, migrations, then 0600 permissions.
 pub fn open(path: &Path, host: &dyn Host) -> Result<Connection> {
     let db = Connection::open(path)
-        .map_err(|e| crate::error::CoreError::wrap("Could not open the database", e))?;
+        .map_err(|e| kchess_contracts::error::CoreError::wrap("Could not open the database", e))?;
     db.execute_batch(
         "PRAGMA busy_timeout = 5000;
          PRAGMA journal_mode = WAL;

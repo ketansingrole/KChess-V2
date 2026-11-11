@@ -13,9 +13,9 @@ use kchess_domain::misc::value::J;
 use serde_json::{Map, Value};
 
 use crate::core::Core;
-use crate::error::{CoreError, Result};
 use crate::store::{library, library_import, view_preferences};
 use crate::time::now_ms;
+use kchess_contracts::error::{CoreError, Result};
 
 impl LibraryApi for Core {
     async fn library(&self) -> Result<Library> {

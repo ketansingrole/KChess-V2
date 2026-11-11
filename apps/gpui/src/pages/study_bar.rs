@@ -18,10 +18,12 @@ use super::Page;
 use super::analysis::AnalysisPage;
 use crate::assets::icon;
 use crate::name_dialog::NameDialog;
-use crate::studies::{MAX_CHAPTERS, StudyHandle, chapter_items, now, study_id, time_ago};
+use crate::studies::{MAX_CHAPTERS, StudyHandle, chapter_items, study_id};
 use crate::theme::Palette;
 use crate::widgets::Choice;
+use crate::widgets::time_ago;
 use kchess_contracts::types::{ChapterEntry, StudyCommand};
+use kchess_games::now_ms;
 
 /// The bar's height and its gap to the board, which the board's size leaves room for.
 pub const STUDY_BAR: Pixels = px(48.);
@@ -941,7 +943,7 @@ impl Render for StudyBar {
                                     .size(px(14.)),
                                 )
                                 .child(error.clone().unwrap_or_else(|| {
-                                    format!("Saved {}", time_ago(saved, now()))
+                                    format!("Saved {}", time_ago(saved, now_ms()))
                                 })),
                         )
                         .into_any_element()
