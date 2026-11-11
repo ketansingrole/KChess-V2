@@ -24,71 +24,30 @@ impl Level {
     }
 }
 
-/// What kind of failure an error is, so a frontend offers the action that can help (a retry, a
-/// reconnect, nothing) without reading its message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ErrorKind {
-    /// Lichess could not be reached.
-    Offline,
-    /// Lichess did not answer in time.
-    TimedOut,
-    /// Lichess asked for fewer requests for a while.
-    RateLimited,
-    /// The account's login no longer works or lacks a permission: reconnect it.
-    Login,
-    /// Lichess refused the request for a reason it gave; trying again changes nothing.
-    Refused,
-    /// What was asked for does not exist (any more).
-    NotFound,
-    /// Lichess failed or answered something unexpected.
-    Unavailable,
-    /// No engine can run here: choose or install one.
-    NoEngine,
-}
-
-impl ErrorKind {
-    /// Every kind, as `parse` reads them.
-    pub const ALL: [ErrorKind; 8] = [
-        ErrorKind::Offline,
-        ErrorKind::TimedOut,
-        ErrorKind::RateLimited,
-        ErrorKind::Login,
-        ErrorKind::Refused,
-        ErrorKind::NotFound,
-        ErrorKind::Unavailable,
-        ErrorKind::NoEngine,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ErrorKind::Offline => "offline",
-            ErrorKind::TimedOut => "timedOut",
-            ErrorKind::RateLimited => "rateLimited",
-            ErrorKind::Login => "login",
-            ErrorKind::Refused => "refused",
-            ErrorKind::NotFound => "notFound",
-            ErrorKind::Unavailable => "unavailable",
-            ErrorKind::NoEngine => "noEngine",
-        }
+kchess_domain::union!(
+    /// What kind of failure an error is, so a frontend offers the action that can help (a retry,
+    /// a reconnect, a copy, nothing) without reading its message.
+    ErrorKind {
+        /// Lichess could not be reached.
+        Offline = "offline",
+        /// Lichess did not answer in time.
+        TimedOut = "timedOut",
+        /// Lichess asked for fewer requests for a while.
+        RateLimited = "rateLimited",
+        /// The account's login no longer works or lacks a permission: reconnect it.
+        Login = "login",
+        /// Lichess refused the request for a reason it gave; trying again changes nothing.
+        Refused = "refused",
+        /// What was asked for does not exist (any more).
+        NotFound = "notFound",
+        /// Lichess failed or answered something unexpected.
+        Unavailable = "unavailable",
+        /// No engine can run here: choose or install one.
+        NoEngine = "noEngine",
+        /// Another window changed what this write was based on; reload before writing again.
+        Conflict = "conflict",
     }
-
-    pub fn parse(text: &str) -> Option<ErrorKind> {
-        ErrorKind::ALL
-            .into_iter()
-            .find(|kind| kind.as_str() == text)
-    }
-
-    /// Whether the same request may work if made again later.
-    pub fn retryable(self) -> bool {
-        matches!(
-            self,
-            ErrorKind::Offline
-                | ErrorKind::TimedOut
-                | ErrorKind::RateLimited
-                | ErrorKind::Unavailable
-        )
-    }
-}
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreError {
@@ -162,17 +121,6 @@ pub type Result<T> = std::result::Result<T, CoreError>;
 mod tests {
     use super::*;
 
-    const KINDS: [ErrorKind; 8] = [
-        ErrorKind::Offline,
-        ErrorKind::TimedOut,
-        ErrorKind::RateLimited,
-        ErrorKind::Login,
-        ErrorKind::Refused,
-        ErrorKind::NotFound,
-        ErrorKind::Unavailable,
-        ErrorKind::NoEngine,
-    ];
-
     #[test]
     fn each_level_has_its_name() {
         assert_eq!(Level::Debug.name(), "debug");
@@ -183,7 +131,7 @@ mod tests {
 
     #[test]
     fn each_kind_reads_back_from_its_name() {
-        let names: Vec<&str> = KINDS.iter().map(|kind| kind.as_str()).collect();
+        let names: Vec<&str> = ErrorKind::ALL.iter().map(|kind| kind.as_str()).collect();
         assert_eq!(
             names,
             [
@@ -194,28 +142,16 @@ mod tests {
                 "refused",
                 "notFound",
                 "unavailable",
-                "noEngine"
+                "noEngine",
+                "conflict"
             ]
         );
-        for kind in KINDS {
-            assert_eq!(ErrorKind::parse(kind.as_str()), Some(kind));
+        for &kind in ErrorKind::ALL {
+            assert_eq!(ErrorKind::from_key(kind.as_str()), Some(kind));
+            assert_eq!(serde_json::to_value(kind).unwrap(), kind.as_str());
         }
-        assert_eq!(ErrorKind::parse("OFFLINE"), None);
-        assert_eq!(ErrorKind::parse(""), None);
-    }
-
-    #[test]
-    fn only_passing_failures_are_worth_retrying() {
-        let retryable: Vec<ErrorKind> = KINDS.into_iter().filter(|kind| kind.retryable()).collect();
-        assert_eq!(
-            retryable,
-            [
-                ErrorKind::Offline,
-                ErrorKind::TimedOut,
-                ErrorKind::RateLimited,
-                ErrorKind::Unavailable
-            ]
-        );
+        assert_eq!(ErrorKind::from_key("OFFLINE"), None);
+        assert_eq!(ErrorKind::from_key(""), None);
     }
 
     #[test]

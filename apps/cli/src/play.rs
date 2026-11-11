@@ -138,7 +138,7 @@ impl Session<'_> {
     }
 
     async fn save_session(&mut self, kind: &str, session: Value) {
-        let Some(kind) = SessionKind::named(kind) else {
+        let Some(kind) = SessionKind::from_key(kind) else {
             eprintln!("[cli] Saving failed: no session is kept as {kind}");
             self.failed = true;
             return;

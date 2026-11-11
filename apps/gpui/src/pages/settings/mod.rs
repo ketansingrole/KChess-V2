@@ -1321,7 +1321,7 @@ impl SettingsPage {
             }
             let _ = this.update(cx, |this, cx| {
                 let outcome = crate::notifications::desktop(
-                    "test",
+                    kchess_contracts::types::NotificationKind::Test,
                     "KChess notifications",
                     "This is how game alerts will look. Click it to return to KChess.",
                     cx,

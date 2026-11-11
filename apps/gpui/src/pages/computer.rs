@@ -384,7 +384,7 @@ impl ComputerPage {
                     // Settings decide whether this reaches the player, and how.
                     if computer {
                         crate::notifications::desktop(
-                            "computerMove",
+                            kchess_contracts::types::NotificationKind::ComputerMove,
                             "Stockfish moved",
                             &format!("{san}. Your move."),
                             cx,

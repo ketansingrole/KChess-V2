@@ -125,6 +125,28 @@ mod tests {
     }
 
     #[test]
+    fn profile_changes_and_alert_owners_cross_as_before() {
+        use crate::types::{AlertOwner, ProfileArea, ProfileChange};
+        let change = ProfileChange {
+            areas: vec![ProfileArea::Studies, ProfileArea::ViewPreferences],
+            origin: 3,
+        };
+        assert_eq!(
+            serde_json::to_string(&change).unwrap(),
+            r#"{"areas":["studies","viewPreferences"],"origin":3}"#
+        );
+        let none = AlertOwner { connection: None };
+        assert_eq!(
+            serde_json::to_string(&none).unwrap(),
+            r#"{"connection":null}"#
+        );
+        let some = AlertOwner {
+            connection: Some(7),
+        };
+        assert_eq!(serde_json::to_string(&some).unwrap(), r#"{"connection":7}"#);
+    }
+
+    #[test]
     fn only_a_progress_update_before_the_last_is_coalesced() {
         assert!(CoreEvent::Analysis(json!({ "done": false })).coalesced());
         let last = CoreEvent::Analysis(json!({ "done": true }));

@@ -638,7 +638,7 @@ mod tests {
         assert_eq!(
             result.effects[1],
             Effect::Notify {
-                kind: "gameEvents",
+                kind: crate::misc::constants::NotificationKind::GameEvents,
                 title: "You lost".into(),
                 body: "Against Bob · resign.".into(),
             }

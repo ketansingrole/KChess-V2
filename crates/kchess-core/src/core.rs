@@ -6,6 +6,7 @@
 //! analysis and game review. They share the one database (`store::Database`) and the battery
 //! reading the scheduler consults.
 
+use kchess_contracts::types::AlertOwner;
 use kchess_contracts::{CoreEvent, HostReply};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -307,8 +308,9 @@ impl Core {
         let owner = self.connections.alert_owner();
         let encoded = owner.unwrap_or(u64::MAX);
         if self.alert_owner.swap(encoded, Ordering::SeqCst) != encoded {
-            self.host
-                .emit(CoreEvent::AlertsOwner(json!({ "connection": owner })));
+            self.host.emit(CoreEvent::AlertsOwner(json!(AlertOwner {
+                connection: owner
+            })));
         }
     }
 
@@ -316,9 +318,9 @@ impl Core {
     /// a client that joins queues it before it receives any event, so it misses no change.
     pub fn with_alert_owner<T>(&self, join: impl FnOnce(CoreEvent) -> T) -> T {
         let _reporting = self.alert_reports.lock();
-        join(CoreEvent::AlertsOwner(
-            json!({ "connection": self.connections.alert_owner() }),
-        ))
+        join(CoreEvent::AlertsOwner(json!(AlertOwner {
+            connection: self.connections.alert_owner(),
+        })))
     }
 
     /// The clients connected now.

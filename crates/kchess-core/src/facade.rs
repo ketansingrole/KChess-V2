@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use kchess_contracts::core_api::CoreApi;
-use kchess_contracts::types::{AppData, ProfileArea, Settings};
+use kchess_contracts::types::{AppData, ProfileArea, ProfileChange, Settings};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -91,9 +91,11 @@ impl CoreApi for Core {
         {
             self.reviews.reviews_changed();
         }
-        self.host.emit(CoreEvent::ProfileChanged(
-            json!({ "areas": areas, "origin": crate::connection::current_or_app() }),
-        ));
+        self.host
+            .emit(CoreEvent::ProfileChanged(json!(ProfileChange {
+                areas: areas.to_vec(),
+                origin: crate::connection::current_or_app(),
+            })));
     }
 }
 

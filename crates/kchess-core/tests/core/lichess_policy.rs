@@ -447,9 +447,7 @@ async fn an_unreachable_server_is_said_in_plain_words() {
         panic!("nothing listens on the discard port");
     };
     assert_eq!(failure.message, "Couldn’t reach Lichess");
-    // Offline is a kind pages offer to retry.
     assert_eq!(failure.kind, Some(kchess_core::ErrorKind::Offline));
-    assert!(kchess_core::ErrorKind::Offline.retryable());
 }
 
 /// A gzip body as a compressing server sends it.

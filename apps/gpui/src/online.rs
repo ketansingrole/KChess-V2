@@ -14,7 +14,8 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use kchess_contracts::check::{GameId, PresenceUsers, Uci, Username, Validate};
 use kchess_contracts::types::{
-    ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, OngoingGame, PresenceReport,
+    ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, NotificationKind, OngoingGame,
+    PresenceReport,
 };
 use kchess_contracts::{CoreError, Level};
 use kchess_domain::online_game::model::{Call, Ctx, Effect, Model, Op, Outcome, Reply, View};
@@ -306,7 +307,7 @@ impl OnlineState {
         match effect {
             Effect::Warn { message } => log(&format!("{message} {}", cause.unwrap_or_default())),
             Effect::Notify { kind, title, body } => {
-                crate::notifications::desktop(kind, title, body, cx);
+                crate::notifications::desktop(*kind, title, body, cx);
             }
             Effect::Moved { san } => {
                 crate::sound::move_sound(san.as_deref().unwrap_or_default(), cx)
@@ -612,7 +613,7 @@ impl OnlineState {
                 let left = self.clock_text(&turn);
                 let opponent = &self.model.online_opponent;
                 crate::notifications::desktop(
-                    "lowTime",
+                    NotificationKind::LowTime,
                     "Low on time",
                     &format!("{left} left against {opponent}"),
                     cx,

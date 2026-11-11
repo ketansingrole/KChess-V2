@@ -10,7 +10,7 @@ use kchess_contracts::Level;
 use kchess_contracts::calls;
 use kchess_contracts::check::{ChesscomUsername, FriendList, Username};
 use kchess_contracts::types::{
-    Account, AppData, ChesscomAccount, RelationAction, Reply, UsageReport,
+    Account, AppData, ChesscomAccount, ProfileArea, RelationAction, Reply, UsageReport,
 };
 use serde_json::json;
 
@@ -55,7 +55,7 @@ pub fn init(cx: &mut App) {
     cx.set_global(AccountsHandle(accounts.clone()));
     accounts.update(cx, |accounts, cx| accounts.refresh(cx));
     // Another window signed in, synced or removed an account.
-    crate::core::on_profile_change(cx, &["accounts", "usage"], {
+    crate::core::on_profile_change(cx, &[ProfileArea::Accounts, ProfileArea::Usage], {
         let accounts = accounts.downgrade();
         move |cx| {
             let _ = accounts.update(cx, |accounts, cx| accounts.refresh(cx));

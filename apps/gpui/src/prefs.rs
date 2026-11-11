@@ -11,6 +11,7 @@ use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, Global};
 use kchess_contracts::Level;
 use kchess_contracts::check::ViewPreferenceKey;
+use kchess_contracts::types::ProfileArea;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
@@ -227,7 +228,7 @@ pub fn init(cx: &mut App) {
         cx.try_global::<ViewPreferences>()
             .map(ViewPreferences::flushed)
     });
-    crate::core::on_profile_change(cx, &["viewPreferences"], reload);
+    crate::core::on_profile_change(cx, &[ProfileArea::ViewPreferences], reload);
 }
 
 /// Read the saved preferences again: another app changed them, or this one reconnected.

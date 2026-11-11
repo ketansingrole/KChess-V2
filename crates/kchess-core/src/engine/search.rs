@@ -288,7 +288,7 @@ impl Search {
                                 error_summary(&cause)
                             ),
                         );
-                        Err(CoreError::new(SUPERSEDED))
+                        Err(CoreError::aborted(SUPERSEDED))
                     } else {
                         shared.ctx.host.log(
                             Level::Warn,

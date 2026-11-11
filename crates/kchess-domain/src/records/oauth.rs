@@ -4,11 +4,10 @@
 use serde_json::{Map, Value, json};
 
 use crate::js;
+use crate::misc::constants::Appearance;
 
 /// The colour keys of one scheme, in their order.
 const COLOR_KEYS: &[&str] = &["bg", "elevated", "text", "textMuted", "primary", "border"];
-
-const APPEARANCES: &[&str] = &["system", "light", "dark"];
 
 /// KChess's default look, used until the app sends its own colours.
 pub fn default_look() -> Value {
@@ -43,7 +42,9 @@ pub fn look(value: &Value) -> Option<Value> {
     let light = colors(map.get("light"));
     let dark = colors(map.get("dark"));
     match (appearance, light, dark) {
-        (Some(appearance), Some(light), Some(dark)) if APPEARANCES.contains(&appearance) => {
+        (Some(appearance), Some(light), Some(dark))
+            if Appearance::from_key(appearance).is_some() =>
+        {
             Some(json!({ "appearance": appearance, "light": light, "dark": dark }))
         }
         _ => None,

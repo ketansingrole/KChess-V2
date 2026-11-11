@@ -89,7 +89,7 @@ impl<V: Resumes> SessionSaver<V> {
         let reads: Vec<_> = std::iter::once(kind.to_string())
             .chain(also.iter().cloned())
             .map(|kind| {
-                let read = SessionKind::named(&kind)
+                let read = SessionKind::from_key(&kind)
                     .map(|named| core.request(calls::Session { kind: named }));
                 async move {
                     let read = match read {
