@@ -188,7 +188,7 @@ fn write_in_order(
                     incremental: Some(true),
                     based_on: based_on.map(PgnText),
                 };
-                let result = core.request(call).await.map_err(|cause| {
+                let result = core.request(call).await.inspect_err(|cause| {
                     let op = json!(command)["op"]
                         .as_str()
                         .unwrap_or_default()
@@ -198,7 +198,6 @@ fn write_in_order(
                         "studies",
                         &format!("saving the study library failed: {op} {}", cause.message),
                     );
-                    cause
                 });
                 if let Some(key) = saved_chapter(&command) {
                     match &result {

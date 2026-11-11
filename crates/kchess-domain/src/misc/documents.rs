@@ -395,9 +395,7 @@ pub fn decode_joined_tournaments(raw: &J) -> J {
                     return None;
                 }
                 let system = entry.get("system").and_then(J::str)?;
-                if TournamentSystem::from_key(system).is_none() {
-                    return None;
-                }
+                TournamentSystem::from_key(system)?;
                 let id = text_of(entry.get("id"), 20)?;
                 let account = text_of(entry.get("account"), 40)?;
                 let name = text_of(entry.get("name"), 200)?;
