@@ -369,12 +369,9 @@ impl Services {
             })),
             "online.ongoing" => to_json(self.online.ongoing().await),
             "online.open" => match (text(args, 0), text(args, 1)) {
-                (Ok(account), Ok(id)) => self
-                    .online
-                    .open(&account, &id)
-                    .await
-                    .map(|()| Value::Null)
-                    .map_err(CoreError::from),
+                (Ok(account), Ok(id)) => {
+                    self.online.open(&account, &id).await.map(|()| Value::Null)
+                }
                 (Err(cause), _) | (_, Err(cause)) => Err(cause),
             },
             _ => return self.call_challenges(method, args).await,
@@ -390,8 +387,7 @@ impl Services {
                     .online
                     .accept_challenge(&challenge)
                     .await
-                    .map(|()| Value::Null)
-                    .map_err(CoreError::from),
+                    .map(|()| Value::Null),
                 Err(cause) => Err(cause),
             },
             "online.declineChallenge" => {
@@ -400,8 +396,7 @@ impl Services {
                         .online
                         .decline_challenge(&challenge, &reason)
                         .await
-                        .map(|()| Value::Null)
-                        .map_err(CoreError::from),
+                        .map(|()| Value::Null),
                     (Err(cause), _) | (_, Err(cause)) => Err(cause),
                 }
             }
@@ -410,8 +405,7 @@ impl Services {
                     .online
                     .withdraw_challenge(&challenge)
                     .await
-                    .map(|()| Value::Null)
-                    .map_err(CoreError::from),
+                    .map(|()| Value::Null),
                 Err(cause) => Err(cause),
             },
             "online.moveCorrespondence" => {
@@ -420,8 +414,7 @@ impl Services {
                         .online
                         .move_correspondence(&account, &id, &fen, &uci)
                         .await
-                        .map(|()| Value::Null)
-                        .map_err(CoreError::from),
+                        .map(|()| Value::Null),
                     (Err(error), ..)
                     | (_, Err(error), ..)
                     | (.., Err(error), _)
@@ -429,12 +422,7 @@ impl Services {
                 }
             }
             "online.move" => match (text(args, 0), text(args, 1)) {
-                (Ok(id), Ok(uci)) => self
-                    .online
-                    .move_uci(&id, &uci)
-                    .await
-                    .map(|()| Value::Null)
-                    .map_err(CoreError::from),
+                (Ok(id), Ok(uci)) => self.online.move_uci(&id, &uci).await.map(|()| Value::Null),
                 (Err(cause), _) | (_, Err(cause)) => Err(cause),
             },
             "online.chat" => match text(args, 0) {
@@ -446,8 +434,7 @@ impl Services {
                     .online
                     .send_chat(&id, &room, &body)
                     .await
-                    .map(|()| Value::Null)
-                    .map_err(CoreError::from),
+                    .map(|()| Value::Null),
                 (Err(cause), _, _) | (_, Err(cause), _) | (_, _, Err(cause)) => Err(cause),
             },
             "online.presence" => match strings(args, 0) {
@@ -455,12 +442,7 @@ impl Services {
                 Err(cause) => Err(cause),
             },
             "online.action" => match (text(args, 0), parse::<OnlineAction>(args, 1, "action")) {
-                (Ok(id), Ok(action)) => self
-                    .online
-                    .action(&id, action)
-                    .await
-                    .map(|()| Value::Null)
-                    .map_err(CoreError::from),
+                (Ok(id), Ok(action)) => self.online.action(&id, action).await.map(|()| Value::Null),
                 (Err(cause), _) | (_, Err(cause)) => Err(cause),
             },
             "online.cancel" => {

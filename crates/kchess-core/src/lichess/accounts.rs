@@ -845,16 +845,13 @@ impl Lichess {
         let mut following: HashMap<String, Value> = HashMap::new();
         let mut problems = Vec::new();
         for row in rows.iter().filter(|row| row.connected) {
-            let auth = match self.signed_in(&row.username, UsageKind::Profile).await {
-                Ok(auth) => auth,
-                Err(_) => {
-                    problems.push(FollowingProblem {
-                        account: row.username.clone(),
-                        message: "Its Lichess login is unavailable.".to_string(),
-                        needs_reconnect: true,
-                    });
-                    continue;
-                }
+            let Ok(auth) = self.signed_in(&row.username, UsageKind::Profile).await else {
+                problems.push(FollowingProblem {
+                    account: row.username.clone(),
+                    message: "Its Lichess login is unavailable.".to_string(),
+                    needs_reconnect: true,
+                });
+                continue;
             };
             let mut lines = Vec::new();
             let outcome = self
