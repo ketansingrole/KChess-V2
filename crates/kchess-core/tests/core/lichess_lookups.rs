@@ -14,7 +14,7 @@ use fixtures::{
 use kchess_contracts::types::{LookupOptions, PositionLookupKind as Kind};
 use kchess_core::lichess::accounts::Lichess;
 use kchess_core::lichess::lookups::{
-    CloudCache, Endpoints, LookupCache, PositionLookups, cloud_eval,
+    CloudCache, Endpoints, LOOKUP_TIMEOUT, LookupCache, PositionLookups, cloud_eval,
 };
 use serde_json::{Value, json};
 use tokio::sync::watch;
@@ -58,6 +58,11 @@ struct Lookups {
 }
 
 fn lookups(base: &str, start: i64) -> Lookups {
+    lookups_with(base, start, CancellationToken::new(), LOOKUP_TIMEOUT)
+}
+
+/// `lookups` ended by `lifetime`, with each answer given at most `timeout`.
+fn lookups_with(base: &str, start: i64, lifetime: CancellationToken, timeout: Duration) -> Lookups {
     let cache = Arc::new(MemoryCache::default());
     let clock = Arc::new(AtomicI64::new(start));
     let endpoints = Endpoints {
@@ -72,6 +77,8 @@ fn lookups(base: &str, start: i64) -> Lookups {
         endpoints,
         Arc::clone(&cache) as Arc<dyn LookupCache>,
         Arc::new(move || now_clock.load(Ordering::SeqCst)),
+        lifetime,
+        timeout,
     );
     Lookups {
         service,
@@ -109,8 +116,8 @@ async fn lifetime_cancellation_ends_pending_and_deduplicated_lookups_without_sta
     })
     .await;
     let lifetime = CancellationToken::new();
-    let lookups = lookups(&fixture.base, 1_000);
-    let service = Arc::new(lookups.service.with_lifetime(lifetime.clone()));
+    let lookups = lookups_with(&fixture.base, 1_000, lifetime.clone(), LOOKUP_TIMEOUT);
+    let service = Arc::new(lookups.service);
     service.lookup(Kind::Opening, INITIAL, None).await.unwrap();
     lookups.clock.store(100_000_000, Ordering::SeqCst);
     let first = {
@@ -165,9 +172,7 @@ async fn dropping_the_producer_releases_its_pending_key_for_retry() {
 async fn lifetime_cancellation_also_stops_master_game_downloads() {
     let fixture = serve(|_| Reply::Hang).await;
     let lifetime = CancellationToken::new();
-    let service = lookups(&fixture.base, 1_000)
-        .service
-        .with_lifetime(lifetime.clone());
+    let service = lookups_with(&fixture.base, 1_000, lifetime.clone(), LOOKUP_TIMEOUT).service;
     let download = service.masters_game("Game0001");
     tokio::pin!(download);
     tokio::select! { biased; _ = &mut download => panic!("fixture hangs"), _ = wait_for_requests(&fixture, 1) => {} }
@@ -850,9 +855,13 @@ async fn a_failed_lookup_shows_no_status() {
 #[tokio::test]
 async fn a_lookup_that_never_answers_times_out_as_a_timeout() {
     let fixture = serve(|_| Reply::Hang).await;
-    let service = lookups(&fixture.base, 1_000)
-        .service
-        .with_timeout(Duration::from_millis(100));
+    let service = lookups_with(
+        &fixture.base,
+        1_000,
+        CancellationToken::new(),
+        Duration::from_millis(100),
+    )
+    .service;
     let error = service
         .lookup(Kind::Opening, INITIAL, None)
         .await
