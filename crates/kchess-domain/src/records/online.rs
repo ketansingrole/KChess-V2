@@ -1,11 +1,9 @@
-//! Validation of Lichess board-API events. The schema is the
-//! one valibot applied: an object is anything with the keys (arrays included, as valibot reads
+//! Validation of Lichess board-API events. The schema: an object is anything with the keys (arrays included, as valibot reads
 //! them), unknown keys pass through, an optional key may be absent but not null, and the event
 //! type picks the schema like valibot's `variant`.
 
 use serde_json::{Map, Value};
 
-use super::{Out, arg};
 use crate::{js, rules};
 
 const UNREADABLE: &str = "Lichess sent an unreadable game event. Reconnect to refresh the board.";
@@ -258,16 +256,6 @@ fn moves_are_valid(moves: &str) -> bool {
 /// `GAME_ID`: 8 to 12 letters and digits.
 fn is_game_id(text: &str) -> bool {
     (8..=12).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_alphanumeric())
-}
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    Some(match method {
-        "validateOnlineEvent" => match arg(args, 0) {
-            None => Ok(Value::Null),
-            Some(raw) => validate(raw).map(|event| event.unwrap_or(Value::Null)),
-        },
-        _ => return None,
-    })
 }
 
 #[cfg(test)]

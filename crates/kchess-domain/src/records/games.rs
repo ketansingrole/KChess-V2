@@ -3,12 +3,11 @@
 //! Game history ended for its player.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use shakmaty::Position;
 use shakmaty::variant::VariantPosition;
 use std::collections::HashMap;
 
-use super::{Out, arg, setup_position};
 use crate::js;
 use crate::{position, replay, rules};
 
@@ -21,37 +20,6 @@ const VARIANT_WIN: &[(&str, &str)] = &[
     ("horde", "Horde captured"),
     ("racingKings", "King reached the eighth rank"),
 ];
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    Some(match method {
-        "opponent" => Ok(json!(opponent(
-            arg(args, 0).and_then(Value::as_str).unwrap_or_default()
-        ))),
-        "boardResult" => setup_position(arg(args, 0)).and_then(|pos| {
-            let variant = arg(args, 1).and_then(Value::as_str).unwrap_or("");
-            let draw = arg(args, 2)
-                .filter(|draw| !js::falsy(Some(draw)))
-                .map(|draw| js::to_string(Some(draw)));
-            serde_json::to_value(board_result(&pos, variant, draw.as_deref()))
-                .map_err(|e| e.to_string())
-        }),
-        "timeoutWinner" => setup_position(arg(args, 0)).map(|pos| {
-            json!(timeout_winner(
-                &pos,
-                arg(args, 1).and_then(Value::as_str).unwrap_or_default()
-            ))
-        }),
-        "pgnResult" => Ok(json!(pgn_result(
-            !js::falsy(arg(args, 0)),
-            arg(args, 1).and_then(Value::as_str)
-        ))),
-        "isGameInProgress" => Ok(json!(is_game_in_progress(arg(args, 0)))),
-        "gameResult" => Ok(json!(game_result(arg(args, 0)))),
-        "archivedPlayerSide" => Ok(json!(archived_player_side(arg(args, 0)))),
-        "archivedOutcome" => Ok(json!(archived_outcome(arg(args, 0)))),
-        _ => return None,
-    })
-}
 
 /// How a game ended: the winner, none for a draw, and why.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -176,27 +144,15 @@ pub fn setup_draw_reason(variant: &str, fen: &str, moves: &[&str]) -> Option<&'s
     repetition(start, &played, false)
 }
 
-/// `isGameInProgress(status?)`: no status, or a live game (`created` is before its first move).
+/// Whether a Lichess game's `status` is live: none, or a game started (`created` is before its
+/// first move).
 pub fn is_game_in_progress(status: Option<&Value>) -> bool {
     js::falsy(status) || matches!(status.and_then(Value::as_str), Some("started" | "created"))
 }
 
-/// `gameResult(game)`: the result from the account's side.
-fn game_result(game: Option<&Value>) -> &'static str {
-    let winner = game.and_then(|g| g.get("winner"));
-    if js::falsy(winner) {
-        return "draw";
-    }
-    if winner == game.and_then(|g| g.get("color")) {
-        "win"
-    } else {
-        "loss"
-    }
-}
-
-/// `archivedPlayerSide(game)`: the side named “You” in a computer game; none at the board.
-fn archived_player_side(game: Option<&Value>) -> Option<&'static str> {
-    let name = |side: &str| game.and_then(|g| g.get(side)).and_then(Value::as_str);
+/// The side named “You” in a saved computer game; none for a game at the board.
+pub fn archived_player_side(game: &Value) -> Option<&'static str> {
+    let name = |side: &str| game.get(side).and_then(Value::as_str);
     if name("white") == Some("You") {
         Some("white")
     } else if name("black") == Some("You") {
@@ -206,11 +162,11 @@ fn archived_player_side(game: Option<&Value>) -> Option<&'static str> {
     }
 }
 
-/// `archivedOutcome(game)`: a saved local game's outcome, won or lost for the side named “You”
+/// A saved local game's outcome, won or lost for the side named “You”
 /// (computer games) or the winning colour when both players were at the board; `unfinished`,
 /// `ongoing` or `clock` when it has no result.
-fn archived_outcome(game: Option<&Value>) -> &'static str {
-    let field = |key: &str| game.and_then(|g| g.get(key));
+pub fn archived_outcome(game: &Value) -> &'static str {
+    let field = |key: &str| game.get(key);
     if field("source").and_then(Value::as_str) == Some("clock") {
         return "clock";
     }
@@ -236,9 +192,10 @@ fn archived_outcome(game: Option<&Value>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn outcome(game: Value) -> &'static str {
-        archived_outcome(Some(&game))
+        archived_outcome(&game)
     }
 
     #[test]
@@ -260,11 +217,11 @@ mod tests {
             "clock"
         );
         assert_eq!(
-            archived_player_side(Some(&computer("White", "You", "*"))),
+            archived_player_side(&computer("White", "You", "*")),
             Some("black")
         );
         assert_eq!(
-            archived_player_side(Some(&computer("White", "Black", "*"))),
+            archived_player_side(&computer("White", "Black", "*")),
             None
         );
     }

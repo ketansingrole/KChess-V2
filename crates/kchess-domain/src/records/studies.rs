@@ -1,27 +1,29 @@
-//! What a study's card shows (`summarizeStudy`). The
-//! frontends remember results per PGN; the summary itself is worked out here.
+//! What a study's card shows. The frontends remember results per PGN; the summary itself is
+//! worked out here.
 
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
 
-use super::{Out, arg};
 use crate::tree::summarize_pgn;
 
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    Some(match method {
-        "summarizeStudy" => arg(args, 0)
-            .and_then(Value::as_str)
-            .map(|pgn| Ok(summarize_study(pgn)))
-            .unwrap_or_else(|| Err("pgn must be a string".into())),
-        _ => return None,
-    })
+/// What a study's card shows.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StudySummary {
+    /// The position at the end of the main line.
+    pub fen: String,
+    /// Half-moves in the main line.
+    pub plies: u32,
+    /// Moves with a comment, the start's included.
+    pub comments: usize,
+    pub variations: usize,
+    /// "White – Black", '' when neither is known.
+    pub players: String,
+    pub event: String,
 }
 
-/// `summarizeStudy`: the card of a study's PGN, or null when the PGN cannot be imported. Read
-/// without building the study's tree (`tree::summarize_pgn`); the answer is the tree's.
-pub fn summarize_study(pgn: &str) -> Value {
-    let Some(summary) = summarize_pgn(pgn) else {
-        return Value::Null;
-    };
+/// The card of a study's PGN, or none when the PGN cannot be imported. Read without building
+/// the study's tree (`tree::summarize_pgn`); the answer is the tree's.
+pub fn summarize_study(pgn: &str) -> Option<StudySummary> {
+    let summary = summarize_pgn(pgn)?;
     // A header's value as the card shows it: '' when empty, '?' or missing.
     let known = |name: &str| {
         summary
@@ -42,13 +44,13 @@ pub fn summarize_study(pgn: &str) -> Value {
             if black.is_empty() { "?" } else { black },
         )
     };
-    json!({
-        "fen": summary.fen,
-        "plies": summary.plies,
-        "comments": summary.comments,
-        "variations": summary.variations,
-        "players": players,
-        "event": known("Event"),
+    Some(StudySummary {
+        fen: summary.fen,
+        plies: summary.plies,
+        comments: summary.comments,
+        variations: summary.variations,
+        players,
+        event: known("Event").to_string(),
     })
 }
 
@@ -133,7 +135,7 @@ mod tests {
         for pgn in documents {
             let tree = from_tree(pgn);
             read += usize::from(!tree.is_null());
-            assert_eq!(summarize_study(pgn), tree, "{pgn:?}");
+            assert_eq!(json!(summarize_study(pgn)), tree, "{pgn:?}");
         }
         assert!(read >= 10, "most of the documents are studies");
     }
@@ -144,11 +146,11 @@ mod tests {
         // `{…} *`: a comment fills the document to the limit (2,000,000 UTF-16 units).
         let at_limit = format!("{{{}}} *", "a".repeat(2_000_000 - 4));
         assert_eq!(at_limit.len(), 2_000_000);
-        let summary = summarize_study(&at_limit);
-        assert_eq!(summary["comments"], json!(1));
-        assert_eq!(summary, from_tree(&at_limit));
+        let summary = summarize_study(&at_limit).unwrap();
+        assert_eq!(summary.comments, 1);
+        assert_eq!(json!(summary), from_tree(&at_limit));
         let over = format!("{{{}}} *", "a".repeat(2_000_000 - 3));
-        assert_eq!(summarize_study(&over), Value::Null);
+        assert_eq!(summarize_study(&over), None);
         assert_eq!(from_tree(&over), Value::Null);
     }
 }

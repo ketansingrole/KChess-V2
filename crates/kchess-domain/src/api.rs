@@ -325,7 +325,6 @@ fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
             let moved = [
                 crate::voice::call,
                 crate::training::call,
-                crate::records::call,
                 crate::misc::call,
                 crate::games::call,
                 crate::online_game::call,

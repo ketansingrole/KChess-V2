@@ -1,10 +1,6 @@
-//! The review helpers. `replay` and
-//! `analyseReview` are in `review.rs`.
+//! What a review is stored under, and which games get one.
 
-use serde_json::{Value, json};
-
-use super::{Out, arg, list, text_of};
-use crate::js;
+use serde::{Deserialize, Serialize};
 
 /// Lichess speeds of standard chess; variants are not reviewed.
 const STANDARD_PERFS: &[&str] = &[
@@ -16,53 +12,25 @@ const STANDARD_PERFS: &[&str] = &[
     "correspondence",
 ];
 
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    Some(match method {
-        "reviewKey" => list(args, 1, "moves").map(|moves| {
-            // A variant game's key names its variant: the same moves are another game in Atomic.
-            match arg(args, 2).and_then(Value::as_str) {
-                Some(variant) if !matches!(variant, "standard" | "chess960") => json!(review_key(
-                    &format!("{variant}|{}", text_of(args, 0)),
-                    &join(moves)
-                )),
-                _ => json!(review_key(&text_of(args, 0), &join(moves))),
-            }
-        }),
-        "hasScore" => Ok(json!(has_score(arg(args, 0)))),
-        "endEval" => Ok(match arg(args, 0).and_then(Value::as_str) {
-            // A variant won by the side to move (Antichess): mate for it, from White's side.
-            Some("won") => {
-                let white = arg(args, 1).and_then(Value::as_str) == Some("white");
-                json!({ "mate": if white { 1 } else { -1 } })
-            }
-            end => end_eval(end == Some("checkmate")),
-        }),
-        "isReviewablePerf" => Ok(json!(
-            arg(args, 0)
-                .and_then(Value::as_str)
-                .is_some_and(|perf| STANDARD_PERFS.contains(&perf))
-        )),
-        _ => return None,
-    })
+/// The key a review of `moves` (UCI) from `fen` is stored under. A variant game's key names its
+/// variant (`variant`, a Lichess key): the same moves are another game in Atomic.
+pub fn review_key<S: AsRef<str>>(fen: &str, moves: &[S], variant: Option<&str>) -> String {
+    let moves: Vec<&str> = moves.iter().map(AsRef::as_ref).collect();
+    match variant {
+        Some(variant) if !matches!(variant, "standard" | "chess960") => {
+            cyrb53(&format!("{variant}|{fen}"), &moves.join(" "))
+        }
+        _ => cyrb53(fen, &moves.join(" ")),
+    }
 }
 
-/// The text `Array.prototype.join(' ')` makes of list items: null and undefined become ''.
-pub(super) fn join(items: &[Value]) -> String {
-    items
-        .iter()
-        .map(|item| {
-            if item.is_null() {
-                String::new()
-            } else {
-                js::to_string(Some(item))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+/// Whether a review is made for games of this Lichess perf: the standard speeds only.
+pub fn is_reviewable_perf(perf: &str) -> bool {
+    STANDARD_PERFS.contains(&perf)
 }
 
-/// `reviewKey`: cyrb53 of `fen|moves`, over UTF-16 code units, as 16 hex digits.
-pub fn review_key(fen: &str, moves: &str) -> String {
+/// cyrb53 of `fen|moves`, over UTF-16 code units, as 16 hex digits.
+fn cyrb53(fen: &str, moves: &str) -> String {
     let text = format!("{fen}|{moves}");
     let mut h1 = 0xdeadbeefu32 as i32;
     let mut h2 = 0x41c6ce57u32 as i32;
@@ -83,16 +51,20 @@ fn shr(x: i32, n: u32) -> i32 {
     ((x as u32) >> n) as i32
 }
 
-/// `score.cp !== undefined || score.mate !== undefined`: a field present, even as null.
-fn has_score(score: Option<&Value>) -> bool {
-    score.is_some_and(|s| s.get("cp").is_some() || s.get("mate").is_some())
+/// A score: centipawns or mate in moves, from White's side.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Score {
+    Cp(f64),
+    Mate(f64),
 }
 
-/// `endEval`: checkmate is lost for the side to move, the rest drawn.
-fn end_eval(checkmate: bool) -> Value {
-    if checkmate {
-        json!({ "mate": 0 })
-    } else {
-        json!({ "cp": 0 })
+/// The score of a finished game's last position: checkmate is lost for the side to move, a
+/// variant won by the side to move (`won`, Antichess) is mate for it, the rest drawn.
+pub fn end_eval(end: &str, turn: &str) -> Score {
+    match end {
+        "won" => Score::Mate(if turn == "white" { 1.0 } else { -1.0 }),
+        "checkmate" => Score::Mate(0.0),
+        _ => Score::Cp(0.0),
     }
 }
