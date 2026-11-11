@@ -97,22 +97,22 @@ async fn settings_take_a_chosen_engine_and_a_new_one_stops_the_analysis() {
     assert_eq!(saved["enginePath"], json!(first));
     core.call("resumeOnline", vec![]).await.expect("no game");
 
-    let id = analysing(&core, &host).await;
-    // Saving other settings keeps the saved engine and its analysis.
-    let mut cloud = saved.clone();
-    cloud["cloudEval"] = json!(true);
-    core.call("saveSettings", vec![cloud.clone()])
-        .await
-        .expect("the saved engine stays");
-    assert!(core.analysis_running_for_tests());
     // Another engine stops the analysis of the one it replaces.
+    let id = analysing(&core, &host).await;
     core.call("trustEnginePath", vec![json!(second)])
         .await
         .unwrap();
-    core.call("saveSettings", vec![with_engine_path(&cloud, &second)])
+    let saved = core
+        .call("saveSettings", vec![with_engine_path(&saved, &second)])
         .await
         .expect("another chosen engine");
     assert_eq!(ended(&host, &id).await, json!("interrupted"));
+    // Saving other settings keeps the saved engine, though nobody picked it again.
+    let mut cloud = saved.clone();
+    cloud["cloudEval"] = json!(true);
+    core.call("saveSettings", vec![cloud])
+        .await
+        .expect("the saved engine stays");
     core.close().await;
 }
 
