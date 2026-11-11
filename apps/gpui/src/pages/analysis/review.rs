@@ -579,7 +579,7 @@ impl AnalysisPage {
     pub fn open_puzzle(
         &mut self,
         puzzle: &Value,
-        wrong_moves: &[Value],
+        wrong_moves: &[kchess_contracts::types::PuzzleWrongMove],
         cx: &mut Context<Self>,
     ) -> bool {
         let solution: Vec<String> =
@@ -602,10 +602,7 @@ impl AnalysisPage {
         self.tried_done.clear();
         let mut tried = Vec::new();
         for wrong in wrong_moves {
-            let index = wrong["index"].as_u64().unwrap_or_default() as usize;
-            let Some(uci) = wrong["uci"].as_str() else {
-                continue;
-            };
+            let (index, uci) = (wrong.index as usize, wrong.uci.as_str());
             if index > solution.len() || solution.get(index).map(String::as_str) == Some(uci) {
                 continue;
             }
