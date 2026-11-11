@@ -153,6 +153,17 @@ pub(crate) fn interrupted(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    /// How long a turn that should come may take: a stuck line fails here, named, rather than
+    /// hanging the run.
+    const UNTIL_LIMIT: Duration = Duration::from_secs(5);
+
+    async fn within<T>(what: &str, wait: impl Future<Output = T>) -> T {
+        tokio::time::timeout(UNTIL_LIMIT, wait)
+            .await
+            .unwrap_or_else(|_| panic!("{what} did not come within {UNTIL_LIMIT:?}"))
+    }
 
     #[test]
     fn the_position_names_its_start_and_moves() {
@@ -184,7 +195,7 @@ mod tests {
         tokio::task::yield_now().await;
         assert!(!waiting.is_finished());
         drop(first);
-        waiting.await.unwrap();
+        within("the second job's turn", waiting).await.unwrap();
     }
 
     /// A place dropped while it waits (a cancelled `settled()`, a search stopped in line) must
@@ -193,7 +204,7 @@ mod tests {
     async fn a_place_dropped_in_line_does_not_let_the_next_start_early() {
         let mut line = Line::default();
         let mut running = line.join();
-        running.turn().await;
+        within("the first job's turn", running.turn()).await;
         let waiting = line.join();
         let mut last = line.join();
         let after = tokio::spawn(async move { last.turn().await });
@@ -206,7 +217,7 @@ mod tests {
             "started while the running job had not ended"
         );
         drop(running);
-        after.await.unwrap();
+        within("the last job's turn", after).await.unwrap();
     }
 
     /// A place dropped once its own turn has come passes the turn on, also past places dropped
@@ -220,7 +231,7 @@ mod tests {
         drop(also_gone);
         drop(gone);
         drop(running);
-        last.turn().await;
+        within("the turn past the dropped places", last.turn()).await;
         let mut next = line.join();
         let waits = tokio::spawn(async move { next.turn().await });
         for _ in 0..8 {
@@ -228,7 +239,7 @@ mod tests {
         }
         assert!(!waits.is_finished());
         drop(last);
-        waits.await.unwrap();
+        within("the next job's turn", waits).await.unwrap();
     }
 
     #[tokio::test]
