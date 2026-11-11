@@ -104,18 +104,23 @@ commands! {
 /// Where a command's description starts in the help.
 const COLUMN: usize = 35;
 
+/// A command's form and what it does: side by side, or the description on a line of its own
+/// when the form reaches its column.
+fn help_line(call: &str, about: &str) -> String {
+    if call.chars().count() < COLUMN {
+        format!("{call:COLUMN$}{about}\n")
+    } else {
+        format!("{call}\n{:COLUMN$}{about}\n", "")
+    }
+}
+
 fn help() -> String {
     let mut out =
         String::from("KChess CLI\n\nUsage: kchess-cli [options] <command>\n\nCommands:\n");
     for spec in COMMANDS {
         for (usage, about) in spec.forms {
             let call = format!("  {} {usage}", spec.name);
-            let call = call.trim_end();
-            if call.chars().count() < COLUMN {
-                out.push_str(&format!("{call:COLUMN$}{about}\n"));
-            } else {
-                out.push_str(&format!("{call}\n{:COLUMN$}{about}\n", ""));
-            }
+            out.push_str(&help_line(call.trim_end(), about));
         }
     }
     out.push_str(
@@ -206,10 +211,15 @@ fn print(value: impl std::fmt::Display) {
 }
 
 /// A step a command takes on its way out, whose failure is told but does not fail the command.
-fn told_if_failed<T>(what: &str, result: Result<T, String>) {
-    if let Err(cause) = result {
-        eprintln!("[cli] {what} failed: {cause}");
+/// Answers what it told.
+fn told_if_failed<T>(what: &str, result: Result<T, String>) -> Option<String> {
+    let told = result
+        .err()
+        .map(|cause| format!("[cli] {what} failed: {cause}"));
+    if let Some(told) = &told {
+        eprintln!("{told}");
     }
+    told
 }
 
 fn method_names() -> Vec<&'static str> {
@@ -401,11 +411,7 @@ async fn with_core(
                 watched?;
             }
             Command::Explore => {
-                let (kind, fen, variant) = explore_request(rest)?;
-                let options = LookupOptions {
-                    variant,
-                    ..LookupOptions::default()
-                };
+                let (kind, fen, options) = explore_request(rest)?;
                 core.request(calls::ResumeOnline {}).await?;
                 let lookup = core
                     .request(calls::PositionLookup {
@@ -721,7 +727,7 @@ fn position_info(words: &[String]) -> Result<Value, String> {
 /// variant's position (`--variant`, or a PGN's header) is looked up in Lichess's games of it.
 fn explore_request(
     words: &[String],
-) -> Result<(PositionLookupKind, String, Option<Variant>), String> {
+) -> Result<(PositionLookupKind, String, LookupOptions), String> {
     // A player's games need the player, which `explore` does not take.
     let named = words
         .first()
@@ -733,7 +739,11 @@ fn explore_request(
     if let Some(variant) = request.variant.as_deref().and_then(Variant::from_key) {
         return match named {
             None | Some(PositionLookupKind::Opening) => {
-                Ok((PositionLookupKind::Opening, fen, Some(variant)))
+                let options = LookupOptions {
+                    variant: Some(variant),
+                    ..LookupOptions::default()
+                };
+                Ok((PositionLookupKind::Opening, fen, options))
             }
             Some(_) => Err("Masters games and tablebases are standard chess only.".into()),
         };
@@ -753,7 +763,7 @@ fn explore_request(
             PositionLookupKind::Masters
         }
     });
-    Ok((kind, fen, None))
+    Ok((kind, fen, LookupOptions::default()))
 }
 
 fn main() -> ExitCode {
@@ -805,6 +815,70 @@ mod tests {
         assert_eq!(command("--help"), Some(Command::Help));
         assert_eq!(command("-V"), Some(Command::Version));
         assert_eq!(command("bogus"), None);
+    }
+
+    /// A form shorter than the column has its description beside it; one that reaches the
+    /// column has it on the next line.
+    #[test]
+    fn a_long_form_puts_its_description_below() {
+        let short = "c".repeat(COLUMN - 1);
+        assert_eq!(help_line(&short, "Does it"), format!("{short} Does it\n"));
+        let long = "c".repeat(COLUMN);
+        let indent = " ".repeat(COLUMN);
+        assert_eq!(
+            help_line(&long, "Does it"),
+            format!("{long}\n{indent}Does it\n")
+        );
+    }
+
+    #[test]
+    fn a_failed_step_on_the_way_out_is_told() {
+        assert_eq!(
+            told_if_failed("Stopping the engine", Err::<(), _>("gone".into())),
+            Some("[cli] Stopping the engine failed: gone".into())
+        );
+        assert_eq!(told_if_failed("Stopping the engine", Ok(())), None);
+    }
+
+    /// Watching a round ends with its end; a failed watch ends with its message, and the core
+    /// closing ends it too.
+    #[tokio::test]
+    async fn watching_ends_with_the_round_or_a_failure() {
+        use kchess_contracts::types::{BroadcastUpdate, WatchState};
+        let update = |ended| {
+            CoreEvent::WatchBroadcast(BroadcastUpdate {
+                session: 1,
+                round_id: "r1".into(),
+                games: vec![],
+                ended,
+                error: None,
+            })
+        };
+        let state = |phase| {
+            CoreEvent::WatchState(WatchState {
+                session: 1,
+                phase,
+                message: Some("Not found.".into()),
+                kind: None,
+            })
+        };
+        let watched = |sent: Vec<CoreEvent>| async move {
+            let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
+            for event in sent {
+                sender.send(core::ClientEvent::Event(event)).expect("sent");
+            }
+            drop(sender);
+            watch_frames(&mut events).await
+        };
+        assert_eq!(watched(vec![update(Some(true))]).await, Ok(()));
+        assert_eq!(
+            watched(vec![update(Some(false)), state(WatchPhase::Error)]).await,
+            Err("Not found.".into())
+        );
+        assert_eq!(
+            watched(vec![update(None), state(WatchPhase::Connected)]).await,
+            Err("The core closed.".into())
+        );
     }
 
     #[test]
@@ -1006,32 +1080,33 @@ mod tests {
     #[test]
     fn explore_picks_the_tablebase_for_few_pieces() {
         use PositionLookupKind::{Masters, Opening, Tablebase};
+        let standard = LookupOptions::default;
         let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         assert_eq!(
             explore_request(&strings(&["startpos"])),
-            Ok((Masters, start.to_string(), None))
+            Ok((Masters, start.to_string(), standard()))
         );
         assert_eq!(
             explore_request(&strings(&["opening", "startpos"])),
-            Ok((Opening, start.to_string(), None))
+            Ok((Opening, start.to_string(), standard()))
         );
         let ending = "8/8/8/8/8/3k4/8/K6Q w - - 0 1";
         assert_eq!(
             explore_request(&strings(&ending.split(' ').collect::<Vec<_>>())),
-            Ok((Tablebase, ending.to_string(), None))
+            Ok((Tablebase, ending.to_string(), standard()))
         );
         // Castling rights keep a few-piece position out of the tablebase.
         let castling = "4k3/8/8/8/8/8/8/4K2R w K - 0 1";
         assert_eq!(
             explore_request(&strings(&[castling])),
-            Ok((Masters, castling.to_string(), None))
+            Ok((Masters, castling.to_string(), standard()))
         );
         assert_eq!(
             explore_request(&strings(&["opening", "1.", "e4", "c5"])),
             Ok((
                 Opening,
                 "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2".to_string(),
-                None
+                standard()
             ))
         );
         assert_eq!(
@@ -1046,7 +1121,14 @@ mod tests {
         let zh = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
         assert_eq!(
             explore_request(&strings(&["--variant", "crazyhouse", "startpos"])),
-            Ok((Opening, zh.to_string(), Some(Variant::Crazyhouse)))
+            Ok((
+                Opening,
+                zh.to_string(),
+                LookupOptions {
+                    variant: Some(Variant::Crazyhouse),
+                    ..standard()
+                }
+            ))
         );
         assert_eq!(
             explore_request(&strings(&["masters", "--variant", "atomic", "startpos"])),
@@ -1079,6 +1161,10 @@ mod tests {
             ["e2e4", "d7d5", "e4d5", "d8d5", "P@e3"]
         );
         assert!(request.fen.contains("[p]"), "{}", request.fen);
+        assert_eq!(
+            request.root_fen.as_deref(),
+            Some("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1")
+        );
         // A PGN names its own variant: the Atomic capture explodes.
         let request = analysis_request(
             "analyze",

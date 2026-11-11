@@ -603,6 +603,88 @@ mod tests {
     }
 
     #[test]
+    fn counts_and_voice_updates_are_kept() {
+        use serde_json::json;
+        assert_eq!(checked::<Days>(json!(30)), Ok(json!(30)));
+        assert_eq!(checked::<ActivityMax>(json!(200)), Ok(json!(200)));
+        let update = json!({ "outcome": "picked", "expected": "e4" });
+        assert_eq!(checked::<VoiceUpdate>(update.clone()), Ok(update));
+        assert_eq!(
+            checked::<VoiceUpdate>(json!({ "outcome": "maybe" })),
+            Err(VOICE.into())
+        );
+    }
+
+    /// A field of the wrong type, or a theme that is not one, keeps the field's message.
+    #[test]
+    fn each_puzzle_field_keeps_its_message() {
+        use serde_json::json;
+        let request = json!({ "account": "", "angle": "mix", "difficulty": "normal" });
+        let solve = json!({ "account": "Alice", "angle": "mix", "id": "abc12", "win": true, "rated": true });
+        let query = json!({ "count": 10 });
+        let attempt = json!({
+            "puzzle": {
+                "id": "abc12",
+                "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                "solution": ["e2e4"],
+                "rating": 1500,
+                "themes": ["fork"],
+            },
+            "mode": "practice", "retry": false, "win": true, "revealed": false, "hinted": false,
+            "found": 1, "wrong": 0, "total": 1, "day": "2026-11-11",
+        });
+        assert!(checked::<PuzzleRequest>(request.clone()).is_ok());
+        assert!(checked::<PuzzleSolveRequest>(solve.clone()).is_ok());
+        assert!(checked::<LocalPuzzleQuery>(query.clone()).is_ok());
+        assert!(checked::<PuzzleAttemptInput>(attempt.clone()).is_ok());
+        let with = |sent: &Value, path: &[&str], value: Value| {
+            let mut sent = sent.clone();
+            let (last, parents) = path.split_last().unwrap();
+            let field = parents.iter().fold(&mut sent, |at, key| &mut at[*key]);
+            field[*last] = value;
+            sent
+        };
+        type Check = fn(Value) -> Result<Value, Refusal>;
+        let (request_check, solve_check, query_check, attempt_check): (Check, Check, Check, Check) = (
+            checked::<PuzzleRequest>,
+            checked::<PuzzleSolveRequest>,
+            checked::<LocalPuzzleQuery>,
+            checked::<PuzzleAttemptInput>,
+        );
+        for (check, sent, message) in [
+            (request_check, with(&request, &["angle"], json!(1)), THEME),
+            (
+                request_check,
+                with(&request, &["angle"], json!("no way")),
+                THEME,
+            ),
+            (solve_check, with(&solve, &["account"], json!(1)), USERNAME),
+            (solve_check, with(&solve, &["angle"], json!(1)), THEME),
+            (query_check, with(&query, &["theme"], json!(1)), THEME),
+            (
+                attempt_check,
+                with(&attempt, &["puzzle", "themes"], json!([1])),
+                THEME,
+            ),
+            (
+                attempt_check,
+                with(&attempt, &["puzzle", "solution"], json!([])),
+                ATTEMPT,
+            ),
+        ] {
+            assert_eq!(check(sent.clone()), Err(message.into()), "{sent}");
+        }
+        let voice = json!({
+            "source": "computer", "heard": "e four", "confidence": 1.5, "words": [],
+            "outcome": "played",
+        });
+        assert_eq!(
+            checked::<VoiceAttemptInput>(voice),
+            Err("confidence: invalid value, expected a number from 0 to 1".into())
+        );
+    }
+
+    #[test]
     fn a_puzzle_request_trims_its_account_and_reads_its_color() {
         let sent = obj(vec![
             ("account", J::Str(" Alice ".into())),

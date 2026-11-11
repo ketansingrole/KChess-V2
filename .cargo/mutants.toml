@@ -14,6 +14,11 @@ exclude_re = [
     # A deadline compared with `<=` instead of `<` differs only at the very instant it passes, and
     # the next attempt's own deadline ends the loop at that instant either way.
     'kchess-service/src/client\.rs:.*: replace < with <= in (connect_or_start|wait_until_gone)',
+    # `plain` names no message: `None`, which is also what `Default::default()` is for a `Msg`.
+    'kchess-contracts/src/check\.rs:.*: replace plain -> Msg with Default::default\(\)$',
+    # The command line closes its core only as the process exits, with the core's writes already
+    # on disk: what a test can see afterwards is the same whether or not it was closed.
+    'apps/cli/src/core\.rs:.*: replace CoreClient::close with \(\)$',
     # Setting the folder's mode to 0700 when it already is 0700 changes nothing.
     'kchess-service/src/discovery\.rs:.*: replace & with [|^] in private_dir',
     # DETACHED_PROCESS and CREATE_NEW_PROCESS_GROUP share no bit, so `|` and `^` are the same.

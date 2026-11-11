@@ -134,6 +134,46 @@ mod tests {
     }
 
     #[test]
+    fn a_move_list_is_moves() {
+        use serde_json::json;
+        assert_eq!(
+            checked::<Moves>(json!(["e2e4", "e7e5"])),
+            Ok(json!(["e2e4", "e7e5"]))
+        );
+        assert_eq!(
+            checked::<Moves>(json!("e2e4")),
+            Err("Invalid move list.".into())
+        );
+        assert_eq!(checked::<Moves>(json!([4])), Err("Invalid move.".into()));
+        assert_eq!(checked::<Moves>(json!(["e2"])), Err("Invalid move.".into()));
+    }
+
+    #[test]
+    fn a_study_upload_needs_both_texts() {
+        use serde_json::json;
+        let sync = json!({ "account": " Alice ", "studyId": "abcd1234", "baseline": "*", "pgn": "1. e4 *" });
+        assert_eq!(
+            checked::<StudySyncRequest>(sync.clone()),
+            Ok(
+                json!({ "account": "Alice", "studyId": "abcd1234", "baseline": "*", "pgn": "1. e4 *" })
+            )
+        );
+        for field in ["baseline", "pgn"] {
+            let mut empty = sync.clone();
+            empty[field] = json!(" ");
+            assert_eq!(
+                checked::<StudySyncRequest>(empty),
+                Err(STUDY_TEXT.into()),
+                "{field}"
+            );
+        }
+        assert_eq!(
+            checked::<StudySyncRequest>(json!("x")),
+            Err(STUDY_SYNC.into())
+        );
+    }
+
+    #[test]
     fn a_chapter_name_is_trimmed() {
         assert_eq!(
             check::<ChapterName>(J::Str("  Rook endings ".into())),

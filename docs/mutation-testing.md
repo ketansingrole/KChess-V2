@@ -103,12 +103,9 @@ These stay in the reports on purpose; each is listed with the reason.
 - **The CLI's own list of saved games** (`play.rs`, `written`): it only feeds the Game history
   rules within one run, which find an entry by its id with or without the duplicates a mutant
   leaves; the saved library is the same.
-- **How the CLI's `review` recognises its review** (`review.rs`, `run`'s `ours`): by its moves
-  and its start position; one run asks for one review, so no other review's update arrives to
-  be mistaken for it.
 - **The CLI's `close` and `open_browser`**: the process exits right after `close`, with the
-  core's writes already on disk; `open_browser` starts the desktop's opener, which a test must
-  not do.
+  core's writes already on disk (excluded in `.cargo/mutants.toml`); `open_browser` starts the
+  desktop's opener, which a test must not do.
 - **The AppImage step's binding** (`package/linux.rs`, `appimage`): it hands the real pins, the
   `target/package` cache and `download` to `appimage_with`, which its test runs whole with a
   stand-in appimagetool. The binding downloads from GitHub and runs the real tool, so only

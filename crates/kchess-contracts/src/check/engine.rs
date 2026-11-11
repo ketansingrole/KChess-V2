@@ -86,7 +86,6 @@ impl Validate for AnalysisRequest {
             [] | ["infinite"] => Some("Invalid engine options."),
             ["fen"] => Some("Invalid position."),
             ["lines"] => LINES,
-            ["rootFen"] => None,
             ["moves", rest @ ..] => move_list_messages(rest),
             ["clientId"] => Some("Invalid analysis request."),
             ["variant"] => Some("Invalid variant."),
@@ -146,6 +145,53 @@ mod tests {
         assert_eq!(
             check::<Variant>(J::Str("chess".into())),
             Err("Invalid variant.".into())
+        );
+    }
+
+    /// A value of the wrong type keeps the message of its field.
+    #[test]
+    fn each_option_keeps_its_message() {
+        use serde_json::json;
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        assert_eq!(
+            checked::<BestMoveOptions>(json!({ "movetime": "fast" })),
+            Err(THINK_TIME.unwrap().into())
+        );
+        assert_eq!(
+            checked::<BestMoveOptions>(json!({ "movetime": 10 })),
+            Err(THINK_TIME.unwrap().into())
+        );
+        for (field, value, message) in [
+            ("lines", json!("all"), LINES.unwrap()),
+            ("moves", json!("e2e4"), "Invalid move list."),
+            ("moves", json!([1]), "Invalid move."),
+        ] {
+            let mut request = json!({ "fen": start, "lines": 1 });
+            request[field] = value;
+            assert_eq!(
+                checked::<AnalysisRequest>(request),
+                Err(message.into()),
+                "{field}"
+            );
+        }
+    }
+
+    /// A variant's moves must reach the position asked about from its root.
+    #[test]
+    fn a_variant_analysis_replays_its_moves() {
+        use serde_json::json;
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
+        let after = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR[] b KQkq - 0 1";
+        let request = |fen: &str| {
+            json!({
+                "fen": fen, "rootFen": start, "moves": ["e2e4"], "lines": 1,
+                "variant": "crazyhouse",
+            })
+        };
+        assert!(checked::<AnalysisRequest>(request(after)).is_ok());
+        assert_eq!(
+            checked::<AnalysisRequest>(request(start)),
+            Err("Invalid analysis position or move history.".into())
         );
     }
 

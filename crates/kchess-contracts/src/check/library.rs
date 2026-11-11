@@ -486,6 +486,49 @@ mod tests {
         assert!(check::<StudyCommand>(without_place).is_err());
     }
 
+    /// Each command keeps its own `op`, and a study of chapters needs one.
+    #[test]
+    fn each_command_is_the_one_sent() {
+        for command in [
+            json!({ "op": "addChapter", "id": "s1", "name": "Endings" }),
+            json!({ "op": "rename", "id": "s1", "name": "Endings" }),
+            json!({ "op": "duplicateChapter", "id": "s1", "chapterId": "c1" }),
+            json!({ "op": "removeChapter", "id": "s1", "chapterId": "c1" }),
+            json!({ "op": "remove", "id": "s1" }),
+            json!({ "op": "duplicate", "id": "s1" }),
+            json!({ "op": "saveChapters", "name": "S", "chapters": [{ "name": "c", "pgn": "*" }] }),
+        ] {
+            assert_eq!(checked::<StudyCommand>(command.clone()), Ok(command));
+        }
+        assert_eq!(
+            checked::<StudyCommand>(json!({ "op": "saveChapters", "name": "S", "chapters": [] })),
+            Err("chapters: invalid value, expected at least 1 item".into())
+        );
+    }
+
+    #[test]
+    fn keys_and_counts_are_kept_as_sent() {
+        assert_eq!(
+            checked::<RepertoireKey>(json!("abcd1234:white")),
+            Ok(json!("abcd1234:white"))
+        );
+        assert!(checked::<RepertoireKey>(json!("")).is_err());
+        assert_eq!(
+            checked::<MissCounts>(json!({ "a": 2, "b": 0.5 })),
+            Ok(json!({ "a": 2.0, "b": 0.5 }))
+        );
+        assert!(checked::<MissCounts>(json!({ "a": 0 })).is_err());
+        let name = "kchess:board-tab:2";
+        assert_eq!(checked::<ViewPreferenceKey>(json!(name)), Ok(json!(name)));
+        for refused in ["kchess:", "kchess:Tab", "kchess:a_b", "board"] {
+            assert_eq!(
+                checked::<ViewPreferenceKey>(json!(refused)),
+                Err("invalid value, expected a view preference name".into()),
+                "{refused}"
+            );
+        }
+    }
+
     #[test]
     fn single_values_keep_their_messages() {
         assert_eq!(

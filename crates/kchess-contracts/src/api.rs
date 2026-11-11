@@ -350,3 +350,14 @@ macro_rules! core_api {
 }
 
 pub(crate) use core_api;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_answer_crosses_as_its_json() {
+        let answered = answer(vec![("a", 1)]).ok();
+        assert_eq!(answered, Some(serde_json::json!([["a", 1]])));
+    }
+}

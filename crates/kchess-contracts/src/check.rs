@@ -389,9 +389,25 @@ impl Validate for LibraryId {
     }
 }
 
+/// What `T` makes of `value` as sent: the value it keeps, as JSON, or its refusal.
+#[cfg(test)]
+fn checked<T: Validate + Serialize>(value: Value) -> Result<Value, Refusal> {
+    T::validate(J::from(&value)).map(|kept| serde_json::to_value(kept).expect("writes"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_move_and_a_game_id_are_kept_as_sent() {
+        assert_eq!(checked::<Uci>(json!("e7e8q")), Ok(json!("e7e8q")));
+        assert_eq!(checked::<Uci>(json!("e9")), Err("Invalid move.".into()));
+        assert_eq!(checked::<GameId>(json!("abcd1234")), Ok(json!("abcd1234")));
+        assert_eq!(checked::<GameId>(json!("cc-l42")), Ok(json!("cc-l42")));
+        assert_eq!(checked::<GameId>(json!("ab")), Err(GAME_ID.into()));
+    }
 
     #[test]
     fn an_optional_argument_is_absent_as_null_or_undefined() {

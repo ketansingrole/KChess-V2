@@ -3,7 +3,7 @@
 
 use kchess_contracts::calls;
 use kchess_contracts::check::ReviewKey;
-use kchess_contracts::types::{ReviewRequest, StoredReview};
+use kchess_contracts::types::{ReviewRequest, ReviewStatus, StoredReview};
 use kchess_domain::pgn::parse_pgn;
 use kchess_domain::review::{analyse, san_to_uci};
 use kchess_domain::variant::Variant;
@@ -21,6 +21,23 @@ pub struct Line {
     pub sans: Vec<String>,
     pub moves: Vec<String>,
     pub variant: Option<Variant>,
+}
+
+impl Line {
+    /// Whether `review` is this line's: the core keys a review by its own reading of the start
+    /// position, so it is recognised by its moves and the position's pieces and turn.
+    fn reviewed_in(&self, review: &StoredReview) -> bool {
+        let start = |fen: &str| fen.split(' ').take(2).collect::<Vec<_>>().join(" ");
+        review.moves == self.moves && start(&review.fen) == start(&self.fen)
+    }
+}
+
+/// Why the review keyed `key` failed, when `status` reports that.
+fn failure(status: ReviewStatus, key: &str) -> Option<String> {
+    status
+        .failed
+        .filter(|failed| failed.key == key)
+        .map(|failed| format!("The review failed: {}", failed.message))
 }
 
 /// The variant a PGN `Variant` header names.
@@ -118,8 +135,7 @@ pub async fn run(
 ) -> Result<Value, String> {
     let line = main_line(pgn)?;
     core.request(calls::ResumeOnline {}).await?;
-    // A queued request answers null; the finished review arrives as an update. The core keys it
-    // by its own reading of the start position, so it is recognised by its moves and position.
+    // A queued request answers null; the finished review arrives as an update.
     let request = ReviewRequest {
         fen: line.fen.clone(),
         moves: line.moves.clone(),
@@ -128,10 +144,7 @@ pub async fn run(
         account: None,
     };
     let mut stored = core.request(calls::ReviewRequest { request }).await?;
-    let start = |fen: &str| fen.split(' ').take(2).collect::<Vec<_>>().join(" ");
-    let ours = |review: &StoredReview| {
-        review.moves == line.moves && start(&review.fen) == start(&line.fen)
-    };
+    let ours = |review: &StoredReview| line.reviewed_in(review);
     // The key the core gives the review, so a failure reported for it ends the wait.
     let key = kchess_domain::records::review::review_key(&line.fen, &line.moves, line.variant);
     let mut wait = Wait::new(events);
@@ -162,9 +175,8 @@ pub async fn run(
                 }
             }
             Next::Event(CoreEvent::ReviewStatus(status)) => {
-                let failed = status.failed.filter(|failed| failed.key == key);
-                if let Some(failed) = failed {
-                    return Err(format!("The review failed: {}", failed.message));
+                if let Some(failed) = failure(status, key) {
+                    return Err(failed);
                 }
             }
             Next::Event(_) | Next::Line(_) | Next::Tick => {}
@@ -176,8 +188,48 @@ pub async fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::{Variant, main_line, report};
+    use super::{ReviewStatus, StoredReview, Variant, failure, main_line, report};
     use serde_json::json;
+
+    /// A review is the line's when its moves and its start's pieces and turn are the line's; the
+    /// clocks of the start may differ.
+    #[test]
+    fn a_review_is_recognised_by_its_moves_and_start() {
+        let line = main_line("1. e4 e5 *").expect("a game");
+        let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let review = |fen: &str, moves: &[&str]| -> StoredReview {
+            serde_json::from_value(json!({
+                "key": "k", "fen": fen, "moves": moves, "source": "local", "evals": [],
+                "depth": 20, "complete": true, "updatedAt": 0,
+            }))
+            .expect("a review")
+        };
+        assert!(line.reviewed_in(&review(start, &["e2e4", "e7e5"])));
+        assert!(line.reviewed_in(&review(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 3 9",
+            &["e2e4", "e7e5"]
+        )));
+        assert!(!line.reviewed_in(&review(start, &["e2e4"])));
+        assert!(!line.reviewed_in(&review(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1",
+            &["e2e4", "e7e5"]
+        )));
+    }
+
+    #[test]
+    fn only_this_review_s_failure_ends_it() {
+        let status = |key: &str| -> ReviewStatus {
+            serde_json::from_value(json!({
+                "waiting": 0, "failed": { "key": key, "message": "No engine." },
+            }))
+            .expect("a status")
+        };
+        assert_eq!(
+            failure(status("k1"), "k1"),
+            Some("The review failed: No engine.".into())
+        );
+        assert_eq!(failure(status("k2"), "k1"), None);
+    }
 
     #[test]
     fn the_main_line_is_read_in_its_variant() {
