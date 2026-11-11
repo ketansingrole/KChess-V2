@@ -63,3 +63,4 @@ mod voice_model;
 mod voice_model_facade;
 mod voice_ownership;
 mod voice_recognizer;
+mod wire_library;
