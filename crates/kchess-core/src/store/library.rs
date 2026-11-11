@@ -8,7 +8,7 @@ use kchess_contracts::types::{
 };
 use kchess_domain::color::Color;
 use rusqlite::{Connection, OptionalExtension, params};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::sql::Sql as _;
 use crate::host::{Host, Level};
