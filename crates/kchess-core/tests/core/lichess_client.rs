@@ -84,7 +84,6 @@ async fn a_board_api_refusal_is_lichess_s_own_sentence() {
         "This game cannot be played with the Board API."
     );
     assert_eq!(error.kind, Some(ErrorKind::Refused));
-    assert!(!ErrorKind::Refused.retryable());
 }
 
 /// A 403 that is not about the login (a game Lichess will not let this account play) is a

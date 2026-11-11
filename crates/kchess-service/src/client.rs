@@ -220,7 +220,7 @@ impl Client {
                                 let _ = waiting.send(match error {
                                     Some(error) => {
                                         let mut error = CoreError::new(error);
-                                        error.kind = kind.as_deref().and_then(ErrorKind::parse);
+                                        error.kind = kind.as_deref().and_then(ErrorKind::from_key);
                                         Err(error)
                                     }
                                     None => Ok(value.unwrap_or(Value::Null)),

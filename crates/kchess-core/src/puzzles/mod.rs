@@ -8,6 +8,7 @@ pub mod queries;
 mod zst;
 
 use kchess_contracts::CoreEvent;
+use kchess_contracts::types::{PuzzleDbPhase as Phase, PuzzleDbProgress};
 use rusqlite::Connection;
 use serde_json::json;
 use std::path::Path;
@@ -65,27 +66,6 @@ struct Inner {
 
 pub struct PuzzleService {
     inner: Arc<Inner>,
-}
-
-#[derive(Clone, Copy)]
-enum Phase {
-    Downloading,
-    Importing,
-    Done,
-    Cancelled,
-    Failed,
-}
-
-impl Phase {
-    fn name(self) -> &'static str {
-        match self {
-            Phase::Downloading => "downloading",
-            Phase::Importing => "importing",
-            Phase::Done => "done",
-            Phase::Cancelled => "cancelled",
-            Phase::Failed => "failed",
-        }
-    }
 }
 
 /// Write `rows` as the downloaded puzzle database in `data_dir`, as a finished download leaves it:
@@ -493,14 +473,14 @@ impl Progress {
     }
 
     fn send(&self, phase: Phase, kept: usize, message: Option<&str>) {
-        let mut payload = json!({ "phase": phase.name(), "received": self.received, "kept": kept });
-        if let Some(total) = self.total {
-            payload["total"] = json!(total);
-        }
-        if let Some(message) = message {
-            payload["message"] = json!(message);
-        }
-        self.host.emit(CoreEvent::PuzzleDbProgress(payload));
+        let progress = PuzzleDbProgress {
+            phase,
+            received: self.received,
+            kept: kept as u64,
+            total: self.total,
+            message: message.map(str::to_string),
+        };
+        self.host.emit(CoreEvent::PuzzleDbProgress(json!(progress)));
     }
 }
 

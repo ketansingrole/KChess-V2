@@ -268,7 +268,7 @@ fn decode_computer(raw: &J) -> Option<J> {
     let level = raw
         .get("level")
         .and_then(J::str)
-        .filter(|l| ENGINE_LEVELS.contains(l))?;
+        .filter(|level| EngineLevel::from_key(level).is_some())?;
     let color = raw.get("color")?;
     if !matches!(js_string(color).as_str(), "white" | "black") {
         return None;
@@ -334,29 +334,34 @@ fn decode_archive_identity(raw: &J) -> Option<J> {
 }
 
 /// The on-disk version of each kind; archives have none.
-fn session_version(kind: &str) -> Option<Option<f64>> {
-    Some(match kind {
-        "analysis" | "local" => Some(1.0),
-        "computer" => Some(2.0),
-        "archive:computer" | "archive:board" | "archive:clock" => None,
-        _ => return None,
-    })
+fn session_version(kind: SessionKind) -> Option<f64> {
+    match kind {
+        SessionKind::Analysis | SessionKind::Local => Some(1.0),
+        SessionKind::Computer => Some(2.0),
+        SessionKind::ArchiveComputer | SessionKind::ArchiveBoard | SessionKind::ArchiveClock => {
+            None
+        }
+    }
 }
 
 /// A stored session of `kind`, decoded; none when it is not one. An unknown kind is an error.
 pub fn decode_stored(kind: &str, raw: &J) -> Result<Option<J>, String> {
+    let Some(kind) = SessionKind::from_key(kind) else {
+        return Err("SESSION_DECODERS[kind] is not a function".into());
+    };
     Ok(match kind {
-        "analysis" => decode_analysis(raw),
-        "local" => decode_local(raw),
-        "computer" => decode_computer(raw),
-        "archive:computer" | "archive:board" | "archive:clock" => decode_archive_identity(raw),
-        _ => return Err("SESSION_DECODERS[kind] is not a function".into()),
+        SessionKind::Analysis => decode_analysis(raw),
+        SessionKind::Local => decode_local(raw),
+        SessionKind::Computer => decode_computer(raw),
+        SessionKind::ArchiveComputer | SessionKind::ArchiveBoard | SessionKind::ArchiveClock => {
+            decode_archive_identity(raw)
+        }
     })
 }
 
 /// A session as stored: `{ version, ...session }` for kinds with a version.
 pub fn encode_session(kind: &str, session: &J) -> J {
-    let Some(Some(version)) = session_version(kind) else {
+    let Some(version) = SessionKind::from_key(kind).and_then(session_version) else {
         return session.clone();
     };
     let mut fields = vec![("version".to_string(), J::Num(version))];
@@ -390,9 +395,7 @@ pub fn decode_joined_tournaments(raw: &J) -> J {
                     return None;
                 }
                 let system = entry.get("system").and_then(J::str)?;
-                if !TOURNAMENT_SYSTEMS.contains(&system) {
-                    return None;
-                }
+                TournamentSystem::from_key(system)?;
                 let id = text_of(entry.get("id"), 20)?;
                 let account = text_of(entry.get("account"), 40)?;
                 let name = text_of(entry.get("name"), 200)?;

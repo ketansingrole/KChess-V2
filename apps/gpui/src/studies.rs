@@ -9,13 +9,15 @@ use std::collections::HashMap;
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
-use kchess_contracts::Level;
 use kchess_contracts::check::PgnText;
-use kchess_contracts::types::{Library, StudyCommand, StudyCommandResult};
+use kchess_contracts::types::{Library, ProfileArea, StudyCommand, StudyCommandResult};
+use kchess_contracts::{CoreError, ErrorKind, Level};
 use serde_json::{Map, Value, json};
 
 use crate::core::{Answer, AppCore, Reads};
 use crate::quit::BoxedSave;
+
+const CLOSED: &str = "The study library is closed";
 
 /// Studies a library may hold.
 pub const MAX_STUDIES: usize = 50;
@@ -25,7 +27,7 @@ pub const MAX_CHAPTERS: usize = 64;
 enum Write {
     Command {
         command: StudyCommand,
-        reply: Option<oneshot::Sender<Result<StudyCommandResult, String>>>,
+        reply: Option<oneshot::Sender<Result<StudyCommandResult, CoreError>>>,
     },
     /// Done once every command before it was answered: with the chapters whose last content save
     /// failed, if any did.
@@ -44,8 +46,8 @@ enum Write {
 type Bases = HashMap<(String, String), String>;
 
 /// The core refused a chapter save: another window changed the chapter since this one read it.
-pub fn is_stale(cause: &str) -> bool {
-    cause.contains("This study was changed in another KChess window")
+pub fn is_stale(cause: &CoreError) -> bool {
+    cause.kind == Some(ErrorKind::Conflict)
 }
 
 pub struct StudyLibrary {
@@ -79,7 +81,7 @@ pub fn init(library: &Library, cx: &mut App) {
         move |cx| Some(entity.read(cx).flushed())
     });
     // Another window saved a study: show the profile's.
-    crate::core::on_profile_change(cx, &["studies"], {
+    crate::core::on_profile_change(cx, &[ProfileArea::Studies], {
         let entity = entity.downgrade();
         move |cx| {
             let _ = entity.update(cx, |library, cx| library.reload(cx));
@@ -155,7 +157,7 @@ fn write_in_order(
 ) {
     let core = cx.global::<AppCore>().clone();
     // Each answer, for the library to show.
-    let (answers, mut answered) = mpsc::unbounded::<Result<StudyCommandResult, String>>();
+    let (answers, mut answered) = mpsc::unbounded::<Result<StudyCommandResult, CoreError>>();
     cx.background_executor()
         .spawn(async move {
             // Chapters whose last content save failed, until one succeeds: their moves are not
@@ -186,7 +188,7 @@ fn write_in_order(
                     incremental: Some(true),
                     based_on: based_on.map(PgnText),
                 };
-                let result = core.request(call).await.map_err(|cause| {
+                let result = core.request(call).await.inspect_err(|cause| {
                     let op = json!(command)["op"]
                         .as_str()
                         .unwrap_or_default()
@@ -196,12 +198,11 @@ fn write_in_order(
                         "studies",
                         &format!("saving the study library failed: {op} {}", cause.message),
                     );
-                    cause.message
                 });
                 if let Some(key) = saved_chapter(&command) {
                     match &result {
                         Err(cause) if !is_stale(cause) => {
-                            unsaved.insert(key, cause.clone());
+                            unsaved.insert(key, cause.message.clone());
                         }
                         _ => {
                             unsaved.remove(&key);
@@ -238,7 +239,7 @@ fn write_in_order(
                         this.error = None;
                     }
                     Err(cause) => {
-                        this.error = Some(cause);
+                        this.error = Some(cause.message);
                         this.reload(cx);
                     }
                 }
@@ -354,11 +355,22 @@ impl StudyLibrary {
             .unwrap_or_else(|| base.to_string())
     }
 
-    /// Send a command; its answer (the changed studies, and an `id` where one was made).
+    /// Send a command; its answer (the changed studies, and an `id` where one was made), or why
+    /// the core refused it.
     pub fn command(
         &self,
         command: StudyCommand,
     ) -> impl std::future::Future<Output = Result<StudyCommandResult, String>> + 'static + use<>
+    {
+        let answer = self.command_answer(command);
+        async move { answer.await.map_err(|cause| cause.message) }
+    }
+
+    /// `command`, with the core's error as it came: a stale chapter save is `ErrorKind::Conflict`.
+    pub fn command_answer(
+        &self,
+        command: StudyCommand,
+    ) -> impl std::future::Future<Output = Result<StudyCommandResult, CoreError>> + 'static + use<>
     {
         let (reply, answer) = oneshot::channel();
         let sent = self.writes.unbounded_send(Write::Command {
@@ -367,11 +379,9 @@ impl StudyLibrary {
         });
         async move {
             if sent.is_err() {
-                return Err("The study library is closed".to_string());
+                return Err(CoreError::new(CLOSED));
             }
-            answer
-                .await
-                .unwrap_or_else(|_| Err("The study library is closed".to_string()))
+            answer.await.unwrap_or_else(|_| Err(CoreError::new(CLOSED)))
         }
     }
 
@@ -379,10 +389,7 @@ impl StudyLibrary {
     pub fn flushed(&self) -> BoxedSave {
         let (done, wait) = oneshot::channel();
         let _ = self.writes.unbounded_send(Write::Flushed(done));
-        Box::pin(async move {
-            wait.await
-                .unwrap_or_else(|_| Err("The study library is closed".to_string()))
-        })
+        Box::pin(async move { wait.await.unwrap_or_else(|_| Err(CLOSED.to_string())) })
     }
 
     /// Show the studies an answer names: all of them, or the changed ones in the library's order.

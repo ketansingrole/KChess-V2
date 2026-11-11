@@ -44,7 +44,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::Level;
+use kchess_contracts::{CoreError, Level};
 use serde_json::{Value, json};
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Color, Position as _, Square};
@@ -85,7 +85,7 @@ const CONFLICT: &str = "Recovered session differs from the saved study. It is ke
 /// A study write's answer, which the quit and the page's own handling both wait on.
 type StudySave = futures::future::Shared<
     std::pin::Pin<
-        Box<dyn Future<Output = Result<kchess_contracts::types::StudyCommandResult, String>>>,
+        Box<dyn Future<Output = Result<kchess_contracts::types::StudyCommandResult, CoreError>>>,
     >,
 >;
 
@@ -530,7 +530,10 @@ impl AnalysisPage {
         crate::quit::on_quit(cx, move |cx| {
             let page = weak.upgrade()?;
             let study = page.update(cx, |page, cx| page.persist_study(cx))?;
-            Some(Box::pin(async move { study.await.map(|_| ()) }) as BoxedSave)
+            Some(
+                Box::pin(async move { study.await.map(|_| ()).map_err(|cause| cause.message) })
+                    as BoxedSave,
+            )
         });
         page
     }

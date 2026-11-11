@@ -3,8 +3,9 @@
 //! Conventions:
 //! - Field names are camelCase on the wire. `Option` fields are omitted when absent unless a
 //!   field says otherwise with its serde attributes.
-//! - A string-literal union is a Rust enum. `wire_enum!` also emits the array of wire values
-//!   under the constant's name (`APPEARANCES`, ...); `union!` does not.
+//! - A string-literal union is a Rust enum (`kchess_domain::union!`). `wire_enum!` also emits the
+//!   array of wire values under the constant's name (`APPEARANCES`, ...); `union!` does not. The
+//!   unions domain rules read are declared in the domain and re-exported here.
 //! - A flattened parent is `#[serde(flatten)]`.
 
 use std::collections::BTreeMap;
@@ -15,74 +16,20 @@ use serde_json::{Number, Value};
 use crate::Variant;
 use kchess_domain::color::Color;
 
-/// A string-literal union.
-macro_rules! union {
-    ($(#[$meta:meta])* $name:ident { $($variant:ident = $wire:literal),+ $(,)? }) => {
-        $(#[$meta])*
-        #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub enum $name {
-            $(#[serde(rename = $wire)] $variant,)+
-        }
+use kchess_domain::{union, wire_enum};
 
-        impl $name {
-            /// Every value, in declaration order.
-            pub const ALL: &[$name] = &[$($name::$variant),+];
-
-            /// Its wire value.
-            pub const fn as_str(self) -> &'static str {
-                match self {
-                    $($name::$variant => $wire,)+
-                }
-            }
-        }
-    };
-}
-
-/// A string-literal union with the array of its wire values.
-macro_rules! wire_enum {
-    ($(#[$meta:meta])* $name:ident, $konst:ident { $($variant:ident = $wire:literal),+ $(,)? }) => {
-        union!($(#[$meta])* $name { $($variant = $wire),+ });
-        /// The wire values of the union, in declaration order.
-        pub const $konst: &[&str] = &[$($wire),+];
-    };
-}
+pub use kchess_domain::misc::constants::{
+    APPEARANCES, Appearance, ENGINE_LEVELS, EngineLevel, NotificationKind, SESSION_KINDS,
+    SessionKind, TournamentSystem,
+};
 
 /* ── Choices and settings ───────────────────────────────────────────── */
 
-wire_enum!(#[doc = "Which color scheme the app uses."] Appearance, APPEARANCES {
-    System = "system",
-    Light = "light",
-    Dark = "dark",
-});
 wire_enum!(#[doc = "Where board coordinates are shown."] CoordinateMode, COORDINATE_MODES {
     None = "none",
     Inside = "inside",
     Outside = "outside",
 });
-wire_enum!(#[doc = "Built-in engine strength, from beginner to max."] EngineLevel, ENGINE_LEVELS {
-    Beginner = "beginner",
-    Novice = "novice",
-    Casual = "casual",
-    Club = "club",
-    StrongClub = "strong-club",
-    Expert = "expert",
-    Cm = "cm",
-    Fm = "fm",
-    Im = "im",
-    Gm = "gm",
-    SuperGm = "super-gm",
-    Max = "max",
-});
-impl EngineLevel {
-    /// The level a wire value names.
-    pub fn from_key(key: &str) -> Option<EngineLevel> {
-        EngineLevel::ALL
-            .iter()
-            .copied()
-            .find(|level| level.as_str() == key)
-    }
-}
-
 wire_enum!(#[doc = "How a pawn reaching the last rank is promoted: always ask, always to a queen, or a queen only when premoving."] PromotionMode, PROMOTION_MODES {
     Ask = "ask",
     Queen = "queen",
@@ -93,14 +40,6 @@ wire_enum!(#[doc = "How long a piece takes to slide to its square."] PieceAnimat
     Fast = "fast",
     Normal = "normal",
     Slow = "slow",
-});
-union!(#[doc = "What a desktop notification is about; each kind (except `test`) has its own switch in Settings."] NotificationKind {
-    OpponentMove = "opponentMove",
-    LowTime = "lowTime",
-    GameEvents = "gameEvents",
-    ComputerMove = "computerMove",
-    Challenge = "challenge",
-    Test = "test",
 });
 wire_enum!(#[doc = "An action the player can take in an online game, such as resigning, aborting, offering or declining a takeback or draw, claiming a result, or going berserk."] OnlineAction, ONLINE_ACTIONS {
     Resign = "resign",
@@ -227,11 +166,6 @@ wire_enum!(#[doc = "Lichess rating category, including variants."] PerfType, PER
     RacingKings = "racingKings",
     Crazyhouse = "crazyhouse",
 });
-union!(#[doc = "Format for exporting a game."] ExportKind {
-    Gif = "gif",
-    Png = "png",
-    Pgn = "pgn",
-});
 wire_enum!(#[doc = "What a connected account can do about a player on Lichess."] RelationAction, RELATION_ACTIONS {
     Follow = "follow",
     Unfollow = "unfollow",
@@ -239,7 +173,6 @@ wire_enum!(#[doc = "What a connected account can do about a player on Lichess."]
     Unblock = "unblock",
 });
 
-union!(#[doc = "Tournament pairing system."] TournamentSystem { Arena = "arena", Swiss = "swiss" });
 union!(#[doc = "Whether play is rated or casual."] LookupMode { Rated = "rated", Casual = "casual" });
 /// Filter games by result. A refusal names it `GameResult`, as the recorded checks did.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -270,7 +203,6 @@ impl GameResultFilter {
         }
     }
 }
-union!(#[doc = "Whether a challenge was received or sent."] ChallengeDirection { In = "in", Out = "out" });
 union!(#[doc = "Which online stream a message arrived on."] Lane { Events = "events", Game = "game", Seek = "seek" });
 union!(#[doc = "Connection state of the online play session."] OnlinePhase {
     Checking = "checking",
@@ -315,8 +247,6 @@ union!(#[doc = "Progress stage of the puzzle database download."] PuzzleDbPhase 
     Cancelled = "cancelled",
     Failed = "failed",
 });
-union!(#[doc = "Progress stage of the voice model download."] VoiceModelPhase { Checking = "checking", Downloading = "downloading", Preparing = "preparing" });
-
 /// Colors of one light or dark variant of an app theme, as `#rgb` / `#rrggbb`. Optional ones are derived from the rest.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -653,12 +583,16 @@ pub struct MessageSent {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct OnlineConnection {
-    pub session: f64,
+    pub session: u64,
     pub account: String,
     pub game_id: String,
     pub lane: Lane,
     pub phase: OnlinePhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// The kind of failure that caused this state, so the page offers what can help.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<crate::ErrorKind>,
 }
 
 /// Health of the idle event stream that waits for challenges and pairings.
@@ -667,6 +601,7 @@ pub struct OnlineConnection {
 pub struct LobbyState {
     pub account: String,
     pub phase: OnlinePhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
 
@@ -1342,7 +1277,7 @@ pub enum ProfileArea {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AlertOwner {
-    pub connection: Option<f64>,
+    pub connection: Option<u64>,
 }
 
 /// `profile:changed`: a write to the profile, from connection `origin` (`docs/shared-core.md`).
@@ -1351,7 +1286,7 @@ pub struct AlertOwner {
 pub struct ProfileChange {
     pub areas: Vec<ProfileArea>,
     /// The connection that wrote it; a window ignores its own writes.
-    pub origin: f64,
+    pub origin: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -1359,12 +1294,25 @@ pub struct ProfileChange {
 pub struct PuzzleDbProgress {
     pub phase: PuzzleDbPhase,
     /// Compressed bytes received so far.
-    pub received: f64,
-    /// Total compressed bytes, when the server said.
-    pub total: Option<f64>,
+    pub received: u64,
     /// Puzzles kept so far.
-    pub kept: f64,
+    pub kept: u64,
+    /// Total compressed bytes, when the server said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+    /// Why it failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+}
+
+impl PuzzleDbPhase {
+    /// The last report of a download: none follows it.
+    pub fn is_terminal(self) -> bool {
+        match self {
+            PuzzleDbPhase::Done | PuzzleDbPhase::Cancelled | PuzzleDbPhase::Failed => true,
+            PuzzleDbPhase::Downloading | PuzzleDbPhase::Importing => false,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
@@ -1461,23 +1409,6 @@ pub struct VoiceWord {
     pub word: String,
     #[serde(with = "js_number")]
     pub conf: f64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct VoiceModelProgress {
-    pub phase: VoiceModelPhase,
-    pub received: f64,
-    pub total: Option<f64>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct VoiceModelStatus {
-    pub installed: bool,
-    pub bytes: f64,
-    pub busy: bool,
-    pub progress: Option<VoiceModelProgress>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -2081,7 +2012,7 @@ pub struct PopularityMonth {
 /* ── Online play, watching and tournaments, as the core answers them ────── */
 
 pub use kchess_domain::records::challenge::{
-    ChallengeInfo, PlayerRef, TimeControl as ChallengeTimeControl,
+    ChallengeDirection, ChallengeInfo, PlayerRef, TimeControl as ChallengeTimeControl,
 };
 
 /// What to play online and how: a public seek, or a challenge to `target`.
@@ -2643,25 +2574,6 @@ impl<'de, V: Deserialize<'de>> Deserialize<'de> for Keyed<V> {
             }
         }
         deserializer.deserialize_map(Entries(std::marker::PhantomData))
-    }
-}
-
-wire_enum!(#[doc = "The unfinished game or analysis a page keeps to resume, and the played game a board shows."] SessionKind, SESSION_KINDS {
-    Analysis = "analysis",
-    Local = "local",
-    Computer = "computer",
-    ArchiveComputer = "archive:computer",
-    ArchiveBoard = "archive:board",
-    ArchiveClock = "archive:clock",
-});
-
-impl SessionKind {
-    /// The kind a page names its session by (`computer`, `archive:board`, …).
-    pub fn named(name: &str) -> Option<SessionKind> {
-        SessionKind::ALL
-            .iter()
-            .copied()
-            .find(|kind| kind.as_str() == name)
     }
 }
 

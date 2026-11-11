@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::game::tree::TreePgn as _;
+use kchess_contracts::CoreError;
 use kchess_contracts::types::{StudyCommand, StudyCommandResult};
 
 impl AnalysisPage {
@@ -24,7 +25,7 @@ impl AnalysisPage {
         // Counted as saved while the core writes it; a failure makes it unsaved again.
         let previous = std::mem::replace(&mut self.study_pgn, text.clone());
         let (study, chapter) = (self.study.clone(), self.chapter.clone());
-        let command = library.read(cx).command(StudyCommand::Save {
+        let command = library.read(cx).command_answer(StudyCommand::Save {
             name,
             pgn: text.clone(),
             id: Some(self.study.clone()),
@@ -36,7 +37,7 @@ impl AnalysisPage {
         let write = self.study_writes;
         self.study_writing = Some((write, answer.clone()));
         cx.spawn(async move |this, cx| {
-            let result: Result<StudyCommandResult, String> = outcome.await;
+            let result: Result<StudyCommandResult, CoreError> = outcome.await;
             let _ = this.update(cx, |this, cx| {
                 if this
                     .study_writing
@@ -50,7 +51,7 @@ impl AnalysisPage {
                     // Another window changed the chapter: the board keeps its moves as an unsaved
                     // copy rather than overwriting that window's, or blocking every later save.
                     Err(cause)
-                        if crate::studies::is_stale(cause.as_str())
+                        if crate::studies::is_stale(&cause)
                             && this.study == study
                             && this.chapter == chapter =>
                     {
@@ -65,7 +66,7 @@ impl AnalysisPage {
                         if this.study_pgn == text {
                             this.study_pgn = previous;
                         }
-                        this.study_error = Some(cause);
+                        this.study_error = Some(cause.message);
                     }
                     Err(_) => {}
                 }
@@ -87,7 +88,7 @@ impl AnalysisPage {
             .or_else(|| self.study_writing.as_ref().map(|(_, save)| save.clone()));
         async move {
             match save {
-                Some(save) => save.await.map(|_| ()),
+                Some(save) => save.await.map(|_| ()).map_err(|cause| cause.message),
                 None => Ok(()),
             }
         }

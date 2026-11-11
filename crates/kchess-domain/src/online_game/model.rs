@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::js;
+use crate::misc::constants::NotificationKind;
 use crate::records;
 use crate::replay::replay_setup;
 use crate::rules::INITIAL_FEN;
@@ -94,7 +95,7 @@ pub enum Effect {
         message: &'static str,
     },
     Notify {
-        kind: &'static str,
+        kind: NotificationKind,
         title: String,
         body: String,
     },
@@ -273,7 +274,7 @@ impl<'a> Run<'a> {
         self.fx.push(Effect::Warn { message });
     }
 
-    pub fn notify(&mut self, kind: &'static str, title: &str, body: String) {
+    pub fn notify(&mut self, kind: NotificationKind, title: &str, body: String) {
         self.fx.push(Effect::Notify {
             kind,
             title: title.to_string(),

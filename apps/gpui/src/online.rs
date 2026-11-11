@@ -14,7 +14,8 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use kchess_contracts::check::{GameId, PresenceUsers, Uci, Username, Validate};
 use kchess_contracts::types::{
-    ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, OngoingGame, PresenceReport,
+    ChallengeInfo, ChallengeTimeControl, ChatRoom, DeclineReason, NotificationKind, OngoingGame,
+    PresenceReport,
 };
 use kchess_contracts::{CoreError, Level};
 use kchess_domain::online_game::model::{Call, Ctx, Effect, Model, Op, Outcome, Reply, View};
@@ -307,7 +308,7 @@ impl OnlineState {
         match effect {
             Effect::Warn { message } => log(&format!("{message} {}", cause.unwrap_or_default())),
             Effect::Notify { kind, title, body } => {
-                crate::notifications::desktop(kind, title, body, cx);
+                crate::notifications::desktop(*kind, title, body, cx);
             }
             Effect::Moved { san } => {
                 crate::sound::move_sound(san.as_deref().unwrap_or_default(), cx)
@@ -610,7 +611,7 @@ impl OnlineState {
                 let left = self.clock_text(&turn);
                 let opponent = &self.model.online_opponent;
                 crate::notifications::desktop(
-                    "lowTime",
+                    NotificationKind::LowTime,
                     "Low on time",
                     &format!("{left} left against {opponent}"),
                     cx,
@@ -866,7 +867,10 @@ impl OnlineState {
         let last = self.model.last_game.as_ref()?.id.as_str();
         self.challenges
             .iter()
-            .find(|c| c.direction == "in" && c.rematch_of.as_deref() == Some(last))
+            .find(|c| {
+                c.direction == kchess_contracts::types::ChallengeDirection::In
+                    && c.rematch_of.as_deref() == Some(last)
+            })
             .cloned()
     }
 
@@ -930,7 +934,7 @@ impl OnlineState {
                 let Ok(challenge) = serde_json::from_value::<ChallengeInfo>(payload.clone()) else {
                     return;
                 };
-                if challenge.direction != "in" {
+                if challenge.direction != kchess_contracts::types::ChallengeDirection::In {
                     return;
                 }
                 let (title, body) = challenge_alert(&challenge);

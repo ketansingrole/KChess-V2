@@ -168,7 +168,7 @@ fn incoming(overrides: Value) -> ChallengeInfo {
     let mut info = ChallengeInfo {
         id: "Chal1234".into(),
         account: "Alice".into(),
-        direction: "in".into(),
+        direction: kchess_contracts::types::ChallengeDirection::In,
         opponent: PlayerRef {
             name: "Bob".into(),
             rating: None,

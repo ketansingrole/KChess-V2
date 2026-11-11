@@ -571,7 +571,7 @@ impl Inner {
             state.failure = Some(error.clone());
             std::mem::take(&mut state.listeners)
         };
-        if is_expected_cancellation(&error) {
+        if error.aborted {
             self.log(
                 Level::Debug,
                 format!("Engine stopped: {}", error_summary(&error)),
@@ -811,14 +811,6 @@ fn exit_fields(status: &ExitStatus) -> (String, String) {
         "none".to_string()
     };
     (code, signal)
-}
-
-fn is_expected_cancellation(error: &CoreError) -> bool {
-    if error.aborted {
-        return true;
-    }
-    let message = error.message.to_lowercase();
-    message.contains("superseded") || message.contains("cancelled")
 }
 
 fn collapse_whitespace(text: &str) -> String {

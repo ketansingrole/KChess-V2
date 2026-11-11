@@ -8,6 +8,7 @@ use super::model::{
     string_or, turn_of,
 };
 use crate::js;
+use crate::misc::constants::NotificationKind;
 use crate::variant::Variant;
 
 /// The days per move Lichess allows.
@@ -173,7 +174,7 @@ impl Run<'_> {
                 "You lost"
             };
             let body = format!("Against {} · {reason}.", self.m.online_opponent);
-            self.notify("gameEvents", outcome, body);
+            self.notify(NotificationKind::GameEvents, outcome, body);
         }
     }
 
@@ -203,7 +204,7 @@ impl Run<'_> {
                 "You are playing {} as {}.",
                 self.m.online_opponent, self.m.online_color
             );
-            self.notify("gameEvents", "Game started", body);
+            self.notify(NotificationKind::GameEvents, "Game started", body);
         }
     }
 
@@ -287,7 +288,7 @@ impl Run<'_> {
             if turn_of(&replayed.setup.fen) == self.m.online_color {
                 let body = format!("{}. Your move.", san.as_deref().unwrap_or("undefined"));
                 let title = format!("{} moved", self.m.online_opponent);
-                self.notify("opponentMove", &title, body);
+                self.notify(NotificationKind::OpponentMove, &title, body);
                 // A new move answers any takeback request.
                 self.m.takeback_offer = "none".into();
             }
@@ -302,7 +303,7 @@ impl Run<'_> {
         let my_draw = flag(format!("{mine}draw"));
         if their_draw && self.m.draw_offer != "theirs" && !full {
             let body = format!("{} offers a draw.", self.m.online_opponent);
-            self.notify("gameEvents", "Draw offered", body);
+            self.notify(NotificationKind::GameEvents, "Draw offered", body);
         }
         self.m.draw_offer = if their_draw {
             "theirs"

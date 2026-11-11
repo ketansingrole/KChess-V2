@@ -60,7 +60,7 @@ pub fn color_text(challenge: &ChallengeInfo) -> String {
     if color == "random" {
         return "random colours".into();
     }
-    let yours = if challenge.direction == "out" {
+    let yours = if challenge.direction == kchess_contracts::types::ChallengeDirection::Out {
         color
     } else if color == "white" {
         "black"
@@ -176,7 +176,7 @@ impl OnlinePage {
             .children(
                 challenges
                     .iter()
-                    .filter(|c| c.direction == "in")
+                    .filter(|c| c.direction == kchess_contracts::types::ChallengeDirection::In)
                     .enumerate()
                     .map(|(index, challenge)| {
                         let opponent = &challenge.opponent;
@@ -291,7 +291,7 @@ impl OnlinePage {
             .children(
                 challenges
                     .iter()
-                    .filter(|c| c.direction == "out")
+                    .filter(|c| c.direction == kchess_contracts::types::ChallengeDirection::Out)
                     .enumerate()
                     .map(|(index, challenge)| {
                         let id = challenge.id.clone();
