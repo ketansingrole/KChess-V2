@@ -11,20 +11,22 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
+use super::EngineContext;
 use super::scheduler::Priority;
 use super::slot::EngineSlot;
 use super::status::fairy_variant;
 use super::uci::{error_summary, truncate_for_log};
-use super::{EngineContext, validated};
-use crate::error::Result;
+use crate::error::{CoreError, Result};
 use crate::host::Level;
 use crate::tasks::{aborted as signal_aborted, lock};
-use kchess_domain::misc::{validate, value::J};
+use kchess_contracts::check::check;
+use kchess_contracts::types::AnalysisRequest;
+pub use kchess_contracts::types::{AnalysisReason as Reason, AnalysisUpdate, EngineLine};
+use kchess_domain::misc::value::J;
 use kchess_domain::training::uci_info::parse_info;
 
 /// Depth a bounded analysis searches to.
@@ -38,79 +40,6 @@ const EMIT_EVERY: Duration = Duration::from_millis(120);
 
 /// Where updates go: the host's `engine:analysis` event, or a test's recorder.
 pub type AnalysisSink = Arc<dyn Fn(AnalysisUpdate) + Send + Sync>;
-
-/// Why an analysis ended (`reason`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Reason {
-    Completed,
-    Interrupted,
-    Failed,
-}
-
-/// One line of a search's principal variations (`EngineLine`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EngineLine {
-    /// 1 for the best line, 2 for the next best...
-    pub rank: u32,
-    pub depth: f64,
-    /// Centipawns, when there is no forced mate.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cp: Option<f64>,
-    /// Moves to mate: positive when White mates, negative when Black does.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mate: Option<f64>,
-    /// Principal variation as UCI moves.
-    pub pv: Vec<String>,
-}
-
-/// The payload of `engine:analysis` (`AnalysisUpdate`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalysisUpdate {
-    /// The request this belongs to; the frontends drop updates of superseded ones.
-    pub id: u64,
-    pub fen: String,
-    pub depth: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nps: Option<f64>,
-    pub lines: Vec<EngineLine>,
-    pub done: bool,
-    pub context: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<Reason>,
-    pub engine: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// `AnalysisRequest` after validation.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Request {
-    fen: String,
-    #[serde(default)]
-    root_fen: Option<String>,
-    #[serde(default)]
-    moves: Option<Vec<String>>,
-    /// Numbers arrive as floats from the validator.
-    #[serde(default)]
-    client_id: Option<f64>,
-    lines: f64,
-    #[serde(default)]
-    infinite: bool,
-    /// A Lichess variant key; standard chess (or Chess960) when left out.
-    #[serde(default)]
-    variant: Option<String>,
-}
-
-/// The whole number a validated request carries, as the integer the update reports.
-fn whole(value: f64) -> i64 {
-    value as i64
-}
 
 /// The analysis service's state.
 #[derive(Default)]
@@ -187,13 +116,13 @@ impl Analysis {
 
     pub(crate) async fn start_analysis_with_settings(
         &self,
-        raw: Value,
+        request: AnalysisRequest,
         configured: impl Future<Output = Result<String>>,
         send: AnalysisSink,
     ) -> Result<u64> {
         self.interrupt_others();
         self.mine()
-            .start_analysis_with_settings(raw, configured, send)
+            .start_analysis_with_settings(request, configured, send)
             .await
     }
 
@@ -330,7 +259,7 @@ struct Finish {
 
 /// An admitted request owns cancellation and its place in line, including while settings load.
 struct PendingAnalysis {
-    request: Request,
+    request: AnalysisRequest,
     id: u64,
     token: CancellationToken,
     prev: Option<oneshot::Receiver<()>>,
@@ -362,17 +291,18 @@ impl AnalysisEngine {
     /// `startAnalysis(request, configured, send)`: validates the request, supersedes the analysis
     /// running, and starts this one on its own task. Returns the request's id.
     pub fn start_analysis(&self, raw: Value, configured: &str, send: AnalysisSink) -> Result<u64> {
-        Ok(self.start_pending(self.reserve(raw)?, configured.to_string(), send))
+        let request = check::<AnalysisRequest>(J::from(&raw)).map_err(CoreError::new)?;
+        Ok(self.start_pending(self.reserve(request), configured.to_string(), send))
     }
 
     /// Admit before the first await; stopping the service cancels pending settings reads too.
     pub(crate) async fn start_analysis_with_settings(
         &self,
-        raw: Value,
+        request: AnalysisRequest,
         configured: impl Future<Output = Result<String>>,
         send: AnalysisSink,
     ) -> Result<u64> {
-        let mut pending = self.reserve(raw)?;
+        let mut pending = self.reserve(request);
         if let Some(prev) = pending.prev.take() {
             let _ = prev.await;
         }
@@ -384,8 +314,7 @@ impl AnalysisEngine {
         Ok(self.start_pending(pending, configured, send))
     }
 
-    fn reserve(&self, raw: Value) -> Result<PendingAnalysis> {
-        let request: Request = validated(validate::assert_analysis_request(J::from(&raw)))?;
+    fn reserve(&self, request: AnalysisRequest) -> PendingAnalysis {
         let (id, token, prev, done) = {
             let mut state = lock(&self.shared.state);
             state.next_id += 1;
@@ -400,7 +329,7 @@ impl AnalysisEngine {
             let prev = state.serial.replace(queued);
             (id, token, prev, done)
         };
-        Ok(PendingAnalysis {
+        PendingAnalysis {
             request,
             id,
             token,
@@ -410,7 +339,7 @@ impl AnalysisEngine {
                 shared: Arc::clone(&self.shared),
                 id,
             },
-        })
+        }
     }
 
     fn start_pending(
@@ -446,7 +375,7 @@ impl AnalysisEngine {
                 id,
                 fen: request.fen.clone(),
                 context,
-                client_id: request.client_id.map(whole),
+                client_id: request.client_id.map(|id| id as i64),
                 sink: send,
                 progress: Mutex::new(Progress::default()),
             });
@@ -469,7 +398,7 @@ impl AnalysisEngine {
                         truncate_for_log(
                             &request
                                 .client_id
-                                .map_or("none".to_string(), |id| whole(id).to_string()),
+                                .map_or("none".to_string(), |id| id.to_string()),
                             40
                         ),
                     );
@@ -530,7 +459,7 @@ impl AnalysisEngine {
 async fn analyse(
     shared: &Arc<Shared>,
     session: &Arc<Session>,
-    request: &Request,
+    request: &AnalysisRequest,
     root: &str,
     moves: &[String],
     configured: &str,
@@ -559,7 +488,7 @@ async fn analyse(
             // Stepping through a game reuses this process with identical options; only changed
             // values are sent. Chess960 is always on: castling is king-takes-rook in the history.
             let threads = shared.ctx.scheduler.search_threads().to_string();
-            let lines = whole(request.lines).to_string();
+            let lines = request.lines.to_string();
             let mut options = vec![
                 ("Threads", threads.as_str()),
                 ("Hash", "128"),
@@ -579,7 +508,7 @@ async fn analyse(
                 position.push_str(&format!(" moves {}", moves.join(" ")));
             }
             target.write(&position)?;
-            let (command, timeout) = if request.infinite {
+            let (command, timeout) = if request.infinite == Some(true) {
                 ("go infinite".to_string(), None)
             } else {
                 (
@@ -589,7 +518,7 @@ async fn analyse(
             };
             let listener = Arc::clone(session);
             let listener_token = token.clone();
-            let wanted = whole(request.lines) as u32;
+            let wanted = request.lines;
             target
                 .search(
                     &command,

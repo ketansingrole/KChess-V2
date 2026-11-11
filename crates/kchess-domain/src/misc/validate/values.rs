@@ -71,10 +71,6 @@ pub(super) fn picked(value: J, options: &[&str], msg: Msg) -> Checked<String> {
     Ok(text)
 }
 
-pub(super) fn assert_level(value: J) -> Checked<String> {
-    picked(value, ENGINE_LEVELS, Some("Invalid engine level."))
-}
-
 /// A list of usernames (trimmed), at most `max`; `min_msg` when there must be at least one.
 pub(super) fn usernames(value: J, min_msg: Msg, max: usize) -> Checked<Vec<String>> {
     let names: Vec<String> = decode(value, |keys| match keys {
@@ -157,10 +153,6 @@ pub(super) fn assert_tournament_password(value: J) -> Checked<Option<String>> {
 }
 
 /// A variant KChess plays (`VARIANTS`).
-pub(super) fn assert_variant(value: J) -> Checked<String> {
-    picked(value, VARIANTS, Some("Invalid variant."))
-}
-
 pub(super) fn assert_perf_type(value: J) -> Checked<String> {
     picked(value, PERF_TYPES, Some("Invalid rating category."))
 }

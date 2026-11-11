@@ -790,52 +790,6 @@ pub(super) fn assert_puzzle_progress_query(value: J) -> Checked<PuzzleProgressQu
     Ok(query)
 }
 
-#[derive(Deserialize, Serialize, Default)]
-#[serde(expecting = "an object")]
-pub struct BestMoveOptions {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    fen: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    movetime: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    chess960: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    variant: Option<String>,
-}
-
-pub fn assert_best_move_options(value: J) -> Checked<BestMoveOptions> {
-    if matches!(value, J::Undef) {
-        return Ok(BestMoveOptions::default());
-    }
-    let mut options: BestMoveOptions = decode(value, |keys| match keys {
-        ["fen"] => Some("Invalid position."),
-        ["movetime"] => Some("Invalid think time."),
-        ["variant"] => Some("Invalid variant."),
-        _ => Some("Invalid engine options."),
-    })?;
-    // Another variant (Fairy-Stockfish plays it) starts from a position legal by its own rules.
-    if let Some(variant) = other_variant(options.variant.as_deref())? {
-        let position = options.fen.as_deref().ok_or("Invalid position.")?;
-        max_chars(position, 120, Some("Invalid position."), "fen")?;
-        if crate::rules::setup_start(variant, position).is_none() {
-            return Err("Invalid position.".into());
-        }
-        if let Some(movetime) = options.movetime {
-            within(movetime, 50, 5000, Some("Invalid think time."), "")?;
-        }
-        return Ok(options);
-    }
-    options.variant = None;
-    if let Some(position) = &options.fen {
-        fen(position, None, Some("Invalid position."), "fen")?;
-        engine_position(position)?;
-    }
-    if let Some(movetime) = options.movetime {
-        within(movetime, 50, 5000, Some("Invalid think time."), "")?;
-    }
-    Ok(options)
-}
-
 #[derive(Deserialize, Serialize)]
 #[serde(expecting = "an object")]
 #[serde(rename_all = "camelCase")]

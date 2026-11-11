@@ -165,11 +165,9 @@ fn a_call_sends_its_arguments_in_order_without_trailing_ones_left_out() {
             .is_empty()
     );
     assert_eq!(
-        calls::StopAnalysis {
-            kill: Some(json!(true))
-        }
-        .args()
-        .expect("args"),
+        calls::StopAnalysis { kill: Some(true) }
+            .args()
+            .expect("args"),
         [json!(true)]
     );
     // One left out between two given is sent as `null`, which the check reads alike.

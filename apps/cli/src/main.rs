@@ -7,8 +7,9 @@ mod review;
 mod wait;
 
 use kchess_contracts::calls;
-use kchess_contracts::check::{Fen, GameId, LichessId, StudyId};
-use kchess_contracts::types::{LookupOptions, PositionLookupKind};
+use kchess_contracts::check::{Fen, GameId, LichessId, StudyId, check};
+use kchess_contracts::types::{AnalysisRequest, LookupOptions, PositionLookupKind};
+use kchess_domain::misc::value::J;
 use kchess_domain::variant::Variant;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -300,7 +301,7 @@ async fn with_core(
             // An explicit operator path is trusted and kept without a fingerprint prompt, as the
             // app's own "your own Stockfish" setting; the core checks it on use.
             core.request(calls::TrustEnginePath {
-                path: json!(engine),
+                path: engine.clone(),
             })
             .await?;
             let mut settings = core.request(calls::StoredSettings {}).await?;
@@ -333,6 +334,7 @@ async fn with_core(
             }
             Command::Analyze => {
                 let request = analysis_request("analyze", rest)?;
+                let request = check::<AnalysisRequest>(J::from(&request))?;
                 core.request(calls::ResumeOnline {}).await?;
                 core.request(calls::StartAnalysis { request }).await?;
                 let mut wait = Wait::new(&mut events);

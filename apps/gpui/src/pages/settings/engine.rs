@@ -10,7 +10,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::types::{EngineStatus, ReviewAuto, Settings};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::{Rows, SettingsPage, choice, info};
 use crate::assets::icon;
@@ -95,9 +95,7 @@ impl SettingsPage {
         cx.spawn(async move |this, cx| {
             let status = status.await;
             let _ = this.update(cx, |this, cx| {
-                this.engine = status
-                    .ok()
-                    .and_then(|status| serde_json::from_value(status).ok());
+                this.engine = status.ok();
                 cx.notify();
             });
         })
@@ -124,10 +122,7 @@ impl SettingsPage {
                 })
                 .ok();
             let Some(status) = status else { return };
-            let status: Option<EngineStatus> = status
-                .await
-                .ok()
-                .and_then(|status| serde_json::from_value(status).ok());
+            let status: Option<EngineStatus> = status.await.ok();
             let _ = this.update_in(cx, |this, window, cx| {
                 let ready = status.as_ref().is_some_and(|status| status.ready);
                 this.engine = status;
@@ -162,7 +157,7 @@ impl SettingsPage {
             let trusted = this
                 .update(cx, |_, cx| {
                     cx.global::<AppCore>()
-                        .request(calls::TrustEnginePath { path: json!(path) })
+                        .request(calls::TrustEnginePath { path: path.clone() })
                 })
                 .ok();
             if let Some(trusted) = trusted {
@@ -204,8 +199,8 @@ impl SettingsPage {
                         return;
                     }
                 };
-                let version = result["version"].as_str().unwrap_or_default().to_string();
-                if result["updated"] != json!(true) {
+                let version = result.version;
+                if !result.updated {
                     window.push_notification(
                         SharedString::from(format!(
                             "You already have the latest Stockfish ({version})"
@@ -224,8 +219,7 @@ impl SettingsPage {
                         SharedString::from(format!("Stockfish {version} downloaded")),
                         cx,
                     );
-                    let path = result["path"].as_str().unwrap_or_default().to_string();
-                    this.set_engine_path(path, false, window, cx);
+                    this.set_engine_path(result.path, false, window, cx);
                 }
                 cx.notify();
             });

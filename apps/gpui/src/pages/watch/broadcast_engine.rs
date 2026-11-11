@@ -209,9 +209,8 @@ impl WatchPage {
             .global::<AppCore>()
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
-            let status = status.await.unwrap_or(Value::Null);
+            let ready = status.await.is_ok_and(|status| status.ready);
             let _ = this.update(cx, |this, cx| {
-                let ready = status["ready"].as_bool() == Some(true);
                 if this.broadcasts.engine.ready != ready {
                     this.broadcasts.engine.ready = ready;
                     this.broadcasts.engine.previews.clear();

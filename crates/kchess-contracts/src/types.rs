@@ -73,6 +73,16 @@ wire_enum!(#[doc = "Built-in engine strength, from beginner to max."] EngineLeve
     SuperGm = "super-gm",
     Max = "max",
 });
+impl EngineLevel {
+    /// The level a wire value names.
+    pub fn from_key(key: &str) -> Option<EngineLevel> {
+        EngineLevel::ALL
+            .iter()
+            .copied()
+            .find(|level| level.as_str() == key)
+    }
+}
+
 wire_enum!(#[doc = "How a pawn reaching the last rank is promoted: always ask, always to a queen, or a queen only when premoving."] PromotionMode, PROMOTION_MODES {
     Ask = "ask",
     Queen = "queen",
@@ -1137,19 +1147,21 @@ pub struct BroadcastUpdate {
     pub error: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+/// What the managed engine directory holds.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineManaged {
     pub installed: bool,
     pub path: String,
+    /// The release tag recorded when it was downloaded, e.g. `sf_17.1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+/// The engine that would run: ready when its executable is.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineStatus {
-    /// Identity of the executable currently selected, including native file changes.
-    pub identity: Option<String>,
     pub ready: bool,
     /// The executable in use (a downloaded or chosen one), or empty when the bundled engine is.
     pub path: String,
@@ -1158,6 +1170,19 @@ pub struct EngineStatus {
     pub managed: EngineManaged,
     /// An official native download exists for this platform and architecture.
     pub can_download: bool,
+    /// Identity of the executable currently selected, including native file changes; only a
+    /// ready engine has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
+}
+
+/// The downloaded Stockfish. `updated` is false when it already was the latest release.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineInstalled {
+    pub path: String,
+    pub version: String,
+    pub updated: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -1685,32 +1710,54 @@ pub struct VoiceAttempt {
     pub at: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase", expecting = "an object")]
 pub struct BestMoveOptions {
     /// Start from this position instead of the standard one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fen: Option<String>,
     /// Think for this many milliseconds instead of the level's default.
-    pub movetime: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub movetime: Option<u64>,
     /// Chess960 rules: castling is king-takes-rook in UCI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chess960: Option<bool>,
+    /// The Lichess key of a variant with rules of its own; Fairy-Stockfish plays it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
+}
+
+impl From<&kchess_domain::games::computer::SearchOptions> for BestMoveOptions {
+    fn from(options: &kchess_domain::games::computer::SearchOptions) -> BestMoveOptions {
+        BestMoveOptions {
+            fen: options.fen.clone(),
+            movetime: options.movetime.map(|ms| ms as u64),
+            chess960: options.chess960.then_some(true),
+            variant: options.variant.map(|variant| variant.key().to_string()),
+        }
+    }
 }
 
 /// Ask the analysis engine to study one position until stopped or a limit is reached.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", expecting = "an object")]
 pub struct AnalysisRequest {
     pub fen: String,
-    /// Repetition context: root plus moves must produce fen.
-    pub root_fen: Option<String>,
-    pub moves: Option<Vec<String>>,
-    pub client_id: Option<f64>,
     /// How many of the best lines to report (MultiPV).
-    pub lines: f64,
+    pub lines: u32,
     /// Keep searching until stopped instead of stopping at a sensible depth.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub infinite: Option<bool>,
+    /// Repetition context: root plus moves must produce fen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_fen: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moves: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<u64>,
     /// The Lichess variant key (`crazyhouse`, `atomic`…) when the position is not standard chess;
     /// those go to Fairy-Stockfish.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
 }
 
@@ -1719,32 +1766,39 @@ pub struct AnalysisRequest {
 #[serde(rename_all = "camelCase")]
 pub struct EngineLine {
     /// 1 for the best line, 2 for the next best…
-    pub rank: f64,
+    pub rank: u32,
     pub depth: f64,
     /// Centipawns, when there is no forced mate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cp: Option<f64>,
     /// Moves to mate: positive when White mates, negative when Black does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mate: Option<f64>,
     /// Principal variation as UCI moves.
     pub pv: Vec<String>,
 }
 
+/// The payload of `engine:analysis`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisUpdate {
     /// The request this belongs to; a frontend drops updates of superseded ones.
-    pub id: f64,
+    pub id: u64,
     pub fen: String,
     pub depth: f64,
     /// Nodes per second, for the engine's status line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nps: Option<f64>,
     pub lines: Vec<EngineLine>,
     /// The search finished (limit reached, or stopped) and no more updates follow.
     pub done: bool,
-    pub context: Option<String>,
-    pub client_id: Option<f64>,
+    pub context: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<AnalysisReason>,
-    pub engine: Option<String>,
+    pub engine: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 

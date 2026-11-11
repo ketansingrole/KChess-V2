@@ -4,7 +4,8 @@
 //! core's library as the app saves them, so either can carry the game on.
 
 use kchess_contracts::calls::{self, CoreCall};
-use kchess_contracts::check::LibraryId;
+use kchess_contracts::check::{LibraryId, Moves};
+use kchess_contracts::types::EngineLevel;
 use std::time::{Duration, Instant};
 
 use kchess_domain::games::Setup;
@@ -307,10 +308,14 @@ impl Session<'_> {
                     return;
                 }
             };
+            let Some(level) = EngineLevel::from_key(&request.level) else {
+                eprintln!("Engine: Invalid engine level.");
+                return;
+            };
             let search = self.core.request(calls::BestMove {
-                moves: json!(request.moves),
-                level: json!(request.level),
-                options: Some(json!(request.options)),
+                moves: Moves(request.moves.clone()),
+                level,
+                options: Some((&request.options).into()),
             });
             let reply = search.await;
             let host = self.host();
@@ -318,7 +323,7 @@ impl Session<'_> {
                 return;
             };
             let effects = match reply {
-                Ok(reply) => game.search_reply(&request, reply.as_str().unwrap_or_default(), &host),
+                Ok(reply) => game.search_reply(&request, &reply, &host),
                 Err(cause) => {
                     eprintln!("Engine: {cause}");
                     game.search_failed(&request)
@@ -522,7 +527,7 @@ async fn computer_game(
     // Fairy-Stockfish plays the other variants; the core says so if it is missing.
     let fairy = variant.is_some_and(|variant| !variant.standard_rules());
     let engine = core.request(calls::EngineStatus { variant: None }).await?;
-    if !fairy && engine["ready"] != json!(true) {
+    if !fairy && !engine.ready {
         return Err("Stockfish is unavailable. Install an engine or pass --engine.".into());
     }
     let host = computer::Host {

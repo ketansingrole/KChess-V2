@@ -4,6 +4,7 @@
 use super::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::{Bounded, Position};
+use kchess_contracts::types::AnalysisRequest;
 
 impl AnalysisPage {
     pub(crate) fn engine_on(cx: &App) -> bool {
@@ -31,10 +32,10 @@ impl AnalysisPage {
             .global::<AppCore>()
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
-            let status = status.await.unwrap_or(Value::Null);
+            let status = status.await.ok();
             let _ = this.update(cx, |this, cx| {
-                this.engine_ready = status["ready"].as_bool() == Some(true);
-                let identity = status["identity"].as_str().map(str::to_string);
+                this.engine_ready = status.as_ref().is_some_and(|status| status.ready);
+                let identity = status.and_then(|status| status.identity);
                 if identity != this.engine_identity {
                     // Another engine: what the old one said is no longer this one's.
                     this.engine_identity = identity;
@@ -114,18 +115,24 @@ impl AnalysisPage {
         self.wanted = fen.clone();
         self.live = None;
         self.engine_busy = true;
-        let mut asked = json!({
-            "fen": fen,
-            "clientId": request,
-            "rootFen": if threat { fen.clone() } else { self.root.fen.clone() },
-            "moves": if threat { Vec::new() } else { moves_of(&self.path) },
-            "lines": lines.clamp(1, 5),
-            "infinite": infinite,
-        });
-        // Fairy-Stockfish analyses the other variants.
-        if let Some(variant) = self.fairy_variant() {
-            asked["variant"] = json!(variant);
-        }
+        let asked = AnalysisRequest {
+            fen: fen.clone(),
+            lines: lines.clamp(1, 5) as u32,
+            infinite: Some(infinite),
+            root_fen: Some(if threat {
+                fen.clone()
+            } else {
+                self.root.fen.clone()
+            }),
+            moves: Some(if threat {
+                Vec::new()
+            } else {
+                moves_of(&self.path)
+            }),
+            client_id: Some(request),
+            // Fairy-Stockfish analyses the other variants.
+            variant: self.fairy_variant().map(str::to_string),
+        };
         let start = cx
             .global::<AppCore>()
             .request(calls::StartAnalysis { request: asked });
@@ -135,7 +142,7 @@ impl AnalysisPage {
                 let current = this.wanted == fen && this.client_id == request;
                 match started {
                     Ok(id) if current => {
-                        this.latest_id = this.latest_id.max(id.as_f64().unwrap_or_default());
+                        this.latest_id = this.latest_id.max(id as f64);
                     }
                     Err(cause) if current => {
                         crate::log::write(
@@ -748,7 +755,7 @@ pub(super) fn prefs_lines(cx: &App) -> usize {
 /// `stopAnalysisSafe`: stop the search; `release` also closes the engine.
 pub(super) fn stop_analysis(release: bool, cx: &mut App) {
     let stop = cx.global::<AppCore>().request(calls::StopAnalysis {
-        kill: release.then(|| json!(true)),
+        kill: release.then_some(true),
     });
     cx.background_executor()
         .spawn(async move {

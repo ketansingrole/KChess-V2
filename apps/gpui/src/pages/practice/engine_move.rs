@@ -5,7 +5,8 @@
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::calls;
-use serde_json::{Value, json};
+use kchess_contracts::check::Moves;
+use kchess_contracts::types::{BestMoveOptions, EngineLevel};
 
 use crate::core::AppCore;
 
@@ -35,8 +36,7 @@ impl EngineMove {
             .global::<AppCore>()
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
-            let ready =
-                matches!(status.await, Ok(status) if status["ready"].as_bool() == Some(true));
+            let ready = matches!(status.await, Ok(status) if status.ready);
             let _ = this.update(cx, |view, cx| {
                 view.engine().ready = Some(ready);
                 cx.notify();
@@ -64,9 +64,13 @@ impl EngineMove {
         engine.thinking = busy;
         engine.error = None;
         let search = cx.global::<AppCore>().request(calls::BestMove {
-            moves: json!(moves),
-            level: json!("max"),
-            options: Some(json!({ "fen": fen, "movetime": movetime })),
+            moves: Moves(moves.to_vec()),
+            level: EngineLevel::Max,
+            options: Some(BestMoveOptions {
+                fen: Some(fen.to_string()),
+                movetime: Some(movetime.into()),
+                ..BestMoveOptions::default()
+            }),
         });
         let task = cx.spawn(async move |this, cx| {
             let reply = search.await;
@@ -80,7 +84,7 @@ impl EngineMove {
                     engine.thinking = false;
                 }
                 match reply {
-                    Ok(Value::String(best)) if !best.is_empty() => done(view, best, cx),
+                    Ok(best) if !best.is_empty() => done(view, best, cx),
                     Ok(_) => {}
                     Err(cause) if !cause.aborted => {
                         crate::log::write(

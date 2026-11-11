@@ -19,6 +19,7 @@ use kchess_domain::variant::Variant;
 use kchess_domain::{js, replay};
 
 mod ai;
+mod engine;
 mod lookups;
 mod studies;
 

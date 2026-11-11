@@ -305,7 +305,7 @@ async fn reports_missing_when_the_directory_or_binary_is_absent() {
         managed_engine(&host, &empty).await,
         ManagedEngine {
             installed: false,
-            path: empty.join(executable_name()),
+            path: empty.join(executable_name()).to_string_lossy().into_owned(),
             version: None,
         }
     );

@@ -388,7 +388,7 @@ async fn a_variant_position_goes_to_the_variant_engine_with_its_variant() {
     let seen = Arc::clone(&started);
     let fake_log = log.clone();
     ctx.command = Arc::new(move |status| {
-        seen.lock().expect("paths").push(status.path.clone());
+        seen.lock().expect("paths").push(status.path.clone().into());
         support::fake("search", Some(&fake_log))
     });
     let analysis = Analysis::new(ctx);

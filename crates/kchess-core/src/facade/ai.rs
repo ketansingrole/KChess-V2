@@ -7,14 +7,12 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tokio::net::TcpListener;
 
-use kchess_contracts::check::AiModelName;
+use kchess_contracts::check::{AiModelName, Moves};
 use kchess_contracts::core_api::{AiApi, Assist, EngineApi};
 use kchess_contracts::types::{
-    AiConnection, AiEffort, AiExplanation, AiKind, AiModelList, AiRequest,
+    AiConnection, AiEffort, AiExplanation, AiKind, AiModelList, AiRequest, BestMoveOptions,
+    EngineLevel,
 };
-use kchess_domain::misc::checks;
-
-use super::args::normal;
 
 use crate::ai::{
     Attempt, CALLBACK_PATH, FIRST_PORT, Model, Problem, Refusal, Tokens, new_host_id, valid_host_id,
@@ -338,18 +336,17 @@ impl Core {
             return Vec::new();
         };
         kchess_domain::rules::san_and_play(&mut after, chosen);
-        let options = json!({
-            "fen": kchess_domain::rules::make_fen(&after),
-            "movetime": REFUTATION_TIME,
-        });
+        let options = BestMoveOptions {
+            fen: Some(kchess_domain::rules::make_fen(&after)),
+            movetime: Some(REFUTATION_TIME),
+            ..BestMoveOptions::default()
+        };
         let reply = async {
             self.assistance_allowed(Assist::Engine.refusal())?;
-            let options = normal(checks::best_move_options, &options)?;
-            EngineApi::best_move(self, json!([]), json!("club"), Some(options)).await
+            EngineApi::best_move(self, Moves::default(), EngineLevel::Club, Some(options)).await
         };
         match reply.await {
-            Ok(Value::String(reply)) => vec![reply],
-            Ok(_) => Vec::new(),
+            Ok(reply) => vec![reply],
             Err(cause) => {
                 self.host.log(
                     Level::Debug,

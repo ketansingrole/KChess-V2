@@ -189,16 +189,7 @@ pub trait EngineHandoff: Send + Sync {
 /// Held for the duration of one replacement; dropping it resumes the engine owners.
 pub type EngineGuard = Box<dyn Send>;
 
-/// What the managed directory holds.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ManagedEngine {
-    pub installed: bool,
-    pub path: PathBuf,
-    /// Release tag recorded when it was downloaded, e.g. `sf_17.1`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-}
+pub use kchess_contracts::types::EngineManaged as ManagedEngine;
 
 /// The result of `install_managed_engine`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -229,14 +220,14 @@ pub async fn managed_engine(host: &dyn Host, dir: &Path) -> ManagedEngine {
     let path = dir.join(executable_name());
     match tokio::fs::metadata(&path).await {
         Ok(metadata) if metadata.is_file() => {}
-        Ok(_) => return ManagedEngine::absent(path),
+        Ok(_) => return absent(&path),
         Err(cause) => {
             host.log(
                 Level::Debug,
                 "managed-engine",
                 &format!("Managed engine check failed: {} {cause}", dir.display()),
             );
-            return ManagedEngine::absent(path);
+            return absent(&path);
         }
     }
     let version = tokio::fs::read_to_string(dir.join(VERSION_FILE))
@@ -246,18 +237,16 @@ pub async fn managed_engine(host: &dyn Host, dir: &Path) -> ManagedEngine {
         .filter(|text| !text.is_empty());
     ManagedEngine {
         installed: true,
-        path,
+        path: path.to_string_lossy().into_owned(),
         version,
     }
 }
 
-impl ManagedEngine {
-    fn absent(path: PathBuf) -> ManagedEngine {
-        ManagedEngine {
-            installed: false,
-            path,
-            version: None,
-        }
+fn absent(path: &Path) -> ManagedEngine {
+    ManagedEngine {
+        installed: false,
+        path: path.to_string_lossy().into_owned(),
+        version: None,
     }
 }
 
@@ -373,7 +362,7 @@ async fn install(
     if current.installed && current.version.as_deref() == Some(release.tag.as_str()) {
         return Ok(InstallResult {
             installed: true,
-            path: current.path,
+            path: current.path.into(),
             version: release.tag,
             updated: false,
         });

@@ -203,33 +203,33 @@ core_api! {
         /// The engine that plays `variant` (standard chess when omitted): Stockfish, or for the
         /// variants it cannot play, the bundled Fairy-Stockfish.
         EngineStatus = "engineStatus" fn engine_status(;
-            variant: Option<Value> = Optional(Raw(c::variant))
-        ) -> Value;
+            variant: Option<crate::Variant>
+        ) -> crate::types::EngineStatus;
         /// Download and verify the latest official Stockfish build into KChess's own folder.
         /// `updated` is false when the installed copy was already the latest and nothing was
         /// downloaded.
         #[writes(Engine)]
-        InstallEngine = "installEngine" fn install_engine() -> Value;
+        InstallEngine = "installEngine" fn install_engine() -> EngineInstalled;
         /// Delete the downloaded engine; the bundled and chosen ones are never touched.
         #[writes(Engine)]
-        DeleteEngine = "deleteEngine" fn delete_engine() -> Value;
-        StopEngine = "stopEngine" fn stop_engine() -> Value;
+        DeleteEngine = "deleteEngine" fn delete_engine() -> ();
+        StopEngine = "stopEngine" fn stop_engine() -> ();
         #[assist(Engine)]
         BestMove = "bestMove" fn best_move(
-            moves: Value = c::moves,
-            level: Value = c::level;
-            options: Option<Value> = c::best_move_options
-        ) -> Value;
+            moves: Moves,
+            level: EngineLevel;
+            options: Option<BestMoveOptions>
+        ) -> String;
         /// Start analysing a position (replacing any running analysis); updates arrive on
         /// `engine:analysis`.
         #[assist(Analysis)]
         StartAnalysis = "startAnalysis" fn start_analysis(
-            request: Value = Raw(c::analysis_request)
-        ) -> Value;
+            request: AnalysisRequest
+        ) -> u64;
         /// Stop the running analysis; with `kill`, also closes the engine.
         StopAnalysis = "stopAnalysis" fn stop_analysis(;
-            kill: Option<Value> = Optional(c::boolean)
-        ) -> Value;
+            kill: Option<bool>
+        ) -> ();
         /// The stored review of these moves from this position, if any; `variant` is a variant
         /// game's Lichess key.
         #[assist(StoredReview)]
@@ -249,7 +249,7 @@ core_api! {
         /// Review summaries of up to one history page of games, by game id.
         ReviewSummaries = "reviewSummaries" fn review_summaries(ids: Value = c::game_ids) -> Value;
         /// Trusts the Stockfish executable at `path`, chosen with the file picker.
-        TrustEnginePath = "trustEnginePath" fn trust_engine_path(path: Value = c::any) -> Value;
+        TrustEnginePath = "trustEnginePath" fn trust_engine_path(path: String) -> ();
     }
 
     /// Online play and challenges.

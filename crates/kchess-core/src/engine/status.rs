@@ -8,10 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
-use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
-use super::managed::{ManagedEngine, Target, can_download, executable_name, managed_engine};
+use super::managed::{Target, can_download, executable_name, managed_engine};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 
@@ -33,19 +32,7 @@ pub struct EngineLocations {
     pub variant: PathBuf,
 }
 
-/// What `engine_status` reports (`EngineStatus` in the TypeScript contracts).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EngineStatus {
-    pub ready: bool,
-    /// The executable in use (a downloaded or chosen one), or empty when the bundled engine is.
-    pub path: PathBuf,
-    pub bundled: bool,
-    /// The Stockfish KChess downloaded, whether or not it is the one in use.
-    pub managed: ManagedEngine,
-    /// An official native download exists for this platform and architecture.
-    pub can_download: bool,
-}
+pub use kchess_contracts::types::EngineStatus;
 
 /// The engine the computer would use: a configured executable that is executable, else the
 /// bundled one. Not ready when neither is.
@@ -60,19 +47,21 @@ pub async fn engine_status(
     if !configured.is_empty() && is_executable_file(host, Path::new(configured)).await {
         return EngineStatus {
             ready: true,
-            path: PathBuf::from(configured),
+            path: configured.to_string(),
             bundled: false,
             managed,
             can_download,
+            identity: None,
         };
     }
     if is_executable_file(host, &locations.bundled).await {
         return EngineStatus {
             ready: true,
-            path: PathBuf::new(),
+            path: String::new(),
             bundled: true,
             managed,
             can_download,
+            identity: None,
         };
     }
     host.log(
@@ -85,10 +74,11 @@ pub async fn engine_status(
     );
     EngineStatus {
         ready: false,
-        path: PathBuf::from(configured),
+        path: configured.to_string(),
         bundled: false,
         managed,
         can_download,
+        identity: None,
     }
 }
 
@@ -114,10 +104,11 @@ pub async fn variant_engine_status(host: &dyn Host, locations: &EngineLocations)
     }
     EngineStatus {
         ready,
-        path: locations.variant.clone(),
+        path: locations.variant.to_string_lossy().into_owned(),
         bundled: false,
         managed: managed_engine(host, &locations.managed_dir).await,
         can_download: false,
+        identity: None,
     }
 }
 
@@ -164,7 +155,7 @@ pub async fn engine_identity(status: &EngineStatus) -> Result<String> {
         .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0);
     Ok(format!(
         "{}:{}:{}",
-        status.path.display(),
+        status.path,
         metadata.len(),
         modified_ms
     ))

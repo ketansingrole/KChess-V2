@@ -4,6 +4,8 @@
 //! unfinished game in the profile, to resume it.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::Moves;
+use kchess_contracts::types::EngineLevel;
 use kchess_domain::training::clock::format_clock;
 use std::time::Instant;
 
@@ -325,11 +327,10 @@ impl ComputerPage {
         self.engine = Engine::Checking;
         cx.notify();
         let status = cx.global::<AppCore>().request(calls::EngineStatus {
-            variant: Some(json!(self.setup_variant())),
+            variant: Some(self.game.setup().variant),
         });
         cx.spawn(async move |this, cx| {
-            let ready =
-                matches!(status.await, Ok(status) if status["ready"].as_bool() == Some(true));
+            let ready = matches!(status.await, Ok(status) if status.ready);
             let _ = this.update(cx, |this, cx| {
                 this.engine = if ready {
                     Engine::Ready
@@ -411,10 +412,13 @@ impl ComputerPage {
             Ok(None) => return,
             Err(cause) => return self.log_warn(&cause),
         };
+        let Some(level) = EngineLevel::from_key(&request.level) else {
+            return self.log_warn("Invalid engine level.");
+        };
         let search = cx.global::<AppCore>().request(calls::BestMove {
-            moves: json!(request.moves),
-            level: json!(request.level),
-            options: Some(json!(request.options)),
+            moves: Moves(request.moves.clone()),
+            level,
+            options: Some((&request.options).into()),
         });
         cx.notify();
         self.search = Some(cx.spawn(async move |this, cx| {
@@ -426,15 +430,14 @@ impl ComputerPage {
     fn search_finished(
         &mut self,
         request: &SearchRequest,
-        reply: Result<Value, kchess_contracts::CoreError>,
+        reply: Result<String, kchess_contracts::CoreError>,
         cx: &mut Context<Self>,
     ) {
         let host = self.host();
         let effects = match reply {
             Ok(reply) => {
                 self.error = None;
-                self.game
-                    .search_reply(request, reply.as_str().unwrap_or_default(), &host)
+                self.game.search_reply(request, &reply, &host)
             }
             Err(cause) => {
                 if !cause.aborted {

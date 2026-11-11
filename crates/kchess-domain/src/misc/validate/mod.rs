@@ -235,8 +235,8 @@ use requests::*;
 use values::*;
 
 pub use requests::{
-    AnalysisRequest, BestMoveOptions, GamePageQuery, assert_analysis_request,
-    assert_best_move_options, assert_game_page_query, assert_watch_target,
+    AnalysisRequest, GamePageQuery, assert_analysis_request, assert_game_page_query,
+    assert_watch_target,
 };
 pub use values::{assert_moves, assert_username};
 
@@ -346,8 +346,6 @@ checks! {
     game_ids => assert_game_ids,
     uci => assert_uci,
     fen => assert_fen,
-    moves => assert_moves,
-    level => assert_level,
     usernames => assert_usernames,
     friend_list => assert_friend_list,
     action => assert_action,
@@ -362,7 +360,6 @@ checks! {
     tournament_password => assert_tournament_password,
     insights_query => assert_insights_query,
     perf_type => assert_perf_type,
-    variant => assert_variant,
     lichess_id => assert_lichess_id,
     puzzle_id => assert_puzzle_id,
     optional_account => assert_optional_account,
@@ -380,8 +377,6 @@ checks! {
     run_input => assert_run_input,
     puzzle_attempt => assert_puzzle_attempt,
     puzzle_progress_query => assert_puzzle_progress_query,
-    best_move_options => assert_best_move_options,
-    analysis_request => assert_analysis_request,
     review_request => assert_review_request,
     review_key => assert_review_key,
     voice_attempt => assert_voice_attempt,
@@ -624,36 +619,6 @@ mod tests {
         // Black has a seventeenth piece: Stockfish quit on it ("More than 32 pieces").
         let crowded = "rnbqkbnr/pppppppp/8/8/3q3N/4K3/1PPPPPPP/RNBQ1BNR w kq - 0 1";
         let refused = Err("Each side can have at most 16 pieces.".into());
-        let analysis = obj(vec![
-            ("fen", J::Str(crowded.into())),
-            ("lines", J::Num(3.0)),
-        ]);
-        assert_eq!(checks::analysis_request(analysis), refused);
-        let search = obj(vec![("fen", J::Str(crowded.into()))]);
-        assert_eq!(checks::best_move_options(search), refused);
-        // Horde's thirty-six pawns are Horde's: Fairy-Stockfish plays them.
-        let horde = "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1";
-        let search = obj(vec![
-            ("fen", J::Str(horde.into())),
-            ("variant", J::Str("horde".into())),
-        ]);
-        assert_eq!(
-            checks::best_move_options(search),
-            Ok(json!({ "fen": horde, "variant": "horde" }))
-        );
-        let search = obj(vec![
-            ("fen", J::Str(horde.into())),
-            ("variant", J::Str("crazyhouse".into())),
-        ]);
-        assert_eq!(
-            checks::best_move_options(search),
-            Err("Invalid position.".into())
-        );
-        let search = obj(vec![("variant", J::Str("bughouse".into()))]);
-        assert_eq!(
-            checks::best_move_options(search),
-            Err("Invalid variant.".into())
-        );
         let review = obj(vec![
             ("fen", J::Str(crowded.into())),
             ("moves", J::Arr(vec![])),
@@ -663,8 +628,6 @@ mod tests {
 
     #[test]
     fn lists_are_objects_of_their_indices_and_binary_data_is_not_text() {
-        assert_eq!(checks::best_move_options(J::Arr(vec![])), Ok(json!({})));
-        assert_eq!(checks::best_move_options(J::Undef), Ok(json!({})));
         let bytes = J::Bytes {
             len: 2,
             head: b"hi".to_vec(),

@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use futures_util::future::{BoxFuture, ready};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
@@ -26,8 +26,10 @@ use crate::error::{CoreError, Result};
 use crate::host::Level;
 use crate::tasks::{aborted as signal_aborted, lock};
 use crate::time::now_ms;
+use kchess_contracts::check::{Moves, check};
+use kchess_contracts::types::BestMoveOptions;
 use kchess_domain::js::number_to_string as js_number;
-use kchess_domain::misc::{validate, value::J};
+use kchess_domain::misc::value::J;
 
 /// The message a superseded search rejects with.
 pub const SUPERSEDED: &str = "Engine search superseded.";
@@ -38,21 +40,6 @@ const WARM_IDLE: Duration = Duration::from_secs(120);
 
 /// The random source for the weakest levels' random moves; tests replace it.
 pub type RandomSource = Arc<dyn Fn() -> f64 + Send + Sync>;
-
-/// `BestMoveOptions` after validation.
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MoveOptions {
-    #[serde(default)]
-    fen: Option<String>,
-    #[serde(default)]
-    movetime: Option<f64>,
-    #[serde(default)]
-    chess960: bool,
-    /// Another variant's Lichess key; Fairy-Stockfish plays it.
-    #[serde(default)]
-    variant: Option<String>,
-}
 
 /// `EngineLevelInfo` for the level asked for.
 #[derive(Debug, Deserialize)]
@@ -224,15 +211,26 @@ impl Search {
         configured: &str,
         options: Value,
     ) -> BoxFuture<'static, Result<String>> {
+        let checked = check::<Moves>(J::from(&moves)).and_then(|Moves(moves)| {
+            let options = match options {
+                Value::Null => BestMoveOptions::default(),
+                options => check::<BestMoveOptions>(J::from(&options))?,
+            };
+            Ok((moves, options))
+        });
+        let (moves, options) = match checked {
+            Ok(checked) => checked,
+            Err(refusal) => return Box::pin(ready(Err(CoreError::new(refusal)))),
+        };
         self.best_move_with_settings(moves, level, options, ready(Ok(configured.to_string())))
     }
 
     /// Register before settings are read, so stop/suspend also cancel that wait.
     pub(crate) fn best_move_with_settings<'a>(
         &self,
-        moves: Value,
+        moves: Vec<String>,
         level: &str,
-        options: Value,
+        options: BestMoveOptions,
         configured: impl Future<Output = Result<String>> + Send + 'a,
     ) -> BoxFuture<'a, Result<String>> {
         let mut request = match prepare(moves, options, level, "") {
@@ -324,17 +322,14 @@ impl Search {
     }
 }
 
-/// Validates the untrusted arguments the way `bestMove` does, then checks the moves reach a
-/// position.
-fn prepare(moves: Value, options: Value, level: &str, configured: &str) -> Result<Request> {
-    let moves: Vec<String> = validate::assert_moves(J::from(&moves)).map_err(CoreError::new)?;
-    let options = if options.is_null() {
-        json!({})
-    } else {
-        options
-    };
-    let options: MoveOptions =
-        super::validated(validate::assert_best_move_options(J::from(&options)))?;
+/// Checks the moves reach a position from the options' start.
+fn prepare(
+    moves: Vec<String>,
+    options: BestMoveOptions,
+    level: &str,
+    configured: &str,
+) -> Result<Request> {
+    let chess960 = options.chess960 == Some(true);
     let start = options.fen.as_deref().unwrap_or(INITIAL_FEN);
     let invalid = || CoreError::new("Invalid computer position or move history.");
     let variant = options.variant.as_deref().and_then(fairy_variant);
@@ -349,14 +344,13 @@ fn prepare(moves: Value, options: Value, level: &str, configured: &str) -> Resul
         }
         // The rules write castling king-takes-rook; with `UCI_Chess960` off the engine rejects
         // that.
-        _ => kchess_domain::replay::engine_line(start, &moves, options.chess960)
-            .ok_or_else(invalid)?,
+        _ => kchess_domain::replay::engine_line(start, &moves, chess960).ok_or_else(invalid)?,
     };
     Ok(Request {
         moves,
         fen: options.fen,
-        movetime: options.movetime,
-        chess960: options.chess960,
+        movetime: options.movetime.map(|ms| ms as f64),
+        chess960,
         variant,
         level: level.to_string(),
         configured: configured.to_string(),

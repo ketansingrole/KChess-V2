@@ -3,6 +3,9 @@
 //! dropping its answers), and only updates for the request asked last are kept.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::check;
+use kchess_contracts::types::AnalysisRequest;
+use kchess_domain::misc::value::J;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -106,14 +109,21 @@ impl PositionEngine {
                 (engine(owner).client_id == id).then(|| {
                     let mut request = request;
                     request["clientId"] = json!(id);
-                    cx.global::<AppCore>()
-                        .request(calls::StartAnalysis { request })
+                    let request = check::<AnalysisRequest>(J::from(&request))
+                        .map_err(kchess_contracts::CoreError::new)?;
+                    Ok(cx
+                        .global::<AppCore>()
+                        .request(calls::StartAnalysis { request }))
                 })
             });
             let Ok(Some(start)) = start else {
                 return;
             };
-            if let Err(cause) = start.await {
+            let started = match start {
+                Ok(start) => start.await.map(drop),
+                Err(cause) => Err(cause),
+            };
+            if let Err(cause) = started {
                 let _ = this.update(cx, |owner, cx| {
                     let engine = engine(owner);
                     if engine.client_id != id {

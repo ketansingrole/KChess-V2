@@ -236,8 +236,7 @@ impl GuessMoves {
             .global::<AppCore>()
             .request(calls::EngineStatus { variant: None });
         cx.spawn(async move |this, cx| {
-            let ready =
-                matches!(status.await, Ok(status) if status["ready"].as_bool() == Some(true));
+            let ready = matches!(status.await, Ok(status) if status.ready);
             let _ = this.update(cx, |this, cx| this.engine_known(ready, cx));
         })
         .detach();

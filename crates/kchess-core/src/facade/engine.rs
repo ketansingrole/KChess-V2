@@ -4,14 +4,19 @@ use kchess_contracts::CoreEvent;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use kchess_contracts::Variant;
+use kchess_contracts::check::Moves;
 use kchess_contracts::core_api::{Assist, EngineApi};
+use kchess_contracts::types::{
+    AnalysisRequest, BestMoveOptions, EngineInstalled, EngineLevel, EngineStatus,
+};
 use kchess_domain::misc::checks;
 use serde_json::{Value, json};
 
 use super::args::{normal, text, to_json};
 use crate::core::{Core, LocationOverride, Mutation};
 use crate::engine::review::ReviewRequest;
-use crate::engine::status::{engine_identity, engine_status, fairy_variant, variant_engine_status};
+use crate::engine::status::{engine_identity, engine_status, variant_engine_status};
 use crate::error::{CoreError, Result};
 use crate::store::games::as_json;
 
@@ -26,65 +31,61 @@ impl Core {
 }
 
 impl EngineApi for Core {
-    async fn engine_status(&self, variant: Option<Value>) -> Result<Value> {
-        let variant = variant
-            .as_ref()
-            .and_then(Value::as_str)
-            .unwrap_or("standard");
+    async fn engine_status(&self, variant: Option<Variant>) -> Result<EngineStatus> {
         let host = self.host.as_ref();
-        let mut status = if fairy_variant(variant).is_some() {
-            as_json(variant_engine_status(host, &self.ctx.locations).await)?
+        let mut status = if variant.and_then(Variant::fairy_name).is_some() {
+            variant_engine_status(host, &self.ctx.locations).await
         } else {
             let configured = text(&self.get_settings().await?["enginePath"]);
-            as_json(engine_status(host, &self.ctx.locations, &configured).await)?
+            engine_status(host, &self.ctx.locations, &configured).await
         };
-        if status["ready"].as_bool() == Some(true) {
-            let read = serde_json::from_value(status.clone())
-                .map_err(|e| CoreError::new(format!("Invalid status: {e}")))?;
-            status["identity"] = to_json(engine_identity(&read).await)?;
+        if status.ready {
+            status.identity = Some(engine_identity(&status).await?);
         }
         Ok(status)
     }
 
-    async fn install_engine(&self) -> Result<Value> {
+    async fn install_engine(&self) -> Result<EngineInstalled> {
         let id = self.next_request();
         let installed = self
             .managed_request(id, Mutation::Install, &LocationOverride::default())
             .await?;
-        Ok(json!({
-            "path": installed["path"],
-            "version": installed["version"],
-            "updated": installed["updated"],
-        }))
+        serde_json::from_value(installed)
+            .map_err(|cause| CoreError::new(format!("Invalid install: {cause}")))
     }
 
-    async fn delete_engine(&self) -> Result<Value> {
+    async fn delete_engine(&self) -> Result<()> {
         let id = self.next_request();
         self.managed_request(id, Mutation::Delete, &LocationOverride::default())
             .await
+            .map(drop)
     }
 
     // A window stops its own computer search, not another window's game.
-    async fn stop_engine(&self) -> Result<Value> {
+    async fn stop_engine(&self) -> Result<()> {
         self.search
             .stop_connection(crate::connection::current_or_app());
-        Ok(Value::Null)
+        Ok(())
     }
 
-    async fn best_move(&self, moves: Value, level: Value, options: Option<Value>) -> Result<Value> {
+    async fn best_move(
+        &self,
+        Moves(moves): Moves,
+        level: EngineLevel,
+        options: Option<BestMoveOptions>,
+    ) -> Result<String> {
         let configured = self.configured_engine(Assist::Engine);
         self.search
             .best_move_with_settings(
                 moves,
-                level.as_str().unwrap_or_default(),
-                options.unwrap_or(Value::Null),
+                level.as_str(),
+                options.unwrap_or_default(),
                 configured,
             )
             .await
-            .map(|value| json!(value))
     }
 
-    async fn start_analysis(&self, request: Value) -> Result<Value> {
+    async fn start_analysis(&self, request: AnalysisRequest) -> Result<u64> {
         let configured = self.configured_engine(Assist::Analysis);
         let host = Arc::clone(&self.host);
         // Its updates go to the window that asked, not to every window.
@@ -98,13 +99,11 @@ impl EngineApi for Core {
                 }),
             )
             .await
-            .map(|id| json!(id))
     }
 
-    async fn stop_analysis(&self, kill: Option<Value>) -> Result<Value> {
-        self.analysis
-            .stop_mine(kill.is_some_and(|kill| kill.as_bool() == Some(true)));
-        Ok(Value::Null)
+    async fn stop_analysis(&self, kill: Option<bool>) -> Result<()> {
+        self.analysis.stop_mine(kill == Some(true));
+        Ok(())
     }
 
     async fn review_get(&self, fen: Value, moves: Value, variant: Option<Value>) -> Result<Value> {
@@ -152,8 +151,8 @@ impl EngineApi for Core {
             .await
     }
 
-    async fn trust_engine_path(&self, path: Value) -> Result<Value> {
-        self.search.trust_engine_path(&PathBuf::from(text(&path)));
-        Ok(Value::Null)
+    async fn trust_engine_path(&self, path: String) -> Result<()> {
+        self.search.trust_engine_path(&PathBuf::from(path));
+        Ok(())
     }
 }
