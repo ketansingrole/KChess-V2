@@ -509,7 +509,7 @@ fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppConte
     app.cx.update(|cx| {
         insights.update(cx, |page, cx| {
             page.show_time_use(
-                serde_json::json!({
+                serde_json::from_value(serde_json::json!({
                     "games": 12,
                     "trouble": { "win": 2, "draw": 0, "loss": 3, "total": 5 },
                     "spare": { "win": 5, "draw": 1, "loss": 1, "total": 7 },
@@ -523,7 +523,8 @@ fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppConte
                         "short": { "moves": 40, "blunders": 3 },
                         "spare": { "moves": 200, "blunders": 2 },
                     },
-                }),
+                }))
+                .expect("a time use"),
                 cx,
             )
         })

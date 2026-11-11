@@ -142,7 +142,7 @@ core_api! {
         GameLibraryOverview = "gameLibraryOverview" fn game_library_overview(
         ) -> crate::types::GameLibraryOverview;
         /// Patterns in an account's synced games, worked out on this computer.
-        Insights = "insights" fn insights(query: InsightsQuery) -> Value;
+        Insights = "insights" fn insights(query: InsightsQuery) -> InsightsReport;
         GameRatingHistory = "gameRatingHistory" fn game_rating_history(
             account: GameAccount
         ) -> Vec<RatingSeries>;

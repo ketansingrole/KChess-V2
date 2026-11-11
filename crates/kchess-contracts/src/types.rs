@@ -564,13 +564,166 @@ pub struct InsightsQuery {
     pub variant: Option<Variant>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Streaks {
     pub longest_win: i64,
     pub longest_loss: i64,
     /// Positive for wins in a row, negative for losses.
     pub current: i64,
+}
+
+/// One account's finished games as insights: results overall and broken down, streaks, and
+/// accuracy and time use where reviews and clocks allow.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightsReport {
+    pub account: String,
+    pub total: i64,
+    pub record: GameRecord,
+    pub by_color: ByColor,
+    /// Most games first.
+    pub by_speed: Vec<SpeedRecord>,
+    /// Opening families with two games or more, most games first.
+    pub by_opening: Vec<OpeningRecord>,
+    /// Sunday first, in local time.
+    pub by_weekday: Vec<GameRecord>,
+    /// Hours 0 to 23, in local time.
+    pub by_hour: Vec<GameRecord>,
+    /// By the opponent's rating against the player's.
+    pub by_opponent: Vec<BandRecord>,
+    /// By the game's length in moves.
+    pub by_length: Vec<BandRecord>,
+    /// By how the game ended, most games first.
+    pub endings: Vec<EndingRecord>,
+    pub streaks: Streaks,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accuracy: Option<AccuracyReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_use: Option<TimeUseReport>,
+    /// The variants other than standard the account has finished games in.
+    pub variants: Vec<Variant>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ByColor {
+    pub white: GameRecord,
+    pub black: GameRecord,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SpeedRecord {
+    pub speed: String,
+    pub record: GameRecord,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpeningRecord {
+    pub name: String,
+    pub record: GameRecord,
+    /// Of those games, the ones played as White.
+    pub as_white: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct BandRecord {
+    pub label: String,
+    pub record: GameRecord,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct EndingRecord {
+    /// The game's Lichess status (`mate`, `resign`, ...).
+    pub status: String,
+    pub record: GameRecord,
+}
+
+/// The reviewed games' accuracy and mistakes.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AccuracyReport {
+    pub games: i64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "js_number::option"
+    )]
+    pub average: Option<f64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "js_number::option"
+    )]
+    pub acpl: Option<f64>,
+    pub per_game: MistakeRates,
+}
+
+/// Inaccuracies, mistakes and blunders per reviewed game.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Default)]
+pub struct MistakeRates {
+    pub inaccuracy: f64,
+    pub mistake: f64,
+    pub blunder: f64,
+}
+
+/// How the clock was used in the clocked games.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeUseReport {
+    pub games: i64,
+    /// Results when the player's clock fell under a tenth of its start.
+    pub trouble: GameRecord,
+    /// Results of the rest.
+    pub spare: GameRecord,
+    /// The phases the player moved in, in game order.
+    pub phases: Vec<PhaseTime>,
+    pub clock_at: Vec<ClockAt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blunders: Option<BlundersByTime>,
+}
+
+/// The player's average time per move in one phase of the game.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PhaseTime {
+    /// `opening`, `middlegame` or `endgame`.
+    pub phase: String,
+    pub moves: i64,
+    #[serde(with = "js_number")]
+    pub seconds: f64,
+    /// Percent of all the time the player spent.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "js_number::option"
+    )]
+    pub share: Option<f64>,
+}
+
+/// The clocks at a move, as percentages of the start, averaged over the games that reached it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ClockAt {
+    #[serde(rename = "move")]
+    pub at_move: i64,
+    pub games: i64,
+    #[serde(with = "js_number")]
+    pub player: f64,
+    #[serde(with = "js_number")]
+    pub opponent: f64,
+}
+
+/// Blunders when short of time against with time to spare, in the reviewed clocked games.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BlundersByTime {
+    pub games: i64,
+    pub short: Blunders,
+    pub spare: Blunders,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Blunders {
+    pub moves: i64,
+    pub blunders: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -2874,6 +3027,34 @@ pub struct MistakeGame {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Accuracy and time use, which the recorded reports leave out, keep the numbers the core
+    /// wrote by hand: averages whole when they are, per-game rates always with a fraction.
+    #[test]
+    fn insights_accuracy_and_time_use_keep_their_bytes() {
+        let record = r#"{"total":1,"win":1,"loss":0,"draw":0}"#;
+        let text = format!(
+            concat!(
+                r#"{{"accuracy":{{"games":2,"average":87.5,"acpl":30,"#,
+                r#""perGame":{{"inaccuracy":1.0,"mistake":0.5,"blunder":0.0}}}},"#,
+                r#""timeUse":{{"games":1,"trouble":{r},"spare":{r},"#,
+                r#""phases":[{{"phase":"opening","moves":3,"seconds":2,"share":12.5}},"#,
+                r#"{{"phase":"endgame","moves":1,"seconds":0.5}}],"#,
+                r#""clockAt":[{{"move":20,"games":1,"player":50,"opponent":41.5}}],"#,
+                r#""blunders":{{"games":1,"short":{{"moves":1,"blunders":0}},"#,
+                r#""spare":{{"moves":2,"blunders":1}}}}}}}}"#
+            ),
+            r = record
+        );
+        #[derive(Serialize, Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Parts {
+            accuracy: AccuracyReport,
+            time_use: TimeUseReport,
+        }
+        let parts: Parts = serde_json::from_str(&text).unwrap();
+        assert_eq!(serde_json::to_string(&parts).unwrap(), text);
+    }
 
     /// A game saved before `playable` existed is one the Board API can play.
     #[test]
