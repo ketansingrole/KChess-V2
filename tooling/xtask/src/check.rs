@@ -701,9 +701,12 @@ fn mutants_base(remote: &str, is_ancestor: impl Fn(&str) -> bool) -> Option<&str
 /// `cargo xtask mutants`' arguments for a branch push from `base`: CI's (the app left out), with
 /// the results in `checkout`'s `mutants.out`, where the pusher looks for them.
 ///
-/// One job (`jobs_for`) tests them one at a time, in place, in the tree kept built. More test
+/// One job (`jobs_for`) tests them one at a time, in place, in the tree kept built: for a few
+/// mutants that beats copies built afresh (2026-11-10, the 4 kchess-core mutants of 9e39cc7f took
+/// 92 s on the next push against 337 s four at once, each build 8–19 s against 38–254 s). More test
 /// that many at once, each in cargo-mutants' own copy of the tree with its build (`--copy-target`,
-/// which APFS and other copy-on-write file systems clone rather than copy), so no job starts cold.
+/// which APFS and other copy-on-write file systems clone rather than copy), so a job rebuilds
+/// the workspace's crates (at their new path) but not their dependencies.
 fn branch_mutants_args(base: &str, checkout: &Path, jobs: usize) -> Vec<String> {
     let out = checkout.to_string_lossy();
     if jobs <= 1 {
@@ -727,15 +730,21 @@ fn branch_mutants_args(base: &str, checkout: &Path, jobs: usize) -> Vec<String> 
     .to_vec()
 }
 
-/// From how many mutants a branch push tests several at once (`jobs_for`). MEASUREMENT
-const PARALLEL_FROM: usize = 40;
+/// From how many mutants a branch push tests several at once (`jobs_for`). 2026-11-11, the 25
+/// kchess-domain mutants of 1efd5324 on a busy 10-core Mac: 294 s in place (about 12 s each),
+/// 174 s five at once with copied builds (the same outcomes). The copies paid about 115 s up
+/// front (28 s for the baseline, then 65–91 s for each copy's first build, which rebuilds the
+/// workspace's crates at their new path) and then 13 s a mutant per job, so they win from about
+/// 11 kchess-domain mutants. The core's first builds in a copy take longer (38–254 s, 2026-11-10,
+/// `branch_mutants_args`'s note), which moves its break-even towards 30.
+const PARALLEL_FROM: usize = 30;
 
 /// The most mutants a branch push tests at once: each job's builds and tests take several cores
 /// and a few gigabytes, and the machine is still in use.
 const MAX_JOBS: usize = 6;
 
 /// How many mutants a branch push of `count` tests at once on a machine of `cpus`: one, in place,
-/// up to `PARALLEL_FROM`, where a copy's first build costs more than it saves; then half the
+/// below `PARALLEL_FROM`, where a copy's first build costs more than it saves; then half the
 /// CPUs, leaving the rest to the jobs' own builds and to whoever uses the machine, up to
 /// `MAX_JOBS`.
 fn jobs_for(count: usize, cpus: usize) -> usize {

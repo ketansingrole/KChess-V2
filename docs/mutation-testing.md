@@ -41,10 +41,14 @@ changed in the app.
 
 The pre-push hook (`cargo xtask install-hooks`) runs it before every push of a branch, on the
 lines new since that branch's last push, and refuses the push while a mutant survives: a survivor
-costs minutes here rather than a whole CI run. It tests them as CI does, one at a time in place,
-but in the checkout's own mutants tree (`.data/mutants-tree`, a detached worktree set to the pushed
-commit), never in the files you are editing; the tree stays built, so a push rebuilds only what
-changed since the last one. A second push from the same checkout waits for the first, and whatever
+costs minutes here rather than a whole CI run. It tests them in the checkout's own mutants tree
+(`.data/mutants-tree`, a detached worktree set to the pushed commit), never in the files you are
+editing; the tree stays built, so a push rebuilds only what changed since the last one. It counts
+them first (as `--plan` does): below 30 it tests them as CI does, one at a time in place;
+from there, half the CPUs' worth at once (at most six), each job in cargo-mutants' own copy of the
+tree with its build (`--copy-target`, cloned rather than copied on APFS), so each rebuilds only the
+workspace's crates, not their dependencies: 25 kchess-domain mutants took 174 s five at once
+against 294 s in place. A second push from the same checkout waits for the first, and whatever
 an interrupted run left in the tree is reset before the next. Results land in the checkout's
 `mutants.out/`. It skips a push of anything but a clean HEAD, and
 clones without cargo-mutants; `KCHESS_SKIP_PRE_PUSH=1 git push …` skips it on purpose. When CI's
