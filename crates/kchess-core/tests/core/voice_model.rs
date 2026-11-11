@@ -468,11 +468,12 @@ async fn rejects_a_bad_checksum_without_publishing_a_cache_then_permits_retry() 
     let directory = tempfile::tempdir().expect("directory");
     let (cache, logs) = cache_in(directory.path(), &server.base, &zip);
 
+    // 2026-11-11: every failure ended "Connect to the internet and try again.", this one too,
+    // although the connection worked.
     let error = cache.ensure(None).await.expect_err("checksum");
-    assert!(
-        error.message.contains("checksum mismatch"),
-        "{}",
-        error.message
+    assert_eq!(
+        error.message,
+        "Couldn’t prepare voice input. Voice model checksum mismatch. Try downloading it again."
     );
     assert!(entries(directory.path()).is_empty());
     assert!(
@@ -530,13 +531,17 @@ async fn cleans_up_failed_and_interrupted_responses_and_allows_another_attempt()
     let failed = cache.ensure(None).await.expect_err("503");
     assert_eq!(
         failed.message,
-        "Couldn’t prepare voice input. Voice model download failed: HTTP 503. Connect to the internet and try again."
+        "Couldn’t prepare voice input. Voice model download failed: HTTP 503."
     );
+    // A lost connection is the one failure the connection advice is for.
     let interrupted = cache.ensure(None).await.expect_err("interrupted");
     assert!(
         interrupted
             .message
-            .starts_with("Couldn’t prepare voice input. "),
+            .starts_with("Couldn’t prepare voice input. Voice model download failed (network error)")
+            && interrupted
+                .message
+                .ends_with(" Connect to the internet and try again."),
         "{}",
         interrupted.message
     );
@@ -551,12 +556,9 @@ async fn refuses_a_download_declared_larger_than_the_limit() {
     let directory = tempfile::tempdir().expect("directory");
     let (cache, _) = cache_in(directory.path(), &server.base, &zip);
     let error = cache.ensure(None).await.expect_err("too large");
-    assert!(
-        error
-            .message
-            .ends_with("Voice model download is too large. Connect to the internet and try again."),
-        "{}",
-        error.message
+    assert_eq!(
+        error.message,
+        "Couldn’t prepare voice input. Voice model download is too large."
     );
     assert!(entries(directory.path()).is_empty());
 }

@@ -24,7 +24,7 @@ use reqwest::header::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, Result};
+use crate::error::{CoreError, ErrorKind, Result};
 use crate::usage::Meter;
 
 /// The message of a download stopped by its caller.
@@ -66,6 +66,17 @@ pub struct Wording {
     pub too_large: &'static str,
 }
 
+/// A request that failed or timed out, in `wording`'s words: an `Offline` (or `TimedOut`) error,
+/// so a caller can tell the person to check the connection only when the connection failed.
+fn network_error(wording: &Wording, cause: &reqwest::Error) -> CoreError {
+    let kind = if cause.is_timeout() {
+        ErrorKind::TimedOut
+    } else {
+        ErrorKind::Offline
+    };
+    CoreError::new((wording.network)(cause)).with_kind(kind)
+}
+
 /// Where a download's traffic is counted.
 #[derive(Clone, Copy)]
 pub struct Usage<'a> {
@@ -100,7 +111,7 @@ pub async fn open<'a>(
         biased;
         () = cancel.cancelled() => Err(CoreError::aborted(ABORTED)),
         sent = send_retrying(request, limits.deadline, &mut requests) => {
-            sent.map_err(|cause| CoreError::new((wording.network)(&cause)))
+            sent.map_err(|cause| network_error(wording, &cause))
         }
     };
     let counted = |requests| usage.meter.count("", usage.kind, requests, 0);
@@ -151,7 +162,7 @@ impl Body<'_> {
             () = self.cancel.cancelled() => return Err(CoreError::aborted(ABORTED)),
             chunk = self.body.chunk() => chunk,
         };
-        let chunk = chunk.map_err(|cause| CoreError::new((self.wording.network)(&cause)))?;
+        let chunk = chunk.map_err(|cause| network_error(self.wording, &cause))?;
         if let Some(chunk) = &chunk {
             self.received += chunk.len() as u64;
             if self.received > self.limits.max_bytes {

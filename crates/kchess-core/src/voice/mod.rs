@@ -26,7 +26,7 @@ pub mod recognizer;
 
 use crate::archive::{self, Refusal};
 use crate::download;
-use crate::error::{CoreError, Result};
+use crate::error::{CoreError, ErrorKind, Result};
 use crate::host::{Host, Level};
 use crate::usage::Meter;
 
@@ -381,10 +381,19 @@ impl VoiceModelCache {
             })?;
         match self.stage(staging.path()).await {
             Ok(()) => Ok(self.path()),
-            Err(cause) => Err(CoreError::new(format!(
-                "Couldn’t prepare voice input. {} Connect to the internet and try again.",
-                cause.message
-            ))),
+            Err(cause) => {
+                // Connection guidance only when the connection is what failed.
+                let advice = match cause.kind {
+                    Some(ErrorKind::Offline | ErrorKind::TimedOut) => {
+                        " Connect to the internet and try again."
+                    }
+                    _ => "",
+                };
+                Err(CoreError::new(format!(
+                    "Couldn’t prepare voice input. {}{advice}",
+                    cause.message
+                )))
+            }
         }
     }
 
