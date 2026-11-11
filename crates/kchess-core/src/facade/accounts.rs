@@ -12,7 +12,6 @@ use crate::store::games::{self, as_json};
 impl AccountsApi for Core {
     async fn add_account(&self, username: Value) -> Result<Value> {
         let name = text(&username);
-        self.ensure_migrated().await?;
         let data = self
             .database
             .write_async(move |ctx| as_json(games::add_account(ctx.db, &name, false)?))
@@ -30,7 +29,6 @@ impl AccountsApi for Core {
             .revoke_logins(Some(std::slice::from_ref(&username)))
             .await;
         let data = self.logout_accounts(Some(&username)).await?;
-        self.reviews.reviews_changed();
         core_data(&data)
     }
 
@@ -38,7 +36,6 @@ impl AccountsApi for Core {
         self.end_sessions(None).await?;
         self.services.lichess().revoke_logins(None).await;
         let data = self.logout_accounts(None).await?;
-        self.reviews.reviews_changed();
         core_data(&data)
     }
 
@@ -54,13 +51,11 @@ impl AccountsApi for Core {
         }
         self.services.online().challenges().forget(&name);
         self.services.lichess().revoke_logins(Some(one)).await;
-        self.ensure_migrated().await?;
         let account = name.clone();
         let data = self
             .database
             .write_async(move |ctx| as_json(games::remove_account(ctx.db, &account)?))
             .await?;
-        self.reviews.reviews_changed();
         core_data(&data)
     }
 }

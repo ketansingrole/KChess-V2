@@ -356,12 +356,14 @@ impl Core {
                 .map_err(|_| CoreError::new("Invalid host reply."))?;
             return self.host_reply(id, reply).map(|()| Value::Null);
         }
-        if !self.closed.load(Ordering::SeqCst) {
-            self.start();
-        }
         // Tracked before the closed check: closing waits for every call that got this far.
         let _in_flight = self.tracker.token();
         self.refuse_closed()?;
+        // An earlier release's profile is imported before anything reads the store.
+        self.ensure_migrated().await?;
+        if !self.closed.load(Ordering::SeqCst) {
+            self.start();
+        }
         // Boxed: the method table is one large future, too big to lay out on a worker's stack.
         Box::pin(kchess_contracts::core_api::dispatch(self, method, args)).await
     }

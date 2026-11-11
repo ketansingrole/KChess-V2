@@ -20,20 +20,17 @@ impl GamesApi for Core {
             .lichess()
             .sync_games(username.as_deref())
             .await?;
-        let data = self.stored_app_data().await?;
-        self.reviews.reviews_changed();
+        let data = self.app_data().await?;
         core_data(&data)
     }
 
     async fn game_page(&self, query: Value) -> Result<Value> {
-        self.ensure_migrated().await?;
         self.database
             .read_async(move |ctx| games::game_page(ctx, query))
             .await
     }
 
     async fn game_library_overview(&self) -> Result<Value> {
-        self.ensure_migrated().await?;
         self.database.read_async(games::game_library_overview).await
     }
 
@@ -46,7 +43,6 @@ impl GamesApi for Core {
 
     async fn game_rating_history(&self, account: Value) -> Result<Value> {
         let account = text(&account);
-        self.ensure_migrated().await?;
         self.database
             .read_async(move |ctx| as_json(games::rating_history(ctx.db, &account)?))
             .await
@@ -54,7 +50,6 @@ impl GamesApi for Core {
 
     async fn game_pgn(&self, account: Value, id: Value) -> Result<Value> {
         let (account, id) = (text(&account), text(&id));
-        self.ensure_migrated().await?;
         self.database
             .read_async(move |ctx| Ok(json!(games::game_pgn(ctx.db, &account, &id)?)))
             .await
@@ -108,7 +103,7 @@ impl GamesApi for Core {
             .lichess()
             .connect_lichess(look.as_ref(), Some(&focus))
             .await?;
-        let data = self.stored_app_data().await?;
+        let data = self.app_data().await?;
         Ok(json!({ "data": core_data(&data)?, "username": connected.username }))
     }
 
@@ -127,14 +122,12 @@ impl GamesApi for Core {
         lichess.cancel_account_syncs(std::slice::from_ref(&account));
         self.reviews
             .discard_account_reviews(std::slice::from_ref(&account));
-        self.ensure_migrated().await?;
         let cleared = account.clone();
         let data = self
             .database
             .write_async(move |ctx| as_json(games::clear_account_data(ctx.db, &cleared)?))
             .await?;
         lichess.forget_profile(&account);
-        self.reviews.reviews_changed();
         core_data(&data)
     }
 
@@ -143,7 +136,6 @@ impl GamesApi for Core {
     }
 
     async fn add_friends(&self, usernames: Value) -> Result<Value> {
-        self.ensure_migrated().await?;
         let list = usernames.as_array().cloned().unwrap_or_default();
         let data = self
             .database

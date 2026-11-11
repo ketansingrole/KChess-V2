@@ -101,6 +101,13 @@ impl CoreApi for Core {
     }
 
     fn changed(&self, areas: &'static [ProfileArea]) {
+        // New games or accounts: the automatic reviews look for work again.
+        if areas
+            .iter()
+            .any(|area| matches!(area, ProfileArea::LichessGames | ProfileArea::Accounts))
+        {
+            self.reviews.reviews_changed();
+        }
         self.host.emit(CoreEvent::ProfileChanged(
             json!({ "areas": areas, "origin": crate::connection::current_or_app() }),
         ));
@@ -108,8 +115,8 @@ impl CoreApi for Core {
 }
 
 impl Core {
-    /// Migrates an earlier release's profile once, before the first store read (`ensureMigrated`).
-    /// The plaintext tokens of an earlier database are encrypted with the OS store here.
+    /// Migrates an earlier release's profile once, before the first call reads the store. The
+    /// plaintext tokens of an earlier database are encrypted with the OS store here.
     pub(crate) async fn ensure_migrated(&self) -> Result<()> {
         self.migrated
             .get_or_try_init(|| async { self.migrate().await })
@@ -186,22 +193,15 @@ impl Core {
         Ok(())
     }
 
-    /// The saved settings (`getSettings`).
+    /// The saved settings.
     pub(crate) async fn get_settings(&self) -> Result<Value> {
-        self.ensure_migrated().await?;
         self.database
             .read_async(|ctx| store::games::get_settings(ctx.db))
             .await
     }
 
-    /// Settings, accounts and the library size, once the profile is migrated.
+    /// Settings, accounts and the library size.
     pub(crate) async fn app_data(&self) -> Result<Value> {
-        self.ensure_migrated().await?;
-        self.stored_app_data().await
-    }
-
-    /// Settings, accounts and the library size as stored.
-    pub(crate) async fn stored_app_data(&self) -> Result<Value> {
         self.database
             .read_async(|ctx| store::games::as_json(store::games::load_app_data(ctx.db)?))
             .await
@@ -268,7 +268,6 @@ impl Core {
                 "Choose the Stockfish executable with the file picker.",
             ));
         }
-        self.ensure_migrated().await?;
         let settings: store::games::Settings = serde_json::from_value(settings)
             .map_err(|cause| CoreError::new(format!("Invalid settings: {cause}")))?;
         let saved = self
@@ -301,7 +300,6 @@ impl Core {
 
     /// Logs a user's logout result after the sessions have ended (`logoutAccounts`).
     pub(crate) async fn logout_accounts(&self, username: Option<&str>) -> Result<Value> {
-        self.ensure_migrated().await?;
         let username = username.map(str::to_string);
         self.database
             .write_async(move |ctx| {
