@@ -12,10 +12,8 @@ use std::collections::BTreeSet;
 
 use crate::util::{Result, available, output, run, say};
 
-/// The hack's manifest, from the repository root.
 const MANIFEST: &str = "crates/kchess-hack/Cargo.toml";
-
-/// Dependabot's configuration, from the repository root.
+const CONFIG: &str = ".config/hakari.toml";
 const DEPENDABOT: &str = ".github/dependabot.yml";
 
 /// How `.github/dependabot.yml` holds a package only the hack depends on to the hack's
@@ -25,25 +23,26 @@ const DEPENDABOT: &str = ".github/dependabot.yml";
 /// Patch and security updates still come; a 0.x package's minor is its major.
 const KEPT: &str = "update-types: [version-update:semver-major, version-update:semver-minor]";
 
-/// The packages whose own dependencies may go in the hack: the headless ones, so that the hack
-/// never makes them build the app's or xtask's dependencies.
-const HEADLESS: [&str; 8] = [
-    "kchess-domain",
-    "kchess-contracts",
-    "kchess-core",
-    "kchess-games",
-    "kchess-service",
-    "kchess-cli",
-    "kchess-voice",
-    "kchess-delta",
-];
+/// The members whose own dependencies may not go in the hack: the app and xtask. The rest are the
+/// headless ones, and the hack never makes them build the app's or xtask's dependencies.
+const NOT_HEADLESS: [&str; 3] = ["kchess-gpui", "xtask", "kchess-hack"];
 
-/// The platforms the hack is written for (`.config/hakari.toml`).
-const PLATFORMS: [&str; 3] = [
-    "aarch64-apple-darwin",
-    "x86_64-unknown-linux-gnu",
-    "x86_64-pc-windows-msvc",
-];
+/// The platforms the hack is written for: `platforms` in `.config/hakari.toml`.
+fn platforms(config: &str) -> Vec<String> {
+    config
+        .lines()
+        .skip_while(|line| !line.starts_with("platforms = ["))
+        .skip(1)
+        .take_while(|line| !line.starts_with(']'))
+        .filter_map(|line| {
+            line.trim()
+                .trim_end_matches(',')
+                .strip_prefix('"')?
+                .strip_suffix('"')
+        })
+        .map(str::to_string)
+        .collect()
+}
 
 /// The hack as `cargo hakari` writes it, and every package depending on it, when cargo-hakari is
 /// installed (CI installs it); and the hack's dependencies all headless ones. Not `cargo hakari
@@ -61,12 +60,23 @@ pub fn check() -> Result {
     } else {
         say("cargo-hakari is not installed (`cargo install cargo-hakari`): CI checks the hack.");
     }
-    let text = std::fs::read_to_string(crate::util::root().join(MANIFEST))
-        .map_err(|cause| format!("{MANIFEST}: {cause}"))?;
+    let read = |path: &str| {
+        std::fs::read_to_string(crate::util::root().join(path))
+            .map_err(|cause| format!("{path}: {cause}"))
+    };
+    let text = read(MANIFEST)?;
+    let platforms = platforms(&read(CONFIG)?);
+    if platforms.is_empty() {
+        return Err(format!("{CONFIG} names no platforms."));
+    }
+    let members = crate::check::members()?;
     let mut headless = BTreeSet::new();
-    for platform in PLATFORMS {
+    for platform in &platforms {
         let mut args = vec!["tree", "--locked", "--prune", "kchess-hack"];
-        for package in HEADLESS {
+        for package in members
+            .iter()
+            .filter(|member| !NOT_HEADLESS.contains(&member.as_str()))
+        {
             args.extend(["-p", package]);
         }
         args.extend([
@@ -95,9 +105,7 @@ pub fn check() -> Result {
     )?;
     let metadata =
         serde_json::from_str(&metadata).map_err(|cause| format!("cargo metadata: {cause}"))?;
-    let config = std::fs::read_to_string(crate::util::root().join(DEPENDABOT))
-        .map_err(|cause| format!("{DEPENDABOT}: {cause}"))?;
-    unkept(&hack_only(&metadata), &kept(&config))
+    unkept(&hack_only(&metadata), &kept(&read(DEPENDABOT)?))
 }
 
 /// The packages only the hack depends on, from `cargo metadata --no-deps`: no other manifest
@@ -244,6 +252,16 @@ mod tests {
         assert!(error.contains("remove log,"));
         assert!(unkept(&set(&["zbus"]), &set(&[])).is_err());
         assert!(unkept(&set(&[]), &set(&["log"])).is_err());
+    }
+
+    #[test]
+    fn the_platforms_are_read_from_the_configuration() {
+        let config = "resolver = \"2\"\nplatforms = [\n    \"aarch64-apple-darwin\",\n    \"x86_64-pc-windows-msvc\",\n]\n\n[final-excludes]\n";
+        assert_eq!(
+            platforms(config),
+            ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
+        );
+        assert!(platforms("").is_empty());
     }
 
     #[test]
