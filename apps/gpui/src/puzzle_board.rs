@@ -8,10 +8,9 @@ use std::time::Duration;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
-use kchess_contracts::types::PuzzleWrongMove;
+use kchess_contracts::types::{Puzzle, PuzzleWrongMove};
 use kchess_domain::trainer::puzzle_session::Detail;
 use kchess_domain::variant::Setup;
-use serde_json::Value;
 use shakmaty::Color;
 
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
@@ -180,7 +179,7 @@ impl PuzzleBoard {
     }
 
     /// A puzzle, from its start; `outcome` is a verdict its page kept from before.
-    pub fn start(&mut self, puzzle: &Value, outcome: Option<bool>, cx: &mut Context<Self>) {
+    pub fn start(&mut self, puzzle: Puzzle, outcome: Option<bool>, cx: &mut Context<Self>) {
         self.generation.invalidate();
         self.timers.clear();
         self.on_board = Some(OnBoard::start(puzzle));
@@ -729,13 +728,14 @@ mod tests {
             board.update(cx, |board, cx| {
                 board.for_runs(Duration::from_secs(1));
                 board.start(
-                    &serde_json::json!({
+                    serde_json::from_value(serde_json::json!({
                         "id": "slowreply",
                         "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
                         "solution": ["e2e4", "e7e5", "g1f3"],
                         "rating": 1500,
                         "themes": [],
-                    }),
+                    }))
+                    .expect("a puzzle"),
                     None,
                     cx,
                 );

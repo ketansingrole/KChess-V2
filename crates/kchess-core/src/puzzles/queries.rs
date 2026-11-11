@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::store::sql::{Sql as _, transaction};
 use kchess_contracts::error::{CoreError, Result};
+use kchess_domain::variant::Variant;
 use kchess_domain::{position, rules};
 
 /// A row of the puzzle table as the importer hands it over.
@@ -220,6 +221,7 @@ fn puzzle_from_db(row: &DbPuzzle) -> Option<Puzzle> {
             .collect(),
         plays: row.plays,
         game_id: Some(row.game_id.clone()).filter(|id| !id.is_empty()),
+        variant: Variant::Standard,
     })
 }
 

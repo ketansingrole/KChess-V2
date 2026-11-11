@@ -17,7 +17,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::types::{
-    PuzzleAttempt, PuzzleAttemptOutcome, PuzzleProgress, PuzzleProgressQuery,
+    Puzzle, PuzzleAttempt, PuzzleAttemptOutcome, PuzzleProgress, PuzzleProgressQuery,
 };
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use serde_json::{Value, json};
@@ -650,12 +650,17 @@ impl PuzzlesPage {
         let ready = self.session.phase() == "ready";
         let key = self.session.puzzle_key();
         let shown = self.puzzle.read(cx).puzzle().is_some();
-        match self.session.current().cloned() {
-            Some(puzzle) if ready && (!shown || key != self.shown_key) => {
+        let current = self
+            .session
+            .current()
+            .cloned()
+            .map(serde_json::from_value::<Puzzle>);
+        match current {
+            Some(Ok(puzzle)) if ready && (!shown || key != self.shown_key) => {
                 self.shown_key = key;
                 let outcome = self.session.state().attempt_outcome;
                 self.puzzle
-                    .update(cx, |board, cx| board.start(&puzzle, outcome, cx));
+                    .update(cx, |board, cx| board.start(puzzle, outcome, cx));
             }
             _ if !ready => self.puzzle.update(cx, |board, cx| board.clear(cx)),
             _ => {}
@@ -828,9 +833,8 @@ fn train_theme(key: String, window: &mut Window, cx: &mut App) {
 pub(crate) type NextPuzzle = Box<dyn Fn(&mut Window, &mut App)>;
 
 /// The puzzle's idea, shown with the hint.
-fn clue(puzzle: &Value) -> Option<AnyElement> {
-    let solution: Vec<String> = serde_json::from_value(puzzle["solution"].clone()).ok()?;
-    let clue = kchess_domain::coach::puzzle_clue(puzzle["fen"].as_str()?, &solution)?;
+fn clue(puzzle: &Puzzle) -> Option<AnyElement> {
+    let clue = kchess_domain::coach::puzzle_clue(&puzzle.fen, &puzzle.solution)?;
     Some(div().text_size(px(13.)).child(clue).into_any_element())
 }
 
@@ -843,7 +847,7 @@ fn coach_allowed(rated: bool, status: PuzzleStatus) -> bool {
 /// What a coach can add: a nudge while solving, why a wrong move fails, why the solution works.
 fn coach_block(
     board_entity: &Entity<PuzzleBoard>,
-    puzzle: &Value,
+    puzzle: &Puzzle,
     status: PuzzleStatus,
     playing: bool,
     rated: bool,
@@ -855,20 +859,13 @@ fn coach_block(
     }
     let shown = board_entity.read(cx);
     let on_board = shown.puzzle()?;
-    let solution: Vec<String> = puzzle["solution"]
-        .as_array()?
-        .iter()
-        .filter_map(|played| played.as_str().map(str::to_string))
-        .collect();
+    let solution = &puzzle.solution;
     // While solving, from where the board stands: a long puzzle may be several moves in.
     let current = (
         on_board.fen().to_string(),
         solution.get(on_board.index()..)?.to_vec(),
     );
-    let whole = (
-        puzzle["fen"].as_str().unwrap_or_default().to_string(),
-        solution.clone(),
-    );
+    let whole = (puzzle.fen.clone(), solution.clone());
     let merged = |(fen, moves): &(String, Vec<String>), kind, played: Option<&str>| AiRequest {
         kind,
         fen: fen.clone(),
@@ -995,7 +992,7 @@ pub(crate) fn status_panel(
                             .text_color(palette.text_muted)
                             .child("Rating"),
                     )
-                    .child(format!("{}", puzzle["rating"].as_f64().unwrap_or_default())),
+                    .child(format!("{}", puzzle.rating)),
             )
             .child(
                 h_flex()
@@ -1007,42 +1004,36 @@ pub(crate) fn status_panel(
                             .text_color(palette.text_muted)
                             .child("Themes"),
                     )
-                    .child(
-                        h_flex().flex_1().flex_wrap().gap(px(4.)).children(
-                            puzzle["themes"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .filter_map(Value::as_str)
-                                .enumerate()
-                                .map(|(index, theme)| {
-                                    let name = theme_name(theme, themes);
-                                    // A theme Train offers is a way to train it, as on Lichess.
-                                    let trainable = themes.iter().any(|known| known.key == theme);
-                                    let key = theme.to_string();
-                                    div()
-                                        .id(("puzzle-theme", index))
-                                        .test_support()
-                                        .px(px(6.))
-                                        .py(px(1.))
-                                        .rounded(radii::SM)
-                                        .border_1()
-                                        .border_color(palette.border_accented)
-                                        .bg(palette.elevated)
-                                        .text_size(px(12.))
-                                        .when(trainable, |pill| {
-                                            pill.role(gpui_kit::Role::Button)
-                                                .aria_label(format!("Train {name}"))
-                                                .cursor_pointer()
-                                                .pressable(palette)
-                                                .on_click(move |_, window, cx| {
-                                                    train_theme(key.clone(), window, cx)
-                                                })
-                                        })
-                                        .child(name)
-                                }),
+                    .child(h_flex().flex_1().flex_wrap().gap(px(4.)).children(
+                        puzzle.themes.iter().map(String::as_str).enumerate().map(
+                            |(index, theme)| {
+                                let name = theme_name(theme, themes);
+                                // A theme Train offers is a way to train it, as on Lichess.
+                                let trainable = themes.iter().any(|known| known.key == theme);
+                                let key = theme.to_string();
+                                div()
+                                    .id(("puzzle-theme", index))
+                                    .test_support()
+                                    .px(px(6.))
+                                    .py(px(1.))
+                                    .rounded(radii::SM)
+                                    .border_1()
+                                    .border_color(palette.border_accented)
+                                    .bg(palette.elevated)
+                                    .text_size(px(12.))
+                                    .when(trainable, |pill| {
+                                        pill.role(gpui_kit::Role::Button)
+                                            .aria_label(format!("Train {name}"))
+                                            .cursor_pointer()
+                                            .pressable(palette)
+                                            .on_click(move |_, window, cx| {
+                                                train_theme(key.clone(), window, cx)
+                                            })
+                                    })
+                                    .child(name)
+                            },
                         ),
-                    ),
+                    )),
             )
     });
     v_flex()
@@ -1442,7 +1433,7 @@ impl PuzzlesPage {
                         attempt.puzzle.rating
                     );
                     let (puzzle, wrong) = (
-                        json!(attempt.puzzle),
+                        attempt.puzzle.clone(),
                         attempt.wrong_moves.clone().unwrap_or_default(),
                     );
                     let page = cx.entity().downgrade();
@@ -1471,7 +1462,7 @@ impl PuzzlesPage {
                                     .icon(icon("rotate-ccw"))
                                     .on_click(move |_, _, cx| {
                                         let _ = page
-                                            .update(cx, |page, cx| page.retry(puzzle.clone(), cx));
+                                            .update(cx, |page, cx| page.retry(json!(puzzle), cx));
                                     }),
                             )
                             .item(
@@ -1905,7 +1896,7 @@ impl Render for PuzzlesPage {
                         &history,
                         window,
                         |this, _, event: &history::HistoryEvent, window, cx| match event {
-                            history::HistoryEvent::Retry(puzzle) => this.retry(puzzle.clone(), cx),
+                            history::HistoryEvent::Retry(puzzle) => this.retry(json!(puzzle), cx),
                             history::HistoryEvent::Analyse(puzzle, wrong) => {
                                 crate::pages::analysis::analyse_puzzle(
                                     puzzle.clone(),

@@ -577,19 +577,15 @@ impl AnalysisPage {
     /// reviewed like a game.
     pub fn open_puzzle(
         &mut self,
-        puzzle: &Value,
+        puzzle: &kchess_contracts::types::Puzzle,
         wrong_moves: &[kchess_contracts::types::PuzzleWrongMove],
         cx: &mut Context<Self>,
     ) -> bool {
-        let solution: Vec<String> =
-            serde_json::from_value(puzzle["solution"].clone()).unwrap_or_default();
-        let Some(fen) = puzzle["fen"].as_str() else {
-            return false;
-        };
+        let solution = &puzzle.solution;
         let Ok(pgn) = kchess_domain::pgn::setup_pgn(
             kchess_domain::variant::Variant::Standard,
-            fen,
-            &solution,
+            &puzzle.fen,
+            solution,
             &[],
         ) else {
             return false;
@@ -612,7 +608,7 @@ impl AnalysisPage {
                 tried.push((path, fen, uci.to_string()));
             }
         }
-        self.orientation = crate::game::puzzle::OnBoard::start(puzzle).player_color();
+        self.orientation = kchess_domain::training::puzzle::player_color(&puzzle.fen);
         self.review.origin = None;
         self.go_to_ply(0, cx);
         self.request_review(cx);

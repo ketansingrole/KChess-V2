@@ -1189,6 +1189,10 @@ pub struct Puzzle {
     /// Lichess game the position came from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game_id: Option<String>,
+    /// A drill's variant (a mistake from a Crazyhouse game); every Lichess puzzle is standard
+    /// chess.
+    #[serde(default, skip_serializing_if = "Variant::is_standard")]
+    pub variant: Variant,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]

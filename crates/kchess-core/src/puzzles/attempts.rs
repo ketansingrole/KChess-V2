@@ -10,6 +10,7 @@ use rusqlite::{Connection, Row, params};
 
 use crate::store::sql::Sql as _;
 use kchess_contracts::error::Result;
+use kchess_domain::variant::Variant;
 
 use kchess_domain::trainer::puzzle_progress::{Outcome, Verdict, classify, day_streak, moves};
 
@@ -119,6 +120,7 @@ fn attempt_from(row: &Row<'_>) -> rusqlite::Result<PuzzleAttempt> {
         themes: owned(&themes),
         plays: None,
         game_id: row.get("game_id")?,
+        variant: Variant::Standard,
     };
     let wrong_moves: String = row.get("wrong_moves")?;
     let wrong_moves: Vec<PuzzleWrongMove> = words(&wrong_moves)
@@ -252,6 +254,7 @@ mod tests {
                 themes: vec!["mateIn1".into(), "short".into()],
                 plays: None,
                 game_id: None,
+                variant: Variant::Standard,
             },
             mode: PuzzleTrainMode::Practice,
             retry,

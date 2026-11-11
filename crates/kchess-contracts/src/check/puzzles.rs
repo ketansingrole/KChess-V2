@@ -311,6 +311,7 @@ impl Validate for PuzzleAttemptInput {
                 themes: puzzle.themes,
                 plays: puzzle.plays.map(|plays| plays as f64),
                 game_id: puzzle.game_id,
+                variant: crate::Variant::Standard,
             },
             mode: wire(sent.mode)?,
             retry: sent.retry,

@@ -3,10 +3,11 @@
 
 use kchess_contracts::calls;
 use kchess_contracts::check::PuzzleId;
+use kchess_contracts::types::Puzzle;
 use kchess_domain::position::{play_san, play_uci};
 use kchess_domain::rules::setup_start;
 use kchess_games::puzzle::OnBoard;
-use serde_json::{Value, json};
+use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::core::{ClientEvent, CoreClient};
@@ -36,7 +37,7 @@ pub enum Answer {
 
 impl Solving {
     /// The puzzle, unless the rules cannot set it up or it has no solution.
-    pub fn new(puzzle: &Value) -> Option<Solving> {
+    pub fn new(puzzle: Puzzle) -> Option<Solving> {
         let board = OnBoard::start(puzzle);
         (!board.fen().is_empty() && board.player_moves() > 0).then_some(Solving { board })
     }
@@ -129,13 +130,12 @@ pub async fn interactive(
         }
         None => core.request(calls::PuzzleDaily {}).await?,
     };
-    let puzzle = json!(puzzle);
-    let mut solving =
-        Solving::new(&puzzle).ok_or("Lichess sent a puzzle KChess could not read.")?;
+    let sent = json!(puzzle);
+    let mut solving = Solving::new(puzzle).ok_or("Lichess sent a puzzle KChess could not read.")?;
     crate::print(json!({
-        "puzzle": puzzle["id"],
-        "rating": puzzle["rating"],
-        "themes": puzzle["themes"],
+        "puzzle": sent["id"],
+        "rating": sent["rating"],
+        "themes": sent["themes"],
         "fen": solving.fen(),
         "toMove": solving.solver(),
     }));
@@ -180,14 +180,28 @@ pub async fn interactive(
 #[cfg(test)]
 mod tests {
     use super::{Answer, Solving};
-    use serde_json::json;
+    use kchess_contracts::types::Puzzle;
+
+    fn puzzle(fen: &str, solution: &[&str]) -> Puzzle {
+        Puzzle {
+            id: "test".into(),
+            fen: fen.into(),
+            last_move: None,
+            solution: solution.iter().map(|uci| uci.to_string()).collect(),
+            rating: 1500.,
+            themes: Vec::new(),
+            plays: None,
+            game_id: None,
+            variant: Default::default(),
+        }
+    }
 
     /// Lichess's daily puzzle of 4 November 2026: a discovered check wins the queen.
     fn daily() -> Solving {
-        Solving::new(&json!({
-            "fen": "r1b4r/ppqpkpb1/2nNpnp1/7p/5P1P/4BNP1/PPP5/R2QKB1R w KQ - 1 1",
-            "solution": ["e3c5", "c7a5", "b2b4", "c6b4", "d6b7", "a5c5", "b7c5"],
-        }))
+        Solving::new(puzzle(
+            "r1b4r/ppqpkpb1/2nNpnp1/7p/5P1P/4BNP1/PPP5/R2QKB1R w KQ - 1 1",
+            &["e3c5", "c7a5", "b2b4", "c6b4", "d6b7", "a5c5", "b7c5"],
+        ))
         .expect("the puzzle reads")
     }
 
@@ -235,11 +249,8 @@ mod tests {
     #[test]
     fn any_checkmate_solves_a_mate_puzzle() {
         // Mate in one with two mating moves: Ra8 and Rb8 both mate; the solution names one.
-        let mut solving = Solving::new(&json!({
-            "fen": "6k1/5ppp/8/8/8/8/8/RR4K1 w - - 0 1",
-            "solution": ["a1a8"],
-        }))
-        .expect("the puzzle reads");
+        let mut solving = Solving::new(puzzle("6k1/5ppp/8/8/8/8/8/RR4K1 w - - 0 1", &["a1a8"]))
+            .expect("the puzzle reads");
         assert!(matches!(
             solving.answer("Rb8#"),
             Answer::Right { solved: true, .. }

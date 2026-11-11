@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use shakmaty::variant::VariantPosition;
-use shakmaty::{Position as _, Role};
+use shakmaty::{Color, Position as _, Role};
 
 use crate::variant::Variant;
 use crate::{js, position, rules};
@@ -56,11 +56,6 @@ pub struct PlayerMove {
     pub correct: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply: Option<String>,
-}
-
-/// A puzzle's solution, its UCI moves.
-pub fn solution_of(puzzle: &Value) -> Vec<String> {
-    strings_of(puzzle.get("solution"))
 }
 
 fn strings_of(value: Option<&Value>) -> Vec<String> {
@@ -223,20 +218,16 @@ pub fn move_squares(fen: &str, uci: &str) -> Option<Vec<String>> {
     squares_for(pos.as_ref(), uci)
 }
 
-/// A puzzle's state before the first move.
-pub fn start_puzzle(puzzle: &Value) -> PuzzleState {
-    let fen = js::string(puzzle.get("fen")).unwrap_or("").to_string();
-    let last_move = js::string(puzzle.get("lastMove"))
-        .filter(|uci| !uci.is_empty())
-        .and_then(|uci| move_squares(&fen, uci));
-    let variant = js::string(puzzle.get("variant"))
-        .and_then(Variant::from_key)
-        .unwrap_or_default();
+/// A puzzle's state before the first move: its position, the squares of the opponent's move
+/// that led there (UCI), and the variant it is played in.
+pub fn start_puzzle(fen: &str, last_move: Option<&str>, variant: Variant) -> PuzzleState {
     PuzzleState {
-        fen,
+        fen: fen.to_string(),
         index: 0.0,
         status: PuzzleStatus::Playing,
-        last_move,
+        last_move: last_move
+            .filter(|uci| !uci.is_empty())
+            .and_then(|uci| move_squares(fen, uci)),
         sans: Vec::new(),
         variant,
     }
@@ -324,11 +315,11 @@ pub fn opponent_reply(state: PuzzleState, uci: &str) -> PuzzleState {
 }
 
 /// The side the player solves for: the side to move in the puzzle's FEN.
-pub fn player_color(puzzle: &Value) -> &'static str {
-    if js::string(puzzle.get("fen")).and_then(|fen| fen.split(' ').nth(1)) == Some("b") {
-        "black"
+pub fn player_color(fen: &str) -> Color {
+    if fen.split(' ').nth(1) == Some("b") {
+        Color::Black
     } else {
-        "white"
+        Color::White
     }
 }
 
@@ -347,9 +338,11 @@ mod tests {
     #[test]
     fn the_opponents_move_is_no_answer() {
         let solution: Vec<String> = ["e2e4", "e7e5", "g1f3"].map(String::from).to_vec();
-        let start = start_puzzle(&serde_json::json!({
-            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        }));
+        let start = start_puzzle(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            None,
+            Variant::Standard,
+        );
         let first = player_move(&solution, start, "e2e4");
         assert!(first.correct);
         assert_eq!(first.reply.as_deref(), Some("e7e5"));
@@ -392,14 +385,12 @@ mod tests {
     #[test]
     fn a_variant_drill_is_solved_by_its_rules() {
         // Crazyhouse, a pawn in each pocket: the drop is the answer, which standard rules refuse.
-        let puzzle = json!({
-            "fen": "rnb1kbnr/ppp1pppp/8/q7/8/2N5/PPPP1PPP/R1BQKBNR[Pp] w KQkq - 2 4",
-            "solution": ["P@d4"],
-            "variant": "crazyhouse",
-        });
-        let state = start_puzzle(&puzzle);
-        assert_eq!(state.variant, Variant::Crazyhouse);
-        let squares = next_solution_squares(&solution_of(&puzzle), &state);
+        let state = start_puzzle(
+            "rnb1kbnr/ppp1pppp/8/q7/8/2N5/PPPP1PPP/R1BQKBNR[Pp] w KQkq - 2 4",
+            None,
+            Variant::Crazyhouse,
+        );
+        let squares = next_solution_squares(&["P@d4".to_string()], &state);
         assert_eq!(squares, Some(vec!["d4".to_string(), "d4".to_string()]));
         let played = player_move(&["P@d4".to_string()], state.clone(), "P@d4");
         assert!(played.correct);

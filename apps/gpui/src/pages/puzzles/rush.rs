@@ -11,7 +11,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::types::{LocalLadderQuery, RunKind, RunRecord, RunSaved, RunSummary};
+use kchess_contracts::types::{LocalLadderQuery, Puzzle, RunKind, RunRecord, RunSaved, RunSummary};
 use kchess_domain::training::data::data;
 use kchess_domain::training::rush::{RushConfig, RushState, combo_progress, format_run_clock};
 use serde_json::{Value, json};
@@ -77,7 +77,7 @@ pub struct PuzzleRush {
     choice: String,
     stage: Stage,
     error: Option<String>,
-    ladder: Vec<Value>,
+    ladder: Vec<Puzzle>,
     index: usize,
     state: RushState,
     /// `runSummary` by mode.
@@ -210,9 +210,7 @@ impl PuzzleRush {
                     return;
                 }
                 let ladder = match ladder {
-                    Ok(ladder) if ladder.len() >= 10 => {
-                        ladder.into_iter().map(|puzzle| json!(puzzle)).collect()
-                    }
+                    Ok(ladder) if ladder.len() >= 10 => ladder,
                     Ok(_) => {
                         this.error =
                             Some("The puzzle database is too small; download it again".into());
@@ -251,7 +249,7 @@ impl PuzzleRush {
             return;
         };
         self.board.update(cx, |board, cx| {
-            board.start(&puzzle, None, cx);
+            board.start(puzzle, None, cx);
             board.set_frozen(false, cx);
         });
     }
@@ -335,12 +333,7 @@ impl PuzzleRush {
             return;
         }
         let solved = self.board.read(cx).status() == PuzzleStatus::Solved;
-        if solved
-            && let Some(rating) = self
-                .ladder
-                .get(self.index)
-                .and_then(|p| p["rating"].as_f64())
-        {
+        if solved && let Some(rating) = self.ladder.get(self.index).map(|p| p.rating) {
             self.state.puzzle_solved(rating);
         }
         self.locked = true;
@@ -766,7 +759,7 @@ impl PuzzleRush {
             let rating = self
                 .ladder
                 .get(self.index)
-                .and_then(|p| p["rating"].as_f64())
+                .map(|p| p.rating)
                 .unwrap_or_default();
             let skips = state.skips_left;
             panel = panel

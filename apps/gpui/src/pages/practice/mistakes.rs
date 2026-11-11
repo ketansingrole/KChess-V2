@@ -11,8 +11,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::check::LibraryId;
-use kchess_contracts::types::{Drill, MistakeGame, ProfileArea};
-use serde_json::{Value, json};
+use kchess_contracts::types::{Drill, MistakeGame, ProfileArea, Puzzle};
+use serde_json::json;
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -30,15 +30,18 @@ const GAMES_SHOWN: usize = 8;
 const CLOCK: Duration = Duration::from_secs(60);
 
 /// A drill as a puzzle for the board.
-fn puzzle(item: &Drill) -> Value {
-    json!({
-        "id": item.id,
-        "fen": item.fen,
-        "solution": item.solution,
-        "variant": item.variant,
-        "rating": 0,
-        "themes": [],
-    })
+fn puzzle(item: &Drill) -> Puzzle {
+    Puzzle {
+        id: item.id.clone(),
+        fen: item.fen.clone(),
+        last_move: None,
+        solution: item.solution.clone(),
+        rating: 0.,
+        themes: Vec::new(),
+        plays: None,
+        game_id: None,
+        variant: item.variant.unwrap_or_default(),
+    }
 }
 
 /// A game's title: your opponent when your side is known, else the players.
@@ -226,7 +229,7 @@ impl Mistakes {
     }
 
     #[cfg(test)]
-    pub(crate) fn seed(&mut self, items: Vec<Value>, cx: &mut Context<Self>) {
+    pub(crate) fn seed(&mut self, items: Vec<serde_json::Value>, cx: &mut Context<Self>) {
         // A drill as the core lists it, with what a test leaves out filled in.
         self.items = items
             .into_iter()
@@ -302,7 +305,7 @@ impl Mistakes {
         self.current = item.as_ref().map(|item| item.id.clone());
         if let Some(item) = item {
             self.puzzle
-                .update(cx, |board, cx| board.start(&puzzle(&item), None, cx));
+                .update(cx, |board, cx| board.start(puzzle(&item), None, cx));
         }
         cx.notify();
     }
