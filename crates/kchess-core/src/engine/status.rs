@@ -219,14 +219,8 @@ fn executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_contracts::CoreEvent;
 
-    struct SilentHost;
-
-    impl Host for SilentHost {
-        fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-        fn emit(&self, _event: CoreEvent) {}
-    }
+    use crate::test_host::QUIET;
 
     fn locations(dir: &Path) -> EngineLocations {
         EngineLocations {
@@ -246,15 +240,15 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let locations = locations(dir.path());
-        assert!(!engine_status(&SilentHost, &locations, "").await.ready);
+        assert!(!engine_status(&QUIET, &locations, "").await.ready);
         std::fs::write(&locations.bundled, "#!/bin/sh\n").unwrap();
         assert!(
-            !engine_status(&SilentHost, &locations, "").await.ready,
+            !engine_status(&QUIET, &locations, "").await.ready,
             "a file that cannot run is not an engine"
         );
         std::fs::set_permissions(&locations.bundled, std::fs::Permissions::from_mode(0o755))
             .unwrap();
-        let status = engine_status(&SilentHost, &locations, "").await;
+        let status = engine_status(&QUIET, &locations, "").await;
         assert!(status.ready && status.bundled);
         assert_eq!(status.path, PathBuf::new());
         assert!(status.can_download);
@@ -285,11 +279,11 @@ mod tests {
         let configured = engine.display().to_string();
 
         // Not executable yet: the bundled engine is used.
-        let status = engine_status(&SilentHost, &locations, &configured).await;
+        let status = engine_status(&QUIET, &locations, &configured).await;
         assert!(status.bundled);
 
         std::fs::set_permissions(&engine, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let status = engine_status(&SilentHost, &locations, &configured).await;
+        let status = engine_status(&QUIET, &locations, &configured).await;
         assert!(status.ready && !status.bundled);
         assert_eq!(status.path, engine);
         let first = engine_identity(&status).await.unwrap();
@@ -303,7 +297,7 @@ mod tests {
     async fn missing_configured_engine_falls_back_and_reports_the_configured_path() {
         let dir = tempfile::tempdir().unwrap();
         let locations = locations(dir.path());
-        let status = engine_status(&SilentHost, &locations, "/no/such/engine").await;
+        let status = engine_status(&QUIET, &locations, "/no/such/engine").await;
         assert!(!status.ready);
         assert_eq!(status.path, PathBuf::from("/no/such/engine"));
     }

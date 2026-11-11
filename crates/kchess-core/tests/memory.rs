@@ -12,15 +12,14 @@
 
 mod support;
 
-use kchess_contracts::CoreEvent;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::time::Duration;
 
 use kchess_core::connection::ClientInfo;
-use kchess_core::{Config, Core, Host, Level};
+use kchess_core::test_host::TestHost;
+use kchess_core::{Config, Core};
 use serde_json::json;
 
 /// Counts the bytes live on the heap.
@@ -75,14 +74,6 @@ static ALLOCATOR: Counting = Counting;
 static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
-/// Drops what it is sent, so the host itself keeps nothing (`support::Recording` keeps all).
-struct Quiet;
-
-impl Host for Quiet {
-    fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-    fn emit(&self, _event: CoreEvent) {}
-}
 
 /// The live heap once background work has settled: once no more than `tasks` tasks are alive (or
 /// after `TASKS_SETTLE`), the lowest of a few samples a moment apart, so a task still finishing
@@ -220,7 +211,7 @@ fn kib(bytes: isize) -> String {
 }
 
 fn open(dir: &Path) -> Core {
-    Core::open(Config::new(dir.to_path_buf()), Arc::new(Quiet)).expect("the profile opens")
+    Core::open(Config::new(dir.to_path_buf()), TestHost::quiet()).expect("the profile opens")
 }
 
 /// A core whose engine is the fake engine in `search` mode, with assistance allowed.

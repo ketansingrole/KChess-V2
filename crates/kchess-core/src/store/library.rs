@@ -648,7 +648,8 @@ mod tests {
     use crate::store::documents::{DAMAGED_STUDIES, read_document_text};
     use crate::store::library_import::read_studies;
     use crate::store::{StoreContext, library_import};
-    use kchess_contracts::CoreEvent;
+
+    use crate::test_host::QUIET;
     use kchess_contracts::check::{MissCounts, Validate as _};
 
     // The store's calls with what the window sends and reads: JSON in, JSON out.
@@ -758,14 +759,6 @@ mod tests {
         assert_eq!(keep_last(vec![1], 5), vec![1]);
     }
 
-    /// A host that records nothing: the store's logs are not under test here.
-    struct Quiet;
-
-    impl Host for Quiet {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _event: CoreEvent) {}
-    }
-
     /// An arena that has ended is dropped when the next one is remembered, and
     /// forgetting an account drops its tournaments whatever the case of its name.
     #[test]
@@ -774,7 +767,7 @@ mod tests {
         crate::store::migrations::migrate(&db).unwrap();
         let now = 1_700_000_000_000.0;
         let entry = |system: &str, id: &str, account: &str, name: &str, until: f64| json!({ "system": system, "id": id, "account": account, "name": name, "until": until });
-        let remember = |item: Value| remember_tournament(&Quiet, &db, &item, now).unwrap();
+        let remember = |item: Value| remember_tournament(&QUIET, &db, &item, now).unwrap();
         remember(entry("arena", "ended", "Alice", "Old", now - 1.0));
         remember(entry("arena", "live", "Alice", "Live", now + 60_000.0));
         remember(entry("swiss", "other", "Bob", "Swiss", now + 60_000.0));
@@ -786,9 +779,9 @@ mod tests {
                 .map(|item| item["id"].as_str().unwrap().to_string())
                 .collect()
         };
-        let joined = || joined_tournaments(&Quiet, &db, now).unwrap();
+        let joined = || joined_tournaments(&QUIET, &db, now).unwrap();
         assert_eq!(ids(joined()), ["live", "other"]);
-        forget_tournaments_of(&Quiet, &db, &["alice".to_string()]).unwrap();
+        forget_tournaments_of(&QUIET, &db, &["alice".to_string()]).unwrap();
         assert_eq!(ids(joined()), ["other"]);
     }
 
@@ -801,13 +794,13 @@ mod tests {
         let now = 1_700_000_000_000.0;
         let remember = |account: &str| {
             let entry = json!({ "system": "arena", "id": "live", "account": account, "name": "Live", "until": now + 60_000.0 });
-            remember_tournament(&Quiet, &db, &entry, now).unwrap();
+            remember_tournament(&QUIET, &db, &entry, now).unwrap();
         };
         let forget = |account: Option<&str>| {
-            forget_tournament(&Quiet, &db, "arena", "live", account).unwrap();
+            forget_tournament(&QUIET, &db, "arena", "live", account).unwrap();
         };
         let accounts = || -> Vec<String> {
-            joined_tournaments(&Quiet, &db, now)
+            joined_tournaments(&QUIET, &db, now)
                 .unwrap()
                 .as_array()
                 .unwrap()
@@ -852,7 +845,7 @@ mod tests {
                 &json!({"pgn":"1. d4 *","path":"","orientation":"white","study":"","chapter":""}),
             );
             write_document(&db, "session:analysis", &session, "").expect("save session");
-            let snapshot = snapshot_of(&Quiet, &db, 1.0).expect("other documents remain readable");
+            let snapshot = snapshot_of(&QUIET, &db, 1.0).expect("other documents remain readable");
             assert_eq!(snapshot["studyError"], json!(DAMAGED_STUDIES));
             assert_eq!(snapshot["sessions"]["analysis"]["pgn"], json!("1. d4 *"));
             assert!(
@@ -1077,7 +1070,7 @@ mod tests {
         evals.push(json!({ "mate": 1, "depth": depth, "best": "h5f7", "pv": ["h5f7"] }));
         evals.push(json!({ "mate": 0, "depth": depth }));
         crate::store::reviews::write_review(
-            &Quiet,
+            &QUIET,
             db,
             &json!({
                 "key": key, "fen": START, "moves": BLUNDER, "source": source,
@@ -1093,9 +1086,9 @@ mod tests {
         let db = drills_db();
         let key = store_blunder_review(&db, "local", 20);
         // White made no mistake, so a drill of White's moves adds nothing.
-        let white = add_mistakes(&Quiet, &db, &key, Some("white"), 1.0).expect("add");
+        let white = add_mistakes(&QUIET, &db, &key, Some("white"), 1.0).expect("add");
         assert_eq!(white["added"], json!(0));
-        let added = add_mistakes(&Quiet, &db, &key, Some("black"), 1.0).expect("add");
+        let added = add_mistakes(&QUIET, &db, &key, Some("black"), 1.0).expect("add");
         assert_eq!(added["added"], json!(1));
         let drill = &added["items"][0];
         assert_eq!(drill["id"], json!(format!("{key}:5")));
@@ -1107,7 +1100,7 @@ mod tests {
             (json!(1), json!(0))
         );
         // Adding again keeps one drill per position.
-        let again = add_mistakes(&Quiet, &db, &key, None, 2.0).expect("add");
+        let again = add_mistakes(&QUIET, &db, &key, None, 2.0).expect("add");
         assert_eq!(again["added"], json!(0));
         assert_eq!(again["items"].as_array().map(Vec::len), Some(1));
 
@@ -1147,7 +1140,7 @@ mod tests {
         evals.push(json!({ "cp": 30, "depth": 20, "best": "P@e4", "pv": ["P@e4"] }));
         evals.push(json!({ "cp": -500, "depth": 20 }));
         crate::store::reviews::write_review(
-            &Quiet,
+            &QUIET,
             &db,
             &json!({
                 "key": key, "fen": fen, "moves": moves, "source": "local", "variant": "crazyhouse",
@@ -1156,7 +1149,7 @@ mod tests {
         )
         .expect("write review");
         let added =
-            add_mistakes(&Quiet, &db, key.as_str().unwrap(), Some("white"), 1.0).expect("add");
+            add_mistakes(&QUIET, &db, key.as_str().unwrap(), Some("white"), 1.0).expect("add");
         assert_eq!(added["added"], json!(1), "{added}");
         let drill = &added["items"][0];
         assert_eq!(drill["solution"], json!(["P@e4"]));
@@ -1175,20 +1168,20 @@ mod tests {
     fn shallow_local_reviews_and_unfinished_ones_make_no_drills() {
         let db = drills_db();
         let key = store_blunder_review(&db, "local", 8);
-        let shallow = add_mistakes(&Quiet, &db, &key, None, 1.0).expect("add");
+        let shallow = add_mistakes(&QUIET, &db, &key, None, 1.0).expect("add");
         assert_eq!(shallow["added"], json!(0));
-        let missing = add_mistakes(&Quiet, &db, "no review", None, 1.0).expect("add");
+        let missing = add_mistakes(&QUIET, &db, "no review", None, 1.0).expect("add");
         assert_eq!(missing, json!({ "added": 0, "items": [] }));
     }
 
     #[test]
     fn drill_games_name_the_game_a_review_came_from() {
         let db = drills_db();
-        assert_eq!(mistake_games(&Quiet, &db).expect("games"), json!([]));
+        assert_eq!(mistake_games(&QUIET, &db).expect("games"), json!([]));
         let key = store_blunder_review(&db, "local", 20);
-        add_mistakes(&Quiet, &db, &key, None, 1.0).expect("add");
+        add_mistakes(&QUIET, &db, &key, None, 1.0).expect("add");
         // Without a game it is dated by its review (when it was written).
-        let games = mistake_games(&Quiet, &db).expect("games");
+        let games = mistake_games(&QUIET, &db).expect("games");
         assert_eq!(games[0]["key"], json!(key));
         assert!(games[0]["playedAt"].as_f64().is_some_and(|at| at > 1.0e12));
         assert!(games[0].get("white").is_none());
@@ -1200,7 +1193,7 @@ mod tests {
             "moves": BLUNDER,
         });
         write_game(&db, &game).map(|()| Value::Null).expect("save");
-        let games = mistake_games(&Quiet, &db).expect("games");
+        let games = mistake_games(&QUIET, &db).expect("games");
         assert_eq!(
             (
                 games[0]["white"].clone(),
@@ -1218,7 +1211,7 @@ mod tests {
              INSERT INTO game_reviews (gameId, reviewKey) VALUES ('Lichess1', '{key}');"
         ))
         .expect("seed");
-        let games = mistake_games(&Quiet, &db).expect("games");
+        let games = mistake_games(&QUIET, &db).expect("games");
         assert_eq!(
             (
                 games[0]["white"].clone(),
@@ -1238,7 +1231,7 @@ mod tests {
     fn repertoire_misses_are_counted_per_line_and_cleared() {
         let db = drills_db();
         let miss =
-            |key: &str, fen: &str| record_repertoire_miss(&Quiet, &db, key, fen).expect("miss");
+            |key: &str, fen: &str| record_repertoire_miss(&QUIET, &db, key, fen).expect("miss");
         miss("white", "fen1");
         miss("white", "fen1");
         let misses = miss("black", "fen2");
@@ -1246,18 +1239,18 @@ mod tests {
             misses,
             json!({ "white": { "fen1": 2 }, "black": { "fen2": 1 } })
         );
-        let cleared = clear_repertoire_misses(&Quiet, &db, "white").expect("clear");
+        let cleared = clear_repertoire_misses(&QUIET, &db, "white").expect("clear");
         assert_eq!(cleared, json!({ "black": { "fen2": 1 } }));
         // Undo puts the cleared table back, adding to a miss recorded since.
         miss("white", "fen3");
         let restored =
-            restore_repertoire_misses(&Quiet, &db, "white", &json!({ "fen1": 2, "fen3": 1 }))
+            restore_repertoire_misses(&QUIET, &db, "white", &json!({ "fen1": 2, "fen3": 1 }))
                 .expect("restore");
         assert_eq!(
             restored,
             json!({ "black": { "fen2": 1 }, "white": { "fen3": 2, "fen1": 2 } })
         );
-        assert!(restore_repertoire_misses(&Quiet, &db, "white", &json!({ "fen1": -1 })).is_err());
+        assert!(restore_repertoire_misses(&QUIET, &db, "white", &json!({ "fen1": -1 })).is_err());
     }
 
     #[test]
@@ -1281,7 +1274,7 @@ mod tests {
                 "reviewRepertoireLine",
                 |db, _| {
                     review_repertoire_line(
-                        &Quiet,
+                        &QUIET,
                         db,
                         "study:white",
                         "d2d4",
@@ -1295,25 +1288,25 @@ mod tests {
                 MISTAKES,
                 r#"{"version":1,"items":[{"id":"a"#,
                 "addMistakes",
-                |db, review| add_mistakes(&Quiet, db, review, Some("black"), 1.0),
+                |db, review| add_mistakes(&QUIET, db, review, Some("black"), 1.0),
             ),
             (
                 MISTAKES,
                 r#"{"version":2,"items":[]}"#,
                 "addMistakes",
-                |db, review| add_mistakes(&Quiet, db, review, Some("black"), 1.0),
+                |db, review| add_mistakes(&QUIET, db, review, Some("black"), 1.0),
             ),
             (
                 JOINED,
                 r#"[{"system":"arena""#,
                 "forgetTournament",
-                |db, _| forget_tournament(&Quiet, db, "arena", "x", None).map(|()| Value::Null),
+                |db, _| forget_tournament(&QUIET, db, "arena", "x", None).map(|()| Value::Null),
             ),
             (
                 MISSES,
                 r#"{"study:white":"#,
                 "recordRepertoireMiss",
-                |db, _| record_repertoire_miss(&Quiet, db, "study:white", "fen"),
+                |db, _| record_repertoire_miss(&QUIET, db, "study:white", "fen"),
             ),
         ];
         for (key, body, method, write) in cases {
@@ -1325,7 +1318,7 @@ mod tests {
             let kept = read_document_text(&db, key).expect("read").expect("kept");
             assert_eq!(kept, body, "{method} replaced {key}");
             // Reading still works, so the rest of the library opens.
-            snapshot_of(&Quiet, &db, now).expect("library");
+            snapshot_of(&QUIET, &db, now).expect("library");
         }
     }
 
@@ -1339,7 +1332,7 @@ mod tests {
         )
         .expect("seed");
         let now = 1_800_000_000_000.0;
-        let library = snapshot_of(&Quiet, &db, now).expect("library");
+        let library = snapshot_of(&QUIET, &db, now).expect("library");
         assert_eq!(library["repertoireSchedule"], json!({}));
         assert_eq!(
             library["repertoireMisses"],
@@ -1352,12 +1345,12 @@ mod tests {
             params![SCHEDULE, r#"{"study:white":{"e2e4":{"due":0}}}"#],
         )
         .expect("seed");
-        let library = snapshot_of(&Quiet, &db, now).expect("library");
+        let library = snapshot_of(&QUIET, &db, now).expect("library");
         assert_eq!(library["repertoireSchedule"], json!({}));
 
         // Answering a line schedules it; the misses stay as they were.
         let review = |line: &str, correct: bool, at: f64| {
-            review_repertoire_line(&Quiet, &db, "study:white", line, correct, at)
+            review_repertoire_line(&QUIET, &db, "study:white", line, correct, at)
         };
         let schedule = review("e2e4 e7e5", true, now).expect("review");
         assert_eq!(schedule["study:white"]["e2e4 e7e5"]["interval"], json!(1.0));
@@ -1367,7 +1360,7 @@ mod tests {
         );
         let schedule = review("d2d4", false, now).expect("review");
         assert_eq!(schedule["study:white"]["d2d4"]["due"], json!(now));
-        let library = snapshot_of(&Quiet, &db, now).expect("library");
+        let library = snapshot_of(&QUIET, &db, now).expect("library");
         assert_eq!(library["repertoireSchedule"], schedule);
         assert_eq!(
             library["repertoireMisses"],
@@ -1380,7 +1373,7 @@ mod tests {
 
         // A line that is not moves, or a missing key, is refused and changes nothing.
         assert!(review("not moves", true, now).is_err());
-        let after = snapshot_of(&Quiet, &db, now).expect("library");
+        let after = snapshot_of(&QUIET, &db, now).expect("library");
         assert_eq!(after["repertoireSchedule"], schedule);
     }
 
@@ -1411,7 +1404,7 @@ mod tests {
         let cache = crate::store::StoreCache::default();
         let ctx = crate::store::StoreContext {
             db: &db,
-            host: &Quiet,
+            host: &QUIET,
             config: &config,
             cache: &cache,
         };
@@ -1457,13 +1450,13 @@ mod tests {
         let cache = crate::store::StoreCache::default();
         let ctx = crate::store::StoreContext {
             db: &db,
-            host: &Quiet,
+            host: &QUIET,
             config: &config,
             cache: &cache,
         };
         let now = 1_700_000_000_000.0;
         let entry = json!({ "system": "arena", "id": "live", "account": "Alice", "name": "Live", "until": now + 60_000.0 });
-        remember_tournament(&Quiet, &db, &entry, now).expect("remember");
+        remember_tournament(&QUIET, &db, &entry, now).expect("remember");
         let joined = |at: f64| {
             cached_library(&ctx, at).expect("library")["joinedTournaments"]
                 .as_array()
@@ -1481,8 +1474,8 @@ mod tests {
     fn a_session_and_the_drills_read_alone_are_the_librarys() {
         let db = drills_db();
         let now = 1_700_000_000_000.0;
-        let library = || snapshot_of(&Quiet, &db, now).expect("library");
-        let session = |kind: &str| session(&Quiet, &db, kind).expect(kind);
+        let library = || snapshot_of(&QUIET, &db, now).expect("library");
+        let session = |kind: &str| session(&QUIET, &db, kind).expect(kind);
         let mistakes = || read_mistakes(&db).map(Value::Array).expect("mistakes");
         assert_eq!(session("analysis"), Value::Null, "none kept yet");
         assert_eq!(mistakes(), json!([]));
@@ -1490,7 +1483,7 @@ mod tests {
         let kept = json!({ "pgn": "1. e4 e5 *", "path": "e2e4", "orientation": "black" });
         save_session(&db, "analysis", kept).expect("save");
         let key = store_blunder_review(&db, "local", 18);
-        add_mistakes(&Quiet, &db, &key, None, 1.0).expect("add");
+        add_mistakes(&QUIET, &db, &key, None, 1.0).expect("add");
         let library = library();
         assert!(
             !library["sessions"]["analysis"].is_null(),

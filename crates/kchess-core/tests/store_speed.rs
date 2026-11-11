@@ -3,23 +3,16 @@
 //! newest to the oldest. Not part of `check`; it prints the figures:
 //! `cargo test --release -p kchess-core --test store_speed -- --ignored --nocapture`
 
-use kchess_contracts::CoreEvent;
 use kchess_contracts::types::GamePageQuery;
 use std::time::{Duration, Instant};
 
 use kchess_core::store::{self, StoreCache, StoreContext, games, library};
-use kchess_core::{Config, CoreError, Host, Level};
+use kchess_core::test_host::QUIET;
+use kchess_core::{Config, CoreError};
 use rusqlite::{Connection, params};
 use serde_json::json;
 use shakmaty::uci::UciMove;
 use shakmaty::{CastlingMode, Chess, Position};
-
-struct Quiet;
-
-impl Host for Quiet {
-    fn log(&self, _: Level, _: &str, _: &str) {}
-    fn emit(&self, _event: CoreEvent) {}
-}
 
 /// xorshift64: the same games on every run.
 struct Rng(u64);
@@ -57,7 +50,7 @@ fn run<T>(
     let config = Config::new(std::path::PathBuf::new());
     let ctx = StoreContext {
         db,
-        host: &Quiet,
+        host: &QUIET,
         config: &config,
         cache,
     };
@@ -132,7 +125,7 @@ fn library_read_over_a_full_profile() {
         ("studies only", 0, 50),
     ] {
         let dir = tempfile::tempdir().expect("dir");
-        let db = store::open(&dir.path().join("kchess.db"), &Quiet).expect("open");
+        let db = store::open(&dir.path().join("kchess.db"), &QUIET).expect("open");
         let cache = StoreCache::default();
         full_library(&db, &cache, games, studies);
         let library = run(&db, &cache, |c| library::cached_library(c, 0.0));
@@ -162,7 +155,7 @@ fn library_read_over_a_full_profile() {
 #[ignore = "a benchmark: run with --ignored --nocapture"]
 fn game_pages_from_newest_to_oldest() {
     let dir = tempfile::tempdir().expect("dir");
-    let db = store::open(&dir.path().join("kchess.db"), &Quiet).expect("open");
+    let db = store::open(&dir.path().join("kchess.db"), &QUIET).expect("open");
     let cache = StoreCache::default();
     let total = 50_000;
     let mut rng = Rng(7);

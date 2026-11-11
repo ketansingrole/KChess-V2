@@ -682,7 +682,8 @@ fn url_path(url: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_contracts::CoreEvent;
+
+    use crate::test_host::TestHost;
 
     /// reqwest says "error sending request" for every failed connection; the log carries what
     /// lies beneath, so a failure on CI says whether it was refused, reset or out of ports.
@@ -743,16 +744,9 @@ mod tests {
         assert!(sync.await.is_err() && other.await.is_err() && moved.await.is_err());
     }
 
-    struct Quiet;
-
-    impl Host for Quiet {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _event: CoreEvent) {}
-    }
-
     fn quiet_policy() -> Arc<Policy> {
         Policy::new(
-            Arc::new(Quiet),
+            TestHost::quiet(),
             Arc::new(Unmetered),
             reqwest::Client::new(),
             CancellationToken::new(),

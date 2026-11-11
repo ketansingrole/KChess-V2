@@ -3,6 +3,7 @@
 use crate::support;
 use futures_util::poll;
 use kchess_contracts::core_api::CoreApi;
+use kchess_core::engine::search;
 use kchess_core::{Config, Core};
 use serde_json::Value;
 use serde_json::json;
@@ -14,7 +15,7 @@ async fn prepared(dir: &Path, host: &Arc<support::Recording>) -> Core {
     let core = Core::open(Config::new(dir.to_path_buf()), host.clone()).unwrap();
     core.call("loadData", vec![]).await.unwrap();
     core.call("resumeOnline", vec![]).await.unwrap();
-    assert_eq!(json!(core.assistance_blocked()), json!(false));
+    assert!(!core.assistance_blocked());
     let engine = support::engine_copy(dir, "search");
     support::save_engine_path(&core, &engine);
     core
@@ -22,18 +23,12 @@ async fn prepared(dir: &Path, host: &Arc<support::Recording>) -> Core {
 
 async fn scored(host: &support::Recording) -> Value {
     support::wait_until(Duration::from_secs(5), "a scored update", || {
-        host.events
-            .lock()
-            .unwrap()
-            .iter()
-            .find_map(|(name, value)| {
-                (name == "engine:analysis"
-                    && value["done"] == json!(false)
-                    && value["lines"]
-                        .as_array()
-                        .is_some_and(|lines| !lines.is_empty()))
-                .then(|| value.clone())
-            })
+        host.named("engine:analysis").into_iter().find(|value| {
+            value["done"] == json!(false)
+                && value["lines"]
+                    .as_array()
+                    .is_some_and(|lines| !lines.is_empty())
+        })
     })
     .await
 }
@@ -55,14 +50,8 @@ async fn stopping_cancels_analysis_waiting_for_settings() {
     core.call("stopAnalysis", vec![json!(true)]).await.unwrap();
     drop(storage);
     assert!(start.await.unwrap_err().aborted);
-    assert_eq!(json!(core.analysis_running_for_tests()), json!(false));
-    assert!(
-        host.events
-            .lock()
-            .unwrap()
-            .iter()
-            .all(|(name, _)| name != "engine:analysis")
-    );
+    assert!(!core.analysis_running_for_tests());
+    assert!(host.named("engine:analysis").is_empty());
     // A later explicit start is still allowed and produces usable output.
     let id = core
         .call(
@@ -93,17 +82,11 @@ async fn recovery_cancels_analysis_waiting_for_settings() {
         poll!(&mut recovery).is_pending(),
         "recovery has reported checking and is awaiting accounts"
     );
-    assert_eq!(json!(core.assistance_blocked()), json!(true));
+    assert!(core.assistance_blocked());
     drop(storage);
     assert!(start.await.unwrap_err().aborted);
-    assert!(
-        host.events
-            .lock()
-            .unwrap()
-            .iter()
-            .all(|(name, _)| name != "engine:analysis")
-    );
-    assert_eq!(json!(core.assistance_blocked()), json!(true));
+    assert!(host.named("engine:analysis").is_empty());
+    assert!(core.assistance_blocked());
     recovery.await.unwrap();
     core.close().await;
 }
@@ -125,10 +108,7 @@ async fn stopping_cancels_computer_search_waiting_for_settings() {
     );
     core.call("stopEngine", vec![]).await.unwrap();
     drop(storage);
-    assert_eq!(
-        search.await.unwrap_err().message,
-        "Engine search superseded."
-    );
+    assert_eq!(search.await.unwrap_err().message, search::SUPERSEDED);
     core.close().await;
 }
 
@@ -151,11 +131,5 @@ async fn close_drains_and_cancels_a_pending_analysis_start() {
     .await
     .expect("close must cancel a pending start");
     assert!(result.unwrap_err().aborted);
-    assert!(
-        host.events
-            .lock()
-            .unwrap()
-            .iter()
-            .all(|(name, _)| name != "engine:analysis")
-    );
+    assert!(host.named("engine:analysis").is_empty());
 }

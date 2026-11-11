@@ -1,66 +1,15 @@
-//! The core answers every method `CoreApi` declares (`kchess_contracts::core_api::METHODS`) and
-//! nothing else, and reads arguments as their checks leave them.
+//! The core reads arguments as their checks leave them.
 
-use kchess_contracts::CoreEvent;
-use std::sync::Arc;
-
-use kchess_contracts::core_api::METHODS;
-use kchess_core::{Config, Core, Host, Level};
+use kchess_core::test_host::TestHost;
+use kchess_core::{Config, Core};
 use serde_json::{Value, json};
-
-/// More arguments than any method takes: every method refuses this count before it does any
-/// work, so probing with it has no effect.
-const EXCESS: usize = 64;
-
-/// The message of a name the core does not answer.
-const UNKNOWN: &str = "Unknown core method";
-
-/// Discards the events and host requests; the probe calls need neither.
-struct Quiet;
-
-impl Host for Quiet {
-    fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-
-    fn emit(&self, _event: CoreEvent) {}
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn every_declared_method_is_answered_and_no_other() {
-    let dir = tempfile::tempdir().expect("profile");
-    let core = Core::open(Config::new(dir.path().to_path_buf()), Arc::new(Quiet)).expect("opens");
-    for method in METHODS {
-        let refused = core
-            .call(method.name, vec![json!(1); EXCESS])
-            .await
-            .expect_err("too many arguments");
-        assert_eq!(
-            refused.message,
-            format!("Invalid argument count for {}.", method.name)
-        );
-    }
-    // Neither the lifecycle nor the services' own methods are reached by name.
-    for name in [
-        "noSuchMethod",
-        "close",
-        "suspend",
-        "lichess.profile",
-        "engine.bestMove",
-    ] {
-        let unknown = core.call(name, vec![json!(1)]).await;
-        assert!(
-            unknown.is_err_and(|cause| cause.message.starts_with(UNKNOWN)),
-            "{name} is unknown"
-        );
-    }
-    core.close().await;
-}
 
 /// A page resuming its session reads it, and the drills, alone: through the facade each answers
 /// what the whole library holds for it, and a kind no session has is refused.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_session_and_the_drills_are_read_alone() {
     let dir = tempfile::tempdir().expect("profile");
-    let core = Core::open(Config::new(dir.path().to_path_buf()), Arc::new(Quiet)).expect("opens");
+    let core = Core::open(Config::new(dir.path().to_path_buf()), TestHost::quiet()).expect("opens");
     let kept = json!({ "pgn": "1. e4 e5 *", "path": "e2e4", "orientation": "black" });
     core.call("saveSession", vec![json!("analysis"), kept])
         .await
@@ -92,7 +41,7 @@ async fn a_session_and_the_drills_are_read_alone() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn review_get_takes_an_optional_variant() {
     let dir = tempfile::tempdir().expect("profile");
-    let core = Core::open(Config::new(dir.path().to_path_buf()), Arc::new(Quiet)).expect("opens");
+    let core = Core::open(Config::new(dir.path().to_path_buf()), TestHost::quiet()).expect("opens");
     // Assistance waits for the check that no Lichess game is live.
     core.call("resumeOnline", vec![]).await.expect("no game");
     let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";

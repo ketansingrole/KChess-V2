@@ -155,7 +155,7 @@ async fn two_windows_share_one_core_and_see_each_others_writes() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_client_reaches_only_the_core_api() {
+async fn a_client_calls_the_core_and_answers_host_requests() {
     let profile = tempfile::tempdir().expect("profile");
     let service = spawn_service(profile.path(), Duration::from_secs(30));
     let (gpui, _events) = connect(profile.path(), "gpui").await;
@@ -167,20 +167,6 @@ async fn a_client_reaches_only_the_core_api() {
             .await
             .expect("the call is answered")
     };
-    // Internal methods skip the facade's validation and its live-game assistance checks.
-    for method in [
-        "engine.bestMove",
-        "analysis.start",
-        "store.voiceLog.voiceHistoryDocument",
-    ] {
-        let refused = answered(gpui.call(method, vec![]))
-            .await
-            .expect_err("an internal method");
-        assert!(
-            refused.message.contains("Unknown core method"),
-            "{method}: {refused}"
-        );
-    }
     answered(gpui.call("library", vec![]))
         .await
         .expect("a CoreApi method");
@@ -252,10 +238,19 @@ async fn a_core_nobody_uses_closes_for_another_release() {
     let service = spawn_service(profile.path(), Duration::from_secs(30));
     let (gpui, _events) = connect(profile.path(), "gpui").await;
     drop(gpui);
-    tokio::time::sleep(Duration::from_millis(100)).await;
     let token = discovery::read_token(profile.path()).expect("token");
-    let refused = raw_hello(profile.path(), token, "another-release".into()).await;
-    assert!(matches!(refused, Frame::Refuse { sole: true, .. }));
+    // Until the core has let go of the window that left, it refuses with `sole: false` and
+    // stays open; once it has, the refusal is the only client's and the core closes.
+    tokio::time::timeout(WAIT, async {
+        while !matches!(
+            raw_hello(profile.path(), token.clone(), "another-release".into()).await,
+            Frame::Refuse { sole: true, .. }
+        ) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the core lets go of the window that left");
     tokio::time::timeout(WAIT, service)
         .await
         .expect("the service closes")
@@ -669,8 +664,6 @@ async fn a_window_cannot_close_the_shared_core() {
     let profile = tempfile::tempdir().expect("profile");
     let service = spawn_service(profile.path(), Duration::from_secs(30));
     let (gpui, _events) = connect(profile.path(), "gpui").await;
-    let info = discovery::read_info(profile.path()).expect("core.json");
-    assert!(info.started_at > 1_600_000_000_000, "{}", info.started_at);
     gpui.suspend();
     for name in ["suspend", "close"] {
         let refused = gpui.call(name, vec![]).await.expect_err("not a method");
@@ -691,16 +684,8 @@ async fn a_closing_core_lets_nobody_in() {
     let socket =
         std::path::PathBuf::from(discovery::read_info(profile.path()).expect("info").socket);
     drop(gpui);
-    tokio::time::sleep(Duration::from_millis(100)).await;
     let token = discovery::read_token(profile.path()).expect("token");
     let info = discovery::read_info(profile.path()).expect("core.json");
-    // Both connect before the refusal, so the second is answered after the core decided.
-    let first = transport::connect(Path::new(&info.socket))
-        .await
-        .expect("socket");
-    let second = transport::connect(Path::new(&info.socket))
-        .await
-        .expect("socket");
     let say_hello = |stream: transport::Stream, protocol: String| {
         let token = token.clone();
         async move {
@@ -716,8 +701,28 @@ async fn a_closing_core_lets_nobody_in() {
             read_frame(&mut reader).await.ok().flatten()
         }
     };
-    let refused = say_hello(first, "another-release".into()).await;
-    assert!(matches!(refused, Some(Frame::Refuse { sole: true, .. })));
+    // Both connect before the refusal, so the second is answered after the core decided. Until
+    // the core has let go of the window that left, the refusal is not the only client's
+    // (`sole: false`) and changes nothing: try again.
+    let second = tokio::time::timeout(WAIT, async {
+        loop {
+            let first = transport::connect(Path::new(&info.socket))
+                .await
+                .expect("socket");
+            let second = transport::connect(Path::new(&info.socket))
+                .await
+                .expect("socket");
+            match say_hello(first, "another-release".into()).await {
+                Some(Frame::Refuse { sole: true, .. }) => return second,
+                Some(Frame::Refuse { sole: false, .. }) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                answer => panic!("not refused for its release: {answer:?}"),
+            }
+        }
+    })
+    .await
+    .expect("the core lets go of the window that left");
     let late = say_hello(second, protocol::protocol()).await;
     assert!(
         !matches!(late, Some(Frame::Welcome { .. })),

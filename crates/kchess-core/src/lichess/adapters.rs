@@ -375,23 +375,17 @@ impl LookupCache for DbLookups {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host::{Config, Host, Level};
-    use kchess_contracts::CoreEvent;
+    use crate::host::{Config, Host};
+
+    use crate::test_host::TestHost;
     use serde_json::json;
-
-    struct Quiet;
-
-    impl Host for Quiet {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _event: CoreEvent) {}
-    }
 
     /// A saved explorer lookup written by the cache comes back as the same JSON, so a refresh that
     /// fails can show it (`lookups.rs` reads the entry the store keeps as text).
     #[tokio::test]
     async fn a_saved_lookup_reads_back_as_the_json_it_was_written_as() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let host: Arc<dyn Host> = Arc::new(Quiet);
+        let host: Arc<dyn Host> = TestHost::quiet();
         let database = Arc::new(Database::new(
             Config::new(dir.path().to_path_buf()),
             Arc::clone(&host),
@@ -415,7 +409,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let database = Arc::new(Database::new(
             Config::new(dir.path().to_path_buf()),
-            Arc::new(Quiet),
+            TestHost::quiet(),
         ));
         database
             .write(|ctx| games::add_account(ctx.db, "Alice", true))

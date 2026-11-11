@@ -109,13 +109,8 @@ fn read_theme(path: &Path) -> Result<AppTheme> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_contracts::CoreEvent;
 
-    struct Quiet;
-    impl Host for Quiet {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _event: CoreEvent) {}
-    }
+    use crate::test_host::QUIET;
 
     #[test]
     fn valid_files_load_and_bad_ones_are_reported() {
@@ -129,7 +124,7 @@ mod tests {
         .unwrap();
         std::fs::write(folder.join("a-broken.json"), "{").unwrap();
         std::fs::write(folder.join("_draft.json"), "{").unwrap();
-        let report = custom_themes(&Quiet, profile.path()).unwrap();
+        let report = custom_themes(&QUIET, profile.path()).unwrap();
         assert_eq!(
             serde_json::to_string(&report.themes).unwrap(),
             r##"[{"id":"mine","name":"Mine","dark":{"bg":"#000","text":"#fff","primary":"#f00"},"custom":true}]"##

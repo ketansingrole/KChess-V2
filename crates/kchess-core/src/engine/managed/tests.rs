@@ -2,7 +2,7 @@
 //! archive traversal and links, failed handoff, failed probe, cancellation. A local HTTP server
 //! stands in for GitHub; archives are generated in the test.
 
-use kchess_contracts::CoreEvent;
+use crate::test_host::TestHost;
 use std::collections::HashMap;
 use std::future::Future;
 use std::io::{Cursor, Write};
@@ -22,29 +22,6 @@ use super::*;
 
 const EXE: &str = "stockfish";
 const LINUX_ASSET: &str = "stockfish-linux-x86-64-universal.tar.gz";
-
-#[derive(Default)]
-struct RecordingHost {
-    events: Mutex<Vec<(String, Value)>>,
-    logs: Mutex<Vec<String>>,
-}
-
-impl Host for RecordingHost {
-    fn log(&self, _level: Level, scope: &str, message: &str) {
-        self.logs
-            .lock()
-            .unwrap()
-            .push(format!("[{scope}] {message}"));
-    }
-
-    fn emit(&self, event: CoreEvent) {
-        let (event, payload) = (event.name(), event.into_payload());
-        self.events
-            .lock()
-            .unwrap()
-            .push((event.to_string(), payload));
-    }
-}
 
 type Hits = Arc<Mutex<Vec<String>>>;
 
@@ -298,7 +275,7 @@ impl EngineHandoff for TestHandoff {
 
 #[tokio::test]
 async fn reports_missing_when_the_directory_or_binary_is_absent() {
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let empty = dir.path().join("empty");
     assert_eq!(
@@ -316,7 +293,7 @@ async fn reports_missing_when_the_directory_or_binary_is_absent() {
 
 #[tokio::test]
 async fn reports_the_recorded_version_and_none_when_the_file_is_missing() {
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join(executable_name()), "#!/bin/sh\nexit 0\n").unwrap();
     let state = managed_engine(&host, dir.path()).await;
@@ -329,7 +306,7 @@ async fn reports_the_recorded_version_and_none_when_the_file_is_missing() {
 
 #[tokio::test]
 async fn deletes_only_its_own_directory_under_engine_maintenance() {
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     std::fs::create_dir_all(&engine).unwrap();
@@ -354,7 +331,7 @@ async fn skips_the_download_when_the_installed_engine_matches_the_release() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_17.1", "binary");
@@ -376,7 +353,7 @@ async fn skips_the_download_when_the_installed_engine_matches_the_release() {
 #[tokio::test]
 async fn rejects_invalid_release_metadata_instead_of_downloading() {
     let (base, hits) = serve(|_| vec![Route("/release", 200, br#"{"nope":true}"#.to_vec())]).await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let error = install_managed_engine(&host, &location(dir.path(), &base))
         .await
@@ -416,7 +393,7 @@ async fn installs_the_verified_release_and_records_its_version() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     let meter = Arc::new(crate::usage::UsageLog::default());
@@ -473,7 +450,7 @@ async fn a_token_authenticates_the_release_check_but_not_the_download() {
     let dir = tempfile::tempdir().unwrap();
     let mut location = location(&dir.path().join("current"), &base);
     location.github_token = Some("test-token".to_string());
-    install_managed_engine(&RecordingHost::default(), &location)
+    install_managed_engine(&TestHost::default(), &location)
         .await
         .unwrap();
     assert_eq!(
@@ -505,7 +482,7 @@ async fn rejects_a_download_that_fails_its_digest_and_keeps_the_old_engine() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -537,7 +514,7 @@ async fn rejects_a_release_without_a_sha256_digest() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -577,7 +554,7 @@ async fn rejects_a_download_shorter_than_the_release_size() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -606,7 +583,7 @@ async fn refuses_an_oversized_release_before_downloading() {
         )]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let error = install_managed_engine(&host, &location(dir.path(), &base))
         .await
@@ -633,7 +610,7 @@ async fn reports_a_failed_download_status() {
         )]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let error = install_managed_engine(&host, &location(dir.path(), &base))
         .await
@@ -672,7 +649,7 @@ async fn a_brief_github_failure_is_asked_again_and_the_install_succeeds() {
         },
     )
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let result = install_managed_engine(&host, &location(dir.path(), &base))
         .await
@@ -687,7 +664,7 @@ async fn a_brief_github_failure_is_asked_again_and_the_install_succeeds() {
 #[tokio::test]
 async fn a_lasting_github_failure_still_fails_the_install() {
     let (base, hits) = serve_failing(vec![("/release", vec![504; 3])], |_| Vec::new()).await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let error = install_managed_engine(&host, &location(dir.path(), &base))
         .await
@@ -749,7 +726,7 @@ async fn a_binary_that_does_not_answer_uci_keeps_the_old_engine() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -788,7 +765,7 @@ async fn an_archive_without_an_engine_is_rejected() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -831,7 +808,7 @@ async fn rejects_path_traversal_in_a_tar_archive() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -870,7 +847,7 @@ async fn rejects_a_symbolic_link_in_a_tar_archive() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -962,7 +939,7 @@ async fn a_refused_handoff_keeps_the_old_engine_and_resumes_nothing() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -1001,7 +978,7 @@ async fn owners_that_do_not_exit_time_out_and_keep_the_old_engine() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -1019,7 +996,7 @@ async fn owners_that_do_not_exit_time_out_and_keep_the_old_engine() {
 #[tokio::test]
 async fn a_cancelled_install_fails_as_an_abort() {
     let (base, _hits) = serve(|_| vec![Route("/release", 200, release("sf_17", vec![]))]).await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let location = location(dir.path(), &base);
     location.cancel.cancel();
@@ -1030,7 +1007,7 @@ async fn a_cancelled_install_fails_as_an_abort() {
 
 #[tokio::test]
 async fn delete_reports_the_refused_handoff_and_removes_nothing() {
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -1188,7 +1165,7 @@ async fn a_pinned_release_is_checked_against_its_pinned_digest() {
         ]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let engine = dir.path().join("current");
     seed_installed(&engine, "sf_16", "old engine");
@@ -1225,7 +1202,7 @@ async fn a_pinned_release_must_answer_its_own_tag() {
         )]
     })
     .await;
-    let host = RecordingHost::default();
+    let host = TestHost::default();
     let dir = tempfile::tempdir().unwrap();
     let mut pinned = location(&dir.path().join("current"), &base);
     pinned.pinned = Some(&OTHER_TAG);

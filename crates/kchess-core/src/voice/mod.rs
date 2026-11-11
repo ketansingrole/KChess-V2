@@ -745,14 +745,8 @@ fn unpack(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_contracts::CoreEvent;
 
-    struct Silent;
-
-    impl Host for Silent {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _event: CoreEvent) {}
-    }
+    use crate::test_host::TestHost;
 
     /// A call cancelled while the model is being prepared stops listening: before, its listener
     /// stayed for good and every later progress went to every window once more for each one.
@@ -767,7 +761,7 @@ mod tests {
             std::thread::current().id()
         ));
         let cache = VoiceModelCache::new(
-            Arc::new(Silent),
+            TestHost::quiet(),
             Arc::new(crate::usage::Unmetered),
             directory.clone(),
             Archive::Url(url),

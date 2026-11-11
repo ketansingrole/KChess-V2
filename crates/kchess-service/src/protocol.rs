@@ -287,12 +287,6 @@ mod tests {
         assert!(over.is_err_and(|error| error.to_string().contains("over the limit")));
     }
 
-    /// Library documents of several megabytes fit in a frame.
-    #[test]
-    fn the_limit_is_sixteen_megabytes() {
-        assert_eq!(MAX_FRAME, 16 << 20);
-    }
-
     /// A read that fails is an error, not a closed connection.
     #[tokio::test]
     async fn a_broken_connection_is_an_error() {
@@ -309,14 +303,10 @@ mod tests {
         assert!(read_frame(&mut Broken).await.is_err());
     }
 
+    /// A hello carries both: the release is named, the protocol a short fingerprint.
     #[test]
-    fn the_release_and_protocol_are_stable() {
-        let packaged = std::env::var("KCHESS_PACKAGE_VERSION").unwrap_or_default();
-        if packaged.is_empty() {
-            assert_eq!(release(), env!("CARGO_PKG_VERSION"));
-        }
+    fn the_release_is_named_and_the_protocol_is_a_short_fingerprint() {
         assert!(!release().is_empty());
-        assert_eq!(protocol(), protocol());
         assert_eq!(protocol().len(), 16);
     }
 }

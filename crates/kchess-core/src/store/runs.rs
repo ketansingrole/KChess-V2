@@ -129,16 +129,9 @@ pub fn clear_runs(db: &Connection, kind: Option<RunKind>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_contracts::CoreEvent;
-    use serde_json::json;
 
-    struct Logged(std::sync::Mutex<Vec<String>>);
-    impl Host for Logged {
-        fn log(&self, _: Level, scope: &str, message: &str) {
-            self.0.lock().unwrap().push(format!("{scope}: {message}"));
-        }
-        fn emit(&self, _event: CoreEvent) {}
-    }
+    use crate::test_host::TestHost;
+    use serde_json::json;
 
     fn database() -> Connection {
         let db = Connection::open_in_memory().unwrap();
@@ -147,7 +140,7 @@ mod tests {
     }
 
     /// A run as the game sends it; the variant and detail may be left out here.
-    fn save(db: &Connection, host: &Logged, mut sent: Value) -> Value {
+    fn save(db: &Connection, host: &TestHost, mut sent: Value) -> Value {
         sent.as_object_mut()
             .unwrap()
             .entry("variant")
@@ -160,14 +153,14 @@ mod tests {
         serde_json::to_value(save_run(host, db, &run).unwrap()).unwrap()
     }
 
-    fn summary(db: &Connection, host: &Logged, kind: RunKind) -> Value {
+    fn summary(db: &Connection, host: &TestHost, kind: RunKind) -> Value {
         serde_json::to_value(run_summary(host, db, kind).unwrap()).unwrap()
     }
 
     #[test]
     fn an_empty_kind_summarises_to_nothing() {
         let db = database();
-        let host = Logged(Default::default());
+        let host = TestHost::default();
         assert_eq!(
             summary(&db, &host, RunKind::Storm),
             json!({ "kind": "storm", "best": {}, "recent": [], "total": 0 })
@@ -177,7 +170,7 @@ mod tests {
     #[test]
     fn saving_reports_a_new_best_only_when_it_beats_the_variant() {
         let db = database();
-        let host = Logged(Default::default());
+        let host = TestHost::default();
         let first = save(
             &db,
             &host,
@@ -223,7 +216,7 @@ mod tests {
     #[test]
     fn the_summary_lists_only_the_most_recent_runs() {
         let db = database();
-        let host = Logged(Default::default());
+        let host = TestHost::default();
         for score in 1..=(RECENT + 5) {
             save(
                 &db,
@@ -241,7 +234,7 @@ mod tests {
     #[test]
     fn a_detail_that_is_not_json_reads_as_empty_and_is_logged() {
         let db = database();
-        let host = Logged(Default::default());
+        let host = TestHost::default();
         db.execute(
             "INSERT INTO runs (kind, variant, score, detail, playedAt) VALUES ('storm', '3m', 5, 'not json', 1)",
             [],
@@ -249,15 +242,15 @@ mod tests {
         .unwrap();
         let summary = summary(&db, &host, RunKind::Storm);
         assert_eq!(summary["recent"][0]["detail"], json!({}));
-        let logged = host.0.lock().unwrap();
+        let logged = host.logs();
         assert_eq!(logged.len(), 1);
-        assert!(logged[0].starts_with("runs: Run row has invalid detail JSON"));
+        assert!(logged[0].contains("[runs] Run row has invalid detail JSON"));
     }
 
     #[test]
     fn clearing_forgets_one_kind_or_every_kind() {
         let db = database();
-        let host = Logged(Default::default());
+        let host = TestHost::default();
         for kind in ["storm", "streak", "rush"] {
             save(&db, &host, json!({ "kind": kind, "score": 3 }));
         }
@@ -275,7 +268,7 @@ mod tests {
     #[test]
     fn a_saved_run_is_stored_as_before() {
         let db = database();
-        let host = Logged(Default::default());
+        let host = TestHost::default();
         save(
             &db,
             &host,

@@ -252,6 +252,7 @@ pub fn opens_in_browser(url: &str) -> bool {
 mod tests {
     use super::*;
     use crate::host::Level;
+    use crate::test_host::TestHost;
     use kchess_contracts::CoreEvent;
     use serde_json::json;
 
@@ -371,22 +372,11 @@ mod tests {
         assert_eq!(receive.await.unwrap(), Ok(json!("real")));
     }
 
-    /// Hears requests and never answers, like the closing core's gated host.
-    #[derive(Default)]
-    struct Silent(Mutex<usize>);
-
-    impl Host for Silent {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _event: CoreEvent) {
-            *self.0.lock().unwrap() += 1;
-        }
-    }
-
     /// A request made once the capabilities have closed fails at once, unheard: it is no longer
     /// left waiting `DEADLINE` for an answer that cannot come.
     #[tokio::test]
     async fn a_request_after_close_fails_at_once() {
-        let host = Arc::new(Silent::default());
+        let host = TestHost::new();
         let caps = Capabilities::new(host.clone());
         caps.close();
         let answer = tokio::time::timeout(Duration::from_secs(1), caps.on_battery())
@@ -396,7 +386,7 @@ mod tests {
             answer.unwrap_err().message,
             "The host closed before answering."
         );
-        assert_eq!(*host.0.lock().unwrap(), 0, "the host was asked");
+        assert!(host.events().is_empty(), "the host was asked");
         assert!(caps.pending.lock().unwrap().waiting.is_empty());
     }
 
@@ -406,7 +396,7 @@ mod tests {
     /// (`tests/memory.rs`, `cores_opened_and_closed`). The refresh now ends with the core.
     #[tokio::test]
     async fn a_battery_refresh_that_starts_after_close_ends_at_once() {
-        let host: Arc<dyn Host> = Arc::new(Silent::default());
+        let host: Arc<dyn Host> = TestHost::new();
         let caps = Arc::new(Capabilities::new(Arc::clone(&host)));
         let battery = crate::engine::bridge::Battery::new(host, Arc::clone(&caps));
         let alive = || {

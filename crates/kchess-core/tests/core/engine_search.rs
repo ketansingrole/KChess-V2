@@ -199,9 +199,11 @@ async fn a_new_search_supersedes_the_running_one_and_stops_its_engine() {
 async fn windows_play_their_own_computer_games_side_by_side() {
     let log = log_path("windows");
     let (search, _) = search_with("search", false, &log);
-    let in_window = |connection: u64, movetime: u64| {
+    // A window's search, asked for in its scope: it has superseded the window's last search and
+    // taken its turn by the time this returns.
+    let in_window = async |connection: u64, movetime: u64| {
         let search = search.clone();
-        tokio::spawn(kchess_core::connection::scope(connection, async move {
+        let mut asked = Box::pin(kchess_core::connection::scope(connection, async move {
             search
                 .best_move(
                     json!(["e2e4"]),
@@ -210,9 +212,14 @@ async fn windows_play_their_own_computer_games_side_by_side() {
                     json!({ "movetime": movetime }),
                 )
                 .await
-        }))
+        }));
+        assert!(
+            futures_util::poll!(&mut asked).is_pending(),
+            "the search is asked for"
+        );
+        tokio::spawn(asked)
     };
-    let first = in_window(2, 400);
+    let first = in_window(2, 400).await;
     wait_until(
         Duration::from_secs(10),
         "the first window's search to reach the engine",
@@ -224,9 +231,8 @@ async fn windows_play_their_own_computer_games_side_by_side() {
         },
     )
     .await;
-    let second = in_window(3, 50);
+    let second = in_window(3, 50).await;
     // The second window takes its move back: only its own search stops.
-    tokio::time::sleep(Duration::from_millis(20)).await;
     search.stop_connection(3);
     assert_eq!(
         first
@@ -239,6 +245,7 @@ async fn windows_play_their_own_computer_games_side_by_side() {
     assert_eq!(stopped.message, SUPERSEDED);
     assert_eq!(
         in_window(3, 50)
+            .await
             .await
             .expect("joined")
             .expect("the second window's next move"),

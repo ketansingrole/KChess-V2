@@ -199,7 +199,8 @@ fn iso_time(ms: f64) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_contracts::CoreEvent;
+
+    use crate::test_host::TestHost;
 
     #[test]
     fn dates_read_as_javascript_reads_them() {
@@ -220,17 +221,6 @@ mod tests {
         assert_eq!(out, "{\n  \"a\": [\n    1,\n    {}\n  ],\n  \"b\": []\n}");
     }
 
-    struct Logged(std::sync::Mutex<Vec<String>>);
-    impl Host for Logged {
-        fn log(&self, _: Level, scope: &str, message: &str) {
-            self.0
-                .lock()
-                .expect("log")
-                .push(format!("{scope}: {message}"));
-        }
-        fn emit(&self, _event: CoreEvent) {}
-    }
-
     fn database() -> Connection {
         let db = Connection::open_in_memory().expect("database");
         crate::store::migrations::migrate(&db).expect("migrate");
@@ -247,14 +237,14 @@ mod tests {
         update_voice_attempt(db, id, &update).expect("update");
     }
 
-    fn history(host: &Logged, db: &Connection, limit: u32) -> Value {
+    fn history(host: &TestHost, db: &Connection, limit: u32) -> Value {
         json!(voice_history(host, db, limit).expect("history"))
     }
 
     #[test]
     fn attempts_are_saved_corrected_and_listed_newest_first() {
         let db = database();
-        let host = Logged(Default::default());
+        let host = TestHost::default();
         let first = save(
             &db,
             json!({
@@ -328,7 +318,7 @@ mod tests {
     #[test]
     fn the_export_dates_every_entry_and_reads_bad_words_as_none() {
         let db = database();
-        let host = Logged(Default::default());
+        let host = TestHost::default();
         db.execute(
             "INSERT INTO voice_log (at, source, heard, confidence, words, outcome)
              VALUES (1700000000123, 'local', 'e4', 0.5, 'not json', 'played'),
@@ -348,9 +338,9 @@ mod tests {
         assert_eq!(parsed["entries"][0]["words"], json!([]));
         assert!(parsed["exportedAt"].as_f64().is_some());
         assert_eq!(parsed["entries"].as_array().map(Vec::len), Some(1));
-        let logged = host.0.lock().expect("log");
-        assert!(logged[0].starts_with("voice: Voice log row 2 is not readable"));
-        assert!(logged[1].starts_with("voice: Voice log row has invalid words JSON"));
+        let logged = host.logs();
+        assert!(logged[0].contains("[voice] Voice log row 2 is not readable"));
+        assert!(logged[1].contains("[voice] Voice log row has invalid words JSON"));
     }
 
     /// The row a saved phrase leaves, as earlier builds wrote it: whole confidences without a

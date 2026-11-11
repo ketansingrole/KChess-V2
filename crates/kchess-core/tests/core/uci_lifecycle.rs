@@ -137,7 +137,7 @@ async fn rejects_a_bounded_search_with_no_bestmove() {
         .unwrap_err();
     assert!(error.message.contains("timed out"), "{}", error.message);
     assert!(
-        host.contains("Engine command timed out: go timeoutMs=20"),
+        host.logged("Engine command timed out: go timeoutMs=20"),
         "the timeout is logged with the command name only"
     );
 }

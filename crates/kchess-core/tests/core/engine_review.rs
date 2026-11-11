@@ -204,9 +204,7 @@ async fn a_review_that_panicked_runs_when_asked_for_again() {
         .await
         .expect("the request");
     wait_until(WAIT, "the failed pass", || {
-        rig.recording
-            .contains("a review step panicked")
-            .then_some(())
+        rig.recording.logged("a review step panicked").then_some(())
     })
     .await;
     rig.reviews

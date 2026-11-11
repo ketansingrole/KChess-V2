@@ -270,18 +270,13 @@ pub struct StoreContext<'a> {
 /// Runs `work` over a fresh, migrated database in memory.
 #[cfg(test)]
 pub(crate) fn in_memory<T>(work: impl FnOnce(&StoreContext) -> T) -> T {
-    struct Quiet;
-    impl Host for Quiet {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _event: crate::host::CoreEvent) {}
-    }
     let db = Connection::open_in_memory().expect("open");
     migrations::migrate(&db).expect("migrate");
     let config = Config::new(std::path::PathBuf::new());
     let cache = StoreCache::default();
     work(&StoreContext {
         db: &db,
-        host: &Quiet,
+        host: &crate::test_host::QUIET,
         config: &config,
         cache: &cache,
     })
@@ -333,21 +328,15 @@ pub(crate) fn restrict_database(_path: &Path, _host: &dyn Host, _tag: &str) {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_contracts::CoreEvent;
+
     use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};
-
-    struct Quiet;
-    impl Host for Quiet {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _event: CoreEvent) {}
-    }
 
     fn database() -> (tempfile::TempDir, Arc<Database>) {
         let dir = tempfile::tempdir().expect("profile");
         let database = Arc::new(Database::new(
             Config::new(dir.path().to_path_buf()),
-            Arc::new(Quiet),
+            crate::test_host::TestHost::quiet(),
         ));
         (dir, database)
     }
@@ -368,7 +357,10 @@ mod tests {
         let (dir, database) = database();
         assert_eq!(played_games(&database), 0);
         database.lane.release();
-        let other = Database::new(Config::new(dir.path().to_path_buf()), Arc::new(Quiet));
+        let other = Database::new(
+            Config::new(dir.path().to_path_buf()),
+            crate::test_host::TestHost::quiet(),
+        );
         let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         let game = json!({
             "id": "g", "source": "board", "startedAt": 1, "updatedAt": 2, "white": "A",

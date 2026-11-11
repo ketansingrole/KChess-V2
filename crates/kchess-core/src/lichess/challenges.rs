@@ -192,10 +192,10 @@ fn sorted(entries: &[ChallengeInfo]) -> Vec<ChallengeInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host::Level;
-    use kchess_contracts::CoreEvent;
+
+    use crate::test_host::TestHost;
     use serde_json::Number;
-    use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicI64, Ordering};
 
     fn challenge(overrides: Value) -> Value {
         let mut challenge = json!({
@@ -285,23 +285,11 @@ mod tests {
         );
     }
 
-    #[derive(Default)]
-    struct Updates(AtomicUsize);
-
-    impl Host for Updates {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, event: CoreEvent) {
-            let event = event.name();
-            assert_eq!(event, "challenges:update");
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
     #[test]
     fn announces_a_challenge_once_removes_it_when_cancelled_and_forgets_stale_ones() {
         let clock = Arc::new(AtomicI64::new(1_000));
         let now = Arc::clone(&clock);
-        let host = Arc::new(Updates::default());
+        let host = TestHost::new();
         let inbox = ChallengeInbox::new(
             Arc::clone(&host) as Arc<dyn Host>,
             Arc::new(move || now.load(Ordering::SeqCst)),
@@ -332,12 +320,12 @@ mod tests {
         assert_eq!(inbox.list().len(), 1);
         inbox.forget("alice");
         assert!(inbox.list().is_empty());
-        assert!(host.0.load(Ordering::SeqCst) > 0);
+        assert!(!host.named("challenges:update").is_empty());
     }
 
     #[test]
     fn a_listing_replaces_only_its_own_accounts_challenges_and_a_malformed_one_changes_nothing() {
-        let host = Arc::new(Updates::default());
+        let host = TestHost::new();
         let inbox = ChallengeInbox::new(Arc::clone(&host) as Arc<dyn Host>, Arc::new(|| 1_000));
         inbox.ingest("Alice", &challenge(json!({})));
         let to_bob = challenge(json!({
