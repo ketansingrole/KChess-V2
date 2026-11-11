@@ -22,10 +22,12 @@ const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const CASTLED: [&str; 7] = ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "e1h1"];
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(
+    not(kchess_stockfish),
+    ignore = "needs a native Stockfish: set KCHESS_ENGINE_PATH"
+)]
 async fn bundled_stockfish_reviews_a_game_with_castling() {
-    let Some(engine) = support::stockfish() else {
-        return;
-    };
+    let engine = support::engine("KCHESS_ENGINE_PATH");
     let host = support::host();
     let locations = EngineLocations {
         managed_dir: std::env::temp_dir().join("kchess-no-managed-engine"),

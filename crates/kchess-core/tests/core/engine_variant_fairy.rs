@@ -52,10 +52,12 @@ async fn analyse(
 }
 
 #[tokio::test]
+#[cfg_attr(
+    not(kchess_fairy_stockfish),
+    ignore = "needs Fairy-Stockfish: set KCHESS_VARIANT_ENGINE_PATH"
+)]
 async fn crazyhouse_lines_drop_pieces_from_the_pockets() {
-    let Some(engine) = support::fairy_stockfish() else {
-        return;
-    };
+    let engine = support::engine("KCHESS_VARIANT_ENGINE_PATH");
     // 1. e4 d5 2. exd5 Qxd5: a pawn each in hand.
     let update = analyse(
         engine,
@@ -80,10 +82,12 @@ async fn crazyhouse_lines_drop_pieces_from_the_pockets() {
 }
 
 #[tokio::test]
+#[cfg_attr(
+    not(kchess_fairy_stockfish),
+    ignore = "needs Fairy-Stockfish: set KCHESS_VARIANT_ENGINE_PATH"
+)]
 async fn an_atomic_capture_that_explodes_the_king_is_mate() {
-    let Some(engine) = support::fairy_stockfish() else {
-        return;
-    };
+    let engine = support::engine("KCHESS_VARIANT_ENGINE_PATH");
     // Qxf7 explodes the king beside f7: White wins at once, which standard rules would not see.
     let update = analyse(
         engine,
@@ -104,12 +108,14 @@ async fn an_atomic_capture_that_explodes_the_king_is_mate() {
 /// A Crazyhouse game with a drop is reviewed by Fairy-Stockfish to the end (standard rules stop
 /// at the drop), under a key of its own: the same moves in standard chess are another game.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(
+    not(kchess_fairy_stockfish),
+    ignore = "needs Fairy-Stockfish: set KCHESS_VARIANT_ENGINE_PATH"
+)]
 async fn a_crazyhouse_game_is_reviewed_with_its_drops() {
     use kchess_core::engine::review::{ReviewRequest, ReviewSettings, Reviews};
     use support::reviews::{ReviewDb, ScriptedHost};
-    let Some(engine) = support::fairy_stockfish() else {
-        return;
-    };
+    let engine = support::engine("KCHESS_VARIANT_ENGINE_PATH");
     let host = support::host();
     let mut locations = support::locations();
     locations.variant = engine;
@@ -193,10 +199,12 @@ fn variant_search(engine: std::path::PathBuf, random: f64) -> kchess_core::engin
 /// The computer plays Crazyhouse and Horde by their rules, from their own starts: its moves
 /// (best or random) are legal there, and a drop is among the moves it is given.
 #[tokio::test]
+#[cfg_attr(
+    not(kchess_fairy_stockfish),
+    ignore = "needs Fairy-Stockfish: set KCHESS_VARIANT_ENGINE_PATH"
+)]
 async fn the_computer_plays_a_variant_by_its_rules() {
-    let Some(engine) = support::fairy_stockfish() else {
-        return;
-    };
+    let engine = support::engine("KCHESS_VARIANT_ENGINE_PATH");
     let zh = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
     let horde = "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1";
     let games = [

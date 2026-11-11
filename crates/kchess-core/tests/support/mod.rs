@@ -174,36 +174,19 @@ pub async fn wait_until<T>(
     }
 }
 
-/// Fairy-Stockfish for the tests that analyse a variant with it: `KCHESS_VARIANT_ENGINE_PATH`
-/// (`cargo xtask fairy-stockfish` builds it in `target/fairy-stockfish/bin`). None, with a note,
-/// when it is not set, so the test is skipped.
-#[allow(dead_code)]
-pub fn fairy_stockfish() -> Option<PathBuf> {
-    let path = std::env::var_os("KCHESS_VARIANT_ENGINE_PATH")
+/// The engine at `variable`'s path: Stockfish (`KCHESS_ENGINE_PATH`, which CI fetches with `cargo
+/// run -p kchess-core --example fetch_stockfish`) or Fairy-Stockfish
+/// (`KCHESS_VARIANT_ENGINE_PATH`). The tests that call it are ignored unless the variable was set
+/// when they were built (`build.rs`); set to a missing file, the test fails.
+pub fn engine(variable: &str) -> PathBuf {
+    let path = std::env::var_os(variable)
         .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
-    match path {
-        Some(path) if path.is_file() => Some(path),
-        _ => {
-            eprintln!("skipping: set KCHESS_VARIANT_ENGINE_PATH to Fairy-Stockfish");
-            None
-        }
-    }
-}
-
-/// A native Stockfish for the tests that need a real engine: `KCHESS_ENGINE_PATH` (CI fetches the
-/// official build with `cargo run -p kchess-core --example fetch_stockfish`). None, with a note,
-/// when it is not set, so the test is skipped.
-#[allow(dead_code)]
-pub fn stockfish() -> Option<PathBuf> {
-    let path = std::env::var_os("KCHESS_ENGINE_PATH")
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
-    match path {
-        Some(path) if path.is_file() => Some(path),
-        _ => {
-            eprintln!("skipping: set KCHESS_ENGINE_PATH to a native Stockfish");
-            None
-        }
-    }
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("set {variable} to the engine"));
+    assert!(
+        path.is_file(),
+        "{variable} names no file: {}",
+        path.display()
+    );
+    path
 }

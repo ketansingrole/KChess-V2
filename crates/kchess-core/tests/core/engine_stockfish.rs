@@ -8,10 +8,12 @@ use kchess_core::engine::uci::UciController;
 use tokio::process::Command;
 
 #[tokio::test]
+#[cfg_attr(
+    not(kchess_stockfish),
+    ignore = "needs a native Stockfish: set KCHESS_ENGINE_PATH"
+)]
 async fn bundled_stockfish_answers_a_bounded_search() {
-    let Some(engine) = support::stockfish() else {
-        return;
-    };
+    let engine = support::engine("KCHESS_ENGINE_PATH");
 
     let host = support::host();
     let hub = support::hub(&host);
