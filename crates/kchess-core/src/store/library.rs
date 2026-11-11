@@ -29,14 +29,7 @@ pub(crate) const MISSES: &str = "repertoire:misses";
 /// The repertoire lines' spaced-repetition schedule (`kchess_domain::training::repetition`).
 pub(crate) const SCHEDULE: &str = "repertoire:schedule";
 
-pub(crate) const SESSION_KINDS: [&str; 6] = [
-    "analysis",
-    "local",
-    "computer",
-    "archive:computer",
-    "archive:board",
-    "archive:clock",
-];
+pub(crate) use kchess_domain::misc::constants::SESSION_KINDS;
 
 const GAMES_FULL: &str =
     "Game history is full. Export saved games before making room for new games.";

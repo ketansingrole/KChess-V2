@@ -884,6 +884,35 @@ mod tests {
         assert_eq!(game.search_failed(&request), [Effect::Cancelled]);
     }
 
+    /// A session as the library stores it today reads back exactly: the sides stay named
+    /// `white` and `black`, a missing flag stays missing, and a saved game writes the same shape.
+    #[test]
+    fn a_stored_session_reads_and_writes_as_before() {
+        let stored = json!({
+            "version": 2,
+            "moves": ["e2e4", "e7e5"],
+            "ply": 2,
+            "level": "club",
+            "color": "black",
+            "resigned": false,
+            "setup": { "variant": "standard", "fen": crate::rules::INITIAL_FEN },
+            "clock": { "minutes": 3.0, "increment": 2.0 },
+            "times": { "white": 170000.0, "black": 175000.0 },
+            "flagged": null,
+        });
+        let game = ComputerGame::resume(Some(&stored), &host(0.)).unwrap();
+        assert_eq!(game.color(), Color::Black);
+        assert!(!game.flagged());
+        let mut written = json!(game.snapshot(0.));
+        assert_eq!(written["color"], "black");
+        assert_eq!(written["flagged"], Value::Null);
+        written["version"] = json!(2);
+        assert_eq!(written, stored);
+        let flagged = json!({ "color": "white", "flagged": "white", "moves": ["e2e4"] });
+        let game = ComputerGame::resume(Some(&flagged), &host(0.)).unwrap();
+        assert_eq!(json!(game.snapshot(0.))["flagged"], "white");
+    }
+
     #[test]
     fn an_illegal_move_is_refused() {
         let mut game = ComputerGame::resume(None, &host(0.)).unwrap();

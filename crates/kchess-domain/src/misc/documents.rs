@@ -92,7 +92,8 @@ fn clock_side(raw: Option<&J>) -> Option<(f64, f64)> {
     let raw = object_or_none(raw?)?;
     let minutes = integer_of(raw.get("minutes"))?;
     let increment = integer_of(raw.get("increment"))?;
-    ((0.0..=180.0).contains(&minutes) && (0.0..=180.0).contains(&increment))
+    crate::games::Clock { minutes, increment }
+        .fits()
         .then_some((minutes, increment))
 }
 

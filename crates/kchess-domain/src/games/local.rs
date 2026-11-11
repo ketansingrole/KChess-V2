@@ -490,6 +490,28 @@ mod tests {
         assert_eq!(game.result().unwrap().winner, Some(Color::Black));
     }
 
+    /// A board game as the library stores it today reads back exactly, its winner named as
+    /// before.
+    #[test]
+    fn a_stored_session_reads_and_writes_as_before() {
+        let stored = json!({
+            "setup": { "variant": "standard", "fen": crate::rules::INITIAL_FEN },
+            "moves": ["f2f3", "e7e5", "g2g4", "d8h4"],
+            "clock": null,
+            "times": null,
+            "result": { "winner": "black", "reason": "Checkmate" },
+        });
+        let game = LocalGame::resume(Some(&stored), 0.).unwrap();
+        assert_eq!(game.outcome(), Some(Outcome::Wins(Color::Black)));
+        assert_eq!(json!(game.snapshot(0.)), stored);
+        let drawn = json!({ "result": { "reason": "Draw agreed" } });
+        let game = LocalGame::resume(Some(&drawn), 0.).unwrap();
+        assert_eq!(
+            json!(game.snapshot(0.))["result"],
+            json!({ "reason": "Draw agreed" })
+        );
+    }
+
     #[test]
     fn a_saved_game_resumes_where_it_was_left() {
         let mut game = LocalGame::resume(None, 0.).unwrap();

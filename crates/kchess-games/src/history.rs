@@ -249,6 +249,22 @@ mod tests {
         );
     }
 
+    /// Each history kind's identity is a session the library keeps.
+    #[test]
+    fn every_place_is_kept_as_a_known_session() {
+        use kchess_domain::misc::constants::SESSION_KINDS;
+        for kind in [
+            crate::computer::HISTORY,
+            crate::local::HISTORY,
+            crate::local::CLOCK_HISTORY,
+        ] {
+            assert!(
+                SESSION_KINDS.contains(&session_kind(kind).as_str()),
+                "{kind}"
+            );
+        }
+    }
+
     #[test]
     fn removed_games_leave_the_list() {
         let mut games = vec![json!({ "id": "a" }), json!({ "id": "b" })];
