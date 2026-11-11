@@ -6,6 +6,7 @@
 
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
+use kchess_core::store::games;
 use kchess_core::{Config, Core, Host, Level};
 use serde_json::{Value, json};
 
@@ -78,15 +79,12 @@ pub async fn open(base: &str) -> Profile {
         )
     };
     host.core.set(Arc::downgrade(&core)).unwrap();
-    core.call("store.games.addAccount", vec![json!("Alice"), json!(true)])
-        .await
+    core.database_for_tests()
+        .write(|c| {
+            games::add_account(c.db, "Alice", true)?;
+            games::import_token_ciphertext(c.db, Some("Alice"), "lip_alice")
+        })
         .unwrap();
-    core.call(
-        "store.games.importTokenCiphertext",
-        vec![json!("Alice"), json!("lip_alice")],
-    )
-    .await
-    .unwrap();
     Profile {
         core,
         host,

@@ -7,12 +7,18 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fixtures::{Recording, Reply, http_client, serve};
-use kchess_core::lichess::policy::Policy;
+use kchess_contracts::types::UsageKind;
+use kchess_core::lichess::policy::{Lane, Policy, Usage};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 fn policy_with(host: Arc<Recording>, timeout: Duration) -> Arc<Policy> {
     Policy::with_timeout(host, http_client(), CancellationToken::new(), timeout)
+}
+
+/// Traffic counted against nobody.
+fn nobody(policy: &Policy) -> Usage {
+    policy.usage("", UsageKind::Other)
 }
 
 /// Lets spawned requests reach the queue before the next step.
@@ -43,6 +49,8 @@ async fn runs_one_export_at_a_time_until_its_body_ends_without_blocking_other_re
                 .get(format!("{}/api/games/user/Alice", fixture.base))
                 .build()
                 .unwrap(),
+            Lane::Export,
+            &nobody(&policy),
             &cancel,
         )
         .await
@@ -62,8 +70,9 @@ async fn runs_one_export_at_a_time_until_its_body_ends_without_blocking_other_re
         .build()
         .unwrap();
     let second = tokio::spawn(async move {
+        let usage = nobody(&second_policy);
         second_policy
-            .send(second_request, &second_cancel)
+            .send(second_request, Lane::Export, &usage, &second_cancel)
             .await
             .map(|admitted| admitted.response.status().as_u16())
     });
@@ -77,6 +86,8 @@ async fn runs_one_export_at_a_time_until_its_body_ends_without_blocking_other_re
                 .get(format!("{}/api/account", fixture.base))
                 .build()
                 .unwrap(),
+            Lane::Background,
+            &nobody(&policy),
             &cancel,
         )
         .await
@@ -119,23 +130,51 @@ async fn releases_the_export_lane_when_a_body_is_cancelled_or_the_request_fails(
     };
 
     // A body dropped before it ends frees the lane.
-    let admitted = policy.send(export(&fixture.base), &cancel).await.unwrap();
+    let admitted = policy
+        .send(
+            export(&fixture.base),
+            Lane::Export,
+            &nobody(&policy),
+            &cancel,
+        )
+        .await
+        .unwrap();
     assert!(admitted.hold.is_some());
     drop(admitted);
     drop(chunks);
 
     // A request that never connects frees it too.
-    let failed = policy.send(export("http://127.0.0.1:1"), &cancel).await;
+    let failed = policy
+        .send(
+            export("http://127.0.0.1:1"),
+            Lane::Export,
+            &nobody(&policy),
+            &cancel,
+        )
+        .await;
     assert!(failed.is_err());
 
     // A failed status is answered and keeps no lane.
-    let refused = policy.send(export(&fixture.base), &cancel).await.unwrap();
+    let refused = policy
+        .send(
+            export(&fixture.base),
+            Lane::Export,
+            &nobody(&policy),
+            &cancel,
+        )
+        .await
+        .unwrap();
     assert_eq!(refused.response.status().as_u16(), 500);
     assert!(refused.hold.is_none());
 
     let ok = tokio::time::timeout(
         Duration::from_secs(5),
-        policy.send(export(&fixture.base), &cancel),
+        policy.send(
+            export(&fixture.base),
+            Lane::Export,
+            &nobody(&policy),
+            &cancel,
+        ),
     )
     .await
     .expect("the lane is free")
@@ -166,11 +205,17 @@ async fn a_rate_limit_cools_the_next_request_down_for_retry_after() {
             .unwrap()
     };
 
-    let limited = policy.send(account(), &cancel).await.unwrap();
+    let limited = policy
+        .send(account(), Lane::Background, &nobody(&policy), &cancel)
+        .await
+        .unwrap();
     assert_eq!(limited.response.status().as_u16(), 429);
 
     let started = Instant::now();
-    let next = policy.send(account(), &cancel).await.unwrap();
+    let next = policy
+        .send(account(), Lane::Background, &nobody(&policy), &cancel)
+        .await
+        .unwrap();
     assert!(next.response.status().is_success());
     assert!(started.elapsed() >= Duration::from_millis(900));
 
@@ -211,8 +256,9 @@ async fn interactive_game_moves_go_before_background_reads() {
             .build()
             .unwrap();
         holds.push(tokio::spawn(async move {
+            let usage = nobody(&policy);
             policy
-                .send(request, &CancellationToken::new())
+                .send(request, Lane::Background, &usage, &CancellationToken::new())
                 .await
                 .map(|_| ())
         }));
@@ -222,8 +268,14 @@ async fn interactive_game_moves_go_before_background_reads() {
     let background_policy = Arc::clone(&policy);
     let background_request = client.get(format!("{base}/api/account")).build().unwrap();
     let background = tokio::spawn(async move {
+        let usage = nobody(&background_policy);
         background_policy
-            .send(background_request, &CancellationToken::new())
+            .send(
+                background_request,
+                Lane::Background,
+                &usage,
+                &CancellationToken::new(),
+            )
             .await
             .map(|_| ())
     });
@@ -234,8 +286,14 @@ async fn interactive_game_moves_go_before_background_reads() {
         .build()
         .unwrap();
     let game_move = tokio::spawn(async move {
+        let usage = nobody(&move_policy);
         move_policy
-            .send(move_request, &CancellationToken::new())
+            .send(
+                move_request,
+                Lane::Interactive,
+                &usage,
+                &CancellationToken::new(),
+            )
             .await
             .map(|_| ())
     });
@@ -273,6 +331,8 @@ async fn a_request_that_never_answers_fails_at_the_deadline() {
                 .get(format!("{}/api/account", fixture.base))
                 .build()
                 .unwrap(),
+            Lane::Background,
+            &nobody(&policy),
             &CancellationToken::new(),
         )
         .await
@@ -298,6 +358,8 @@ async fn a_cancelled_request_ends_with_an_abort() {
                 .get(format!("{}/api/account", fixture.base))
                 .build()
                 .unwrap(),
+            Lane::Background,
+            &nobody(&policy),
             &cancel,
         )
         .await
@@ -306,7 +368,7 @@ async fn a_cancelled_request_ends_with_an_abort() {
 }
 
 #[tokio::test]
-async fn usage_is_counted_for_the_task_that_made_the_request() {
+async fn usage_is_counted_against_the_account_and_kind_the_caller_names() {
     let fixture = serve(|_| Reply::Json(200, "{}".into())).await;
     let host = Arc::new(Recording::default());
     let policy = policy_with(Arc::clone(&host), Duration::from_secs(5));
@@ -316,11 +378,11 @@ async fn usage_is_counted_for_the_task_that_made_the_request() {
         .get(format!("{}/api/account", fixture.base))
         .build()
         .unwrap();
+    let usage = policy.usage("Alice", UsageKind::Games);
     policy
-        .with_usage("Alice", "games", async {
-            policy.send(request, &cancel).await.unwrap()
-        })
-        .await;
+        .send(request, Lane::Background, &usage, &cancel)
+        .await
+        .unwrap();
     let usage = host.usage_events();
     assert!(
         usage.contains(&serde_json::json!({
@@ -344,12 +406,12 @@ async fn traffic_of_a_forgotten_account_is_not_counted() {
         .get(format!("{}/api/account", fixture.base))
         .build()
         .unwrap();
+    let usage = policy.usage("Alice", UsageKind::Games);
+    policy.forget_usage(&["ALICE".to_string()]);
     policy
-        .with_usage("Alice", "games", async {
-            policy.forget_usage(&["ALICE".to_string()]);
-            policy.send(request, &cancel).await.unwrap()
-        })
-        .await;
+        .send(request, Lane::Background, &usage, &cancel)
+        .await
+        .unwrap();
     assert!(
         host.usage_events()
             .iter()
@@ -367,7 +429,15 @@ async fn an_unreachable_server_is_said_in_plain_words() {
         .get("http://127.0.0.1:9/api/puzzle/daily")
         .build()
         .unwrap();
-    let Err(failure) = policy.send(request, &CancellationToken::new()).await else {
+    let Err(failure) = policy
+        .send(
+            request,
+            Lane::Background,
+            &nobody(&policy),
+            &CancellationToken::new(),
+        )
+        .await
+    else {
         panic!("nothing listens on the discard port");
     };
     assert_eq!(failure.message, "Couldn’t reach Lichess");
@@ -405,18 +475,25 @@ async fn ordinary_calls_accept_gzip_and_live_streams_ask_for_an_uncompressed_bod
     let policy = policy_with(Arc::new(Recording::default()), Duration::from_secs(5));
     let client = http_client();
     let cancel = CancellationToken::new();
-    let send = |path: &str| {
+    let send = |path: &str, lane: Lane| {
         let request = client
             .get(format!("{}{path}", fixture.base))
             .build()
             .unwrap();
         let policy = Arc::clone(&policy);
         let cancel = cancel.clone();
-        async move { policy.send(request, &cancel).await.unwrap().response }
+        async move {
+            let usage = nobody(&policy);
+            policy
+                .send(request, lane, &usage, &cancel)
+                .await
+                .unwrap()
+                .response
+        }
     };
 
     // The compressed answer arrives decoded.
-    let answer = send("/api/account").await;
+    let answer = send("/api/account", Lane::Background).await;
     assert_eq!(answer.text().await.unwrap(), account);
     let encoding = |path: &str| {
         fixture.to(path)[0]
@@ -426,8 +503,11 @@ async fn ordinary_calls_accept_gzip_and_live_streams_ask_for_an_uncompressed_bod
     assert!(encoding("/api/account").is_some_and(|value| value.contains("gzip")));
 
     // A live stream must not wait on a compressor's buffer; a bulk export may.
-    let _ = send("/api/stream/event").await.text().await;
+    let _ = send("/api/stream/event", Lane::Live).await.text().await;
     assert_eq!(encoding("/api/stream/event").as_deref(), Some("identity"));
-    let _ = send("/api/games/user/Alice").await.text().await;
+    let _ = send("/api/games/user/Alice", Lane::Export)
+        .await
+        .text()
+        .await;
     assert!(encoding("/api/games/user/Alice").is_some_and(|value| value.contains("gzip")));
 }

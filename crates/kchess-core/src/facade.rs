@@ -19,6 +19,7 @@ use std::sync::Arc;
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use crate::store::{self, import, voice_log};
 
 mod accounts;
 mod ai;
@@ -436,7 +437,8 @@ impl Core {
                     return Some(Err(CoreError::new(CLOSED)));
                 }
                 self.database
-                    .call("store.voiceLog.voiceHistoryDocument", &[])
+                    .read(|ctx| voice_log::voice_history_document(ctx.host, ctx.db))
+                    .map(Value::String)
             }
             _ => return None,
         };
@@ -461,34 +463,32 @@ impl Core {
         // Asking the OS secret store can show a keychain prompt: only when tokens may be imported.
         let pending = self
             .database
-            .call_async("store.games.legacyImportPending", &[])
-            .await?
-            .as_bool()
-            == Some(true);
+            .read_async(import::legacy_import_pending)
+            .await?;
         let available = pending && self.capabilities.secrets_available().await?;
         let legacy = self
             .database
-            .call_async("store.games.migrate", &[json!(available)])
+            .write_async(move |ctx| import::migrate(ctx, available))
             .await?;
         if !available {
             return Ok(());
         }
-        for entry in legacy["legacyTokens"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-        {
-            let account = entry["account"].clone();
-            let token = entry["token"].as_str().unwrap_or_default().to_string();
-            let stored = match self.capabilities.encrypt(&token).await {
-                Ok(encrypted) => self
-                    .database
-                    .call_async(
-                        "store.games.importTokenCiphertext",
-                        &[account.clone(), json!(encrypted)],
-                    )
-                    .await
-                    .map(|_| ()),
+        let imported = !legacy.is_empty();
+        for entry in legacy {
+            let account = entry.account;
+            let stored = match self.capabilities.encrypt(&entry.token).await {
+                Ok(encrypted) => {
+                    let owner = account.clone();
+                    self.database
+                        .write_async(move |ctx| {
+                            store::games::import_token_ciphertext(
+                                ctx.db,
+                                owner.as_deref(),
+                                &encrypted,
+                            )
+                        })
+                        .await
+                }
                 Err(cause) => Err(cause),
             };
             if let Err(cause) = stored {
@@ -497,26 +497,32 @@ impl Core {
                 // state that `legacyImportPending` (now false) would never retry. Its
                 // imported games stay: a logout would delete them (and with no account
                 // name, every account's).
-                let name = account.as_str().unwrap_or("?");
+                let name = account.clone().unwrap_or_else(|| "?".into());
                 self.host.log(
                     Level::Warn,
                     "store",
                     &format!("Legacy migration failed for {name}: {}", cause.message),
                 );
-                let _ = self
-                    .database
-                    .call_async("store.games.disconnectAccount", &[account])
-                    .await;
+                if let Some(account) = account {
+                    let disconnected = self
+                        .database
+                        .write_async(move |ctx| store::games::disconnect_account(ctx.db, &account))
+                        .await;
+                    if let Err(cause) = disconnected {
+                        self.host.log(
+                            Level::Warn,
+                            "store",
+                            &format!("Could not disconnect {name}: {}", cause.message),
+                        );
+                    }
+                }
             }
         }
         // Every login the earlier database held is sealed here now (or its account was
         // disconnected), so its plaintext copies go.
-        if legacy["legacyTokens"]
-            .as_array()
-            .is_some_and(|tokens| !tokens.is_empty())
-        {
+        if imported {
             self.database
-                .call_async("store.games.scrubLegacyTokens", &[])
+                .read_async(import::scrub_legacy_tokens)
                 .await?;
         }
         Ok(())
@@ -526,14 +532,16 @@ impl Core {
     pub(crate) async fn get_settings(&self) -> Result<Value> {
         self.ensure_migrated().await?;
         self.database
-            .call_async("store.games.getSettings", &[])
+            .read_async(|ctx| store::games::get_settings(ctx.db))
             .await
     }
 
     /// Settings, accounts and the library size (`loadData`).
     pub(crate) async fn load_data(&self) -> Result<Value> {
         self.ensure_migrated().await?;
-        self.database.call_async("store.games.loadData", &[]).await
+        self.database
+            .read_async(|ctx| store::games::as_json(store::games::load_app_data(ctx.db)?))
+            .await
     }
 
     /// The Lichess accounts that are signed in, as names; `username` restricts the list.
@@ -572,9 +580,17 @@ impl Core {
             self.inner("challenges.forget", vec![json!(name)]).await?;
         }
         // Tournaments joined as a signed-out account would otherwise reopen its event streams.
-        self.inner("store.library.forgetTournamentsOf", vec![names])
-            .await?;
+        self.forget_tournaments_of(accounts.clone()).await?;
         Ok(accounts)
+    }
+
+    /// Forgets the tournaments these accounts joined.
+    pub(crate) async fn forget_tournaments_of(&self, accounts: Vec<String>) -> Result<()> {
+        self.database
+            .write_async(move |ctx| {
+                store::library::forget_tournaments_of(ctx.host, ctx.db, &accounts)
+            })
+            .await
     }
 
     /// Settings changed: store them, and stop what the new settings change (`persistSettings`).
@@ -596,9 +612,11 @@ impl Core {
             ));
         }
         self.ensure_migrated().await?;
+        let settings: store::games::Settings = serde_json::from_value(settings)
+            .map_err(|cause| CoreError::new(format!("Invalid settings: {cause}")))?;
         let saved = self
             .database
-            .call_async("store.games.saveSettings", &[settings])
+            .write_async(move |ctx| store::games::save_settings(ctx.db, &settings))
             .await?;
         if previous["enginePath"] != saved["enginePath"] {
             self.search.stop_engine(true);
@@ -758,11 +776,11 @@ impl Core {
     /// Logs a user's logout result after the sessions have ended (`logoutAccounts`).
     pub(crate) async fn logout_accounts(&self, username: Option<&str>) -> Result<Value> {
         self.ensure_migrated().await?;
+        let username = username.map(str::to_string);
         self.database
-            .call_async(
-                "store.games.logoutAccounts",
-                &[username.map_or(Value::Null, |name| json!(name))],
-            )
+            .write_async(move |ctx| {
+                store::games::as_json(store::games::logout_accounts(ctx.db, username.as_deref())?)
+            })
             .await
     }
 

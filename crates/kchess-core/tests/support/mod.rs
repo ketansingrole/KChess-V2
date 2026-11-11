@@ -83,6 +83,20 @@ pub fn engine_copy(dir: &Path, mode: &str) -> String {
     path.display().to_string()
 }
 
+/// Saves `path` as the engine executable in the core's settings, as the settings page does.
+pub fn save_engine_path(core: &kchess_core::Core, path: &str) {
+    use kchess_core::store::games;
+    let database = core.database_for_tests();
+    let mut settings = database
+        .read(|c| games::get_settings(c.db))
+        .expect("settings");
+    settings["enginePath"] = serde_json::json!(path);
+    let settings: games::Settings = serde_json::from_value(settings).expect("valid settings");
+    database
+        .write(|c| games::save_settings(c.db, &settings))
+        .expect("save settings");
+}
+
 /// The lines the fake engine has received so far, in order.
 pub fn received(log: &Path) -> Vec<String> {
     std::fs::read_to_string(log)

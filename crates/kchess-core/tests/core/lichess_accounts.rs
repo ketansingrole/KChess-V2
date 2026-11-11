@@ -33,14 +33,13 @@ fn service(
         CancellationToken::new(),
         Duration::from_secs(5),
     );
-    let client = LichessClient::with_base(base, Arc::clone(&policy), http_client());
+    let client = LichessClient::with_base(base, Arc::clone(&policy));
     Arc::new(Lichess::new(
         client,
         capabilities_for(host),
         store,
         tokens,
         Arc::clone(host) as Arc<dyn kchess_core::host::Host>,
-        CancellationToken::new(),
     ))
 }
 
@@ -450,6 +449,24 @@ async fn a_stale_login_for_followed_users_asks_to_reconnect() {
     );
 }
 
+/// Every 403 asked to reconnect, though a 403 that is not about the login (Lichess refusing the
+/// request itself) is not mended by reconnecting.
+#[tokio::test]
+async fn a_403_that_is_not_about_the_login_does_not_ask_to_reconnect() {
+    let fixture = serve(|_| Reply::Json(403, r#"{"error":"Not allowed right now."}"#.into())).await;
+    let host = Arc::new(Recording::default());
+    let lichess = service(
+        &fixture.base,
+        &host,
+        MemoryStore::with_accounts(&[("Alice", true)]),
+        MemoryTokens::with(&[("Alice", "lip_alice")]),
+    );
+    let report = lichess.followed_users().await.unwrap();
+    assert_eq!(report.problems.len(), 1);
+    assert!(!report.problems[0].needs_reconnect);
+    assert_eq!(report.problems[0].message, "Not allowed right now.");
+}
+
 #[tokio::test]
 async fn a_missing_user_is_named_in_the_error() {
     let fixture = serve(|_| Reply::Text(404, "text/html", "<html>missing</html>".into())).await;
@@ -740,7 +757,6 @@ async fn a_synced_page_saves_its_reviews_with_its_games() {
             CancellationToken::new(),
             Duration::from_secs(5),
         ),
-        http_client(),
     );
     let lichess = Lichess::new(
         client,
@@ -748,7 +764,6 @@ async fn a_synced_page_saves_its_reviews_with_its_games() {
         Arc::new(PageOnly(Arc::clone(&store))),
         tokens,
         Arc::clone(&host) as Arc<dyn kchess_core::host::Host>,
-        CancellationToken::new(),
     );
     lichess.sync_games(Some("Alice")).await.unwrap();
     assert_eq!(store.games.lock().unwrap().len(), 1);

@@ -10,13 +10,15 @@ mod zst;
 use rusqlite::Connection;
 use serde_json::json;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{CoreError, Result};
 use crate::host::{Config, Host, Level};
+use crate::store::sql::{Lane, LaneMessages, Sql as _, transaction};
+use crate::tasks::lock;
 use kchess_domain::puzzle::{Random, Sampler};
 use queries::{LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleDbStatus};
 
@@ -40,10 +42,10 @@ struct Installing<'a> {
 impl Drop for Installing<'_> {
     fn drop(&mut self) {
         self.download.cancel.cancel();
-        if let Ok(mut running) = self.inner.running.lock()
-            && running
-                .as_ref()
-                .is_some_and(|current| Arc::ptr_eq(current, &self.download))
+        let mut running = lock(&self.inner.running);
+        if running
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &self.download))
         {
             running.take();
         }
@@ -51,13 +53,9 @@ impl Drop for Installing<'_> {
 }
 
 struct Inner {
-    config: Config,
     host: Arc<dyn Host>,
-    db: Mutex<Option<Connection>>,
-    execution: Arc<tokio::sync::Semaphore>,
-    work: tokio_util::task::TaskTracker,
+    lane: Arc<Lane>,
     running: Mutex<Option<Arc<Download>>>,
-    closed: AtomicBool,
 }
 
 pub struct PuzzleService {
@@ -95,7 +93,7 @@ pub fn write_database(data_dir: &Path, rows: &[queries::DbPuzzle]) -> Result<usi
     attempts::create_schema(&db)?;
     let count = queries::store_sample(&db, rows, &|| false)?;
     db.execute_batch("INSERT OR IGNORE INTO worker_meta VALUES (1)")
-        .map_err(|e| CoreError::new(e.to_string()))?;
+        .sql()?;
     Ok(count)
 }
 
@@ -104,8 +102,7 @@ fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
     let path = config.data_dir.join("puzzles.db");
     let db = Connection::open(&path)
         .map_err(|e| CoreError::wrap("Could not open the puzzle database", e))?;
-    db.execute_batch("PRAGMA busy_timeout = 5000;")
-        .map_err(|e| CoreError::new(e.to_string()))?;
+    db.execute_batch("PRAGMA busy_timeout = 5000;").sql()?;
     queries::create_schema(&db)?;
     attempts::create_schema(&db)?;
     restrict(&path, host);
@@ -121,7 +118,7 @@ fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
             "ATTACH DATABASE ?1 AS legacy",
             [legacy.to_string_lossy().as_ref()],
         )
-        .map_err(|e| CoreError::new(e.to_string()))?;
+        .sql()?;
         // A main database the store has not migrated yet has no puzzle tables to read; leave the
         // import for a later open rather than marking it done.
         let has_tables: bool = db
@@ -131,28 +128,24 @@ fn open(config: &Config, host: &dyn Host) -> Result<Connection> {
                 [],
                 |row| row.get(0),
             )
-            .map_err(|e| CoreError::new(e.to_string()))?;
+            .sql()?;
         if has_tables {
-            db.execute_batch(
-                "BEGIN IMMEDIATE;
-                INSERT OR IGNORE INTO puzzles (id, fen, moves, rating, plays, themes)
-                    SELECT id, fen, moves, rating, plays, themes FROM legacy.puzzles;
-                INSERT OR IGNORE INTO puzzle_meta SELECT id, importedAt, count, bytes FROM legacy.puzzle_meta;
-                INSERT OR REPLACE INTO worker_meta VALUES (1);
-                COMMIT;",
-            )
-            .map_err(|e| match db.execute_batch("ROLLBACK") {
-                Ok(()) => CoreError::new(e.to_string()),
-                Err(rollback) => CoreError::new(e.to_string()).with_rollback_failure(rollback),
+            transaction(&db, || {
+                db.execute_batch(
+                    "INSERT OR IGNORE INTO puzzles (id, fen, moves, rating, plays, themes)
+                        SELECT id, fen, moves, rating, plays, themes FROM legacy.puzzles;
+                    INSERT OR IGNORE INTO puzzle_meta SELECT id, importedAt, count, bytes FROM legacy.puzzle_meta;
+                    INSERT OR REPLACE INTO worker_meta VALUES (1);",
+                )
+                .sql()
             })?;
         }
         deferred = !has_tables;
-        db.execute_batch("DETACH DATABASE legacy")
-            .map_err(|e| CoreError::new(e.to_string()))?;
+        db.execute_batch("DETACH DATABASE legacy").sql()?;
     }
     if !deferred {
         db.execute_batch("INSERT OR IGNORE INTO worker_meta VALUES (1)")
-            .map_err(|e| CoreError::new(e.to_string()))?;
+            .sql()?;
     }
     Ok(db)
 }
@@ -180,53 +173,18 @@ fn random() -> impl FnMut() -> f64 {
 }
 
 impl Inner {
-    /// Run `work` on the database off the async threads, opening it on first use.
-    /// Admission is serialized on the execution semaphore so `close` drains cleanly;
-    /// the closed flag is rechecked while holding the connection lock to close the
-    /// reopen-after-close race.
+    /// Runs `work` on the database off the async threads, opening it on first use.
     async fn with_db<T: Send + 'static>(
-        self: &Arc<Self>,
+        &self,
         work: impl FnOnce(&Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
-        let permit = Arc::clone(&self.execution)
-            .acquire_owned()
-            .await
-            .map_err(|_| CoreError::new("Puzzle service closed."))?;
-        let tracked = self.work.token();
-        let inner = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
-            let (_permit, _tracked) = (permit, tracked);
-            let mut db = crate::store::usable_connection(&inner.db, inner.host.as_ref(), "puzzles");
-            if inner.closed.load(Ordering::SeqCst) {
-                return Err(CoreError::new("Puzzle service closed."));
-            }
-            if db.is_none() {
-                *db = Some(open(&inner.config, inner.host.as_ref())?);
-                if inner.closed.load(Ordering::SeqCst) {
-                    db.take();
-                    return Err(CoreError::new("Puzzle service closed."));
-                }
-            }
-            match db.as_ref() {
-                Some(connection) => work(connection),
-                None => Err(CoreError::new(
-                    "Puzzle service stopped. Retry the operation.",
-                )),
-            }
-        })
-        .await
-        .map_err(|_| CoreError::new("Puzzle service stopped. Retry the operation."))?
+        self.lane.run(work).await
     }
 
+    /// The download in progress. A download whose task panicked holding the lock is still the
+    /// one running: reporting none would let `delete` clear the database under its writes.
     fn running(&self) -> Option<Arc<Download>> {
-        self.running.lock().ok().and_then(|r| r.clone())
-    }
-
-    fn usage(&self, requests: u32, bytes: u64) {
-        self.host.emit(
-            "host:usage",
-            json!({ "account": "", "category": "database", "requests": requests, "bytes": bytes }),
-        );
+        lock(&self.running).clone()
     }
 
     fn failed(&self, method: &str, error: &CoreError) {
@@ -240,15 +198,20 @@ impl Inner {
 
 impl PuzzleService {
     pub fn new(config: Config, host: Arc<dyn Host>) -> PuzzleService {
+        let lane = Lane::new(
+            "puzzles",
+            LaneMessages {
+                closed: "Puzzle service closed.",
+                stopped: "Puzzle service stopped. Retry the operation.",
+            },
+            Arc::clone(&host),
+            move |host| open(&config, host),
+        );
         PuzzleService {
             inner: Arc::new(Inner {
-                config,
                 host,
-                db: Mutex::new(None),
-                execution: Arc::new(tokio::sync::Semaphore::new(1)),
-                work: tokio_util::task::TaskTracker::new(),
+                lane: Arc::new(lane),
                 running: Mutex::new(None),
-                closed: AtomicBool::new(false),
             }),
         }
     }
@@ -264,7 +227,7 @@ impl PuzzleService {
         let running = self.inner.running().is_some();
         let result = self
             .inner
-            .with_db(move |db| Ok(queries::read_status(db, running)?))
+            .with_db(move |db| queries::read_status(db, running))
             .await;
         self.logged("status", result).await
     }
@@ -272,7 +235,7 @@ impl PuzzleService {
     pub async fn query(&self, query: LocalPuzzleQuery) -> Result<Vec<Puzzle>> {
         let result = self
             .inner
-            .with_db(move |db| Ok(queries::query_puzzles(db, &query, &mut random())?))
+            .with_db(move |db| queries::query_puzzles(db, &query, &mut random()))
             .await;
         self.logged("query", result).await
     }
@@ -280,7 +243,7 @@ impl PuzzleService {
     pub async fn ladder(&self, query: LocalLadderQuery) -> Result<Vec<Puzzle>> {
         let result = self
             .inner
-            .with_db(move |db| Ok(queries::query_ladder(db, &query, &mut random())?))
+            .with_db(move |db| queries::query_ladder(db, &query, &mut random()))
             .await;
         self.logged("ladder", result).await
     }
@@ -298,7 +261,7 @@ impl PuzzleService {
                     today: attempt.day,
                     limit: attempts::RECENT,
                 };
-                Ok(attempts::progress(db, &query)?)
+                attempts::progress(db, &query)
             })
             .await;
         self.logged("recordAttempt", result).await
@@ -307,7 +270,7 @@ impl PuzzleService {
     pub async fn progress(&self, query: attempts::ProgressQuery) -> Result<serde_json::Value> {
         let result = self
             .inner
-            .with_db(move |db| Ok(attempts::progress(db, &query)?))
+            .with_db(move |db| attempts::progress(db, &query))
             .await;
         self.logged("progress", result).await
     }
@@ -321,7 +284,7 @@ impl PuzzleService {
             self.inner
                 .with_db(|db| {
                     queries::clear_stored(db)?;
-                    Ok(queries::read_status(db, false)?)
+                    queries::read_status(db, false)
                 })
                 .await
         };
@@ -337,18 +300,7 @@ impl PuzzleService {
 
     pub async fn close(&self) {
         self.cancel();
-        self.inner.closed.store(true, Ordering::SeqCst);
-        self.inner.execution.close();
-        self.inner.work.close();
-        self.inner.work.wait().await;
-        let inner = Arc::clone(&self.inner);
-        // Closing drains admitted workers first, then releases the file.
-        let _ = tokio::task::spawn_blocking(move || {
-            if let Ok(mut db) = inner.db.lock() {
-                db.take();
-            }
-        })
-        .await;
+        self.inner.lane.close().await;
     }
 
     /// Download, sample and store the puzzle database, reporting `puzzledb:progress`.
@@ -356,11 +308,7 @@ impl PuzzleService {
     /// completion via the `puzzledb:progress` `cancelled`/`done` phase, not the result.
     pub async fn install(&self, url: String) -> Result<PuzzleDbStatus> {
         let download = {
-            let mut running = self
-                .inner
-                .running
-                .lock()
-                .map_err(|_| CoreError::new("Puzzle service stopped. Retry the operation."))?;
+            let mut running = lock(&self.inner.running);
             if running.is_some() {
                 let error = CoreError::new("The puzzle database is already downloading.");
                 self.inner.failed("install", &error);
@@ -399,12 +347,11 @@ impl PuzzleService {
                 if aborted { Ok(()) } else { Err(error) }
             }
         };
-        self.inner.usage(0, progress.received);
         drop(installing);
         let result = match outcome {
             Ok(()) => {
                 self.inner
-                    .with_db(|db| Ok(queries::read_status(db, false)?))
+                    .with_db(|db| queries::read_status(db, false))
                     .await
             }
             Err(error) => Err(error),
@@ -418,29 +365,28 @@ impl PuzzleService {
         download: &Arc<Download>,
         progress: &mut Progress,
     ) -> Result<()> {
-        let cancelled = || CoreError::aborted("Cancelled");
-        let cancel = download.cancel.clone();
+        let cancelled = || CoreError::aborted(crate::download::ABORTED);
         // A server that stops sending ends the download instead of holding the puzzle database's
-        // "downloading" state until the user cancels. The file is already Zstandard: it is fetched
-        // as published (no gzip on top), so its length is the progress total and a dropped
-        // connection can resume from the byte it reached.
-        let client = crate::lichess::client::http_client_builder()
-            .read_timeout(DOWNLOAD_SILENCE)
-            .no_gzip()
-            .build()
-            .map_err(|e| CoreError::new(fetch_failed(&e)))?;
-        let response = tokio::select! {
-            response = crate::download::send_retrying(|| client.get(url), None) => response.map_err(|e| CoreError::new(fetch_failed(&e))),
-            _ = cancel.cancelled() => Err(cancelled()),
-        }?;
-        self.inner.usage(1, 0);
-        if !response.status().is_success() {
-            return Err(CoreError::new(format!(
-                "Lichess answered {} for the puzzle database.",
-                response.status().as_u16()
-            )));
-        }
-        progress.total = response.content_length().filter(|&n| n > 0);
+        // "downloading" state until the user cancels.
+        let client = crate::download::client(Some(DOWNLOAD_SILENCE))?;
+        let limits = crate::download::Limits {
+            max_bytes: MAX_DOWNLOAD,
+            deadline: None,
+        };
+        let usage = crate::download::Usage {
+            host: &*self.inner.host,
+            kind: kchess_contracts::types::UsageKind::Database,
+        };
+        let mut body = crate::download::open(
+            &client,
+            || client.get(url),
+            limits,
+            &download.cancel,
+            usage,
+            &WORDING,
+        )
+        .await?;
+        progress.total = body.total();
         // Decompression and sampling run on a blocking thread, fed chunk by chunk.
         let (send, receive) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
         let counted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -474,37 +420,19 @@ impl PuzzleService {
                     .collect();
                 Ok((rows, sampler.count()))
             });
-        // A dropped connection picks up at the byte it reached instead of starting over.
-        let mut body = crate::download::Resumable::new(&client, response, None);
-        let cancel = download.cancel.clone();
         let fed: Result<()> = async {
-            loop {
-                let chunk = tokio::select! {
-                    chunk = body.chunk() => chunk,
-                    _ = cancel.cancelled() => return Err(cancelled()),
-                };
-                let chunk = chunk.map_err(|e| CoreError::new(fetch_failed(&e)))?;
-                let Some(chunk) = chunk else { return Ok(()) };
-                if cancel.is_cancelled() {
-                    return Err(cancelled());
-                }
-                progress.received += chunk.len() as u64;
-                if progress.received > MAX_DOWNLOAD {
-                    return Err(CoreError::new(
-                        "The puzzle database download is unexpectedly large.",
-                    ));
-                }
+            while let Some(chunk) = body.next().await? {
+                progress.received = body.received();
                 progress.report(Phase::Downloading, counted.load(Ordering::Relaxed), false);
                 if send.send(chunk.to_vec()).await.is_err() {
                     // The sampler stopped; its error is reported below.
                     return Ok(());
                 }
             }
+            Ok(())
         }
         .await;
-        if body.resumed() > 0 {
-            self.inner.usage(body.resumed() as u32, 0);
-        }
+        drop(body);
         drop(send);
         let sampled = sampling
             .await
@@ -517,21 +445,25 @@ impl PuzzleService {
         progress.report(Phase::Importing, kept, true);
         let cancel = download.cancel.clone();
         self.inner
-            .with_db(move |db| Ok(queries::store_sample(db, &rows, &|| cancel.is_cancelled())?))
+            .with_db(move |db| queries::store_sample(db, &rows, &|| cancel.is_cancelled()))
             .await?;
         progress.report(Phase::Done, kept, true);
         Ok(())
     }
 }
 
-/// `fetch` failures as Node words them are not reproducible; keep reqwest's text short.
-fn fetch_failed(error: &reqwest::Error) -> String {
-    if error.is_timeout() {
-        "The puzzle download timed out.".to_string()
-    } else {
-        format!("fetch failed: {error}")
-    }
-}
+/// How the database download words its failures.
+const WORDING: crate::download::Wording = crate::download::Wording {
+    network: |error| {
+        if error.is_timeout() {
+            "The puzzle download timed out.".to_string()
+        } else {
+            format!("fetch failed: {error}")
+        }
+    },
+    status: |status| format!("Lichess answered {status} for the puzzle database."),
+    too_large: "The puzzle database download is unexpectedly large.",
+};
 
 struct Progress {
     host: Arc<dyn Host>,
@@ -709,9 +641,11 @@ mod tests {
         let done = host.of("puzzledb:progress").pop().unwrap();
         // Each byte arrived once: the resumed request asked only for the rest.
         assert_eq!(done["received"], json!(length));
+        // The request and the one that resumed it, with every byte counted once.
         let usage = host.of("host:usage");
-        assert_eq!(usage[0]["requests"], json!(1));
-        assert_eq!(usage[1]["requests"], json!(1));
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0]["requests"], json!(2));
+        assert_eq!(usage[0]["bytes"], json!(length));
     }
 
     fn service(dir: &Path) -> (PuzzleService, Arc<Events>) {
@@ -748,10 +682,11 @@ mod tests {
         let done = host.of("puzzledb:progress").pop().unwrap();
         assert_eq!(done["kept"], json!(3));
         assert!(done["total"].as_u64().is_some_and(|total| total > 0));
-        // One request, then the bytes it brought.
+        // One request and the bytes it brought.
         let usage = host.of("host:usage");
+        assert_eq!(usage.len(), 1);
         assert_eq!(usage[0]["requests"], json!(1));
-        assert_eq!(usage[1]["bytes"], done["received"]);
+        assert_eq!(usage[0]["bytes"], done["received"]);
 
         let forks = puzzles
             .query(LocalPuzzleQuery {
@@ -877,6 +812,36 @@ mod tests {
         assert!(first.await.unwrap_err().is_cancelled());
         assert!(!puzzles.status().await.unwrap().busy);
         puzzles.delete().await.expect("deleting is allowed again");
+        puzzles.close().await;
+    }
+
+    /// A task that panicked holding the running download's lock poisoned it, and the poisoned
+    /// lock read as no download: `delete` then cleared the database under the download's writes.
+    #[tokio::test]
+    async fn a_download_whose_lock_was_poisoned_still_counts_as_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let (puzzles, _host) = service(dir.path());
+        let download = Arc::new(Download {
+            cancel: CancellationToken::new(),
+        });
+        *lock(&puzzles.inner.running) = Some(Arc::clone(&download));
+        let inner = Arc::clone(&puzzles.inner);
+        std::thread::spawn(move || {
+            let _held = inner.running.lock().unwrap();
+            panic!("a download task failed holding the lock");
+        })
+        .join()
+        .expect_err("the thread panicked");
+        assert!(puzzles.inner.running.is_poisoned());
+
+        assert!(puzzles.status().await.unwrap().busy);
+        let refused = puzzles.delete().await.expect_err("the download still runs");
+        assert_eq!(
+            refused.message,
+            "Cancel the download before deleting puzzles."
+        );
+        puzzles.cancel();
+        assert!(download.cancel.is_cancelled());
         puzzles.close().await;
     }
 

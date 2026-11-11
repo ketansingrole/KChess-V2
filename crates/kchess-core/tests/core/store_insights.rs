@@ -2,8 +2,9 @@
 
 use crate::support;
 
+use kchess_core::store::{games, insights, library};
 use serde_json::{Value, json};
-use support::store::{Store, game, profile};
+use support::store::{Store, game, list, profile};
 
 #[derive(Clone, Copy, Default)]
 struct Counts {
@@ -35,17 +36,22 @@ fn fresh() -> Store {
 }
 
 fn save_games(store: &Store, games: Vec<Value>) {
-    store.ok(
-        "store.games.saveGames",
-        vec![json!("Alice"), json!(games), json!(1), json!(true)],
-    );
+    store
+        .write(|c| games::save_games(c.host, c.db, "Alice", list(&json!(games)), Some(1)))
+        .expect("saveGames");
 }
 
 fn insights(store: &Store) -> Value {
-    store.ok(
-        "store.insights.insights",
-        vec![json!({ "account": "Alice" })],
-    )
+    store
+        .read(|c| {
+            insights::insights(
+                c.host,
+                c.db,
+                &json!({ "account": "Alice" }),
+                library::now_ms()?,
+            )
+        })
+        .expect("insights")
 }
 
 /// UTC milliseconds from a Gregorian civil date.
@@ -266,10 +272,16 @@ fn variant_games_are_counted_apart_from_standard_chess() {
     assert_eq!(standard["variants"], json!(["chess960", "crazyhouse"]));
 
     let only = |variant: &str| {
-        store.ok(
-            "store.insights.insights",
-            vec![json!({ "account": "Alice", "variant": variant })],
-        )
+        store
+            .read(|c| {
+                insights::insights(
+                    c.host,
+                    c.db,
+                    &json!({ "account": "Alice", "variant": variant }),
+                    library::now_ms()?,
+                )
+            })
+            .expect("insights")
     };
     assert_eq!(only("chess960")["total"], json!(2));
     assert_eq!(only("crazyhouse")["total"], json!(1));

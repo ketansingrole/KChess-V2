@@ -1,30 +1,31 @@
-//! Starting online games and answering challenges (moved from `session.rs` without changes).
+//! Starting online games and answering challenges.
 
 use std::sync::Arc;
 
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Level;
 use crate::lichess::accounts::path_segment;
 use crate::lichess::challenges::{ChallengeInfo, TimeControl};
-use crate::lichess::client::authorize;
+use crate::lichess::client::Auth;
 
 use crate::lichess::online::events::{perf_for, rule_bool};
-use crate::lichess::online::requests::{Emitter, StreamRequest, game_body, refs};
+use crate::lichess::online::requests::{Emitter, StreamRequest, game_body};
 use crate::lichess::online::state::{
-    Handle, Lane, OnlineOptions, OnlineSession, Res, StartResult, aborted, core, js_number,
+    Handle, Lane, OnlineOptions, OnlineSession, SEEK_REJECTED, StartResult, js_number,
 };
 
 impl OnlineSession {
     /// `start(options)`: a challenge to a player, a public seek, or a correspondence game.
-    pub async fn start(&self, options: &OnlineOptions) -> Res<StartResult> {
+    pub async fn start(&self, options: &OnlineOptions) -> CoreResult<StartResult> {
         {
             let st = self.st();
             // A correspondence game on the board may be left for a real-time one.
             let correspondence = st.live.as_ref().is_some_and(|game| game.correspondence);
             if !correspondence && (st.live.is_some() || !st.protected_game.is_empty()) {
-                return Err(core(
+                return Err(CoreError::new(
                     "Reconnect to your current game before finding another.",
                 ));
             }
@@ -62,7 +63,7 @@ impl OnlineSession {
         };
         if let Some(message) = rejection {
             // A refused request leaves the seek or challenge already running alone.
-            return Err(core(message));
+            return Err(CoreError::new(message));
         }
         self.cancel_inner();
         let handle = {
@@ -104,7 +105,7 @@ impl OnlineSession {
         perf: &str,
         label: &str,
         handle: &Handle,
-    ) -> Res<StartResult> {
+    ) -> CoreResult<StartResult> {
         let connected: Vec<String> = self
             .inner
             .lichess
@@ -116,38 +117,38 @@ impl OnlineSession {
             .map(|row| row.username)
             .collect();
         if handle.token.is_cancelled() {
-            return Err(aborted("This operation was aborted"));
+            return Err(crate::lichess::aborted());
         }
         if connected.is_empty() {
-            return Err(core("Connect your Lichess account in Settings first."));
+            return Err(CoreError::new(
+                "Connect your Lichess account in Settings first.",
+            ));
         }
         // An explicit account must match exactly: never play as a different one.
         let account = match options.account.as_deref().filter(|name| !name.is_empty()) {
             Some(wanted) => connected
                 .iter()
-                .find(|name| name.to_lowercase() == wanted.to_lowercase())
+                .find(|name| name.eq_ignore_ascii_case(wanted))
                 .cloned()
                 .ok_or_else(|| {
-                    core(format!(
+                    CoreError::new(format!(
                         "@{wanted} is not connected. Connect it in Settings."
                     ))
                 })?,
             None => connected[0].clone(),
         };
         self.st().current_account = account.clone();
-        let token = self.token(&account).await?;
+        let auth = self.login(&account).await?;
         if handle.token.is_cancelled() {
-            return Err(aborted("This operation was aborted"));
+            return Err(crate::lichess::aborted());
         }
-        let Some(token) = token else {
-            return Err(core(
-                "Your Lichess login is unavailable. Reconnect in Settings.",
-            ));
+        let Some(auth) = auth else {
+            return Err(crate::lichess::accounts::login_unavailable(&account));
         };
         if correspondence {
             // Correspondence games run for days: nothing waits here; the idle stream reports acceptance.
             let created = self
-                .create_correspondence(options, &account, &token, &handle.token, target)
+                .create_correspondence(options, &auth, &handle.token, target)
                 .await?;
             handle.token.cancel();
             {
@@ -164,7 +165,7 @@ impl OnlineSession {
                 correspondence: Some(true),
             });
         }
-        self.start_event_stream(token.clone(), handle.clone());
+        self.start_event_stream(auth.clone(), handle.clone());
         if !target.is_empty() {
             let mut form: Vec<(&'static str, String)> = vec![
                 ("clock.limit", js_number(options.minutes * 60.0)),
@@ -175,19 +176,17 @@ impl OnlineSession {
             // Cancellation does not cut the creation short: Lichess may already have created the
             // challenge, and its id is cancelled below once the answer arrives.
             let creation = CancellationToken::new();
-            let reply = self
-                .post_form(&path, &refs(&form), &account, &token, &creation)
-                .await;
+            let reply = self.post_form(&path, &form, &auth, &creation).await;
             let challenge = match reply {
                 Ok(challenge) => challenge,
                 Err(_) if handle.token.is_cancelled() => {
-                    return Err(aborted("This operation was aborted"));
+                    return Err(crate::lichess::aborted());
                 }
                 Err(cause) => {
-                    if matches!(cause.status(), Some(400)) {
-                        return Err(core(format!(
+                    if cause.kind == Some(ErrorKind::Refused) {
+                        return Err(CoreError::new(format!(
                             "Lichess rejected this {perf} ({label}) challenge: {}. The Board API allows Blitz and slower for direct challenges.",
-                            cause.message()
+                            cause.message
                         )));
                     }
                     return Err(cause);
@@ -196,8 +195,8 @@ impl OnlineSession {
             let id = challenge["id"].as_str().unwrap_or("").to_string();
             // A server may finish creating the challenge just as cancellation arrives.
             if handle.token.is_cancelled() {
-                self.cancel_challenge(&id, &token).await;
-                return Err(aborted("This operation was aborted"));
+                self.cancel_challenge(&id, &auth).await;
+                return Err(crate::lichess::aborted());
             }
             if self.st().live.is_none() {
                 self.st().pending_challenge = Some(id.clone()).filter(|id| !id.is_empty());
@@ -225,14 +224,15 @@ impl OnlineSession {
             method: reqwest::Method::POST,
             path: "/api/board/seek".into(),
             query: Vec::new(),
-            auth: Some(authorize(&token)),
+            auth,
             form: Some(form),
         };
         let emit_self = self.clone();
         let emit: Emitter = Arc::new(move |event| emit_self.emit("online:event", event));
-        let options_listen = self.listen_options(Lane::Seek, false, None, None);
+        let mut options_listen = self.listen_options(Lane::Seek, false, None, None);
+        options_listen.refused = Some(SEEK_REJECTED);
         let listen_self = self.clone();
-        self.spawn_for(&account, "play", async move {
+        tokio::spawn(async move {
             listen_self
                 .listen(request, seek.token, emit, options_listen)
                 .await;
@@ -248,11 +248,10 @@ impl OnlineSession {
     async fn create_correspondence(
         &self,
         options: &OnlineOptions,
-        account: &str,
-        token: &str,
+        auth: &Auth,
         cancel: &CancellationToken,
         target: &str,
-    ) -> Res<StartResult> {
+    ) -> CoreResult<StartResult> {
         let mut form: Vec<(&'static str, String)> =
             vec![("days", js_number(options.days.unwrap_or_default()))];
         form.extend(game_body(options));
@@ -261,9 +260,7 @@ impl OnlineSession {
         } else {
             format!("/api/challenge/{}", path_segment(target))
         };
-        let created = self
-            .post_form(&path, &refs(&form), account, token, cancel)
-            .await?;
+        let created = self.post_form(&path, &form, auth, cancel).await?;
         Ok(StartResult {
             id: created["id"].as_str().map(str::to_string),
             url: created["url"].as_str().map(str::to_string),
@@ -272,78 +269,65 @@ impl OnlineSession {
         })
     }
 
-    /// A form POST as `account`, under the request's cancellation. The answer is JSON.
+    /// A form POST as `auth`, under `cancel`. The answer is JSON.
     async fn post_form(
         &self,
         path: &str,
-        form: &[(&str, &str)],
-        account: &str,
-        token: &str,
+        form: &[(&str, String)],
+        auth: &Auth,
         cancel: &CancellationToken,
-    ) -> Res<Value> {
-        let auth = authorize(token);
-        let lichess = Arc::clone(&self.inner.lichess);
-        let path = path.to_string();
-        let form: Vec<(String, String)> = form
-            .iter()
-            .map(|(key, value)| (key.to_string(), value.to_string()))
-            .collect();
-        let cancel = cancel.clone();
-        self.policy()
-            .with_usage(account, "play", async move {
-                let pairs: Vec<(&str, &str)> = form
-                    .iter()
-                    .map(|(key, value)| (key.as_str(), value.as_str()))
-                    .collect();
-                lichess
-                    .client()
-                    .post_form::<Value>(&path, &pairs, Some(&auth), &cancel)
-                    .await
-            })
+    ) -> CoreResult<Value> {
+        self.inner
+            .lichess
+            .client()
+            .post(path, auth)
+            .form(form)
+            .cancel(cancel)
+            .read_json()
             .await
     }
 
-    /// `cancelChallenge`: a failed cancel is logged, not raised.
-    pub(super) async fn cancel_challenge(&self, id: &str, token: &str) {
+    /// A failed cancel is logged, not raised.
+    pub(super) async fn cancel_challenge(&self, id: &str, auth: &Auth) {
         let path = format!("/api/challenge/{}/cancel", path_segment(id));
-        let cancel = self.inner.lichess.lifetime().clone();
-        if let Err(cause) = self
-            .inner
-            .lichess
-            .client()
-            .post_form::<Value>(&path, &[], Some(&authorize(token)), &cancel)
-            .await
-        {
+        if let Err(cause) = self.challenge_post(auth, &path, &[]).await {
             self.log(
                 Level::Debug,
-                format!("Challenge cancel failed: {id} {}", cause.message()),
+                format!("Challenge cancel failed: {id} {}", cause.message),
             );
         }
     }
 
+    async fn challenge_post(
+        &self,
+        auth: &Auth,
+        path: &str,
+        form: &[(&str, &str)],
+    ) -> CoreResult<()> {
+        self.inner
+            .lichess
+            .client()
+            .post(path, auth)
+            .form(form)
+            .read_json::<Value>()
+            .await
+            .map(|_| ())
+    }
+
     /// Accept an incoming challenge as the account it was sent to; a real-time game opens at once.
-    pub async fn accept_challenge(&self, challenge: &ChallengeInfo) -> Res<()> {
+    pub async fn accept_challenge(&self, challenge: &ChallengeInfo) -> CoreResult<()> {
         let live = matches!(challenge.time_control, TimeControl::Clock { .. });
         if live {
             let st = self.st();
             if st.realtime_live() {
-                return Err(core(
+                return Err(CoreError::new(
                     "Finish the game on the board before accepting another.",
                 ));
             }
         }
-        let token = self.account_token(&challenge.account).await?;
+        let auth = self.required_login(&challenge.account).await?;
         let path = format!("/api/challenge/{}/accept", path_segment(&challenge.id));
-        let cancel = self.inner.lichess.lifetime().clone();
-        self.policy()
-            .with_usage(&challenge.account, "play", async {
-                self.inner
-                    .lichess
-                    .client()
-                    .post_form::<Value>(&path, &[], Some(&authorize(&token)), &cancel)
-                    .await
-            })
-            .await?;
+        self.challenge_post(&auth, &path, &[]).await?;
         // The game has the challenge's id. Open it now rather than wait for the event stream,
         // which may belong to another connected account.
         if live {
@@ -355,30 +339,20 @@ impl OnlineSession {
     }
 
     /// Decline an incoming challenge with a reason Lichess shows the challenger.
-    pub async fn decline_challenge(&self, challenge: &ChallengeInfo, reason: &str) -> Res<()> {
-        let token = self.account_token(&challenge.account).await?;
+    pub async fn decline_challenge(
+        &self,
+        challenge: &ChallengeInfo,
+        reason: &str,
+    ) -> CoreResult<()> {
+        let auth = self.required_login(&challenge.account).await?;
         let path = format!("/api/challenge/{}/decline", path_segment(&challenge.id));
-        let cancel = self.inner.lichess.lifetime().clone();
-        self.policy()
-            .with_usage(&challenge.account, "play", async {
-                self.inner
-                    .lichess
-                    .client()
-                    .post_form::<Value>(
-                        &path,
-                        &[("reason", reason)],
-                        Some(&authorize(&token)),
-                        &cancel,
-                    )
-                    .await
-            })
-            .await?;
-        Ok(())
+        self.challenge_post(&auth, &path, &[("reason", reason)])
+            .await
     }
 
     /// Withdraw an outgoing challenge.
-    pub async fn withdraw_challenge(&self, challenge: &ChallengeInfo) -> Res<()> {
-        let token = self.account_token(&challenge.account).await?;
+    pub async fn withdraw_challenge(&self, challenge: &ChallengeInfo) -> CoreResult<()> {
+        let auth = self.required_login(&challenge.account).await?;
         {
             let mut st = self.st();
             if st.pending_challenge.as_deref() == Some(challenge.id.as_str()) {
@@ -386,25 +360,6 @@ impl OnlineSession {
             }
         }
         let path = format!("/api/challenge/{}/cancel", path_segment(&challenge.id));
-        let cancel = self.inner.lichess.lifetime().clone();
-        self.policy()
-            .with_usage(&challenge.account, "play", async {
-                self.inner
-                    .lichess
-                    .client()
-                    .post_form::<Value>(&path, &[], Some(&authorize(&token)), &cancel)
-                    .await
-            })
-            .await?;
-        Ok(())
-    }
-
-    /// The token of `account`, or the reconnect message when it has none.
-    async fn account_token(&self, account: &str) -> Res<String> {
-        self.token(account).await?.ok_or_else(|| {
-            core(format!(
-                "@{account}'s Lichess login is unavailable. Reconnect in Settings."
-            ))
-        })
+        self.challenge_post(&auth, &path, &[]).await
     }
 }

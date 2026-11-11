@@ -38,7 +38,7 @@ fn service(base: &str, host: &Arc<Recording>, store: Arc<MemoryStore>) -> Arc<Li
         CancellationToken::new(),
         Duration::from_secs(5),
     );
-    let client = LichessClient::with_base(base, Arc::clone(&policy), http_client());
+    let client = LichessClient::with_base(base, Arc::clone(&policy));
     let capabilities = capabilities_for(host);
     Arc::new(Lichess::new(
         client,
@@ -46,7 +46,6 @@ fn service(base: &str, host: &Arc<Recording>, store: Arc<MemoryStore>) -> Arc<Li
         store,
         MemoryTokens::with(&[]),
         Arc::clone(host) as Arc<dyn kchess_core::host::Host>,
-        CancellationToken::new(),
     ))
 }
 

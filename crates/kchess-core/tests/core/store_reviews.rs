@@ -8,7 +8,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use kchess_core::engine::review::GameToReview;
-use kchess_core::{Config, Core};
+use kchess_core::store::{StoreContext, insights, library, reviews};
+use kchess_core::{Config, Core, CoreError};
 use kchess_domain::api;
 use rusqlite::Connection;
 use serde_json::{Value, json};
@@ -29,7 +30,8 @@ fn profile() -> Profile {
     let mut config = Config::new(path.clone());
     config.bundled_engine_path = Some(path.join("no-engine.js"));
     let core = Core::open(config, Arc::new(Recording::default())).expect("the profile opens");
-    core.call_sync("store.open", vec![])
+    core.database_for_tests()
+        .read(|_| Ok(()))
         .expect("the database opens");
     Profile {
         _dir: dir,
@@ -43,36 +45,44 @@ impl Profile {
         database(&self.path).execute_batch(sql).expect("seeding");
     }
 
-    fn sync(&self, method: &str, args: Vec<Value>) -> Value {
+    fn read<T: serde::Serialize>(
+        &self,
+        work: impl FnOnce(&StoreContext) -> Result<T, CoreError>,
+    ) -> Value {
+        let value = self.core.database_for_tests().read(work).expect("read");
+        serde_json::to_value(value).expect("json")
+    }
+
+    fn write_reviews(&self, reviews: &Value) -> Result<Value, CoreError> {
         self.core
-            .call_sync(method, args)
-            .unwrap_or_else(|cause| panic!("{method} failed: {cause}"))
+            .database_for_tests()
+            .write(|c| reviews::write_reviews(c.host, c.db, reviews))
     }
 
     fn write_review(&self, review: &Value) -> Value {
-        self.sync("store.reviewStore.writeReview", vec![review.clone()])
+        self.core
+            .database_for_tests()
+            .write(|c| reviews::write_review(c.host, c.db, review))
+            .expect("writeReview")
     }
 
     fn read_review(&self, key: &str) -> Value {
-        self.sync("store.reviewStore.readReview", vec![json!(key)])
+        self.read(|c| reviews::read_review(c.host, c.db, key))
     }
 
     fn review_summaries(&self, ids: &[&str]) -> Value {
-        self.sync("store.reviewStore.reviewSummaries", vec![json!(ids)])
+        let ids: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+        self.read(|c| reviews::review_summaries(c.host, c.db, &ids))
     }
 
     fn games_to_review(&self, accounts: &[&str]) -> Value {
-        self.sync(
-            "store.reviewStore.gamesToReview",
-            vec![json!(accounts), json!(0), json!(300)],
-        )
+        let accounts: Vec<String> = accounts.iter().map(|name| name.to_string()).collect();
+        self.read(|c| reviews::games_to_review(c.db, &accounts, 0.0, 300.0))
     }
 
     fn insights(&self, account: &str) -> Value {
-        self.sync(
-            "store.insights.insights",
-            vec![json!({ "account": account })],
-        )
+        let query = json!({ "account": account });
+        self.read(|c| insights::insights(c.host, c.db, &query, library::now_ms()?))
     }
 
     /// `reviews.request`, which answers from the store when a review is known and otherwise
@@ -258,16 +268,16 @@ fn a_review_batch_writes_atomically_and_a_failed_batch_keeps_the_previous_review
         second
     };
     let bad = json!({ "fen": INITIAL_FEN });
-    let outcome = profile
-        .core
-        .call_sync("store.reviewStore.writeReviews", vec![json!([second, bad])]);
+    let outcome = profile.write_reviews(&json!([second, bad]));
     assert!(outcome.is_err(), "a malformed batch member fails the batch");
     assert!(
         profile.read_review("batch-second-key").is_null(),
         "the failed batch keeps the previous reviews"
     );
     // A well-formed batch writes every member in one transaction.
-    let stored = profile.sync("store.reviewStore.writeReviews", vec![json!([second])]);
+    let stored = profile
+        .write_reviews(&json!([second]))
+        .expect("writeReviews");
     assert_eq!(stored.as_array().map(Vec::len), Some(1));
     assert_eq!(
         profile.read_review("batch-second-key")["gameId"],

@@ -112,20 +112,15 @@ fn session(
     store: &Arc<MemoryStore>,
     tokens: &Arc<ScriptedTokens>,
 ) -> OnlineSession {
-    let client = LichessClient::with_base(base, policy(host), http_client());
+    let client = LichessClient::with_base(base, policy(host));
     let lichess = Arc::new(Lichess::new(
         client,
         capabilities_for(host),
         Arc::clone(store) as Arc<dyn kchess_core::lichess::accounts::LichessStore>,
         Arc::clone(tokens) as Arc<dyn TokenSource>,
         Arc::clone(host) as Arc<dyn Host>,
-        CancellationToken::new(),
     ));
-    OnlineSession::new(
-        lichess,
-        Arc::clone(tokens) as Arc<dyn TokenSource>,
-        http_client(),
-    )
+    OnlineSession::new(lichess)
 }
 
 fn rig(accounts: &[(&str, bool)]) -> (Arc<Recording>, Arc<MemoryStore>, Arc<ScriptedTokens>) {
@@ -299,7 +294,7 @@ async fn aborts_an_outstanding_challenge_and_sends_no_more_once_cancelled() {
     // Lichess answers after the cancel: the late challenge is still cancelled, once.
     let _ = gate_tx.send(true);
     let outcome = result.await.unwrap();
-    assert!(outcome.as_ref().is_err_and(|cause| cause.is_aborted()));
+    assert!(outcome.as_ref().is_err_and(|cause| cause.aborted));
     fixture.requested("/api/challenge/AbCd1234/cancel", 1).await;
     assert_eq!(fixture.to("/api/challenge/Bob").len(), 1);
     assert_eq!(fixture.to("/api/challenge/AbCd1234/cancel").len(), 1);
@@ -414,24 +409,76 @@ async fn a_protected_game_keeps_other_games_out_but_opens_itself() {
     let started = tokio::time::timeout(LIMIT, online.start(&seek_options(None)))
         .await
         .expect("refused at once");
-    assert!(started.is_err_and(|cause| cause.message().contains(REFUSED)));
+    assert!(started.is_err_and(|cause| cause.message.contains(REFUSED)));
     // The connection drops: the board is empty, the game stays protected.
     online.cancel();
     assert!(online.playing());
     let started = tokio::time::timeout(LIMIT, online.start(&seek_options(None)))
         .await
         .expect("refused at once");
-    assert!(started.is_err_and(|cause| cause.message().contains(REFUSED)));
+    assert!(started.is_err_and(|cause| cause.message.contains(REFUSED)));
     let other = tokio::time::timeout(LIMIT, online.open("Alice", "Other123"))
         .await
         .expect("refused at once");
-    assert!(other.is_err_and(|cause| cause.message().contains(REFUSED)));
+    assert!(other.is_err_and(|cause| cause.message.contains(REFUSED)));
     // The protected game itself is not refused: it attaches (here, to a stream that never answers).
     if let Ok(itself) =
         tokio::time::timeout(Duration::from_millis(300), online.open("Alice", "AbCd1234")).await
     {
-        assert!(itself.is_ok() || itself.is_err_and(|cause| !cause.message().contains(REFUSED)));
+        assert!(itself.is_ok() || itself.is_err_and(|cause| !cause.message.contains(REFUSED)));
     }
+    online.close();
+}
+
+/// A refused public seek explains the Board API's matchmaking limits. It was matched by its
+/// endpoint's text, so the explanation depended on how the error happened to name the request.
+#[tokio::test]
+async fn a_refused_public_seek_explains_the_board_api_limits() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/board/seek" => Reply::Json(400, json!({ "error": "Bad request" }).to_string()),
+        _ => Reply::Hang,
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    let started = online.start(&seek_options(None)).await.unwrap();
+    assert_eq!(started.seeking, Some(true));
+    until("the refusal is explained", || {
+        emitted(&host, "online:error").iter().any(|message| {
+            message
+                .as_str()
+                .is_some_and(|text| text.starts_with("Lichess rejected this public seek."))
+        })
+    })
+    .await;
+    online.close();
+}
+
+/// Every 403 asked to reconnect, though one that is not about the login (Lichess refusing the
+/// request itself) is not mended by reconnecting.
+#[tokio::test]
+async fn a_403_that_is_not_about_the_login_does_not_ask_to_reconnect() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/account/playing" => Reply::Json(403, json!({ "error": "Forbidden" }).to_string()),
+        _ => refuse(seen),
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    assert!(online.resume().await.is_err());
+    assert_eq!(states(&host).last().unwrap()["phase"], "disconnected");
+    online.close();
+
+    // A refused login still does.
+    let fixture = serve(|seen| match seen.path() {
+        "/api/account/playing" => Reply::Json(401, json!({ "error": "No such token" }).to_string()),
+        _ => refuse(seen),
+    })
+    .await;
+    let (host, store, tokens) = rig(&[("Alice", true)]);
+    let online = session(&fixture.base, &host, &store, &tokens);
+    assert!(online.resume().await.is_err());
+    assert_eq!(states(&host).last().unwrap()["phase"], "auth-required");
     online.close();
 }
 
@@ -459,7 +506,7 @@ async fn a_refused_start_leaves_the_pending_challenge_running() {
     let mut bullet = seek_options(Some("Carol"));
     bullet.minutes = 1.0;
     let refused = online.start(&bullet).await;
-    assert!(refused.is_err_and(|cause| !cause.is_aborted()));
+    assert!(refused.is_err_and(|cause| !cause.aborted));
     let _ = gate_tx.send(true);
     assert!(
         result.await.unwrap().is_ok(),
@@ -483,7 +530,7 @@ async fn prevents_streams_and_challenges_when_cancelled_before_credentials_arriv
     online.cancel();
     let _ = login_tx.send(true);
     let outcome = result.await.unwrap();
-    assert!(outcome.is_err_and(|cause| cause.is_aborted()));
+    assert!(outcome.is_err_and(|cause| cause.aborted));
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(
         fixture.requests().is_empty(),
@@ -514,7 +561,7 @@ async fn retains_live_game_protection_when_the_owning_credentials_or_account_dis
     store.accounts.lock().unwrap().clear();
     let before = fixture.requests().len();
     let error = online.resume().await.unwrap_err();
-    assert!(error.message().contains("login is unavailable"));
+    assert!(error.message.contains("login is unavailable"));
     assert_eq!(fixture.requests().len(), before, "no request was made");
     assert!(online.playing());
     let last = states(&host).pop().unwrap();
@@ -543,7 +590,7 @@ async fn ignores_a_cancelled_resume_before_missing_credentials_arrive() {
     let count = states(&host).len();
     let _ = token_tx.send(true);
     let outcome = pending.await.unwrap();
-    assert!(outcome.is_err_and(|cause| cause.is_aborted()));
+    assert!(outcome.is_err_and(|cause| cause.aborted));
     assert_eq!(states(&host).len(), count);
     assert!(fixture.to("/api/account/playing").is_empty());
     online.close();
@@ -621,7 +668,7 @@ async fn keeps_startup_protection_when_any_account_is_unverified_or_the_response
     assert!(online.assistance_blocked());
     phase.store(1, Ordering::SeqCst);
     let error = online.resume().await.unwrap_err();
-    assert!(error.message().contains("invalid ongoing-game response"));
+    assert!(error.message.contains("invalid ongoing-game response"));
     assert!(online.assistance_blocked());
     online.close();
 }
@@ -773,7 +820,7 @@ async fn rejects_an_attachment_whose_credentials_arrive_after_cancel_close_or_lo
         }
         let _ = token_tx.send(true);
         let outcome = pending.await.unwrap();
-        assert!(outcome.is_err_and(|cause| cause.is_aborted()), "{action}");
+        assert!(outcome.is_err_and(|cause| cause.aborted), "{action}");
         tokio::time::sleep(Duration::from_millis(30)).await;
         assert!(
             fixture.to("/api/board/game/stream/AbCd1234").is_empty(),
@@ -802,12 +849,7 @@ async fn keeps_the_newer_attachment_when_an_older_account_login_arrives_late() {
     assert_eq!(games.len(), 1);
     assert_eq!(games[0].header("Authorization"), Some("Bearer Bob-token"));
     let _ = alice_tx.send(true);
-    assert!(
-        pending
-            .await
-            .unwrap()
-            .is_err_and(|cause| cause.is_aborted())
-    );
+    assert!(pending.await.unwrap().is_err_and(|cause| cause.aborted));
     assert_eq!(
         fixture.to("/api/board/game/stream/AbCd1234").len(),
         0,
@@ -839,12 +881,7 @@ async fn supersedes_a_pending_attachment_with_authoritative_recovery() {
     until("credentials requested", || tokens.calls_for("Alice") >= 1).await;
     assert_eq!(online.resume().await.unwrap(), None);
     let _ = token_tx.send(true);
-    assert!(
-        pending
-            .await
-            .unwrap()
-            .is_err_and(|cause| cause.is_aborted())
-    );
+    assert!(pending.await.unwrap().is_err_and(|cause| cause.aborted));
     assert_eq!(fixture.to("/api/account/playing").len(), 1);
     assert!(!online.playing());
     online.close();
@@ -864,12 +901,7 @@ async fn treats_a_late_credential_failure_for_a_cancelled_attachment_as_cancella
     // A failing store answers only after the cancellation: it is not an error to report.
     tokens.set("Alice", Script::Fail("Old login failure".into()));
     let _ = token_tx.send(true);
-    assert!(
-        pending
-            .await
-            .unwrap()
-            .is_err_and(|cause| cause.is_aborted())
-    );
+    assert!(pending.await.unwrap().is_err_and(|cause| cause.aborted));
     assert!(fixture.to("/api/board/game/stream/AbCd1234").is_empty());
     online.close();
 }
@@ -982,9 +1014,9 @@ async fn refuses_actions_and_chat_for_a_game_not_on_the_board() {
     })
     .await;
     let action = online.action("Other123", OnlineAction::OfferDraw).await;
-    assert!(action.unwrap_err().message().contains("Reconnect"));
+    assert!(action.unwrap_err().message.contains("Reconnect"));
     let chat = online.send_chat("Other123", "player", "hi").await;
-    assert!(chat.unwrap_err().message().contains("Reconnect"));
+    assert!(chat.unwrap_err().message.contains("Reconnect"));
     online.cancel();
     online.close();
 }
@@ -1179,7 +1211,7 @@ async fn declines_with_a_reason_and_refuses_a_second_live_game() {
     })
     .await;
     let refused = online.accept_challenge(&incoming(json!({}))).await;
-    assert!(refused.unwrap_err().message().contains("Finish the game"));
+    assert!(refused.unwrap_err().message.contains("Finish the game"));
     online
         .decline_challenge(&incoming(json!({})), "later")
         .await
@@ -1238,7 +1270,7 @@ async fn refuses_a_rated_or_public_game_from_a_set_up_position() {
             .start(&rated)
             .await
             .unwrap_err()
-            .message()
+            .message
             .contains("casual challenge")
     );
     assert!(
@@ -1246,7 +1278,7 @@ async fn refuses_a_rated_or_public_game_from_a_set_up_position() {
             .start(&casual_public)
             .await
             .unwrap_err()
-            .message()
+            .message
             .contains("casual challenge")
     );
     online.close();
@@ -1297,7 +1329,7 @@ async fn a_second_move_is_refused_while_the_first_is_unanswered() {
         .requested("/api/board/game/AbCd1234/move/e2e4", 1)
         .await;
     let second = online.move_uci("AbCd1234", "d2d4").await;
-    assert!(second.unwrap_err().message().contains("already being sent"));
+    assert!(second.unwrap_err().message.contains("already being sent"));
     assert!(
         fixture.to("/api/board/game/AbCd1234/move/d2d4").is_empty(),
         "the second move never reaches Lichess"
@@ -1317,12 +1349,7 @@ async fn a_second_move_is_refused_while_the_first_is_unanswered() {
 async fn a_live_game_is_not_replaced_by_opening_another_game() {
     let (_host, _fixture, online) = playing(|_| None).await;
     let other = online.open("Alice", "Other123").await;
-    assert!(
-        other
-            .unwrap_err()
-            .message()
-            .contains("Finish the live game")
-    );
+    assert!(other.unwrap_err().message.contains("Finish the live game"));
     online.cancel();
     online.close();
 }
@@ -1338,7 +1365,7 @@ async fn a_protected_game_is_not_replaced_by_opening_another_game() {
     assert!(
         other
             .unwrap_err()
-            .message()
+            .message
             .contains("Reconnect to your current game")
     );
     assert!(online.assistance_blocked());
@@ -1386,14 +1413,13 @@ async fn a_tournament_join_and_withdrawal_use_the_accounts_login() {
     .await;
     let (host, store, tokens) = rig(&[("Alice", true)]);
     let lichess = {
-        let client = LichessClient::with_base(&fixture.base, policy(&host), http_client());
+        let client = LichessClient::with_base(&fixture.base, policy(&host));
         Arc::new(Lichess::new(
             client,
             capabilities_for(&host),
             Arc::clone(&store) as Arc<dyn kchess_core::lichess::accounts::LichessStore>,
             Arc::clone(&tokens) as Arc<dyn TokenSource>,
             Arc::clone(&host) as Arc<dyn Host>,
-            CancellationToken::new(),
         ))
     };
     let joined = kchess_core::lichess::tournaments::join_tournament(

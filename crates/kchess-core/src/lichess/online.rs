@@ -10,12 +10,9 @@
 //!
 //! What leaves this module, on the host's `emit`: `online:state`, `online:event`, `online:error`,
 //! `online:lobby`, `online:ongoing-changed` (debounced 750 ms), `challenge:received` and
-//! `challenges:update` (from the inbox). Payloads are the TypeScript shapes; absent optional
-//! fields are left out, as `JSON.stringify` drops `undefined`.
+//! `challenges:update` (from the inbox); absent optional fields are left out.
 //!
-//! Deviations kept on purpose and documented: the stream opener is in this file (the shared
-//! client has no open hook or form-body stream), so it calls the same policy and error mapping;
-//! bodyless POSTs send an empty form body; the presence cache keeps finished answers only.
+//! Bodyless POSTs send an empty form body; the presence cache keeps finished answers only.
 
 pub mod events;
 pub mod ongoing;
@@ -24,7 +21,7 @@ pub mod session;
 pub mod state;
 
 pub use state::{
-    ChatLine, Lane, OngoingGame, OnlineAction, OnlineOptions, OnlineSession, PresenceReport, Res,
+    ChatLine, Lane, OngoingGame, OnlineAction, OnlineOptions, OnlineSession, PresenceReport,
     Resumed, StartResult, UserPresence, js_number,
 };
 

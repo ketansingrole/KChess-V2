@@ -4,7 +4,7 @@
 //!
 //! Tokens: the JSON backup already holds encrypted tokens, which are stored as they are. The earlier
 //! database holds plaintext tokens; they are returned to the caller, which encrypts them with the
-//! OS credential store (Rust never sees it) and stores them with `store.games.importTokenCiphertext`.
+//! OS credential store (Rust never sees it) and stores them with `games::import_token_ciphertext`.
 
 use std::fs;
 use std::path::Path;
@@ -17,6 +17,7 @@ use super::StoreContext;
 use super::games::{
     GAME_KEYS, MAX_GAMES, default_settings, in_progress, to_sql, write_settings_json,
 };
+use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
 use kchess_domain::js;
@@ -29,10 +30,6 @@ pub struct PlainToken {
     /// NULL stays NULL, as the earlier database stored it.
     pub account: Option<String>,
     pub token: String,
-}
-
-fn storage(cause: rusqlite::Error) -> CoreError {
-    CoreError::new(cause.to_string())
 }
 
 fn log(ctx: &StoreContext, level: Level, message: &str) {
@@ -53,14 +50,13 @@ pub fn legacy_import_pending(ctx: &StoreContext) -> Result<bool> {
 
 fn profile_empty(ctx: &StoreContext) -> Result<bool> {
     let db = ctx.db;
-    let count =
-        |sql: &str| -> Result<i64> { db.query_row(sql, [], |row| row.get(0)).map_err(storage) };
+    let count = |sql: &str| -> Result<i64> { db.query_row(sql, [], |row| row.get(0)).sql() };
     let settings = db
         .query_row("SELECT id FROM settings WHERE id = 1", [], |row| {
             row.get::<_, i64>(0)
         })
         .optional()
-        .map_err(storage)?;
+        .sql()?;
     Ok(count("SELECT COUNT(*) AS n FROM accounts")? == 0
         && count("SELECT COUNT(*) AS n FROM games")? == 0
         && count("SELECT COUNT(*) AS n FROM tokens")? == 0
@@ -142,23 +138,21 @@ fn from_json(ctx: &StoreContext) -> Result<bool> {
         }
     };
 
-    let imported = (|| -> Result<()> {
-        begin(ctx.db)?;
-        let outcome = (|| -> Result<()> {
-            write_settings_json(ctx.db, &Value::Object(settings.clone()))?;
-            let Some(accounts) = accounts.as_array() else {
-                return Err(CoreError::new("accounts is not iterable"));
-            };
-            for account in accounts {
-                // `accounts.username` is a nullable primary key; a NULL row breaks every load.
-                if account
-                    .get("username")
-                    .and_then(Value::as_str)
-                    .is_none_or(|name| name.trim().is_empty())
-                {
-                    continue;
-                }
-                ctx.db
+    let imported = transaction(ctx.db, || {
+        write_settings_json(ctx.db, &Value::Object(settings.clone()))?;
+        let Some(accounts) = accounts.as_array() else {
+            return Err(CoreError::new("accounts is not iterable"));
+        };
+        for account in accounts {
+            // `accounts.username` is a nullable primary key; a NULL row breaks every load.
+            if account
+                .get("username")
+                .and_then(Value::as_str)
+                .is_none_or(|name| name.trim().is_empty())
+            {
+                continue;
+            }
+            ctx.db
                     .execute(
                         "INSERT OR REPLACE INTO accounts (username, connected, lastSyncedAt) VALUES (?, ?, ?)",
                         params_from_iter([
@@ -167,37 +161,29 @@ fn from_json(ctx: &StoreContext) -> Result<bool> {
                             SqlValue::Null,
                         ]),
                     )
-                    .map_err(storage)?;
-            }
-            for game in &games {
-                insert_game(ctx.db, game)?;
-            }
-            if let Some(tokens) = &tokens {
-                let Some(entries) = tokens.as_object() else {
-                    return Err(CoreError::new("tokens is not an object"));
-                };
-                for (username, encrypted) in entries {
-                    ctx.db
-                        .execute(
-                            "INSERT OR REPLACE INTO tokens (username, encrypted) VALUES (?, ?)",
-                            params_from_iter([
-                                SqlValue::Text(username.clone()),
-                                to_sql(Some(encrypted))?,
-                            ]),
-                        )
-                        .map_err(storage)?;
-                }
-            }
-            Ok(())
-        })();
-        match outcome {
-            Ok(()) => commit(ctx.db),
-            Err(cause) => {
-                rollback(ctx, &cause);
-                Err(cause)
+                    .sql()?;
+        }
+        for game in &games {
+            insert_game(ctx.db, game)?;
+        }
+        if let Some(tokens) = &tokens {
+            let Some(entries) = tokens.as_object() else {
+                return Err(CoreError::new("tokens is not an object"));
+            };
+            for (username, encrypted) in entries {
+                ctx.db
+                    .execute(
+                        "INSERT OR REPLACE INTO tokens (username, encrypted) VALUES (?, ?)",
+                        params_from_iter([
+                            SqlValue::Text(username.clone()),
+                            to_sql(Some(encrypted))?,
+                        ]),
+                    )
+                    .sql()?;
             }
         }
-    })();
+        Ok(())
+    });
     if let Err(cause) = imported {
         log(
             ctx,
@@ -431,16 +417,14 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
         .iter()
         .any(|row| matches!(row[1], SqlValue::Null));
 
-    let imported = (|| -> Result<()> {
-        begin(ctx.db)?;
-        let outcome = (|| -> Result<()> {
-            write_settings_json(ctx.db, &Value::Object(settings.clone()))?;
-            for row in &account_rows {
-                if !matches!(&row[0], SqlValue::Text(name) if !name.trim().is_empty()) {
-                    continue;
-                }
-                let auth_oauth = matches!(&row[1], SqlValue::Text(kind) if kind == "oauth");
-                ctx.db
+    let imported = transaction(ctx.db, || {
+        write_settings_json(ctx.db, &Value::Object(settings.clone()))?;
+        for row in &account_rows {
+            if !matches!(&row[0], SqlValue::Text(name) if !name.trim().is_empty()) {
+                continue;
+            }
+            let auth_oauth = matches!(&row[1], SqlValue::Text(kind) if kind == "oauth");
+            ctx.db
                     .execute(
                         "INSERT OR REPLACE INTO accounts (username, connected, lastSyncedAt) VALUES (?, ?, ?)",
                         params_from_iter([
@@ -449,24 +433,16 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
                             SqlValue::Null,
                         ]),
                     )
-                    .map_err(storage)?;
-            }
-            for game in &games {
-                insert_game(ctx.db, game)?;
-            }
-            if encryption_available && null_token {
-                return Err(CoreError::new("Cannot encrypt a NULL token."));
-            }
-            Ok(())
-        })();
-        match outcome {
-            Ok(()) => commit(ctx.db),
-            Err(cause) => {
-                rollback(ctx, &cause);
-                Err(cause)
-            }
+                    .sql()?;
         }
-    })();
+        for game in &games {
+            insert_game(ctx.db, game)?;
+        }
+        if encryption_available && null_token {
+            return Err(CoreError::new("Cannot encrypt a NULL token."));
+        }
+        Ok(())
+    });
     match imported {
         Ok(()) if encryption_available => tokens,
         Ok(()) => Vec::new(),
@@ -527,7 +503,7 @@ fn insert_game(db: &Connection, game: &Value) -> Result<()> {
              SELECT ?, ? WHERE EXISTS (SELECT 1 FROM accounts WHERE username = ? COLLATE NOCASE)",
             params_from_iter([account.clone(), to_sql(game.get("id"))?, account]),
         )
-        .map_err(storage)?;
+        .sql()?;
         return Ok(());
     }
     if !importable(game) {
@@ -543,7 +519,7 @@ fn insert_game(db: &Connection, game: &Value) -> Result<()> {
         &format!("INSERT OR REPLACE INTO games ({columns}) VALUES ({placeholders})"),
         params_from_iter(params),
     )
-    .map_err(storage)?;
+    .sql()?;
     Ok(())
 }
 
@@ -649,21 +625,6 @@ pub fn normalize_settings(stored: &Map<String, Value>) -> Result<Map<String, Val
 
 fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
     crate::engine::domain(method, args)
-}
-
-fn begin(db: &Connection) -> Result<()> {
-    db.execute_batch("BEGIN IMMEDIATE").map_err(storage)
-}
-
-fn commit(db: &Connection) -> Result<()> {
-    db.execute_batch("COMMIT").map_err(storage)
-}
-
-/// `rollback`: a failed rollback is logged, and the original error is the one reported.
-fn rollback(ctx: &StoreContext, _cause: &CoreError) {
-    if let Err(cause) = ctx.db.execute_batch("ROLLBACK") {
-        log(ctx, Level::Debug, &format!("Rollback failed: {cause}"));
-    }
 }
 
 /// A SQLite value as the JSON the TypeScript mapping saw.

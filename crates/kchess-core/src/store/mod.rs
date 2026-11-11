@@ -1,5 +1,6 @@
-//! KChess's main database (`kchess.db`), the storage the services share. The Rust core is its only owner: one connection, opened
-//! and migrated on first use, with every storage method dispatched from here.
+//! KChess's main database (`kchess.db`), the storage the services share. The Rust core is its
+//! only owner: one connection, opened and migrated on first use. Callers run the storage
+//! functions of the modules below through [`Database::read`] and [`Database::write`].
 
 pub mod ai;
 pub mod chesscom;
@@ -15,6 +16,7 @@ pub mod lookups;
 pub mod migrations;
 pub mod reviews;
 pub mod runs;
+pub mod sql;
 pub mod studies;
 pub mod usage;
 pub mod view_preferences;
@@ -23,15 +25,18 @@ pub mod voice_log;
 use rusqlite::Connection;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::error::{CoreError, Result};
+use crate::error::Result;
 use crate::host::{Config, Host, Level};
+use crate::tasks::lock;
+use sql::{Lane, LaneMessages, Sql as _};
 
-/// Filtered page counts, the library overview and the storage the games take, valid until a call
-/// that can change the stored games runs. The count is a full scan of the filter's index, while
-/// the page rows themselves are a short index range; the storage reads every game's row.
+/// Filtered page counts, the library overview and the storage the games take, valid until a
+/// write runs. The count is a full scan of the filter's index, while the page rows themselves are
+/// a short index range; the storage reads every game's row.
 ///
 /// And the library snapshot, which decodes every study and replays every played game: it is kept
 /// with the connection's count of changed rows when it was read, and is stale once any write has
@@ -46,286 +51,215 @@ pub struct StoreCache {
 
 impl StoreCache {
     pub fn count(&self, key: &str) -> Option<i64> {
-        self.counts.lock().ok()?.get(key).copied()
+        lock(&self.counts).get(key).copied()
     }
 
     pub fn remember_count(&self, key: String, total: i64) {
-        if let Ok(mut counts) = self.counts.lock() {
-            if counts.len() >= 128 {
-                counts.clear();
-            }
-            counts.insert(key, total);
+        let mut counts = lock(&self.counts);
+        if counts.len() >= 128 {
+            counts.clear();
         }
+        counts.insert(key, total);
     }
 
     pub fn overview(&self) -> Option<Value> {
-        self.overview.lock().ok()?.clone()
+        lock(&self.overview).clone()
     }
 
     pub fn remember_overview(&self, value: &Value) {
-        if let Ok(mut overview) = self.overview.lock() {
-            *overview = Some(value.clone());
-        }
+        *lock(&self.overview) = Some(value.clone());
     }
 
     /// Each account's games and the bytes they take (`usageReport`'s storage).
     pub fn storage(&self) -> Option<Vec<(String, i64, i64)>> {
-        self.storage.lock().ok()?.clone()
+        lock(&self.storage).clone()
     }
 
     pub fn remember_storage(&self, rows: &[(String, i64, i64)]) {
-        if let Ok(mut storage) = self.storage.lock() {
-            *storage = Some(rows.to_vec());
-        }
+        *lock(&self.storage) = Some(rows.to_vec());
     }
 
     /// The library snapshot read when the connection had changed `changes` rows, if it is kept.
     pub fn library(&self, changes: u64) -> Option<Value> {
-        let library = self.library.lock().ok()?;
+        let library = lock(&self.library);
         let (read_at, snapshot) = library.as_ref()?;
         (*read_at == changes).then(|| snapshot.clone())
     }
 
     pub fn remember_library(&self, changes: u64, snapshot: &Value) {
-        if let Ok(mut library) = self.library.lock() {
-            *library = Some((changes, snapshot.clone()));
-        }
+        *lock(&self.library) = Some((changes, snapshot.clone()));
     }
 
     /// A connection opened afresh counts its changes from zero again.
     pub fn forget_library(&self) {
-        if let Ok(mut library) = self.library.lock() {
-            *library = None;
-        }
+        *lock(&self.library) = None;
     }
 
     pub fn clear(&self) {
         self.forget_library();
-        if let Ok(mut counts) = self.counts.lock() {
-            counts.clear();
-        }
-        if let Ok(mut overview) = self.overview.lock() {
-            *overview = None;
-        }
-        if let Ok(mut storage) = self.storage.lock() {
-            *storage = None;
-        }
+        lock(&self.counts).clear();
+        *lock(&self.overview) = None;
+        *lock(&self.storage) = None;
     }
 }
 
-/// Whether `method` can change the games or accounts a count or the overview is computed from.
-/// Every games method except the known reads clears the cache, so a new mutation (or one that
-/// only touches `accounts`, such as a login) can never leave a stale total behind.
-fn invalidates_counts(method: &str) -> bool {
-    if let Some(name) = method.strip_prefix("store.games.") {
-        return !matches!(
-            name,
-            "getSettings"
-                | "loadData"
-                | "gamePage"
-                | "gameLibraryOverview"
-                | "gameRatingHistory"
-                | "pendingGameIds"
-                | "gamePgn"
-                | "readApiCache"
-                | "writeApiCache"
-                | "saveSettings"
-                | "dismissedFriends"
-                | "legacyImportPending"
-                | "tokenCiphertext"
-        );
-    }
-    if let Some(name) = method.strip_prefix("store.chesscom.") {
-        return !matches!(name, "accounts" | "archives");
-    }
-    method.starts_with("store.import.") || method.starts_with("store.debug.")
-}
-
-/// `kchess.db` as the core shares it: one connection, opened and migrated on first use, behind a
-/// lock. The synchronous storage calls and the asynchronous services (the review queue) both
-/// reach it through `call`, so there is never a second copy of the database. Callers must not
-/// hold the lock across another `call`.
+/// `kchess.db` as the core shares it: one connection on one [`Lane`], so there is never a second
+/// copy of the database. A read leaves the caches alone; a write clears them, so no write can
+/// leave a stale total behind.
 pub struct Database {
-    connection: Mutex<Option<Connection>>,
-    execution: Arc<tokio::sync::Semaphore>,
-    work: tokio_util::task::TaskTracker,
+    lane: Arc<Lane>,
     host: Arc<dyn Host>,
     config: Config,
-    cache: StoreCache,
+    cache: Arc<StoreCache>,
+}
+
+/// Whether a call may change what the caches were computed from.
+#[derive(Clone, Copy)]
+enum Access {
+    Read,
+    Write,
 }
 
 impl Database {
     pub fn new(config: Config, host: Arc<dyn Host>) -> Database {
+        let cache = Arc::new(StoreCache::default());
+        let path = config.data_dir.join("kchess.db");
+        let opened = Arc::clone(&cache);
+        let lane = Lane::new(
+            "db",
+            LaneMessages {
+                closed: "The database is closed.",
+                stopped: "Database worker failed.",
+            },
+            Arc::clone(&host),
+            move |host| {
+                let db = open(&path, host)?;
+                opened.forget_library();
+                Ok(db)
+            },
+        );
         Database {
-            connection: Mutex::new(None),
-            execution: Arc::new(tokio::sync::Semaphore::new(1)),
-            work: tokio_util::task::TaskTracker::new(),
+            lane: Arc::new(lane),
             host,
             config,
-            cache: StoreCache::default(),
+            cache,
         }
     }
 
-    /// Serializes async callers before occupying a blocking worker. The worker owns its permit
-    /// and tracking token, so dropping the awaiting future cannot let close race an active write.
-    pub async fn call_async(self: &Arc<Self>, method: &str, args: &[Value]) -> Result<Value> {
-        self.call_async_with(method, || Ok(args.to_vec())).await
+    /// Runs a read on this thread. Blocking: never on an async executor thread.
+    pub fn read<T>(&self, work: impl FnOnce(&StoreContext) -> Result<T>) -> Result<T> {
+        self.here(Access::Read, work)
     }
 
-    /// Builds arguments and rechecks mutation ownership after waiting for database admission.
-    pub async fn call_async_with(
+    /// Runs a write on this thread. Blocking: never on an async executor thread.
+    pub fn write<T>(&self, work: impl FnOnce(&StoreContext) -> Result<T>) -> Result<T> {
+        self.here(Access::Write, work)
+    }
+
+    /// Runs a read on a blocking worker, in turn with every other call.
+    #[track_caller]
+    pub fn read_async<T, F>(
         self: &Arc<Self>,
-        method: &str,
-        args: impl FnOnce() -> Result<Vec<Value>>,
-    ) -> Result<Value> {
-        let permit = Arc::clone(&self.execution)
-            .acquire_owned()
-            .await
-            .map_err(|_| CoreError::new("The database is closed."))?;
-        let tracked = self.work.token();
+        work: F,
+    ) -> impl Future<Output = Result<T>> + use<T, F>
+    where
+        T: Send + 'static,
+        F: FnOnce(&StoreContext) -> Result<T> + Send + 'static,
+    {
+        self.admitted(Access::Read, move || Ok(work))
+    }
+
+    /// Runs a write on a blocking worker, in turn with every other call.
+    #[track_caller]
+    pub fn write_async<T, F>(
+        self: &Arc<Self>,
+        work: F,
+    ) -> impl Future<Output = Result<T>> + use<T, F>
+    where
+        T: Send + 'static,
+        F: FnOnce(&StoreContext) -> Result<T> + Send + 'static,
+    {
+        self.admitted(Access::Write, move || Ok(work))
+    }
+
+    /// Runs the write `prepare` returns once the database admits it. `prepare` runs at admission:
+    /// a write wanted only while its caller is still current (a sync a logout ended) checks that
+    /// there, after waiting its turn, and fails or skips rather than writing.
+    #[track_caller]
+    pub fn write_admitted<T, W, P>(
+        self: &Arc<Self>,
+        prepare: P,
+    ) -> impl Future<Output = Result<T>> + use<T, W, P>
+    where
+        T: Send + 'static,
+        W: FnOnce(&StoreContext) -> Result<T> + Send + 'static,
+        P: FnOnce() -> Result<W>,
+    {
+        self.admitted(Access::Write, prepare)
+    }
+
+    #[track_caller]
+    fn admitted<T, W, P>(
+        self: &Arc<Self>,
+        access: Access,
+        prepare: P,
+    ) -> impl Future<Output = Result<T>> + use<T, W, P>
+    where
+        T: Send + 'static,
+        W: FnOnce(&StoreContext) -> Result<T> + Send + 'static,
+        P: FnOnce() -> Result<W>,
+    {
         let database = Arc::clone(self);
-        let method = method.to_string();
-        let args = args()?;
-        let started = std::time::Instant::now();
-        let logged_method = method.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let (_permit, _tracked) = (permit, tracked);
-            database.call_inner(&method, &args, true)
+        self.lane.run_admitted(move || {
+            let work = prepare()?;
+            Ok(move |db: &Connection| database.with_context(access, db, work))
         })
-        .await
-        .map_err(|cause| CoreError::wrap("Database worker failed", cause))?;
-        // Structural head-of-line signal: a single connection serializes all storage,
-        // so a slow call blocks UI reads. Log slow calls instead of silently queueing.
-        let elapsed = started.elapsed();
-        if elapsed.as_millis() > 500 {
-            self.host.log(
-                Level::Warn,
-                "db",
-                &format!(
-                    "Slow storage call: method={logged_method} durationMs={}",
-                    elapsed.as_millis()
-                ),
-            );
+    }
+
+    fn here<T>(&self, access: Access, work: impl FnOnce(&StoreContext) -> Result<T>) -> Result<T> {
+        self.lane.run_here(|db| self.with_context(access, db, work))
+    }
+
+    fn with_context<T>(
+        &self,
+        access: Access,
+        db: &Connection,
+        work: impl FnOnce(&StoreContext) -> Result<T>,
+    ) -> Result<T> {
+        let ctx = StoreContext {
+            db,
+            host: self.host.as_ref(),
+            config: &self.config,
+            cache: &self.cache,
+        };
+        let result = work(&ctx);
+        if matches!(access, Access::Write) {
+            self.cache.clear();
         }
         result
     }
 
     /// Occupies the async execution lane until the permit drops (`Core::hold_storage_for_tests`).
     pub(crate) async fn hold_execution(&self) -> Result<tokio::sync::OwnedSemaphorePermit> {
-        Arc::clone(&self.execution)
-            .acquire_owned()
-            .await
-            .map_err(|_| CoreError::new("The database is closed."))
+        self.lane.hold().await
     }
 
-    /// Refuses queued/new async work, drains accepted operations, then releases the file.
-    pub async fn close_async(self: &Arc<Self>) {
-        self.execution.close();
-        self.work.close();
-        self.work.wait().await;
-        let database = Arc::clone(self);
-        if let Err(cause) = tokio::task::spawn_blocking(move || database.close()).await {
-            self.host.log(
-                Level::Warn,
-                "db",
-                &format!("Database close failed: {cause}"),
-            );
-        }
+    /// Refuses queued/new work, drains accepted operations, then releases the file.
+    pub async fn close_async(&self) {
+        self.lane.close().await;
+        self.cache.clear();
     }
 
-    /// Runs one storage method (`store.<module>.<name>`) against the database, opening it first.
-    ///
-    /// Blocking: runs rusqlite synchronously and holds a `std::sync::Mutex` while it does, so
-    /// it must never run on an async executor thread. Async callers use `call_async`.
-    #[track_caller]
-    pub fn call(&self, method: &str, args: &[Value]) -> Result<Value> {
-        self.call_inner(method, args, false)
-    }
-
-    fn call_inner(&self, method: &str, args: &[Value], admitted: bool) -> Result<Value> {
-        let mut db = usable_connection(&self.connection, self.host.as_ref(), "db");
-        if !admitted && self.execution.is_closed() {
-            return Err(CoreError::new("The database is closed."));
-        }
-        if method == "store.debug.historical" && debug::enabled() {
-            // Test-only: an earlier release's database, written before the store opens the file.
-            if db.is_some() {
-                return Err(CoreError::new("The database is already open."));
-            }
-            let path = self.config.data_dir.join("kchess.db");
-            return debug::historical(&path, args);
-        }
-        if db.is_none() {
-            let path = self.config.data_dir.join("kchess.db");
-            *db = Some(open(&path, self.host.as_ref())?);
-            self.cache.forget_library();
-        }
-        if invalidates_counts(method) {
-            self.cache.clear();
-        }
-        match db.as_ref() {
-            Some(connection) => {
-                let ctx = StoreContext {
-                    db: connection,
-                    host: self.host.as_ref(),
-                    config: &self.config,
-                    cache: &self.cache,
-                };
-                call(&ctx, method, args)
-            }
-            None => Err(CoreError::new("The database is unavailable.")),
-        }
-    }
-
-    /// Releases the file; the next `call` opens it again.
+    /// Releases the file; the next call opens it again.
     pub fn close(&self) {
         self.cache.clear();
-        if let Ok(mut db) = self.connection.lock() {
-            db.take();
-        }
+        self.lane.release();
     }
 }
 
-/// The connection behind `slot`, as a call may use it. A call that panicked holding the lock may
-/// have left its transaction open, and a ROLLBACK that failed leaves one open too: either way the
-/// connection is dropped (SQLite rolls the transaction back) and the next call opens the file
-/// again, rather than every later call failing or joining a transaction nobody will commit.
-pub(crate) fn usable_connection<'a>(
-    slot: &'a std::sync::Mutex<Option<Connection>>,
-    host: &dyn Host,
-    scope: &str,
-) -> std::sync::MutexGuard<'a, Option<Connection>> {
-    let mut db = match slot.lock() {
-        Ok(db) => db,
-        Err(poisoned) => {
-            slot.clear_poison();
-            let mut db = poisoned.into_inner();
-            if db.take().is_some() {
-                host.log(
-                    Level::Warn,
-                    scope,
-                    "A storage call failed while it held the database; it is opened again.",
-                );
-            }
-            db
-        }
-    };
-    if db
-        .as_ref()
-        .is_some_and(|connection| !connection.is_autocommit())
-    {
-        host.log(
-            Level::Warn,
-            scope,
-            "The database was left inside a transaction; it is opened again.",
-        );
-        db.take();
-    }
-    db
-}
-
-/// What a storage method may use: the open database, the host (for logs) and the core's
-/// configuration (the data directory and an earlier release's database, for the one-time imports).
+/// What a storage function may use: the open database, the host (for logs), the core's
+/// configuration (the data directory and an earlier release's database, for the one-time imports)
+/// and the caches.
 pub struct StoreContext<'a> {
     pub db: &'a Connection,
     pub host: &'a dyn Host,
@@ -333,11 +267,31 @@ pub struct StoreContext<'a> {
     pub cache: &'a StoreCache,
 }
 
+/// Runs `work` over a fresh, migrated database in memory.
+#[cfg(test)]
+pub(crate) fn in_memory<T>(work: impl FnOnce(&StoreContext) -> T) -> T {
+    struct Quiet;
+    impl Host for Quiet {
+        fn log(&self, _: Level, _: &str, _: &str) {}
+        fn emit(&self, _: &str, _: Value) {}
+    }
+    let db = Connection::open_in_memory().expect("open");
+    migrations::migrate(&db).expect("migrate");
+    let config = Config::new(std::path::PathBuf::new());
+    let cache = StoreCache::default();
+    work(&StoreContext {
+        db: &db,
+        host: &Quiet,
+        config: &config,
+        cache: &cache,
+    })
+}
+
 /// Open `kchess.db`: WAL, foreign keys, NORMAL sync, memory temp store, a 20 MB
 /// cache, migrations, then 0600 permissions.
 pub fn open(path: &Path, host: &dyn Host) -> Result<Connection> {
-    let db =
-        Connection::open(path).map_err(|e| CoreError::wrap("Could not open the database", e))?;
+    let db = Connection::open(path)
+        .map_err(|e| crate::error::CoreError::wrap("Could not open the database", e))?;
     db.execute_batch(
         "PRAGMA busy_timeout = 5000;
          PRAGMA journal_mode = WAL;
@@ -346,14 +300,10 @@ pub fn open(path: &Path, host: &dyn Host) -> Result<Connection> {
          PRAGMA temp_store = MEMORY;
          PRAGMA cache_size = -20000;",
     )
-    .map_err(|e| CoreError::new(e.to_string()))?;
+    .sql()?;
     migrations::migrate(&db)?;
-    restrict(path, host);
-    Ok(db)
-}
-
-fn restrict(path: &Path, host: &dyn Host) {
     restrict_database(path, host, "db");
+    Ok(db)
 }
 
 /// 0600 for a database and its `-wal` and `-shm` files. Opening in WAL mode creates both before
@@ -380,43 +330,11 @@ pub(crate) fn restrict_database(path: &Path, host: &dyn Host, tag: &str) {
 #[cfg(not(unix))]
 pub(crate) fn restrict_database(_path: &Path, _host: &dyn Host, _tag: &str) {}
 
-type Dispatch = fn(&StoreContext, &str, &[Value]) -> Option<Result<Value>>;
-
-/// Every storage method, `store.<module>.<name>`: each module dispatches its own.
-pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Result<Value> {
-    match method {
-        // The database is opened and migrated before any call reaches this dispatch.
-        "store.open" => return Ok(Value::Null),
-        "store.debug.tables" if debug::enabled() => return debug::tables(ctx.db, args),
-        "store.debug.exec" if debug::enabled() => return debug::exec(ctx.db, args),
-        "store.debug.query" if debug::enabled() => return debug::query(ctx.db, args),
-        _ => {}
-    }
-    let modules: [Dispatch; 12] = [
-        migrations::call,
-        games::call,
-        chesscom::call,
-        library::call,
-        reviews::call,
-        runs::call,
-        insights::call,
-        usage::call,
-        voice_log::call,
-        lookups::call,
-        view_preferences::call,
-        ai::call,
-    ];
-    modules
-        .iter()
-        .find_map(|call| call(ctx, method, args))
-        .unwrap_or_else(|| Err(CoreError::new(format!("Unknown core method {method}."))))
-}
-
 #[cfg(test)]
-mod scheduling_tests {
+mod tests {
     use super::*;
+    use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::Duration;
 
     struct Quiet;
     impl Host for Quiet {
@@ -433,202 +351,72 @@ mod scheduling_tests {
         (dir, database)
     }
 
+    fn played_games(database: &Database) -> usize {
+        database
+            .read(|ctx| library::cached_library(ctx, 0.0))
+            .expect("library")["games"]
+            .as_array()
+            .expect("games")
+            .len()
+    }
+
     /// A connection opened again counts its changed rows from zero: the library read on the
     /// one before must not stand for what the file holds now (here, a game another core saved
     /// while this one had let the file go).
     #[test]
     fn a_reopened_connection_reads_the_library_afresh() {
         let (dir, database) = database();
-        let games = |database: &Database| {
-            database
-                .call("store.library.library", &[serde_json::json!(0)])
-                .expect("library")["games"]
-                .as_array()
-                .expect("games")
-                .len()
-        };
-        assert_eq!(games(&database), 0);
-        // As a failed call leaves it: the connection dropped, the cache not cleared.
-        database.connection.lock().expect("lock").take();
+        assert_eq!(played_games(&database), 0);
+        database.lane.release();
         let other = Database::new(Config::new(dir.path().to_path_buf()), Arc::new(Quiet));
         let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let game = json!({
+            "id": "g", "source": "board", "startedAt": 1, "updatedAt": 2, "white": "A",
+            "black": "B", "result": "*", "reason": "-", "timeControl": "-",
+            "finished": false, "setup": { "variant": "standard", "fen": start },
+            "moves": ["e2e4"],
+        });
         other
-            .call(
-                "store.library.saveArchivedGame",
-                &[serde_json::json!({
-                    "id": "g", "source": "board", "startedAt": 1, "updatedAt": 2, "white": "A",
-                    "black": "B", "result": "*", "reason": "-", "timeControl": "-",
-                    "finished": false, "setup": { "variant": "standard", "fen": start },
-                    "moves": ["e2e4"],
-                })],
-            )
+            .write(|ctx| library::write_game(ctx.db, &game))
             .expect("save");
         other.close();
-        database.call("store.open", &[]).expect("open");
-        assert!(
-            database.cache.library.lock().expect("cache").is_none(),
-            "opening the file forgets the snapshot"
-        );
-        assert_eq!(games(&database), 1);
+        assert_eq!(played_games(&database), 1);
     }
 
-    /// A storage call that panicked with the lock held used to leave it poisoned, so every later
-    /// call failed with "The database is unavailable." until the app restarted, and its open
-    /// transaction stayed open.
+    /// A write clears the cached totals, whichever table it changed.
     #[test]
-    fn a_call_that_panicked_holding_the_database_does_not_disable_storage() {
+    fn a_write_clears_the_cached_totals_and_a_read_keeps_them() {
         let (_dir, database) = database();
-        database.call("store.open", &[]).expect("open");
-        let held = Arc::clone(&database);
-        let panicked = std::thread::spawn(move || {
-            let db = held.connection.lock().expect("lock");
-            if let Some(connection) = db.as_ref() {
-                connection.execute_batch("BEGIN IMMEDIATE").expect("begin");
-            }
-            panic!("a storage method panicked");
-        })
-        .join();
-        assert!(panicked.is_err());
-        assert!(database.connection.is_poisoned());
         database
-            .call("store.open", &[])
-            .expect("storage works after the panic");
-        assert!(!database.connection.is_poisoned());
-        let db = database.connection.lock().expect("lock");
-        assert!(db.as_ref().is_some_and(Connection::is_autocommit));
-    }
-
-    /// A connection a failed ROLLBACK left inside its transaction is opened again, so later
-    /// writes are not lost inside a transaction nobody commits.
-    #[test]
-    fn a_connection_left_inside_a_transaction_is_opened_again() {
-        let slot = Mutex::new(Some(Connection::open_in_memory().expect("open")));
-        if let Some(connection) = slot.lock().expect("lock").as_ref() {
-            connection.execute_batch("BEGIN").expect("begin");
-        }
-        assert!(usable_connection(&slot, &Quiet, "db").is_none());
-        let slot = Mutex::new(Some(Connection::open_in_memory().expect("open")));
-        assert!(usable_connection(&slot, &Quiet, "db").is_some());
-    }
-
-    #[tokio::test]
-    async fn a_contended_database_keeps_the_executor_free_and_close_drains_a_detached_worker() {
-        let (_dir, database) = database();
-        // Opened first, so the detached worker's call below is cheap: a first open creates the
-        // files and runs every migration, which took over 10 s on a loaded Windows PC whose
-        // virus scanner reads each new file.
+            .read(|ctx| {
+                ctx.cache.remember_count("all".into(), 3);
+                Ok(())
+            })
+            .expect("read");
+        assert_eq!(database.cache.count("all"), Some(3));
         database
-            .call_async("store.open", &[])
-            .await
-            .expect("first open");
-        let (held, held_rx) = tokio::sync::oneshot::channel();
-        let (release, release_rx) = std::sync::mpsc::channel();
-        let blocking_db = Arc::clone(&database);
-        let holder = std::thread::spawn(move || {
-            let _lock = blocking_db.connection.lock().expect("database lock");
-            held.send(()).expect("notify");
-            release_rx
-                .recv_timeout(Duration::from_secs(5))
-                .expect("release lock");
-        });
-        held_rx.await.expect("held");
-        let task_db = Arc::clone(&database);
-        let caller = tokio::spawn(async move { task_db.call_async("store.open", &[]).await });
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while database.execution.available_permits() != 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("executor progresses while storage is blocked");
-        caller.abort();
-        let _ = caller.await;
-        let close_db = Arc::clone(&database);
-        let close = tokio::spawn(async move { close_db.close_async().await });
-        tokio::task::yield_now().await;
-        assert!(
-            !close.is_finished(),
-            "close waits for the detached database worker"
-        );
-        release.send(()).expect("release");
-        tokio::time::timeout(Duration::from_secs(10), close)
-            .await
-            .expect("close completes")
-            .expect("close task");
-        holder.join().expect("holder");
-        assert!(database.connection.lock().expect("connection").is_none());
-        assert!(database.call_async("store.open", &[]).await.is_err());
-        assert!(database.call("store.open", &[]).is_err());
-    }
-
-    #[tokio::test]
-    async fn cancelled_waiters_do_not_write_and_mutation_ownership_is_rechecked_after_admission() {
-        let (_dir, database) = database();
-        let permit = Arc::clone(&database.execution)
-            .acquire_owned()
-            .await
-            .expect("hold lane");
-        let started = Arc::new(AtomicBool::new(false));
-        let queued_db = Arc::clone(&database);
-        let queued_started = Arc::clone(&started);
-        let queued = tokio::spawn(async move {
-            queued_db
-                .call_async_with("store.open", || {
-                    queued_started.store(true, Ordering::SeqCst);
-                    Ok(vec![])
-                })
-                .await
-        });
-        tokio::task::yield_now().await;
-        queued.abort();
-        let _ = queued.await;
-        drop(permit);
+            .read(|ctx| games::load_app_data(ctx.db))
+            .expect("read");
+        assert_eq!(database.cache.count("all"), Some(3));
         database
-            .call_async("store.open", &[])
-            .await
-            .expect("next call");
-        assert!(
-            !started.load(Ordering::SeqCst),
-            "cancelled queued work never starts"
-        );
-
-        let permit = Arc::clone(&database.execution)
-            .acquire_owned()
-            .await
-            .expect("hold lane");
-        let current = AtomicBool::new(true);
-        let guarded = database.call_async_with("store.open", || {
-            if !current.load(Ordering::SeqCst) {
-                return Err(CoreError::new("Cancelled"));
-            }
-            Ok(vec![])
-        });
-        tokio::pin!(guarded);
-        assert!(futures_util::poll!(&mut guarded).is_pending());
-        current.store(false, Ordering::SeqCst);
-        drop(permit);
-        assert_eq!(
-            guarded.await.expect_err("stale mutation").message,
-            "Cancelled"
-        );
-        database.close_async().await;
+            .write(|ctx| games::add_account(ctx.db, "Alice", false))
+            .expect("write");
+        assert_eq!(database.cache.count("all"), None);
     }
 
     #[tokio::test]
     async fn admitted_writes_keep_their_order() {
         let (_dir, database) = database();
-        let first_args = [serde_json::json!("Alice"), serde_json::json!(false)];
-        let first = database.call_async("store.games.addAccount", &first_args);
-        let args = [serde_json::json!("Alice"), serde_json::json!(true)];
-        let second = database.call_async("store.games.addAccount", &args);
+        let first = database.write_async(|ctx| games::add_account(ctx.db, "Alice", false));
+        let second = database.write_async(|ctx| games::add_account(ctx.db, "Alice", true));
         let (one, two) = tokio::join!(first, second);
         one.expect("first write");
         two.expect("second write");
         let data = database
-            .call_async("store.games.loadData", &[])
+            .read_async(|ctx| games::load_app_data(ctx.db))
             .await
             .expect("data");
-        assert_eq!(data["accounts"][0]["connected"], serde_json::json!(true));
+        assert!(data.accounts[0].connected);
         database.close_async().await;
     }
 
@@ -639,13 +427,10 @@ mod scheduling_tests {
 
         let (_dir, database) = database();
         let store = DbLichessStore::new(Arc::clone(&database));
-        let permit = Arc::clone(&database.execution)
-            .acquire_owned()
-            .await
-            .expect("hold lane");
+        let permit = database.hold_execution().await.expect("hold lane");
         let signed_in = AtomicBool::new(true);
         let current = || signed_in.load(Ordering::SeqCst);
-        let profile = serde_json::json!({ "username": "Alice" });
+        let profile = json!({ "username": "Alice" });
         let write = store.write_api_cache("alice:profile", &profile, &current);
         tokio::pin!(write);
         assert!(futures_util::poll!(&mut write).is_pending());

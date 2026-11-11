@@ -9,21 +9,18 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value, json};
-use tokio_util::sync::CancellationToken;
 
 use super::accounts::{Lichess, Reply, path_segment};
-use super::client::{Failure, Ndjson, TokenSource, authorize};
+use super::client::Auth;
 use super::decode::{Millis, Text, present, read};
 use super::online::js_number;
-use crate::error::CoreError;
+use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Level;
+use kchess_contracts::types::UsageKind;
 
 /// `TournamentSystem`: an arena, or a Swiss event.
 pub const ARENA: &str = "arena";
 pub const SWISS: &str = "swiss";
-
-/// The result type of the calls here: a Lichess or core failure.
-pub type Res<T> = std::result::Result<T, Failure>;
 
 /// A tournament's clock: seconds and seconds per move (`clock`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -743,11 +740,12 @@ pub fn arena_extras(raw: &Value) -> ArenaExtras {
     }
 }
 
-/// `teamProblem(cause)`: a short reason for the Swiss list, never Lichess's raw response.
-fn team_problem(cause: &Failure) -> &'static str {
-    match cause.status() {
-        Some(401) | Some(403) => ". Connect the account again to allow it.",
-        Some(429) => ". Lichess asked to slow down.",
+/// A short reason for the Swiss list, never Lichess's raw response. Only a refused login asks
+/// to connect again: a 403 for another reason did, and reconnecting changed nothing.
+fn team_problem(cause: &CoreError) -> &'static str {
+    match cause.kind {
+        Some(ErrorKind::Login) => ". Connect the account again to allow it.",
+        Some(ErrorKind::RateLimited) => ". Lichess asked to slow down.",
         _ => ".",
     }
 }
@@ -782,17 +780,14 @@ fn first_chars(text: &str, max: usize) -> String {
 
 /// The tournaments of the timeline (`tournaments`). Arenas are listed for everyone; with an
 /// account, its teams' upcoming Swiss events are listed too (signed in).
-pub async fn tournaments(lichess: &Lichess, account: &str) -> Res<TournamentList> {
-    let cancel = lichess.lifetime().clone();
+pub async fn tournaments(lichess: &Lichess, account: &str) -> CoreResult<TournamentList> {
     let raw: Value = lichess
         .client()
-        .policy()
-        .with_usage(account, "tournament", async {
-            lichess
-                .client()
-                .get_json::<Value>("/api/tournament", &[], None, &cancel)
-                .await
-        })
+        .get(
+            "/api/tournament",
+            &lichess.client().counted(account, UsageKind::Tournament),
+        )
+        .read_json()
         .await?;
     let mut arenas: Vec<TournamentSummary> = Vec::new();
     // Recently finished arenas stay on the timeline, faded, for context.
@@ -808,13 +803,13 @@ pub async fn tournaments(lichess: &Lichess, account: &str) -> Res<TournamentList
     let teams = if account.is_empty() {
         Ok(())
     } else {
-        swiss_of_teams(lichess, account, &cancel, &mut swiss, &mut problems).await
+        swiss_of_teams(lichess, account, &mut swiss, &mut problems).await
     };
     if let Err(cause) = teams {
         lichess.host().log(
             Level::Warn,
             "tournaments",
-            &format!("Could not load teams: {account} {}", cause.message()),
+            &format!("Could not load teams: {account} {}", cause.message),
         );
         problems.push(format!(
             "Couldn’t load the teams of @{account}{}",
@@ -835,32 +830,20 @@ pub async fn tournaments(lichess: &Lichess, account: &str) -> Res<TournamentList
 async fn swiss_of_teams(
     lichess: &Lichess,
     account: &str,
-    cancel: &CancellationToken,
     swiss: &mut Vec<TournamentSummary>,
     problems: &mut Vec<String>,
-) -> Res<()> {
+) -> CoreResult<()> {
     // Lichess lists a player's teams only to signed-in apps; a rejected login falls back.
     let path = format!("/api/team/of/{}", path_segment(account));
     let teams: Value = lichess
-        .client()
-        .policy()
-        .with_usage(account, "tournament", async {
-            lichess
-                .as_owner(account, |auth| {
-                    let path = path.clone();
-                    async move {
-                        lichess
-                            .client()
-                            .get_json::<Value>(&path, &[], auth.as_deref(), cancel)
-                            .await
-                    }
-                })
-                .await
+        .as_owner(account, UsageKind::Tournament, |auth| {
+            let path = &path;
+            async move { lichess.client().get(path, &auth).read_json().await }
         })
         .await?;
     let teams = teams
         .as_array()
-        .ok_or_else(|| Failure::Core(CoreError::new("Lichess sent an unreadable team list.")))?;
+        .ok_or_else(|| CoreError::new("Lichess sent an unreadable team list."))?;
     // Lichess asks for one request at a time; a few teams are plenty.
     for raw_team in teams.iter().take(8) {
         let team = Team {
@@ -872,28 +855,20 @@ async fn swiss_of_teams(
         // A malformed line fails the team's read as it arrives (`JSON.parse` in `readLines`).
         let outcome = lichess
             .client()
-            .policy()
-            .with_usage(account, "tournament", async {
-                lichess
-                    .client()
-                    .ndjson(
-                        Ndjson {
-                            method: reqwest::Method::GET,
-                            path: &path,
-                            query: &[("max", "10".to_string())],
-                            body: None,
-                            auth: None,
-                        },
-                        cancel,
-                        |line| {
-                            let value = serde_json::from_str::<Value>(line)
-                                .map_err(|cause| CoreError::new(cause.to_string()))?;
-                            lines.push(value);
-                            Ok(())
-                        },
-                    )
-                    .await
-            })
+            .get(
+                &path,
+                &lichess.client().counted(account, UsageKind::Tournament),
+            )
+            .query(&[("max", "10")])
+            .lines(
+                || {},
+                |line| {
+                    let value = serde_json::from_str::<Value>(line)
+                        .map_err(|cause| CoreError::new(cause.to_string()))?;
+                    lines.push(value);
+                    Ok(())
+                },
+            )
             .await;
         match outcome {
             Ok(()) => {
@@ -909,11 +884,7 @@ async fn swiss_of_teams(
                 lichess.host().log(
                     Level::Warn,
                     "tournaments",
-                    &format!(
-                        "Could not load Swiss events: {} {}",
-                        team.id,
-                        cause.message()
-                    ),
+                    &format!("Could not load Swiss events: {} {}", team.id, cause.message),
                 );
                 problems.push(format!(
                     "Couldn’t load Swiss events of {}{}",
@@ -927,65 +898,45 @@ async fn swiss_of_teams(
 }
 
 /// One tournament with its leaderboard (`tournament`). As `account` it also says whether you are
-/// in it, when the account has a login (`tokens`); without one the answer is anonymous.
+/// in it, when the account has a login; without one the answer is anonymous.
 pub async fn tournament(
     lichess: &Lichess,
-    tokens: &dyn TokenSource,
     system: &str,
     id: &str,
     account: &str,
     page: u32,
-) -> Res<TournamentDetail> {
-    let token = if account.is_empty() {
-        None
+) -> CoreResult<TournamentDetail> {
+    let mut auth = lichess.client().counted(account, UsageKind::Tournament);
+    if !account.is_empty()
+        && let Ok(Some(token)) = lichess.stored_login(account).await
+    {
+        auth = auth.with_token(token);
+    }
+    if system == ARENA {
+        arena_detail(lichess, id, page, &auth).await
     } else {
-        match tokens.token(account).await {
-            Ok(token) => token,
-            Err(cause) => {
-                lichess.host().log(
-                    Level::Debug,
-                    "tournaments",
-                    &format!("Stored login is unavailable: {account} {}", cause.message),
-                );
-                None
-            }
-        }
-    };
-    let auth = token.as_deref().map(authorize);
-    let cancel = lichess.lifetime().clone();
-    lichess
-        .client()
-        .policy()
-        .with_usage(account, "tournament", async {
-            if system == ARENA {
-                arena_detail(lichess, id, page, auth.as_deref(), &cancel).await
-            } else {
-                swiss_detail(lichess, id, auth.as_deref(), &cancel).await
-            }
-        })
-        .await
+        swiss_detail(lichess, id, &auth).await
+    }
 }
 
 async fn arena_detail(
     lichess: &Lichess,
     id: &str,
     page: u32,
-    auth: Option<&str>,
-    cancel: &CancellationToken,
-) -> Res<TournamentDetail> {
+    auth: &Auth,
+) -> CoreResult<TournamentDetail> {
     let path = format!("/api/tournament/{}", path_segment(id));
     let raw: Value = lichess
         .client()
-        .get_json(&path, &[("page", page.to_string())], auth, cancel)
+        .get(&path, auth)
+        .query(&[("page", page.to_string())])
+        .read_json()
         .await?;
     let object = raw
         .as_object()
-        .ok_or_else(|| Failure::Core(CoreError::new("Lichess sent an unreadable tournament.")))?;
-    let summary = arena_detail_summary(id, &raw).ok_or_else(|| {
-        Failure::Core(CoreError::new(
-            "Lichess sent an unreadable tournament clock.",
-        ))
-    })?;
+        .ok_or_else(|| CoreError::new("Lichess sent an unreadable tournament."))?;
+    let summary = arena_detail_summary(id, &raw)
+        .ok_or_else(|| CoreError::new("Lichess sent an unreadable tournament clock."))?;
     let standing: Vec<Standing> = object
         .get("standing")
         .and_then(|standing| standing.get("players"))
@@ -1096,32 +1047,19 @@ fn num_at(value: &Value, key: &str) -> Option<Number> {
     value.get(key).and_then(Value::as_number).cloned()
 }
 
-async fn swiss_detail(
-    lichess: &Lichess,
-    id: &str,
-    auth: Option<&str>,
-    cancel: &CancellationToken,
-) -> Res<TournamentDetail> {
+async fn swiss_detail(lichess: &Lichess, id: &str, auth: &Auth) -> CoreResult<TournamentDetail> {
     let path = format!("/api/swiss/{}", path_segment(id));
-    let raw: Value = lichess.client().get_json(&path, &[], auth, cancel).await?;
-    let (summary, swiss) = swiss_read(&raw, None).ok_or_else(|| {
-        Failure::Core(CoreError::new(
-            "Lichess sent details KChess could not read.",
-        ))
-    })?;
+    let raw: Value = lichess.client().get(&path, auth).read_json().await?;
+    let (summary, swiss) = swiss_read(&raw, None)
+        .ok_or_else(|| CoreError::new("Lichess sent details KChess could not read."))?;
     let mut standing: Vec<Standing> = Vec::new();
     let results = format!("/api/swiss/{}/results", path_segment(id));
     lichess
         .client()
-        .ndjson(
-            Ndjson {
-                method: reqwest::Method::GET,
-                path: &results,
-                query: &[("nb", "50".to_string())],
-                body: None,
-                auth,
-            },
-            cancel,
+        .get(&results, auth)
+        .query(&[("nb", "50")])
+        .lines(
+            || {},
             |line| {
                 let value = serde_json::from_str::<Value>(line)
                     .map_err(|cause| CoreError::new(cause.to_string()))?;
@@ -1156,8 +1094,7 @@ pub async fn join_tournament(
     id: &str,
     account: &str,
     password: Option<&str>,
-) -> Res<Reply<()>> {
-    let cancel = lichess.lifetime().clone();
+) -> CoreResult<Reply<()>> {
     let path = format!(
         "/api/{}/{}/join",
         if system == ARENA {
@@ -1172,7 +1109,7 @@ pub async fn join_tournament(
         .map(str::to_string);
     let pair_me = (system == ARENA).then(|| "true".to_string());
     lichess
-        .as_account(account, "tournament", |token| async move {
+        .as_account(account, UsageKind::Tournament, |auth| async move {
             let mut form: Vec<(&str, &str)> = Vec::new();
             if let Some(password) = password.as_deref() {
                 form.push(("password", password));
@@ -1182,12 +1119,13 @@ pub async fn join_tournament(
             }
             lichess
                 .client()
-                .post_form::<Value>(&path, &form, Some(&authorize(&token)), &cancel)
+                .post(&path, &auth)
+                .form(&form)
+                .read_json::<Value>()
                 .await
                 .map(|_| ())
         })
         .await
-        .map_err(Failure::from)
 }
 
 /// Withdraws `account` from a tournament (`leaveTournament`).
@@ -1196,8 +1134,7 @@ pub async fn leave_tournament(
     system: &str,
     id: &str,
     account: &str,
-) -> Res<Reply<()>> {
-    let cancel = lichess.lifetime().clone();
+) -> CoreResult<Reply<()>> {
     let path = format!(
         "/api/{}/{}/withdraw",
         if system == ARENA {
@@ -1208,15 +1145,16 @@ pub async fn leave_tournament(
         path_segment(id)
     );
     lichess
-        .as_account(account, "tournament", |token| async move {
+        .as_account(account, UsageKind::Tournament, |auth| async move {
             lichess
                 .client()
-                .post_form::<Value>(&path, &[], Some(&authorize(&token)), &cancel)
+                .post(&path, &auth)
+                .form::<&str, &str>(&[])
+                .read_json::<Value>()
                 .await
                 .map(|_| ())
         })
         .await
-        .map_err(Failure::from)
 }
 
 /// The form fields of an arena to create (`createTournament`'s body). An unset field is left out,
@@ -1264,18 +1202,15 @@ pub async fn create_tournament(
     lichess: &Lichess,
     account: &str,
     arena: &NewArena,
-) -> Res<Reply<TournamentSummary>> {
-    let cancel = lichess.lifetime().clone();
+) -> CoreResult<Reply<TournamentSummary>> {
     let form = arena_form(arena);
     lichess
-        .as_account(account, "tournament", |token| async move {
-            let pairs: Vec<(&str, &str)> = form
-                .iter()
-                .map(|(key, value)| (*key, value.as_str()))
-                .collect();
-            let raw = lichess
+        .as_account(account, UsageKind::Tournament, |auth| async move {
+            let raw: Value = lichess
                 .client()
-                .post_form::<Value>("/api/tournament", &pairs, Some(&authorize(&token)), &cancel)
+                .post("/api/tournament", &auth)
+                .form(&form)
+                .read_json()
                 .await?;
             // Lichess answers with the arena on its own (as `GET /api/tournament/{id}` does), not
             // with an entry of the arena list.
@@ -1291,11 +1226,10 @@ pub async fn create_tournament(
                         .flatten()
                 })
                 .ok_or_else(|| {
-                    Failure::Core(CoreError::new(
+                    CoreError::new(
                         "Lichess created the arena but sent details KChess could not read.",
-                    ))
+                    )
                 })
         })
         .await
-        .map_err(Failure::from)
 }

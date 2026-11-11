@@ -1,8 +1,8 @@
 use serde_json::Value;
 
 use super::super::challenges::PlayerRef;
-use super::super::client::Failure;
 use super::state::{OngoingGame, State};
+use crate::error::CoreError;
 
 /// `checking` of a resume: the account being checked, whether it lacked a login, and the failure
 /// to report if no account has a game.
@@ -10,7 +10,7 @@ use super::state::{OngoingGame, State};
 pub(crate) struct Checking {
     pub(crate) account: String,
     pub(crate) auth_required: bool,
-    pub(crate) error: Option<Failure>,
+    pub(crate) error: Option<CoreError>,
 }
 
 /// `finished()` of a game controller: the stream it belongs to is still the current one.

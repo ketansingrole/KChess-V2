@@ -15,9 +15,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 
 use super::accounts::Lichess;
-use super::client::authorize;
 use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
+use kchess_contracts::types::UsageKind;
 
 /// The OAuth client id KChess sends to Lichess.
 pub const OAUTH_CLIENT_ID: &str = "kchess-desktop";
@@ -370,29 +370,28 @@ impl Lichess {
                 &format!("Could not bring KChess forward: {}", cause.message),
             );
         }
+        let anonymous = self.anonymous(UsageKind::Other);
         let token: TokenResponse = self
             .client()
-            .post_form(
-                "/api/token",
-                &[
-                    ("grant_type", "authorization_code"),
-                    ("code", code.as_str()),
-                    ("redirect_uri", redirect.as_str()),
-                    ("client_id", OAUTH_CLIENT_ID),
-                    ("code_verifier", pkce.verifier.as_str()),
-                ],
-                None,
-                &cancel,
-            )
+            .post("/api/token", &anonymous)
+            .form(&[
+                ("grant_type", "authorization_code"),
+                ("code", code.as_str()),
+                ("redirect_uri", redirect.as_str()),
+                ("client_id", OAUTH_CLIENT_ID),
+                ("code_verifier", pkce.verifier.as_str()),
+            ])
+            .cancel(&cancel)
+            .read_json()
             .await?;
         let account: AccountResponse = self
             .client()
-            .get_json(
+            .get(
                 "/api/account",
-                &[],
-                Some(&authorize(&token.access_token)),
-                &cancel,
+                &anonymous.with_token(token.access_token.as_str()),
             )
+            .cancel(&cancel)
+            .read_json()
             .await?;
         self.save_login(&account.username, &token.access_token, epoch)
             .await?;

@@ -5,10 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::time::Duration;
 
-use super::PositionLookups;
-use crate::error::{CoreError, Result as CoreResult};
+use super::{CONNECT_EXPLORER, PositionLookups};
+use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use kchess_domain::training::openings::{line_fens, wikibooks_title};
 
 /// Saved descriptions (and pages that do not exist) are fresh for a week; so is popularity.
@@ -251,9 +250,7 @@ impl PositionLookups {
             .append_pair("format", "json")
             .append_pair("formatversion", "2")
             .append_pair("titles", title);
-        let text = self
-            .bounded_get(self.http.get(url), "The opening description")
-            .await?;
+        let text = self.wikibooks(url).await?;
         let raw: Value = serde_json::from_str(&text)
             .map_err(|_| CoreError::new("The opening description could not be read."))?;
         let Some(page) = raw.pointer("/query/pages/0") else {
@@ -357,63 +354,64 @@ impl PositionLookups {
     }
 
     async fn fetch_history(&self, fen: &str) -> CoreResult<Value> {
-        let mut url = reqwest::Url::parse(&format!("{}/history", self.endpoints.opening))
-            .map_err(|cause| CoreError::new(format!("Invalid explorer URL: {cause}")))?;
-        url.query_pairs_mut()
-            .append_pair("variant", "standard")
-            .append_pair("fen", fen)
-            .append_pair("speeds", "blitz,rapid,classical");
-        let request = self.explorer_request(url).await?;
-        let text = self.bounded_get(request, "Opening popularity").await?;
+        let text = self
+            .explorer
+            .get("/lichess/history", &self.explorer_auth().await?)
+            .query(&[
+                ("variant", "standard"),
+                ("fen", fen),
+                ("speeds", "blitz,rapid,classical"),
+            ])
+            .max_bytes(MAX_BYTES, "Opening popularity returned too much data.")
+            .read_text(None)
+            .await
+            .map_err(|cause| match cause.kind {
+                Some(ErrorKind::Login) => {
+                    CoreError::new(CONNECT_EXPLORER).with_kind(ErrorKind::Login)
+                }
+                Some(ErrorKind::Offline) => CoreError {
+                    message: "Opening popularity could not be loaded. Check your connection."
+                        .into(),
+                    ..cause
+                },
+                _ => cause,
+            })?;
         serde_json::from_str(&text)
             .map_err(|_| CoreError::new("Opening popularity could not be read."))
     }
 
-    /// A GET answered within 15 seconds and `MAX_BYTES`; `what` names it in errors.
-    async fn bounded_get(
-        &self,
-        request: reqwest::RequestBuilder,
-        what: &str,
-    ) -> CoreResult<String> {
-        let request = request
-            .build()
-            .map_err(|_| CoreError::new(format!("{what} could not be loaded.")))?;
-        let url = request.url().clone();
-        self.paced(&url)?;
+    /// A Wikibooks page, answered within the lookup deadline and `MAX_BYTES`. Wikibooks has
+    /// nothing to do with Lichess, so no failure asks for a Lichess login.
+    async fn wikibooks(&self, url: reqwest::Url) -> CoreResult<String> {
+        const WHAT: &str = "The opening description";
+        let unreachable = || {
+            CoreError::new(format!(
+                "{WHAT} could not be loaded. Check your connection."
+            ))
+            .with_kind(ErrorKind::Offline)
+        };
         let attempt = async {
-            let mut response = self.http.execute(request).await.map_err(|_| {
-                CoreError::new(format!(
-                    "{what} could not be loaded. Check your connection."
-                ))
-            })?;
-            self.note_rate_limit(&url, &response)?;
-            let status = response.status().as_u16();
-            if status == 401 || status == 403 {
-                return Err(CoreError::new(
-                    "Connect a Lichess account in Settings to use the opening explorer.",
-                ));
-            }
+            let response = self.http.get(url).send().await.map_err(|_| unreachable())?;
             if !response.status().is_success() {
                 return Err(CoreError::new(format!(
-                    "{what} returned {status}. Try again shortly."
-                )));
-            }
-            let mut bytes: Vec<u8> = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(|_| {
-                CoreError::new(format!(
-                    "{what} could not be loaded. Check your connection."
+                    "{WHAT} could not be loaded. Try again shortly."
                 ))
-            })? {
-                if bytes.len() + chunk.len() > MAX_BYTES {
-                    return Err(CoreError::new(format!("{what} returned too much data.")));
-                }
-                bytes.extend_from_slice(&chunk);
+                .with_kind(ErrorKind::Unavailable));
             }
-            Ok(String::from_utf8_lossy(&bytes).into_owned())
-        };
-        tokio::time::timeout(Duration::from_secs(15), attempt)
+            crate::lichess::client::read_body(
+                response,
+                &self.lifetime,
+                (MAX_BYTES, "The opening description returned too much data."),
+                None,
+            )
             .await
-            .map_err(|_| CoreError::new("The operation was aborted due to timeout"))?
+        };
+        tokio::time::timeout(self.timeout, attempt)
+            .await
+            .map_err(|_| {
+                CoreError::new(format!("{WHAT} took too long to load."))
+                    .with_kind(ErrorKind::TimedOut)
+            })?
     }
 }
 

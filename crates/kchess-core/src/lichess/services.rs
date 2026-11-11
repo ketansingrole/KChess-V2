@@ -25,12 +25,12 @@ use crate::capabilities::Capabilities;
 use crate::error::{CoreError, Result};
 use crate::host::Host;
 use crate::store::Database;
+use crate::store::games::{self, as_json};
 use crate::usage::UsageBatch;
 
 /// The Lichess services of one core.
 pub struct Services {
     lichess: Arc<Lichess>,
-    tokens: Arc<dyn TokenSource>,
     online: OnlineSession,
     spectator: Spectators,
     lookups: PositionLookups,
@@ -78,11 +78,11 @@ impl Services {
         // A test origin replaces Lichess for every request (`origin` is only set by the tests).
         let (client, endpoints) = match &origin {
             Some(base) => (
-                LichessClient::with_base(base, Arc::clone(&policy), http.clone()),
+                LichessClient::with_base(base, Arc::clone(&policy)),
                 Endpoints::at(base),
             ),
             None => (
-                LichessClient::new(Arc::clone(&policy), http.clone()),
+                LichessClient::new(Arc::clone(&policy)),
                 Endpoints::default(),
             ),
         };
@@ -97,9 +97,8 @@ impl Services {
             store,
             Arc::clone(&tokens),
             Arc::clone(&host),
-            lifetime.clone(),
         ));
-        let online = OnlineSession::new(Arc::clone(&lichess), Arc::clone(&tokens), http.clone());
+        let online = OnlineSession::new(Arc::clone(&lichess));
         let spectator = Spectators::new(Arc::clone(&lichess), host.clone());
         // Before each state is reported: a live game (or the startup check) stops the engines and the
         // watch, and the engines' busy state is taken from the session as it now is.
@@ -114,6 +113,7 @@ impl Services {
             }));
         }
         let lookups = PositionLookups::new(
+            Arc::clone(&host),
             http,
             endpoints,
             Arc::new(DbLookups::new(Arc::clone(&database))),
@@ -122,11 +122,10 @@ impl Services {
         .with_lifetime(lifetime.clone())
         .with_login(Arc::new(DbExplorerLogin::new(
             Arc::clone(&database),
-            Arc::clone(&tokens),
+            tokens,
         )));
         Services {
             lichess,
-            tokens,
             online,
             spectator,
             lookups,
@@ -371,12 +370,9 @@ impl Services {
             })),
             "online.ongoing" => to_json(self.online.ongoing().await),
             "online.open" => match (text(args, 0), text(args, 1)) {
-                (Ok(account), Ok(id)) => self
-                    .online
-                    .open(&account, &id)
-                    .await
-                    .map(|()| Value::Null)
-                    .map_err(CoreError::from),
+                (Ok(account), Ok(id)) => {
+                    self.online.open(&account, &id).await.map(|()| Value::Null)
+                }
                 (Err(cause), _) | (_, Err(cause)) => Err(cause),
             },
             _ => return self.call_challenges(method, args).await,
@@ -392,8 +388,7 @@ impl Services {
                     .online
                     .accept_challenge(&challenge)
                     .await
-                    .map(|()| Value::Null)
-                    .map_err(CoreError::from),
+                    .map(|()| Value::Null),
                 Err(cause) => Err(cause),
             },
             "online.declineChallenge" => {
@@ -402,8 +397,7 @@ impl Services {
                         .online
                         .decline_challenge(&challenge, &reason)
                         .await
-                        .map(|()| Value::Null)
-                        .map_err(CoreError::from),
+                        .map(|()| Value::Null),
                     (Err(cause), _) | (_, Err(cause)) => Err(cause),
                 }
             }
@@ -412,8 +406,7 @@ impl Services {
                     .online
                     .withdraw_challenge(&challenge)
                     .await
-                    .map(|()| Value::Null)
-                    .map_err(CoreError::from),
+                    .map(|()| Value::Null),
                 Err(cause) => Err(cause),
             },
             "online.moveCorrespondence" => {
@@ -422,8 +415,7 @@ impl Services {
                         .online
                         .move_correspondence(&account, &id, &fen, &uci)
                         .await
-                        .map(|()| Value::Null)
-                        .map_err(CoreError::from),
+                        .map(|()| Value::Null),
                     (Err(error), ..)
                     | (_, Err(error), ..)
                     | (.., Err(error), _)
@@ -431,12 +423,7 @@ impl Services {
                 }
             }
             "online.move" => match (text(args, 0), text(args, 1)) {
-                (Ok(id), Ok(uci)) => self
-                    .online
-                    .move_uci(&id, &uci)
-                    .await
-                    .map(|()| Value::Null)
-                    .map_err(CoreError::from),
+                (Ok(id), Ok(uci)) => self.online.move_uci(&id, &uci).await.map(|()| Value::Null),
                 (Err(cause), _) | (_, Err(cause)) => Err(cause),
             },
             "online.chat" => match text(args, 0) {
@@ -448,8 +435,7 @@ impl Services {
                     .online
                     .send_chat(&id, &room, &body)
                     .await
-                    .map(|()| Value::Null)
-                    .map_err(CoreError::from),
+                    .map(|()| Value::Null),
                 (Err(cause), _, _) | (_, Err(cause), _) | (_, _, Err(cause)) => Err(cause),
             },
             "online.presence" => match strings(args, 0) {
@@ -457,12 +443,7 @@ impl Services {
                 Err(cause) => Err(cause),
             },
             "online.action" => match (text(args, 0), parse::<OnlineAction>(args, 1, "action")) {
-                (Ok(id), Ok(action)) => self
-                    .online
-                    .action(&id, action)
-                    .await
-                    .map(|()| Value::Null)
-                    .map_err(CoreError::from),
+                (Ok(id), Ok(action)) => self.online.action(&id, action).await.map(|()| Value::Null),
                 (Err(cause), _) | (_, Err(cause)) => Err(cause),
             },
             "online.cancel" => {
@@ -510,15 +491,8 @@ impl Services {
                 arg_u32(args, 3),
             ) {
                 (Ok(system), Ok(id), Ok(account), Ok(page)) => to_json(
-                    super::tournaments::tournament(
-                        &self.lichess,
-                        self.tokens.as_ref(),
-                        &system,
-                        &id,
-                        &account,
-                        page,
-                    )
-                    .await,
+                    super::tournaments::tournament(&self.lichess, &system, &id, &account, page)
+                        .await,
                 ),
                 (Err(cause), _, _, _)
                 | (_, Err(cause), _, _)
@@ -713,7 +687,9 @@ impl Services {
     async fn sync_games(&self, args: &[Value]) -> Result<Value> {
         let username = optional_text(args, 0);
         self.lichess.sync_games(username.as_deref()).await?;
-        self.database.call_async("store.games.loadData", &[]).await
+        self.database
+            .read_async(|ctx| as_json(games::load_app_data(ctx.db)?))
+            .await
     }
 
     /// `connectLichess(look)`: the browser sign-in; the window is focused when the browser returns.
@@ -729,7 +705,7 @@ impl Services {
         let connected = self.lichess.connect_lichess(look, Some(&focus)).await?;
         let data = self
             .database
-            .call_async("store.games.loadData", &[])
+            .read_async(|ctx| as_json(games::load_app_data(ctx.db)?))
             .await?;
         Ok(json!({ "data": data, "username": connected.username }))
     }

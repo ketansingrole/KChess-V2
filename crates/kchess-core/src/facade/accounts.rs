@@ -3,6 +3,7 @@
 use super::args::{arg, normal};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
+use crate::store::games::{self, as_json};
 use serde_json::{Value, json};
 
 impl Core {
@@ -10,10 +11,13 @@ impl Core {
     pub(crate) async fn run_accounts(&self, method: &str, args: &[Value]) -> Result<Value> {
         match method {
             "addAccount" => {
-                let name = normal("assertUsername", &arg(args, 0))?;
+                let name = normal("assertUsername", &arg(args, 0))?
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
                 self.ensure_migrated().await?;
                 self.database
-                    .call_async("store.games.addAccount", &[name, json!(false)])
+                    .write_async(move |ctx| as_json(games::add_account(ctx.db, &name, false)?))
                     .await
             }
             "logout" => {
@@ -42,16 +46,16 @@ impl Core {
                         .discard_account_reviews(std::slice::from_ref(&name));
                     self.usage.flush().await;
                     self.services.forget_usage(std::slice::from_ref(&name));
-                    self.inner("store.library.forgetTournamentsOf", vec![json!([name])])
-                        .await?;
+                    self.forget_tournaments_of(vec![name.clone()]).await?;
                 }
                 self.inner("challenges.forget", vec![json!(name)]).await?;
                 self.inner("lichess.revokeLogins", vec![json!([name])])
                     .await?;
                 self.ensure_migrated().await?;
+                let account = name.clone();
                 let data = self
                     .database
-                    .call_async("store.games.removeAccount", &[json!(name)])
+                    .write_async(move |ctx| as_json(games::remove_account(ctx.db, &account)?))
                     .await?;
                 self.reviews.reviews_changed();
                 Ok(data)

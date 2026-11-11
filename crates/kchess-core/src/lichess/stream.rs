@@ -68,13 +68,13 @@ where
     let max = options.max_line_bytes;
     loop {
         if cancel.is_some_and(CancellationToken::is_cancelled) {
-            return Err(CoreError::aborted("This operation was aborted").into());
+            return Err(super::aborted().into());
         }
         let next = match cancel {
             Some(token) => tokio::select! {
                 biased;
                 _ = token.cancelled() => {
-                    return Err(CoreError::aborted("This operation was aborted").into());
+                    return Err(super::aborted().into());
                 }
                 answer = tokio::time::timeout(options.idle, body.next()) => answer,
             },
@@ -132,7 +132,7 @@ where
     loop {
         let next = tokio::select! {
             biased;
-            _ = cancel.cancelled() => return Err(CoreError::aborted("This operation was aborted").into()),
+            _ = cancel.cancelled() => return Err(super::aborted().into()),
             answer = body.next() => answer,
         };
         let Some(item) = next else { break };

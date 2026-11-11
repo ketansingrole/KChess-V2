@@ -4,12 +4,11 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
 
-use super::documents::{DAMAGED_STUDIES, parse_text, read_document_text, write_document};
+use super::documents::{DAMAGED_STUDIES, read_document_text, write_document};
 use super::json_codec::{clean_name, js_json, js_slice, utf16_len};
-use super::library::{
-    STUDIES, STUDY_LIBRARY_MAX_TEXT, db_err, num, object, random_uuid, transaction, truthy,
-};
-use super::library_import::{migrate_studies, read_studies};
+use super::library::{STUDIES, STUDY_LIBRARY_MAX_TEXT, num, object, random_uuid, truthy};
+use super::library_import::{StudyBodies, migrate_studies, read_studies, read_study_rows};
+use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
 use kchess_domain::js;
 use kchess_domain::library::{MAX_CHAPTERS, MAX_STUDIES};
@@ -200,42 +199,12 @@ fn read_command_studies(db: &Connection, command: &Map<String, Value>) -> Result
             .and_then(|remote| remote.get("id"))
             .and_then(Value::as_str);
         db.query_row("SELECT id FROM studies WHERE lower(json_extract(body, '$.cloud.account')) = lower(?1) AND json_extract(body, '$.cloud.id') = ?2 ORDER BY position LIMIT 1",
-            params![account, remote], |row| row.get(0)).optional().map_err(db_err)?
+            params![account, remote], |row| row.get(0)).optional().sql()?
     } else {
         None
     };
     let target = offline_id.as_deref().or(target);
-    let mut statement = db
-        .prepare(
-            "SELECT id, CASE WHEN id = ?1 THEN body ELSE NULL END FROM studies ORDER BY position",
-        )
-        .map_err(db_err)?;
-    let rows = statement
-        .query_map(params![target], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-        })
-        .map_err(db_err)?;
-    let mut items = Vec::new();
-    for row in rows {
-        let (id, body) = row.map_err(db_err)?;
-        let study = match body {
-            Some(body) => {
-                let raw = parse_text(&body).ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
-                let study = kchess_domain::library::decode_study(&raw)
-                    .ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
-                if id_of(&study) != Some(id.as_str()) {
-                    return Err(CoreError::new(DAMAGED_STUDIES));
-                }
-                study
-            }
-            None => json!({ "id": id }),
-        };
-        items.push(study);
-    }
-    if items.len() > MAX_STUDIES {
-        return Err(CoreError::new(DAMAGED_STUDIES));
-    }
-    Ok(items)
+    read_study_rows(db, StudyBodies::Only(target))
 }
 
 /// `studyCommand(command, now)`: one change to the study library, stored on success.
@@ -308,11 +277,11 @@ pub(crate) fn study_command(
     migrate_studies(db)?;
     let stored_sizes: Vec<(String, i64)> = db
         .prepare("SELECT id, textUnits FROM studies")
-        .map_err(db_err)?
+        .sql()?
         .query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)?)))
-        .map_err(db_err)?
+        .sql()?
         .collect::<std::result::Result<_, _>>()
-        .map_err(db_err)?;
+        .sql()?;
     // A size no study can have (negative, or past one document) is damage: as `usize` it
     // overflowed the sums below, a panic with the database held.
     let sizes = stored_sizes
@@ -893,7 +862,7 @@ fn finish_studies(
         for study in original {
             if !studies.items.iter().any(|next| id_of(next) == id_of(study)) {
                 db.execute("DELETE FROM studies WHERE id = ?1", params![id_of(study)])
-                    .map_err(db_err)?;
+                    .sql()?;
             }
         }
         for (position, study) in studies.items.iter().enumerate() {
@@ -908,13 +877,13 @@ fn finish_studies(
                         (body, units)
                     });
                 db.execute("INSERT INTO studies (id, body, position, textUnits) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(id) DO UPDATE SET body = excluded.body, position = excluded.position, textUnits = excluded.textUnits",
-                    params![id_of(study), body, position as i64, units]).map_err(db_err)?;
+                    params![id_of(study), body, position as i64, units]).sql()?;
             } else {
                 db.execute(
                     "UPDATE studies SET position = ?2 WHERE id = ?1 AND position != ?2",
                     params![id_of(study), position as i64],
                 )
-                .map_err(db_err)?;
+                .sql()?;
             }
         }
         Ok(())

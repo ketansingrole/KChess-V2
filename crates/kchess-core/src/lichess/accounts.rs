@@ -21,12 +21,13 @@ use serde_json::Value;
 use tokio::sync::{OnceCell, watch};
 use tokio_util::sync::CancellationToken;
 
-use super::client::{Failure, LichessClient, Ndjson, TokenSource, authorize};
+use super::client::{Auth, Lane, LichessClient, TokenSource};
 use super::reviews::review_from_lichess;
 use crate::capabilities::Capabilities;
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::{Host, Level};
 use crate::store::games::EXPORTED_GAME_CACHE;
+use kchess_contracts::types::UsageKind;
 
 /// The most games one sync keeps walking back through.
 pub const MAX_GAMES: usize = 5000;
@@ -331,7 +332,6 @@ pub struct Lichess {
     store: Arc<dyn LichessStore>,
     tokens: Arc<dyn TokenSource>,
     host: Arc<dyn Host>,
-    lifetime: CancellationToken,
     login_epoch: AtomicU64,
     account_epochs: Mutex<HashMap<String, u64>>,
     profiles: Mutex<HashMap<String, (Instant, Value)>>,
@@ -357,7 +357,6 @@ impl Lichess {
         store: Arc<dyn LichessStore>,
         tokens: Arc<dyn TokenSource>,
         host: Arc<dyn Host>,
-        lifetime: CancellationToken,
     ) -> Lichess {
         Lichess {
             client,
@@ -365,7 +364,6 @@ impl Lichess {
             store,
             tokens,
             host,
-            lifetime,
             login_epoch: AtomicU64::new(0),
             account_epochs: Mutex::new(HashMap::new()),
             profiles: Mutex::new(HashMap::new()),
@@ -399,8 +397,9 @@ impl Lichess {
         &self.host
     }
 
+    /// The core's lifetime, which the client's policy holds: closing ends every request.
     pub fn lifetime(&self) -> &CancellationToken {
-        &self.lifetime
+        self.client.policy().lifetime()
     }
 
     pub fn login_epoch(&self) -> u64 {
@@ -427,9 +426,30 @@ impl Lichess {
         self.cancel_account_syncs(accounts);
     }
 
-    /// `account`'s stored login, when there is one to use.
-    pub(crate) async fn token_of(&self, account: &str) -> Option<String> {
-        self.tokens.token(account).await.ok().flatten()
+    /// `account`'s stored login: None when it has none. A store that cannot answer is logged
+    /// and its error returned.
+    pub async fn stored_login(&self, account: &str) -> CoreResult<Option<String>> {
+        self.tokens.token(account).await.inspect_err(|cause| {
+            self.host.log(
+                Level::Warn,
+                "lichess",
+                &format!("Stored login is unavailable: {account} {}", cause.message),
+            );
+        })
+    }
+
+    /// A caller without a login, counted as `kind` against nobody.
+    pub fn anonymous(&self, kind: UsageKind) -> Auth {
+        self.client.anonymous(kind)
+    }
+
+    /// `account`'s login, counted as `kind` against it. Without a usable login it fails with
+    /// the kind `Login`: the account must be connected again.
+    pub async fn signed_in(&self, account: &str, kind: UsageKind) -> CoreResult<Auth> {
+        match self.stored_login(account).await {
+            Ok(Some(token)) => Ok(self.client.counted(account, kind).with_token(token)),
+            _ => Err(login_unavailable(account)),
+        }
     }
 
     /// Revoke the stored logins of these accounts on Lichess (`DELETE /api/token`) before they are
@@ -456,18 +476,17 @@ impl Lichess {
             },
         };
         for name in names {
-            let Ok(Some(token)) = self.tokens.token(&name).await else {
+            let Ok(auth) = self.signed_in(&name, UsageKind::Profile).await else {
                 continue;
             };
             let revoked = tokio::time::timeout(
                 REVOKE_TIMEOUT,
-                self.client
-                    .delete("/api/token", Some(&authorize(&token)), &self.lifetime),
+                self.client.delete("/api/token", &auth).send(),
             )
             .await;
             let failure = match revoked {
                 Ok(Ok(())) => continue,
-                Ok(Err(cause)) => cause.message(),
+                Ok(Err(cause)) => cause.message,
                 Err(_) => "timed out".to_string(),
             };
             self.host.log(
@@ -509,71 +528,83 @@ impl Lichess {
         profiles.remove(&profile_key(username, "rating"));
     }
 
-    /// `asOwner`: run `call` with the account's own token when it has one. A rejected token
-    /// falls back to the anonymous request, so a sync is never worse than an anonymous one.
-    /// `call` receives the `Authorization` header value, or None.
-    /// A 401 fallback is logged at warn and reported via `as_owner_downgraded` so callers
-    /// (game sync) can avoid advancing the cursor on partial data.
-    pub async fn as_owner<T, F, Fut>(&self, account: &str, call: F) -> Result<T, Failure>
+    /// Runs `call` with the account's own login when it has one, counted as `kind` against
+    /// it. A refused login falls back to the anonymous request, so a sync is never worse than an
+    /// anonymous one.
+    pub async fn as_owner<T, F, Fut>(
+        &self,
+        account: &str,
+        kind: UsageKind,
+        call: F,
+    ) -> CoreResult<T>
     where
-        F: Fn(Option<String>) -> Fut,
-        Fut: Future<Output = Result<T, Failure>>,
+        F: Fn(Auth) -> Fut,
+        Fut: Future<Output = CoreResult<T>>,
     {
-        let (result, _) = self.as_owner_downgraded(account, call).await?;
+        let (result, _) = self.as_owner_downgraded(account, kind, call).await?;
         Ok(result)
     }
 
-    /// `as_owner` with downgrade flag: true when the request fell back to anonymous
-    /// because the stored login was missing, undecryptable, or refused (401).
+    /// `as_owner`, and whether the request fell back to anonymous because the stored login was
+    /// missing, unreadable or refused: the game sync then does not advance its cursor on partial
+    /// data.
     pub async fn as_owner_downgraded<T, F, Fut>(
         &self,
         account: &str,
+        kind: UsageKind,
         call: F,
-    ) -> Result<(T, bool), Failure>
+    ) -> CoreResult<(T, bool)>
     where
-        F: Fn(Option<String>) -> Fut,
-        Fut: Future<Output = Result<T, Failure>>,
+        F: Fn(Auth) -> Fut,
+        Fut: Future<Output = CoreResult<T>>,
     {
-        let token = match self.tokens.token(account).await {
-            Ok(token) => token,
-            Err(cause) => {
-                // A corrupt OS keychain must not silently degrade to a partial sync:
-                // log at warn and mark downgraded so the cursor is not advanced.
+        let anonymous = self.client.counted(account, kind);
+        self.owner_or_anonymous(account, anonymous, call).await
+    }
+
+    /// `call` as `owner` when it has a login, counted as `anonymous` is.
+    async fn owner_or_anonymous<T, F, Fut>(
+        &self,
+        owner: &str,
+        anonymous: Auth,
+        call: F,
+    ) -> CoreResult<(T, bool)>
+    where
+        F: Fn(Auth) -> Fut,
+        Fut: Future<Output = CoreResult<T>>,
+    {
+        // A corrupt OS keychain must not silently degrade to a partial sync: `stored_login`
+        // logs it, and the answer is marked downgraded.
+        let Ok(Some(token)) = self.stored_login(owner).await else {
+            return Ok((call(anonymous).await?, true));
+        };
+        match call(anonymous.clone().with_token(token)).await {
+            Err(error) if error.kind == Some(ErrorKind::Login) => {
                 self.host.log(
                     Level::Warn,
                     "lichess",
-                    &format!("Stored login is unavailable: {account} {}", cause.message),
+                    &format!("Lichess refused the login for {owner}; synced public games only."),
                 );
-                None
-            }
-        };
-        let Some(token) = token else {
-            return Ok((call(None).await?, true));
-        };
-        match call(Some(authorize(&token))).await {
-            Err(failure) if failure.status() == Some(401) => {
-                self.host.log(
-                    Level::Warn,
-                    "lichess",
-                    &format!("Lichess refused the login for {account}; synced public games only."),
-                );
-                Ok((call(None).await?, true))
+                Ok((call(anonymous).await?, true))
             }
             answer => answer.map(|value| (value, false)),
         }
     }
 
-    /// `asAnyAccount`: some public lookups answer only to a signed-in app. Use a connected login,
-    /// preferring `account`; a refused login falls back to asking anonymously.
+    /// Some public lookups answer only to a signed-in app. Uses a connected login, preferring
+    /// `account`; a refused login falls back to asking anonymously. Counted as `kind` against
+    /// `account`, or nobody.
     pub async fn as_any_account<T, F, Fut>(
         &self,
         account: Option<&str>,
+        kind: UsageKind,
         call: F,
-    ) -> Result<T, Failure>
+    ) -> CoreResult<T>
     where
-        F: Fn(Option<String>) -> Fut,
-        Fut: Future<Output = Result<T, Failure>>,
+        F: Fn(Auth) -> Fut,
+        Fut: Future<Output = CoreResult<T>>,
     {
+        let anonymous = self.client.counted(account.unwrap_or(""), kind);
         let connected: Vec<String> = match self.store.accounts().await {
             Ok(rows) => rows
                 .into_iter()
@@ -593,57 +624,38 @@ impl Lichess {
             .and_then(|wanted| {
                 connected
                     .iter()
-                    .find(|name| name.to_lowercase() == wanted.to_lowercase())
+                    .find(|name| name.eq_ignore_ascii_case(wanted))
                     .cloned()
             })
             .or_else(|| connected.first().cloned());
         match owner {
-            Some(owner) => self.as_owner(&owner, call).await,
-            None => call(None).await,
+            Some(owner) => Ok(self.owner_or_anonymous(&owner, anonymous, call).await?.0),
+            None => call(anonymous).await,
         }
     }
 
-    /// `asAccount`: run `work` with the account's token. A missing login, an
-    /// undecryptable login, or one Lichess refuses (401/403), answers "reconnect"
-    /// instead of failing.
+    /// Runs `work` with the account's login, counted as `kind` against it. A missing or
+    /// unreadable login, or one Lichess refuses, answers "reconnect" instead of failing.
     pub async fn as_account<T, F, Fut>(
         &self,
         account: &str,
-        kind: &str,
+        kind: UsageKind,
         work: F,
     ) -> CoreResult<Reply<T>>
     where
-        F: FnOnce(String) -> Fut,
-        Fut: Future<Output = Result<T, Failure>>,
+        F: FnOnce(Auth) -> Fut,
+        Fut: Future<Output = CoreResult<T>>,
     {
-        let token = match self.tokens.token(account).await {
-            Ok(token) => token,
-            Err(cause) => {
-                self.host.log(
-                    Level::Warn,
-                    "lichess",
-                    &format!("Stored login is unavailable: {account} {}", cause.message),
-                );
-                return Ok(Reply::NeedsReconnect);
-            }
-        };
-        let Some(token) = token else {
+        let Ok(auth) = self.signed_in(account, kind).await else {
             return Ok(Reply::NeedsReconnect);
         };
-        match self
-            .client
-            .policy()
-            .with_usage(account, kind, work(token))
-            .await
-        {
+        match work(auth).await {
             Ok(value) => Ok(Reply::Done(value)),
             // Only a refused login asks to reconnect: a 403 for a reason Lichess gave ("not
             // your study", a closed tournament) said "reconnect your account", and reconnecting
             // changed nothing.
-            Err(Failure::Lichess(error)) if error.kind() == ErrorKind::Login => {
-                Ok(Reply::NeedsReconnect)
-            }
-            Err(failure) => Err(failure.into()),
+            Err(error) if error.kind == Some(ErrorKind::Login) => Ok(Reply::NeedsReconnect),
+            Err(error) => Err(error),
         }
     }
 
@@ -658,7 +670,7 @@ impl Lichess {
     ) -> CoreResult<Value>
     where
         F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<Value, Failure>>,
+        Fut: Future<Output = CoreResult<Value>>,
     {
         if let Some(value) = self.memory_value(key) {
             return Ok(value);
@@ -704,7 +716,7 @@ impl Lichess {
     ) -> CoreResult<Value>
     where
         F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<Value, Failure>>,
+        Fut: Future<Output = CoreResult<Value>>,
     {
         match load().await {
             Ok(value) => {
@@ -725,7 +737,7 @@ impl Lichess {
                 self.remember(key, &value);
                 Ok(value)
             }
-            Err(failure) if failure.status() == Some(404) => Err(failure.into()),
+            Err(failure) if failure.kind == Some(ErrorKind::NotFound) => Err(failure),
             Err(failure) => {
                 let stale = match self.store.read_api_cache(key).await {
                     Ok(stale) => stale,
@@ -752,13 +764,12 @@ impl Lichess {
                             "lichess-cache",
                             &format!(
                                 "Serving stale cache: {key} fetchedAt={} ({})",
-                                stale.fetched_at,
-                                failure.message()
+                                stale.fetched_at, failure.message
                             ),
                         );
                         Ok(stale.value)
                     }
-                    None => Err(failure.into()),
+                    None => Err(failure),
                 }
             }
         }
@@ -834,7 +845,7 @@ impl Lichess {
         let mut following: HashMap<String, Value> = HashMap::new();
         let mut problems = Vec::new();
         for row in rows.iter().filter(|row| row.connected) {
-            let Ok(Some(token)) = self.tokens.token(&row.username).await else {
+            let Ok(auth) = self.signed_in(&row.username, UsageKind::Profile).await else {
                 problems.push(FollowingProblem {
                     account: row.username.clone(),
                     message: "Its Lichess login is unavailable.".to_string(),
@@ -845,25 +856,14 @@ impl Lichess {
             let mut lines = Vec::new();
             let outcome = self
                 .client
-                .policy()
-                .with_usage(&row.username, "profile", async {
-                    self.client
-                        .ndjson(
-                            Ndjson {
-                                method: reqwest::Method::GET,
-                                path: "/api/rel/following",
-                                query: &[],
-                                body: None,
-                                auth: Some(&authorize(&token)),
-                            },
-                            &self.lifetime,
-                            |line| {
-                                lines.push(line.to_string());
-                                Ok(())
-                            },
-                        )
-                        .await
-                })
+                .get("/api/rel/following", &auth)
+                .lines(
+                    || {},
+                    |line| {
+                        lines.push(line.to_string());
+                        Ok(())
+                    },
+                )
                 .await;
             match outcome {
                 Ok(()) => {
@@ -890,14 +890,13 @@ impl Lichess {
                     }
                 }
                 Err(failure) => {
-                    let denied = matches!(failure.status(), Some(401) | Some(403));
+                    let denied = failure.kind == Some(ErrorKind::Login);
                     self.host.log(
                         Level::Warn,
                         "lichess",
                         &format!(
                             "Could not load followed users: {} {}",
-                            row.username,
-                            failure.message()
+                            row.username, failure.message
                         ),
                     );
                     problems.push(FollowingProblem {
@@ -906,7 +905,7 @@ impl Lichess {
                             "Lichess needs your permission to read who this account follows."
                                 .to_string()
                         } else {
-                            failure.message()
+                            failure.message
                         },
                         needs_reconnect: denied,
                     });
@@ -962,45 +961,29 @@ impl Lichess {
     pub async fn profile(&self, username: &str) -> CoreResult<Value> {
         let key = profile_key(username, "profile");
         self.cached_fetch(&key, username, || async {
+            let auth = self.client.counted(username, UsageKind::Profile);
             self.client
-                .policy()
-                .with_usage(username, "profile", async {
-                    self.client
-                        .get_json::<Value>(
-                            &format!("/api/user/{}", path_segment(username)),
-                            &[],
-                            None,
-                            &self.lifetime,
-                        )
-                        .await
-                        .map_err(|failure| no_such_user(username, failure))
-                })
+                .get(&format!("/api/user/{}", path_segment(username)), &auth)
+                .read_json::<Value>()
                 .await
+                .map_err(|failure| no_such_user(username, failure))
         })
         .await
     }
 
     /// `playerPerf`: one player's record in one rating category (public).
     pub async fn player_perf(&self, username: &str, perf: &str) -> CoreResult<PerfStats> {
+        let path = format!(
+            "/api/user/{}/perf/{}",
+            path_segment(username),
+            path_segment(perf)
+        );
         let raw: PerfResponse = self
             .client
-            .policy()
-            .with_usage("", "profile", async {
-                self.client
-                    .get_json(
-                        &format!(
-                            "/api/user/{}/perf/{}",
-                            path_segment(username),
-                            path_segment(perf)
-                        ),
-                        &[],
-                        None,
-                        &self.lifetime,
-                    )
-                    .await
-                    .map_err(|failure| no_such_user(username, failure))
-            })
-            .await?;
+            .get(&path, &self.anonymous(UsageKind::Profile))
+            .read_json()
+            .await
+            .map_err(|failure| no_such_user(username, failure))?;
         Ok(perf_stats(perf, raw))
     }
 
@@ -1014,23 +997,15 @@ impl Lichess {
         {
             return Ok(pgn.to_string());
         }
+        // `/game/export/{id}` sends a request without an account to its sign-up page; the export
+        // of ids answers without one. One game does not wait for the bulk export lane.
         let fetched = self
             .client
-            .policy()
-            .with_usage("", "games", async {
-                self.client
-                    .export_one(
-                        id,
-                        &[
-                            ("clocks", "true".to_string()),
-                            ("evals", "false".to_string()),
-                            ("opening", "true".to_string()),
-                        ],
-                        "application/x-chess-pgn",
-                        &self.lifetime,
-                    )
-                    .await
-            })
+            .post("/api/games/export/_ids", &self.anonymous(UsageKind::Games))
+            .query(&[("clocks", "true"), ("evals", "false"), ("opening", "true")])
+            .accept("application/x-chess-pgn")
+            .text(id)
+            .read_text(None)
             .await;
         let pgn = match fetched {
             Ok(pgn) => pgn,
@@ -1046,7 +1021,7 @@ impl Lichess {
                         None
                     }
                 };
-                return kept.ok_or_else(|| error.into());
+                return kept.ok_or(error);
             }
         };
         if pgn.trim().is_empty() {
@@ -1073,53 +1048,46 @@ impl Lichess {
     /// asks for more of their rated games, to chart their ratings.
     pub async fn recent_games(&self, username: &str, rated: bool) -> CoreResult<Vec<LichessGame>> {
         let max = if rated { RATED_GAMES } else { RECENT_GAMES };
-        self.client
-            .policy()
-            .with_usage("", "profile", async {
-                self.as_any_account(None, |auth| async move {
-                    let mut query = vec![
-                        ("max", max.to_string()),
-                        ("moves", "false".to_string()),
-                        ("opening", (!rated).to_string()),
-                        ("ongoing", "false".to_string()),
-                    ];
-                    if rated {
-                        query.push(("rated", "true".to_string()));
-                    }
-                    let mut lines = Vec::new();
-                    self.client
-                        .ndjson(
-                            Ndjson {
-                                method: reqwest::Method::GET,
-                                path: &format!("/api/games/user/{}", path_segment(username)),
-                                query: &query,
-                                body: None,
-                                auth: auth.as_deref(),
-                            },
-                            &self.lifetime,
-                            |line| {
-                                lines.push(line.to_string());
-                                Ok(())
-                            },
-                        )
-                        .await?;
-                    Ok::<Vec<String>, Failure>(lines)
-                })
-                .await
-            })
-            .await
-            .map_err(CoreError::from)
-            .and_then(|lines| {
-                let mut games = Vec::new();
-                for line in lines {
-                    if games.len() >= max {
-                        break;
-                    }
-                    let raw: GameJson = parse_game(&line)?;
-                    games.push(normalize_game(&raw, username));
+        self.as_any_account(None, UsageKind::Profile, |auth| async move {
+            let mut query = vec![
+                ("max", max.to_string()),
+                ("moves", "false".to_string()),
+                ("opening", (!rated).to_string()),
+                ("ongoing", "false".to_string()),
+            ];
+            if rated {
+                query.push(("rated", "true".to_string()));
+            }
+            let mut lines = Vec::new();
+            self.client
+                .get(
+                    &format!("/api/games/user/{}", path_segment(username)),
+                    &auth,
+                )
+                .query(&query)
+                .lane(Lane::Export)
+                .lines(
+                    || {},
+                    |line| {
+                        lines.push(line.to_string());
+                        Ok(())
+                    },
+                )
+                .await?;
+            Ok(lines)
+        })
+        .await
+        .and_then(|lines| {
+            let mut games = Vec::new();
+            for line in lines {
+                if games.len() >= max {
+                    break;
                 }
-                Ok(games)
-            })
+                let raw: GameJson = parse_game(&line)?;
+                games.push(normalize_game(&raw, username));
+            }
+            Ok(games)
+        })
     }
 
     /// `sendMessage`: a private message from `account`. A login made before messaging was
@@ -1130,14 +1098,11 @@ impl Lichess {
         username: &str,
         text: &str,
     ) -> CoreResult<Reply<()>> {
-        self.as_account(account, "profile", |token| async move {
+        self.as_account(account, UsageKind::Profile, |auth| async move {
             self.client
-                .post_form::<Value>(
-                    &format!("/inbox/{}", path_segment(username)),
-                    &[("text", text)],
-                    Some(&authorize(&token)),
-                    &self.lifetime,
-                )
+                .post(&format!("/inbox/{}", path_segment(username)), &auth)
+                .form(&[("text", text)])
+                .read_json::<Value>()
                 .await
                 .map(|_| ())
         })
@@ -1148,17 +1113,12 @@ impl Lichess {
     pub async fn crosstable(&self, a: &str, b: &str) -> CoreResult<Crosstable> {
         let raw: CrosstableRaw = self
             .client
-            .policy()
-            .with_usage("", "profile", async {
-                self.client
-                    .get_json(
-                        &format!("/api/crosstable/{}/{}", path_segment(a), path_segment(b)),
-                        &[("matchup", "true".to_string())],
-                        None,
-                        &self.lifetime,
-                    )
-                    .await
-            })
+            .get(
+                &format!("/api/crosstable/{}/{}", path_segment(a), path_segment(b)),
+                &self.anonymous(UsageKind::Profile),
+            )
+            .query(&[("matchup", "true")])
+            .read_json()
             .await?;
         Ok(Crosstable {
             users: lower_keys(raw.users),
@@ -1174,23 +1134,13 @@ impl Lichess {
     pub async fn rating_history(&self, username: &str) -> CoreResult<Value> {
         let key = profile_key(username, "rating");
         self.cached_fetch(&key, username, || async {
-            self.client
-                .policy()
-                .with_usage(username, "profile", async {
-                    self.as_any_account(Some(username), |auth| async move {
-                        self.client
-                            .get_json::<Value>(
-                                &format!("/api/user/{}/rating-history", path_segment(username)),
-                                &[],
-                                auth.as_deref(),
-                                &self.lifetime,
-                            )
-                            .await
-                    })
-                    .await
-                    .map_err(|failure| no_such_user(username, failure))
-                })
-                .await
+            let path = format!("/api/user/{}/rating-history", path_segment(username));
+            self.as_any_account(Some(username), UsageKind::Profile, |auth| {
+                let path = &path;
+                async move { self.client.get(path, &auth).read_json::<Value>().await }
+            })
+            .await
+            .map_err(|failure| no_such_user(username, failure))
         })
         .await
     }
@@ -1300,67 +1250,65 @@ impl Lichess {
         let epoch = self.account_epoch(name);
         let current = || self.account_epoch(name) == epoch;
         let started_at = now_ms();
-        self.client
-            .policy()
-            .with_usage(name, "games", async {
-                self.refresh_pending_games(name, &current).await?;
-                // Incremental sync: Lichess filters by `since` (ms), overlapping 60 s for skew.
-                // It returns newest first and caps each page, so the walk pages backwards with
-                // `until`; a long gap between syncs must not silently lose games.
-                let since = row.last_synced_at.map(|at| at - SYNC_OVERLAP_MS);
-                let mut fetched = 0usize;
-                let mut until: Option<i64> = None;
-                let mut downgraded = false;
-                while fetched < MAX_GAMES {
-                    let (games, reviews, settled, page_downgraded) =
-                        self.fetch_games_page(name, since, until).await?;
-                    downgraded |= page_downgraded;
-                    if !current() {
-                        return Err(sync_cancelled());
-                    }
-                    if !games.is_empty() {
-                        self.store
-                            .save_games_page(name, &games, &reviews, &current)
-                            .await?;
-                    }
-                    if !current() {
-                        return Err(sync_cancelled());
-                    }
-                    self.store.mark_checked(&settled, &current).await?;
-                    fetched += games.len();
-                    if games.len() < SYNC_PAGE {
-                        break;
-                    }
-                    let oldest = games.iter().map(|game| game.created_at).min().unwrap_or(0);
-                    if until.is_some_and(|bound| oldest >= bound) {
-                        break;
-                    }
-                    until = Some(oldest);
+        async {
+            self.refresh_pending_games(name, &current).await?;
+            // Incremental sync: Lichess filters by `since` (ms), overlapping 60 s for skew.
+            // It returns newest first and caps each page, so the walk pages backwards with
+            // `until`; a long gap between syncs must not silently lose games.
+            let since = row.last_synced_at.map(|at| at - SYNC_OVERLAP_MS);
+            let mut fetched = 0usize;
+            let mut until: Option<i64> = None;
+            let mut downgraded = false;
+            while fetched < MAX_GAMES {
+                let (games, reviews, settled, page_downgraded) =
+                    self.fetch_games_page(name, since, until).await?;
+                downgraded |= page_downgraded;
+                if !current() {
+                    return Err(sync_cancelled());
                 }
-                // A 401-downgraded sync yields a successful partial (public games only):
-                // do not advance the cursor, so the gap is backfilled after reconnect. A tracked
-                // player has no login, so public games are the whole sync: holding its cursor
-                // back re-downloaded its full history every time.
-                if !downgraded || !row.connected {
+                if !games.is_empty() {
                     self.store
-                        .save_games_cursor(name, started_at, &current)
+                        .save_games_page(name, &games, &reviews, &current)
                         .await?;
-                    if let Some(play_time) = play_time {
-                        self.store
-                            .save_synced_play_time(name, play_time, &current)
-                            .await?;
-                    }
-                } else {
-                    self.host.log(
-                        Level::Warn,
-                        "lichess",
-                        &format!("Game sync for {name} used public games only; cursor unchanged."),
-                    );
                 }
-                self.forget_profile(name);
-                Ok::<usize, CoreError>(fetched)
-            })
-            .await
+                if !current() {
+                    return Err(sync_cancelled());
+                }
+                self.store.mark_checked(&settled, &current).await?;
+                fetched += games.len();
+                if games.len() < SYNC_PAGE {
+                    break;
+                }
+                let oldest = games.iter().map(|game| game.created_at).min().unwrap_or(0);
+                if until.is_some_and(|bound| oldest >= bound) {
+                    break;
+                }
+                until = Some(oldest);
+            }
+            // A 401-downgraded sync yields a successful partial (public games only):
+            // do not advance the cursor, so the gap is backfilled after reconnect. A tracked
+            // player has no login, so public games are the whole sync: holding its cursor
+            // back re-downloaded its full history every time.
+            if !downgraded || !row.connected {
+                self.store
+                    .save_games_cursor(name, started_at, &current)
+                    .await?;
+                if let Some(play_time) = play_time {
+                    self.store
+                        .save_synced_play_time(name, play_time, &current)
+                        .await?;
+                }
+            } else {
+                self.host.log(
+                    Level::Warn,
+                    "lichess",
+                    &format!("Game sync for {name} used public games only; cursor unchanged."),
+                );
+            }
+            self.forget_profile(name);
+            Ok::<usize, CoreError>(fetched)
+        }
+        .await
     }
 
     /// One page of the sync: its games, Lichess's reviews of them, and the finished games it
@@ -1473,34 +1421,20 @@ impl Lichess {
         body: Option<String>,
     ) -> CoreResult<(Vec<String>, bool)> {
         let (lines, downgraded) = self
-            .client
-            .policy()
-            .with_usage(account, "games", async {
-                self.as_owner_downgraded(account, |auth| {
-                    let method = method.clone();
-                    let body = body.clone();
-                    async move {
-                        let mut lines = Vec::new();
-                        self.client
-                            .ndjson(
-                                Ndjson {
-                                    method,
-                                    path,
-                                    query,
-                                    body,
-                                    auth: auth.as_deref(),
-                                },
-                                &self.lifetime,
-                                |line| {
-                                    lines.push(line.to_string());
-                                    Ok(())
-                                },
-                            )
-                            .await?;
-                        Ok::<Vec<String>, Failure>(lines)
+            .as_owner_downgraded(account, UsageKind::Games, |auth| {
+                let method = method.clone();
+                let body = body.clone();
+                async move {
+                    let mut request = self
+                        .client
+                        .request(method, path, &auth)
+                        .query(query)
+                        .lane(Lane::Export);
+                    if let Some(body) = body {
+                        request = request.text(body);
                     }
-                })
-                .await
+                    request.read_lines().await
+                }
             })
             .await?;
         Ok((lines, downgraded))
@@ -1540,18 +1474,22 @@ fn is_game_in_progress(raw: &Value) -> bool {
         .unwrap_or(true)
 }
 
-/// `noSuchUser`: Lichess's generic 404 becomes a message that names the user.
-pub(crate) fn no_such_user(username: &str, failure: Failure) -> Failure {
-    match failure {
-        Failure::Lichess(error) if error.status == 404 => {
-            Failure::Lichess(super::client::LichessError {
-                status: 404,
-                endpoint: error.endpoint,
-                detail: format!("no such Lichess user \"{username}\""),
-            })
-        }
-        other => other,
+/// Lichess's generic 404 becomes a message that names the user.
+pub(crate) fn no_such_user(username: &str, error: CoreError) -> CoreError {
+    if error.kind == Some(ErrorKind::NotFound) {
+        CoreError::new(format!("No such Lichess user \"{username}\"."))
+            .with_kind(ErrorKind::NotFound)
+    } else {
+        error
     }
+}
+
+/// The error of an account whose stored login cannot be used: it must be connected again.
+pub(crate) fn login_unavailable(account: &str) -> CoreError {
+    CoreError::new(format!(
+        "@{account}'s Lichess login is unavailable. Reconnect it in Settings."
+    ))
+    .with_kind(ErrorKind::Login)
 }
 
 fn lower_keys<V>(map: BTreeMap<String, V>) -> BTreeMap<String, V> {

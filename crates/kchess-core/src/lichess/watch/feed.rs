@@ -476,10 +476,10 @@ fn header_map(raw: Option<&Value>) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
-/// `/\/([a-zA-Z0-9]{8})$/` on a broadcast URL: the chapter id.
+/// The chapter id that ends a broadcast URL.
 fn last_path_id(url: Option<&str>) -> Option<String> {
     let (_, id) = url?.rsplit_once('/')?;
-    (id.len() == 8 && id.bytes().all(|byte| byte.is_ascii_alphanumeric())).then(|| id.to_string())
+    crate::lichess::is_lichess_id(id).then(|| id.to_string())
 }
 
 /// `Number(text)`: JavaScript's conversion (blank is zero, unreadable is NaN).

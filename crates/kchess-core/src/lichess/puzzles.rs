@@ -6,19 +6,15 @@
 //! `Lichess::as_account`, so a refused login answers `Reply::NeedsReconnect`.
 
 use std::collections::VecDeque;
-use std::time::Duration;
 
-use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
+use kchess_contracts::types::UsageKind;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio_util::sync::CancellationToken;
 
-use super::accounts::{Lichess, Reply, path_segment};
-use super::client::{Failure, LichessError, authorize, lichess_error, read_with_deadline};
+use super::accounts::{Lichess, Reply, no_such_user, path_segment};
+use super::client::Lane;
 use super::decode::{Loose, present, read};
-use super::policy::Admitted;
-use super::reviews::collect_lines;
-use crate::error::{CoreError, Result as CoreResult};
+use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use kchess_domain::training;
 
 #[derive(Deserialize)]
@@ -158,7 +154,6 @@ pub async fn puzzle_next(
     lichess: &Lichess,
     request: &PuzzleRequest,
 ) -> CoreResult<Reply<PuzzleDraw>> {
-    let cancel = lichess.lifetime().clone();
     let mut query: Vec<(&str, String)> = Vec::new();
     query.push(("angle", request.angle.clone()));
     query.push(("difficulty", request.difficulty.clone()));
@@ -166,18 +161,14 @@ pub async fn puzzle_next(
         query.push(("color", color.clone()));
     }
     if request.account.is_empty() {
-        let raw: Result<Value, Failure> = lichess
+        let raw: CoreResult<Value> = lichess
             .client()
-            .policy()
-            .with_usage("", "puzzles", async {
-                lichess
-                    .client()
-                    .get_json("/api/puzzle/next", &query, None, &cancel)
-                    .await
-            })
+            .get("/api/puzzle/next", &lichess.anonymous(UsageKind::Puzzles))
+            .query(&query)
+            .read_json()
             .await;
         let puzzle = match raw {
-            Err(Failure::Lichess(error)) if error.status == 404 => Value::Null,
+            Err(error) if error.kind == Some(ErrorKind::NotFound) => Value::Null,
             raw => readable_puzzle(&raw?)?,
         };
         return Ok(Reply::Done(PuzzleDraw {
@@ -191,11 +182,13 @@ pub async fn puzzle_next(
         list
     };
     lichess
-        .as_account(&request.account, "puzzles", |token| async move {
+        .as_account(&request.account, UsageKind::Puzzles, |auth| async move {
             let path = format!("/api/puzzle/batch/{}", path_segment(&request.angle));
             let batch: Value = lichess
                 .client()
-                .get_json(&path, &batch_query, Some(&authorize(&token)), &cancel)
+                .get(&path, &auth)
+                .query(&batch_query)
+                .read_json()
                 .await?;
             let Some(items) = batch
                 .get("puzzles")
@@ -236,14 +229,18 @@ pub async fn puzzle_solve(
     lichess: &Lichess,
     request: &PuzzleSolveRequest,
 ) -> CoreResult<Reply<PuzzleSolveResult>> {
-    let cancel = lichess.lifetime().clone();
     lichess
-        .as_account(&request.account, "puzzles", |token| async move {
+        .as_account(&request.account, UsageKind::Puzzles, |auth| async move {
             let path = format!("/api/puzzle/batch/{}", path_segment(&request.angle));
             let body = json!({
                 "solutions": [{ "id": request.id, "win": request.win, "rated": request.rated }]
             });
-            let result = post_json(lichess, &path, &body, &authorize(&token), &cancel).await?;
+            let result: Value = lichess
+                .client()
+                .post(&path, &auth)
+                .json(&body)
+                .read_json()
+                .await?;
             let rounds = read::<SolveAnswer>(&result)
                 .and_then(|answer| answer.rounds.0)
                 .unwrap_or_default();
@@ -264,30 +261,21 @@ pub async fn puzzle_solve(
 
 /// `puzzleDaily()`: today's puzzle, with no login needed.
 pub async fn puzzle_daily(lichess: &Lichess) -> CoreResult<Value> {
-    let cancel = lichess.lifetime().clone();
     let raw: Value = lichess
         .client()
-        .policy()
-        .with_usage("", "puzzles", async {
-            lichess
-                .client()
-                .get_json("/api/puzzle/daily", &[], None, &cancel)
-                .await
-        })
+        .get("/api/puzzle/daily", &lichess.anonymous(UsageKind::Puzzles))
+        .read_json()
         .await?;
     readable_puzzle(&raw)
 }
 
 /// `puzzleById(id)`: one puzzle, as a lichess.org/training link names it; no login needed.
 pub async fn puzzle_by_id(lichess: &Lichess, id: &str) -> CoreResult<Value> {
-    let cancel = lichess.lifetime().clone();
     let path = format!("/api/puzzle/{}", path_segment(id));
     let raw: Value = lichess
         .client()
-        .policy()
-        .with_usage("", "puzzles", async {
-            lichess.client().get_json(&path, &[], None, &cancel).await
-        })
+        .get(&path, &lichess.anonymous(UsageKind::Puzzles))
+        .read_json()
         .await?;
     readable_puzzle(&raw)
 }
@@ -299,14 +287,10 @@ pub async fn puzzle_dashboard(
     account: &str,
     days: u32,
 ) -> CoreResult<Reply<Value>> {
-    let cancel = lichess.lifetime().clone();
     lichess
-        .as_account(account, "puzzles", |token| async move {
+        .as_account(account, UsageKind::Puzzles, |auth| async move {
             let path = format!("/api/puzzle/dashboard/{days}");
-            lichess
-                .client()
-                .get_json(&path, &[], Some(&authorize(&token)), &cancel)
-                .await
+            lichess.client().get(&path, &auth).read_json().await
         })
         .await
 }
@@ -318,26 +302,19 @@ pub async fn puzzle_activity(
     account: &str,
     max: u32,
 ) -> CoreResult<Reply<Vec<PuzzleActivityEntry>>> {
-    let cancel = lichess.lifetime().clone();
     lichess
-        .as_account(account, "puzzles", |token| async move {
-            let auth = authorize(&token);
-            let lines = collect_lines(
-                lichess.client(),
-                reqwest::Method::GET,
-                "/api/puzzle/activity",
-                &[("max", max.to_string())],
-                None,
-                Some(auth.as_str()),
-                &cancel,
-            )
-            .await?;
+        .as_account(account, UsageKind::Puzzles, |auth| async move {
+            let lines = lichess
+                .client()
+                .get("/api/puzzle/activity", &auth)
+                .query(&[("max", max.to_string())])
+                .lane(Lane::Feed)
+                .read_lines()
+                .await?;
             let mut entries = Vec::new();
             for line in &lines {
                 let raw: Value = serde_json::from_str(line).map_err(|cause| {
-                    Failure::Core(CoreError::new(format!(
-                        "Lichess sent an unreadable puzzle record: {cause}"
-                    )))
+                    CoreError::new(format!("Lichess sent an unreadable puzzle record: {cause}"))
                 })?;
                 let activity: ActivityEntry = read(&raw).unwrap_or_default();
                 let mut puzzle = activity.puzzle.unwrap_or_else(|| json!({}));
@@ -360,74 +337,12 @@ pub async fn puzzle_activity(
 
 /// `stormDashboard(username, days)`: anyone's public Storm results; needs no login.
 pub async fn storm_dashboard(lichess: &Lichess, username: &str, days: u32) -> CoreResult<Value> {
-    let cancel = lichess.lifetime().clone();
     let path = format!("/api/storm/dashboard/{}", path_segment(username));
-    let result = lichess
+    lichess
         .client()
-        .policy()
-        .with_usage("", "puzzles", async {
-            lichess
-                .client()
-                .get_json::<Value>(&path, &[("days", days.to_string())], None, &cancel)
-                .await
-        })
-        .await;
-    match result {
-        Ok(value) => Ok(value),
-        Err(Failure::Lichess(error)) if error.status == 404 => Err(CoreError::new(format!(
-            "No such Lichess user \"{username}\"."
-        ))
-        .with_kind(crate::error::ErrorKind::NotFound)),
-        Err(failure) => Err(failure.into()),
-    }
-}
-
-/// A JSON `POST` admitted through the policy (the client only sends form bodies), read within the
-/// request deadline. A non-2xx answer is the same `LichessError` a `GET` gives.
-async fn post_json(
-    lichess: &Lichess,
-    path: &str,
-    body: &Value,
-    auth: &str,
-    cancel: &CancellationToken,
-) -> Result<Value, Failure> {
-    let url = reqwest::Url::parse(&format!("{}{path}", lichess.client().base()))
-        .map_err(|cause| Failure::Core(CoreError::new(format!("Invalid Lichess URL: {cause}"))))?;
-    let mut request = reqwest::Request::new(reqwest::Method::POST, url);
-    let bad_header = |cause: reqwest::header::InvalidHeaderValue| {
-        Failure::Core(CoreError::new(format!("Invalid Lichess request: {cause}")))
-    };
-    request.headers_mut().insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(auth).map_err(bad_header)?,
-    );
-    request
-        .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    request
-        .headers_mut()
-        .insert(ACCEPT, HeaderValue::from_static("application/json"));
-    *request.body_mut() = Some(serde_json::to_vec(body).unwrap_or_default().into());
-    let Admitted { response, hold } = lichess.client().policy().send(request, cancel).await?;
-    let status = response.status().as_u16();
-    let timeout: Duration = lichess.client().policy().timeout();
-    let text = read_with_deadline(response, cancel, false, timeout, None).await;
-    drop(hold);
-    let text = text?;
-    let endpoint = format!("POST {path}");
-    if !(200..300).contains(&status) {
-        let detail = if text.is_empty() {
-            None
-        } else {
-            Some(serde_json::from_str(&text).unwrap_or(Value::String(text.clone())))
-        };
-        return Err(Failure::Lichess(lichess_error(status, detail, &endpoint)));
-    }
-    serde_json::from_str(&text).map_err(|cause| {
-        Failure::Lichess(LichessError {
-            status,
-            endpoint,
-            detail: format!("unreadable response: {cause}"),
-        })
-    })
+        .get(&path, &lichess.anonymous(UsageKind::Puzzles))
+        .query(&[("days", days.to_string())])
+        .read_json()
+        .await
+        .map_err(|error| no_such_user(username, error))
 }

@@ -28,14 +28,13 @@ fn lichess(base: &str, host: &Arc<Recording>, tokens: Arc<MemoryTokens>) -> Lich
         CancellationToken::new(),
         Duration::from_secs(5),
     );
-    let client = LichessClient::with_base(base, policy, http_client());
+    let client = LichessClient::with_base(base, policy);
     Lichess::new(
         client,
         capabilities_for(host),
         MemoryStore::with_accounts(&[]) as Arc<dyn LichessStore>,
         tokens as Arc<dyn TokenSource>,
         Arc::clone(host) as Arc<dyn Host>,
-        CancellationToken::new(),
     )
 }
 
@@ -287,6 +286,32 @@ async fn looks_up_the_accounts_teams_signed_in_and_explains_a_refusal_briefly() 
     assert!(!list.problems.join(" ").contains("authorization header"));
 }
 
+/// Every 403 asked to connect the account again, though one that is not about the login (a
+/// team Lichess will not list) is not mended by reconnecting.
+#[tokio::test]
+async fn a_team_refusal_that_is_not_about_the_login_does_not_ask_to_reconnect() {
+    let fixture = serve(|seen| match seen.path() {
+        "/api/tournament" => Reply::Json(
+            200,
+            json!({ "started": [], "created": [], "finished": [] }).to_string(),
+        ),
+        "/api/team/of/Alice" => Reply::Json(403, json!({ "error": "Forbidden" }).to_string()),
+        _ => Reply::Json(404, "{}".into()),
+    })
+    .await;
+    let host = Arc::new(Recording::default());
+    let lichess = lichess(
+        &fixture.base,
+        &host,
+        MemoryTokens::with(&[("Alice", "Alice-token")]),
+    );
+    let list = tournaments(&lichess, "Alice").await.unwrap();
+    assert_eq!(
+        list.problems,
+        vec!["Couldn’t load the teams of @Alice.".to_string()]
+    );
+}
+
 #[tokio::test]
 async fn reads_an_arenas_top_game_games_in_progress_podium_and_totals() {
     let extras = arena_extras(&json!({
@@ -453,7 +478,7 @@ async fn reads_an_arena_with_its_leaderboard_page_and_the_accounts_place() {
     let host = Arc::new(Recording::default());
     let tokens = MemoryTokens::with(&[("Alice", "Alice-token")]);
     let lichess = lichess(&fixture.base, &host, Arc::clone(&tokens));
-    let detail = tournament(&lichess, tokens.as_ref(), "arena", "Abcd1234", "Alice", 2)
+    let detail = tournament(&lichess, "arena", "Abcd1234", "Alice", 2)
         .await
         .unwrap();
     let seen = &fixture.to("/api/tournament/Abcd1234")[0];
@@ -478,11 +503,11 @@ async fn reads_an_arena_with_its_leaderboard_page_and_the_accounts_place() {
     // An arena whose clock cannot be read is refused, not shown half-read.
     let fixture = serve(|_| Reply::Json(200, json!({ "id": "Abcd1234" }).to_string())).await;
     let lichess = self::lichess(&fixture.base, &host, MemoryTokens::with(&[]));
-    let error = tournament(&lichess, tokens.as_ref(), "arena", "Abcd1234", "", 1)
+    let error = tournament(&lichess, "arena", "Abcd1234", "", 1)
         .await
         .unwrap_err();
     assert_eq!(
-        error.message(),
+        error.message,
         "Lichess sent an unreadable tournament clock."
     );
     assert!(fixture.requests()[0].header("Authorization").is_none());
@@ -507,7 +532,7 @@ async fn reads_a_swiss_event_with_its_results_and_next_round() {
     let host = Arc::new(Recording::default());
     let tokens = MemoryTokens::with(&[]);
     let lichess = lichess(&fixture.base, &host, Arc::clone(&tokens));
-    let detail = tournament(&lichess, tokens.as_ref(), "swiss", "Swiss123", "", 1)
+    let detail = tournament(&lichess, "swiss", "Swiss123", "", 1)
         .await
         .unwrap();
     let value = serde_json::to_value(&detail).unwrap();
@@ -526,11 +551,8 @@ async fn reads_a_swiss_event_with_its_results_and_next_round() {
             .as_deref(),
         Some("50")
     );
-    let error = tournament(&lichess, tokens.as_ref(), "swiss", "Garbled1", "", 1)
+    let error = tournament(&lichess, "swiss", "Garbled1", "", 1)
         .await
         .unwrap_err();
-    assert_eq!(
-        error.message(),
-        "Lichess sent details KChess could not read."
-    );
+    assert_eq!(error.message, "Lichess sent details KChess could not read.");
 }

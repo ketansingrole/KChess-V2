@@ -10,8 +10,9 @@ use super::accounts::{
     Lichess, LichessGame, Reply, no_such_user, normalize_game, parse_game, path_segment,
     profile_key,
 };
-use super::client::{Failure, Ndjson};
-use crate::error::{CoreError, Result as CoreResult};
+use super::client::Lane;
+use crate::error::{CoreError, ErrorKind, Result as CoreResult};
+use kchess_contracts::types::UsageKind;
 use kchess_domain::records::RATING_DISPLAY_NAMES;
 
 /// `/api/users` takes at most this many names a request.
@@ -107,15 +108,11 @@ impl Lichess {
         account: &str,
         username: &str,
     ) -> CoreResult<Reply<LichessRelation>> {
-        self.as_account(account, "profile", |token| async move {
+        self.as_account(account, UsageKind::Profile, |auth| async move {
             let user: Value = self
                 .client()
-                .get_json(
-                    &format!("/api/user/{}", path_segment(username)),
-                    &[],
-                    Some(&super::client::authorize(&token)),
-                    self.lifetime(),
-                )
+                .get(&format!("/api/user/{}", path_segment(username)), &auth)
+                .read_json()
                 .await
                 .map_err(|failure| no_such_user(username, failure))?;
             Ok(LichessRelation {
@@ -137,14 +134,14 @@ impl Lichess {
         if !matches!(action, "follow" | "unfollow" | "block" | "unblock") {
             return Err(CoreError::new("Invalid action."));
         }
-        self.as_account(account, "profile", |token| async move {
+        self.as_account(account, UsageKind::Profile, |auth| async move {
             self.client()
-                .post_form::<Value>(
+                .post(
                     &format!("/api/rel/{action}/{}", path_segment(username)),
-                    &[],
-                    Some(&super::client::authorize(&token)),
-                    self.lifetime(),
+                    &auth,
                 )
+                .form::<&str, &str>(&[])
+                .read_json::<Value>()
                 .await
                 .map(|_| ())
         })
@@ -158,12 +155,9 @@ impl Lichess {
         for chunk in usernames.chunks(USERS_PER_REQUEST) {
             let page: Vec<Value> = self
                 .client()
-                .policy()
-                .with_usage("", "profile", async {
-                    self.client()
-                        .post_text("/api/users", chunk.join(","), None, self.lifetime())
-                        .await
-                })
+                .post("/api/users", &self.anonymous(UsageKind::Profile))
+                .text(chunk.join(","))
+                .read_json()
                 .await?;
             users.extend(page);
         }
@@ -177,19 +171,12 @@ impl Lichess {
         }
         let text = self
             .client()
-            .policy()
-            .with_usage("", "profile", async {
-                self.client()
-                    .get_text(
-                        &format!("/api/player/top/{LEADERBOARD_SIZE}/{}", path_segment(perf)),
-                        &[],
-                        "application/vnd.lichess.v3+json",
-                        None,
-                        self.lifetime(),
-                        None,
-                    )
-                    .await
-            })
+            .get(
+                &format!("/api/player/top/{LEADERBOARD_SIZE}/{}", path_segment(perf)),
+                &self.anonymous(UsageKind::Profile),
+            )
+            .accept("application/vnd.lichess.v3+json")
+            .read_text(None)
             .await?;
         let body: Value = serde_json::from_str(&text)
             .map_err(|_| CoreError::new("Lichess returned an invalid leaderboard."))?;
@@ -203,17 +190,12 @@ impl Lichess {
         }
         let body: Value = self
             .client()
-            .policy()
-            .with_usage("", "profile", async {
-                self.client()
-                    .get_json(
-                        "/api/player/autocomplete",
-                        &[("term", term.to_string()), ("object", "true".to_string())],
-                        None,
-                        self.lifetime(),
-                    )
-                    .await
-            })
+            .get(
+                "/api/player/autocomplete",
+                &self.anonymous(UsageKind::Profile),
+            )
+            .query(&[("term", term), ("object", "true")])
+            .read_json()
             .await?;
         Ok(read_suggestions(&body))
     }
@@ -224,19 +206,13 @@ impl Lichess {
         let body = self
             .cached_fetch(&profile_key(username, "activity"), username, || async {
                 self.client()
-                    .policy()
-                    .with_usage("", "profile", async {
-                        self.client()
-                            .get_json(
-                                &format!("/api/user/{}/activity", path_segment(username)),
-                                &[],
-                                None,
-                                self.lifetime(),
-                            )
-                            .await
-                            .map_err(|failure| no_such_user(username, failure))
-                    })
+                    .get(
+                        &format!("/api/user/{}/activity", path_segment(username)),
+                        &self.anonymous(UsageKind::Profile),
+                    )
+                    .read_json()
                     .await
+                    .map_err(|failure| no_such_user(username, failure))
             })
             .await?;
         Ok(read_activity(&body))
@@ -288,28 +264,21 @@ impl Lichess {
     /// `importGame`: upload `pgn` to Lichess as `account`, or anonymously when it is empty or its
     /// login is unavailable.
     pub async fn import_game(&self, account: &str, pgn: &str) -> CoreResult<ImportedGame> {
-        let token = if account.is_empty() {
-            None
-        } else {
-            self.token_of(account).await
-        };
+        let mut auth = self.client().counted(account, UsageKind::Profile);
+        if !account.is_empty()
+            && let Ok(Some(token)) = self.stored_login(account).await
+        {
+            auth = auth.with_token(token);
+        }
         let answer: Value = self
             .client()
-            .policy()
-            .with_usage(account, "profile", async {
-                self.client()
-                    .post_form(
-                        "/api/import",
-                        &[("pgn", pgn)],
-                        token.as_deref().map(super::client::authorize).as_deref(),
-                        self.lifetime(),
-                    )
-                    .await
-            })
+            .post("/api/import", &auth)
+            .form(&[("pgn", pgn)])
+            .read_json()
             .await
-            .map_err(|failure: Failure| match failure.status() {
-                Some(400) => CoreError::new("Lichess could not read that game."),
-                _ => failure.into(),
+            .map_err(|failure| match failure.kind {
+                Some(ErrorKind::Refused) => CoreError::new("Lichess could not read that game."),
+                _ => failure,
             })?;
         match (answer["id"].as_str(), answer["url"].as_str()) {
             (Some(id), Some(url)) if url.starts_with("https://") => Ok(ImportedGame {
@@ -325,22 +294,18 @@ impl Lichess {
     /// `bookmarkedGames`: the games `account` bookmarked, newest first, from its side.
     pub async fn bookmarked_games(&self, account: &str) -> CoreResult<Reply<Vec<LichessGame>>> {
         let reply = self
-            .as_account(account, "profile", |token| async move {
+            .as_account(account, UsageKind::Profile, |auth| async move {
                 let mut lines = Vec::new();
                 self.client()
-                    .ndjson(
-                        Ndjson {
-                            method: reqwest::Method::GET,
-                            path: "/api/games/export/bookmarks",
-                            query: &[
-                                ("max", BOOKMARKS_MAX.to_string()),
-                                ("moves", "false".to_string()),
-                                ("opening", "true".to_string()),
-                            ],
-                            body: None,
-                            auth: Some(&super::client::authorize(&token)),
-                        },
-                        self.lifetime(),
+                    .get("/api/games/export/bookmarks", &auth)
+                    .query(&[
+                        ("max", BOOKMARKS_MAX.to_string()),
+                        ("moves", "false".to_string()),
+                        ("opening", "true".to_string()),
+                    ])
+                    .lane(Lane::Export)
+                    .lines(
+                        || {},
                         |line| {
                             lines.push(line.to_string());
                             Ok(())

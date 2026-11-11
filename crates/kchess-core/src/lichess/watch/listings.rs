@@ -9,6 +9,7 @@ use super::{
 use crate::error::{CoreError, Result as CoreResult};
 use crate::lichess::accounts::{Lichess, path_segment};
 use crate::lichess::decode::{Loose, Millis, Text, read};
+use kchess_contracts::types::UsageKind;
 use kchess_domain::js;
 
 /* ── Broadcast listings (pure) ── */
@@ -126,16 +127,10 @@ struct ChannelRaw {
 
 /// `tvChannels()`: the TV channels with who is playing on each right now.
 pub async fn tv_channels(lichess: &Lichess) -> CoreResult<Vec<TvChannel>> {
-    let cancel = lichess.lifetime().clone();
     let raw: Value = lichess
         .client()
-        .policy()
-        .with_usage("", "watch", async {
-            lichess
-                .client()
-                .get_json("/api/tv/channels", &[], None, &cancel)
-                .await
-        })
+        .get("/api/tv/channels", &lichess.anonymous(UsageKind::Watch))
+        .read_json()
         .await?;
     Ok(TV_CHANNELS
         .iter()
@@ -168,23 +163,16 @@ pub async fn broadcasts(
     lichess: &Lichess,
     query: Option<&str>,
 ) -> CoreResult<Vec<BroadcastSummary>> {
-    let cancel = lichess.lifetime().clone();
     let query = query.map(js::trim).filter(|q| !q.is_empty());
     if let Some(query) = query {
         let raw: Value = lichess
             .client()
-            .policy()
-            .with_usage("", "watch", async {
-                lichess
-                    .client()
-                    .get_json(
-                        "/api/broadcast/search",
-                        &[("q", query.to_string()), ("page", "1".to_string())],
-                        None,
-                        &cancel,
-                    )
-                    .await
-            })
+            .get(
+                "/api/broadcast/search",
+                &lichess.anonymous(UsageKind::Watch),
+            )
+            .query(&[("q", query.to_string()), ("page", "1".to_string())])
+            .read_json()
             .await?;
         let entries = raw
             .get("currentPageResults")
@@ -195,18 +183,9 @@ pub async fn broadcasts(
     }
     let raw: Value = lichess
         .client()
-        .policy()
-        .with_usage("", "watch", async {
-            lichess
-                .client()
-                .get_json(
-                    "/api/broadcast/top",
-                    &[("page", "1".to_string())],
-                    None,
-                    &cancel,
-                )
-                .await
-        })
+        .get("/api/broadcast/top", &lichess.anonymous(UsageKind::Watch))
+        .query(&[("page", "1".to_string())])
+        .read_json()
         .await?;
     let list = |key: &str| {
         raw.get(key)
@@ -228,14 +207,11 @@ pub async fn broadcasts(
 /// `broadcastRound(id)`: the tournament a broadcast round is in, as a round's link names only
 /// the round (`{ tourId, roundId }`).
 pub async fn broadcast_round(lichess: &Lichess, id: &str) -> CoreResult<Value> {
-    let cancel = lichess.lifetime().clone();
     let path = format!("/api/broadcast/-/-/{}", path_segment(id));
     let raw: Value = lichess
         .client()
-        .policy()
-        .with_usage("", "watch", async {
-            lichess.client().get_json(&path, &[], None, &cancel).await
-        })
+        .get(&path, &lichess.anonymous(UsageKind::Watch))
+        .read_json()
         .await?;
     let tour = raw["tour"]["id"]
         .as_str()
@@ -246,14 +222,11 @@ pub async fn broadcast_round(lichess: &Lichess, id: &str) -> CoreResult<Value> {
 
 /// `broadcastTour(id)`: a broadcast tournament and its rounds (at most 100).
 pub async fn broadcast_tour(lichess: &Lichess, id: &str) -> CoreResult<BroadcastTourDetail> {
-    let cancel = lichess.lifetime().clone();
     let path = format!("/api/broadcast/{}", path_segment(id));
     let raw: Value = lichess
         .client()
-        .policy()
-        .with_usage("", "watch", async {
-            lichess.client().get_json(&path, &[], None, &cancel).await
-        })
+        .get(&path, &lichess.anonymous(UsageKind::Watch))
+        .read_json()
         .await?;
     let unreadable = || CoreError::new("Lichess sent an unreadable broadcast.");
     let tour: TourRaw = raw.get("tour").and_then(read).ok_or_else(unreadable)?;

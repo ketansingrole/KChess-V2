@@ -17,9 +17,10 @@ use super::{
 use crate::error::{CoreError, Result as CoreResult};
 use crate::host::Level;
 use crate::lichess::accounts::{Lichess, path_segment};
-use crate::lichess::client::{Failure, Ndjson, parse_json};
+use crate::lichess::client::{Auth, Lane};
 use crate::lichess::decode::{Loose, read};
 use crate::lichess::stream::STALLED;
+use kchess_contracts::types::{UsageKind, WatchPhase};
 
 /// A TV feed record, `{ t, d }`: a featured game or a move. Other kinds, and records whose
 /// `d` is not an object, are ignored; each field is read when it has the right type.
@@ -186,9 +187,8 @@ impl Spectator {
         let (session, token) = self.inner.begin();
         let inner = Arc::clone(&self.inner);
         tokio::spawn(async move {
-            inner.report(session, &token, "connecting", None);
-            let lichess = Arc::clone(&inner.lichess);
-            let followed = lichess.client().policy().with_usage("", "watch", async {
+            inner.report(session, &token, WatchPhase::Connecting, None);
+            let followed = async {
                 match &target {
                     WatchTarget::Channel(channel) => inner
                         .follow_tv(channel, session, &token)
@@ -196,18 +196,18 @@ impl Spectator {
                         .map(|()| false),
                     WatchTarget::Game(id) => inner.follow_game(id, session, &token).await,
                 }
-            });
+            };
             // A panic ends the feed as a failure, so the viewer is offered a retry.
             let result = crate::tasks::caught(followed)
                 .await
                 .unwrap_or_else(|_| Err(CoreError::new(FEED_PANICKED)));
             match result {
                 // Lichess closes a game's stream once the game is over: nothing to reconnect to.
-                Ok(true) => inner.report(session, &token, "ended", None),
+                Ok(true) => inner.report(session, &token, WatchPhase::Ended, None),
                 Ok(false) => inner.report(
                     session,
                     &token,
-                    "ended",
+                    WatchPhase::Ended,
                     Some("The feed ended. Retry to reconnect."),
                 ),
                 // Stopped, or replaced by another watch: nothing failed.
@@ -240,12 +240,7 @@ impl Spectator {
         let inner = Arc::clone(&self.inner);
         let round_id = round_id.to_string();
         tokio::spawn(async move {
-            let lichess = Arc::clone(&inner.lichess);
-            let followed = lichess.client().policy().with_usage(
-                "",
-                "watch",
-                inner.follow_round(&round_id, session, &token),
-            );
+            let followed = inner.follow_round(&round_id, session, &token);
             let result = crate::tasks::caught(followed)
                 .await
                 .unwrap_or_else(|_| Err(CoreError::new(FEED_PANICKED)));
@@ -289,6 +284,11 @@ impl Spectator {
 }
 
 impl Inner {
+    /// Who the watch's requests are made as: nobody, counted as watching.
+    fn watcher(&self) -> Auth {
+        self.lichess.anonymous(UsageKind::Watch)
+    }
+
     /// Starts a session: stops the running one and returns the new session and its token.
     fn begin(&self) -> (u64, CancellationToken) {
         let mut control = lock(&self.control);
@@ -322,7 +322,7 @@ impl Inner {
         &self,
         session: u64,
         token: &CancellationToken,
-        phase: &'static str,
+        phase: WatchPhase,
         message: Option<&str>,
     ) {
         if !token.is_cancelled() && self.is_current(session) {
@@ -346,7 +346,7 @@ impl Inner {
         if !token.is_cancelled() && self.is_current(session) {
             self.sink.state(WatchState {
                 session,
-                phase: "error",
+                phase: WatchPhase::Error,
                 message: Some(message.to_string()),
                 kind: Some(kind.as_str()),
             });
@@ -380,15 +380,11 @@ impl Inner {
             let followed = self
                 .lichess
                 .client()
-                .ndjson(
-                    Ndjson {
-                        method: reqwest::Method::GET,
-                        path: &path,
-                        query: &[],
-                        body: None,
-                        auth: None,
-                    },
-                    token,
+                .get(&path, &self.watcher())
+                .lane(Lane::Live)
+                .cancel(token)
+                .lines(
+                    || {},
                     move |line| {
                         if token_for_lines.is_cancelled() || !inner.is_current(session) {
                             return Ok(());
@@ -408,11 +404,11 @@ impl Inner {
             match followed {
                 // The TV feed has no keep-alive: it is silent while a player thinks. A new
                 // request answers with the featured game at once.
-                Err(Failure::Core(cause))
+                Err(cause)
                     if cause.message == STALLED
                         && !token.is_cancelled()
                         && self.is_current(session) => {}
-                other => return other.map_err(Into::into),
+                other => return other,
             }
         }
     }
@@ -497,7 +493,7 @@ impl Inner {
                 drop(state);
                 self.sink.state(WatchState {
                     session,
-                    phase: "connected",
+                    phase: WatchPhase::Connected,
                     message: None,
                     kind: None,
                 });
@@ -507,15 +503,8 @@ impl Inner {
                 let token = token.clone();
                 let channel = channel.to_string();
                 tokio::spawn(async move {
-                    let lichess = Arc::clone(&inner.lichess);
-                    lichess
-                        .client()
-                        .policy()
-                        .with_usage(
-                            "",
-                            "watch",
-                            inner.line_up(&channel, &live, &track, &game_id, session, &token),
-                        )
+                    inner
+                        .line_up(&channel, &live, &track, &game_id, session, &token)
                         .await;
                 });
                 Ok(())
@@ -555,7 +544,7 @@ impl Inner {
                 drop(state);
                 self.sink.state(WatchState {
                     session,
-                    phase: "connected",
+                    phase: WatchPhase::Connected,
                     message: None,
                     kind: None,
                 });
@@ -649,7 +638,6 @@ impl Inner {
     }
 
     async fn fetch_tv_game(&self, id: &str, token: &CancellationToken) -> CoreResult<TvGame> {
-        let path = "/api/games/export/_ids";
         let query = [
             ("moves", "true".to_string()),
             ("tags", "false".to_string()),
@@ -658,17 +646,24 @@ impl Inner {
             ("opening", "false".to_string()),
         ];
         // Lichess exports games as PGN unless the request asks for NDJSON: one line per game.
+        // One game does not wait for the bulk export lane.
         let text = self
             .lichess
             .client()
-            .export_one(id, &query, "application/x-ndjson", token)
-            .await
-            .map_err(CoreError::from)?;
+            .post("/api/games/export/_ids", &self.watcher())
+            .query(&query)
+            .accept("application/x-ndjson")
+            .text(id)
+            .cancel(token)
+            .read_text(None)
+            .await?;
         let line = text
             .lines()
             .find(|line| !line.trim().is_empty())
-            .unwrap_or("");
-        let raw: Value = parse_json(line, path).map_err(CoreError::from)?;
+            .ok_or_else(|| CoreError::new("Lichess has no such game."))?;
+        let raw: Value = serde_json::from_str(line).map_err(|cause| {
+            CoreError::new(format!("Lichess sent an unreadable game record: {cause}"))
+        })?;
         Ok(parse_tv_game(&raw))
     }
 
@@ -704,12 +699,7 @@ impl Inner {
         let channel = channel.to_string();
         let token = token.clone();
         tokio::spawn(async move {
-            let lichess = Arc::clone(&inner.lichess);
-            let result = lichess
-                .client()
-                .policy()
-                .with_usage("", "watch", inner.fetch_tv_game(&entry.game_id, &token))
-                .await;
+            let result = inner.fetch_tv_game(&entry.game_id, &token).await;
             match result {
                 Ok(game) => {
                     let mut control = lock(&inner.control);
@@ -745,15 +735,11 @@ impl Inner {
         let mut current: Option<WatchFrame> = None;
         self.lichess
             .client()
-            .ndjson(
-                Ndjson {
-                    method: reqwest::Method::GET,
-                    path: &path,
-                    query: &[],
-                    body: None,
-                    auth: None,
-                },
-                token,
+            .get(&path, &self.watcher())
+            .lane(Lane::Live)
+            .cancel(token)
+            .lines(
+                || {},
                 |line| {
                     if token.is_cancelled() || !self.is_current(session) {
                         return Ok(());
@@ -824,7 +810,7 @@ impl Inner {
                     if let Some(frame) = current.clone() {
                         self.sink.state(WatchState {
                             session,
-                            phase: "connected",
+                            phase: WatchPhase::Connected,
                             message: None,
                             kind: None,
                         });
@@ -861,7 +847,10 @@ impl Inner {
         };
         self.lichess
             .client()
-            .stream_chunks(&path, None, token, |chunk| {
+            .get(&path, &self.watcher())
+            .lane(Lane::Live)
+            .cancel(token)
+            .chunks(|chunk| {
                 if token.is_cancelled() || !self.is_current(session) {
                     return Ok(());
                 }

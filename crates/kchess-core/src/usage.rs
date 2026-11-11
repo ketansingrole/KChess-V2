@@ -14,7 +14,7 @@ use tokio::task::JoinHandle;
 
 use crate::error::Result;
 use crate::host::{Host, Level};
-use crate::store::Database;
+use crate::store::{self, Database, usage::UsageRow};
 
 /// How long counters wait in memory before they are written.
 pub const FLUSH_EVERY: Duration = Duration::from_secs(5);
@@ -85,24 +85,16 @@ impl UsageBatch {
     }
 
     /// Writes every pending counter (`flushUsage`). A failed write drops the batch and logs it.
-    fn take_rows(&self) -> Vec<Value> {
-        {
-            let mut pending = lock(&self.pending);
-            if pending.cells.is_empty() {
-                return Vec::new();
-            }
-            std::mem::take(&mut pending.cells)
-                .into_iter()
-                .map(|((account, kind), cell)| {
-                    json!({
-                        "account": account,
-                        "kind": kind,
-                        "requests": cell.requests,
-                        "bytesIn": cell.bytes_in,
-                    })
-                })
-                .collect()
-        }
+    fn take_rows(&self) -> Vec<UsageRow> {
+        std::mem::take(&mut lock(&self.pending).cells)
+            .into_iter()
+            .map(|((account, kind), cell)| UsageRow {
+                account,
+                kind,
+                requests: cell.requests,
+                bytes_in: cell.bytes_in,
+            })
+            .collect()
     }
 
     fn flush_sync(&self) {
@@ -113,7 +105,7 @@ impl UsageBatch {
         let count = rows.len();
         self.log_flush(
             self.database
-                .call("store.usage.flushUsage", &[Value::Array(rows)]),
+                .write(|ctx| store::usage::flush_usage(ctx.db, &rows)),
             count,
         );
     }
@@ -126,13 +118,13 @@ impl UsageBatch {
         let count = rows.len();
         self.log_flush(
             self.database
-                .call_async("store.usage.flushUsage", &[Value::Array(rows)])
+                .write_async(move |ctx| store::usage::flush_usage(ctx.db, &rows))
                 .await,
             count,
         );
     }
 
-    fn log_flush(&self, result: Result<Value>, count: usize) {
+    fn log_flush(&self, result: Result<()>, count: usize) {
         if let Err(cause) = result {
             self.host.log(
                 Level::Warn,
@@ -154,10 +146,7 @@ impl UsageBatch {
     /// size of the databases on disk.
     pub async fn report(&self) -> Result<Value> {
         self.flush().await;
-        let report = self
-            .database
-            .call_async("store.usage.usageReport", &[])
-            .await?;
+        let report = self.database.read_async(store::usage::usage_report).await?;
         let mut object: Map<String, Value> = match report {
             Value::Object(object) => object,
             _ => Map::new(),
@@ -174,8 +163,9 @@ impl UsageBatch {
     pub async fn reset(&self) -> Result<Value> {
         lock(&self.pending).cells.clear();
         self.database
-            .call_async("store.usage.resetUsage", &[])
-            .await
+            .write_async(|ctx| store::usage::reset_usage(ctx.db))
+            .await?;
+        Ok(Value::Null)
     }
 
     /// `closeUsage`: stops the timer and drops what is pending.
@@ -202,6 +192,16 @@ fn database_bytes(data_dir: &Path) -> u64 {
 }
 
 use crate::tasks::lock;
+use kchess_contracts::types::UsageKind;
+
+/// Counts metered network traffic: every service reports its requests and bytes here, and the
+/// [`UsageHost`] adds them to the batch.
+pub fn report(host: &dyn Host, account: &str, kind: UsageKind, requests: u64, bytes: u64) {
+    host.emit(
+        "host:usage",
+        json!({ "account": account, "category": kind, "requests": requests, "bytes": bytes }),
+    );
+}
 
 /// The host the core's services use: `host:usage` events go to the batch, everything else to the
 /// platform host unchanged.

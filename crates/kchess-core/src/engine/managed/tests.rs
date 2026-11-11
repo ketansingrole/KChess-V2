@@ -155,8 +155,9 @@ fn sha256(bytes: &[u8]) -> String {
     format!("sha256:{}", hex(&Sha256::digest(bytes)))
 }
 
-/// A fake UCI engine: answers `uci` with `uciok`, then exits at end of input.
-const FAKE_ENGINE: &str = "#!/bin/sh\nwhile read line; do\n  if [ \"$line\" = uci ]; then echo id name Fake; echo uciok; fi\ndone\n";
+/// A fake UCI engine: answers `uci` with `uciok` and `isready` with `readyok`, then exits at end
+/// of input.
+const FAKE_ENGINE: &str = "#!/bin/sh\nwhile read line; do\n  if [ \"$line\" = uci ]; then echo id name Fake; echo uciok; fi\n  if [ \"$line\" = isready ]; then echo readyok; fi\ndone\n";
 
 /// One archive member.
 enum Member<'a> {
@@ -444,16 +445,12 @@ async fn installs_the_verified_release_and_records_its_version() {
     assert_eq!(mode & 0o777, 0o755);
     assert!(!engine.join(format!("{EXE}.pending")).exists());
     assert_eq!(*hits.lock().unwrap(), ["/release", "/asset"]);
+    // The release check, then the download: one request and its bytes each.
     let usage = host.usage_events();
-    assert_eq!(usage.first().unwrap()["requests"], 1);
-    assert_eq!(usage.last().unwrap()["bytes"], size as u64);
-    assert_eq!(
-        usage
-            .iter()
-            .map(|u| u["bytes"].as_u64().unwrap())
-            .sum::<u64>(),
-        size as u64
-    );
+    assert_eq!(usage.len(), 2);
+    assert!(usage.iter().all(|u| u["requests"] == 1));
+    assert!(usage[0]["bytes"].as_u64().unwrap() > 0);
+    assert_eq!(usage[1]["bytes"], size as u64);
 }
 
 // The release is a Linux archive whose engine is a shell script.
@@ -904,7 +901,7 @@ fn zip_archives_extract_named_files_and_directories() {
     )
     .unwrap();
     let out = root.path().join("out");
-    extract(ArchiveKind::Zip, &archive, &out).unwrap();
+    extract(ArchiveKind::Zip, &archive, &out, None).unwrap();
     assert_eq!(
         std::fs::read(out.join("stockfish/bin/stockfish.exe")).unwrap(),
         b"engine"
@@ -932,7 +929,7 @@ fn zip_archives_refuse_traversal_absolute_paths_and_links() {
     for (index, (bytes, expected)) in cases.iter().enumerate() {
         std::fs::write(&archive, bytes).unwrap();
         let out = root.path().join(format!("out{index}"));
-        let error = extract(ArchiveKind::Zip, &archive, &out).unwrap_err();
+        let error = extract(ArchiveKind::Zip, &archive, &out, None).unwrap_err();
         assert_eq!(error.message, *expected);
     }
     assert!(!root.path().join("escape").exists());
@@ -947,36 +944,7 @@ fn archive_names_select_the_format_case_insensitively() {
     assert_eq!(archive_kind("a.7z"), None);
 }
 
-#[test]
-fn safe_relative_keeps_only_normal_components() {
-    assert_eq!(safe_relative("./a/b").unwrap(), Path::new("a/b"));
-    assert!(safe_relative("../a").is_err());
-    assert!(safe_relative("a/../../b").is_err());
-    assert!(safe_relative("/etc/passwd").is_err());
-    assert!(safe_relative("a\\..\\b").is_err());
-}
-
 // --- Handoff, cancellation and deadlines ---
-
-/// CI regression (Linux): a descriptor still open for writing makes `execve` fail with
-/// `ETXTBSY`, as when a concurrently forked child inherits it. The probe waits it out.
-#[cfg(target_os = "linux")]
-#[tokio::test]
-async fn the_probe_waits_out_a_busy_executable() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join(EXE);
-    let mut writer = std::fs::File::create(&path).unwrap();
-    writer.write_all(FAKE_ENGINE.as_bytes()).unwrap();
-    set_executable(&path).unwrap();
-    let busy = tokio::process::Command::new(&path).spawn().unwrap_err();
-    assert_eq!(busy.kind(), std::io::ErrorKind::ExecutableFileBusy);
-    let release = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        drop(writer);
-    });
-    probe_engine(&path).await.unwrap();
-    release.await.unwrap();
-}
 
 // The release is a Linux archive whose engine is a shell script.
 #[cfg(unix)]
@@ -1063,10 +1031,8 @@ async fn a_cancelled_install_fails_as_an_abort() {
     let (base, _hits) = serve(|_| vec![Route("/release", 200, release("sf_17", vec![]))]).await;
     let host = RecordingHost::default();
     let dir = tempfile::tempdir().unwrap();
-    let (cancel, receiver) = watch::channel(false);
-    cancel.send(true).unwrap();
-    let mut location = location(dir.path(), &base);
-    location.cancel = Some(receiver);
+    let location = location(dir.path(), &base);
+    location.cancel.cancel();
     let error = install_managed_engine(&host, &location).await.unwrap_err();
     assert!(error.aborted);
     assert_eq!(error.message, "This operation was aborted");
