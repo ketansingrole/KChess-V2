@@ -1465,13 +1465,9 @@ pub(crate) fn parse_game(line: &str) -> CoreResult<GameJson> {
 /// Games that ended this long ago have had their chance to be analysed on Lichess.
 const ANALYSIS_SETTLED_MS: i64 = 86_400_000;
 
-/// `isGameInProgress(raw.status)` for a game record.
+/// Whether a game record is still being played, by its `status`.
 fn is_game_in_progress(raw: &Value) -> bool {
-    let status = raw.get("status").cloned().unwrap_or(Value::Null);
-    kchess_domain::records::call("isGameInProgress", &[status])
-        .and_then(Result::ok)
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true)
+    kchess_domain::records::games::is_game_in_progress(raw.get("status"))
 }
 
 /// Lichess's generic 404 becomes a message that names the user.

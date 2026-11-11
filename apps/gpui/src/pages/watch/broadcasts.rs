@@ -3,6 +3,7 @@
 //! move by move, and Analyse.
 
 use kchess_contracts::calls;
+use kchess_domain::training::clock::format_clock;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -22,7 +23,7 @@ use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
 use crate::game::tree::format_eval;
-use crate::game::{rules, view};
+use crate::game::view;
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
@@ -1112,11 +1113,7 @@ impl WatchPage {
             let running = clocks.is_some_and(|clocks| clocks.ticking == Some(color));
             let clock = clocks
                 .and_then(|clocks| clocks.remaining(color))
-                .and_then(|ms| {
-                    rules("formatClock", &[json!(ms)])
-                        .ok()
-                        .and_then(|text| text.as_str().map(str::to_string))
-                });
+                .map(format_clock);
             widgets::player_line(
                 h_flex()
                     .gap(px(8.))

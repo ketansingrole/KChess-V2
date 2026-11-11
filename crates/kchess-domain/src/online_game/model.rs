@@ -11,7 +11,7 @@ use crate::replay::replay_setup;
 use crate::rules::{default_position, lichess_variant, make_fen};
 
 /// The standard start.
-pub const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+use crate::rules::INITIAL_FEN;
 
 use crate::misc::constants::VARIANTS;
 
@@ -57,9 +57,8 @@ pub struct FinishedGame {
     pub days: Option<f64>,
 }
 
-/// `onlineGameState()` plus the two private fields the class kept: the connection epoch and the
-/// request generation (`RequestScope`'s counter). Options are `undefined` in the TypeScript and
-/// `null` on the wire.
+/// The game's state, with the connection epoch and the request generation (a newer request
+/// supersedes every earlier one). Absent options are `null` on the wire.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Model {
@@ -400,7 +399,7 @@ pub fn nullish(v: Option<&Value>) -> Option<&Value> {
     v.filter(|v| !v.is_null())
 }
 
-/// `String(x ?? fallback)` for a string the TypeScript keeps as text.
+/// `String(x ?? fallback)`: any value as text, `fallback` when absent.
 pub fn string_or(v: Option<&Value>, fallback: &str) -> String {
     match nullish(v) {
         Some(v) => js::to_string(Some(v)),
@@ -418,9 +417,5 @@ pub fn number_or_zero(v: Option<&Value>) -> f64 {
 
 /// `isGameInProgress(status ?? null)`: the records rule, reused.
 pub fn is_running(status: Option<&Value>) -> bool {
-    let status = nullish(status).cloned().unwrap_or(Value::Null);
-    matches!(
-        records::call("isGameInProgress", &[status]),
-        Some(Ok(Value::Bool(true)))
-    )
+    records::games::is_game_in_progress(nullish(status))
 }

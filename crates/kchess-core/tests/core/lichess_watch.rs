@@ -451,32 +451,25 @@ async fn broadcast_search_lists_recent_official_broadcasts() {
 #[test]
 fn validates_watch_targets_and_broadcast_queries() {
     let channels = json!(["rapid"]);
-    let sidecar = json!([]);
-    let target = |value: Value| {
-        misc::call(
-            "assertWatchTarget",
-            &[sidecar.clone(), value, channels.clone()],
-        )
-    };
+    let target =
+        |value: Value| misc::validate_values("assertWatchTarget", &[value, channels.clone()]);
     assert_eq!(
-        target(json!({ "channel": "rapid" })).unwrap().unwrap(),
+        target(json!({ "channel": "rapid" })).unwrap(),
         json!({ "channel": "rapid" })
     );
     assert_eq!(
-        target(json!({ "gameId": "AbCd1234" })).unwrap().unwrap(),
+        target(json!({ "gameId": "AbCd1234" })).unwrap(),
         json!({ "gameId": "AbCd1234" })
     );
-    assert!(target(json!({ "channel": "../x" })).unwrap().is_err());
+    assert!(target(json!({ "channel": "../x" })).is_err());
     let query = |value: Option<Value>| {
-        let mut args = vec![sidecar.clone()];
-        args.extend(value);
-        misc::call("assertBroadcastQuery", &args).unwrap()
+        let args: Vec<Value> = value.into_iter().collect();
+        misc::validate_values("assertBroadcastQuery", &args)
     };
     assert!(query(None).is_ok());
     assert_eq!(query(Some(json!(" Open "))).unwrap(), json!("Open"));
     assert!(query(Some(json!("x".repeat(101)))).is_err());
-    let session =
-        |value: Value| misc::call("assertWatchSession", &[sidecar.clone(), value]).unwrap();
+    let session = |value: Value| misc::validate_values("assertWatchSession", &[value]);
     assert_eq!(session(json!(3)).unwrap(), json!(3));
     assert!(session(json!(0)).is_err());
     assert!(session(json!("3")).is_err());

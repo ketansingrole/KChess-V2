@@ -129,9 +129,7 @@ impl GameOptions {
         });
         // A variant game from another position (the analysis board's "Play from here") opens
         // with that position.
-        let default_fen = crate::game::rules("defaultFen", &[json!(variant)])
-            .ok()
-            .and_then(|fen| fen.as_str().map(str::to_string));
+        let default_fen = kchess_domain::rules::default_fen(variant);
         let variant_fen = cx.new(|cx| {
             let label = fairy_variants()
                 .nth(variant_row)
@@ -325,10 +323,7 @@ impl GameOptions {
                     .variant_text(cx)
                     .map_or("crazyhouse", |text| text.key.as_str());
                 let fen = self.variant_fen(cx).unwrap_or_else(|| {
-                    crate::game::rules("defaultFen", &[json!(variant)])
-                        .ok()
-                        .and_then(|fen| fen.as_str().map(str::to_string))
-                        .unwrap_or_default()
+                    kchess_domain::rules::default_fen(variant).unwrap_or_default()
                 });
                 json!({ "variant": variant, "fen": fen })
             }

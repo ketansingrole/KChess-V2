@@ -17,6 +17,7 @@ use crate::host::{Host, Level};
 use kchess_domain::js;
 use kchess_domain::library::{MAX_ARCHIVED_GAMES, MAX_MISTAKES};
 use kchess_domain::misc::MAX_DOCUMENT;
+use kchess_domain::misc::value::J;
 use kchess_domain::training::repetition;
 
 pub(crate) const STUDY_LIBRARY_MAX_TEXT: usize = 1_800_000;
@@ -80,7 +81,7 @@ pub fn remove_archived_game(db: &Connection, id: &str) -> Result<()> {
 
 /// Saves a page's unfinished session (`value`, already validated for `kind`).
 pub fn save_session(db: &Connection, kind: &str, value: Value) -> Result<Value> {
-    let encoded = misc("encodeSession", vec![json!(kind), value])?;
+    let encoded = encode_session(kind, &value);
     write_document(
         db,
         &format!("session:{kind}"),
@@ -153,13 +154,9 @@ pub fn object<'a>(value: &'a Value, name: &str) -> Result<&'a Map<String, Value>
 
 /// A `kchess_domain` document decoder or encoder by name. Values are JSON, so the lossless
 /// sidecar is empty.
-pub fn misc(method: &str, args: Vec<Value>) -> Result<Value> {
-    let mut full = vec![json!([])];
-    full.extend(args);
-    match kchess_domain::misc::call(method, &full) {
-        Some(result) => result.map_err(CoreError::new),
-        None => Err(CoreError::new(format!("Unknown core method {method}."))),
-    }
+/// A session of `kind` as stored, with its kind's version.
+pub(crate) fn encode_session(kind: &str, session: &Value) -> Value {
+    kchess_domain::misc::documents::encode_session(kind, &J::from(session)).into_value()
 }
 
 /* ── Split modules: the codec, documents, studies and the legacy import live beside this
@@ -353,12 +350,11 @@ fn line_review_key(fen: &str, moves: &[String]) -> Option<String> {
     if positions.len() < 2 {
         return None;
     }
-    let key = kchess_domain::api::call_value(
-        "reviewKey",
-        &[json!(start.fen), json!(moves[..positions.len() - 1])],
-    )
-    .ok()?;
-    key.as_str().map(str::to_string)
+    Some(kchess_domain::records::review::review_key(
+        &start.fen,
+        &moves[..positions.len() - 1],
+        None,
+    ))
 }
 
 /// `mistakeGames()`: each review with positions in practice, most recently played first, with
@@ -818,7 +814,10 @@ mod tests {
             db.execute("INSERT INTO documents VALUES ('studies', ?1, 1)", [body])
                 .expect("seed");
             assert!(read_studies(&db).is_err());
-            let session = misc("encodeSession", vec![json!("analysis"), json!({"pgn":"1. d4 *","path":"","orientation":"white","study":"","chapter":""})]).expect("session");
+            let session = encode_session(
+                "analysis",
+                &json!({"pgn":"1. d4 *","path":"","orientation":"white","study":"","chapter":""}),
+            );
             write_document(&db, "session:analysis", &session, "").expect("save session");
             let snapshot =
                 super::library(&Quiet, &db, 1.0).expect("other documents remain readable");
@@ -1034,11 +1033,9 @@ mod tests {
 
     /// A complete review of `BLUNDER`: level until Black's sixth move hands White mate in one.
     fn store_blunder_review(db: &Connection, source: &str, depth: u32) -> String {
-        let key: Value = serde_json::from_str(
-            &kchess_domain::api::call("reviewKey", &json!([START, BLUNDER]).to_string())
-                .expect("key"),
-        )
-        .expect("key json");
+        let key = json!(kchess_domain::records::review::review_key(
+            START, &BLUNDER, None
+        ));
         let mut evals: Vec<Value> = (0..5)
             .map(|_| json!({ "cp": 30, "depth": depth, "best": "a2a3" }))
             .collect();
@@ -1107,11 +1104,11 @@ mod tests {
         let db = drills_db();
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
         let moves = json!(["e2e4", "d7d5", "e4d5", "d8d5", "g1f3"]);
-        let key: Value = serde_json::from_str(
-            &kchess_domain::api::call("reviewKey", &json!([fen, moves, "crazyhouse"]).to_string())
-                .expect("key"),
-        )
-        .expect("key json");
+        let key = json!(kchess_domain::records::review::review_key(
+            fen,
+            &string_list(Some(&moves)),
+            Some("crazyhouse")
+        ));
         let mut evals: Vec<Value> = (0..4)
             .map(|_| json!({ "cp": 30, "depth": 20, "best": "a2a3" }))
             .collect();

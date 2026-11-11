@@ -609,7 +609,6 @@ pub fn init(cx: &mut App) {
     cx.set_global(VoiceHandle(voice));
 }
 
-/// A rules grammar (`MOVE_GRAMMAR`, `GAME_GRAMMAR`, …).
 /// A phrase's place in the voice history, once saved (none when Settings keep no history).
 pub type Entry = Shared<Task<Option<i64>>>;
 
@@ -713,30 +712,16 @@ pub fn amend(entry: Entry, update: Value, cx: &App) {
         .detach();
 }
 
-/// A voice grammar by name. Pages read it on every render and it never changes, so each one is
-/// built by the rules once and copied from then on.
-pub fn grammar(name: &str) -> Vec<String> {
-    thread_local! {
-        static GRAMMARS: std::cell::RefCell<std::collections::HashMap<String, Vec<String>>> =
-            std::cell::RefCell::default();
-    }
-    if let Some(known) = GRAMMARS.with_borrow(|grammars| grammars.get(name).cloned()) {
-        return known;
-    }
-    let list: Vec<String> = crate::game::rules(name, &[])
-        .ok()
-        .and_then(|list| serde_json::from_value(list).ok())
-        .unwrap_or_default();
-    // An unreadable answer is tried again next time rather than kept.
-    if !list.is_empty() {
-        GRAMMARS.with_borrow_mut(|grammars| grammars.insert(name.to_string(), list.clone()));
-    }
-    list
+pub use kchess_domain::voice::Grammar;
+
+/// The words a voice grammar listens for.
+pub fn grammar(which: Grammar) -> Vec<String> {
+    kchess_domain::voice::grammar(which).to_vec()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ErrorKind, grammar, handle, heard_of, model, progress_of};
+    use super::{ErrorKind, Grammar, grammar, handle, heard_of, model, progress_of};
     use crate::e2e::Harness;
     use kchess_contracts::CoreError;
     use serde_json::{Value, json};
@@ -823,8 +808,8 @@ mod tests {
 
     #[test]
     fn the_rules_supply_the_grammars() {
-        let moves = grammar("MOVE_GRAMMAR");
+        let moves = grammar(Grammar::Move);
         assert!(moves.contains(&"e four".to_string()) && moves.contains(&"knight".to_string()));
-        assert!(grammar("GAME_GRAMMAR").contains(&"take back".to_string()));
+        assert!(grammar(Grammar::Game).contains(&"take back".to_string()));
     }
 }

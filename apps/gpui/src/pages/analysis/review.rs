@@ -17,7 +17,6 @@ use shakmaty::Color;
 use super::{AnalysisPage, TOOL, stop_analysis};
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::rules;
 use crate::game::tree::{moves_of, path_of};
 use crate::reviews::ReviewHandle;
 use crate::theme::{Palette, judgment_color, radii};
@@ -103,14 +102,13 @@ impl AnalysisPage {
         moves_of(&self.root.line_end(""))
     }
 
-    /// `reviewKey`: the same moves from the same start (and in the same variant) share one review.
+    /// The same moves from the same start (and in the same variant) share one review.
     pub fn mainline_key(&self) -> String {
-        let mut args = vec![json!(self.root.fen), json!(self.mainline())];
-        args.extend(self.fairy_variant().map(|variant| json!(variant)));
-        rules("reviewKey", &args)
-            .ok()
-            .and_then(|key| key.as_str().map(str::to_string))
-            .unwrap_or_default()
+        kchess_domain::records::review::review_key(
+            &self.root.fen,
+            &self.mainline(),
+            self.fairy_variant(),
+        )
     }
 
     pub(super) fn review(&self, cx: &App) -> Option<Value> {
@@ -207,12 +205,8 @@ impl AnalysisPage {
         {
             return Some(analysed.clone());
         }
-        let analysis = rules("analyseReview", std::slice::from_ref(&review)).ok()?;
-        if analysis.is_null() {
-            return None;
-        }
-        let classes: Vec<Option<String>> = rules("reviewClassifications", &[review])
-            .ok()
+        let analysis = kchess_domain::review::analyse_review(&review)?;
+        let classes: Vec<Option<String>> = kchess_domain::review::review_classifications(&review)
             .and_then(|classes| serde_json::from_value(classes).ok())
             .unwrap_or_default();
         *memo = Some((key, updated, (analysis.clone(), classes.clone())));
@@ -566,16 +560,10 @@ impl AnalysisPage {
     ) -> bool {
         let solution: Vec<String> =
             serde_json::from_value(puzzle["solution"].clone()).unwrap_or_default();
-        let Ok(Value::String(pgn)) = crate::game::rules(
-            "setupPgn",
-            &[
-                serde_json::json!({ "variant": "standard", "fen": puzzle["fen"] }),
-                serde_json::json!(solution),
-                serde_json::json!({}),
-            ],
-        ) else {
+        let Some(fen) = puzzle["fen"].as_str() else {
             return false;
         };
+        let pgn = kchess_domain::pgn::setup_pgn("standard", fen, &solution, &[]);
         if !self.load_pgn(&pgn, cx) {
             return false;
         }
@@ -673,13 +661,11 @@ impl AnalysisPage {
             return false;
         }
         self.tried_done.push(path.to_string());
-        let judgment = rules("analyseReview", std::slice::from_ref(review))
-            .ok()
-            .and_then(|analysis| {
-                analysis["moves"][0]["judgment"]
-                    .as_str()
-                    .map(str::to_string)
-            });
+        let judgment = kchess_domain::review::analyse_review(review).and_then(|analysis| {
+            analysis["moves"][0]["judgment"]
+                .as_str()
+                .map(str::to_string)
+        });
         // The board still holds this puzzle and the variation was not deleted.
         let held =
             self.root.fen == start && self.root.nodes_along(path).len() == moves_of(path).len() + 1;
@@ -710,16 +696,14 @@ impl AnalysisPage {
                     headers.insert(header.into(), json!(name));
                 }
             }
-            let pgn = rules(
-                "setupPgn",
-                &[
-                    json!({ "variant": "standard", "fen": game["fen"] }),
-                    game["moves"].clone(),
-                    Value::Object(headers),
-                ],
-            )
-            .ok()
-            .and_then(|pgn| pgn.as_str().map(str::to_string));
+            let moves: Option<Vec<String>> = serde_json::from_value(game["moves"].clone()).ok();
+            let pgn = moves.and_then(|moves| {
+                crate::game::setup_pgn(
+                    &json!({ "variant": "standard", "fen": game["fen"] }),
+                    &moves,
+                    &Value::Object(headers),
+                )
+            });
             let Some(pgn) = pgn else {
                 return false;
             };
@@ -1000,7 +984,7 @@ impl AnalysisPage {
         if !matches!(judgment, "inaccuracy" | "mistake" | "blunder") {
             return None;
         }
-        let moment = rules("reviewMoment", &[review, json!(index)]).ok()?;
+        let moment = kchess_domain::coach::review_moment(&review, index)?;
         let reason = moment["reason"].as_str().map(str::to_string);
         Some(
             v_flex()
@@ -1161,7 +1145,7 @@ impl AnalysisPage {
                         .into_any_element(),
                 )
             }));
-        let phases = rules("reviewPhases", std::slice::from_ref(review)).unwrap_or(Value::Null);
+        let phases = kchess_domain::review::review_phases(review).unwrap_or(Value::Null);
         let phase_rows: Vec<AnyElement> = [
             ("opening", "Opening"),
             ("middlegame", "Middlegame"),
@@ -1359,8 +1343,7 @@ pub(super) fn eval_chart(
 #[cfg(test)]
 mod tests {
     use super::tried_nag;
-    use crate::game::rules;
-    use serde_json::json;
+    use kchess_domain::trainer::analysis_tree::move_glyph;
 
     /// A tried move is labelled as the app labels it (`NAGS`), and
     /// the glyph the rules give that NAG is the one the move list shows.
@@ -1368,8 +1351,8 @@ mod tests {
     fn a_judged_tried_move_gets_its_glyph() {
         for (judgment, glyph) in [("inaccuracy", "?!"), ("mistake", "?"), ("blunder", "??")] {
             let nag = tried_nag(judgment).unwrap();
-            let shown = rules("moveGlyph", &[json!([nag])]).unwrap();
-            assert_eq!(shown["glyph"], json!(glyph), "{judgment}");
+            let shown = move_glyph(&[nag as f64]).unwrap();
+            assert_eq!(shown.glyph, glyph, "{judgment}");
         }
         assert_eq!(tried_nag("good"), None);
     }

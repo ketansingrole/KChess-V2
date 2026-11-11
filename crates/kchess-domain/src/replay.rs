@@ -402,8 +402,10 @@ mod variant_tests {
             replay_positions_in("kingOfTheHill", hill, &[] as &[&str])[0].end,
             Some("won")
         );
-        let score = crate::api::call("endEval", r#"["won", "black"]"#).unwrap();
-        assert_eq!(score, r#"{"mate":-1}"#);
+        assert_eq!(
+            crate::records::review::end_eval("won", "black"),
+            crate::records::review::Score::Mate(-1.0)
+        );
         // A drop replays in Crazyhouse and not in standard chess.
         let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[P] w KQkq - 0 1";
         assert_eq!(replay_positions_in("crazyhouse", start, &["P@e4"]).len(), 2);

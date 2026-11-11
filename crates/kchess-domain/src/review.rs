@@ -791,7 +791,7 @@ pub fn san_to_uci<S: AsRef<str>>(fen: &str, sans: &[S]) -> Vec<String> {
     moves
 }
 
-const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+use crate::rules::INITIAL_FEN;
 
 /// `/\[FEN "([^"]+)"\]/.exec(pgn)?.[1]`
 fn fen_tag(pgn: &str) -> Option<&str> {

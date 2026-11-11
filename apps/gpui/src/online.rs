@@ -1,4 +1,4 @@
-//! The live Lichess game, app-wide (over `OnlineGame`): every decision is the rules' (`onlineGame*`); this
+//! The live Lichess game, app-wide: every decision is the rules' (`kchess_domain::online_game`); this
 //! keeps their state, makes the calls they ask for, and runs their effects (clock, sounds,
 //! notices). Beside it: the challenges, the lobby stream and the games in progress.
 //! Engine help stays off while a game is live or being looked for, and
@@ -11,10 +11,12 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use kchess_contracts::Level;
+use kchess_domain::online_game;
+use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
+use kchess_domain::training::clock::{ClockState, SetData, format_clock};
 use serde_json::{Value, json};
 
 use crate::core::{AppCore, CoreEvent};
-use crate::game::rules;
 
 /// Clocks and the low-time alert are read this often during a game.
 const TICK: Duration = Duration::from_millis(250);
@@ -83,10 +85,10 @@ pub fn notice(cx: &mut App, text: impl Into<gpui_kit::SharedString>) {
 
 pub struct OnlineState {
     pub phase: Phase,
-    /// The rules' state: `onlineGameState()` and the class's private fields.
+    /// The rules' state of the game.
     model: Value,
     /// `ClockState`.
-    clock: Value,
+    clock: ClockState,
     /// The position looked at while reviewing; `None` follows the game.
     pub view_ply: Option<usize>,
     pub flipped: bool,
@@ -192,8 +194,6 @@ impl OnlineState {
         cx.notify();
     }
 
-    /// `onlineGameView`: the live position, the SAN history, the moves this side made, whether
-    /// it is a correspondence game, and the rematch's options.
     /// A real-time game of the account's is on, its clock running on Lichess whether or not
     /// KChess stays open (`beforeunload` on lichess.org asks first too).
     pub fn live_game_on(&self) -> bool {
@@ -205,8 +205,13 @@ impl OnlineState {
         on && !self.correspondence()
     }
 
+    /// The live position, the SAN history, the moves this side made, whether it is a
+    /// correspondence game, and the rematch's options.
     pub fn view(&self) -> Value {
-        rules("onlineGameView", std::slice::from_ref(&self.model)).unwrap_or(Value::Null)
+        online_game::view(std::slice::from_ref(&self.model)).unwrap_or_else(|error| {
+            log(&format!("the online game's view failed: {error}"));
+            Value::Null
+        })
     }
 
     pub fn correspondence(&self) -> bool {
@@ -215,24 +220,15 @@ impl OnlineState {
 
     /// Milliseconds left on `color`'s clock.
     pub fn remaining(&self, color: &str) -> f64 {
-        rules(
-            "clockRemaining",
-            &[self.clock.clone(), json!(color), json!(now())],
-        )
-        .ok()
-        .and_then(|value| value.as_f64())
-        .unwrap_or_default()
+        self.clock.remaining(color, now())
     }
 
     pub fn clock_running(&self) -> Option<&str> {
-        self.clock["ticking"].as_str()
+        self.clock.ticking.as_deref()
     }
 
     pub fn clock_text(&self, color: &str) -> String {
-        rules("formatClock", &[json!(self.remaining(color))])
-            .ok()
-            .and_then(|text| text.as_str().map(str::to_string))
-            .unwrap_or_default()
+        format_clock(self.remaining(color))
     }
 
     fn context(cx: &App) -> Value {
@@ -249,7 +245,7 @@ impl OnlineState {
     /// Asks the rules for the next state, keeps it, then runs its effects in order.
     fn transition(
         &mut self,
-        method: &str,
+        step: fn(&[Value]) -> online_game::Out,
         args: Vec<Value>,
         cause: Option<&str>,
         cx: &mut Context<Self>,
@@ -257,10 +253,10 @@ impl OnlineState {
         let mut all = vec![self.model.clone()];
         all.extend(args);
         all.push(Self::context(cx));
-        let next = match rules(method, &all) {
+        let next = match step(&all) {
             Ok(next) => next,
             Err(error) => {
-                log(&format!("{method} failed: {error}"));
+                log(&format!("an online game transition failed: {error}"));
                 return Value::Null;
             }
         };
@@ -354,25 +350,24 @@ impl OnlineState {
                     notice(cx, cause.to_string());
                 }
             }
-            "clockPause" => {
-                if let Ok(clock) = rules("clockPause", &[self.clock.clone(), json!(now())]) {
-                    self.clock = clock;
+            "clockPause" => self.clock.pause(now()),
+            "clockSet" => match (effect["white"].as_f64(), effect["black"].as_f64()) {
+                (Some(white), Some(black)) => {
+                    let data = SetData {
+                        white,
+                        black,
+                        ticking: effect["ticking"].as_str().map(str::to_string),
+                        initial_seconds: effect["initialSeconds"].as_f64(),
+                        delay_centis: None,
+                    };
+                    self.clock.set(&data, now());
                 }
-            }
-            "clockSet" => {
-                let mut data = json!({
-                    "white": effect["white"],
-                    "black": effect["black"],
-                });
-                for key in ["ticking", "initialSeconds"] {
-                    if !effect[key].is_null() {
-                        data[key] = effect[key].clone();
-                    }
-                }
-                if let Ok(clock) = rules("clockSet", &[self.clock.clone(), data, json!(now())]) {
-                    self.clock = clock;
-                }
-            }
+                _ => crate::log::write(
+                    Level::Warn,
+                    "online",
+                    &format!("A clock without both times: {effect}"),
+                ),
+            },
             "loadChat" => {
                 let id = effect["id"].clone();
                 self.perform("chat", id, cx).detach();
@@ -389,7 +384,7 @@ impl OnlineState {
         input: Value,
         cx: &mut Context<Self>,
     ) -> Task<Value> {
-        let begun = self.transition("onlineGameBegin", vec![json!(operation), input], None, cx);
+        let begun = self.transition(online_game::begin, vec![json!(operation), input], None, cx);
         let Some(method) = begun["call"]["method"].as_str() else {
             return Task::ready(begun["ret"].clone());
         };
@@ -407,7 +402,7 @@ impl OnlineState {
                     Err(error) => (json!({ "ok": false }), Some(error.message)),
                 };
                 let settled = this.transition(
-                    "onlineGameSettle",
+                    online_game::settle,
                     vec![pending, outcome],
                     cause.as_deref(),
                     cx,
@@ -631,25 +626,19 @@ impl OnlineState {
         }
         if self.model["onlineClockConfig"].is_object()
             && let Some(turn) = self.clock_running().map(str::to_string)
-            && let Ok(alert) = rules(
-                "clockLowTimeAlert",
-                &[self.clock.clone(), json!(turn), json!(now())],
-            )
+            && self.clock.low_time_alert(&turn, now())
         {
-            self.clock = alert["state"].clone();
-            if alert["result"] == json!(true) {
-                crate::sound::play(crate::sound::Sound::LowTime, cx);
-                let mine = self.model["onlineColor"] == json!(turn);
-                if mine {
-                    let left = self.clock_text(&turn);
-                    let opponent = self.model["onlineOpponent"].as_str().unwrap_or_default();
-                    crate::notifications::desktop(
-                        "lowTime",
-                        "Low on time",
-                        &format!("{left} left against {opponent}"),
-                        cx,
-                    );
-                }
+            crate::sound::play(crate::sound::Sound::LowTime, cx);
+            let mine = self.model["onlineColor"] == json!(turn);
+            if mine {
+                let left = self.clock_text(&turn);
+                let opponent = self.model["onlineOpponent"].as_str().unwrap_or_default();
+                crate::notifications::desktop(
+                    "lowTime",
+                    "Low on time",
+                    &format!("{left} left against {opponent}"),
+                    cx,
+                );
             }
         }
         // Redraw only when something the game shows by the clock changes: a clock face (each
@@ -918,14 +907,14 @@ impl OnlineState {
                 let starts = event.payload["type"] == json!("gameStart")
                     && event.payload["game"]["speed"] != json!("correspondence")
                     && event.payload["game"]["compat"]["board"] != json!(false);
-                self.transition("onlineGameEvent", vec![event.payload.clone()], None, cx);
+                self.transition(online_game::event, vec![event.payload.clone()], None, cx);
                 // The event stream announces a game whose board stream already failed for good
                 // (on launch the two race): the failure stands, as the core opens no new stream.
                 if event.payload["type"] == json!("gameStart")
                     && let Some(failed) = self.failed_state.clone()
                     && failed["gameId"] == event.payload["game"]["gameId"]
                 {
-                    self.transition("onlineGameConnection", vec![failed], None, cx);
+                    self.transition(online_game::connection, vec![failed], None, cx);
                 }
                 // A pairing or an accepted challenge takes you to the board, as Lichess does.
                 if starts {
@@ -951,7 +940,7 @@ impl OnlineState {
                     self.failure = kind;
                 }
                 self.transition(
-                    "onlineGameConnection",
+                    online_game::connection,
                     vec![event.payload.clone()],
                     None,
                     cx,
@@ -1028,18 +1017,15 @@ pub fn handle(cx: &App) -> Entity<OnlineState> {
 /// is connected, else the first connected one.
 pub fn active_account(accounts: &[Value], cx: &App) -> Option<String> {
     let preferred = crate::prefs::get::<String>(cx, crate::accounts::ONLINE_ACCOUNT, String::new());
-    let listed: Vec<Value> = accounts
+    let listed: Vec<ListedAccount> = accounts
         .iter()
-        .map(
-            |account| json!({ "username": account["username"], "connected": account["connected"] }),
-        )
+        .map(|account| ListedAccount {
+            username: account["username"].as_str(),
+            connected: account["connected"].as_bool().unwrap_or(false),
+        })
         .collect();
-    let index = crate::game::rules("connectedAccountIndex", &[json!(listed), json!(preferred)])
-        .ok()
-        .filter(|index| !index.is_null())?;
-    accounts.get(crate::game::whole(&index) as usize)?["username"]
-        .as_str()
-        .map(str::to_string)
+    let index = connected_account_index(&listed, Some(&preferred))?;
+    listed[index].username.map(str::to_string)
 }
 
 /// Which connected account plays (`setOnlineAccount`).
@@ -1052,7 +1038,7 @@ pub fn init(cx: &mut App) {
         let mut state = OnlineState {
             phase: Phase::Checking,
             model: kchess_domain::online_game::idle_state(),
-            clock: rules("clockInitial", &[]).unwrap_or(Value::Null),
+            clock: ClockState::initial(),
             view_ply: None,
             flipped: false,
             form: Form::default(),
@@ -1078,7 +1064,7 @@ pub fn init(cx: &mut App) {
             _ongoing_poll: None,
             resumes: 0,
         };
-        state.transition("onlineGameChecking", Vec::new(), None, cx);
+        state.transition(online_game::checking, Vec::new(), None, cx);
         state
     });
     cx.set_global(OnlineHandle(state.clone()));
@@ -1110,7 +1096,7 @@ pub fn init(cx: &mut App) {
                 let phase = state.model["onlinePhase"].as_str().unwrap_or_default();
                 if matches!(phase, "playing" | "seeking" | "disconnected") {
                     state.phase = Phase::Checking;
-                    state.transition("onlineGameChecking", Vec::new(), None, cx);
+                    state.transition(online_game::checking, Vec::new(), None, cx);
                 }
             });
             resume(state.clone(), cx);
@@ -1130,7 +1116,7 @@ pub fn account_connected(cx: &mut App) {
         // cut the check short, and the check's end put the page back to its form while Lichess
         // still held the seek.
         state.update(cx, |state, cx| {
-            state.transition("onlineGameChecking", Vec::new(), None, cx);
+            state.transition(online_game::checking, Vec::new(), None, cx);
         });
         resume_quietly(state, true, cx);
     }

@@ -17,8 +17,6 @@ use crate::training::openings::opening_at;
 /// The suffix of a Chess.com player's account.
 pub const ACCOUNT_SUFFIX: &str = "@chess.com";
 
-const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
 /// `^[a-zA-Z0-9_-]{3,25}$`: what Chess.com accepts as a name.
 pub fn is_username(name: &str) -> bool {
     (3..=25).contains(&name.len())
@@ -188,7 +186,7 @@ pub fn game_row(username: &str, game: &Value) -> Option<Value> {
         variant
     };
     let sans = main_line(&parsed);
-    let start = parsed.header("FEN").unwrap_or(INITIAL_FEN);
+    let start = parsed.header("FEN").unwrap_or(crate::rules::INITIAL_FEN);
     let opening = (variant == "standard")
         .then(|| opening(start, &sans))
         .flatten();

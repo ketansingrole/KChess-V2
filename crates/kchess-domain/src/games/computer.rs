@@ -28,7 +28,8 @@ pub struct State {
     pub epoch: u64,
 }
 
-/// The private fields the TypeScript class kept beside its state.
+/// What the host keeps beside the state: when the turn began, whether the engine may play, and
+/// whether the game was closed (a closed game ignores every input).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Runtime {
@@ -422,19 +423,6 @@ impl Game {
         Ok(())
     }
 
-    fn dispose(&mut self) {
-        if self.rt.disposed {
-            return;
-        }
-        self.rt.disposed = true;
-        if self.state.thinking {
-            self.cancel();
-        } else {
-            self.state.epoch += 1;
-            self.wrote("epoch");
-        }
-    }
-
     /// `availabilityChanged()`: freeze the clocks and cancel the engine when assistance stops.
     fn availability(&mut self, reads: &mut Reads) -> Flow<()> {
         let permitted = reads.allowed()?;
@@ -629,13 +617,6 @@ pub fn takeback(args: &[Value]) -> Result<Value, String> {
 pub fn resign(args: &[Value]) -> Result<Value, String> {
     Game::step(args, |game, _, _| {
         game.resign()?;
-        Ok(Value::Null)
-    })
-}
-
-pub fn dispose(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, _, _| {
-        game.dispose();
         Ok(Value::Null)
     })
 }

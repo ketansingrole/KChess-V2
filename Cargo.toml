@@ -61,7 +61,6 @@ shakmaty = { version = "0.30", features = ["variant"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "unbounded_depth", "float_roundtrip"] }
 memchr = "2"
-thiserror = "2"
 
 # Development and test builds: dependencies optimized (the app's end-to-end tests and
 # `cargo xtask app` run several times faster; they compile once), line tables only for

@@ -17,6 +17,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_domain::records::studies::StudySummary;
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -44,9 +45,10 @@ const CARD_GAP: Pixels = px(16.);
 /// "Edited 2 min ago" is redrawn this often.
 const CLOCK: Duration = Duration::from_secs(60);
 
-/// What a study's card shows of it (`summarizeStudy`): its final position, players and event.
-fn summary(pgn: &str) -> Value {
-    crate::game::rules("summarizeStudy", &[json!(pgn)]).unwrap_or(Value::Null)
+/// What a study's card shows of it: its final position, players and event; none for a PGN that
+/// cannot be imported.
+fn summary(pgn: &str) -> Option<StudySummary> {
+    kchess_domain::records::studies::summarize_study(pgn)
 }
 
 /// The rows' heights as laid out at one width of card: at another, a card's text wraps
@@ -190,21 +192,19 @@ const VARIANT_IMPORT: &str = "A chapter is in a variant KChess doesn't play";
 
 /// An import's chapters (`pgnGames`): each game named by its `ChapterName`, or numbered.
 fn import_chapters(text: &str) -> Result<Vec<(String, String)>, &'static str> {
-    let games = crate::game::rules("pgnGames", &[json!(text)]).map_err(|_| INVALID_IMPORT)?;
-    let chapters: Vec<(String, String)> = games
-        .as_array()
-        .ok_or(INVALID_IMPORT)?
-        .iter()
+    let chapters: Vec<(String, String)> = kchess_domain::position::pgn_games(text)
+        .into_iter()
         .enumerate()
         .map(|(index, game)| {
-            let name = game["headers"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|pair| pair[0] == json!("ChapterName"))
-                .and_then(|pair| pair[1].as_str())
-                .map_or_else(|| format!("Chapter {}", index + 1), str::to_string);
-            (name, game["pgn"].as_str().unwrap_or_default().to_string())
+            let name = game
+                .headers
+                .iter()
+                .find(|(name, _)| name == "ChapterName")
+                .map_or_else(
+                    || format!("Chapter {}", index + 1),
+                    |(_, value)| value.clone(),
+                );
+            (name, game.pgn)
         })
         .collect();
     // A game read under rules other than its own would show positions it never had.
@@ -259,7 +259,7 @@ pub struct StudiesPage {
     row_heights: std::rc::Rc<std::cell::RefCell<RowHeights>>,
     /// Each listed study's summary by its PGN: reading it parses the study and plays it out, and
     /// every frame of the page asks for each study's twice.
-    summaries: std::cell::RefCell<HashMap<String, Value>>,
+    summaries: std::cell::RefCell<HashMap<String, Option<StudySummary>>>,
     area: Measured,
     focus: FocusHandle,
     _clock: Task<()>,
@@ -857,8 +857,8 @@ impl StudiesPage {
         kept
     }
 
-    /// A study's summary (`summarizeStudy`), kept while the study is listed.
-    fn summary(&self, pgn: &str) -> Value {
+    /// A study's summary, kept while the study is listed.
+    fn summary(&self, pgn: &str) -> Option<StudySummary> {
         if let Some(kept) = self.summaries.borrow().get(pgn) {
             return kept.clone();
         }
@@ -883,8 +883,8 @@ impl StudiesPage {
         let listed: std::collections::HashSet<String> = studies
             .iter()
             .filter_map(|study| {
-                let summary = self.summary(study["pgn"].as_str().unwrap_or_default());
-                summary["fen"].as_str().map(str::to_string)
+                self.summary(study["pgn"].as_str().unwrap_or_default())
+                    .map(|summary| summary.fen)
             })
             .collect();
         self.previews.retain(|fen, _| listed.contains(fen));
@@ -910,11 +910,15 @@ impl StudiesPage {
                     let id = study["id"].as_str().unwrap_or_default().to_string();
                     let name = study["name"].as_str().unwrap_or_default().to_string();
                     let summary = self.summary(study["pgn"].as_str().unwrap_or_default());
-                    let board = summary["fen"]
-                        .as_str()
-                        .map(|fen| self.preview(fen, cx).into());
-                    let event = summary["event"].as_str().filter(|event| *event != name);
-                    let description = [summary["players"].as_str(), event]
+                    let board = summary
+                        .as_ref()
+                        .map(|summary| self.preview(&summary.fen, cx).into());
+                    let event = summary
+                        .as_ref()
+                        .map(|summary| summary.event.as_str())
+                        .filter(|event| *event != name);
+                    let players = summary.as_ref().map(|summary| summary.players.as_str());
+                    let description = [players, event]
                         .into_iter()
                         .flatten()
                         .filter(|part| !part.is_empty())
@@ -1095,8 +1099,12 @@ impl StudiesPage {
                 let text = format!(
                     "{} {} {}",
                     study["name"].as_str().unwrap_or_default(),
-                    summary["players"].as_str().unwrap_or_default(),
-                    summary["event"].as_str().unwrap_or_default()
+                    summary
+                        .as_ref()
+                        .map_or("", |summary| summary.players.as_str()),
+                    summary
+                        .as_ref()
+                        .map_or("", |summary| summary.event.as_str())
                 )
                 .to_lowercase();
                 words.iter().all(|word| text.contains(word))

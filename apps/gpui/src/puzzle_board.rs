@@ -427,7 +427,7 @@ impl PuzzleBoard {
             self.decide(false, cx);
             if !self.retry {
                 if let Some(board) = &mut self.on_board {
-                    board.state["status"] = json!("failed");
+                    board.state.status = "failed".into();
                 }
                 cx.emit(PuzzleBoardEvent::Done);
             }
@@ -558,7 +558,7 @@ impl PuzzleBoard {
         self.voice.sync(
             &context,
             None,
-            crate::voice::grammar("MOVE_GRAMMAR"),
+            crate::voice::grammar(crate::voice::Grammar::Move),
             playing,
             cx,
         );
@@ -647,7 +647,7 @@ impl Render for PuzzleBoard {
                 hint: "Say “E four” or “Knight F three”",
                 active: playing,
                 listening: playing,
-                grammar: crate::voice::grammar("MOVE_GRAMMAR"),
+                grammar: crate::voice::grammar(crate::voice::Grammar::Move),
             },
             cx,
         );

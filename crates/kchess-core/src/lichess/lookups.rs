@@ -23,7 +23,8 @@ use super::policy::{Clock, Policy, timed_out};
 use super::reviews::split_whitespace;
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Host;
-use kchess_domain::{js, misc, position, replay};
+use kchess_domain::misc::{validate, value::J};
+use kchess_domain::{js, position, replay};
 
 mod opening_info;
 pub use opening_info::{DescriptionBlock, OpeningDescription, PopularityMonth};
@@ -574,14 +575,9 @@ impl PositionLookups {
         if let Some(variant) = &options.variant {
             request["variant"] = json!(variant);
         }
-        let analysis = misc::call("assertAnalysisRequest", &[no_lossless(), request])
-            .ok_or_else(|| CoreError::new("Unknown validator."))?
-            .map_err(CoreError::new)?;
-        let fen = analysis
-            .get("fen")
-            .and_then(Value::as_str)
-            .ok_or_else(|| CoreError::new("Invalid analysis request."))?
-            .to_string();
+        let fen = validate::assert_analysis_request(J::from(&request))
+            .map_err(CoreError::new)?
+            .fen;
         if !is_legal_position(variant, &fen) {
             return Err(CoreError::new("That position is not legal."));
         }
@@ -882,18 +878,11 @@ fn clients(
     (client(&endpoints.explorer), client(&endpoints.tablebase))
 }
 
-fn no_lossless() -> Value {
-    json!([])
-}
-
 /// `assertLookupOptions(raw)`: the filters as the request sent them, validated.
 fn assert_options(raw: Option<&Value>) -> CoreResult<LookupOptions> {
-    // An absent value is passed as no argument at all, which the validator reads as undefined.
-    let mut args = vec![no_lossless()];
-    args.extend(raw.cloned());
-    let value = misc::call("assertLookupOptions", &args)
-        .ok_or_else(|| CoreError::new("Unknown validator."))?
-        .map_err(CoreError::new)?;
+    let options =
+        validate::assert_lookup_options(raw.map_or(J::Undef, J::from)).map_err(CoreError::new)?;
+    let value = serde_json::to_value(options).map_err(|cause| CoreError::new(cause.to_string()))?;
     let strings = |key: &str| -> Option<Vec<String>> {
         value.get(key).and_then(Value::as_array).map(|items| {
             items

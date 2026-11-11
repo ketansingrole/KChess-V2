@@ -3,6 +3,7 @@
 //! a channel's earlier games, and Analyse.
 
 use kchess_contracts::calls;
+use kchess_domain::training::clock::format_clock;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -17,7 +18,7 @@ use super::{WatchPage, label, live_badge};
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
-use crate::game::{rules, view};
+use crate::game::view;
 use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, panel_style};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
@@ -425,10 +426,7 @@ impl Live {
             0.
         };
         let millis = (base - elapsed).max(0.) * 1000.;
-        let text = rules("formatClock", &[json!(millis)])
-            .ok()
-            .and_then(|text| text.as_str().map(str::to_string))?;
-        Some((text, running))
+        Some((format_clock(millis), running))
     }
 
     /// "All time 3–2 · 5 games" and the current match.
@@ -1041,15 +1039,12 @@ impl WatchPage {
             "gameId": frame["gameId"],
         });
         if let Some(setup) = self.live.setup() {
-            let pgn = rules(
-                "setupPgn",
-                &[
-                    setup,
-                    json!(self.live.moves()),
-                    json!({ "White": frame["white"]["name"], "Black": frame["black"]["name"] }),
-                ],
+            let pgn = crate::game::setup_pgn(
+                &setup,
+                &self.live.moves(),
+                &json!({ "White": frame["white"]["name"], "Black": frame["black"]["name"] }),
             );
-            if let Ok(Value::String(pgn)) = pgn {
+            if let Some(pgn) = pgn {
                 let ply = self.live.shown_ply();
                 // Once this page is no longer being updated: leaving Watch tells it it is hidden.
                 window.defer(cx, move |window, cx| {

@@ -240,6 +240,12 @@ use library::*;
 use requests::*;
 use values::*;
 
+pub use requests::{
+    AnalysisRequest, BestMoveOptions, GamePageQuery, LookupOptions, assert_analysis_request,
+    assert_best_move_options, assert_game_page_query, assert_lookup_options,
+};
+pub use values::{assert_moves, assert_username};
+
 /* ── The table ── */
 
 macro_rules! validators {

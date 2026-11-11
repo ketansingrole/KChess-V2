@@ -10,7 +10,7 @@ use std::sync::Arc;
 use kchess_contracts::core_api;
 use kchess_core::facade::FACADE_METHODS;
 use kchess_core::{Config, Core, Host, Level};
-use kchess_domain::misc::{Scope, arities};
+use kchess_domain::misc::arities;
 use serde_json::{Value, json};
 
 /// The KChess methods beyond `CoreApi` that the facade answers (`KChessCore`'s extras).
@@ -150,10 +150,7 @@ async fn every_listed_method_is_dispatched() {
     let core = Core::open(Config::new(dir.path().to_path_buf()), Arc::new(Quiet)).expect("opens");
 
     // Only names with a core contract, or the extras, are probed: a name with neither would run.
-    let contracts: BTreeSet<&str> = arities(Scope::Core)
-        .iter()
-        .map(|(name, ..)| *name)
-        .collect();
+    let contracts: BTreeSet<&str> = arities().iter().map(|(name, ..)| *name).collect();
     for name in listed() {
         assert!(
             contracts.contains(name) || EXTRAS.contains(&name),
@@ -281,7 +278,7 @@ async fn review_get_takes_an_optional_variant() {
 /// arguments as its contract takes: an extra method takes what its arm reads.
 #[test]
 fn typed_calls_name_facade_methods_with_their_arity() {
-    let contracts = arities(Scope::Core);
+    let contracts = arities();
     for (method, sent) in kchess_contracts::calls::CALLS {
         assert!(
             listed().contains(method),

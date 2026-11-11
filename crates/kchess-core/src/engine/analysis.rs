@@ -20,9 +20,11 @@ use super::scheduler::Priority;
 use super::slot::EngineSlot;
 use super::status::fairy_variant;
 use super::uci::{error_summary, lock, signal_aborted, truncate_for_log};
-use super::{EngineContext, domain, parse_info, validate};
-use crate::error::{CoreError, Result};
+use super::{EngineContext, validated};
+use crate::error::Result;
 use crate::host::Level;
+use kchess_domain::misc::{validate, value::J};
+use kchess_domain::training::uci_info::parse_info;
 
 /// The event analysis updates are delivered as.
 pub const ANALYSIS_EVENT: &str = "engine:analysis";
@@ -287,7 +289,8 @@ impl Session {
             return;
         };
         let rank = parsed.line.rank;
-        if rank > f64::from(wanted) {
+        // A rank the engine did not write as a number is no line.
+        if !rank.is_finite() || rank > f64::from(wanted) {
             return;
         }
         let rank = rank as u32;
@@ -383,8 +386,7 @@ impl AnalysisEngine {
     }
 
     fn reserve(&self, raw: Value) -> Result<PendingAnalysis> {
-        let request: Request = serde_json::from_value(validate("assertAnalysisRequest", &raw)?)
-            .map_err(|cause| CoreError::new(cause.to_string()))?;
+        let request: Request = validated(validate::assert_analysis_request(J::from(&raw)))?;
         let (id, token, prev, done) = {
             let mut state = lock(&self.shared.state);
             state.next_id += 1;
@@ -440,13 +442,7 @@ impl AnalysisEngine {
                 .clone()
                 .unwrap_or_else(|| request.fen.clone());
             let moves = request.moves.clone().unwrap_or_default();
-            let context = domain(
-                "analysisContext",
-                vec![Value::String(root.clone()), serde_json::json!(moves)],
-            )
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_string))
-            .unwrap_or_default();
+            let context = kchess_domain::records::context::analysis_context(&root, &moves);
             let session = Arc::new(Session {
                 id,
                 fen: request.fen.clone(),

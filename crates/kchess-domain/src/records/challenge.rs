@@ -1,14 +1,12 @@
-//! The reader of a challenge event from an account's event stream (`readChallengeEvent`,
-//! the challenges service of the TypeScript core), a pure rule beside `validateOnlineEvent`.
+//! The reader of a challenge event from an account's event stream, a pure rule beside
+//! `online::validate`.
 //!
-//! The reader keeps the TypeScript schema's rules (valibot): unknown keys pass, an optional key
+//! Unknown keys pass, an optional key
 //! may be absent but not null, lengths count UTF-16 units, and a malformed event is not a
 //! challenge at all. The variant mapping comes from `crate::online_game`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
-
-use super::{Out, arg};
 
 /// A Lichess game id: `^[a-zA-Z0-9]{8,12}$`.
 fn is_game_id(text: &str) -> bool {
@@ -319,24 +317,6 @@ pub fn read_challenge_event(account: &str, raw: &Value, now: i64) -> Option<Chal
         received_at: now,
     };
     Some(ChallengeEvent { kind, info })
-}
-
-/// This module's methods for `records::call`; None when the method is not one of them.
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    Some(match method {
-        "readChallengeEvent" => {
-            let account = arg(args, 0).and_then(Value::as_str).unwrap_or_default();
-            let now = arg(args, 2).and_then(Value::as_i64).unwrap_or(0);
-            match arg(args, 1) {
-                None => Ok(Value::Null),
-                Some(raw) => Ok(match read_challenge_event(account, raw, now) {
-                    Some(event) => serde_json::to_value(event).unwrap_or(Value::Null),
-                    None => Value::Null,
-                }),
-            }
-        }
-        _ => return None,
-    })
 }
 
 #[cfg(test)]

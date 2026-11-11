@@ -3,16 +3,15 @@
 //! (the first on a tie, like Lichess), and the names form the family tree the openings page browses.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use shakmaty::Position;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use super::{Out, js_slice_end, to_value, value_arg};
-use crate::{js, position, rules};
+use super::js_slice_end;
+use crate::{position, rules};
 
 const OPENINGS_JSON: &str = include_str!("../../data/openings.json");
-const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+use crate::rules::INITIAL_FEN as START;
 
 /// `OpeningName`
 #[derive(Debug, Serialize)]
@@ -69,7 +68,7 @@ fn table() -> &'static HashMap<String, usize> {
             if !played {
                 continue;
             }
-            let key = repetition_key(&rules::make_fen(&pos)).to_string();
+            let key = rules::repetition_key(&rules::make_fen(&pos)).to_string();
             let shorter = table
                 .get(&key)
                 .is_none_or(|&known| line.moves.len() < all[known].moves.len());
@@ -116,20 +115,6 @@ fn placements() -> &'static std::collections::HashSet<u64> {
     })
 }
 
-/// `repetitionKey`: the first four FEN fields, borrowed from the FEN.
-fn repetition_key(fen: &str) -> &str {
-    let mut seen = 0;
-    for (index, byte) in fen.bytes().enumerate() {
-        if byte == b' ' {
-            seen += 1;
-            if seen == 4 {
-                return &fen[..index];
-            }
-        }
-    }
-    fen
-}
-
 /// `openingAt`: the name of the opening reached after `ply` moves. As Lichess suggests, step back
 /// from the position until a named one is found. Only games under standard rules have names.
 pub fn opening_at<S: AsRef<str>>(
@@ -152,7 +137,7 @@ pub fn opening_at<S: AsRef<str>>(
             return None;
         }
         books
-            .get(repetition_key(&rules::make_fen(pos)))
+            .get(rules::repetition_key(&rules::make_fen(pos)))
             .map(|&index| &named[index])
     };
     let end = js_slice_end(moves.len(), ply);
@@ -407,59 +392,23 @@ pub fn opening_replies(moves: &[ExplorerMove], yours: bool) -> Vec<String> {
     picked
 }
 
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "openingAt" => opening_at_call(args),
-        "openingTree" => to_value(opening_tree()),
-        "openingReplies" => opening_replies_call(args),
-        "openingKey" => {
-            super::text_arg(args, 0, "name").and_then(|name| to_value(opening_key(name)))
-        }
-        _ => return None,
-    };
-    Some(result)
-}
-
-fn opening_at_call(args: &[Value]) -> Out {
-    let setup: Value = value_arg(args, 0, "setup")?;
-    let variant = setup.get("variant").and_then(Value::as_str).unwrap_or("");
-    let fen = setup.get("fen").and_then(Value::as_str).unwrap_or("");
-    let moves: Vec<String> = value_arg(args, 1, "moves")?;
-    // `ply` defaults to the number of moves; a non-finite one arrives as its text.
-    let ply = match args.get(2).filter(|v| !v.is_null()) {
-        Some(_) => js::to_number(args.get(2)),
-        None => moves.len() as f64,
-    };
-    to_value(opening_at(variant, fen, &moves, ply))
-}
-
-fn opening_replies_call(args: &[Value]) -> Out {
-    let moves: Vec<ExplorerMove> = value_arg(args, 0, "moves")?;
-    let yours = super::arg(args, 1)
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    to_value(opening_replies(&moves, yours))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
     /// The lookup as it was: a FEN written and looked up after every move.
     fn opening_written_out(moves: &[String]) -> Option<(String, String)> {
         let mut pos = rules::setup_start("standard", START)?;
         let (books, named) = (table(), lines());
         let mut found = books
-            .get(repetition_key(&rules::make_fen(&pos)))
+            .get(rules::repetition_key(&rules::make_fen(&pos)))
             .map(|&index| &named[index]);
         for text in moves {
             let Some(m) = rules::parse_uci(text).and_then(|u| rules::legal_move(&pos, u)) else {
                 break;
             };
             pos.play_unchecked(m);
-            if let Some(&index) = books.get(repetition_key(&rules::make_fen(&pos))) {
+            if let Some(&index) = books.get(rules::repetition_key(&rules::make_fen(&pos))) {
                 found = Some(&named[index]);
             }
         }

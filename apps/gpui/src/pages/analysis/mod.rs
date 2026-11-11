@@ -55,7 +55,7 @@ use crate::game::tree::{
     TreeNode, analysis_context, child_path, comment_text, format_eval, move_glyph, move_number,
     moves_of, path_of, pv_san,
 };
-use crate::game::{STANDARD_FEN, rules, view};
+use crate::game::{STANDARD_FEN, view};
 use crate::online::OnlineHandle;
 use crate::pages::study_bar::{STUDY_BAR, StudyBar};
 use crate::part::Part;
@@ -618,7 +618,7 @@ impl AnalysisPage {
     /// The engine's search and its cache entry: the threat's position stands on its own.
     fn engine_context(&self) -> String {
         match self.threat_position() {
-            Some(fen) => analysis_context(&fen, &[]),
+            Some(fen) => analysis_context::<&str>(&fen, &[]),
             None => self.context(),
         }
     }
@@ -878,10 +878,8 @@ impl AnalysisPage {
 
     /// Load a line from the starting position, opened at its end (an opening's Analyse).
     pub fn load_line(&mut self, moves: &[String], cx: &mut Context<Self>) {
-        let Ok(pgn) = rules("pgnFromUci", &[json!(moves)]) else {
-            return;
-        };
-        if self.load_pgn(pgn.as_str().unwrap_or_default(), cx) {
+        let pgn = kchess_domain::pgn::pgn_from_uci(moves);
+        if self.load_pgn(&pgn, cx) {
             self.go_to_end(cx);
         }
     }
@@ -1104,7 +1102,7 @@ impl AnalysisPage {
         self.voice.sync(
             &context,
             Some(line),
-            crate::voice::grammar("ANALYSIS_GRAMMAR"),
+            crate::voice::grammar(crate::voice::Grammar::Analysis),
             true,
             cx,
         );
@@ -1141,8 +1139,7 @@ impl AnalysisPage {
             &setup,
             turn,
             |text| {
-                let said = crate::game::rules("spokenAnalysisCommand", &[json!(text)]).ok()?;
-                let said = said.as_str()?.to_string();
+                let said = kchess_domain::voice::analysis_command(text)?.to_string();
                 let feedback = if said == "best" && best.is_none() {
                     "The engine has no move yet".to_string()
                 } else {
@@ -1425,19 +1422,14 @@ impl AnalysisPage {
         if !shown || self.root.variant() != "standard" {
             return None;
         }
-        let opening = rules(
-            "openingAt",
-            &[
-                json!({ "variant": "standard", "fen": self.root.fen }),
-                json!(moves_of(&self.path)),
-            ],
-        )
-        .ok()?;
-        Some(format!(
-            "{} {}",
-            opening["eco"].as_str()?,
-            opening["name"].as_str()?
-        ))
+        let moves = moves_of(&self.path);
+        let opening = kchess_domain::training::openings::opening_at(
+            "standard",
+            &self.root.fen,
+            &moves,
+            moves.len() as f64,
+        )?;
+        Some(format!("{} {}", opening.eco, opening.name))
     }
 
     /// First, previous, next and last move, flip, import, and the rest in a menu.
@@ -1826,7 +1818,7 @@ impl Render for AnalysisPage {
                 hint: "Say a move like “Knight F three”, or “back”, “next”, “best move”",
                 active: true,
                 listening: true,
-                grammar: crate::voice::grammar("ANALYSIS_GRAMMAR"),
+                grammar: crate::voice::grammar(crate::voice::Grammar::Analysis),
             },
             cx,
         );

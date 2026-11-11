@@ -14,7 +14,6 @@ use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::rules;
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill};
@@ -76,10 +75,7 @@ impl RunClock {
             self.left()
         }
         .as_millis() as f64;
-        rules("formatRunClock", &[json!(ms)])
-            .ok()
-            .and_then(|text| text.as_str().map(str::to_string))
-            .unwrap_or_default()
+        kchess_domain::training::rush::format_run_clock(ms)
     }
 
     /// Under ten seconds left.

@@ -13,7 +13,6 @@ use serde_json::{Value, json};
 use super::TournamentsPage;
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::rules;
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Choice};
 
@@ -231,15 +230,10 @@ impl CreateArena {
 
     /// Lichess lets third-party apps play only Rapid and Classical arena games.
     fn playable_here(&self, cx: &App) -> bool {
-        rules(
-            "canBoardSeek",
-            &[
-                json!(Self::number(&self.clock, cx)),
-                json!(Self::number(&self.increment, cx)),
-            ],
+        kchess_domain::records::time_control::can_board_seek(
+            Self::number(&self.clock, cx),
+            Self::number(&self.increment, cx),
         )
-        .ok()
-            == Some(json!(true))
     }
 
     fn arena(&self, cx: &App) -> Value {

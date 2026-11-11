@@ -86,12 +86,7 @@ struct RawGame {
 /// or is a variant reviews cannot replay.
 pub fn review_from_lichess(raw: &Value) -> Option<Value> {
     let game: RawGame = read(raw)?;
-    let status = game.status.unwrap_or(Value::Null);
-    let in_progress = records::call("isGameInProgress", &[status])
-        .and_then(Result::ok)
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true);
-    if in_progress {
+    if records::games::is_game_in_progress(game.status.as_ref()) {
         return None;
     }
     let analysis = game.analysis.0?;
@@ -167,9 +162,7 @@ pub fn review_from_lichess(raw: &Value) -> Option<Value> {
             accuracy.insert(color.to_string(), Value::Number(figure));
         }
     }
-    let key = records::call("reviewKey", &[json!(fen), json!(moves)])
-        .and_then(Result::ok)
-        .and_then(|value| value.as_str().map(str::to_string))?;
+    let key = records::review::review_key(&fen, &moves, None);
     let evals: Vec<Value> = evals
         .into_iter()
         .map(|slot| slot.map_or(Value::Null, Value::Object))

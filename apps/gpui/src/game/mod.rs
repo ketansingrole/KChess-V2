@@ -8,7 +8,7 @@ pub mod tree;
 pub mod view;
 
 /// The usual starting position.
-pub const STANDARD_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+pub const STANDARD_FEN: &str = kchess_domain::rules::INITIAL_FEN;
 
 use serde_json::{Value, json};
 
@@ -16,7 +16,51 @@ pub use kchess_domain::links::{
     BroadcastLink, GameLink, broadcast_link, game_link, is_username, pgn_orientation, profile_link,
     study_link,
 };
-pub use kchess_games::{archive, computer, local, random_unit, rules, whole};
+pub use kchess_games::{archive, computer, local, random_unit, whole};
+
+/// A `{ variant, fen }` setup's UCI moves as PGN, as far as they are legal, after `headers` (a
+/// JSON object of strings). `None` when the setup or a header is not one.
+pub fn setup_pgn(setup: &Value, moves: &[String], headers: &Value) -> Option<String> {
+    let (variant, fen) = (setup["variant"].as_str()?, setup["fen"].as_str()?);
+    let headers: Vec<(&str, &str)> = match headers {
+        Value::Object(headers) => headers
+            .iter()
+            .map(|(name, value)| value.as_str().map(|value| (name.as_str(), value)))
+            .collect::<Option<_>>()?,
+        _ => Vec::new(),
+    };
+    Some(kchess_domain::pgn::setup_pgn(variant, fen, moves, &headers))
+}
+
+use kchess_contracts::Level;
+use kchess_domain::training::engine_levels::{self, EngineLevelInfo};
+use kchess_domain::training::openings::{self, OpeningName};
+
+/// The opening a game set up as `setup` reached after `ply` of `moves`.
+pub fn opening_at<S: AsRef<str>>(setup: &Value, moves: &[S], ply: usize) -> Option<OpeningName> {
+    openings::opening_at(
+        setup["variant"].as_str().unwrap_or_default(),
+        setup["fen"].as_str().unwrap_or_default(),
+        moves,
+        ply as f64,
+    )
+}
+
+/// A computer level's search profile; none for a level the ladder does not know.
+pub fn engine_level(level: &str) -> Option<&'static EngineLevelInfo> {
+    engine_levels::info(level).unwrap_or_else(|cause| {
+        crate::log::write(Level::Warn, "engine-levels", &cause);
+        None
+    })
+}
+
+/// "Grandmaster · ~2550"; empty for a level the ladder does not know.
+pub fn engine_level_label(level: &str) -> String {
+    engine_levels::label(level).unwrap_or_else(|cause| {
+        crate::log::write(Level::Warn, "engine-levels", &cause);
+        String::new()
+    })
+}
 
 /// `formatGameDate`: "Oct 22, 2026" in local time.
 pub fn game_date(millis: f64) -> String {
@@ -60,17 +104,27 @@ pub fn chess960(n: i64) -> String {
 
 /// A FEN typed or pasted, as the board editor reads it (`setupFromFen`): the placement and side
 /// from the rules, castling rights as written, and a plausible en passant square.
+/// The FEN of a board editor setup (`editor_setup`'s shape): castling and en passant only where
+/// the pieces allow them. None, logged, for anything else.
+pub fn setup_fen(setup: &Value) -> Option<String> {
+    match serde_json::from_value::<kchess_domain::voice::EditorSetup>(setup.clone()) {
+        Ok(setup) => Some(kchess_domain::voice::setup_fen(&setup)),
+        Err(cause) => {
+            crate::log::write(
+                kchess_contracts::Level::Warn,
+                "editor",
+                &format!("not an editor setup: {cause}"),
+            );
+            None
+        }
+    }
+}
+
 pub fn editor_setup(text: &str) -> Option<Value> {
     let trimmed = text.trim();
-    let parsed = rules("fenSetup", &[json!(trimmed)]).ok()?;
-    if parsed.is_null() {
-        return None;
-    }
+    let parsed = kchess_domain::position::fen_setup(trimmed)?;
     let fields: Vec<&str> = trimmed.split_whitespace().collect();
-    let rights = castling_letters(
-        parsed["board"].as_str().unwrap_or_default(),
-        fields.get(2).copied().unwrap_or("-"),
-    );
+    let rights = castling_letters(&parsed.board, fields.get(2).copied().unwrap_or("-"));
     let ep = fields
         .get(3)
         .copied()
@@ -80,8 +134,8 @@ pub fn editor_setup(text: &str) -> Option<Value> {
         })
         .unwrap_or_default();
     Some(json!({
-        "board": parsed["board"],
-        "turn": parsed["turn"],
+        "board": parsed.board,
+        "turn": parsed.turn,
         "castling": {
             "K": rights.contains('K'),
             "Q": rights.contains('Q'),
@@ -306,12 +360,12 @@ mod setup_tests {
                 serde_json::json!({ "K": true, "Q": true, "k": true, "q": true }),
                 "{pasted}"
             );
-            let fen = super::rules("setupFen", &[setup]).expect("its FEN");
+            let fen = super::setup_fen(&setup).expect("its FEN");
             assert_eq!(
                 fen,
                 "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w KQkq - 0 1"
             );
-            assert_eq!(setup_from_fen(fen.as_str().unwrap())["variant"], "chess960");
+            assert_eq!(setup_from_fen(&fen)["variant"], "chess960");
         }
         // Only the rights written: the long side's rook (F) on its own.
         let setup = super::editor_setup("bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w F - 0 1");

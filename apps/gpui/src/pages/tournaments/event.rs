@@ -6,13 +6,13 @@ use gpui_kit::component::input::Input;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_domain::training::clock::format_clock;
 use serde_json::{Value, json};
 use shakmaty::Color;
 
 use super::{TournamentsPage, control};
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
-use crate::game::rules;
 use crate::pages::players::player_link;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
@@ -582,8 +582,7 @@ fn featured_clock(featured: &Value, color: Color, elapsed: f64) -> Option<(Strin
     } else {
         reported
     };
-    let text = rules("formatClock", &[json!(left.max(0.) * 1000.)]).ok()?;
-    Some((text.as_str()?.to_string(), running))
+    Some((format_clock(left.max(0.) * 1000.), running))
 }
 
 /// The games being played now: a row each, watched with a click anywhere on it.

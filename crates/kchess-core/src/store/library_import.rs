@@ -11,12 +11,13 @@ use super::documents::{
     read_document_text, stored_studies, write_document,
 };
 use super::json_codec::{js_json, utf16_len};
-use super::library::{JOINED, MISSES, MISTAKES, SCHEDULE, SESSION_KINDS, STUDIES, misc, truthy};
+use super::library::{JOINED, MISSES, MISTAKES, SCHEDULE, SESSION_KINDS, STUDIES, truthy};
 use super::sql::{Sql as _, transaction};
 use super::studies::id_of;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::library::MAX_STUDIES;
+use kchess_domain::misc::value::J;
 
 /// Migrate an earlier release's document atomically, retaining it unchanged on any failure.
 pub(crate) fn migrate_studies(db: &Connection) -> Result<()> {
@@ -125,7 +126,7 @@ pub(crate) fn read_mistakes(db: &Connection) -> Result<Vec<Value>> {
 
 pub(crate) fn read_misses(host: &dyn Host, db: &Connection) -> Result<Value> {
     let raw = read_document(host, db, MISSES)?.unwrap_or(Value::Null);
-    misc("decodeRepertoireMisses", vec![raw])
+    Ok(kchess_domain::misc::documents::decode_repertoire_misses(&J::from(&raw)).into_value())
 }
 
 /// The repertoire schedule's lines, `key` → line → card; none in a profile from before it.
@@ -136,7 +137,7 @@ pub(crate) fn read_schedule_lines(host: &dyn Host, db: &Connection) -> Result<Ma
 
 pub(crate) fn read_joined(host: &dyn Host, db: &Connection) -> Result<Vec<Value>> {
     let raw = read_document(host, db, JOINED)?.unwrap_or(Value::Null);
-    match misc("decodeJoinedTournaments", vec![raw])? {
+    match kchess_domain::misc::documents::decode_joined_tournaments(&J::from(&raw)).into_value() {
         Value::Array(entries) => Ok(entries),
         _ => Ok(Vec::new()),
     }
@@ -145,7 +146,9 @@ pub(crate) fn read_joined(host: &dyn Host, db: &Connection) -> Result<Vec<Value>
 /// `readSession(kind)`: the decoded session, or null.
 pub(crate) fn read_session(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value> {
     let raw = read_document(host, db, &format!("session:{kind}"))?.unwrap_or(Value::Null);
-    misc("decodeStoredSession", vec![json!(kind), raw])
+    let session = kchess_domain::misc::documents::decode_stored(kind, &J::from(&raw))
+        .map_err(CoreError::new)?;
+    Ok(session.map_or(Value::Null, J::into_value))
 }
 
 /// The played games, newest first; a game that no longer replays is skipped.

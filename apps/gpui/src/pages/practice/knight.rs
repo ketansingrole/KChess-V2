@@ -15,7 +15,7 @@ use shakmaty::{Color, Square};
 use super::run::{self, RunClock};
 use crate::assets::icon;
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
-use crate::game::{random_unit, rules};
+use crate::game::random_unit;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
@@ -42,27 +42,18 @@ enum Stage {
     Over,
 }
 
-fn knight_moves(square: &str) -> Vec<String> {
-    rules("knightMoves", &[json!(square)])
-        .ok()
-        .and_then(|moves| serde_json::from_value(moves).ok())
-        .unwrap_or_default()
-}
+use kchess_domain::voice::knight_moves;
 
-/// `knightChallenge`: a start, a goal and the shortest path between them, from random draws.
+/// A start, a goal and the shortest path between them, from random draws.
 fn knight_challenge(min: u32, max: u32) -> (String, String, u32) {
     let mut draws: Vec<f64> = Vec::new();
     for _ in 0..64 {
         draws.push(random_unit());
         draws.push(random_unit());
-        if let Ok(found) = rules("knightChallenge", &[json!(min), json!(max), json!(draws)])
-            && !found.is_null()
+        if let Some(found) =
+            kchess_domain::voice::knight_challenge(f64::from(min), f64::from(max), &draws)
         {
-            return (
-                found["from"].as_str().unwrap_or("e4").to_string(),
-                found["to"].as_str().unwrap_or("e4").to_string(),
-                crate::game::whole(&found["best"]) as u32,
-            );
+            return (found.from, found.to, found.best.unwrap_or(0));
         }
     }
     ("b1".into(), "c3".into(), 1)
@@ -293,9 +284,7 @@ impl KnightPaths {
         if self.knight == self.goal {
             return;
         }
-        let square = rules("spokenSquare", &[json!(heard.text)])
-            .ok()
-            .and_then(|square| square.as_str().map(str::to_string));
+        let square = kchess_domain::voice::spoken_square(&heard.text);
         let feedback = match square {
             None => {
                 log(self, "invalid", None, cx);
@@ -354,12 +343,12 @@ impl KnightPaths {
 
     fn redraw(&mut self, cx: &mut Context<Self>) {
         let running = self.stage == Stage::Running;
-        self.voice
-            .sync(crate::voice::grammar("COORDINATE_GRAMMAR"), running, cx);
-        let fen = rules("knightFen", &[json!(self.knight)])
-            .ok()
-            .and_then(|fen| fen.as_str().map(str::to_string))
-            .unwrap_or_default();
+        self.voice.sync(
+            crate::voice::grammar(crate::voice::Grammar::Coordinate),
+            running,
+            cx,
+        );
+        let fen = kchess_domain::voice::knight_fen(&self.knight);
         let position = kchess_domain::rules::setup_start("standard", crate::game::STANDARD_FEN)
             .unwrap_or_default();
         let movable = running && self.knight != self.goal;
@@ -459,7 +448,7 @@ impl Render for KnightPaths {
                     id: "knight-voice",
                     hint: "Say the square to jump to, such as “F three”",
                     active: running,
-                    grammar: crate::voice::grammar("COORDINATE_GRAMMAR"),
+                    grammar: crate::voice::grammar(crate::voice::Grammar::Coordinate),
                 },
                 cx,
             ))

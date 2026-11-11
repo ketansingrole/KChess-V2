@@ -18,10 +18,6 @@ exclude_re = [
     'kchess-service/src/discovery\.rs:.*: replace & with [|^] in private_dir',
     # DETACHED_PROCESS and CREATE_NEW_PROCESS_GROUP share no bit, so `|` and `^` are the same.
     'kchess-service/src/client\.rs:.*: replace \| with \^ in launch',
-    # Arguments exactly at the depth that moves a call to the large stack answer the same on
-    # either stack, and so does every call when all of them move there: only the stack differs.
-    'kchess-domain/src/api\.rs:.*: replace > with >= in goes_deep$',
-    'kchess-domain/src/api\.rs:.*: replace (goes_deep|needs_large_stack) -> bool with true',
     # A uniform draw picks White half the time whether below or above 0.5 counts, and exactly
     # 0.5 has no weight.
     'apps/cli/src/play\.rs:.*: replace < with (>|<=) in Session<.*>::choose_color',

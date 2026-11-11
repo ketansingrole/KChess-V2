@@ -4,12 +4,12 @@
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::{BroadcastGame, MAX_BROADCAST_PGN, VARIANTS, WatchClock, WatchPlayer};
 use crate::lichess::decode::{Text, present, read};
 use crate::lichess::reviews::split_whitespace;
-use kchess_domain::{api, js, position};
+use kchess_domain::{js, position, rules};
 
 /* ── Feed decoding (pure) ── */
 
@@ -240,19 +240,6 @@ pub fn variant_from_lichess(key: Option<&str>) -> Option<&'static str> {
     }
 }
 
-/// `defaultFen(variant)`: the usual start of a variant.
-fn default_fen(variant: &str) -> Option<String> {
-    domain_call("defaultFen", json!([variant]))?
-        .as_str()
-        .map(str::to_string)
-}
-
-/// Calls a domain method that answers in JSON.
-fn domain_call(method: &str, args: Value) -> Option<Value> {
-    let text = api::call(method, &args.to_string()).ok()?;
-    serde_json::from_str(&text).ok()
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Winner {
@@ -306,7 +293,7 @@ pub fn parse_tv_game(raw: &Value) -> TvGame {
     let setup = variant.and_then(|variant| {
         let fen = match initial {
             Some(fen) => Some(fen.to_string()),
-            None => default_fen(variant),
+            None => rules::default_fen(variant),
         }?;
         Some(GameSetup { variant, fen })
     });
@@ -336,27 +323,18 @@ pub fn align_tv_moves(
     feed: &[String],
     live: &[Option<String>],
 ) -> Option<Vec<String>> {
-    let setup_json = json!({ "variant": setup.variant, "fen": setup.fen });
-    let start = domain_call("line", json!([setup_json, [], { "san": true }]))?;
-    let start_fen = start.get("start")?.as_str()?.to_string();
+    let start = rules::setup_start(setup.variant, &setup.fen)?;
+    let start_fen = rules::make_fen(&start);
     if feed.is_empty() {
         return None;
     }
-    let line = domain_call("line", json!([setup_json, san, { "san": true }]))?;
-    let line = line.get("moves")?.as_array()?.clone();
+    let (_, line) = position::line(start, san, true, false);
     if line.len() < san.len() {
         return None;
     }
-    let exported: Vec<String> = line
-        .iter()
-        .filter_map(|move_| move_.get("uci").and_then(Value::as_str).map(str::to_string))
-        .collect();
+    let exported: Vec<String> = line.iter().map(|played| played.uci.clone()).collect();
     let mut keys = vec![position_key(&start_fen)];
-    keys.extend(
-        line.iter()
-            .filter_map(|move_| move_.get("fen").and_then(Value::as_str))
-            .map(position_key),
-    );
+    keys.extend(line.iter().map(|played| position_key(&played.fen)));
     let target = position_key(feed.last()?);
     for (ply, key) in keys.iter().enumerate().rev() {
         let Some(seen) = feed.iter().rposition(|seen| seen == key) else {
@@ -385,9 +363,9 @@ fn replay_uci(setup: &GameSetup, moves: &[String]) -> Option<(usize, String)> {
 /// `broadcastGame(pgn)`: one broadcast board, with the main line replayed and checked.
 pub fn broadcast_game(pgn: &str) -> Option<BroadcastGame> {
     let text = take_utf16(pgn, MAX_BROADCAST_PGN);
-    let game = position::pgn_mainline(&text, 1001);
-    let start_fen = game.get("start")?.as_str()?.to_string();
-    let headers = header_map(game.get("headers"));
+    let game = position::pgn_mainline(&text, 1001)?;
+    let start_fen = game.start?;
+    let headers = game.headers;
     let header = |name: &str| {
         headers
             .iter()
@@ -395,19 +373,15 @@ pub fn broadcast_game(pgn: &str) -> Option<BroadcastGame> {
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.as_str())
     };
-    let moves_json = game.get("moves")?.as_array()?;
-    let moves: Vec<String> = moves_json
-        .iter()
-        .filter_map(|entry| entry.get("uci").and_then(Value::as_str).map(str::to_string))
-        .collect();
+    let moves: Vec<String> = game.moves.iter().map(|entry| entry.uci.clone()).collect();
     let mut white_clock = None;
     let mut black_clock = None;
-    for entry in moves_json {
-        let Some(clock) = entry.get("clock").and_then(Value::as_f64) else {
+    for entry in &game.moves {
+        let Some(clock) = entry.clock else {
             continue;
         };
         let rounded = Some(js::round(clock));
-        if entry.get("mover").and_then(Value::as_str) == Some("white") {
+        if entry.mover == "white" {
             white_clock = rounded;
         } else {
             black_clock = rounded;
@@ -424,11 +398,10 @@ pub fn broadcast_game(pgn: &str) -> Option<BroadcastGame> {
             )
         });
     let result = header("Result").unwrap_or("*").to_string();
-    let fen = moves_json
+    let fen = game
+        .moves
         .last()
-        .and_then(|entry| entry.get("fen").and_then(Value::as_str))
-        .unwrap_or(&start_fen)
-        .to_string();
+        .map_or_else(|| start_fen.clone(), |entry| entry.fen.clone());
     let rating = |value: Option<&str>| -> Option<f64> {
         let number = js_number(value.unwrap_or(""));
         (number.is_finite() && number > 0.0).then_some(number)
@@ -458,25 +431,7 @@ pub fn broadcast_game(pgn: &str) -> Option<BroadcastGame> {
     })
 }
 
-/// `headers` of `pgnMainline` as pairs.
-fn header_map(raw: Option<&Value>) -> Vec<(String, String)> {
-    raw.and_then(Value::as_array)
-        .map(|pairs| {
-            pairs
-                .iter()
-                .filter_map(|pair| {
-                    let pair = pair.as_array()?;
-                    Some((
-                        pair.first()?.as_str()?.to_string(),
-                        pair.get(1)?.as_str()?.to_string(),
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// The chapter id that ends a broadcast URL.
+/// `/\/([a-zA-Z0-9]{8})$/` on a broadcast URL: the chapter id.
 fn last_path_id(url: Option<&str>) -> Option<String> {
     let (_, id) = url?.rsplit_once('/')?;
     crate::lichess::is_lichess_id(id).then(|| id.to_string())
@@ -509,6 +464,7 @@ pub(super) fn take_utf16(text: &str, units: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn keeps_only_the_board_and_side_to_move() {

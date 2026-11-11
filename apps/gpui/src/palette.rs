@@ -9,7 +9,6 @@ use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::types::{Appearance, CoordinateMode, Settings};
-use serde_json::json;
 
 use crate::assets::icon;
 use crate::online::Phase;
@@ -351,10 +350,10 @@ fn play_commands(cx: &App) -> Vec<Command> {
         .collect();
     let mut list = Vec::new();
     for level in levels {
-        let info = crate::game::rules("engineLevelInfo", &[json!(level)]).unwrap_or_default();
-        let name = info["label"].as_str().unwrap_or(&level).to_string();
-        let strength = info["elo"]
-            .as_f64()
+        let info = crate::game::engine_level(&level);
+        let name = info.map_or(level.clone(), |info| info.label.clone());
+        let strength = info
+            .and_then(|info| info.elo)
             .map_or("Full strength".to_string(), |elo| format!("~{elo}"));
         for (color, color_label) in [
             ("white", "White"),
@@ -383,19 +382,10 @@ fn play_commands(cx: &App) -> Vec<Command> {
             (15., 10.),
             (30., 0.),
         ] {
-            let allowed = crate::game::rules(
-                "canPlayOnline",
-                &[json!(minutes), json!(increment), json!(false)],
-            )
-            .ok()
-                == Some(json!(true));
-            if !allowed {
+            if !kchess_domain::records::time_control::can_play_online(minutes, increment, false) {
                 continue;
             }
-            let perf = crate::game::rules("perfFor", &[json!(minutes), json!(increment)])
-                .ok()
-                .and_then(|perf| perf.as_str().map(str::to_string))
-                .unwrap_or_default();
+            let perf = kchess_domain::records::time_control::perf_for(minutes, increment);
             for rated in [false, true] {
                 list.push(
                     Command::new(

@@ -2,7 +2,7 @@
 
 use super::*;
 
-pub(super) fn assert_username(value: J) -> Checked<String> {
+pub fn assert_username(value: J) -> Checked<String> {
     let text: String = decode(value, always!(USERNAME))?;
     username(&text, "")
 }
@@ -51,7 +51,7 @@ pub(super) fn assert_uci(value: J) -> Checked<String> {
     Ok(text)
 }
 
-pub(super) fn assert_moves(value: J) -> Checked<Vec<String>> {
+pub fn assert_moves(value: J) -> Checked<Vec<String>> {
     let moves: Vec<String> = decode(value, |keys| {
         move_list_messages(keys, Some("Invalid move list."))
     })?;

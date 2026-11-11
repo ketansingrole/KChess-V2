@@ -16,7 +16,6 @@ use serde_json::{Value, json};
 use shakmaty::Color;
 
 use crate::assets::icon;
-use crate::game::rules;
 use crate::pages::Page;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::played::{PlayedGames, PlayedHandle};
@@ -80,31 +79,13 @@ pub(crate) fn opening_name(game: &Value) -> Option<String> {
     if game["setup"]["variant"].as_str().unwrap_or("standard") != "standard" {
         return None;
     }
-    let opening = rules("openingAt", &[game["setup"].clone(), game["moves"].clone()]).ok()?;
-    Some(format!(
-        "{} {}",
-        opening["eco"].as_str()?,
-        opening["name"].as_str()?
-    ))
-}
-
-/// What `archivedOutcome` and `archivedPlayerSide` read of a played game: the rules check every
-/// argument in full, and a game's moves made most of that work, for each game, every frame.
-fn result_fields(game: &Value) -> Value {
-    let mut fields = serde_json::Map::new();
-    for key in ["source", "result", "finished", "white", "black"] {
-        if let Some(value) = game.get(key) {
-            fields.insert(key.to_string(), value.clone());
-        }
-    }
-    Value::Object(fields)
+    let moves: Vec<String> = serde_json::from_value(game["moves"].clone()).ok()?;
+    let opening = crate::game::opening_at(&game["setup"], &moves, moves.len())?;
+    Some(format!("{} {}", opening.eco, opening.name))
 }
 
 pub(crate) fn outcome(game: &Value) -> String {
-    rules("archivedOutcome", &[result_fields(game)])
-        .ok()
-        .and_then(|outcome| outcome.as_str().map(str::to_string))
-        .unwrap_or_default()
+    kchess_domain::records::games::archived_outcome(game).to_string()
 }
 
 /// The played game with this id, as it is now.
@@ -119,10 +100,7 @@ fn played_game(id: &str, cx: &App) -> Option<Value> {
 }
 
 fn player_side(game: &Value) -> Option<Color> {
-    match rules("archivedPlayerSide", &[result_fields(game)])
-        .ok()?
-        .as_str()?
-    {
+    match kchess_domain::records::games::archived_player_side(game)? {
         "white" => Some(Color::White),
         "black" => Some(Color::Black),
         _ => None,
@@ -232,12 +210,8 @@ fn pgn(game: &Value) -> Option<String> {
         headers["WhiteTimeControl"] = json!(clocks[0]);
         headers["BlackTimeControl"] = json!(clocks[1]);
     }
-    rules(
-        "setupPgn",
-        &[game["setup"].clone(), game["moves"].clone(), headers],
-    )
-    .ok()
-    .and_then(|pgn| pgn.as_str().map(str::to_string))
+    let moves: Vec<String> = serde_json::from_value(game["moves"].clone()).ok()?;
+    crate::game::setup_pgn(&game["setup"], &moves, &headers)
 }
 
 /// PGN's `Date`: the UTC day the game started, "2026.10.22".
@@ -1663,13 +1637,11 @@ pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::{move_count, outcome, player_side, time_label};
-    use crate::game::rules;
     use serde_json::json;
 
-    /// The rules read only a game's result fields: given those alone, each outcome and side is
-    /// what the whole game gets, for every kind of result.
+    /// Each kind of saved game ends for its player, or by colour at the board.
     #[test]
-    fn a_games_outcome_is_read_from_its_result_fields() {
+    fn each_saved_game_ends_for_its_player_or_by_colour() {
         let moves: Vec<&str> = ["e2e4", "e7e5"].repeat(40);
         let game = |source: &str, white: &str, black: &str, result: &str, finished: bool| {
             json!({
@@ -1679,28 +1651,51 @@ mod tests {
                 "setup": { "variant": "standard", "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
             })
         };
+        use shakmaty::Color::{Black, White};
         let games = [
-            game("clock", "A", "B", "*", true),
-            game("computer", "You", "Stockfish", "*", false),
-            game("computer", "You", "Stockfish", "*", true),
-            game("computer", "You", "Stockfish", "1/2-1/2", true),
-            game("computer", "You", "Stockfish", "1-0", true),
-            game("computer", "You", "Stockfish", "0-1", true),
-            game("computer", "Stockfish", "You", "1-0", true),
-            game("computer", "Stockfish", "You", "0-1", true),
-            game("board", "Ann", "Bo", "1-0", true),
-            game("board", "Ann", "Bo", "0-1", true),
+            (game("clock", "A", "B", "*", true), "clock", None),
+            (
+                game("computer", "You", "Stockfish", "*", false),
+                "ongoing",
+                Some(White),
+            ),
+            (
+                game("computer", "You", "Stockfish", "*", true),
+                "unfinished",
+                Some(White),
+            ),
+            (
+                game("computer", "You", "Stockfish", "1/2-1/2", true),
+                "draw",
+                Some(White),
+            ),
+            (
+                game("computer", "You", "Stockfish", "1-0", true),
+                "win",
+                Some(White),
+            ),
+            (
+                game("computer", "You", "Stockfish", "0-1", true),
+                "loss",
+                Some(White),
+            ),
+            (
+                game("computer", "Stockfish", "You", "1-0", true),
+                "loss",
+                Some(Black),
+            ),
+            (
+                game("computer", "Stockfish", "You", "0-1", true),
+                "win",
+                Some(Black),
+            ),
+            (game("board", "Ann", "Bo", "1-0", true), "white", None),
+            (game("board", "Ann", "Bo", "0-1", true), "black", None),
         ];
         let mut seen = std::collections::BTreeSet::new();
-        for whole in &games {
-            let expected = rules("archivedOutcome", std::slice::from_ref(whole)).expect("outcome");
-            assert_eq!(json!(outcome(whole)), expected, "{whole}");
-            let side = rules("archivedPlayerSide", std::slice::from_ref(whole)).expect("side");
-            let named = player_side(whole).map(|color| match color {
-                shakmaty::Color::White => "white",
-                shakmaty::Color::Black => "black",
-            });
-            assert_eq!(json!(named), side, "{whole}");
+        for (whole, expected, side) in &games {
+            assert_eq!(outcome(whole), *expected, "{whole}");
+            assert_eq!(player_side(whole), *side, "{whole}");
             seen.insert(outcome(whole));
         }
         // Every kind of outcome is among them.

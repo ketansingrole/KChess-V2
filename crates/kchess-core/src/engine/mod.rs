@@ -7,8 +7,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::Deserialize;
-use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio::task::AbortHandle;
 
@@ -20,7 +18,6 @@ use uci::{EngineHub, UciController};
 
 pub mod analysis;
 pub mod bridge;
-pub mod domain_client;
 pub mod managed;
 pub mod review;
 pub mod scheduler;
@@ -80,46 +77,13 @@ impl EngineContext {
     }
 }
 
-/// `kchess_domain` rules and validators by their TypeScript name, with JSON arguments.
-pub(crate) fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
-    // Most calls skip writing the arguments out and reading the answer back (`call_value`
-    // answers as `call` does). Trees and deep arguments keep going through JSON text, so their
-    // answer is never built and dropped on this thread's smaller stack.
-    if !kchess_domain::api::needs_large_stack(method, &args) {
-        return kchess_domain::api::call_value(method, &args).map_err(CoreError::new);
-    }
-    let text = serde_json::to_string(&args).map_err(|cause| CoreError::new(cause.to_string()))?;
-    let output = kchess_domain::api::call(method, &text).map_err(CoreError::new)?;
-    serde_json::from_str(&output).map_err(|cause| CoreError::new(cause.to_string()))
-}
-
-/// A `kchess_domain` `assert*` validator: the sidecar of values JSON cannot carry is empty.
-pub(crate) fn validate(method: &str, value: &Value) -> Result<Value> {
-    domain(method, vec![json!([]), value.clone()])
-}
-
-/// `parseInfo`: one UCI `info` line, with its scored principal variation from White's side.
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct InfoLine {
-    pub rank: f64,
-    pub depth: f64,
-    #[serde(default)]
-    pub cp: Option<f64>,
-    #[serde(default)]
-    pub mate: Option<f64>,
-    pub pv: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct ParsedInfo {
-    pub line: InfoLine,
-    #[serde(default)]
-    pub nps: Option<f64>,
-}
-
-pub(crate) fn parse_info(text: &str, white_to_move: bool) -> Option<ParsedInfo> {
-    let parsed = domain_client::parse_info_typed(text, white_to_move)?;
-    serde_json::from_value(parsed).ok()
+/// A typed validator's answer read as the core's own request type.
+pub(crate) fn validated<T: serde::Serialize, U: serde::de::DeserializeOwned>(
+    checked: std::result::Result<T, String>,
+) -> Result<U> {
+    let value = serde_json::to_value(checked.map_err(CoreError::new)?)
+        .map_err(|cause| CoreError::new(cause.to_string()))?;
+    serde_json::from_value(value).map_err(|cause| CoreError::new(cause.to_string()))
 }
 
 /// `Date.now()`: milliseconds since the Unix epoch.

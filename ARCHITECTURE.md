@@ -8,7 +8,7 @@ apps/
     src/e2e/             End-to-end tests that drive the whole app headless
   cli/                   `kchess-cli`, the command line
 crates/
-  kchess-domain/         Chess, PGN, review, training and library document rules (`api.rs`)
+  kchess-domain/         Chess, PGN, review, training and library document rules
   kchess-games/          Computer, over-the-board and Game history sessions as frontends drive them
   kchess-contracts/      `CoreApi`, its events and the serde types frontends decode
   kchess-core/           The headless core: storage, engines, Lichess, puzzles, reviews, voice
@@ -30,9 +30,9 @@ the few files that start or host a core name `kchess_core` (xtask's `boundaries`
 `tooling/xtask/src/boundaries.rs`). The app's only requests of its own are the updater's and
 Lichess's pictures; the engine, the puzzle database and the voice model are the core's downloads.
 
-The chess and document rules are one Rust implementation (`crates/kchess-domain`), exposed through
-`api.rs` as `call(method, argsJson)` and as plain functions; the core and the app use them
-directly. `tests/rules_corpus.rs` pins their answers.
+The chess and document rules are one Rust implementation (`crates/kchess-domain`), a library of
+typed functions the core, the games, the app and the CLI call directly. `tests/rules_corpus.rs`
+pins their answers through its own name-to-function table (`tests/corpus/`).
 
 The app holds positions as FEN strings answered by the rules, keeps view preferences in the core
 (`viewPreferences`) so a page opens as it was left, and owns only presentation: drawing, input,

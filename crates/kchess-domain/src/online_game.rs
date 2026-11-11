@@ -1,11 +1,11 @@
-//! How a Lichess game on the board changes with each server
-//! event, connection report and network reply (see RUST_MIGRATION.md, "Stateful modules").
-//! The class keeps the state object and executes the effects; every decision lives here, including
-//! which call to make and how its reply lands. Each method takes the state, its input, and the
-//! context the host read at that moment (`now`, `activeAccount`, `chatEnabled`) as the last argument.
+//! How a Lichess game on the board changes with each server event, connection report and network
+//! reply. The host keeps the state object and executes the effects; every decision lives here,
+//! including which call to make and how its reply lands. Each transition takes the state, its
+//! input, and the context the host read at that moment (`now`, `activeAccount`, `chatEnabled`) as
+//! the last argument.
 
-mod events;
-mod model;
+pub mod events;
+pub mod model;
 
 use serde_json::{Value, json};
 
@@ -15,7 +15,7 @@ use model::{Call, Ctx, Model, Run, at, string_or};
 /// `variantFromLichess`, for the Lichess service's challenge reader (`kchess-core`).
 pub use model::variant_from_lichess;
 
-type Out = Result<Value, String>;
+pub type Out = Result<Value, String>;
 
 /// The state of a board with no game (`onlineGameState()` and the class's private fields), for
 /// hosts that keep the state as JSON.
@@ -24,21 +24,6 @@ pub fn idle_state() -> Value {
 }
 
 static NULL: Value = Value::Null;
-
-/// This module's methods for `api::call`; None when the method is not one of them.
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    Some(match method {
-        "onlineGameView" => view(args),
-        "onlineGameEvent" => event(args),
-        "onlineGameConnection" => connection(args),
-        "onlineGameChecking" => checking(args),
-        "onlineGameReset" => reset(args),
-        "onlineGameFinish" => finish(args),
-        "onlineGameBegin" => begin(args),
-        "onlineGameSettle" => settle(args),
-        _ => return None,
-    })
-}
 
 /// Argument `i`; a missing argument reads as null.
 fn argument(args: &[Value], i: usize) -> &Value {
@@ -59,7 +44,7 @@ fn run(args: &[Value], i: usize) -> Result<Run, String> {
 }
 
 /// `position`, `history`, `ownMoves`, `correspondence` and `rematchOptions` for the state.
-fn view(args: &[Value]) -> Out {
+pub fn view(args: &[Value]) -> Out {
     let m = state(args)?;
     let replayed = m.replayed();
     Ok(json!({
@@ -71,43 +56,30 @@ fn view(args: &[Value]) -> Out {
     }))
 }
 
-fn event(args: &[Value]) -> Out {
+/// `[state, event, context]`: a server event of the game stream.
+pub fn event(args: &[Value]) -> Out {
     let mut run = run(args, 2)?;
     run.read_event(argument(args, 1));
     run.done(None, None, None, false)
 }
 
-fn connection(args: &[Value]) -> Out {
+/// `[state, report, context]`: the stream connected, failed or ended.
+pub fn connection(args: &[Value]) -> Out {
     let mut run = run(args, 2)?;
     run.read_connection(argument(args, 1));
     run.done(None, None, None, false)
 }
 
-fn checking(args: &[Value]) -> Out {
+/// `[state, context]`: Lichess is being asked for a game in progress.
+pub fn checking(args: &[Value]) -> Out {
     let mut run = run(args, 1)?;
     run.checking();
     run.done(None, None, None, false)
 }
 
-fn reset(args: &[Value]) -> Out {
-    let mut run = run(args, 1)?;
-    run.reset_game();
-    run.done(None, None, None, false)
-}
-
-/// `finish(winner, reason, notify)`: the public call, with its arguments in one object.
-fn finish(args: &[Value]) -> Out {
-    let mut run = run(args, 2)?;
-    let input = argument(args, 1);
-    let reason = js::to_string(input.get("reason"));
-    let notify = js::truthy(input.get("notify"));
-    run.finish(js::string(input.get("winner")), &reason, notify);
-    run.done(None, None, None, false)
-}
-
 /// Starts a network-backed operation: the state changes it makes before the call, the call, and
 /// what the driver must hand back to `settle`. `op` names the public method; `input` is its argument.
-fn begin(args: &[Value]) -> Out {
+pub fn begin(args: &[Value]) -> Out {
     let run = run(args, 3)?;
     let input = argument(args, 2);
     match js::string(Some(argument(args, 1))).unwrap_or("") {
@@ -274,7 +246,7 @@ fn chat(run: Run, input: &Value) -> Out {
 
 /// The network reply to a call `begin` made: `outcome` is `{ ok, value }`, or `{ ok: false }`
 /// when the call threw (the driver keeps the cause for the effects and any rethrow).
-fn settle(args: &[Value]) -> Out {
+pub fn settle(args: &[Value]) -> Out {
     let run = run(args, 3)?;
     let pending = argument(args, 1);
     let outcome = argument(args, 2);
@@ -478,8 +450,8 @@ mod tests {
         json!({ "now": now, "activeAccount": "Alice", "chatEnabled": true })
     }
 
-    fn transition(method: &str, args: Vec<Value>) -> Value {
-        call(method, &args).unwrap().unwrap()
+    fn transition(step: fn(&[Value]) -> Out, args: Vec<Value>) -> Value {
+        step(&args).unwrap()
     }
 
     fn effects(result: &Value) -> Vec<Value> {
@@ -492,7 +464,7 @@ mod tests {
         model.online_phase = "playing".into();
         model.online_id = "AbCd1234".into();
         let result = transition(
-            "onlineGameBegin",
+            begin,
             vec![
                 state_json(&model),
                 json!("start"),
@@ -510,12 +482,9 @@ mod tests {
     #[test]
     fn a_seek_waits_for_the_check_for_a_game_in_progress() {
         let seek = json!({ "minutes": 10, "increment": 0, "color": "random", "rated": false });
-        let checking = transition(
-            "onlineGameChecking",
-            vec![state_json(&Model::idle()), ctx(0.0)],
-        );
+        let checking = transition(checking, vec![state_json(&Model::idle()), ctx(0.0)]);
         let refused = transition(
-            "onlineGameBegin",
+            begin,
             vec![
                 checking["state"].clone(),
                 json!("start"),
@@ -530,7 +499,7 @@ mod tests {
             checking["state"]["onlinePhase"]
         );
         let answered = transition(
-            "onlineGameConnection",
+            connection,
             vec![
                 checking["state"].clone(),
                 json!({ "session": 0, "account": "Alice", "gameId": "", "lane": "game", "phase": "idle" }),
@@ -538,7 +507,7 @@ mod tests {
             ],
         );
         let begun = transition(
-            "onlineGameBegin",
+            begin,
             vec![answered["state"].clone(), json!("start"), seek, ctx(0.0)],
         );
         assert_eq!(begun["call"]["method"], json!("startOnline"));
@@ -549,7 +518,7 @@ mod tests {
     fn a_seek_reply_after_a_stop_is_ignored() {
         let model = Model::idle();
         let begun = transition(
-            "onlineGameBegin",
+            begin,
             vec![
                 state_json(&model),
                 json!("start"),
@@ -559,11 +528,11 @@ mod tests {
         );
         assert_eq!(begun["call"]["method"], json!("startOnline"));
         let stopped = transition(
-            "onlineGameBegin",
+            begin,
             vec![begun["state"].clone(), json!("stop"), Value::Null, ctx(0.0)],
         );
         let late = transition(
-            "onlineGameSettle",
+            settle,
             vec![
                 stopped["state"].clone(),
                 begun["pending"].clone(),
@@ -593,7 +562,7 @@ mod tests {
     #[test]
     fn a_late_offer_reply_leaves_a_finished_game_alone() {
         let begun = transition(
-            "onlineGameBegin",
+            begin,
             vec![
                 state_json(&playing()),
                 json!("action"),
@@ -602,7 +571,7 @@ mod tests {
             ],
         );
         let late = transition(
-            "onlineGameSettle",
+            settle,
             vec![
                 finished(&begun["state"]),
                 begun["pending"].clone(),
@@ -618,7 +587,7 @@ mod tests {
     #[test]
     fn a_late_failed_move_leaves_a_finished_game_alone() {
         let begun = transition(
-            "onlineGameBegin",
+            begin,
             vec![
                 state_json(&playing()),
                 json!("move"),
@@ -627,7 +596,7 @@ mod tests {
             ],
         );
         let late = transition(
-            "onlineGameSettle",
+            settle,
             vec![
                 finished(&begun["state"]),
                 begun["pending"].clone(),
@@ -646,7 +615,7 @@ mod tests {
         model.online_days_per_turn = Some(3.0);
         model.online_account = "Alice".into();
         let begun = transition(
-            "onlineGameBegin",
+            begin,
             vec![
                 state_json(&model),
                 json!("start"),
@@ -656,7 +625,7 @@ mod tests {
         );
         assert_eq!(begun["state"]["onlinePhase"], json!("seeking"));
         let failed = transition(
-            "onlineGameSettle",
+            settle,
             vec![
                 begun["state"].clone(),
                 begun["pending"].clone(),
@@ -673,7 +642,7 @@ mod tests {
     #[test]
     fn a_confirmed_move_reports_how_long_the_server_took() {
         let begun = transition(
-            "onlineGameBegin",
+            begin,
             vec![
                 state_json(&playing()),
                 json!("move"),
@@ -682,7 +651,7 @@ mod tests {
             ],
         );
         let confirmed = transition(
-            "onlineGameSettle",
+            settle,
             vec![
                 begun["state"].clone(),
                 begun["pending"].clone(),
@@ -704,12 +673,12 @@ mod tests {
         model.online_id = "AbCd1234".into();
         model.online_setup = Setup::standard();
         let begun = transition(
-            "onlineGameBegin",
+            begin,
             vec![state_json(&model), json!("move"), json!("e2e4"), ctx(10.0)],
         );
         assert_eq!(begun["call"]["args"], json!(["AbCd1234", "e2e4"]));
         let failed = transition(
-            "onlineGameSettle",
+            settle,
             vec![
                 begun["state"].clone(),
                 begun["pending"].clone(),
@@ -727,7 +696,7 @@ mod tests {
             vec![json!("warn"), json!("clockPause"), json!("failed")]
         );
         let again = transition(
-            "onlineGameBegin",
+            begin,
             vec![
                 failed["state"].clone(),
                 json!("move"),
@@ -776,7 +745,7 @@ mod tests {
         model.online_color = "white".into();
         let clock_after = |model: &Model, moves: &str| {
             let result = transition(
-                "onlineGameEvent",
+                event,
                 vec![
                     state_json(model),
                     json!({
@@ -812,7 +781,7 @@ mod tests {
         model.online_id = "AbCd1234".into();
         model.online_account = "Alice".into();
         let result = transition(
-            "onlineGameEvent",
+            event,
             vec![
                 state_json(&model),
                 json!({
@@ -843,14 +812,9 @@ mod tests {
             initial: 300.0,
             increment: 3.0,
         });
-        let result = transition(
-            "onlineGameFinish",
-            vec![
-                state_json(&model),
-                json!({ "winner": "black", "reason": "resign", "notify": true }),
-                ctx(0.0),
-            ],
-        );
+        let mut run = Run::new(model, serde_json::from_value(ctx(0.0)).unwrap());
+        run.finish(Some("black"), "resign", true);
+        let result = run.done(None, None, None, false).unwrap();
         assert_eq!(result["state"]["onlinePhase"], json!("finished"));
         assert_eq!(
             result["state"]["onlineStatus"],
@@ -867,9 +831,7 @@ mod tests {
                 "body": "Against Bob · resign.",
             })
         );
-        let view = call("onlineGameView", &[result["state"].clone()])
-            .unwrap()
-            .unwrap();
+        let view = view(&[result["state"].clone()]).unwrap();
         assert_eq!(view["rematch"]["color"], json!("black"));
         assert_eq!(view["rematch"]["minutes"], json!(5.0));
         assert_eq!(view["rematch"]["increment"], json!(3.0));

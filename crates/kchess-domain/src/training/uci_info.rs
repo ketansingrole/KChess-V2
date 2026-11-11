@@ -3,24 +3,16 @@
 // Engine output is outside input: read it without indexing that can panic.
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
-use serde_json::{Map, Value, json};
-
-use super::{Out, num_out, text_arg, to_value};
-use crate::js;
+use crate::{js, rules};
 
 /// `/^[a-h][1-8][a-h][1-8][qrbnk]?$/` (`k` promotes to a king in Antichess), or a Crazyhouse
 /// drop such as `P@e4`.
 fn is_uci_move(token: &str) -> bool {
-    let square =
-        |file: u8, rank: u8| (b'a'..=b'h').contains(&file) && (b'1'..=b'8').contains(&rank);
-    match *token.as_bytes() {
-        [role, b'@', file, rank] => b"PNBRQ".contains(&role) && square(file, rank),
-        [f1, r1, f2, r2] => square(f1, r1) && square(f2, r2),
-        [f1, r1, f2, r2, promotion] => {
-            square(f1, r1) && square(f2, r2) && b"qrbnk".contains(&promotion)
-        }
-        _ => false,
-    }
+    rules::is_uci_text(token)
+        || rules::is_drop_text(token)
+        || token
+            .strip_suffix('k')
+            .is_some_and(|from_to| from_to.len() == 4 && rules::is_uci_text(from_to))
 }
 
 /// `Number(v)` of an optional token: a missing one is NaN.
@@ -28,10 +20,30 @@ fn number_of(token: Option<&str>) -> f64 {
     token.map_or(f64::NAN, js::string_to_number)
 }
 
-/// `parseInfo(text, whiteToMove)`: the scored line of one `info` message, or None for progress
-/// lines (`currmove`, `hashfull`…), bound scores and anything without a score and a PV.
-pub fn parse_info(text: &str, white_to_move: bool) -> Option<Value> {
-    // A fast reject for lines that cannot start with `info` (the TypeScript hot path); indented
+/// One scored principal variation, from White's side.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InfoLine {
+    /// `multipv`: 1 for the best line. Not a number when the engine wrote something else.
+    pub rank: f64,
+    pub depth: f64,
+    /// The score in centipawns, unless it is a mate.
+    pub cp: Option<f64>,
+    /// Moves to mate: positive when White mates.
+    pub mate: Option<f64>,
+    pub pv: Vec<String>,
+}
+
+/// One `info` message's scored line, and the engine's speed when it gave it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Info {
+    pub line: InfoLine,
+    pub nps: Option<f64>,
+}
+
+/// The scored line of one `info` message, or None for progress lines (`currmove`, `hashfull`…),
+/// bound scores and anything without a score and a PV.
+pub fn parse_info(text: &str, white_to_move: bool) -> Option<Info> {
+    // A fast reject for lines that cannot start with `info` (the hot path); indented
     // lines fall through to the trimmed read, and any other leading character is rejected.
     if !text.starts_with("info") && !matches!(text.chars().next(), Some(' ' | '\t' | '\n' | '\r')) {
         return None;
@@ -102,35 +114,20 @@ pub fn parse_info(text: &str, white_to_move: bool) -> Option<Value> {
         return None;
     }
     let sign = if white_to_move { 1.0 } else { -1.0 };
-    let mut line = Map::new();
-    line.insert("rank".into(), num_out(rank));
-    line.insert("depth".into(), num_out(depth));
-    line.insert("pv".into(), json!(pv));
-    if let Some(mate) = mate.filter(|m| m.is_finite()) {
-        line.insert("mate".into(), num_out(mate * sign));
-    } else {
-        let cp = cp.filter(|c| c.is_finite())?;
-        line.insert("cp".into(), num_out(cp * sign));
-    }
-    let mut out = Map::new();
-    out.insert("line".into(), Value::Object(line));
-    if let Some(nps) = nps.filter(|n| n.is_finite()) {
-        out.insert("nps".into(), num_out(nps));
-    }
-    Some(Value::Object(out))
-}
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "parseInfo" => text_arg(args, 0, "text").and_then(|text| {
-            let white_to_move = super::arg(args, 1)
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            to_value(parse_info(text, white_to_move))
-        }),
-        _ => return None,
+    let (cp, mate) = match mate.filter(|m| m.is_finite()) {
+        Some(mate) => (None, Some(mate * sign)),
+        None => (Some(cp.filter(|c| c.is_finite())? * sign), None),
     };
-    Some(result)
+    Some(Info {
+        line: InfoLine {
+            rank,
+            depth,
+            cp,
+            mate,
+            pv: pv.into_iter().map(str::to_string).collect(),
+        },
+        nps: nps.filter(|n| n.is_finite()),
+    })
 }
 
 #[cfg(test)]
@@ -140,7 +137,7 @@ mod tests {
     #[test]
     fn scores_turn_to_white_and_bounds_are_skipped() {
         let line = parse_info("info depth 12 score cp 31 nodes 9 pv e2e4 e7e5", false).unwrap();
-        assert_eq!(line["line"]["cp"], json!(-31.0));
+        assert_eq!(line.line.cp, Some(-31.0));
         assert!(parse_info("info depth 12 score cp 40 lowerbound nodes 1 pv e2e4", true).is_none());
         assert!(parse_info("info string NNUE evaluation using nn.nnue", true).is_none());
         assert!(parse_info("", true).is_none());
@@ -149,8 +146,8 @@ mod tests {
     #[test]
     fn variant_lines_keep_their_drops_and_king_promotions() {
         let line = parse_info("info depth 9 score cp 50 pv b1c3 d5e6 P@b4 e7e8k", true).unwrap();
-        assert_eq!(line["line"]["pv"], json!(["b1c3", "d5e6", "P@b4", "e7e8k"]));
+        assert_eq!(line.line.pv, ["b1c3", "d5e6", "P@b4", "e7e8k"]);
         let line = parse_info("info depth 9 score cp 50 pv e2e4 K@e5 p@e4", true).unwrap();
-        assert_eq!(line["line"]["pv"], json!(["e2e4"]));
+        assert_eq!(line.line.pv, ["e2e4"]);
     }
 }

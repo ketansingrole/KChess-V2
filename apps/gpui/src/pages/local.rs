@@ -3,6 +3,7 @@
 //! place in Game history, and the board game resumes in either app.
 
 use kchess_contracts::calls;
+use kchess_domain::training::clock::format_clock;
 use std::time::{Duration, Instant};
 
 use gpui_kit::base::TestSupportExt as _;
@@ -26,7 +27,7 @@ use crate::core::AppCore;
 use crate::export::{Exporter, GameExport};
 use crate::game::history::HistoryPlace;
 use crate::game::local::{Flagged, LocalGame};
-use crate::game::{STANDARD_FEN, chess960, position_problem, rules, view};
+use crate::game::{STANDARD_FEN, chess960, position_problem, view};
 use crate::part::Part;
 use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout, panel_style};
 use crate::settings::{SettingsChanged, SettingsHandle};
@@ -415,7 +416,7 @@ impl LocalPage {
         self.voice.sync(
             &context,
             Some(line),
-            crate::voice::grammar("MOVE_GRAMMAR"),
+            crate::voice::grammar(crate::voice::Grammar::Move),
             taking,
             cx,
         );
@@ -768,11 +769,9 @@ impl LocalPage {
 
     /// Analyse the game on the analysis board at the position shown (standard and Chess960).
     fn analyse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let pgn = rules(
-            "setupPgn",
-            &[self.setup().clone(), json!(self.moves()), json!({})],
-        );
-        let Ok(Value::String(pgn)) = pgn else { return };
+        let Some(pgn) = crate::game::setup_pgn(self.setup(), &self.moves(), &Value::Null) else {
+            return;
+        };
         let ply = self.shown_ply();
         let origin = json!({ "white": "White", "black": "Black" });
         crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
@@ -781,12 +780,7 @@ impl LocalPage {
     }
 
     fn copy_pgn(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let today = rules("calendarToday", &[]).ok();
-        let date = today
-            .as_ref()
-            .and_then(Value::as_str)
-            .map(|day| day.replace('-', "."))
-            .unwrap_or_else(|| "????.??.??".into());
+        let date = chrono::Local::now().format("%Y.%m.%d").to_string();
         let headers = json!({
             "Event": "Over the board (KChess)",
             "Date": date,
@@ -794,11 +788,8 @@ impl LocalPage {
             "Black": "Black",
             "Result": self.pgn_result(),
         });
-        match rules(
-            "setupPgn",
-            &[self.setup().clone(), json!(self.moves()), headers],
-        ) {
-            Ok(Value::String(pgn)) => {
+        match crate::game::setup_pgn(self.setup(), &self.moves(), &headers) {
+            Some(pgn) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(pgn));
                 window.push_notification("PGN copied", cx);
             }
@@ -1025,10 +1016,7 @@ impl LocalPage {
         let mut face = |side: Side, index: usize, cx: &mut Context<Self>| {
             let running = self.clock.running == Some(side);
             let flagged = self.clock.flagged == Some(side);
-            let time = rules("formatClock", &[json!(self.clock.left(side, now))])
-                .ok()
-                .and_then(|text| text.as_str().map(str::to_string))
-                .unwrap_or_default();
+            let time = format_clock(self.clock.left(side, now));
             let state = if flagged {
                 "Time up"
             } else if running {
@@ -1393,7 +1381,7 @@ impl Render for LocalPage {
                 hint: "Either player can say “E four” or “Knight F three”",
                 active: self.voice_taking(),
                 listening: self.voice_taking(),
-                grammar: crate::voice::grammar("MOVE_GRAMMAR"),
+                grammar: crate::voice::grammar(crate::voice::Grammar::Move),
             },
             cx,
         );
@@ -1568,15 +1556,8 @@ impl LocalPage {
         };
         let opening =
             (frontend.show_opening_name && self.setup()["variant"] == "standard").then(|| {
-                let opening = rules(
-                    "openingAt",
-                    &[self.setup().clone(), json!(moves), json!(shown)],
-                )
-                .ok()?;
-                Some((
-                    opening["eco"].as_str()?.to_string(),
-                    opening["name"].as_str()?.to_string(),
-                ))
+                let opening = crate::game::opening_at(self.setup(), &moves, shown)?;
+                Some((opening.eco, opening.name))
             });
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
@@ -1902,9 +1883,7 @@ impl NewGame {
         let usual = match current_variant {
             "standard" => Some(STANDARD_FEN.to_string()),
             "chess960" => None,
-            variant => rules("defaultFen", &[json!(variant)])
-                .ok()
-                .and_then(|fen| fen.as_str().map(str::to_string)),
+            variant => kchess_domain::rules::default_fen(variant),
         };
         let fen = cx.new(|cx| {
             let label = format!(
@@ -2026,7 +2005,7 @@ impl NewGame {
                 .is_none()
                 .then(|| json!({ "variant": variant, "fen": text }));
         }
-        let fen = rules("defaultFen", &[json!(variant)]).ok()?;
+        let fen = kchess_domain::rules::default_fen(&variant)?;
         Some(json!({ "variant": variant, "fen": fen }))
     }
 
@@ -2193,10 +2172,7 @@ fn face(color: Color) -> usize {
 }
 
 fn clock_face(millis: f64) -> String {
-    rules("formatClock", &[json!(millis)])
-        .ok()
-        .and_then(|text| text.as_str().map(str::to_string))
-        .unwrap_or_default()
+    format_clock(millis)
 }
 
 impl crate::pages::PageAction for Action {

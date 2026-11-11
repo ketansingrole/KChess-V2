@@ -14,6 +14,7 @@ use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::calendar::civil_from_days;
+use kchess_domain::misc::{validate, value::J};
 
 /// Games kept per account.
 pub const MAX_GAMES: i64 = 5000;
@@ -325,16 +326,6 @@ pub(super) fn now_ms() -> i64 {
         })
 }
 
-/// A validator or domain rule from `kchess-domain`, by its TypeScript name.
-fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
-    crate::engine::domain(method, args)
-}
-
-/// `rulesLossless(name, value)` with no special values to carry.
-fn validate(method: &str, value: &Value) -> Result<Value> {
-    domain(method, vec![json!([]), value.clone()])
-}
-
 // ---- Values: SQLite and JavaScript semantics ------------------------------------------------
 
 /// A JSON value bound as SQL, as `toSql` binds it: null and undefined as NULL, booleans as 1/0,
@@ -431,9 +422,8 @@ fn settings_from_values(values: &[SqlValue]) -> Result<Settings> {
     // `Number(x) || 0` turns NaN into 0, then the value is clamped to 0..=120.
     let poll = if poll.is_nan() { 0.0 } else { poll };
     let levels: Vec<String> = text("engineLevels").split(',').map(str::to_owned).collect();
-    let engine_levels: Vec<String> =
-        serde_json::from_value(domain("normalizeEngineLevels", vec![json!(levels)])?)
-            .map_err(|cause| CoreError::new(cause.to_string()))?;
+    let engine_levels =
+        kchess_domain::training::engine_levels::normalize(&levels).map_err(CoreError::new)?;
     let coordinates = text("coordinates");
     let promotion = text("promotion");
     let piece_animation = text("pieceAnimation");
@@ -650,8 +640,7 @@ fn game_from_row(row: &Row<'_>) -> rusqlite::Result<LichessGame> {
 pub fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
     let db = ctx.db;
     let query: GamePageQuery =
-        serde_json::from_value(domain("assertGamePageQuery", vec![json!([]), input])?)
-            .map_err(|cause| CoreError::new(cause.to_string()))?;
+        crate::engine::validated(validate::assert_game_page_query(J::from(&input)))?;
     let mut clauses: Vec<String> = Vec::new();
     let mut params: Vec<SqlValue> = Vec::new();
     if let Some(account) = query
@@ -912,8 +901,8 @@ pub fn write_api_cache(db: &Connection, key: &str, value: &Value) -> Result<()> 
 }
 
 pub fn add_account(db: &Connection, username: &str, connected: bool) -> Result<AppData> {
-    let normalized: String = serde_json::from_value(validate("assertUsername", &json!(username))?)
-        .map_err(|cause| CoreError::new(cause.to_string()))?;
+    let normalized =
+        validate::assert_username(J::Str(username.to_owned())).map_err(CoreError::new)?;
     let existing = db
         .query_row(
             "SELECT username, connected FROM accounts WHERE username = ? COLLATE NOCASE",
@@ -953,8 +942,7 @@ pub fn add_account(db: &Connection, username: &str, connected: bool) -> Result<A
 pub fn add_friends(db: &Connection, usernames: &[Value]) -> Result<AppData> {
     transaction(db, || {
         for raw in usernames {
-            let name: String = serde_json::from_value(validate("assertUsername", raw)?)
-                .map_err(|cause| CoreError::new(cause.to_string()))?;
+            let name = validate::assert_username(J::from(raw)).map_err(CoreError::new)?;
             let exists = db
                 .query_row(
                     "SELECT 1 FROM accounts WHERE username = ? COLLATE NOCASE",
@@ -1154,14 +1142,9 @@ pub fn clear_account_data(db: &Connection, username: &str) -> Result<AppData> {
     load_app_data(db)
 }
 
-/// Whether a game is still live, as `isGameInProgress` decides it.
-pub(super) fn in_progress(game: &Value) -> Result<bool> {
-    domain(
-        "isGameInProgress",
-        vec![game.get("status").cloned().unwrap_or(Value::Null)],
-    )?
-    .as_bool()
-    .ok_or_else(|| CoreError::new("isGameInProgress did not return a boolean."))
+/// Whether a game is still live, by its `status`.
+pub(super) fn in_progress(game: &Value) -> bool {
+    kchess_domain::records::games::is_game_in_progress(game.get("status"))
 }
 
 pub(super) fn upsert_sql() -> String {
@@ -1201,7 +1184,7 @@ fn upsert_games(
         }
         let mut upsert = db.prepare(&upsert_sql()).sql()?;
         for game in games {
-            if in_progress(game)? {
+            if in_progress(game) {
                 db.execute(
                     "INSERT OR IGNORE INTO pending_game_sync (account, id) VALUES (?, ?)",
                     params_from_iter([

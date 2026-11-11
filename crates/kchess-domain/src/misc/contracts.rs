@@ -2,14 +2,14 @@
 //! takes, and one validator per argument, run before the method does anything.
 //!
 //! The table is the single source: the facade checks every call against it
-//! (`validate_arguments`), and `validateCoreArguments` answers the same check by name. A JSON
+//! (`validate_arguments`). A JSON
 //! `null` stands for `undefined` where the facade passes JSON arguments, since JSON cannot carry
 //! `undefined`.
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
+use super::Run;
 use super::value::J;
-use super::{Run, call};
 
 /// One argument's validator.
 #[derive(Clone, Copy)]
@@ -30,13 +30,6 @@ use Check::{Any, Optional, Position, Valid, WatchTarget};
 
 /// A method's row: its name, the fewest arguments it takes, and one check per argument.
 type Row = (&'static str, usize, &'static [Check]);
-
-/// Which table a method is checked against.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Scope {
-    /// `CORE_CONTRACTS`: the core's `CoreApi` methods.
-    Core,
-}
 
 /// Methods refused during a live human game (engine, review and explorer assistance),
 /// gated by the facade's `assistance_allowed` (`crates/kchess-core/src/facade.rs`). The single
@@ -426,24 +419,16 @@ const CORE: &[Row] = &[
     ),
 ];
 
-/// The row of `method` in `scope`, or `None` when it has no contract there.
-fn row(scope: Scope, method: &str) -> Option<(usize, &'static [Check])> {
-    let find = |rows: &'static [Row]| {
-        rows.iter()
-            .find(|(name, ..)| *name == method)
-            .map(|(_, min, checks)| (*min, *checks))
-    };
-    match scope {
-        Scope::Core => find(CORE),
-    }
+/// The row of `method`, or `None` when it has no contract.
+fn row(method: &str) -> Option<(usize, &'static [Check])> {
+    CORE.iter()
+        .find(|(name, ..)| *name == method)
+        .map(|(_, min, checks)| (*min, *checks))
 }
 
-/// Every method of `scope` with its fewest and most arguments, sorted by name.
-pub fn arities(scope: Scope) -> Vec<(&'static str, usize, usize)> {
-    let rows: &[Row] = match scope {
-        Scope::Core => CORE,
-    };
-    let mut out: Vec<(&'static str, usize, usize)> = rows
+/// Every core method with its fewest and most arguments, sorted by name.
+pub fn arities() -> Vec<(&'static str, usize, usize)> {
+    let mut out: Vec<(&'static str, usize, usize)> = CORE
         .iter()
         .map(|(name, min, checks)| (*name, *min, checks.len()))
         .collect();
@@ -492,9 +477,9 @@ fn run_check(check: Check, value: &J) -> Result<(), String> {
 
 /// Checks a method's arguments: the count first, then each argument in order, and the first
 /// failing check's message is the result (as `validateArguments` throws it).
-pub fn check(scope: Scope, method: &str, args: &[J]) -> Result<(), String> {
+pub fn check(method: &str, args: &[J]) -> Result<(), String> {
     let count_error = || Err(format!("Invalid argument count for {method}."));
-    let Some((min, checks)) = row(scope, method) else {
+    let Some((min, checks)) = row(method) else {
         return count_error();
     };
     if args.len() < min || args.len() > checks.len() {
@@ -552,7 +537,7 @@ pub fn check(scope: Scope, method: &str, args: &[J]) -> Result<(), String> {
 /// Checks a core method's JSON arguments, as the facade receives them (a JSON `null` is
 /// `undefined`). `None` when the method has no core contract, so the facade dispatches it.
 pub fn validate_arguments(method: &str, args: &[Value]) -> Option<Result<(), String>> {
-    row(Scope::Core, method)?;
+    row(method)?;
     let values: Vec<J> = args
         .iter()
         .map(|value| {
@@ -563,49 +548,28 @@ pub fn validate_arguments(method: &str, args: &[Value]) -> Option<Result<(), Str
             }
         })
         .collect();
-    Some(check(Scope::Core, method, &values))
+    Some(check(method, &values))
 }
 
-/// Whether `method` is the argument-check call (`validateCoreArguments`), which takes
-/// `[method, args]`.
-pub fn is_call(method: &str) -> bool {
-    method == "validateCoreArguments"
-}
-
-/// The argument-check call. `values` are `[method, args]`, with `undefined` kept where the
-/// caller sent it. A valid call returns `null`.
-pub fn argument_call(values: &[J]) -> Result<J, String> {
-    match values {
-        [J::Str(name), J::Arr(list)] => check(Scope::Core, name, list).map(|()| J::Null),
-        _ => Err("The arguments of an argument check are a method name and a list.".into()),
-    }
-}
-
-/// The normalized value validator `name` gives for `args` (`assertX(...)` in the TypeScript).
+/// The normalized value validator `name` gives for `args`, a JSON `null` being `undefined`.
 pub fn normalize(name: &str, args: &[Value]) -> Result<Value, String> {
-    run(name, args)
-}
-
-/// Runs validator `name` on `args`; a JSON `null` is `undefined`, as an absent argument is.
-fn run(name: &str, args: &[Value]) -> Result<Value, String> {
-    let sidecar = Value::Array(
-        args.iter()
-            .enumerate()
-            .filter(|(_, value)| value.is_null())
-            .map(|(index, _)| json!({ "at": [index], "k": 0 }))
-            .collect(),
-    );
-    let mut lossless = vec![sidecar];
-    lossless.extend(args.iter().cloned());
-    match call(name, &lossless) {
-        Some(result) => result,
-        None => Err(format!("Unknown validator {name}.")),
-    }
+    let values = args
+        .iter()
+        .map(|value| {
+            if value.is_null() {
+                J::Undef
+            } else {
+                J::from(value)
+            }
+        })
+        .collect();
+    super::validate(name, values)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn every_contract_names_a_validator() {
@@ -625,11 +589,11 @@ mod tests {
     fn excess_and_missing_arguments_are_rejected_before_any_check() {
         let excess = vec![J::Undef; 3];
         assert_eq!(
-            check(Scope::Core, "answerMistake", &excess),
+            check("answerMistake", &excess),
             Err("Invalid argument count for answerMistake.".into())
         );
         assert_eq!(
-            check(Scope::Core, "unknownMethod", &[]),
+            check("unknownMethod", &[]),
             Err("Invalid argument count for unknownMethod.".into())
         );
     }

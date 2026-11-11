@@ -329,12 +329,22 @@ pub fn line<S: AsRef<str>>(
 
 /* ── Typed positions (the board editor) ── */
 
-/// `parseFen` without validation: the placement field and side to move as written.
-pub fn fen_setup(fen: &str) -> Option<Value> {
+/// A FEN's placement field and side to move.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BoardSetup {
+    pub board: String,
+    pub turn: &'static str,
+}
+
+/// A FEN read without validation: the placement field and side to move as written.
+pub fn fen_setup(fen: &str) -> Option<BoardSetup> {
     let setup = rules::parse_fen(fen)?;
     let written = rules::make_setup_fen(&setup);
     let board = written.split(' ').next().unwrap_or_default().to_string();
-    Some(json!({ "board": board, "turn": color_name(setup.turn) }))
+    Some(BoardSetup {
+        board,
+        turn: color_name(setup.turn),
+    })
 }
 
 /// Why `Chess.fromSetup(parseFen(fen))` refuses a FEN, in its order of checks:
@@ -400,25 +410,27 @@ fn game_problem(game: &Game) -> Option<&'static str> {
     None
 }
 
-fn headers(game: &Game) -> Value {
-    Value::Array(game.headers.iter().map(|(k, v)| json!([k, v])).collect())
+/// One game of a PGN document.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PgnGame {
+    /// Its headers, in order, as name and value.
+    pub headers: Vec<(String, String)>,
+    /// Its text as the PGN writer writes it.
+    pub pgn: String,
+    /// Why it cannot be replayed, if it cannot.
+    pub problem: Option<&'static str>,
 }
 
-/// `parsePgn`: each game's headers, its text as `makePgn` writes it, and why it cannot
-/// be replayed (`game_problem`), if it cannot.
-pub fn pgn_games(text: &str) -> Value {
-    Value::Array(
-        parse_pgn(text)
-            .iter()
-            .map(|game| {
-                json!({
-                    "headers": headers(game),
-                    "pgn": make_pgn(game),
-                    "problem": game_problem(game),
-                })
-            })
-            .collect(),
-    )
+/// Each game of a PGN document.
+pub fn pgn_games(text: &str) -> Vec<PgnGame> {
+    parse_pgn(text)
+        .iter()
+        .map(|game| PgnGame {
+            headers: game.headers.clone(),
+            pgn: make_pgn(game),
+            problem: game_problem(game),
+        })
+        .collect()
 }
 
 /// The value of the last `[%clk h:mm:ss]` in a comment, as `parseComment` reads it.
@@ -465,14 +477,38 @@ fn clock_value(text: &str) -> Option<f64> {
     Some(hours * 3600.0 + minutes * 60.0 + seconds)
 }
 
+/// One move of a game's main line.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MainlineMove {
+    pub san: String,
+    pub uci: String,
+    pub fen: String,
+    /// The colour that played it.
+    pub mover: &'static str,
+    /// Whether it gives check.
+    pub check: bool,
+    /// The clock its comment records, in seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clock: Option<f64>,
+}
+
+/// A game's main line, from its start.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Mainline {
+    pub headers: Vec<(String, String)>,
+    /// The start's FEN; none when the game's own start cannot be set up.
+    pub start: Option<String>,
+    /// Whether the side to move is in check at the start.
+    pub start_check: bool,
+    pub moves: Vec<MainlineMove>,
+}
+
 /// The first game's main line, played from its start (the usual start when its own cannot be
-/// set up, so `start` is null) until a move is illegal, at most `limit` moves. `check` is
-/// `isCheck()` after each move (`startCheck` before the first).
-pub fn pgn_mainline(text: &str, limit: usize) -> Value {
+/// set up) until a move is illegal, at most `limit` moves.
+pub fn pgn_mainline(text: &str, limit: usize) -> Option<Mainline> {
     let games = parse_pgn(text);
-    let Some(game) = games.first() else {
-        return Value::Null;
-    };
+    let game = games.first()?;
     let start = starting_position(game);
     let mut pos = start
         .clone()
@@ -496,23 +532,20 @@ pub fn pgn_mainline(text: &str, limit: usize) -> Value {
             .comments
             .as_ref()
             .and_then(|comments| comment_clock(&comments.join(" ")));
-        let mut entry = json!({
-            "san": data.san.as_str(),
-            "uci": uci,
-            "fen": rules::make_fen(&pos),
-            "mover": mover,
-            "check": pos.is_check(),
+        moves.push(MainlineMove {
+            san: data.san.as_str().to_string(),
+            uci,
+            fen: rules::make_fen(&pos),
+            mover,
+            check: pos.is_check(),
+            clock,
         });
-        if let Some(clock) = clock {
-            entry["clock"] = json!(clock);
-        }
-        moves.push(entry);
     }
-    json!({
-        "headers": headers(game),
-        "start": start.as_ref().map(rules::make_fen),
-        "startCheck": start_check,
-        "moves": moves,
+    Some(Mainline {
+        headers: game.headers.clone(),
+        start: start.as_ref().map(rules::make_fen),
+        start_check,
+        moves,
     })
 }
 
@@ -670,10 +703,29 @@ mod tests {
         let line = pgn_mainline(
             "1. e4 { [%clk 0:01:00] } e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# *",
             3,
-        );
-        assert_eq!(line["moves"].as_array().unwrap().len(), 3);
-        assert_eq!(line["moves"][0]["clock"], json!(60.0));
-        assert_eq!(line["start"], json!(START));
+        )
+        .unwrap();
+        assert_eq!(line.moves.len(), 3);
+        assert_eq!(line.moves[0].clock, Some(60.0));
+        assert_eq!(line.start.as_deref(), Some(START));
+    }
+
+    /// A board's destinations castle onto the king's square too, a Chess960 board's onto the
+    /// rook only, as the rules do.
+    #[test]
+    fn dests_castle_as_the_board_asks() {
+        let pos = rules::setup_start("standard", "4k3/8/8/8/8/8/8/4K2R w K - 0 1").unwrap();
+        let king = |mode| {
+            dests(&pos, mode)
+                .into_iter()
+                .find(|(from, _)| *from == Square::E1)
+                .unwrap()
+                .1
+        };
+        assert!(king(DestMode::Board).contains(&Square::G1));
+        let squares = king(DestMode::Rules);
+        assert!(squares.contains(&Square::H1));
+        assert!(!squares.contains(&Square::G1));
     }
 
     #[test]

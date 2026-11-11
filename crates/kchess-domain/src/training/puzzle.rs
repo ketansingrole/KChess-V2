@@ -6,10 +6,7 @@ use serde_json::{Map, Value, json};
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Position as _, Role};
 
-use super::{Out, text_arg, to_value, value_arg};
 use crate::{js, position, rules};
-
-const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 /// `PuzzleState`: where a solve stands. `index` is the solution move the player must make next.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -36,14 +33,19 @@ fn position_of(state: &PuzzleState) -> Option<VariantPosition> {
     }
 }
 
-/// `PlayerMove`: the state after the player's move, whether it was right, and the reply.
-#[derive(Serialize)]
+/// The state after the player's move, whether it was right, and the opponent's reply.
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PlayerMove {
-    state: PuzzleState,
-    correct: bool,
+pub struct PlayerMove {
+    pub state: PuzzleState,
+    pub correct: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    reply: Option<String>,
+    pub reply: Option<String>,
+}
+
+/// A puzzle's solution, its UCI moves.
+pub fn solution_of(puzzle: &Value) -> Vec<String> {
+    strings_of(puzzle.get("solution"))
 }
 
 fn strings_of(value: Option<&Value>) -> Vec<String> {
@@ -75,15 +77,15 @@ fn expected_at<S: AsRef<str>>(solution: &[S], index: f64) -> Option<&str> {
         .filter(|uci| !uci.is_empty())
 }
 
-/// `puzzleFromApi`: a Lichess API puzzle. Current responses carry the starting `fen` and
+/// A Lichess API puzzle in KChess's shape. Current responses carry the starting `fen` and
 /// `lastMove`; older ones only the game's moves, of which the first `initialPly + 1` lead to it.
-fn from_api(raw: &Value) -> Option<Value> {
+pub fn from_api(raw: &Value) -> Option<Value> {
     let puzzle = raw.get("puzzle")?;
     let game = raw.get("game");
     let mut fen = js::string(puzzle.get("fen")).map(str::to_string);
     let mut last_move = js::string(puzzle.get("lastMove")).map(str::to_string);
     if fen.as_deref().is_none_or(str::is_empty) || last_move.as_deref().is_none_or(str::is_empty) {
-        let start = rules::standard_from_fen(INITIAL_FEN)?;
+        let start = rules::standard_from_fen(rules::INITIAL_FEN)?;
         let pgn = game.and_then(|g| js::string(g.get("pgn"))).unwrap_or("");
         let sans: Vec<&str> = pgn
             .split(js::is_space)
@@ -127,36 +129,6 @@ fn from_api(raw: &Value) -> Option<Value> {
     }
     if let Some(game_id) = game.and_then(|g| g.get("id")).filter(|v| !v.is_null()) {
         out.insert("gameId".into(), game_id.clone());
-    }
-    Some(Value::Object(out))
-}
-
-/// `puzzleFromDb`: a row of Lichess's puzzle database, whose first move is the opponent's.
-fn from_db(row: &Value) -> Option<Value> {
-    let moves = js::string(row.get("moves"))?;
-    let tokens: Vec<&str> = moves.split(' ').filter(|token| !token.is_empty()).collect();
-    let (first, solution) = tokens.split_first()?;
-    let pos = rules::standard_from_fen(js::string(row.get("fen"))?)?;
-    let opening = position::play_uci(&pos, first)?;
-    if solution.is_empty() {
-        return None;
-    }
-    let themes: Vec<&str> = js::string(row.get("themes"))?
-        .split(' ')
-        .filter(|theme| !theme.is_empty())
-        .collect();
-    let mut out = Map::new();
-    out.insert("id".into(), row.get("id").cloned().unwrap_or(Value::Null));
-    out.insert("fen".into(), json!(opening.position.fen));
-    out.insert("lastMove".into(), json!(first));
-    out.insert("solution".into(), json!(solution));
-    out.insert(
-        "rating".into(),
-        row.get("rating").cloned().unwrap_or(Value::Null),
-    );
-    out.insert("themes".into(), json!(themes));
-    if let Some(plays) = row.get("plays").filter(|v| !v.is_null()) {
-        out.insert("plays".into(), plays.clone());
     }
     Some(Value::Object(out))
 }
@@ -229,15 +201,15 @@ fn drill_squares(
     }
 }
 
-/// An unreadable FEN still highlights the move's squares: only castling detection needs the
-/// position, and the old rules treated a missing one as "not castling".
-fn move_squares(fen: &str, uci: &str) -> Option<Vec<String>> {
+/// The squares to highlight for a UCI move from `fen`. An unreadable FEN still highlights them:
+/// only castling detection needs the position.
+pub fn move_squares(fen: &str, uci: &str) -> Option<Vec<String>> {
     let pos = rules::standard_from_fen(fen);
     squares_for(pos.as_ref(), uci)
 }
 
-/// `startPuzzle`
-fn start_puzzle(puzzle: &Value) -> PuzzleState {
+/// A puzzle's state before the first move.
+pub fn start_puzzle(puzzle: &Value) -> PuzzleState {
     let fen = js::string(puzzle.get("fen")).unwrap_or("").to_string();
     let last_move = js::string(puzzle.get("lastMove"))
         .filter(|uci| !uci.is_empty())
@@ -277,9 +249,9 @@ fn apply_move_at(pos: &VariantPosition, state: &PuzzleState, uci: &str) -> Optio
     })
 }
 
-/// `playerMove`: the player moves. The solution's move is right, and so is any other move that
-/// checkmates. The puzzle is solved once the last solution move, or a mate, is played.
-fn player_move(solution: &[String], state: PuzzleState, uci: &str) -> PlayerMove {
+/// The player moves. The solution's move is right, and so is any other move that checkmates.
+/// The puzzle is solved once the last solution move, or a mate, is played.
+pub fn player_move(solution: &[String], state: PuzzleState, uci: &str) -> PlayerMove {
     let wrong = |state| PlayerMove {
         state,
         correct: false,
@@ -326,8 +298,8 @@ fn player_move(solution: &[String], state: PuzzleState, uci: &str) -> PlayerMove
     }
 }
 
-/// `opponentReply`: the scripted reply. The state is unchanged when the move is illegal.
-fn opponent_reply(state: PuzzleState, uci: &str) -> PuzzleState {
+/// The opponent's scripted reply. The state is unchanged when the move is illegal.
+pub fn opponent_reply(state: PuzzleState, uci: &str) -> PuzzleState {
     match apply_move(&state, uci) {
         Some(next) => PuzzleState {
             index: state.index + 1.0,
@@ -337,8 +309,8 @@ fn opponent_reply(state: PuzzleState, uci: &str) -> PuzzleState {
     }
 }
 
-/// `playerColor`
-fn player_color(puzzle: &Value) -> &'static str {
+/// The side the player solves for: the side to move in the puzzle's FEN.
+pub fn player_color(puzzle: &Value) -> &'static str {
     if js::string(puzzle.get("fen")).and_then(|fen| fen.split(' ').nth(1)) == Some("b") {
         "black"
     } else {
@@ -346,48 +318,10 @@ fn player_color(puzzle: &Value) -> &'static str {
     }
 }
 
-fn player_move_call(args: &[Value]) -> Out {
-    let puzzle: Value = value_arg(args, 0, "puzzle")?;
-    let state: PuzzleState = value_arg(args, 1, "state")?;
-    let uci = text_arg(args, 2, "uci")?;
-    to_value(player_move(&strings_of(puzzle.get("solution")), state, uci))
-}
-
-fn next_solution_squares_call(args: &[Value]) -> Out {
-    let puzzle: Value = value_arg(args, 0, "puzzle")?;
-    let state: PuzzleState = value_arg(args, 1, "state")?;
-    let solution = strings_of(puzzle.get("solution"));
-    let squares = expected_at(&solution, state.index)
-        .and_then(|uci| drill_squares(&state, position_of(&state).as_ref(), uci));
-    to_value(squares)
-}
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result =
-        match method {
-            "puzzleFromApi" => {
-                value_arg::<Value>(args, 0, "raw").map(|raw| from_api(&raw).unwrap_or(Value::Null))
-            }
-            "puzzleFromDb" => {
-                value_arg::<Value>(args, 0, "row").map(|row| from_db(&row).unwrap_or(Value::Null))
-            }
-            "moveSquares" => value_arg::<String>(args, 0, "fen").and_then(|fen| {
-                let uci = text_arg(args, 1, "uci")?;
-                to_value(move_squares(&fen, uci))
-            }),
-            "startPuzzle" => value_arg::<Value>(args, 0, "puzzle")
-                .and_then(|puzzle| to_value(start_puzzle(&puzzle))),
-            "playerMove" => player_move_call(args),
-            "opponentReply" => value_arg::<PuzzleState>(args, 0, "state").and_then(|state| {
-                let uci = text_arg(args, 1, "uci")?;
-                to_value(opponent_reply(state, uci))
-            }),
-            "nextSolutionSquares" => next_solution_squares_call(args),
-            "playerColor" => value_arg::<Value>(args, 0, "puzzle")
-                .and_then(|puzzle| to_value(player_color(&puzzle))),
-            _ => return None,
-        };
-    Some(result)
+/// The squares of the next solution move (the hint, and the solution's arrow).
+pub fn next_solution_squares(solution: &[String], state: &PuzzleState) -> Option<Vec<String>> {
+    expected_at(solution, state.index)
+        .and_then(|uci| drill_squares(state, position_of(state).as_ref(), uci))
 }
 
 #[cfg(test)]
@@ -451,8 +385,8 @@ mod tests {
         });
         let state = start_puzzle(&puzzle);
         assert_eq!(state.variant, "crazyhouse");
-        let squares = next_solution_squares_call(&[puzzle.clone(), json!(state)]).unwrap();
-        assert_eq!(squares, json!(["d4", "d4"]));
+        let squares = next_solution_squares(&solution_of(&puzzle), &state);
+        assert_eq!(squares, Some(vec!["d4".to_string(), "d4".to_string()]));
         let played = player_move(&["P@d4".to_string()], state.clone(), "P@d4");
         assert!(played.correct);
         assert_eq!(played.state.status, "solved");

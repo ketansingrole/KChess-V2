@@ -6,12 +6,10 @@
 //! without an engine) or played out against the engine (`play`, with a goal).
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use shakmaty::{Chess, Color, Move, Position, Role, Square, variant::VariantPosition};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use super::{Out, to_value, value_arg};
 use crate::rules;
 
 const LESSONS_JSON: &str = include_str!("../../data/lessons.json");
@@ -213,11 +211,7 @@ fn bare_king_against_major(pos: &Chess, color: Color) -> bool {
 }
 
 fn repetition_key(pos: &Chess) -> String {
-    rules::make_fen(&VariantPosition::Chess(pos.clone()))
-        .split(' ')
-        .take(4)
-        .collect::<Vec<_>>()
-        .join(" ")
+    rules::repetition_key(&rules::make_fen(&VariantPosition::Chess(pos.clone()))).to_string()
 }
 
 /* ── Forced mate ─────────────────────────────────────────────────────────────────────────── */
@@ -727,37 +721,6 @@ fn step_problems(step: &Step) -> Vec<String> {
     out
 }
 
-/* ── Calls ───────────────────────────────────────────────────────────────────────────────── */
-
-fn step_args(args: &[Value]) -> Result<(String, Task, Vec<String>), String> {
-    Ok((
-        value_arg(args, 0, "fen")?,
-        value_arg(args, 1, "task")?,
-        value_arg(args, 2, "moves")?,
-    ))
-}
-
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let result = match method {
-        "lessonCourses" => data().and_then(|d| to_value(&d.courses)),
-        "lessonProblems" => data().and_then(|d| to_value(problems(d))),
-        "lessonStatus" => step_args(args)
-            .and_then(|(fen, task, moves)| status(&fen, &task, &moves))
-            .and_then(to_value),
-        "lessonMove" => step_args(args)
-            .and_then(|(fen, task, moves)| {
-                let uci: String = value_arg(args, 3, "uci")?;
-                try_move(&fen, &task, &moves, &uci)
-            })
-            .and_then(to_value),
-        "lessonHint" => step_args(args)
-            .and_then(|(fen, task, moves)| hint(&fen, &task, &moves))
-            .and_then(to_value),
-        _ => return None,
-    };
-    Some(result)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -874,7 +837,6 @@ mod tests {
     #[test]
     fn invalid_input_is_an_error() {
         assert!(status("nonsense", &Task::Read, &[] as &[String]).is_err());
-        assert!(call("lessonStatus", &[]).unwrap().is_err());
-        assert!(call("lessonCourses", &[]).unwrap().is_ok());
+        assert!(data().is_ok());
     }
 }

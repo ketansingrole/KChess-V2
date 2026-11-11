@@ -61,8 +61,7 @@ pub fn classify(text: &str) -> Option<Link> {
     text.contains('/')
         .then(|| crate::game::editor_setup(text))
         .flatten()
-        .and_then(|setup| crate::game::rules("setupFen", &[setup]).ok())
-        .and_then(|fen| fen.as_str().map(str::to_string))
+        .and_then(|setup| crate::game::setup_fen(&setup))
         .filter(|fen| crate::game::position_problem(fen).is_none())
         .map(Link::Position)
 }
@@ -265,10 +264,7 @@ pub fn open_dropped(paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
         );
         return;
     };
-    let games = crate::game::rules("pgnGames", &[serde_json::json!(text)])
-        .ok()
-        .and_then(|games| games.as_array().map(Vec::len))
-        .unwrap_or(0);
+    let games = kchess_domain::position::pgn_games(&text).len();
     if games > 1 {
         crate::shell::open(crate::pages::Page::Studies, window, cx);
         crate::pages::studies::StudiesPage::open_import_with(Some(text), window, cx);

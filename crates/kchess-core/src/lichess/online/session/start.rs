@@ -11,11 +11,11 @@ use crate::lichess::accounts::path_segment;
 use crate::lichess::challenges::{ChallengeInfo, TimeControl};
 use crate::lichess::client::Auth;
 
-use crate::lichess::online::events::{perf_for, rule_bool};
 use crate::lichess::online::requests::{Emitter, StreamRequest, game_body};
 use crate::lichess::online::state::{
     Handle, Lane, OnlineOptions, OnlineSession, SEEK_REJECTED, StartResult, js_number,
 };
+use kchess_domain::records::time_control::{can_board_seek, can_direct_challenge, perf_for};
 
 impl OnlineSession {
     /// `start(options)`: a challenge to a player, a public seek, or a correspondence game.
@@ -46,14 +46,14 @@ impl OnlineSession {
             )
         } else if !correspondence
             && !target.is_empty()
-            && !rule_bool("canDirectChallenge", options.minutes, options.increment)
+            && !can_direct_challenge(options.minutes, options.increment)
         {
             Some(format!(
                 "Lichess blocks {perf} ({label}) even for direct challenges. The Board API allows Blitz and slower — pick at least 3 minutes of estimated play (time + 40 × increment)."
             ))
         } else if !correspondence
             && target.is_empty()
-            && !rule_bool("canBoardSeek", options.minutes, options.increment)
+            && !can_board_seek(options.minutes, options.increment)
         {
             Some(format!(
                 "Lichess blocks {perf} ({label}) for public seeks. The Board API allows Rapid and slower for matchmaking — add a username to challenge directly (Blitz allowed) or pick a longer control."
@@ -73,7 +73,7 @@ impl OnlineSession {
             handle
         };
         match self
-            .start_inner(options, &target, correspondence, &perf, &label, &handle)
+            .start_inner(options, &target, correspondence, perf, &label, &handle)
             .await
         {
             Ok(result) => Ok(result),

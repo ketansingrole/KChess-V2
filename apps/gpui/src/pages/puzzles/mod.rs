@@ -15,13 +15,13 @@ use gpui_kit::component::{Disableable as _, Icon, IndexPath, Sizable as _, h_fle
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use serde_json::{Value, json};
 use shakmaty::Color;
 
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::puzzle::{PuzzleSession, Step, local_day};
-use crate::game::rules;
+use crate::game::puzzle::{PuzzleSession, Step, Transition, local_day, transitions};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::puzzle_db::PuzzleDbHandle;
@@ -337,10 +337,10 @@ impl PuzzlesPage {
                         uci,
                     } => {
                         let step = this.session.apply(
-                            "puzzleSessionMove",
+                            transitions::played,
                             json!({ "index": index, "correct": correct, "uci": uci }),
                         );
-                        this.follow(step, "puzzleSessionLoadSettled", cx);
+                        this.follow(step, transitions::load_settled, cx);
                     }
                     PuzzleBoardEvent::Outcome { win, detail } => {
                         this.report(*win, detail.clone(), cx)
@@ -410,7 +410,7 @@ impl PuzzlesPage {
             page.update(cx, |page, cx| {
                 let record = page
                     .session
-                    .apply("puzzleSessionInvalidate", json!({}))
+                    .apply(transitions::invalidate, json!({}))
                     .record?;
                 let save = cx
                     .global::<AppCore>()
@@ -500,19 +500,16 @@ impl PuzzlesPage {
     fn account(&self, cx: &App) -> String {
         let preferred = crate::prefs::get::<String>(cx, ACCOUNT, String::new());
         let connected = self.accounts(cx);
-        let accounts: Vec<Value> = connected
+        let accounts: Vec<ListedAccount> = connected
             .iter()
-            .map(|username| json!({ "username": username, "connected": true }))
+            .map(|username| ListedAccount {
+                username: Some(username),
+                connected: true,
+            })
             .collect();
-        rules(
-            "connectedAccountIndex",
-            &[json!(accounts), json!(preferred)],
-        )
-        .ok()
-        .filter(|index| !index.is_null())
-        .map(|index| crate::game::whole(&index))
-        .and_then(|index| connected.get(index as usize).cloned())
-        .unwrap_or_default()
+        connected_account_index(&accounts, Some(&preferred))
+            .and_then(|index| connected.get(index).cloned())
+            .unwrap_or_default()
     }
 
     fn selection(&self, cx: &App) -> Value {
@@ -527,15 +524,15 @@ impl PuzzlesPage {
 
     fn load_next(&mut self, cx: &mut Context<Self>) {
         let step = self.session.apply(
-            "puzzleSessionLoadBegin",
+            transitions::load_begin,
             json!({ "selection": self.selection(cx), "online": true }),
         );
-        self.follow(step, "puzzleSessionLoadSettled", cx);
+        self.follow(step, transitions::load_settled, cx);
         self.sync_board(cx);
     }
 
     /// Run the transitions' host calls in order until one asks for nothing more.
-    fn follow(&mut self, step: Step, settle: &'static str, cx: &mut Context<Self>) {
+    fn follow(&mut self, step: Step, settle: Transition, cx: &mut Context<Self>) {
         if let Some(record) = step.record {
             self.record(record, cx);
         }
@@ -596,10 +593,10 @@ impl PuzzlesPage {
 
     fn report(&mut self, win: bool, detail: Value, cx: &mut Context<Self>) {
         let step = self.session.apply(
-            "puzzleSessionReportBegin",
+            transitions::report_begin,
             json!({ "win": win, "detail": detail, "selection": self.selection(cx) }),
         );
-        self.follow(step, "puzzleSessionReportSettled", cx);
+        self.follow(step, transitions::report_settled, cx);
     }
 
     /* ── The board ────────────────────────────────────────────────────── */
@@ -624,8 +621,8 @@ impl PuzzlesPage {
 
     /// The puzzle is over: count and log it, and go on to the next one after a solve when asked.
     fn done(&mut self, cx: &mut Context<Self>) {
-        let step = self.session.apply("puzzleSessionEnd", json!({}));
-        self.follow(step, "puzzleSessionLoadSettled", cx);
+        let step = self.session.apply(transitions::end, json!({}));
+        self.follow(step, transitions::load_settled, cx);
         let solved = self.puzzle.read(cx).status() == "solved";
         let auto_next = cx
             .global::<SettingsHandle>()
@@ -691,10 +688,10 @@ impl PuzzlesPage {
     pub(crate) fn retry(&mut self, puzzle: Value, cx: &mut Context<Self>) {
         Tab::Train.store(cx);
         let step = self.session.apply(
-            "puzzleSessionRetry",
+            transitions::retry,
             json!({ "puzzle": puzzle, "selection": self.selection(cx) }),
         );
-        self.follow(step, "puzzleSessionLoadSettled", cx);
+        self.follow(step, transitions::load_settled, cx);
         self.sync_board(cx);
         cx.notify();
     }
@@ -768,8 +765,8 @@ impl PuzzlesPage {
     }
 
     fn reset_session(&mut self, cx: &mut Context<Self>) {
-        let step = self.session.apply("puzzleSessionResetSession", json!({}));
-        self.follow(step, "puzzleSessionLoadSettled", cx);
+        let step = self.session.apply(transitions::reset_session, json!({}));
+        self.follow(step, transitions::load_settled, cx);
         cx.notify();
     }
 }
@@ -789,12 +786,8 @@ pub(crate) type NextPuzzle = Box<dyn Fn(&mut Window, &mut App)>;
 
 /// The puzzle's idea, shown with the hint.
 fn clue(puzzle: &Value) -> Option<AnyElement> {
-    let clue = rules(
-        "puzzleClue",
-        &[puzzle["fen"].clone(), puzzle["solution"].clone()],
-    )
-    .ok()?;
-    let clue = clue.as_str()?.to_string();
+    let solution: Vec<String> = serde_json::from_value(puzzle["solution"].clone()).ok()?;
+    let clue = kchess_domain::coach::puzzle_clue(puzzle["fen"].as_str()?, &solution)?;
     Some(div().text_size(px(13.)).child(clue).into_any_element())
 }
 
@@ -2096,12 +2089,7 @@ pub fn open_puzzle(id: String, window: &mut Window, cx: &mut App) {
 
 /// Puzzles from one opening, by the key Lichess names its puzzles by.
 pub fn open_opening(name: &str, window: &mut Window, cx: &mut App) {
-    let Some(key) = crate::game::rules("openingKey", &[json!(name)])
-        .ok()
-        .and_then(|key| key.as_str().map(str::to_string))
-    else {
-        return;
-    };
+    let key = kchess_domain::training::openings::opening_key(name);
     PuzzlesPage::choose_opening(&key, name, cx);
     // A page made now starts with the opening; one made before is told.
     if let Some(puzzles) = crate::shell::view::<PuzzlesPage>(cx) {

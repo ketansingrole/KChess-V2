@@ -99,6 +99,23 @@ fn the_players_take_turns_at_one_board(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(app.status(), "White to move");
 }
 
+/// Copy PGN writes the game with today's date: it was always "????.??.??", from a rules
+/// method that did not exist.
+#[gpui_kit::test]
+fn copy_pgn_dates_the_game_today(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = board(cx);
+    type_moves(&mut app, &["e4", "e5"]);
+    app.click("copy-pgn");
+    let pgn = app
+        .cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .expect("a copied PGN");
+    let today = chrono::Local::now().format("%Y.%m.%d").to_string();
+    assert!(pgn.contains(&format!("[Date \"{today}\"]")), "{pgn}");
+    assert!(pgn.contains("1. e4 e5"), "{pgn}");
+}
+
 #[gpui_kit::test]
 fn typed_moves_play_a_game_to_checkmate(cx: &mut gpui_kit::TestAppContext) {
     let mut app = board(cx);

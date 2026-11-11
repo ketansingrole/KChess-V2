@@ -1260,8 +1260,7 @@ fn analyse(window: &mut Window, cx: &mut App) {
         "black": black,
         "player": color_name(color),
     });
-    let Ok(Value::String(pgn)) = crate::game::rules("setupPgn", &[setup, json!(moves), json!({})])
-    else {
+    let Some(pgn) = crate::game::setup_pgn(&setup, &moves, &Value::Null) else {
         return;
     };
     crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {

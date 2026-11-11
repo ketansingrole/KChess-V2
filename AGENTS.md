@@ -165,7 +165,7 @@ and in the App Store. Its readers play chess; they are not developers.
   reach a service. The app's own HTTP is the updater (`updates.rs`, which replaces the app) and
   Lichess's pictures (`remote_image.rs`), neither with a login; any other download (the engine,
   the puzzle database, the voice model) is a core method with a progress event.
-- Pure chess and training rules live in `crates/kchess-domain` (`api.rs` is their one entry);
+- Pure chess and training rules live in `crates/kchess-domain`, called as typed functions;
   game sessions as frontends drive them in `crates/kchess-games`. View preferences (tabs, sort
   orders, layout) are the core's (`viewPreferences`), so every frontend opens a page as it was
   left.

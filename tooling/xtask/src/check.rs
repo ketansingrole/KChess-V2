@@ -855,7 +855,7 @@ mod tests {
     #[test]
     fn files_belong_to_their_nearest_package() {
         assert_eq!(
-            package_of("crates/kchess-domain/src/api.rs").as_deref(),
+            package_of("crates/kchess-domain/src/lib.rs").as_deref(),
             Some("kchess-domain")
         );
         assert_eq!(
@@ -960,7 +960,7 @@ mod tests {
                 Selection::Packages(domain),
             ),
             (
-                &["crates/kchess-domain/src/api.rs"],
+                &["crates/kchess-domain/src/lib.rs"],
                 Selection::Packages(all(&[
                     "kchess-cli",
                     "kchess-core",

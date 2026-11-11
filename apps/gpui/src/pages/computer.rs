@@ -4,6 +4,7 @@
 //! unfinished game in the profile, to resume it.
 
 use kchess_contracts::calls;
+use kchess_domain::training::clock::format_clock;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -25,7 +26,6 @@ use crate::core::AppCore;
 use crate::export::{Exporter, GameExport};
 use crate::game::computer::{ComputerGame, Effect, Host, SearchRequest};
 use crate::game::history::HistoryPlace;
-use crate::game::rules;
 use crate::pages::computer_options::{Chosen, Current, GameOptions};
 use crate::play_layout::{Measured, PANEL_MAX, PANEL_MIN, PANEL_ZEN, PlayLayout};
 use crate::settings::SettingsHandle;
@@ -519,24 +519,12 @@ impl ComputerPage {
 
     /// Review the game on the analysis board, opened at the move being looked at.
     fn review_game(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let pgn = rules(
-            "setupPgn",
-            &[
-                self.game.state["setup"].clone(),
-                json!(self.moves()),
-                json!({}),
-            ],
-        )
-        .ok()
-        .and_then(|pgn| pgn.as_str().map(str::to_string));
+        let pgn = crate::game::setup_pgn(&self.game.state["setup"], &self.moves(), &Value::Null);
         let Some(pgn) = pgn else { return };
         let (ply, color) = (self.ply(), self.user_color());
         let computer = format!(
             "Stockfish ({})",
-            rules("engineLevelLabel", &[self.game.state["level"].clone()])
-                .ok()
-                .and_then(|label| label.as_str().map(str::to_string))
-                .unwrap_or_default()
+            crate::game::engine_level_label(self.game.state["level"].as_str().unwrap_or_default())
         );
         let (white, black) = if color == Color::White {
             ("You".to_string(), computer)
@@ -1097,7 +1085,7 @@ impl ComputerPage {
         self.voice.sync(
             &context,
             Some(self.sans()),
-            crate::voice::grammar("GAME_GRAMMAR"),
+            crate::voice::grammar(crate::voice::Grammar::Game),
             listening,
             cx,
         );
@@ -1153,8 +1141,8 @@ impl ComputerPage {
                 };
                 if let Some(question) = asked {
                     let answer = crate::voice::moves::spoken_move(text, &setup);
-                    return Some(match answer["kind"].as_str() {
-                        Some("confirm") => {
+                    return Some(match answer {
+                        kchess_domain::voice::SpokenMove::Confirm => {
                             run = Some(Box::new(move |this, window, cx| {
                                 this.asked = None;
                                 window.close_dialog(cx);
@@ -1162,7 +1150,7 @@ impl ComputerPage {
                             }));
                             reply("confirm", "Done")
                         }
-                        Some("cancel") => {
+                        kchess_domain::voice::SpokenMove::Cancel => {
                             run = Some(Box::new(|this, window, cx| {
                                 this.asked = None;
                                 window.close_dialog(cx);
@@ -1177,8 +1165,8 @@ impl ComputerPage {
                         },
                     });
                 }
-                let command = crate::game::rules("spokenCommand", &[json!(text)]).ok()?;
-                let (said, question, feedback) = match command.as_str()? {
+                let command = kchess_domain::voice::game_command(text)?;
+                let (said, question, feedback) = match command {
                     "takeback" => {
                         run = Some(Box::new(|this, _, cx| {
                             if this.can_takeback() {
@@ -1247,19 +1235,9 @@ impl ComputerPage {
 
     /// The opening the moves on the board reached, as `(eco, name)` (`openingAt`).
     fn opening(&self) -> Option<(SharedString, SharedString)> {
-        let opening = rules(
-            "openingAt",
-            &[
-                self.game.state["setup"].clone(),
-                json!(self.moves()),
-                json!(self.ply()),
-            ],
-        )
-        .ok()?;
-        Some((
-            opening["eco"].as_str()?.to_string().into(),
-            opening["name"].as_str()?.to_string().into(),
-        ))
+        let opening =
+            crate::game::opening_at(&self.game.state["setup"], &self.moves(), self.ply())?;
+        Some((opening.eco.into(), opening.name.into()))
     }
 
     fn clock_text(&self, color: &str) -> Option<SharedString> {
@@ -1267,12 +1245,7 @@ impl ComputerPage {
             return None;
         }
         let remaining = self.game.remaining(color, &self.host());
-        rules("formatClock", &[json!(remaining)])
-            .ok()
-            .and_then(|text| {
-                text.as_str()
-                    .map(|text| SharedString::from(text.to_string()))
-            })
+        Some(format_clock(remaining).into())
     }
 
     fn render_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1399,15 +1372,9 @@ fn level_choices(cx: &App) -> (Vec<String>, Vec<SharedString>) {
         .collect();
     let labels = ids
         .iter()
-        .map(|id| {
-            rules("engineLevelLabel", &[json!(id)])
-                .ok()
-                .and_then(|label| {
-                    label
-                        .as_str()
-                        .map(|label| SharedString::from(label.to_string()))
-                })
-                .unwrap_or_else(|| id.clone().into())
+        .map(|id| match crate::game::engine_level_label(id) {
+            label if label.is_empty() => id.clone().into(),
+            label => SharedString::from(label),
         })
         .collect();
     (ids, labels)
@@ -1558,7 +1525,7 @@ impl Render for ComputerPage {
                 hint: "Say “E four”, “Knight F three”, or “take back”",
                 active: self.voice_taking(),
                 listening: self.voice_listening(),
-                grammar: crate::voice::grammar("GAME_GRAMMAR"),
+                grammar: crate::voice::grammar(crate::voice::Grammar::Game),
             },
             cx,
         );

@@ -730,16 +730,19 @@ fn opening_name(words: &[String]) -> Result<Value, String> {
     if request.get("variant").is_some() {
         return Err("Opening names are for standard chess only.".into());
     }
-    let root = request.get("rootFen").unwrap_or(&request["fen"]).clone();
-    let moves = request.get("moves").cloned().unwrap_or_else(|| json!([]));
-    let named = kchess_domain::api::call_value(
-        "openingAt",
-        &[json!({ "variant": "standard", "fen": root }), moves],
-    )?;
-    if named.is_null() {
-        return Err("No named opening there.".into());
-    }
-    Ok(json!({ "eco": named["eco"], "name": named["name"], "fen": request["fen"] }))
+    let root = request
+        .get("rootFen")
+        .unwrap_or(&request["fen"])
+        .as_str()
+        .unwrap_or_default();
+    let moves: Vec<String> = match request.get("moves") {
+        Some(moves) => serde_json::from_value(moves.clone()).map_err(|e| format!("moves: {e}"))?,
+        None => Vec::new(),
+    };
+    let ply = moves.len() as f64;
+    let named = kchess_domain::training::openings::opening_at("standard", root, &moves, ply)
+        .ok_or("No named opening there.")?;
+    Ok(json!({ "eco": named.eco, "name": named.name, "fen": request["fen"] }))
 }
 
 /// The position a FEN or line reaches: whose turn, check and how the game stands, and every legal
@@ -747,20 +750,20 @@ fn opening_name(words: &[String]) -> Result<Value, String> {
 fn position_info(words: &[String]) -> Result<Value, String> {
     let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "position"))?;
     let variant = request["variant"].as_str().unwrap_or("standard");
-    let setup = json!({ "variant": variant, "fen": request["fen"] });
-    let call = |method: &str| kchess_domain::api::call_value(method, std::slice::from_ref(&setup));
-    let info = call("position")?;
-    let legal =
-        kchess_domain::rules::setup_start(variant, info["fen"].as_str().unwrap_or_default())
-            .map(|position| kchess_domain::position::legal_sans(&position))
-            .unwrap_or_default();
+    let fen = request["fen"].as_str().ok_or("setup.fen")?;
+    let position = kchess_domain::rules::setup_start(variant, fen);
+    let info = position.as_ref().map(kchess_domain::position::info);
+    let legal = position
+        .as_ref()
+        .map(kchess_domain::position::legal_sans)
+        .unwrap_or_default();
     Ok(json!({
-        "fen": info["fen"],
-        "turn": info["turn"],
-        "check": info["check"],
-        "checkmate": info["checkmate"],
-        "stalemate": info["stalemate"],
-        "insufficient": info["insufficient"],
+        "fen": info.as_ref().map(|info| &info.fen),
+        "turn": info.as_ref().map(|info| info.turn),
+        "check": info.as_ref().map(|info| info.check),
+        "checkmate": info.as_ref().map(|info| info.checkmate),
+        "stalemate": info.as_ref().map(|info| info.stalemate),
+        "insufficient": info.as_ref().map(|info| info.insufficient),
         "legal": legal,
     }))
 }

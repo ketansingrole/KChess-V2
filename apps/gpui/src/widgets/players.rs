@@ -140,11 +140,9 @@ pub fn player_line(
 /// The pieces one side has won over the other, as silhouettes in the text
 /// colour, and its lead in pawns, as Lichess shows them.
 pub fn material(fen: &str, white: bool, set: &str, palette: &Palette) -> Option<AnyElement> {
-    let diff = crate::game::rules("materialDiff", &[serde_json::json!(fen)]).ok()?;
-    let roles: Vec<String> =
-        serde_json::from_value(diff[if white { "white" } else { "black" }].clone())
-            .unwrap_or_default();
-    let lead = diff["score"].as_f64().unwrap_or_default() * if white { 1. } else { -1. };
+    let diff = kchess_domain::voice::material_diff(fen);
+    let roles = if white { diff.white } else { diff.black };
+    let lead = diff.score as f64 * if white { 1. } else { -1. };
     if roles.is_empty() && lead <= 0. {
         return None;
     }
@@ -152,7 +150,7 @@ pub fn material(fen: &str, white: bool, set: &str, palette: &Palette) -> Option<
     for role in roles {
         match groups.last_mut() {
             Some((last, count)) if *last == role => *count += 1,
-            _ => groups.push((role, 1)),
+            _ => groups.push((role.to_string(), 1)),
         }
     }
     let letter = |role: &str| match role {

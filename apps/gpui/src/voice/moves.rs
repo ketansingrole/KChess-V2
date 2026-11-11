@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use super::control::Control;
 use super::{Entry, Heard, VoiceEvent};
 use crate::assets::icon;
+use kchess_domain::voice::SpokenMove;
 
 /// What a page made of a phrase it took as a command.
 pub struct Reply {
@@ -66,10 +67,24 @@ pub struct VoiceMoves {
     position_line: Vec<String>,
 }
 
-/// Every legal move the words could be (`spokenMove`): `move` with its choices, `confirm`,
-/// `cancel`, or nothing.
-pub fn spoken_move(text: &str, setup: &Value) -> Value {
-    crate::game::rules("spokenMove", &[json!(text), setup.clone()]).unwrap_or(Value::Null)
+/// Every legal move the words could be in a `{ variant, fen }` setup: a move with its choices,
+/// confirm, cancel, or nothing; nothing too when the setup is not a legal position.
+pub fn spoken_move(text: &str, setup: &Value) -> SpokenMove {
+    let field = |key: &str| setup[key].as_str().unwrap_or_default();
+    match kchess_domain::rules::setup_start(field("variant"), field("fen")) {
+        Some(pos) => kchess_domain::voice::spoken_move(text, &pos),
+        None => {
+            crate::log::write(
+                kchess_contracts::Level::Warn,
+                "voice",
+                &format!(
+                    "a phrase was heard at an illegal position: {}",
+                    field("fen")
+                ),
+            );
+            SpokenMove::Invalid
+        }
+    }
 }
 
 /// The move played after `before`, when `line` is `before` and one move more.
@@ -245,9 +260,7 @@ impl VoiceMoves {
             self.control.feedback = idle.map(|idle| SharedString::from(idle.to_string()));
             return Action::Nothing;
         }
-        let number = crate::game::rules("spokenChoice", &[json!(heard.text)])
-            .ok()
-            .and_then(|n| n.as_f64());
+        let number = kchess_domain::voice::spoken_choice(&heard.text);
         if let Some(number) = number
             && !self.choices.is_empty()
             && !heard.unclear
@@ -262,7 +275,7 @@ impl VoiceMoves {
             );
             return match self
                 .choices
-                .get((number as usize).saturating_sub(1))
+                .get(usize::from(number).saturating_sub(1))
                 .cloned()
             {
                 Some(choice) => self.choose(choice, "confirmed", cx),
@@ -273,13 +286,13 @@ impl VoiceMoves {
             };
         }
         let parsed = spoken_move(&heard.text, setup);
-        match parsed["kind"].as_str() {
-            Some("cancel") if !heard.unclear => {
+        match parsed {
+            SpokenMove::Cancel if !heard.unclear => {
                 self.record(heard, "command", Some("cancel"), &fen, true, cx);
                 self.cancel(cx);
                 Action::Nothing
             }
-            Some("confirm") if !heard.unclear => {
+            SpokenMove::Confirm if !heard.unclear => {
                 self.record(heard, "command", Some("confirm"), &fen, true, cx);
                 match self.choices.as_slice() {
                     [only] => {
@@ -292,16 +305,12 @@ impl VoiceMoves {
                     }
                 }
             }
-            Some("move") => {
-                let offered: Vec<Choice> = parsed["choices"]
-                    .as_array()
+            SpokenMove::Move { choices } => {
+                let offered: Vec<Choice> = choices
                     .into_iter()
-                    .flatten()
-                    .filter_map(|choice| {
-                        Some(Choice {
-                            uci: choice["uci"].as_str()?.to_string(),
-                            san: choice["san"].as_str()?.to_string(),
-                        })
+                    .map(|choice| Choice {
+                        uci: choice.uci,
+                        san: choice.san,
                     })
                     .collect();
                 self.offer(heard, offered, immediate, &fen, cx)
@@ -540,7 +549,7 @@ pub fn board_bar<V: 'static>(
 
 #[cfg(test)]
 mod tests {
-    use super::{meant, spoken_move};
+    use super::{SpokenMove, meant, spoken_move};
     use serde_json::json;
 
     #[test]
@@ -560,14 +569,16 @@ mod tests {
             "variant": "standard",
             "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         });
-        let e4 = spoken_move("e four", &start);
-        assert_eq!(e4["kind"], "move");
-        assert_eq!(e4["choices"][0]["uci"], "e2e4");
-        assert_eq!(e4["choices"][0]["san"], "e4");
-        assert_eq!(
-            spoken_move("knight f three", &start)["choices"][0]["uci"],
-            "g1f3"
-        );
-        assert_eq!(spoken_move("confirm", &start)["kind"], "confirm");
+        let first = |text: &str| match spoken_move(text, &start) {
+            SpokenMove::Move { choices } => choices[0].clone(),
+            other => panic!("{text}: {other:?}"),
+        };
+        assert_eq!(first("e four").uci, "e2e4");
+        assert_eq!(first("e four").san, "e4");
+        assert_eq!(first("knight f three").uci, "g1f3");
+        assert_eq!(spoken_move("confirm", &start), SpokenMove::Confirm);
+        // An illegal setup hears no move.
+        let empty = json!({ "variant": "standard", "fen": "8/8/8/8/8/8/8/8 w - - 0 1" });
+        assert_eq!(spoken_move("e four", &empty), SpokenMove::Invalid);
     }
 }

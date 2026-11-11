@@ -2,11 +2,14 @@
 //! on time, PGN result tokens, whether a Lichess game is still being played, and how a game in
 //! Game history ended for its player.
 
-use serde_json::{Map, Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use shakmaty::Position;
+use shakmaty::variant::VariantPosition;
+use std::collections::HashMap;
 
-use super::{Out, arg, setup_position};
 use crate::js;
-use crate::position;
+use crate::{position, replay, rules};
 
 /// Why a variant game ends on a win, by variant (`VARIANT_WIN`).
 const VARIANT_WIN: &[(&str, &str)] = &[
@@ -18,38 +21,23 @@ const VARIANT_WIN: &[(&str, &str)] = &[
     ("racingKings", "King reached the eighth rank"),
 ];
 
-pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    Some(match method {
-        "opponent" => Ok(json!(opponent(arg(args, 0).and_then(Value::as_str)))),
-        "boardResult" => board_result(args),
-        "timeoutWinner" => timeout_winner(args),
-        "pgnResult" => Ok(json!(pgn_result(
-            arg(args, 0),
-            arg(args, 1).and_then(Value::as_str)
-        ))),
-        "isGameInProgress" => Ok(json!(is_game_in_progress(arg(args, 0)))),
-        "gameResult" => Ok(json!(game_result(arg(args, 0)))),
-        "archivedPlayerSide" => Ok(json!(archived_player_side(arg(args, 0)))),
-        "archivedOutcome" => Ok(json!(archived_outcome(arg(args, 0)))),
-        _ => return None,
-    })
+/// How a game ended: the winner, none for a draw, and why.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GameEnd {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub winner: Option<String>,
+    pub reason: String,
 }
 
-/// `opponent(color)`: anything but white is black's opponent, as the TypeScript reads it.
-fn opponent(color: Option<&str>) -> &'static str {
-    if color == Some("white") {
-        "black"
-    } else {
-        "white"
-    }
+/// The other colour: anything but white is black's opponent.
+pub fn opponent(color: &str) -> &'static str {
+    if color == "white" { "black" } else { "white" }
 }
 
-/// `boardResult(pos, variant, draw?)`: how the position ended the game, or the draw already
-/// found by repetition or the fifty-move rule; null while the game goes on.
-fn board_result(args: &[Value]) -> Out {
-    let pos = setup_position(arg(args, 0))?;
-    let variant = arg(args, 1).and_then(Value::as_str).unwrap_or("");
-    let facts = position::info(&pos);
+/// How the position ended the game, or the draw already found by repetition or the fifty-move
+/// rule (`draw`); none while the game goes on.
+pub fn board_result(pos: &VariantPosition, variant: &str, draw: Option<&str>) -> Option<GameEnd> {
+    let facts = position::info(pos);
     if let Some(outcome) = &facts.outcome {
         let reason = if facts.checkmate {
             "Checkmate"
@@ -63,39 +51,35 @@ fn board_result(args: &[Value]) -> Out {
         } else {
             "Insufficient material"
         };
-        let mut result = Map::new();
-        if let Some(winner) = outcome.get("winner") {
-            result.insert("winner".into(), winner.clone());
-        }
-        result.insert("reason".into(), json!(reason));
-        return Ok(Value::Object(result));
+        return Some(GameEnd {
+            winner: outcome
+                .get("winner")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            reason: reason.to_string(),
+        });
     }
-    Ok(match arg(args, 2) {
-        Some(draw) if !js::falsy(Some(draw)) => json!({ "reason": js::to_string(Some(draw)) }),
-        _ => Value::Null,
+    draw.map(|reason| GameEnd {
+        winner: None,
+        reason: reason.to_string(),
     })
 }
 
-/// `timeoutWinner(pos, flagged)`: the other side, unless it cannot possibly mate.
-fn timeout_winner(args: &[Value]) -> Out {
-    let pos = setup_position(arg(args, 0))?;
-    let winner = opponent(arg(args, 1).and_then(Value::as_str));
-    let facts = position::info(&pos);
+/// Who wins when `flagged` runs out of time: the other side, unless it cannot possibly mate.
+pub fn timeout_winner(pos: &VariantPosition, flagged: &str) -> Option<&'static str> {
+    let winner = opponent(flagged);
+    let facts = position::info(pos);
     let cannot_win = if winner == "white" {
         facts.cannot_win.white
     } else {
         facts.cannot_win.black
     };
-    Ok(if cannot_win {
-        Value::Null
-    } else {
-        json!(winner)
-    })
+    (!cannot_win).then_some(winner)
 }
 
-/// `pgnResult(over, winner?)`: the PGN result token.
-fn pgn_result(over: Option<&Value>, winner: Option<&str>) -> &'static str {
-    if js::falsy(over) {
+/// The PGN result token.
+pub fn pgn_result(over: bool, winner: Option<&str>) -> &'static str {
+    if !over {
         return "*";
     }
     match winner {
@@ -105,27 +89,61 @@ fn pgn_result(over: Option<&Value>, winner: Option<&str>) -> &'static str {
     }
 }
 
-/// `isGameInProgress(status?)`: no status, or a live game (`created` is before its first move).
-fn is_game_in_progress(status: Option<&Value>) -> bool {
+fn ended(pos: &VariantPosition) -> bool {
+    pos.is_variant_end() || pos.is_insufficient_material() || pos.legal_moves().is_empty()
+}
+
+/// Threefold repetition or the fifty-move rule over `moves` from `pos`, reading each move
+/// trimmed when `trim`; the count stops at the first move that is not legal.
+fn repetition(mut pos: VariantPosition, moves: &[&str]) -> Option<&'static str> {
+    let mut seen: HashMap<String, u32> = HashMap::new();
+    seen.insert(rules::repetition_key(&rules::make_fen(&pos)).to_string(), 1);
+    for &uci in moves {
+        let Some(m) = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u)) else {
+            break;
+        };
+        pos.play_unchecked(m);
+        let count = seen
+            .entry(rules::repetition_key(&rules::make_fen(&pos)).to_string())
+            .or_insert(0);
+        *count += 1;
+        if *count >= 3 {
+            return Some("Threefold repetition");
+        }
+    }
+    (!ended(&pos) && pos.halfmoves() >= 100).then_some("Fifty-move rule")
+}
+
+/// Repetition or the fifty-move rule reached by UCI `moves` from a setup, for the variants where
+/// those rules apply.
+pub fn setup_draw_reason(variant: &str, fen: &str, moves: &[&str]) -> Option<&'static str> {
+    let replayed = replay::replay_setup(variant, fen, moves)?;
+    if ![
+        "standard",
+        "chess960",
+        "kingOfTheHill",
+        "threeCheck",
+        "atomic",
+    ]
+    .contains(&variant)
+    {
+        return None;
+    }
+    let start = rules::setup_start(variant, fen)?;
+    // Replayed moves are read as given, so a padded move ends the count there.
+    let played: Vec<&str> = replayed.played.iter().map(|m| m.uci.as_str()).collect();
+    repetition(start, &played)
+}
+
+/// Whether a Lichess game's `status` is live: none, or a game started (`created` is before its
+/// first move).
+pub fn is_game_in_progress(status: Option<&Value>) -> bool {
     js::falsy(status) || matches!(status.and_then(Value::as_str), Some("started" | "created"))
 }
 
-/// `gameResult(game)`: the result from the account's side.
-fn game_result(game: Option<&Value>) -> &'static str {
-    let winner = game.and_then(|g| g.get("winner"));
-    if js::falsy(winner) {
-        return "draw";
-    }
-    if winner == game.and_then(|g| g.get("color")) {
-        "win"
-    } else {
-        "loss"
-    }
-}
-
-/// `archivedPlayerSide(game)`: the side named “You” in a computer game; none at the board.
-fn archived_player_side(game: Option<&Value>) -> Option<&'static str> {
-    let name = |side: &str| game.and_then(|g| g.get(side)).and_then(Value::as_str);
+/// The side named “You” in a saved computer game; none for a game at the board.
+pub fn archived_player_side(game: &Value) -> Option<&'static str> {
+    let name = |side: &str| game.get(side).and_then(Value::as_str);
     if name("white") == Some("You") {
         Some("white")
     } else if name("black") == Some("You") {
@@ -135,11 +153,11 @@ fn archived_player_side(game: Option<&Value>) -> Option<&'static str> {
     }
 }
 
-/// `archivedOutcome(game)`: a saved local game's outcome, won or lost for the side named “You”
+/// A saved local game's outcome, won or lost for the side named “You”
 /// (computer games) or the winning colour when both players were at the board; `unfinished`,
 /// `ongoing` or `clock` when it has no result.
-fn archived_outcome(game: Option<&Value>) -> &'static str {
-    let field = |key: &str| game.and_then(|g| g.get(key));
+pub fn archived_outcome(game: &Value) -> &'static str {
+    let field = |key: &str| game.get(key);
     if field("source").and_then(Value::as_str) == Some("clock") {
         return "clock";
     }
@@ -165,9 +183,10 @@ fn archived_outcome(game: Option<&Value>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn outcome(game: Value) -> &'static str {
-        archived_outcome(Some(&game))
+        archived_outcome(&game)
     }
 
     #[test]
@@ -189,12 +208,9 @@ mod tests {
             "clock"
         );
         assert_eq!(
-            archived_player_side(Some(&computer("White", "You", "*"))),
+            archived_player_side(&computer("White", "You", "*")),
             Some("black")
         );
-        assert_eq!(
-            archived_player_side(Some(&computer("White", "Black", "*"))),
-            None
-        );
+        assert_eq!(archived_player_side(&computer("White", "Black", "*")), None);
     }
 }

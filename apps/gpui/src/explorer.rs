@@ -24,7 +24,7 @@ use shakmaty::Color;
 use crate::assets::icon;
 use crate::board::{BoardState, ChessBoard};
 use crate::core::AppCore;
-use crate::game::{STANDARD_FEN, rules};
+use crate::game::STANDARD_FEN;
 use crate::play_layout::Measured;
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
@@ -775,17 +775,13 @@ impl PositionExplorer {
                     let opening = self.moves.as_ref().and_then(|moves| {
                         let line: Vec<String> =
                             moves.iter().cloned().chain([uci.clone()]).collect();
-                        rules(
-                            "openingAt",
-                            &[
-                                json!({ "variant": "standard", "fen": STANDARD_FEN }),
-                                json!(line),
-                                json!(line.len()),
-                            ],
+                        kchess_domain::training::openings::opening_at(
+                            "standard",
+                            STANDARD_FEN,
+                            &line,
+                            line.len() as f64,
                         )
-                        .ok()?["name"]
-                            .as_str()
-                            .map(str::to_string)
+                        .map(|opening| opening.name)
                     });
                     let board = self.preview(&next, &uci, cx);
                     shown.insert(format!("{next} {uci}"));

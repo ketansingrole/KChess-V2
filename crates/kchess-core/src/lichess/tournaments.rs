@@ -8,7 +8,7 @@
 //! follows the Board API rules in `kchess_domain`.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Number, Value, json};
+use serde_json::{Number, Value};
 
 use super::accounts::{Lichess, Reply, path_segment};
 use super::client::Auth;
@@ -519,14 +519,6 @@ struct RawExtras {
 
 /* ── Eligibility and dates ─────────────────────────────────────────────── */
 
-/// The Board API time-control rules, read through the domain.
-fn board_rule(method: &str, minutes: f64, increment: f64) -> bool {
-    matches!(
-        kchess_domain::records::call(method, &[json!(minutes), json!(increment)]),
-        Some(Ok(Value::Bool(true)))
-    )
-}
-
 /// `compatibility(clock, variant)`: whether KChess can play the games through the Board API.
 fn compatibility(clock: &Clock, variant: &str) -> (bool, Option<String>) {
     if kchess_domain::online_game::variant_from_lichess(Some(variant)).is_none() {
@@ -537,7 +529,7 @@ fn compatibility(clock: &Clock, variant: &str) -> (bool, Option<String>) {
     }
     let minutes = clock.limit.as_f64().unwrap_or(0.0) / 60.0;
     let increment = clock.increment.as_f64().unwrap_or(0.0);
-    if !board_rule("canBoardSeek", minutes, increment) {
+    if !kchess_domain::records::time_control::can_board_seek(minutes, increment) {
         return (
             false,
             Some(
