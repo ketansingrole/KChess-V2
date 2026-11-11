@@ -281,7 +281,7 @@ impl TournamentsPage {
                 .child(widgets::hint("No arenas to show right now", palette))
                 .into_any_element();
         }
-        let now = chrono::Utc::now().timestamp_millis() as f64;
+        let now = kchess_games::now_ms();
         let (start, end) = range(&arenas, now);
         let box_width = f64::from(self.schedule_area.size().width.as_f32());
         let per_minute = (box_width / VISIBLE_SPAN).clamp(MIN_PX_PER_MINUTE, MAX_PX_PER_MINUTE);

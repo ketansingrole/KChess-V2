@@ -249,43 +249,6 @@ fn write_in_order(
     .detach();
 }
 
-/// "just now", "5 min ago", "3 h ago", "2 days ago", else the date.
-pub fn time_ago(timestamp: f64, now: f64) -> String {
-    if timestamp <= 0. {
-        return "never".into();
-    }
-    let seconds = ((now - timestamp) / 1000.).round().max(0.);
-    if seconds < 45. {
-        return "just now".into();
-    }
-    let minutes = (seconds / 60.).round();
-    if minutes < 60. {
-        return format!("{minutes} min ago");
-    }
-    let hours = (minutes / 60.).round();
-    if hours < 24. {
-        return format!("{hours} h ago");
-    }
-    let days = (hours / 24.).round();
-    if days < 31. {
-        return format!("{days} day{} ago", if days == 1. { "" } else { "s" });
-    }
-    // The numeric date, 12/30/2025.
-    use chrono::TimeZone as _;
-    chrono::Local
-        .timestamp_millis_opt(timestamp as i64)
-        .single()
-        .map(|date| date.format("%-m/%-d/%Y").to_string())
-        .unwrap_or_default()
-}
-
-/// Milliseconds since the epoch.
-pub fn now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0., |since| since.as_millis() as f64)
-}
-
 /// A study's chapters as select items: their ids, and their names numbered as the study orders them.
 pub fn chapter_items(study: &Value) -> Vec<(String, String)> {
     study["chapters"]
@@ -432,8 +395,7 @@ impl StudyLibrary {
 #[cfg(test)]
 mod tests {
     use super::{
-        Bases, StudyLibrary, Write, chapter_items, forget_removed, saved_chapter, time_ago,
-        written_chapter,
+        Bases, StudyLibrary, Write, chapter_items, forget_removed, saved_chapter, written_chapter,
     };
     use futures::channel::mpsc;
     use kchess_contracts::types::{StudyCommand, StudyCommandResult};
@@ -482,19 +444,6 @@ mod tests {
         library.apply(&answer(json!({ "studies": [{ "id": "z" }] })));
         assert_eq!(library.items, [json!({ "id": "z" })]);
         assert_eq!(library.fresh_name("Z"), "Z");
-    }
-
-    #[test]
-    fn edits_read_as_how_long_ago() {
-        let now = 1_000_000_000_000.;
-        assert_eq!(time_ago(now - 10_000., now), "just now");
-        assert_eq!(time_ago(now - 5. * 60_000., now), "5 min ago");
-        assert_eq!(time_ago(now - 3. * 3_600_000., now), "3 h ago");
-        assert_eq!(time_ago(now - 86_400_000., now), "1 day ago");
-        assert_eq!(time_ago(0., now), "never");
-        // Older than a month: the numeric date.
-        let old = time_ago(now - 90. * 86_400_000., now);
-        assert_eq!(old.matches('/').count(), 2, "{old}");
     }
 
     #[test]

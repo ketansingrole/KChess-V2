@@ -104,9 +104,9 @@ fn key(name: &str) -> String {
     name.to_lowercase()
 }
 
-/// "5 minutes ago", for last seen and last synced.
+/// "5 min ago", for last seen and last synced.
 fn ago(millis: f64) -> String {
-    crate::studies::time_ago(millis, crate::studies::now())
+    crate::widgets::time_ago(millis, kchess_games::now_ms())
 }
 
 impl FriendsPage {
@@ -240,7 +240,7 @@ impl FriendsPage {
                 {
                     let recent = saved
                         .profile_fetched_at
-                        .is_some_and(|at| crate::studies::now() - (at as f64) < PROFILE_FRESH_MS);
+                        .is_some_and(|at| kchess_games::now_ms() - (at as f64) < PROFILE_FRESH_MS);
                     if recent && !everyone {
                         fresh.insert(key(name));
                     }

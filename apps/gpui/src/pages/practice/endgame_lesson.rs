@@ -15,7 +15,7 @@ use kchess_domain::training::lessons::{self, Goal, Reason, Status};
 use serde_json::json;
 use shakmaty::Color;
 
-use super::endgame_drills::{color_of, move_squares, san_from};
+use super::endgame_drills::move_squares;
 use super::endgames::{Chapter, Course, Step, TrainerEvent, finished};
 use super::engine_move::{EngineMove, HasEngine};
 use super::run::{self, TrainingItem};
@@ -27,6 +27,7 @@ use crate::play_layout::{LAYOUT_GAP, PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, Tone};
+use kchess_domain::training::endgames::san_from;
 
 /// The chapters' column beside the board, and the page width below which it goes under it.
 const CHAPTERS_WIDTH: Pixels = px(250.);
@@ -265,7 +266,7 @@ impl EndgameLesson {
     }
 
     fn player(&self) -> Color {
-        color_of(self.status().player)
+        kchess_domain::color::from_name(self.status().player).unwrap_or(Color::White)
     }
 
     /// What Return goes on to: the next step or chapter, once this step is read or passed.

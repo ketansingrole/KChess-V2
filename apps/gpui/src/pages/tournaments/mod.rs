@@ -240,7 +240,7 @@ impl TournamentsPage {
 
     /// Joined from KChess by `account` and not over yet.
     fn is_joined(&self, system: &str, id: &str, account: Option<&str>) -> bool {
-        let now = chrono::Utc::now().timestamp_millis() as f64;
+        let now = kchess_games::now_ms();
         let Some(account) = account else {
             return false;
         };

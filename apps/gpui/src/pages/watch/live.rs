@@ -171,14 +171,6 @@ fn past_result(entry: &Value) -> &'static str {
     }
 }
 
-fn color_of(name: &str) -> Color {
-    if name == "black" {
-        Color::Black
-    } else {
-        Color::White
-    }
-}
-
 pub struct Live {
     pub frame: Option<Value>,
     frame_at: Instant,
@@ -325,7 +317,10 @@ impl Live {
 
     fn orientation(&self) -> Color {
         let side = self.frame.as_ref().map_or(Color::White, |frame| {
-            color_of(frame["orientation"].as_str().unwrap_or("white"))
+            frame["orientation"]
+                .as_str()
+                .and_then(kchess_domain::color::from_name)
+                .unwrap_or(Color::White)
         });
         if self.flipped { !side } else { side }
     }
@@ -459,7 +454,10 @@ impl Live {
             .enumerate()
             .map(|(index, entry)| {
                 let id = entry["gameId"].as_str().unwrap_or_default().to_string();
-                let orientation = color_of(entry["orientation"].as_str().unwrap_or("white"));
+                let orientation = entry["orientation"]
+                    .as_str()
+                    .and_then(kchess_domain::color::from_name)
+                    .unwrap_or(Color::White);
                 let board = self
                     .past
                     .entry(id.clone())
@@ -520,7 +518,10 @@ impl Live {
                                     open["gameId"].as_str().unwrap_or_default(),
                                     open["white"]["name"].clone(),
                                     open["black"]["name"].clone(),
-                                    color_of(open["orientation"].as_str().unwrap_or("white")),
+                                    open["orientation"]
+                                        .as_str()
+                                        .and_then(kchess_domain::color::from_name)
+                                        .unwrap_or(Color::White),
                                     window,
                                     cx,
                                 )
