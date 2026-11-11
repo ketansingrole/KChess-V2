@@ -3,9 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 /// A variant KChess plays, by its Lichess key on the wire.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum Variant {
+    #[default]
     Standard,
     Chess960,
     KingOfTheHill,
@@ -67,6 +68,34 @@ impl Variant {
             .find(|variant| variant.key() == key)
     }
 
+    /// The variant a Lichess game is played in: `fromPosition` (or none) is standard rules from
+    /// another start; none for a variant KChess does not play.
+    pub fn from_lichess(key: Option<&str>) -> Option<Variant> {
+        match key {
+            None | Some("" | "fromPosition") => Some(Variant::Standard),
+            Some(key) => Variant::from_key(key),
+        }
+    }
+
+    /// Its usual start as a FEN (Chess960's is the standard one).
+    pub fn default_fen(self) -> String {
+        crate::rules::make_fen(&crate::rules::default_position(self.rules()))
+    }
+
+    /// Why a game of it ends when its own goal is reached; none for the variants that end only
+    /// as chess does.
+    pub const fn win_reason(self) -> Option<&'static str> {
+        Some(match self {
+            Variant::KingOfTheHill => "King reached the centre",
+            Variant::ThreeCheck => "Third check",
+            Variant::Antichess => "Lost every piece",
+            Variant::Atomic => "King exploded",
+            Variant::Horde => "Horde captured",
+            Variant::RacingKings => "King reached the eighth rank",
+            Variant::Standard | Variant::Chess960 | Variant::Crazyhouse => return None,
+        })
+    }
+
     /// The name people and PGN readers know it by ("King of the Hill").
     pub const fn label(self) -> &'static str {
         match self {
@@ -116,6 +145,10 @@ impl Variant {
             Variant::RacingKings => Rules::RacingKings,
             Variant::Crazyhouse => Rules::Crazyhouse,
         }
+    }
+
+    pub fn is_standard(&self) -> bool {
+        *self == Variant::Standard
     }
 
     /// Whether it plays by standard rules (standard chess, and Chess960 with king-takes-rook
@@ -174,6 +207,40 @@ impl Variant {
     }
 }
 
+/// Where a game starts: its variant and the position before the first move.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Setup {
+    pub variant: Variant,
+    pub fen: String,
+}
+
+impl Setup {
+    /// The ordinary game from the usual start.
+    pub fn standard() -> Setup {
+        Setup {
+            variant: Variant::Standard,
+            fen: crate::rules::INITIAL_FEN.into(),
+        }
+    }
+
+    /// A game of `variant` from its usual start.
+    pub fn of(variant: Variant) -> Setup {
+        Setup {
+            variant,
+            fen: variant.default_fen(),
+        }
+    }
+
+    pub fn is_standard_start(&self) -> bool {
+        self.variant == Variant::Standard && self.fen == crate::rules::INITIAL_FEN
+    }
+
+    /// Its position; none when the FEN is not a legal one in its variant.
+    pub fn position(&self) -> Option<shakmaty::variant::VariantPosition> {
+        crate::rules::setup_start(self.variant, &self.fen)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,5 +262,29 @@ mod tests {
             Some(Variant::Chess960)
         );
         assert_eq!(Variant::from_key("bughouse"), None);
+        assert_eq!(Variant::from_lichess(None), Some(Variant::Standard));
+        assert_eq!(
+            Variant::from_lichess(Some("fromPosition")),
+            Some(Variant::Standard)
+        );
+        assert_eq!(
+            Variant::from_lichess(Some("crazyhouse")),
+            Some(Variant::Crazyhouse)
+        );
+        assert_eq!(Variant::from_lichess(Some("bughouse")), None);
+        assert_eq!(Variant::Chess960.default_fen(), crate::rules::INITIAL_FEN);
+        assert!(Variant::Crazyhouse.default_fen().contains("[]"));
+        assert_eq!(Variant::Horde.win_reason(), Some("Horde captured"));
+        assert_eq!(Variant::Crazyhouse.win_reason(), None);
+    }
+
+    #[test]
+    fn a_setup_crosses_as_its_variant_key_and_fen() {
+        let setup = Setup::of(Variant::KingOfTheHill);
+        let wire = serde_json::to_value(&setup).unwrap();
+        assert_eq!(wire["variant"], "kingOfTheHill");
+        assert_eq!(serde_json::from_value::<Setup>(wire).unwrap(), setup);
+        assert!(Setup::standard().is_standard_start());
+        assert!(!Setup::of(Variant::Chess960).is_standard_start());
     }
 }

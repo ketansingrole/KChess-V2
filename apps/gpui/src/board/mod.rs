@@ -267,9 +267,9 @@ impl BoardState {
             )
         };
         let last = last.and_then(last_squares);
-        match kchess_domain::rules::setup_start(variant, &full)
-            .or_else(|| kchess_domain::rules::setup_start("standard", &full))
-        {
+        match crate::game::setup_position(variant, &full).or_else(|| {
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &full)
+        }) {
             Some(position) => BoardState::of(&position, orientation, None, last),
             None => {
                 let mut state = BoardState::of(
@@ -2395,7 +2395,7 @@ mod keyboard_tests {
     use shakmaty::{Color, Role, Square};
 
     fn board(fen: &str, variant: &str, orientation: Color) -> ChessBoard {
-        let position = kchess_domain::rules::setup_start(variant, fen).expect("a position");
+        let position = crate::game::setup_position(variant, fen).expect("a position");
         let turn = if fen.split_whitespace().nth(1) == Some("b") {
             Color::Black
         } else {
@@ -2529,7 +2529,9 @@ mod check_tests {
     use shakmaty::{Color, Square};
 
     fn state(fen: &str) -> BoardState {
-        let position = kchess_domain::rules::setup_start("standard", fen).expect("a position");
+        let position =
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, fen)
+                .expect("a position");
         BoardState::of(&position, Color::White, None, None)
     }
 

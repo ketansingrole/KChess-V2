@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use super::js_slice_end;
+use crate::variant::Variant;
 use crate::{position, rules};
 
 const OPENINGS_JSON: &str = include_str!("../../data/openings.json");
@@ -52,7 +53,7 @@ fn table() -> &'static HashMap<String, usize> {
     static TABLE: OnceLock<HashMap<String, usize>> = OnceLock::new();
     TABLE.get_or_init(|| {
         let mut table: HashMap<String, usize> = HashMap::new();
-        let Some(start) = rules::setup_start("standard", START) else {
+        let Some(start) = rules::setup_start(Variant::Standard, START) else {
             return table;
         };
         let all = lines();
@@ -96,7 +97,7 @@ fn placement_hash(pos: &impl Position) -> u64 {
 fn placements() -> &'static std::collections::HashSet<u64> {
     static PLACEMENTS: OnceLock<std::collections::HashSet<u64>> = OnceLock::new();
     PLACEMENTS.get_or_init(|| {
-        let Some(start) = rules::setup_start("standard", START) else {
+        let Some(start) = rules::setup_start(Variant::Standard, START) else {
             return std::collections::HashSet::new();
         };
         let mut placements = std::collections::HashSet::new();
@@ -126,7 +127,7 @@ pub fn opening_at<S: AsRef<str>>(
     if variant != "standard" {
         return None;
     }
-    let mut pos = rules::setup_start("standard", fen)?;
+    let mut pos = rules::setup_start(Variant::Standard, fen)?;
     let books = table();
     let placements = placements();
     let named = lines();
@@ -282,7 +283,7 @@ pub fn wikibooks_title<S: AsRef<str>>(moves: &[S]) -> Option<String> {
     if moves.is_empty() || moves.len() > WIKIBOOKS_PLIES {
         return None;
     }
-    let start = rules::setup_start("standard", START)?;
+    let start = rules::setup_start(Variant::Standard, START)?;
     let (_, line) = position::line(start, moves, false, false);
     if line.len() != moves.len() {
         return None;
@@ -299,7 +300,7 @@ pub fn wikibooks_title<S: AsRef<str>>(moves: &[S]) -> Option<String> {
 /// The positions (FENs) a line from the starting position reaches, the start first. None when a
 /// move is illegal.
 pub fn line_fens<S: AsRef<str>>(moves: &[S]) -> Option<Vec<String>> {
-    let start = rules::setup_start("standard", START)?;
+    let start = rules::setup_start(Variant::Standard, START)?;
     let first = rules::make_fen(&start);
     let (_, line) = position::line(start, moves, false, false);
     if line.len() != moves.len() {
@@ -398,7 +399,7 @@ mod tests {
 
     /// The lookup as it was: a FEN written and looked up after every move.
     fn opening_written_out(moves: &[String]) -> Option<(String, String)> {
-        let mut pos = rules::setup_start("standard", START)?;
+        let mut pos = rules::setup_start(Variant::Standard, START)?;
         let (books, named) = (table(), lines());
         let mut found = books
             .get(rules::repetition_key(&rules::make_fen(&pos)))
@@ -432,7 +433,7 @@ mod tests {
         }
         let mut seed = 0x2545_F491_4F6C_DD1Du64;
         for _ in 0..300 {
-            let mut pos = rules::setup_start("standard", START).expect("start");
+            let mut pos = rules::setup_start(Variant::Standard, START).expect("start");
             let mut moves = Vec::new();
             for _ in 0..60 {
                 let legal = pos.legal_moves();
@@ -463,7 +464,7 @@ mod tests {
     /// are written out.
     #[test]
     fn only_named_placements_pass_the_filter() {
-        let mut pos = rules::setup_start("standard", START).expect("start");
+        let mut pos = rules::setup_start(Variant::Standard, START).expect("start");
         for uci in &lines()[0].moves {
             let m = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u));
             pos.play_unchecked(m.expect("a legal move"));
@@ -472,7 +473,8 @@ mod tests {
             placements().contains(&placement_hash(&pos)),
             "a named line's end"
         );
-        let far = rules::setup_start("standard", "8/8/8/4k3/8/8/4P3/4K3 w - - 0 40").expect("fen");
+        let far =
+            rules::setup_start(Variant::Standard, "8/8/8/4k3/8/8/4P3/4K3 w - - 0 40").expect("fen");
         assert!(!placements().contains(&placement_hash(&far)), "an endgame");
         assert_ne!(placement_hash(&pos), placement_hash(&far));
     }

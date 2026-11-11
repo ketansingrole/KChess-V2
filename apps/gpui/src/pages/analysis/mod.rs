@@ -123,7 +123,7 @@ fn now_square(uci: &str, range: std::ops::Range<usize>) -> Option<Square> {
 
 /// A position of the tree, read by its variant's rules (a Lichess key).
 fn position_of(variant: &str, fen: &str) -> Option<VariantPosition> {
-    kchess_domain::rules::setup_start(variant, fen)
+    crate::game::setup_position(variant, fen)
 }
 
 /// The position with the other side to move (a null move), whose best line is the threat; `None`

@@ -295,7 +295,7 @@ impl Painter {
 /// Each position of the game from the start, with the move that led to it; `up_to` stops after
 /// that many moves. The line stops at the first illegal move.
 fn positions(options: &ImageOptions, up_to: usize) -> Result<Vec<Shown>, String> {
-    let mut position = kchess_domain::rules::setup_start(&options.variant, &options.fen)
+    let mut position = crate::game::setup_position(&options.variant, &options.fen)
         .ok_or("That game cannot be replayed")?;
     let mut list = vec![Shown {
         board: position.board().clone(),

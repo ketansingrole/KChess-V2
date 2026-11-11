@@ -165,8 +165,11 @@ impl EndgameLesson {
     ) -> EndgameLesson {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", crate::game::STANDARD_FEN)
-                    .unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    crate::game::STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 None,
                 None,
@@ -401,8 +404,9 @@ impl EndgameLesson {
         let fen = self.status().fen;
         let text = self.move_input.read(cx).value().trim().to_string();
         let setup = json!({ "variant": "standard", "fen": fen });
-        let typed = kchess_domain::rules::setup_start("standard", &fen)
-            .and_then(|position| view::typed_uci(&setup, &position, &text));
+        let typed =
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
+                .and_then(|position| view::typed_uci(&setup, &position, &text));
         if let Some(uci) = typed {
             self.move_input
                 .update(cx, |input, cx| input.set_value("", window, cx));
@@ -541,7 +545,9 @@ impl EndgameLesson {
     fn redraw(&mut self, cx: &mut Context<Self>) {
         let status = self.status();
         let fen = status.fen.clone();
-        let Some(position) = kchess_domain::rules::setup_start("standard", &fen) else {
+        let Some(position) =
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
+        else {
             return;
         };
         let last = self.moves.last().and_then(|last| {

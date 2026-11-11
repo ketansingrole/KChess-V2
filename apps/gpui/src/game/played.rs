@@ -124,7 +124,10 @@ impl PlayedGame {
     pub fn analysis_pgn(&self) -> Option<String> {
         match &self.pgn {
             Some(pgn) => Some(pgn.clone()),
-            None => kchess_domain::pgn::setup_pgn(&self.variant, &self.fen, &self.moves, &[]).ok(),
+            None => {
+                let variant = kchess_domain::variant::Variant::from_key(&self.variant)?;
+                kchess_domain::pgn::setup_pgn(variant, &self.fen, &self.moves, &[]).ok()
+            }
         }
     }
 }

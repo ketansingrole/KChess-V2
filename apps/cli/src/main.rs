@@ -634,12 +634,12 @@ fn analysis_request(words: &[String]) -> Result<Value, String> {
 /// A position in another variant, or the one its moves reach, read by that variant's rules.
 fn variant_analysis_request(variant: &str, text: &str) -> Result<Value, String> {
     use kchess_domain::rules;
-    let start = rules::lichess_variant(variant).ok_or("Unknown variant.")?;
+    let start = kchess_domain::variant::Variant::from_key(variant).ok_or("Unknown variant.")?;
     let text = text.trim();
     let fen = match text {
         "" => return Err("analyze requires a FEN or moves.".into()),
-        "startpos" => Some(rules::make_fen(&rules::default_position(start))),
-        text => rules::setup_start(variant, text).map(|position| rules::make_fen(&position)),
+        "startpos" => Some(start.default_fen()),
+        text => rules::setup_start(start, text).map(|position| rules::make_fen(&position)),
     };
     if let Some(fen) = fen {
         return Ok(json!({ "fen": fen, "lines": 3, "variant": variant }));
@@ -726,7 +726,8 @@ fn position_info(words: &[String]) -> Result<Value, String> {
     let request = analysis_request(words).map_err(|cause| cause.replace("analyze", "position"))?;
     let variant = request["variant"].as_str().unwrap_or("standard");
     let fen = request["fen"].as_str().ok_or("setup.fen")?;
-    let position = kchess_domain::rules::setup_start(variant, fen);
+    let position = kchess_domain::variant::Variant::from_key(variant)
+        .and_then(|variant| kchess_domain::rules::setup_start(variant, fen));
     let info = position.as_ref().map(kchess_domain::position::info);
     let legal = position
         .as_ref()

@@ -11,9 +11,6 @@ use serde_json::Value;
 use crate::js;
 use model::{Call, Ctx, Left, Model, Op, Outcome, Pending, Reply, Run, View, at, string_or};
 
-/// `variantFromLichess`, for the Lichess service's challenge reader (`kchess-core`).
-pub use model::variant_from_lichess;
-
 impl Model {
     /// The live position, the SAN history, the moves this side made, whether it is a
     /// correspondence game, and the rematch's options.

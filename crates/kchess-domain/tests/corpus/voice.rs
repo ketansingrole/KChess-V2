@@ -85,7 +85,8 @@ fn spoken_move(args: &[Value]) -> Out {
         .get("fen")
         .and_then(Value::as_str)
         .ok_or("setup.fen")?;
-    let pos = rules::setup_start(variant, fen).ok_or("setup is not a legal position")?;
+    let pos =
+        rules::setup_start(super::variant(variant)?, fen).ok_or("setup is not a legal position")?;
     Ok(json!(voice::spoken_move(text, &pos)))
 }
 

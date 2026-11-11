@@ -8,6 +8,9 @@ use std::ops::Range;
 
 use serde_json::{Map, Value, json};
 use shakmaty::variant::VariantPosition;
+
+use crate::variant::Variant;
+
 use shakmaty::{Bitboard, Color, Move, Position, Rank};
 
 use crate::{js, replay, rules};
@@ -257,8 +260,8 @@ fn harmonic_mean(values: &[f64]) -> f64 {
 /// that is not a number, judgments that are not strings) are refused.
 struct Review<'a> {
     fen: &'a str,
-    /// The Lichess key of a variant game's variant; empty for standard chess.
-    variant: &'a str,
+    /// The game's variant; none for one KChess does not play.
+    variant: Option<Variant>,
     moves: Vec<&'a str>,
     lichess: bool,
     evals: Vec<Option<Score>>,
@@ -337,7 +340,10 @@ impl<'a> Review<'a> {
         };
         Ok(Review {
             fen,
-            variant: map.get("variant").and_then(Value::as_str).unwrap_or(""),
+            variant: match map.get("variant").and_then(Value::as_str) {
+                None | Some("") => Some(Variant::Standard),
+                Some(key) => Variant::from_key(key),
+            },
             moves,
             lichess: map.get("source").and_then(Value::as_str) == Some("lichess"),
             evals,
@@ -366,7 +372,9 @@ fn analyse(review: &Review) -> Result<Analysis, String> {
     // check would generate every legal move at every ply.
     let needs_end =
         review.evals.len() < review.moves.len() + 1 || review.evals.iter().any(Option::is_none);
-    let positions = replay::replay_turns_in(review.variant, review.fen, &review.moves, needs_end);
+    let positions = review.variant.map_or_else(Vec::new, |variant| {
+        replay::replay_turns_in(variant, review.fen, &review.moves, needs_end)
+    });
     let eval_at = |i: usize| -> Option<Score> {
         if let Some(Some(score)) = review.evals.get(i) {
             return Some(*score);
@@ -605,7 +613,7 @@ pub fn review_phases(raw: &Value) -> Option<Value> {
     let review = Review::read(raw).ok()?;
     let analysis = analyse(&review).ok()?;
     let count = analysis.colors.len();
-    let start = replay::start_of(review.variant, review.fen)?;
+    let start = rules::setup_start(review.variant?, review.fen)?;
     let (middle, end) = phase_starts(start, count, |pos, i| {
         rules::parse_uci(review.moves[i]).and_then(|u| rules::legal_move(pos, u))
     })?;
@@ -633,7 +641,7 @@ pub fn review_phases(raw: &Value) -> Option<Value> {
 pub fn review_classifications(raw: &Value) -> Option<Value> {
     let review = Review::read(raw).ok()?;
     let analysis = analyse(&review).ok()?;
-    let mut pos = replay::start_of(review.variant, review.fen)?;
+    let mut pos = rules::setup_start(review.variant?, review.fen)?;
     let evals = raw.get("evals")?.as_array()?;
     let mut labels = Vec::with_capacity(analysis.moves.len());
     for (i, entry) in analysis.moves.iter().enumerate() {
@@ -657,7 +665,7 @@ pub fn review_classifications(raw: &Value) -> Option<Value> {
                 if loss <= 2.0 && best == Some(text) {
                     // Material does not measure a sacrifice in the variants (drops, explosions).
                     Some(
-                        if matches!(review.variant, "" | "standard" | "chess960")
+                        if review.variant.is_some_and(Variant::standard_rules)
                             && sound_sacrifice(&pos, m, before, after)
                         {
                             "brilliant"
@@ -834,11 +842,10 @@ pub fn lichess_line(
     (fen, uci)
 }
 
-/// `lichess_line` for a game of `variant` (a Lichess key such as `crazyhouse`), played by that
-/// variant's rules from its own start (Horde's, Racing Kings') unless a FEN is given. None for a
-/// variant KChess does not play or a start its rules refuse.
+/// `lichess_line` for a game of `variant`, played by its rules from its own start (Horde's,
+/// Racing Kings') unless a FEN is given. None for a start its rules refuse.
 pub fn lichess_line_in(
-    variant: &str,
+    variant: Variant,
     moves: &str,
     pgn: Option<&str>,
     initial_fen: Option<&str>,
@@ -846,7 +853,7 @@ pub fn lichess_line_in(
     let tagged = pgn.filter(|p| !p.is_empty()).and_then(fen_tag);
     let mut pos = match initial_fen.or(tagged) {
         Some(fen) => rules::setup_start(variant, fen)?,
-        None => rules::default_position(rules::lichess_variant(variant)?),
+        None => rules::default_position(variant.rules()),
     };
     let fen = rules::make_fen(&pos);
     let mut uci = Vec::new();
@@ -888,8 +895,13 @@ mod tests {
     #[test]
     fn reads_variant_lichess_lines() {
         // Crazyhouse: a drop, read from the variant's start with its (empty) pockets.
-        let (fen, moves) =
-            lichess_line_in("crazyhouse", "e4 d5 exd5 Qxd5 Nc3 Qa5 P@d4", None, None).unwrap();
+        let (fen, moves) = lichess_line_in(
+            Variant::Crazyhouse,
+            "e4 d5 exd5 Qxd5 Nc3 Qa5 P@d4",
+            None,
+            None,
+        )
+        .unwrap();
         assert!(
             fen.contains('['),
             "a Crazyhouse FEN keeps its pockets: {fen}"
@@ -897,7 +909,7 @@ mod tests {
         assert_eq!(moves.last().map(String::as_str), Some("P@d4"));
         assert_eq!(moves.len(), 7);
         // Horde starts from its own position, where White has no king.
-        let (fen, moves) = lichess_line_in("horde", "e5 f6", None, None).unwrap();
+        let (fen, moves) = lichess_line_in(Variant::Horde, "e5 f6", None, None).unwrap();
         assert!(
             fen.starts_with("rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/"),
             "{fen}"
@@ -910,7 +922,6 @@ mod tests {
                 .len(),
             6
         );
-        assert!(lichess_line_in("bughouse", "e4", None, None).is_none());
     }
 
     fn sacrifice_review() -> Value {

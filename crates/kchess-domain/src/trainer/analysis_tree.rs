@@ -11,6 +11,7 @@ use serde_json::Value;
 use crate::js;
 use crate::review::js_exp;
 use crate::rules;
+use crate::variant::Variant;
 
 /// `MOVE_GLYPHS`, in table order: a move's glyph is the first of these its NAGs contain.
 const GLYPHS: [(f64, &str, &str); 6] = [
@@ -217,8 +218,8 @@ pub fn winning_chances(line: Option<Score>) -> f64 {
     2.0 / (1.0 + js_exp(-0.00368208 * cp)) - 1.0
 }
 
-/// A move to add below a node: the node's path, its position (`fen`, `ply`, and `variant`, a
-/// Lichess key, empty for standard chess) and the moves already tried from it.
+/// A move to add below a node: the node's path, its position (`fen`, `ply` and `variant`) and
+/// the moves already tried from it.
 #[derive(Clone, Debug, Default)]
 pub struct MoveInput<'a> {
     pub path: &'a str,
@@ -226,7 +227,7 @@ pub struct MoveInput<'a> {
     pub fen: &'a str,
     pub ply: f64,
     pub child_ucis: &'a [String],
-    pub variant: &'a str,
+    pub variant: Variant,
 }
 
 /// A legal move's place in the tree: the child's path and, unless the move was already tried,
@@ -248,10 +249,7 @@ pub struct NewNode {
 
 /// Where a move goes below a node; none when it is illegal there.
 pub fn add_move_plan(input: &MoveInput) -> Option<AddedMove> {
-    let mut pos = match input.variant {
-        "" => rules::standard_from_fen(input.fen),
-        variant => rules::setup_start(variant, input.fen),
-    }?;
+    let mut pos = rules::setup_start(input.variant, input.fen)?;
     let played = rules::parse_uci(input.uci).and_then(|u| rules::legal_move(&pos, u))?;
     // Castling comes back as king-takes-rook, so a move has one spelling in the tree.
     let played_uci = rules::make_uci(&played);
@@ -331,10 +329,10 @@ mod tests {
             variant,
             ..MoveInput::default()
         };
-        let plan = add_move_plan(&input("crazyhouse")).unwrap();
+        let plan = add_move_plan(&input(Variant::Crazyhouse)).unwrap();
         assert_eq!(plan.child.unwrap().san, "P@d4");
         assert_eq!(plan.child_path, "P@d4");
-        assert!(add_move_plan(&input("")).is_none());
+        assert!(add_move_plan(&input(Variant::Standard)).is_none());
     }
 
     #[test]

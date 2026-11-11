@@ -30,26 +30,7 @@ pub trait Host {
 /// What a session answers for a setup that is not a legal position.
 pub const ILLEGAL_SETUP: &str = "the setup is not a legal position";
 
-/// A `{ variant, fen }` setup.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Setup {
-    pub variant: String,
-    pub fen: String,
-}
-
-impl Setup {
-    /// The ordinary game from the usual start.
-    pub fn standard() -> Setup {
-        Setup {
-            variant: "standard".into(),
-            fen: INITIAL_FEN.into(),
-        }
-    }
-
-    pub fn is_standard_start(&self) -> bool {
-        self.variant == "standard" && self.fen == INITIAL_FEN
-    }
-}
+pub use crate::variant::Setup;
 
 /// A clock for one side: minutes and the increment in seconds.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -114,12 +95,12 @@ impl Board {
     /// played. An illegal setup is refused.
     pub fn new(setup: Setup, moves: Vec<String>) -> Result<Board, String> {
         let replayed =
-            replay::replay_setup(&setup.variant, &setup.fen, &moves).ok_or(ILLEGAL_SETUP)?;
-        let position = rules::setup_start(&setup.variant, &replayed.fen).ok_or(ILLEGAL_SETUP)?;
+            replay::replay_setup(setup.variant, &setup.fen, &moves).ok_or(ILLEGAL_SETUP)?;
+        let position = rules::setup_start(setup.variant, &replayed.fen).ok_or(ILLEGAL_SETUP)?;
         let texts: Vec<&str> = moves.iter().map(String::as_str).collect();
         let draw =
-            results::setup_draw_reason(&setup.variant, &setup.fen, &texts).map(str::to_string);
-        let end = results::board_result(&position, &setup.variant, draw.as_deref());
+            results::setup_draw_reason(setup.variant, &setup.fen, &texts).map(str::to_string);
+        let end = results::board_result(&position, setup.variant, draw.as_deref());
         Ok(Board {
             info: position::info(&position),
             setup,
@@ -179,7 +160,7 @@ impl Board {
     pub fn with_move(&self, uci: &str) -> Option<(Board, String)> {
         let mut next = self.moves.clone();
         next.push(uci.to_string());
-        let replayed = replay::replay_setup(&self.setup.variant, &self.setup.fen, &next)?;
+        let replayed = replay::replay_setup(self.setup.variant, &self.setup.fen, &next)?;
         if replayed.played.len() != next.len() {
             return None;
         }
@@ -190,7 +171,7 @@ impl Board {
     /// The side to move after the first `count` moves.
     pub fn turn_after(&self, count: usize) -> &'static str {
         let moves = &self.moves[..count.min(self.moves.len())];
-        match replay::replay_setup_turn(&self.setup.variant, &self.setup.fen, moves) {
+        match replay::replay_setup_turn(self.setup.variant, &self.setup.fen, moves) {
             Some((_, shakmaty::Color::Black)) => "black",
             _ => "white",
         }
@@ -252,7 +233,8 @@ mod tests {
     #[test]
     fn an_illegal_setup_is_refused() {
         let illegal = Setup {
-            variant: "standard".into(),
+            variant: crate::variant::Variant::Standard,
+
             fen: "8/8/8/8/8/8/8/8 w - - 0 1".into(),
         };
         assert_eq!(Board::new(illegal, Vec::new()).unwrap_err(), ILLEGAL_SETUP);

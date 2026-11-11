@@ -108,7 +108,7 @@ fn game_pgn(game: &PlayedGame) -> Option<String> {
     let result = kchess_games::Outcome::tag(game.result);
     let date = chrono::Local::now().format("%Y.%m.%d").to_string();
     kchess_domain::pgn::setup_pgn(
-        &game.variant,
+        kchess_domain::variant::Variant::from_key(&game.variant)?,
         &game.fen,
         &game.moves,
         &[

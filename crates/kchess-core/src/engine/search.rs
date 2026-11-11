@@ -340,7 +340,8 @@ fn prepare(moves: Value, options: Value, level: &str, configured: &str) -> Resul
     let moves = match (&options.variant, variant) {
         // Another variant's moves (drops among them) replay by its rules, and go as they are.
         (Some(key), Some(_)) => {
-            kchess_domain::replay::replay_setup_count(key, start, &moves)
+            let variant = kchess_domain::variant::Variant::from_key(key).ok_or_else(invalid)?;
+            kchess_domain::replay::replay_setup_count(variant, start, &moves)
                 .filter(|count| *count == moves.len())
                 .ok_or_else(invalid)?;
             moves

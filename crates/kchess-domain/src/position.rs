@@ -714,7 +714,11 @@ mod tests {
     /// rook only, as the rules do.
     #[test]
     fn dests_castle_as_the_board_asks() {
-        let pos = rules::setup_start("standard", "4k3/8/8/8/8/8/8/4K2R w K - 0 1").unwrap();
+        let pos = rules::setup_start(
+            crate::variant::Variant::Standard,
+            "4k3/8/8/8/8/8/8/4K2R w K - 0 1",
+        )
+        .unwrap();
         let king = |mode| {
             dests(&pos, mode)
                 .into_iter()
@@ -731,7 +735,7 @@ mod tests {
     #[test]
     fn crazyhouse_drops_list_each_pocket_piece_and_its_squares() {
         let pos = crate::rules::setup_start(
-            "crazyhouse",
+            crate::variant::Variant::Crazyhouse,
             "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3",
         )
         .unwrap();
@@ -747,7 +751,7 @@ mod tests {
         assert!(
             super::drop_dests(
                 &crate::rules::setup_start(
-                    "standard",
+                    crate::variant::Variant::Standard,
                     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
                 )
                 .unwrap()

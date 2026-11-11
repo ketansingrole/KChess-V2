@@ -11,6 +11,8 @@ pub mod puzzle;
 use serde_json::Value;
 pub use shakmaty::Color;
 
+use kchess_domain::variant::Variant;
+
 /// A random number in [0, 1), like `Math.random()`, for the rules that draw from them.
 pub fn random_unit() -> f64 {
     let mut bytes = [0u8; 8];
@@ -78,7 +80,7 @@ impl Outcome {
 
 /// A move typed as SAN ("Nf3", "O-O", "exd8=Q") or UCI ("g1f3") in the position `fen` of
 /// `variant`, as UCI when it is legal there.
-pub fn typed_uci(variant: &str, fen: &str, text: &str) -> Option<String> {
+pub fn typed_uci(variant: Variant, fen: &str, text: &str) -> Option<String> {
     let text = text.trim();
     let position = kchess_domain::rules::setup_start(variant, fen)?;
     let bytes = text.as_bytes();
@@ -112,20 +114,26 @@ mod tests {
     #[test]
     fn a_typed_move_is_read_as_san_or_uci() {
         let start = kchess_domain::rules::INITIAL_FEN;
-        assert_eq!(typed_uci("standard", start, "Nf3").as_deref(), Some("g1f3"));
         assert_eq!(
-            typed_uci("standard", start, " g1f3 ").as_deref(),
+            typed_uci(Variant::Standard, start, "Nf3").as_deref(),
             Some("g1f3")
         );
-        assert_eq!(typed_uci("standard", start, "e2e5"), None);
-        assert_eq!(typed_uci("standard", start, "Nf6"), None);
+        assert_eq!(
+            typed_uci(Variant::Standard, start, " g1f3 ").as_deref(),
+            Some("g1f3")
+        );
+        assert_eq!(typed_uci(Variant::Standard, start, "e2e5"), None);
+        assert_eq!(typed_uci(Variant::Standard, start, "Nf6"), None);
         let castle = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
         assert_eq!(
-            typed_uci("standard", castle, "O-O").as_deref(),
+            typed_uci(Variant::Standard, castle, "O-O").as_deref(),
             Some("e1h1")
         );
         let zh = "rnbqkbnr/ppp1pppp/8/8/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
-        assert_eq!(typed_uci("crazyhouse", zh, "P@e3").as_deref(), Some("P@e3"));
+        assert_eq!(
+            typed_uci(Variant::Crazyhouse, zh, "P@e3").as_deref(),
+            Some("P@e3")
+        );
     }
 
     #[test]

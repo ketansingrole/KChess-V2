@@ -12,6 +12,7 @@ use crate::js;
 use crate::pgn::{Game, PgnNode, make_pgn, parse_pgn};
 use crate::rules;
 use crate::trainer::analysis_tree::{self, moves_of, path_of};
+use crate::variant::Variant;
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -296,13 +297,9 @@ fn move_number(ply: u32, always: bool) -> String {
 }
 
 /// A principal variation in SAN with move numbers, at most `max` moves, stopping at the first
-/// illegal one. `variant` is a Lichess key, empty for standard chess.
-pub fn pv_san<S: AsRef<str>>(fen: &str, pv: &[S], max: usize, variant: &str) -> Vec<PvMove> {
-    let position = match variant {
-        "" => rules::standard_from_fen(fen),
-        variant => rules::setup_start(variant, fen),
-    };
-    let Some(mut pos) = position else {
+/// illegal one.
+pub fn pv_san<S: AsRef<str>>(fen: &str, pv: &[S], max: usize, variant: Variant) -> Vec<PvMove> {
+    let Some(mut pos) = rules::setup_start(variant, fen) else {
         return Vec::new();
     };
     let mut moves = Vec::new();
@@ -512,12 +509,7 @@ impl TreeNode {
             fen: &parent.fen,
             ply: f64::from(parent.ply),
             child_ucis: &child_ucis,
-            // Standard rules read Chess960 castling too.
-            variant: if variant.standard_rules() {
-                ""
-            } else {
-                variant.key()
-            },
+            variant,
         })?;
         if let Some(child) = plan.child {
             let child = TreeNode::leaf(child.uci, child.san, child.fen, child.ply as u32);

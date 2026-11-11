@@ -143,7 +143,12 @@ pub async fn run(
                 .is_some_and(|fen| start(fen) == start(&line.fen))
     };
     // The key the core gives the review, so a failure reported for it ends the wait.
-    let key = kchess_domain::records::review::review_key(&line.fen, &line.moves, line.variant);
+    let key = kchess_domain::records::review::review_key(
+        &line.fen,
+        &line.moves,
+        line.variant
+            .and_then(kchess_domain::variant::Variant::from_key),
+    );
     let interrupted = tokio::signal::ctrl_c();
     tokio::pin!(interrupted);
     while !(ours(&stored) && stored["complete"] == json!(true)) {

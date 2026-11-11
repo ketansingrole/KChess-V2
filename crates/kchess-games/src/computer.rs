@@ -323,7 +323,7 @@ mod tests {
         let mut game = ComputerGame::new(None, &host(0.)).unwrap();
         let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
         let setup = Setup {
-            variant: "crazyhouse".into(),
+            variant: kchess_domain::variant::Variant::Crazyhouse,
             fen: start.into(),
         };
         game.start(Some(setup), None, &host(0.)).unwrap();
@@ -332,7 +332,10 @@ mod tests {
                 assert!(game.play(mv, &host(1.)).0, "{mv}");
             } else {
                 let request = game.search_start(&host(2.)).unwrap().expect("a search");
-                assert_eq!(request.options.variant.as_deref(), Some("crazyhouse"));
+                assert_eq!(
+                    request.options.variant,
+                    Some(kchess_domain::variant::Variant::Crazyhouse)
+                );
                 assert_eq!(request.options.fen.as_deref(), Some(start));
                 game.search_reply(&request, mv, &host(3.));
             }

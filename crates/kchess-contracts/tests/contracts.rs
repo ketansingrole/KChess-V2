@@ -2,7 +2,6 @@
 
 use kchess_contracts::defaults::default_settings;
 use kchess_contracts::types::*;
-use kchess_contracts::variant::{VARIANTS, Variant};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -62,11 +61,6 @@ fn every_wire_enum_round_trips_its_listed_values() {
         VoiceOutcome: VOICE_OUTCOMES,
         VoiceSource: VOICE_SOURCES,
     );
-}
-
-#[test]
-fn the_variant_enum_matches_the_domain_variant_keys() {
-    wire_values_round_trip::<Variant>("Variant", VARIANTS);
 }
 
 #[test]

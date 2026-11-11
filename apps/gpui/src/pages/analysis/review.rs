@@ -121,7 +121,8 @@ impl AnalysisPage {
         kchess_domain::records::review::review_key(
             &self.root.fen,
             &self.mainline(),
-            self.fairy_variant(),
+            self.fairy_variant()
+                .and_then(kchess_domain::variant::Variant::from_key),
         )
     }
 
@@ -585,7 +586,12 @@ impl AnalysisPage {
         let Some(fen) = puzzle["fen"].as_str() else {
             return false;
         };
-        let Ok(pgn) = kchess_domain::pgn::setup_pgn("standard", fen, &solution, &[]) else {
+        let Ok(pgn) = kchess_domain::pgn::setup_pgn(
+            kchess_domain::variant::Variant::Standard,
+            fen,
+            &solution,
+            &[],
+        ) else {
             return false;
         };
         if !self.load_pgn(&pgn, cx) {

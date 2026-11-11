@@ -1794,7 +1794,7 @@ impl NewGame {
         let usual = match current_variant {
             "standard" => Some(STANDARD_FEN.to_string()),
             "chess960" => None,
-            variant => kchess_domain::rules::default_fen(variant),
+            variant => crate::game::default_fen(variant),
         };
         let fen = cx.new(|cx| {
             let label = format!(
@@ -1884,12 +1884,12 @@ impl NewGame {
             return None;
         }
         if variant != "standard" {
-            return kchess_domain::rules::setup_start(&variant, &text)
+            return crate::game::setup_position(&variant, &text)
                 .is_none()
                 .then(|| "Not a legal position".into());
         }
         position_problem(&text).map(SharedString::from).or_else(|| {
-            kchess_domain::rules::setup_start("standard", &text)
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &text)
                 .is_none()
                 .then(|| "Not a legal position".into())
         })
@@ -1916,7 +1916,7 @@ impl NewGame {
                 .is_none()
                 .then(|| json!({ "variant": variant, "fen": text }));
         }
-        let fen = kchess_domain::rules::default_fen(&variant)?;
+        let fen = crate::game::default_fen(&variant)?;
         Some(json!({ "variant": variant, "fen": fen }))
     }
 

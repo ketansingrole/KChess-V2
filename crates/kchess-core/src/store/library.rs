@@ -242,9 +242,8 @@ pub fn add_mistakes(
     let variant = review
         .get("variant")
         .and_then(Value::as_str)
-        .filter(|variant| kchess_domain::library::known_variant(variant))
-        .map(str::to_string);
-    let replay = |fen: &str, moves: &[String]| match &variant {
+        .and_then(kchess_domain::variant::Variant::from_key);
+    let replay = |fen: &str, moves: &[String]| match variant {
         Some(variant) => kchess_domain::replay::replay_positions_in(variant, fen, moves),
         None => kchess_domain::replay::replay_positions(fen, moves),
     };
@@ -1108,7 +1107,7 @@ mod tests {
         let key = json!(kchess_domain::records::review::review_key(
             fen,
             &string_list(Some(&moves)),
-            Some("crazyhouse")
+            Some(kchess_domain::variant::Variant::Crazyhouse)
         ));
         let mut evals: Vec<Value> = (0..4)
             .map(|_| json!({ "cp": 30, "depth": 20, "best": "a2a3" }))

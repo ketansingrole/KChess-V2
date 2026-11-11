@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
-use super::feed::{player_of, position_key, take_utf16, uci_or_none, variant_from_lichess};
+use super::feed::{player_of, position_key, take_utf16, uci_or_none};
 use super::{
     BroadcastGame, BroadcastUpdate, LineUpTiming, MAX_PGN, PAST_GAMES, TvGame, TvPastGame,
     WatchFrame, WatchSink, WatchState, WatchTarget, align_tv_moves, broadcast_game, display_fen,
@@ -626,7 +626,7 @@ impl Inner {
         current.speed = game.details.speed.clone();
         current.clock = game.details.clock;
         if let Some(setup) = &game.setup {
-            current.variant = setup.variant.to_string();
+            current.variant = setup.variant.key().to_string();
         }
         if let (Some(setup), Some(moves)) = (&game.setup, moves) {
             current.start_fen = Some(setup.fen.clone());
@@ -785,8 +785,8 @@ impl Inner {
                             black_clock: current.as_ref().and_then(|c| c.black_clock),
                             variant: {
                                 let key = record.variant.0.and_then(|variant| variant.key.0);
-                                variant_from_lichess(key.as_deref())
-                                    .map_or_else(|| key.unwrap_or_default(), String::from)
+                                kchess_domain::variant::Variant::from_lichess(key.as_deref())
+                                    .map_or_else(|| key.unwrap_or_default(), |v| v.key().into())
                             },
                             speed: details.speed,
                             rated: details.rated,

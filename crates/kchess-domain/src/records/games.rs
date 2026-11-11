@@ -9,17 +9,9 @@ use shakmaty::variant::VariantPosition;
 use std::collections::HashMap;
 
 use crate::js;
-use crate::{position, replay, rules};
+use crate::variant::Variant;
 
-/// Why a variant game ends on a win, by variant (`VARIANT_WIN`).
-const VARIANT_WIN: &[(&str, &str)] = &[
-    ("kingOfTheHill", "King reached the centre"),
-    ("threeCheck", "Third check"),
-    ("antichess", "Lost every piece"),
-    ("atomic", "King exploded"),
-    ("horde", "Horde captured"),
-    ("racingKings", "King reached the eighth rank"),
-];
+use crate::{position, replay, rules};
 
 /// How a game ended: the winner, none for a draw, and why.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -36,7 +28,11 @@ pub fn opponent(color: &str) -> &'static str {
 
 /// How the position ended the game, or the draw already found by repetition or the fifty-move
 /// rule (`draw`); none while the game goes on.
-pub fn board_result(pos: &VariantPosition, variant: &str, draw: Option<&str>) -> Option<GameEnd> {
+pub fn board_result(
+    pos: &VariantPosition,
+    variant: Variant,
+    draw: Option<&str>,
+) -> Option<GameEnd> {
     let facts = position::info(pos);
     if let Some(outcome) = &facts.outcome {
         let reason = if facts.checkmate {
@@ -44,10 +40,7 @@ pub fn board_result(pos: &VariantPosition, variant: &str, draw: Option<&str>) ->
         } else if facts.stalemate {
             "Stalemate"
         } else if facts.variant_end {
-            VARIANT_WIN
-                .iter()
-                .find(|(key, _)| *key == variant)
-                .map_or("Game over", |(_, reason)| reason)
+            variant.win_reason().unwrap_or("Game over")
         } else {
             "Insufficient material"
         };
@@ -116,9 +109,9 @@ fn repetition(mut pos: VariantPosition, moves: &[&str]) -> Option<&'static str> 
 
 /// Repetition or the fifty-move rule reached by UCI `moves` from a setup, for the variants where
 /// those rules apply.
-pub fn setup_draw_reason(variant: &str, fen: &str, moves: &[&str]) -> Option<&'static str> {
+pub fn setup_draw_reason(variant: Variant, fen: &str, moves: &[&str]) -> Option<&'static str> {
     let replayed = replay::replay_setup(variant, fen, moves)?;
-    if !crate::variant::Variant::from_key(variant).is_some_and(|v| v.counts_repetition()) {
+    if !variant.counts_repetition() {
         return None;
     }
     let start = rules::setup_start(variant, fen)?;

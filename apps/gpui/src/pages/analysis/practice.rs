@@ -55,7 +55,7 @@ pub struct Practice {
 
 /// A move's SAN from a FEN, by the rules of `variant` (the game's, a Lichess key).
 fn san(variant: &str, fen: &str, uci: &str) -> Option<String> {
-    let position = kchess_domain::rules::setup_start(variant, fen)?;
+    let position = crate::game::setup_position(variant, fen)?;
     kchess_domain::position::play_uci(&position, uci).map(|played| played.san)
 }
 

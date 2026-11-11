@@ -7,6 +7,7 @@ use kchess_contracts::calls;
 use std::time::Instant;
 
 use kchess_domain::games::Setup;
+use kchess_domain::variant::Variant;
 use kchess_games::Outcome;
 use kchess_games::computer::{self, ComputerGame, SearchRequest};
 use kchess_games::history::{self, HistoryPlace, Write};
@@ -83,7 +84,7 @@ impl Session<'_> {
 
     fn fen(&self) -> String {
         let setup = self.setup();
-        kchess_domain::replay::replay_setup(&setup.variant, &setup.fen, self.moves())
+        kchess_domain::replay::replay_setup(setup.variant, &setup.fen, self.moves())
             .map(|replay| replay.fen)
             .unwrap_or_else(|| setup.fen.clone())
     }
@@ -92,7 +93,7 @@ impl Session<'_> {
     /// board; anything that is not a legal move there is passed on as typed for the rules to
     /// judge.
     fn typed_uci(&self, text: &str) -> String {
-        kchess_games::typed_uci(&self.setup().variant, &self.fen(), text)
+        kchess_games::typed_uci(self.setup().variant, &self.fen(), text)
             .unwrap_or_else(|| text.to_string())
     }
 
@@ -120,7 +121,7 @@ impl Session<'_> {
             ("Result", result),
             ("White", white),
         ];
-        kchess_domain::pgn::setup_pgn(&setup.variant, &setup.fen, self.moves(), &headers)
+        kchess_domain::pgn::setup_pgn(setup.variant, &setup.fen, self.moves(), &headers)
     }
 
     fn show(&self) {
@@ -206,6 +207,7 @@ impl Session<'_> {
     /// random position, the others from their usual start, the clock as it was.
     /// Start a game in `variant`, from its usual start or from `fen`.
     async fn choose_setup(&mut self, variant: &str, fen: Option<&str>) -> Result<(), String> {
+        let variant = Variant::from_key(variant).ok_or("variant")?;
         let now = self.now();
         if fen.is_none() && self.setup().variant == variant && !self.over() {
             return Ok(());
@@ -217,16 +219,13 @@ impl Session<'_> {
         }
         let fen = if let Some(fen) = fen {
             playable_fen(variant, fen)?
-        } else if variant == "chess960" {
+        } else if variant == Variant::Chess960 {
             kchess_domain::rules::chess960_fen(kchess_games::random_chess960())
         } else {
-            kchess_domain::rules::default_fen(variant).ok_or("variant")?
+            variant.default_fen()
         };
         self.reset_history().await;
-        let setup = Setup {
-            variant: variant.to_string(),
-            fen,
-        };
+        let setup = Setup { variant, fen };
         let host = self.host();
         match &mut self.game {
             Game::Local(game) => {
@@ -447,9 +446,9 @@ pub fn take_fen(words: &[String]) -> Result<(Option<String>, Vec<String>), Strin
 }
 
 /// A position a game can start from in `variant`, as the app's "Play from here" checks it.
-fn playable_fen(variant: &str, fen: &str) -> Result<String, String> {
+fn playable_fen(variant: Variant, fen: &str) -> Result<String, String> {
     let fen = fen.trim();
-    let playable = if matches!(variant, "standard" | "chess960") {
+    let playable = if variant.standard_rules() {
         kchess_domain::position::fen_problem(fen).is_none()
     } else {
         kchess_domain::rules::setup_start(variant, fen).is_some()
@@ -716,11 +715,20 @@ mod tests {
             take_fen(&words(&["--fen", board, "w", "-", "d66"])),
             Ok((Some(format!("{board} w -")), words(&["d66"])))
         );
-        assert_eq!(playable_fen("standard", fen).as_deref(), Ok(fen));
-        assert!(playable_fen("standard", "8/8/8/8/8/8/8/8 w - - 0 1").is_err());
+        assert_eq!(
+            playable_fen(kchess_domain::variant::Variant::Standard, fen).as_deref(),
+            Ok(fen)
+        );
+        assert!(
+            playable_fen(
+                kchess_domain::variant::Variant::Standard,
+                "8/8/8/8/8/8/8/8 w - - 0 1"
+            )
+            .is_err()
+        );
         let zh = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
-        assert!(playable_fen("crazyhouse", zh).is_ok());
-        assert!(playable_fen("horde", zh).is_err());
+        assert!(playable_fen(kchess_domain::variant::Variant::Crazyhouse, zh).is_ok());
+        assert!(playable_fen(kchess_domain::variant::Variant::Horde, zh).is_err());
     }
 
     #[test]

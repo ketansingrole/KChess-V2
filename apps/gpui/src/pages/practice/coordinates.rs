@@ -159,7 +159,11 @@ impl Coordinates {
     pub fn new(cx: &mut Context<Self>) -> Coordinates {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 None,
                 None,
@@ -454,8 +458,11 @@ impl Coordinates {
                 _ => self.orientation,
             }
         };
-        let position =
-            kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default();
+        let position = kchess_domain::rules::setup_start(
+            kchess_domain::variant::Variant::Standard,
+            STANDARD_FEN,
+        )
+        .unwrap_or_default();
         let mut state = BoardState::of(&position, orientation, None, None);
         // An empty board is no legal position: the board draws the FEN's pieces, none here.
         state.fen = fen.to_string();

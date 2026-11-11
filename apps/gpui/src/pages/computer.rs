@@ -1613,7 +1613,7 @@ pub(crate) fn playable(setup: &Value) -> bool {
     if crate::game::standard_rules(variant) {
         crate::game::position_problem(fen).is_none()
     } else {
-        kchess_domain::rules::setup_start(variant, fen).is_some()
+        crate::game::setup_position(variant, fen).is_some()
     }
 }
 

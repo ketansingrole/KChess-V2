@@ -223,7 +223,11 @@ async fn the_computer_plays_a_variant_by_its_rules() {
             let mut line: Vec<String> = moves.iter().map(|mv| mv.to_string()).collect();
             line.push(reply.clone());
             assert_eq!(
-                kchess_domain::replay::replay_setup_count(variant, fen, &line),
+                kchess_domain::replay::replay_setup_count(
+                    kchess_domain::variant::Variant::from_key(variant).unwrap(),
+                    fen,
+                    &line
+                ),
                 Some(line.len()),
                 "{variant} {level} played {reply}"
             );

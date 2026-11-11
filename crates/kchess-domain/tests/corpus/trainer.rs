@@ -159,7 +159,7 @@ fn add_move_plan(input: Option<&Value>) -> Out {
         fen: field("fen"),
         ply: number(input.get("ply")).unwrap_or(f64::NAN),
         child_ucis: &child_ucis,
-        variant: field("variant"),
+        variant: super::variant(field("variant"))?,
     });
     serde_json::to_value(plan).map_err(|e| e.to_string())
 }

@@ -292,7 +292,11 @@ impl Repertoire {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Repertoire {
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &kchess_domain::rules::setup_start("standard", STANDARD_FEN).unwrap_or_default(),
+                &kchess_domain::rules::setup_start(
+                    kchess_domain::variant::Variant::Standard,
+                    STANDARD_FEN,
+                )
+                .unwrap_or_default(),
                 Color::White,
                 None,
                 None,
@@ -809,8 +813,9 @@ impl Repertoire {
         };
         let text = self.move_input.read(cx).value().trim().to_string();
         let setup = json!({ "variant": "standard", "fen": node.fen });
-        let typed = kchess_domain::rules::setup_start("standard", &node.fen)
-            .and_then(|position| view::typed_uci(&setup, &position, &text));
+        let typed =
+            kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &node.fen)
+                .and_then(|position| view::typed_uci(&setup, &position, &text));
         if let Some(uci) = typed {
             self.move_input
                 .update(cx, |input, cx| input.set_value("", window, cx));
@@ -1062,8 +1067,11 @@ impl Repertoire {
     fn redraw(&mut self, cx: &mut Context<Self>) {
         let color = Self::color(cx);
         let state = self.node().map(|node| {
-            let position =
-                kchess_domain::rules::setup_start("standard", &node.fen).unwrap_or_default();
+            let position = kchess_domain::rules::setup_start(
+                kchess_domain::variant::Variant::Standard,
+                &node.fen,
+            )
+            .unwrap_or_default();
             let last = node
                 .uci
                 .get(0..2)

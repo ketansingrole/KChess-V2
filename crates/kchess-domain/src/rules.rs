@@ -15,7 +15,6 @@ use std::num::NonZeroU32;
 
 use crate::js;
 
-/// The standard starting position.
 pub const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 /// The first four FEN fields: what makes positions the same for repetition.
@@ -55,11 +54,6 @@ pub fn is_uci_text(token: &str) -> bool {
 /// A Crazyhouse drop in UCI: `P@e4`.
 pub fn is_drop_text(token: &str) -> bool {
     matches!(*token.as_bytes(), [role, b'@', file, rank] if b"PNBRQ".contains(&role) && is_square_text(file, rank))
-}
-
-/// The Lichess variant keys KChess can play.
-pub fn lichess_variant(key: &str) -> Option<Variant> {
-    crate::variant::Variant::from_key(key).map(crate::variant::Variant::rules)
 }
 
 /// `parseVariant`, for the PGN `Variant` header.
@@ -421,9 +415,9 @@ fn valid_ep_square(setup: &Setup, square: Square) -> bool {
     }
 }
 
-/// A FEN text as a position under a Lichess variant key (`setupStart`).
-pub fn setup_start(variant: &str, fen: &str) -> Option<VariantPosition> {
-    setup_position(lichess_variant(variant)?, parse_fen(fen)?)
+/// A FEN text as a position of `variant`; none when it is not a legal one there.
+pub fn setup_start(variant: crate::variant::Variant, fen: &str) -> Option<VariantPosition> {
+    setup_position(variant.rules(), parse_fen(fen)?)
 }
 
 /// `Chess.fromSetup(parseFen(fen))`: standard rules.
@@ -990,11 +984,6 @@ pub fn turn_name(color: Color) -> &'static str {
 
 pub fn default_position(variant: Variant) -> VariantPosition {
     VariantPosition::new(variant)
-}
-
-/// The start of the variant a Lichess key names, as a FEN.
-pub fn default_fen(variant: &str) -> Option<String> {
-    lichess_variant(variant).map(|variant| make_fen(&default_position(variant)))
 }
 
 /// The Chess960 starting position numbered `n` in the Scharnagl scheme (any whole number, taken

@@ -99,13 +99,18 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
     // Whose move it is and the move number, from the position reached: a game started from a
     // position (Black to move, or at move 30) does not count from the usual start.
     let played: Vec<String> = serde_json::from_value(session["moves"].clone()).unwrap_or_default();
-    let reached = kchess_domain::replay::replay_setup(
+    let reached = kchess_domain::variant::Variant::from_key(
         session["setup"]["variant"].as_str().unwrap_or("standard"),
-        session["setup"]["fen"]
-            .as_str()
-            .unwrap_or(crate::game::STANDARD_FEN),
-        &played,
     )
+    .and_then(|variant| {
+        kchess_domain::replay::replay_setup(
+            variant,
+            session["setup"]["fen"]
+                .as_str()
+                .unwrap_or(crate::game::STANDARD_FEN),
+            &played,
+        )
+    })
     .map(|replay| replay.fen)
     .unwrap_or_default();
     let fields: Vec<&str> = reached.split(' ').collect();

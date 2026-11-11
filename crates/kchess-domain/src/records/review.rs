@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::variant::Variant;
+
 /// Lichess speeds of standard chess; variants are not reviewed.
 const STANDARD_PERFS: &[&str] = &[
     "ultraBullet",
@@ -12,13 +14,13 @@ const STANDARD_PERFS: &[&str] = &[
     "correspondence",
 ];
 
-/// The key a review of `moves` (UCI) from `fen` is stored under. A variant game's key names its
-/// variant (`variant`, a Lichess key): the same moves are another game in Atomic.
-pub fn review_key<S: AsRef<str>>(fen: &str, moves: &[S], variant: Option<&str>) -> String {
+/// The key a review of `moves` (UCI) from `fen` is stored under. A game of a variant not played
+/// by standard rules has a key that names it: the same moves are another game in Atomic.
+pub fn review_key<S: AsRef<str>>(fen: &str, moves: &[S], variant: Option<Variant>) -> String {
     let moves: Vec<&str> = moves.iter().map(AsRef::as_ref).collect();
     match variant {
-        Some(variant) if !matches!(variant, "standard" | "chess960") => {
-            cyrb53(&format!("{variant}|{fen}"), &moves.join(" "))
+        Some(variant) if !variant.standard_rules() => {
+            cyrb53(&format!("{}|{fen}", variant.key()), &moves.join(" "))
         }
         _ => cyrb53(fen, &moves.join(" ")),
     }

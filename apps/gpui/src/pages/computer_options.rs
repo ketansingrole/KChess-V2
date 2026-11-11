@@ -118,7 +118,7 @@ impl GameOptions {
         });
         // A variant game from another position (the analysis board's "Play from here") opens
         // with that position.
-        let default_fen = kchess_domain::rules::default_fen(variant);
+        let default_fen = crate::game::default_fen(variant);
         let variant_fen = cx.new(|cx| {
             let label = fairy_variants()
                 .nth(variant_row)
@@ -193,7 +193,7 @@ impl GameOptions {
                     // A position the new variant refuses is the old variant's: it goes.
                     let refused = match (this.variant_text(cx), this.variant_fen(cx)) {
                         (Some(text), Some(fen)) => {
-                            kchess_domain::rules::setup_start(&text.key, &fen).is_none()
+                            crate::game::setup_position(&text.key, &fen).is_none()
                         }
                         _ => false,
                     };
@@ -276,7 +276,7 @@ impl GameOptions {
         if self.start == Start::Variant {
             let variant = self.variant_text(cx)?;
             let fen = self.variant_fen(cx)?;
-            return kchess_domain::rules::setup_start(&variant.key, &fen)
+            return crate::game::setup_position(&variant.key, &fen)
                 .is_none()
                 .then(|| "That FEN is not a legal position".into());
         }
@@ -290,7 +290,7 @@ impl GameOptions {
         if let Some(problem) = position_problem(&text) {
             return Some(problem.into());
         }
-        kchess_domain::rules::setup_start("standard", &text)
+        kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &text)
             .is_none()
             .then(|| "That FEN is not a legal position".into())
     }
@@ -311,9 +311,9 @@ impl GameOptions {
                 let variant = self
                     .variant_text(cx)
                     .map_or("crazyhouse", |text| text.key.as_str());
-                let fen = self.variant_fen(cx).unwrap_or_else(|| {
-                    kchess_domain::rules::default_fen(variant).unwrap_or_default()
-                });
+                let fen = self
+                    .variant_fen(cx)
+                    .unwrap_or_else(|| crate::game::default_fen(variant).unwrap_or_default());
                 json!({ "variant": variant, "fen": fen })
             }
             // A Chess960 position pasted here castles as Chess960 (`setup_from_fen`).
@@ -366,8 +366,13 @@ impl GameOptions {
 }
 
 fn preview_state(fen: &str) -> BoardState {
-    let position = kchess_domain::rules::setup_start("chess960", fen)
-        .or_else(|| kchess_domain::rules::setup_start("standard", INITIAL_FEN));
+    let position = kchess_domain::rules::setup_start(
+        kchess_domain::variant::Variant::Chess960,
+        fen,
+    )
+    .or_else(|| {
+        kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, INITIAL_FEN)
+    });
     match position {
         Some(position) => BoardState::of(&position, shakmaty::Color::White, None, None),
         None => BoardState::of(

@@ -58,12 +58,9 @@ pub use kchess_domain::tree::PvMove;
 /// A principal variation in SAN with move numbers, stopping at the first illegal move; `variant`
 /// is the Lichess key of the rules it is played by.
 pub fn pv_san(fen: &str, pv: &[String], max: usize, variant: &str) -> Vec<PvMove> {
-    let variant = if super::standard_rules(variant) {
-        ""
-    } else {
-        variant
-    };
-    kchess_domain::tree::pv_san(fen, pv, max, variant)
+    kchess_domain::variant::Variant::from_key(variant)
+        .map(|variant| kchess_domain::tree::pv_san(fen, pv, max, variant))
+        .unwrap_or_default()
 }
 
 /// "1.", "1…", or nothing: the number to print before a move at `ply`.

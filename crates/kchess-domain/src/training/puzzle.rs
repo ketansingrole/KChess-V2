@@ -6,6 +6,7 @@ use serde_json::{Map, Value, json};
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Position as _, Role};
 
+use crate::variant::Variant;
 use crate::{js, position, rules};
 
 /// `PuzzleState`: where a solve stands. `index` is the solution move the player must make next.
@@ -18,19 +19,15 @@ pub struct PuzzleState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_move: Option<Vec<String>>,
     pub sans: Vec<String>,
-    /// The Lichess key of a drill's variant (a mistake from a Crazyhouse game); empty for
-    /// standard chess, which every Lichess puzzle is.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub variant: String,
+    /// A drill's variant (a mistake from a Crazyhouse game); every Lichess puzzle is standard
+    /// chess.
+    #[serde(default, skip_serializing_if = "Variant::is_standard")]
+    pub variant: Variant,
 }
 
 /// The state's position, by its variant's rules.
 fn position_of(state: &PuzzleState) -> Option<VariantPosition> {
-    if state.variant.is_empty() {
-        rules::standard_from_fen(&state.fen)
-    } else {
-        rules::setup_start(&state.variant, &state.fen)
-    }
+    rules::setup_start(state.variant, &state.fen)
 }
 
 /// The state after the player's move, whether it was right, and the opponent's reply.
@@ -194,7 +191,7 @@ fn drill_squares(
     uci: &str,
 ) -> Option<Vec<String>> {
     match uci.split_once('@') {
-        Some((_, to)) if !state.variant.is_empty() && rules::parse_square(to).is_some() => {
+        Some((_, to)) if !state.variant.is_standard() && rules::parse_square(to).is_some() => {
             Some(vec![to.to_string(), to.to_string()])
         }
         _ => squares_for(pos, uci),
@@ -215,9 +212,8 @@ pub fn start_puzzle(puzzle: &Value) -> PuzzleState {
         .filter(|uci| !uci.is_empty())
         .and_then(|uci| move_squares(&fen, uci));
     let variant = js::string(puzzle.get("variant"))
-        .filter(|variant| *variant != "standard" && rules::lichess_variant(variant).is_some())
-        .unwrap_or_default()
-        .to_string();
+        .and_then(Variant::from_key)
+        .unwrap_or_default();
     PuzzleState {
         fen,
         index: 0.0,
@@ -245,7 +241,7 @@ fn apply_move_at(pos: &VariantPosition, state: &PuzzleState, uci: &str) -> Optio
         sans,
         index: state.index,
         status: state.status.clone(),
-        variant: state.variant.clone(),
+        variant: state.variant,
     })
 }
 
@@ -384,7 +380,7 @@ mod tests {
             "variant": "crazyhouse",
         });
         let state = start_puzzle(&puzzle);
-        assert_eq!(state.variant, "crazyhouse");
+        assert_eq!(state.variant, Variant::Crazyhouse);
         let squares = next_solution_squares(&solution_of(&puzzle), &state);
         assert_eq!(squares, Some(vec!["d4".to_string(), "d4".to_string()]));
         let played = player_move(&["P@d4".to_string()], state.clone(), "P@d4");
@@ -393,7 +389,7 @@ mod tests {
         assert_eq!(played.state.sans, ["P@d4"]);
         assert_eq!(played.state.last_move, Some(vec!["d4".into(), "d4".into()]));
         let standard = PuzzleState {
-            variant: String::new(),
+            variant: Variant::Standard,
             ..state
         };
         assert!(!player_move(&["P@d4".to_string()], standard.clone(), "P@d4").correct);

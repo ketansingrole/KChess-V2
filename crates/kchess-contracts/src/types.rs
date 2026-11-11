@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::variant::Variant;
+use crate::Variant;
 
 /// A string-literal union.
 macro_rules! union {

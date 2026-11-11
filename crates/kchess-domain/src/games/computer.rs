@@ -7,6 +7,7 @@ use super::{Board, Clock, Clocking, Host, Setup, Times};
 use crate::js;
 use crate::records::games::{opponent, pgn_result};
 use crate::training::engine_levels;
+use crate::variant::Variant;
 
 /// The session document and the engine turn's bookkeeping.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -109,9 +110,9 @@ pub struct SearchOptions {
     pub fen: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub chess960: bool,
-    /// Another variant's key: Fairy-Stockfish plays it.
+    /// A variant not played by standard rules: Fairy-Stockfish plays it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
+    pub variant: Option<Variant>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub movetime: Option<f64>,
 }
@@ -399,9 +400,8 @@ impl ComputerGame {
         let setup = &self.state.setup;
         let options = SearchOptions {
             fen: (!setup.is_standard_start()).then(|| setup.fen.clone()),
-            chess960: setup.variant == "chess960",
-            variant: (setup.variant != "standard" && setup.variant != "chess960")
-                .then(|| setup.variant.clone()),
+            chess960: setup.variant == Variant::Chess960,
+            variant: (!setup.variant.standard_rules()).then_some(setup.variant),
             movetime,
         };
         Ok(Some(SearchRequest {
