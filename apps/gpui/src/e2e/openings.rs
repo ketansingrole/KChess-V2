@@ -261,7 +261,16 @@ fn a_drilled_line_is_saved_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = openings(cx);
     open_kieseritzky(&mut app);
     app.click("train-line");
-    app.find("save-opening");
+    // The drill is ready once the explorer's replies are in: its buttons are shown, disabled,
+    // before that, and Quick Pick offers only what they can do now (missing Show move and Save
+    // as study once the lookups outlasted a loaded machine's first look).
+    app.wait_for("the drill to be ready", |window, _| {
+        ["show-move", "save-opening"].into_iter().all(|id| {
+            window
+                .try_find(id)
+                .is_some_and(|button| button.visible() && button.disabled() != Some(true))
+        })
+    });
     app.press("secondary-k");
     app.type_text(">");
     // Zen mode leads, as on every page it applies to.
