@@ -26,7 +26,7 @@ use crate::assets::icon;
 use crate::board::{BoardEvent, ChessBoard};
 use crate::export::Exporter;
 use crate::game::history::HistoryPlace;
-use crate::game::local::{self, Flagged, LocalGame};
+use crate::game::local::{self, LocalGame};
 use crate::game::played::PlayedGame;
 use crate::game::session::{Resumes, SessionSaver, Sessions};
 use crate::game::surface::{self, Faces, MoveBox, Steps};
@@ -157,7 +157,7 @@ impl Resumes for LocalPage {
                     ),
                 }
             }
-            let (source, has_play) = (self.game.archive_snapshot(self.now()), self.has_play());
+            let (source, has_play) = (self.game.archive_snapshot(), self.has_play());
             self.history = Some(HistoryPlace::new(
                 local::HISTORY,
                 saved.take(&session_kind(local::HISTORY)),
@@ -347,7 +347,7 @@ impl LocalPage {
     }
 
     fn moves(&self) -> Vec<String> {
-        self.game.moves()
+        self.game.moves().to_vec()
     }
 
     fn setup(&self) -> &Value {
@@ -364,7 +364,7 @@ impl LocalPage {
     }
 
     fn has_play(&self) -> bool {
-        !self.moves().is_empty() || self.game.result(self.now()).is_some()
+        !self.moves().is_empty() || self.game.result().is_some()
     }
 
     fn mode(&self, cx: &App) -> Mode {
@@ -382,25 +382,23 @@ impl LocalPage {
 
     /// The board faces whoever is to move while automatic turning is on.
     pub(crate) fn orientation(&self, cx: &App) -> Color {
-        if self.auto_flip(cx) && !self.game.over(self.now()) {
+        if self.auto_flip(cx) && !self.game.over() {
             self.turn()
         } else {
             self.fixed_orientation
         }
     }
 
-    fn flagged(&mut self, flagged: Result<Flagged, String>, cx: &mut Context<Self>) {
-        match flagged {
-            Ok(Flagged(true)) => crate::sound::play(crate::sound::Sound::LowTime, cx),
-            Ok(Flagged(false)) => {}
-            Err(cause) => crate::log::write(Level::Warn, "local", &cause),
+    fn flagged(&mut self, flagged: bool, cx: &mut Context<Self>) {
+        if flagged {
+            crate::sound::play(crate::sound::Sound::LowTime, cx);
         }
     }
 
     /// Moves are taken at the latest position of a game on, and not before the saved game is
     /// restored, which would replace the move (and nothing is saved before then).
     fn interactive(&self) -> bool {
-        self.saver.loaded() && !self.game.over(self.now()) && self.at_live()
+        self.saver.loaded() && !self.game.over() && self.at_live()
     }
 
     pub(crate) fn play(&mut self, uci: &str, cx: &mut Context<Self>) {
@@ -408,15 +406,12 @@ impl LocalPage {
             return self.after_change(cx);
         }
         let now = self.now();
-        match self.game.play(uci, now) {
-            Ok((Some(san), flagged)) => {
-                self.shown = None;
-                crate::sound::move_sound(&san, cx);
-                self.flagged(Ok(flagged), cx);
-            }
-            Ok((None, flagged)) => self.flagged(Ok(flagged), cx),
-            Err(cause) => crate::log::write(Level::Warn, "local", &cause),
+        let (san, flagged) = self.game.play(uci, now);
+        if let Some(san) = san {
+            self.shown = None;
+            crate::sound::move_sound(&san, cx);
         }
+        self.flagged(flagged, cx);
         self.changed(cx);
     }
 
@@ -499,7 +494,7 @@ impl LocalPage {
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.after_change(cx);
         SessionSaver::changed(self, cx);
-        let (source, has_play) = (self.game.archive_snapshot(self.now()), self.has_play());
+        let (source, has_play) = (self.game.archive_snapshot(), self.has_play());
         if let Some(history) = &mut self.history {
             history.save(false, source, has_play, cx);
         }
@@ -521,19 +516,18 @@ impl LocalPage {
     fn tick(&mut self, cx: &mut Context<Self>) -> bool {
         let now = self.now();
         let flagged = self.game.expire(now);
-        let fell = matches!(flagged, Ok(Flagged(true)));
+        let fell = flagged;
         self.flagged(flagged, cx);
         if fell {
             self.ticker = None;
             self.changed(cx);
             return false;
         }
-        if !self.game.over(now) {
+        if !self.game.over() {
             for color in [Color::White, Color::Black] {
-                let initial = self.game.clock()[kchess_games::color_name(color)]["minutes"]
-                    .as_f64()
-                    .unwrap_or_default()
-                    * 60.;
+                let initial = self.game.clock().map_or(0., |clock| {
+                    clock.side(kchess_games::color_name(color)).minutes
+                }) * 60.;
                 let remaining = self.game.remaining(color, now);
                 self.low_time.warn(color, remaining, initial, cx);
             }
@@ -551,8 +545,7 @@ impl LocalPage {
 
     fn after_change(&mut self, cx: &mut Context<Self>) {
         self.sync_voice(cx);
-        let now = self.now();
-        let over = self.game.over(now);
+        let over = self.game.over();
         let moves = self.moves();
         let shown = self.shown_ply();
         let turn = self.turn();
@@ -592,7 +585,7 @@ impl LocalPage {
 
     fn set_auto_flip(&mut self, on: bool, cx: &mut Context<Self>) {
         // Turning it off leaves the board facing the way it is now.
-        if !on && self.auto_flip(cx) && !self.game.over(self.now()) {
+        if !on && self.auto_flip(cx) && !self.game.over() {
             self.fixed_orientation = self.turn();
         }
         crate::prefs::set(cx, "kchess:local-autoflip", on);
@@ -603,7 +596,7 @@ impl LocalPage {
     /// After a saved game that could not be read, this one is the players' to keep.
     fn start(&mut self, setup: Value, clock: Value, cx: &mut Context<Self>) {
         self.saver.open();
-        let (source, has_play) = (self.game.archive_snapshot(self.now()), self.has_play());
+        let (source, has_play) = (self.game.archive_snapshot(), self.has_play());
         match &mut self.history {
             Some(history) => history.reset(source, has_play, cx),
             None => {
@@ -617,29 +610,31 @@ impl LocalPage {
                 ))
             }
         }
-        let flagged = self.game.start(setup, clock, self.now());
-        self.flagged(flagged, cx);
+        let started = serde_json::from_value(setup)
+            .and_then(|setup| Ok((setup, serde_json::from_value(clock)?)))
+            .map_err(|error| format!("the chosen game: {error}"))
+            .and_then(|(setup, clock)| self.game.start(setup, clock, self.now()));
+        if let Err(cause) = started {
+            crate::log::write(Level::Warn, "local", &cause);
+        }
         self.shown = None;
         self.fixed_orientation = Color::White;
         self.changed(cx);
     }
 
     fn takeback(&mut self, cx: &mut Context<Self>) {
-        let flagged = self.game.takeback(self.now());
-        self.flagged(flagged, cx);
+        self.game.takeback(self.now());
         self.shown = None;
         self.changed(cx);
     }
 
     fn resign(&mut self, color: Color, cx: &mut Context<Self>) {
-        let flagged = self.game.resign(color, self.now());
-        self.flagged(flagged, cx);
+        self.game.resign(color);
         self.changed(cx);
     }
 
     fn agree_draw(&mut self, cx: &mut Context<Self>) {
-        let flagged = self.game.agree_draw(self.now());
-        self.flagged(flagged, cx);
+        self.game.agree_draw();
         self.changed(cx);
     }
 
@@ -724,7 +719,7 @@ impl LocalPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.moves().is_empty() || self.game.over(self.now()) {
+        if self.moves().is_empty() || self.game.over() {
             return self.start(setup, clock, cx);
         }
         let page = cx.entity().downgrade();
@@ -749,7 +744,7 @@ impl LocalPage {
     /// "Black".
     fn played_game(&self, cx: &App) -> PlayedGame {
         PlayedGame {
-            result: self.game.outcome(self.now()),
+            result: self.game.outcome(),
             ..PlayedGame::new(
                 self.setup(),
                 self.moves(),
@@ -778,7 +773,7 @@ impl LocalPage {
             "Date": date,
             "White": "White",
             "Black": "Black",
-            "Result": Outcome::tag(self.game.outcome(self.now())),
+            "Result": Outcome::tag(self.game.outcome()),
         });
         match crate::game::setup_pgn(self.setup(), &self.moves(), &headers) {
             Some(pgn) => {
@@ -1256,11 +1251,10 @@ impl Render for LocalPage {
                 .child(clock)
                 .into_any_element();
         }
-        let now = self.now();
         let board_size = self.board_size(window);
         let moves = self.moves();
         let shown = self.shown_ply();
-        let live = self.game.result(now).is_none();
+        let live = self.game.result().is_none();
         let orientation = self.orientation(cx);
         let display = view::position_at(self.setup(), &moves, shown);
         let display_turn = view::turn(display.as_ref());
@@ -1391,14 +1385,13 @@ impl LocalPage {
     /// actions. Beside the board it is the page's `Part`, kept while only a clock face redraws.
     fn render_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let palette = *cx.global::<Palette>();
-        let now = self.now();
         let board_size = self.board_size(window);
         let narrow = widgets::is_narrow(self.panel_area.size().width);
         let moves = self.moves();
         let sans = view::sans(self.setup(), &moves);
         let shown = self.shown_ply();
-        let over = self.game.over(now);
-        let result = self.game.result(now);
+        let over = self.game.over();
+        let result = self.game.result();
         let display = view::position_at(self.setup(), &moves, shown);
         let frontend = cx
             .global::<SettingsHandle>()
@@ -1409,23 +1402,19 @@ impl LocalPage {
             .clone();
         let (timed, paused) = (self.game.timed(), self.game.paused());
         let variant_label = crate::game::setup_label(self.setup());
-        let clock_label = self.game.clock().as_object().map(|clock| {
-            let minutes = |color: &str| clock[color]["minutes"].as_f64().unwrap_or_default();
-            let mut label = widgets::time_control(
-                minutes("white"),
-                clock["white"]["increment"].as_f64().unwrap_or_default(),
-            );
-            if minutes("black") != minutes("white") {
+        let clock_label = self.game.clock().map(|clock| {
+            let mut label = widgets::time_control(clock.white.minutes, clock.white.increment);
+            if clock.black.minutes != clock.white.minutes {
                 label.push_str(&format!(
                     " (Black {} min)",
-                    widgets::clock_minutes(minutes("black"))
+                    widgets::clock_minutes(clock.black.minutes)
                 ));
             }
             label
         });
         let banner = match &result {
             Some(result) => {
-                let winner = result["winner"].as_str();
+                let winner = result.winner.as_deref();
                 widgets::StatusBanner::new(
                     if winner.is_some() {
                         Tone::Win
@@ -1444,12 +1433,7 @@ impl LocalPage {
                     },
                 )
                 .announce()
-                .when_some(
-                    result["reason"]
-                        .as_str()
-                        .map(|reason| SharedString::from(reason.to_string())),
-                    |banner, value| banner.detail(value),
-                )
+                .detail(SharedString::from(result.reason.clone()))
             }
             None if !self.at_live() => widgets::StatusBanner::new(
                 Tone::Plain,
@@ -1705,8 +1689,7 @@ impl LocalPage {
         if self.mode(cx) == Mode::Clock {
             return Vec::new();
         }
-        let now = self.now();
-        let over = self.game.over(now);
+        let over = self.game.over();
         let played = !self.moves().is_empty();
         let mut actions = Vec::new();
         if played && !self.timed_out() {
@@ -1751,9 +1734,10 @@ impl LocalPage {
 
     /// A clock ran out: taking back cannot refill it, so the game stays lost on time.
     fn timed_out(&self) -> bool {
-        let times = &self.game.state()["times"];
-        !times.is_null()
-            && (times["white"].as_f64() == Some(0.) || times["black"].as_f64() == Some(0.))
+        self.game
+            .state()
+            .times
+            .is_some_and(|times| times.white == 0. || times.black == 0.)
     }
 }
 

@@ -1,16 +1,14 @@
-//! Game sessions as every KChess frontend drives them: each decision is a Rust transition in
-//! `kchess-domain` (`games/`); these drivers only answer the reads a transition asks for, keep the
-//! state it wrote and hand its effects to the frontend, in order. The GPUI app and the CLI share
-//! them.
+//! Game sessions as every KChess frontend drives them: each decision is the domain's typed
+//! session (`kchess_domain::games`); these drivers answer what it asks with the frontend's values
+//! and hand its effects to the frontend, in order. The GPUI app and the CLI share them.
 
 pub mod archive;
 pub mod computer;
-mod driver;
 pub mod history;
 pub mod local;
 pub mod puzzle;
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 pub use shakmaty::Color;
 
 /// A random number in [0, 1), like `Math.random()`, for the rules that draw from them.
@@ -47,11 +45,6 @@ pub fn now_ms() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0., |elapsed| elapsed.as_secs_f64() * 1000.)
-}
-
-/// A session's moves, in UCI.
-fn moves_of(state: &Value) -> Vec<String> {
-    serde_json::from_value(state["moves"].clone()).unwrap_or_default()
 }
 
 /// How a game ended.
@@ -109,78 +102,10 @@ pub fn whole(value: &Value) -> u64 {
         .unwrap_or_default()
 }
 
-/// A session transition (`kchess_domain::games`): its inputs followed by the host reads supplied
-/// so far, in; the finished transition or the next read it needs, out.
-pub type Transition = fn(&[Value]) -> Result<Value, String>;
-
-/// Run a session transition: the rules answer with the finished transition or with the next
-/// host read they need; each read is answered once, in the order the rules take it.
-pub fn transition(
-    step: Transition,
-    args: &[Value],
-    mut read: impl FnMut(&str) -> Result<Value, String>,
-) -> Result<Value, String> {
-    // The arguments are copied once; each round only adds the new read to the last slot.
-    let mut call = Vec::with_capacity(args.len() + 1);
-    call.extend_from_slice(args);
-    call.push(Value::Object(Map::new()));
-    loop {
-        let mut out = step(&call)?;
-        if let Some(done) = out.get_mut("done") {
-            return Ok(done.take());
-        }
-        let kind = out
-            .get("read")
-            .and_then(Value::as_str)
-            .ok_or("a transition asked for nothing it could be given")?
-            .to_string();
-        let value = read(&kind)?;
-        let Some(Value::Object(reads)) = call.last_mut() else {
-            unreachable!("the reads slot is the object pushed above");
-        };
-        match reads
-            .entry(kind)
-            .or_insert_with(|| Value::Array(Vec::new()))
-        {
-            Value::Array(values) => values.push(value),
-            _ => return Err("a transition's reads were not a list".into()),
-        }
-    }
-}
-
-/// Assign the fields a transition wrote (`assignWritten`).
-pub fn assign_written(target: &mut Value, next: &Value, written: &Value) {
-    let (Some(target), Some(next)) = (target.as_object_mut(), next.as_object()) else {
-        return;
-    };
-    for key in written
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-    {
-        match next.get(key) {
-            Some(value) => {
-                target.insert(key.to_string(), value.clone());
-            }
-            None => {
-                target.remove(key);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn only_written_fields_change() {
-        let mut state = json!({ "a": 1, "b": 2, "c": 3 });
-        assign_written(&mut state, &json!({ "a": 10, "b": 20 }), &json!(["a", "c"]));
-        assert_eq!(state, json!({ "a": 10, "b": 2 }));
-    }
 
     /// A typed move is read as UCI when it looks like one, and as SAN otherwise, in the
     /// position given; anything illegal there is none.
@@ -249,37 +174,5 @@ mod tests {
             let n = random_unit();
             assert!((0. ..1.).contains(&n), "{n}");
         }
-    }
-
-    #[test]
-    fn a_host_read_that_fails_fails_the_transition() {
-        let error = transition(kchess_domain::games::local::init, &[], |kind| {
-            Err(format!("no {kind}"))
-        })
-        .unwrap_err();
-        assert_eq!(error, "no now");
-    }
-
-    #[test]
-    fn each_read_is_answered_in_order() {
-        let mut asked = Vec::new();
-        let done = transition(kchess_domain::games::local::init, &[], |kind| {
-            asked.push(kind.to_string());
-            Ok(json!(5))
-        })
-        .unwrap();
-        assert_eq!(asked, ["now"]);
-        assert!(done.get("runtime").is_some());
-    }
-
-    #[test]
-    fn written_fields_missing_from_the_next_state_are_removed() {
-        let mut state = json!({ "a": 1, "b": 2 });
-        assign_written(&mut state, &json!({}), &json!(["a"]));
-        assert_eq!(state, json!({ "b": 2 }));
-        // A target that is not an object is left alone.
-        let mut scalar = json!(3);
-        assign_written(&mut scalar, &json!({ "a": 1 }), &json!(["a"]));
-        assert_eq!(scalar, json!(3));
     }
 }

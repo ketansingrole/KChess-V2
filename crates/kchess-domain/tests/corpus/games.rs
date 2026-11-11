@@ -1,44 +1,13 @@
-//! The game sessions' transitions, and the board clock over its JSON state.
+//! The board clock over its JSON state; the sessions are in `sessions`.
 
 use serde_json::{Value, json};
 
 use kchess_domain::games::otb_clock::{Config, OtbClock, Side};
-use kchess_domain::games::{archive, computer, local};
 
 use super::Out;
 
 pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    let transition: fn(&[Value]) -> Out = match method {
-        "computerState" => computer::state,
-        "computerInit" => computer::init,
-        "computerView" => computer::view,
-        "computerAvailability" => computer::availability,
-        "computerExpire" => computer::expire,
-        "computerMove" => computer::play,
-        "computerSearchStart" => computer::search_start,
-        "computerSearchReply" => computer::search_reply,
-        "computerSearchFailed" => computer::search_failed,
-        "computerSearchEnd" => computer::search_end,
-        "computerStart" => computer::start,
-        "computerTakeback" => computer::takeback,
-        "computerResign" => computer::resign,
-        "localState" => local::state,
-        "localInit" => local::init,
-        "localView" => local::view,
-        "localExpire" => local::expire,
-        "localMove" => local::play,
-        "localTakeback" => local::takeback,
-        "localStart" => local::start,
-        "localResign" => local::resign,
-        "localAgreeDraw" => local::agree_draw,
-        "localTogglePause" => local::toggle_pause,
-        "archiveState" => archive::state,
-        "archiveInit" => archive::init,
-        "archiveSave" => archive::save,
-        "archiveReset" => archive::reset,
-        _ => return otb_clock(method, args),
-    };
-    Some(transition(args))
+    super::sessions::call(method, args).or_else(|| otb_clock(method, args))
 }
 
 fn clock_arg(args: &[Value]) -> Result<OtbClock, String> {

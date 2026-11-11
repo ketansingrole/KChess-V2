@@ -7,6 +7,7 @@ use kchess_contracts::calls;
 use std::future::Future;
 use std::time::Instant;
 
+use kchess_domain::games::Setup;
 use kchess_games::Outcome;
 use kchess_games::computer::{self, ComputerGame, SearchRequest};
 use kchess_games::history::{self, HistoryPlace, Write};
@@ -71,55 +72,54 @@ impl Session<'_> {
         }
     }
 
-    fn setup(&self) -> &Value {
+    fn setup(&self) -> &Setup {
         match &self.game {
-            Game::Computer(game) => game.setup(),
-            Game::Local(game) => game.setup(),
+            Game::Computer(game) => &game.state().setup,
+            Game::Local(game) => &game.state().setup,
         }
     }
 
-    fn moves(&self) -> Vec<String> {
+    fn moves(&self) -> &[String] {
         match &self.game {
             Game::Computer(game) => game.moves(),
             Game::Local(game) => game.moves(),
         }
     }
 
+    /// The result once the game has ended, as the status line shows it.
     fn result(&self) -> Option<Value> {
         match &self.game {
-            Game::Computer(game) => game.result(&self.host()),
-            Game::Local(game) => game.result(self.now()),
+            Game::Computer(game) => game.result().map(|result| json!(result)),
+            Game::Local(game) => game.result().map(|result| json!(result)),
         }
     }
 
     fn over(&self) -> bool {
         match &self.game {
-            Game::Computer(game) => game.over(&self.host()),
-            Game::Local(game) => game.over(self.now()),
+            Game::Computer(game) => game.over(),
+            Game::Local(game) => game.over(),
         }
     }
 
     fn fen(&self) -> String {
         let setup = self.setup();
-        let variant = setup["variant"].as_str().unwrap_or("standard");
-        let fen = setup["fen"].as_str().unwrap_or_default();
-        kchess_domain::replay::replay_setup(variant, fen, &self.moves())
+        kchess_domain::replay::replay_setup(&setup.variant, &setup.fen, self.moves())
             .map(|replay| replay.fen)
-            .unwrap_or_else(|| fen.to_string())
+            .unwrap_or_else(|| setup.fen.clone())
     }
 
     /// A typed move as UCI: SAN ("Nf3", "O-O", "exd8=Q") or UCI read in the position on the
     /// board; anything that is not a legal move there is passed on as typed for the rules to
     /// judge.
     fn typed_uci(&self, text: &str) -> String {
-        let variant = self.setup()["variant"].as_str().unwrap_or("standard");
-        kchess_games::typed_uci(variant, &self.fen(), text).unwrap_or_else(|| text.to_string())
+        kchess_games::typed_uci(&self.setup().variant, &self.fen(), text)
+            .unwrap_or_else(|| text.to_string())
     }
 
     fn outcome(&self) -> Option<Outcome> {
         match &self.game {
-            Game::Computer(game) => game.outcome(&self.host()),
-            Game::Local(game) => game.outcome(self.now()),
+            Game::Computer(game) => game.outcome(),
+            Game::Local(game) => game.outcome(),
         }
     }
 
@@ -134,9 +134,6 @@ impl Session<'_> {
             }
         };
         let setup = self.setup();
-        let (Some(variant), Some(fen)) = (setup["variant"].as_str(), setup["fen"].as_str()) else {
-            return Err("The game could not be written as PGN.".to_string());
-        };
         let headers = [
             ("Black", black),
             ("Event", event),
@@ -144,9 +141,9 @@ impl Session<'_> {
             ("White", white),
         ];
         Ok(kchess_domain::pgn::setup_pgn(
-            variant,
-            fen,
-            &self.moves(),
+            &setup.variant,
+            &setup.fen,
+            self.moves(),
             &headers,
         ))
     }
@@ -166,11 +163,7 @@ impl Session<'_> {
     }
 
     /// Carry out what Game history asks, keeping the played games as they leave them.
-    async fn written(&mut self, writes: Result<Vec<Write>, String>) {
-        let writes = match writes {
-            Ok(writes) => writes,
-            Err(cause) => return eprintln!("[cli] Game history: {cause}"),
-        };
+    async fn written(&mut self, writes: Vec<Write>) {
         history::apply_to(&mut self.games, &writes);
         for write in writes {
             match write {
@@ -185,8 +178,8 @@ impl Session<'_> {
 
     fn archive_host(&self) -> (Value, bool) {
         let source = match &self.game {
-            Game::Computer(game) => game.archive_snapshot(&self.host()),
-            Game::Local(game) => game.archive_snapshot(self.now()),
+            Game::Computer(game) => game.archive_snapshot(),
+            Game::Local(game) => game.archive_snapshot(),
         };
         let has_play = !self.moves().is_empty() || self.result().is_some();
         (source, has_play)
@@ -239,10 +232,7 @@ impl Session<'_> {
     /// Start a game in `variant`, from its usual start or from `fen`.
     async fn choose_setup(&mut self, variant: &str, fen: Option<&str>) -> Result<(), String> {
         let now = self.now();
-        if fen.is_none()
-            && self.setup()["variant"].as_str().unwrap_or("standard") == variant
-            && !self.over()
-        {
+        if fen.is_none() && self.setup().variant == variant && !self.over() {
             return Ok(());
         }
         if !self.moves().is_empty() && !self.over() {
@@ -253,24 +243,24 @@ impl Session<'_> {
         let fen = if let Some(fen) = fen {
             playable_fen(variant, fen)?
         } else if variant == "chess960" {
-            json!(kchess_domain::rules::chess960_fen(
-                kchess_games::random_chess960()
-            ))
+            kchess_domain::rules::chess960_fen(kchess_games::random_chess960())
         } else {
-            json!(kchess_domain::rules::default_fen(variant).ok_or("variant")?)
+            kchess_domain::rules::default_fen(variant).ok_or("variant")?
         };
         self.reset_history().await;
-        let setup = json!({ "variant": variant, "fen": fen });
+        let setup = Setup {
+            variant: variant.to_string(),
+            fen,
+        };
         let host = self.host();
         match &mut self.game {
             Game::Local(game) => {
-                let clock = game.clock().clone();
+                let clock = game.clock();
                 game.start(setup, clock, now)?;
             }
             // Fairy-Stockfish plays the other variants.
             Game::Computer(game) => {
-                let clock = game.clock().clone();
-                game.start(Some(setup), Some(clock), &host)?;
+                game.start(Some(setup), None, &host)?;
             }
         }
         self.persist().await;
@@ -301,6 +291,7 @@ impl Session<'_> {
                 computer::Effect::Flagged => self.persist().await,
                 computer::Effect::ComputerTurn => turn = true,
                 computer::Effect::Failed => eprintln!("Engine: the last engine operation failed."),
+                computer::Effect::Cancelled => {}
             }
         }
         turn
@@ -324,7 +315,7 @@ impl Session<'_> {
             let search = self.core.request(calls::BestMove {
                 moves: json!(request.moves),
                 level: json!(request.level),
-                options: Some(request.options.clone()),
+                options: Some(json!(request.options)),
             });
             let reply = answering(self.core, events, search).await;
             let host = self.host();
@@ -335,19 +326,11 @@ impl Session<'_> {
                 Ok(reply) => game.search_reply(&request, reply.as_str().unwrap_or_default(), &host),
                 Err(cause) => {
                     eprintln!("Engine: {cause}");
-                    game.search_failed(&request, &host)
+                    game.search_failed(&request)
                 }
             };
-            match effects {
-                Ok(effects) => {
-                    if !self.computer_effects(effects).await {
-                        return;
-                    }
-                }
-                Err(cause) => {
-                    eprintln!("Engine: {cause}");
-                    return;
-                }
+            if !self.computer_effects(effects).await {
+                return;
             }
         }
     }
@@ -360,8 +343,8 @@ impl Session<'_> {
         match &mut self.game {
             Game::Computer(game) => {
                 let effects = match command {
-                    "undo" => game.takeback(&host)?,
-                    "resign" => game.resign(&host)?,
+                    "undo" => game.takeback(&host),
+                    "resign" => game.resign(),
                     "new" => {
                         self.reset_history().await;
                         let Game::Computer(game) = &mut self.game else {
@@ -370,7 +353,7 @@ impl Session<'_> {
                         game.start(None, None, &host)?
                     }
                     _ => {
-                        let (legal, effects) = game.play(&typed, &host)?;
+                        let (legal, effects) = game.play(&typed, &host);
                         if !legal {
                             return Ok(false);
                         }
@@ -380,9 +363,7 @@ impl Session<'_> {
                 self.computer_effects(effects).await;
             }
             Game::Local(game) => match command {
-                "undo" => {
-                    game.takeback(now)?;
-                }
+                "undo" => game.takeback(now),
                 "resign" => {
                     let fen = self.fen();
                     let turn = if fen.split_whitespace().nth(1) == Some("b") {
@@ -393,24 +374,22 @@ impl Session<'_> {
                     let Game::Local(game) = &mut self.game else {
                         return Ok(false);
                     };
-                    game.resign(turn, now)?;
+                    game.resign(turn);
                 }
-                "draw" => {
-                    game.agree_draw(now)?;
-                }
+                "draw" => game.agree_draw(),
                 "pause" => {
-                    game.toggle_pause(now)?;
+                    game.toggle_pause(now);
                 }
                 "new" => {
                     self.reset_history().await;
                     let Game::Local(game) = &mut self.game else {
                         return Ok(false);
                     };
-                    let (setup, clock) = (game.setup().clone(), game.clock().clone());
+                    let (setup, clock) = (game.state().setup.clone(), game.clock());
                     game.start(setup, clock, now)?;
                 }
                 _ => {
-                    let (san, _) = game.play(&typed, now)?;
+                    let (san, _) = game.play(&typed, now);
                     if san.is_none() {
                         return Ok(false);
                     }
@@ -425,15 +404,13 @@ impl Session<'_> {
         let host = self.host();
         let now = self.now();
         match &mut self.game {
-            Game::Computer(game) => match game.expire(&host) {
-                Ok(effects) => {
-                    let fell = effects.contains(&computer::Effect::Flagged);
-                    self.computer_effects(effects).await;
-                    fell
-                }
-                Err(_) => false,
-            },
-            Game::Local(game) => game.expire(now).is_ok_and(|flagged| flagged.0),
+            Game::Computer(game) => {
+                let effects = game.expire(&host);
+                let fell = effects.contains(&computer::Effect::Flagged);
+                self.computer_effects(effects).await;
+                fell
+            }
+            Game::Local(game) => game.expire(now),
         }
     }
 }
@@ -495,7 +472,7 @@ pub fn take_fen(words: &[String]) -> Result<(Option<String>, Vec<String>), Strin
 }
 
 /// A position a game can start from in `variant`, as the app's "Play from here" checks it.
-fn playable_fen(variant: &str, fen: &str) -> Result<Value, String> {
+fn playable_fen(variant: &str, fen: &str) -> Result<String, String> {
     let fen = fen.trim();
     let playable = if matches!(variant, "standard" | "chess960") {
         kchess_domain::position::fen_problem(fen).is_none()
@@ -503,7 +480,7 @@ fn playable_fen(variant: &str, fen: &str) -> Result<Value, String> {
         kchess_domain::rules::setup_start(variant, fen).is_some()
     };
     if playable {
-        Ok(json!(fen))
+        Ok(fen.to_string())
     } else {
         Err(format!("Not a playable position: {fen}"))
     }
@@ -680,7 +657,10 @@ pub async fn interactive(
         started,
         failed: false,
     };
-    session.written(writes).await;
+    match writes {
+        Ok(writes) => session.written(writes).await,
+        Err(cause) => eprintln!("[cli] Game history: {cause}"),
+    }
     if let Some(color) = color.filter(|_| computer) {
         session.choose_color(&color).await?;
     }
@@ -763,7 +743,7 @@ mod tests {
             take_fen(&words(&["--fen", board, "w", "-", "d66"])),
             Ok((Some(format!("{board} w -")), words(&["d66"])))
         );
-        assert_eq!(playable_fen("standard", fen), Ok(serde_json::json!(fen)));
+        assert_eq!(playable_fen("standard", fen).as_deref(), Ok(fen));
         assert!(playable_fen("standard", "8/8/8/8/8/8/8/8 w - - 0 1").is_err());
         let zh = "rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR[Pp] w KQkq - 0 3";
         assert!(playable_fen("crazyhouse", zh).is_ok());

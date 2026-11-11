@@ -7,6 +7,7 @@ mod misc;
 mod online_game;
 mod records;
 mod rules;
+mod sessions;
 mod theme;
 mod trainer;
 mod training;

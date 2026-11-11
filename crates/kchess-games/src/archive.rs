@@ -1,38 +1,47 @@
-//! `GameArchive` : a played game's place in Game history.
-//! The rules decide when the game is saved, replaced or dropped
-//! (`crates/kchess-domain/src/games/archive.rs`); the page answers the reads and writes what they
-//! say to the profile.
+//! A played game's place in Game history: the archive rules (`kchess_domain::games::archive`)
+//! decide when the game is saved, replaced or dropped; this answers what they ask with the
+//! frontend's values.
 
 use serde_json::{Value, json};
 
-use kchess_domain::games::archive as session;
+use kchess_domain::games::archive::{self, Identity, State};
 
-use crate::{Transition, assign_written, transition};
+pub use kchess_domain::games::archive::Effect;
 
-/// What the page tells the archive when a transition reads it.
+/// What the frontend tells the archive.
 pub struct Host<'a> {
-    /// The game as `archiveSnapshot` describes it.
+    /// The game as its archive snapshot describes it.
     pub source: Value,
-    /// The game has moves (`localMoves.length > 0`).
+    /// The game has moves.
     pub has_play: bool,
     /// The games already in history.
     pub games: &'a [Value],
-    /// Milliseconds since the epoch (`Date.now()`).
+    /// Milliseconds since the epoch.
     pub now: f64,
 }
 
-/// What an archive transition asks the page to write.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Effect {
-    Save(Value),
-    Remove(String),
+impl archive::Host for Host<'_> {
+    fn has_play(&mut self) -> bool {
+        self.has_play
+    }
+    fn source(&mut self) -> Value {
+        self.source.clone()
+    }
+    fn stored(&mut self, id: &str) -> Option<Value> {
+        self.games
+            .iter()
+            .find(|game| game.get("id").and_then(Value::as_str) == Some(id))
+            .cloned()
+    }
+    fn now(&mut self) -> f64 {
+        self.now
+    }
+    fn new_id(&mut self) -> String {
+        new_id()
+    }
 }
 
-pub struct GameArchive {
-    /// `{ identity, hadPlay }`; the identity is saved as the `archive:<kind>` session.
-    pub state: Value,
-}
-
+/// A random version-4 UUID.
 fn new_id() -> String {
     let mut bytes = [0u8; 16];
     if getrandom::fill(&mut bytes).is_err() {
@@ -55,29 +64,8 @@ fn new_id() -> String {
     )
 }
 
-fn read(host: &Host<'_>, kind: &str) -> Result<Value, String> {
-    match kind {
-        "hasPlay" => Ok(json!(host.has_play)),
-        "source" => Ok(host.source.clone()),
-        "games" => Ok(json!(host.games)),
-        "now" => Ok(json!(host.now)),
-        // `crypto.randomUUID()`.
-        "id" => Ok(json!(new_id())),
-        other => Err(format!("An archive has no host read {other}")),
-    }
-}
-
-fn effects(done: &Value) -> Vec<Effect> {
-    done["effects"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|effect| match effect["type"].as_str()? {
-            "save" => Some(Effect::Save(effect["game"].clone())),
-            "remove" => Some(Effect::Remove(effect["id"].as_str()?.to_string())),
-            _ => None,
-        })
-        .collect()
+pub struct GameArchive {
+    state: State,
 }
 
 impl GameArchive {
@@ -86,57 +74,34 @@ impl GameArchive {
     pub fn new(
         identity: Option<&Value>,
         resume: bool,
-        host: &Host<'_>,
+        host: &mut Host<'_>,
     ) -> Result<(GameArchive, Vec<Effect>), String> {
-        let state = transition(
-            session::state,
-            &[identity.cloned().unwrap_or(Value::Null)],
-            |kind| read(host, kind),
-        )?;
-        let mut archive = GameArchive {
-            state: state
-                .get("value")
-                .cloned()
-                .ok_or("An archive could not start.")?,
-        };
-        let effects = archive.apply(session::init, &[json!(resume)], host)?;
-        // A resumed game was saved before, so taking back its only move removes that entry
-        // (`archiveInit` reads nothing when resuming, and the state starts without play).
-        let id = archive.state["identity"]["id"].clone();
-        if resume && host.games.iter().any(|game| game["id"] == id) {
-            archive.state["hadPlay"] = json!(true);
+        let identity = identity
+            .map(|identity| serde_json::from_value::<Identity>(identity.clone()))
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let mut state = State::new(identity, host);
+        let effects = state.init(host, resume);
+        // A resumed game was saved before, so taking back its only move removes that entry.
+        if resume && archive::Host::stored(host, &state.identity.id).is_some() {
+            state.had_play = true;
         }
-        Ok((archive, effects))
-    }
-
-    fn apply(
-        &mut self,
-        step: Transition,
-        input: &[Value],
-        host: &Host<'_>,
-    ) -> Result<Vec<Effect>, String> {
-        let mut args = vec![self.state.clone()];
-        args.extend_from_slice(input);
-        let done = transition(step, &args, |kind| read(host, kind))?;
-        if let Some(next) = done.get("state") {
-            assign_written(&mut self.state, next, &done["written"]);
-        }
-        Ok(effects(&done))
+        Ok((GameArchive { state }, effects))
     }
 
     /// The game changed: save it to history when the rules say so.
-    pub fn save(&mut self, finished: bool, host: &Host<'_>) -> Result<Vec<Effect>, String> {
-        self.apply(session::save, &[json!(finished)], host)
+    pub fn save(&mut self, finished: bool, host: &mut Host<'_>) -> Vec<Effect> {
+        self.state.save(host, finished)
     }
 
     /// A new game begins: the next one gets its own place in history.
-    pub fn reset(&mut self, host: &Host<'_>) -> Result<Vec<Effect>, String> {
-        self.apply(session::reset, &[], host)
+    pub fn reset(&mut self, host: &mut Host<'_>) -> Vec<Effect> {
+        self.state.reset(host)
     }
 
     /// The identity to keep as the `archive:<kind>` session.
     pub fn identity(&self) -> Value {
-        self.state["identity"].clone()
+        json!(self.state.identity)
     }
 }
 
@@ -153,7 +118,6 @@ mod tests {
             ready: true,
         };
         let mut game = ComputerGame::new(None, &game_host).unwrap();
-        let source = game.archive_snapshot(&game_host);
         let empty: Vec<Value> = Vec::new();
         let host = |source: Value, has_play: bool| Host {
             source,
@@ -161,27 +125,23 @@ mod tests {
             games: &empty,
             now: 1.7e12,
         };
-        let (mut archive, effects) = GameArchive::new(None, true, &host(source, false)).unwrap();
+        let (mut archive, effects) =
+            GameArchive::new(None, true, &mut host(game.archive_snapshot(), false)).unwrap();
         assert!(effects.is_empty(), "{effects:?}");
         let first = archive.identity();
         assert!(first["id"].as_str().is_some_and(|id| id.len() == 36));
 
-        game.play("e2e4", &game_host).unwrap();
-        let effects = archive
-            .save(false, &host(game.archive_snapshot(&game_host), true))
-            .unwrap();
+        game.play("e2e4", &game_host);
+        let effects = archive.save(false, &mut host(game.archive_snapshot(), true));
         let Some(Effect::Save(saved)) = effects.first() else {
             panic!("a game with a move is saved: {effects:?}");
         };
         assert_eq!(saved["id"], first["id"]);
 
-        archive
-            .reset(&host(game.archive_snapshot(&game_host), true))
-            .unwrap();
+        archive.reset(&mut host(game.archive_snapshot(), true));
         assert_ne!(archive.identity()["id"], first["id"]);
     }
 
-    /// Ids are random version-4 UUIDs, as `crypto.randomUUID()` writes them.
     #[test]
     fn ids_are_version_4_uuids() {
         let ids: Vec<String> = (0..64).map(|_| new_id()).collect();
@@ -202,15 +162,15 @@ mod tests {
     fn a_resumed_game_taken_back_to_its_start_leaves_no_entry() {
         let identity = json!({ "id": "resumed-game", "startedAt": 1.0e12 });
         let saved = vec![json!({ "id": "resumed-game", "moves": ["e2e4"], "result": "*" })];
-        let host = Host {
+        let mut host = Host {
             source: json!({ "moves": [], "result": "*" }),
             has_play: false,
             games: &saved,
             now: 1.7e12,
         };
-        let (mut archive, effects) = GameArchive::new(Some(&identity), true, &host).unwrap();
+        let (mut archive, effects) = GameArchive::new(Some(&identity), true, &mut host).unwrap();
         assert!(effects.is_empty(), "{effects:?}");
-        let effects = archive.save(false, &host).unwrap();
+        let effects = archive.save(false, &mut host);
         assert_eq!(effects, vec![Effect::Remove("resumed-game".into())]);
     }
 }

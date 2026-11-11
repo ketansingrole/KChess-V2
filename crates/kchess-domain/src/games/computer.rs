@@ -1,17 +1,14 @@
-//! `ComputerGame`: a game against the engine, its clock, the
-//! engine's replies and the cancellation of work that is no longer wanted.
+//! A game against the engine: its clock, the engine's replies and the cancellation of work that
+//! is no longer wanted.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
-use super::{
-    Clock, Clocked, Done, Flow, Reads, Session, Setup, Times, arg, board_result, engine_level,
-    opponent, optional_arg, outcome_winner, pgn_result, position_info, timeout_winner, to_value,
-    transition, with_move,
-};
+use super::{Board, Clock, Clocking, Host, Setup, Times};
 use crate::js;
+use crate::records::games::{opponent, pgn_result};
+use crate::training::engine_levels;
 
-/// `ComputerState`: the session document and the engine turn's bookkeeping.
+/// The session document and the engine turn's bookkeeping.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
@@ -28,7 +25,7 @@ pub struct State {
     pub epoch: u64,
 }
 
-/// What the host keeps beside the state: when the turn began, whether the engine may play, and
+/// What the game keeps beside the state: when the turn began, whether the engine may play, and
 /// whether the game was closed (a closed game ignores every input).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,339 +35,445 @@ pub struct Runtime {
     pub disposed: bool,
 }
 
-/// A saved session as `computerState` accepts it: every field may be missing.
-#[derive(Default, Deserialize)]
+impl Runtime {
+    /// The runtime of a new game: the clock and availability as the host reports them now.
+    pub fn start(host: &mut dyn Host) -> Runtime {
+        let turn_started = host.now();
+        let permitted = host.allowed();
+        Runtime {
+            turn_started,
+            permitted,
+            disposed: false,
+        }
+    }
+}
+
+/// A saved session: every field may be missing when it is read back.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Saved {
-    moves: Option<Vec<String>>,
-    ply: Option<usize>,
-    level: Option<String>,
-    color: Option<String>,
-    resigned: Option<bool>,
-    setup: Option<Setup>,
-    clock: Option<Clock>,
-    times: Option<Times>,
-    flagged: Option<String>,
+pub struct Saved {
+    pub moves: Option<Vec<String>>,
+    pub ply: Option<usize>,
+    pub level: Option<String>,
+    pub color: Option<String>,
+    pub resigned: Option<bool>,
+    pub setup: Option<Setup>,
+    pub clock: Option<Clock>,
+    pub times: Option<Times>,
+    pub flagged: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct Epoch {
-    epoch: u64,
+impl State {
+    /// A fresh state from a saved session.
+    pub fn from_saved(saved: Saved) -> State {
+        State {
+            moves: saved.moves.unwrap_or_default(),
+            ply: saved.ply.unwrap_or(0),
+            level: saved.level.unwrap_or_else(|| "club".into()),
+            color: saved.color.unwrap_or_else(|| "white".into()),
+            resigned: saved.resigned.unwrap_or(false),
+            setup: saved.setup.unwrap_or_else(Setup::standard),
+            clock: saved.clock,
+            times: saved.times,
+            flagged: saved.flagged,
+            thinking: false,
+            epoch: 0,
+        }
+    }
 }
 
-#[derive(Deserialize)]
+/// What the game asks its caller to do, in order.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum Effect {
+    StopEngine,
+    Flagged,
+    Moved {
+        san: String,
+        computer: bool,
+    },
+    /// It is the engine's turn: start a search (`search_start`).
+    ComputerTurn,
+    /// The engine's search failed.
+    Failed,
+    /// A search cancelled meanwhile failed: expected, and silent.
+    #[serde(rename = "debug")]
+    Cancelled,
+}
+
+/// The options of an engine search.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct SearchOptions {
+    /// The start, when it is not the usual one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fen: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub chess960: bool,
+    /// Another variant's key: Fairy-Stockfish plays it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub movetime: Option<f64>,
+}
+
+/// An engine search to send; its reply must still match the epoch and move count.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SearchRequest {
+    pub epoch: u64,
+    pub count: usize,
+    pub moves: Vec<String>,
+    pub level: String,
+    pub options: SearchOptions,
+}
+
+/// Whether the player won, lost or drew.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Reply {
-    epoch: u64,
-    count: usize,
-    #[serde(rename = "move")]
-    reply: String,
+pub enum Kind {
+    Win,
+    Loss,
+    Draw,
 }
 
-/// `computerState(saved?)`: a fresh state from a saved session.
-pub fn state(args: &[Value]) -> Result<Value, String> {
-    let saved: Saved = optional_arg(args, 0)?.unwrap_or_default();
-    to_value(&State {
-        moves: saved.moves.unwrap_or_default(),
-        ply: saved.ply.unwrap_or(0),
-        level: saved.level.unwrap_or_else(|| "club".into()),
-        color: saved.color.unwrap_or_else(|| "white".into()),
-        resigned: saved.resigned.unwrap_or(false),
-        setup: saved.setup.unwrap_or_else(|| Setup {
-            variant: "standard".into(),
-            fen: super::INITIAL_FEN.into(),
-        }),
-        clock: saved.clock,
-        times: saved.times,
-        flagged: saved.flagged,
-        thinking: false,
-        epoch: 0,
-    })
+/// The result from the player's side.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Verdict {
+    pub kind: Kind,
+    pub title: &'static str,
+    pub detail: String,
 }
 
-/// One computer game during a transition: its state, runtime and the effects it has produced.
-type Game = Session<State, Runtime>;
+/// The game as the archive stores it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Archived {
+    pub source: &'static str,
+    pub setup: Setup,
+    pub moves: Vec<String>,
+    pub white: String,
+    pub black: String,
+    pub result: &'static str,
+    pub reason: String,
+    pub time_control: String,
+}
 
-impl Clocked for Game {
-    fn setup(&self) -> &Setup {
-        &self.state.setup
-    }
-    fn moves(&self) -> &[String] {
-        &self.state.moves
-    }
-    fn times(&self) -> Option<Times> {
-        self.state.times
-    }
-    fn turn_started(&self) -> f64 {
-        self.rt.turn_started
+/// A game against the engine.
+#[derive(Clone, Debug)]
+pub struct ComputerGame {
+    state: State,
+    runtime: Runtime,
+    board: Board,
+}
+
+impl ComputerGame {
+    /// The game of a state and its runtime; an illegal setup is refused.
+    pub fn new(state: State, runtime: Runtime) -> Result<ComputerGame, String> {
+        let board = Board::new(state.setup.clone(), state.moves.clone())?;
+        Ok(ComputerGame {
+            state,
+            runtime,
+            board,
+        })
     }
 
-    /// `running`: a clock is set, both sides have moved and the game goes on.
-    fn running(&self) -> Result<bool, String> {
-        Ok(self.rt.permitted
+    pub fn state(&self) -> &State {
+        &self.state
+    }
+
+    pub fn runtime(&self) -> &Runtime {
+        &self.runtime
+    }
+
+    pub fn board(&self) -> &Board {
+        &self.board
+    }
+
+    /// Show the position after `ply` moves (at most every move).
+    pub fn show_ply(&mut self, ply: usize) {
+        self.state.ply = ply.min(self.state.moves.len());
+    }
+
+    /// Play `color` from the next game on.
+    pub fn set_color(&mut self, color: &str) {
+        self.state.color = color.to_string();
+    }
+
+    /// Play at `level` from the next search on.
+    pub fn set_level(&mut self, level: &str) {
+        self.state.level = level.to_string();
+    }
+
+    /// Play on `clock` from the next game on.
+    pub fn set_clock(&mut self, clock: Option<Clock>) {
+        self.state.clock = clock;
+    }
+
+    fn set_board(&mut self, board: Board) {
+        self.state.moves = board.moves().to_vec();
+        self.board = board;
+    }
+
+    /// Resigned, flagged, the position ended, or a draw reached.
+    pub fn over(&self) -> bool {
+        self.state.resigned
+            || self.state.flagged.is_some()
+            || self.board.info().end
+            || self.board.draw().is_some()
+    }
+
+    /// A clock is set, both sides have moved and the game goes on.
+    pub fn running(&self) -> bool {
+        self.runtime.permitted
             && self.state.times.is_some()
-            && !self.over()?
-            && self.state.moves.len() >= 2)
-    }
-}
-
-impl Game {
-    /// `over`: resigned, flagged, the position ended, or a draw reached.
-    fn over(&self) -> Result<bool, String> {
-        if self.state.resigned || self.state.flagged.is_some() {
-            return Ok(true);
-        }
-        if self.info()?.end {
-            return Ok(true);
-        }
-        Ok(self.draw()?.is_some())
+            && !self.over()
+            && self.state.moves.len() >= 2
     }
 
-    /// `winner`: the side that won, or none for a draw or a game going on.
-    fn winner(&self) -> Result<Option<String>, String> {
-        if !self.over()? {
-            return Ok(None);
+    fn clocking(&self) -> Clocking<'_> {
+        Clocking {
+            times: self.state.times,
+            turn_started: self.runtime.turn_started,
+            running: self.running(),
+            turn: self.board.turn(),
+        }
+    }
+
+    /// A side's clock in milliseconds at `at`.
+    pub fn remaining(&self, color: &str, at: f64) -> f64 {
+        self.clocking().remaining(color, at)
+    }
+
+    /// The repetition or fifty-move draw reached, if any.
+    pub fn draw(&self) -> Option<&str> {
+        self.board.draw()
+    }
+
+    /// The side that won, or none for a draw or a game going on.
+    pub fn winner(&self) -> Option<String> {
+        if !self.over() {
+            return None;
         }
         if self.state.resigned {
-            return Ok(Some(opponent(&self.state.color)?));
+            return Some(opponent(&self.state.color).to_string());
         }
-        let info = self.info()?;
         match &self.state.flagged {
-            Some(flagged) => timeout_winner(&self.state.setup.variant, &info.fen, flagged),
-            None => Ok(outcome_winner(&info)),
+            Some(flagged) => self.board.timeout_winner(flagged).map(str::to_string),
+            None => self.board.outcome_winner().map(str::to_string),
         }
     }
 
-    /// `result`: the result from the player's side, or null while the game goes on.
-    fn result(&self) -> Result<Value, String> {
-        if !self.over()? {
-            return Ok(Value::Null);
+    /// The result from the player's side, once the game is over.
+    pub fn result(&self) -> Option<Verdict> {
+        if !self.over() {
+            return None;
         }
         if self.state.resigned {
-            return Ok(json!({
-                "kind": "loss",
-                "title": "Stockfish won",
-                "detail": "You resigned",
-            }));
+            return Some(Verdict {
+                kind: Kind::Loss,
+                title: "Stockfish won",
+                detail: "You resigned".into(),
+            });
         }
-        let winner = self.winner()?;
+        let winner = self.winner();
         let won = winner.as_deref() == Some(self.state.color.as_str());
         let detail = if self.state.flagged.is_some() {
             if winner.is_none() {
-                "Time ran out, but mate was impossible".to_string()
+                "Time ran out, but mate was impossible"
             } else if won {
-                "Stockfish ran out of time".to_string()
+                "Stockfish ran out of time"
             } else {
-                "You ran out of time".to_string()
+                "You ran out of time"
             }
+            .to_string()
         } else {
-            let info = self.info()?;
-            let draw = self.draw()?;
-            let reason = board_result(&self.state.setup.variant, &info.fen, draw.as_deref())?;
-            reason
-                .get("reason")
-                .and_then(Value::as_str)
-                .unwrap_or("Game over")
+            self.board
+                .end()
+                .map_or("Game over", |end| end.reason.as_str())
                 .to_string()
         };
         let (kind, title) = if winner.is_none() {
-            ("draw", "Draw")
+            (Kind::Draw, "Draw")
         } else if won {
-            ("win", "You won")
+            (Kind::Win, "You won")
         } else {
-            ("loss", "Stockfish won")
+            (Kind::Loss, "Stockfish won")
         };
-        Ok(json!({ "kind": kind, "title": title, "detail": detail }))
+        Some(Verdict {
+            kind,
+            title,
+            detail,
+        })
     }
 
     /// Stop the engine and invalidate any reply it may still send.
-    fn cancel(&mut self) {
+    fn cancel(&mut self, fx: &mut Vec<Effect>) {
         self.state.epoch += 1;
-        self.wrote("epoch");
         self.state.thinking = false;
-        self.wrote("thinking");
-        self.fx.push(json!({ "type": "stopEngine" }));
+        fx.push(Effect::StopEngine);
     }
 
-    /// `expire(at)`: flag the side on the clock when its time is up.
-    fn expire_at(&mut self, at: f64) -> Result<bool, String> {
-        let Some(turn) = self.out_of_time(at)? else {
-            return Ok(false);
+    fn expire_into(&mut self, at: f64, fx: &mut Vec<Effect>) -> bool {
+        let Some(turn) = self.clocking().out_of_time(at).map(str::to_string) else {
+            return false;
         };
         if let Some(times) = self.state.times.as_mut() {
-            times.set(turn, 0.0);
+            times.set(&turn, 0.0);
         }
-        self.wrote("times");
-        self.state.flagged = Some(turn.to_string());
-        self.wrote("flagged");
-        self.cancel();
-        self.fx.push(json!({ "type": "flagged" }));
-        Ok(true)
+        self.state.flagged = Some(turn);
+        self.cancel(fx);
+        fx.push(Effect::Flagged);
+        true
     }
 
-    /// `commit(uci, at, computer)`: play a legal move, charge the clock and report it.
-    fn commit(&mut self, uci: &str, at: f64, computer: bool) -> Result<bool, String> {
-        let Some((moves, san)) = with_move(&self.state.setup, &self.state.moves, uci) else {
-            return Ok(false);
+    /// Flag the side on the clock when its time is up at `at`.
+    pub fn expire(&mut self, at: f64) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        self.expire_into(at, &mut fx);
+        fx
+    }
+
+    /// Play a legal move, charge the clock and report it.
+    fn commit(&mut self, uci: &str, at: f64, computer: bool, fx: &mut Vec<Effect>) -> bool {
+        let Some((board, san)) = self.board.with_move(uci) else {
+            return false;
         };
-        let mover = self.turn()?;
+        let mover = self.board.turn();
         let increment = if self.state.moves.len() >= 2 {
             self.state.clock.map_or(0.0, |clock| clock.increment) * 1000.0
         } else {
             0.0
         };
-        if let Some(times) = self.charged(mover, at, increment)? {
+        if let Some(times) = self.clocking().charged(mover, at, increment) {
             self.state.times = Some(times);
-            self.wrote("times");
         }
-        self.rt.turn_started = at;
-        self.state.moves = moves;
-        self.wrote("moves");
+        self.runtime.turn_started = at;
+        self.set_board(board);
         self.state.ply = self.state.moves.len();
-        self.wrote("ply");
-        self.fx
-            .push(json!({ "type": "moved", "san": san, "computer": computer }));
-        Ok(true)
+        fx.push(Effect::Moved { san, computer });
+        true
     }
 
-    /// `move(uci)`: the player's move, when it is theirs to make.
-    fn play(&mut self, reads: &mut Reads, uci: &str) -> Flow<bool> {
-        if self.rt.disposed {
-            return Ok(false);
-        }
-        if !reads.allowed()? {
-            return Ok(false);
-        }
-        if !reads.ready()? {
-            return Ok(false);
+    /// The player's move, when it is theirs to make: whether it was played.
+    pub fn play(&mut self, host: &mut dyn Host, uci: &str) -> (bool, Vec<Effect>) {
+        let mut fx = Vec::new();
+        if self.runtime.disposed || !host.allowed() || !host.ready() {
+            return (false, fx);
         }
         if self.state.ply != self.state.moves.len()
-            || self.over()?
+            || self.over()
             || self.state.thinking
-            || self.turn()? != self.state.color.as_str()
+            || self.board.turn() != self.state.color.as_str()
         {
-            return Ok(false);
+            return (false, fx);
         }
-        let at = reads.now()?;
-        if self.expire_at(at)? {
-            return Ok(false);
+        let at = host.now();
+        if self.expire_into(at, &mut fx) || !self.commit(uci, at, false, &mut fx) {
+            return (false, fx);
         }
-        if !self.commit(uci, at, false)? {
-            return Ok(false);
-        }
-        self.fx.push(json!({ "type": "computerTurn" }));
-        Ok(true)
+        fx.push(Effect::ComputerTurn);
+        (true, fx)
     }
 
-    /// The start of an engine turn, when one is due: the request to send and its epoch.
-    fn search_start(&mut self, reads: &mut Reads) -> Flow<Option<Value>> {
-        if self.rt.disposed || self.state.thinking {
+    /// The start of an engine turn, when one is due: the request to send.
+    pub fn search_start(&mut self, host: &mut dyn Host) -> Result<Option<SearchRequest>, String> {
+        if self.runtime.disposed || self.state.thinking {
             return Ok(None);
         }
-        if self.turn()? == self.state.color.as_str() || self.over()? {
+        if self.board.turn() == self.state.color.as_str() || self.over() {
             return Ok(None);
         }
-        if !reads.ready()? || !reads.allowed()? {
+        if !host.ready() || !host.allowed() {
             return Ok(None);
         }
-        let epoch = self.state.epoch;
-        let count = self.state.moves.len();
         self.state.thinking = true;
-        self.wrote("thinking");
-        let turn = self.turn()?;
-        let left = self.remaining(reads, turn, None)?;
+        let left = self.remaining(self.board.turn(), host.now());
         let movetime = match self.state.times {
             Some(_) => {
-                let level = engine_level(&self.state.level)?;
-                let time = level
-                    .get("time")
-                    .and_then(Value::as_f64)
-                    .ok_or_else(|| "the engine level has no think time".to_string())?;
+                let time = level_info(&self.state.level)?.time;
                 let increment = self.state.clock.map_or(0.0, |clock| clock.increment);
                 let budget = (left / 30.0 + increment * 800.0).floor();
                 Some(50.0_f64.max(5000.0_f64.min(time).min(budget)))
             }
             None => None,
         };
-        let mut options = serde_json::Map::new();
-        if !self.state.setup.is_standard_start() {
-            options.insert("fen".into(), json!(self.state.setup.fen));
-        }
-        match self.state.setup.variant.as_str() {
-            "standard" => {}
-            "chess960" => {
-                options.insert("chess960".into(), json!(true));
-            }
-            // Fairy-Stockfish plays the other variants.
-            variant => {
-                options.insert("variant".into(), json!(variant));
-            }
-        }
-        if let Some(movetime) = movetime {
-            options.insert("movetime".into(), json!(movetime));
-        }
-        Ok(Some(json!({
-            "epoch": epoch,
-            "count": count,
-            "moves": self.state.moves,
-            "level": self.state.level,
-            "options": Value::Object(options),
-        })))
+        let setup = &self.state.setup;
+        let options = SearchOptions {
+            fen: (!setup.is_standard_start()).then(|| setup.fen.clone()),
+            chess960: setup.variant == "chess960",
+            variant: (setup.variant != "standard" && setup.variant != "chess960")
+                .then(|| setup.variant.clone()),
+            movetime,
+        };
+        Ok(Some(SearchRequest {
+            epoch: self.state.epoch,
+            count: self.state.moves.len(),
+            moves: self.state.moves.clone(),
+            level: self.state.level.clone(),
+            options,
+        }))
     }
 
-    /// The engine's reply, if it is still wanted: the move is played (or the clock flags).
-    fn search_reply(&mut self, reads: &mut Reads, reply: &Reply) -> Flow<()> {
-        if self.rt.disposed
-            || reply.epoch != self.state.epoch
-            || reply.count != self.state.moves.len()
-            || self.over()?
+    /// The engine's reply to the search of `epoch` at `count` moves, if it is still wanted: the
+    /// move is played (or the clock flags).
+    pub fn search_reply(
+        &mut self,
+        host: &mut dyn Host,
+        epoch: u64,
+        count: usize,
+        reply: &str,
+    ) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        if self.runtime.disposed
+            || epoch != self.state.epoch
+            || count != self.state.moves.len()
+            || self.over()
+            || !host.allowed()
         {
-            return Ok(());
+            return fx;
         }
-        if !reads.allowed()? {
-            return Ok(());
+        let at = host.now();
+        if !self.expire_into(at, &mut fx) {
+            self.commit(reply, at, true, &mut fx);
         }
-        let at = reads.now()?;
-        if !self.expire_at(at)? {
-            self.commit(&reply.reply, at, true)?;
-        }
-        Ok(())
+        fx
     }
 
-    /// The engine turn failed: report it unless the engine turn was cancelled meanwhile.
-    fn search_failed(&mut self, epoch: u64) {
-        if epoch == self.state.epoch && !self.rt.disposed {
-            self.fx.push(json!({ "type": "failed" }));
+    /// The search of `epoch` failed: reported unless it was cancelled meanwhile.
+    pub fn search_failed(&self, epoch: u64) -> Effect {
+        if epoch == self.state.epoch && !self.runtime.disposed {
+            Effect::Failed
         } else {
-            self.fx.push(json!({ "type": "debug" }));
+            Effect::Cancelled
         }
     }
 
-    /// The end of an engine turn, however it finished.
-    fn search_end(&mut self, epoch: u64) {
+    /// The end of the search of `epoch`, however it finished.
+    pub fn search_end(&mut self, epoch: u64) {
         if epoch == self.state.epoch {
             self.state.thinking = false;
-            self.wrote("thinking");
         }
     }
 
-    fn start(&mut self, reads: &mut Reads, setup: Setup, clock: Option<Clock>) -> Flow<()> {
-        if self.rt.disposed {
-            return Ok(());
+    /// A new game from `setup` on `clock`; an illegal setup or clock is refused.
+    pub fn start(
+        &mut self,
+        host: &mut dyn Host,
+        setup: Setup,
+        clock: Option<Clock>,
+    ) -> Result<Vec<Effect>, String> {
+        let clock = clock.map(Clock::checked).transpose()?;
+        let mut fx = Vec::new();
+        if self.runtime.disposed {
+            return Ok(fx);
         }
-        self.cancel();
+        let board = Board::new(setup.clone(), Vec::new())?;
+        self.cancel(&mut fx);
         self.state.setup = setup;
-        self.wrote("setup");
         self.state.clock = clock;
-        self.wrote("clock");
-        self.state.moves = Vec::new();
-        self.wrote("moves");
+        self.set_board(board);
         self.state.ply = 0;
-        self.wrote("ply");
         self.state.resigned = false;
-        self.wrote("resigned");
         self.state.flagged = None;
-        self.wrote("flagged");
         self.state.times = clock.map(|clock| {
             let ms = clock.minutes * 60000.0;
             Times {
@@ -378,111 +481,91 @@ impl Game {
                 black: ms,
             }
         });
-        self.wrote("times");
-        self.rt.turn_started = reads.now()?;
-        self.fx.push(json!({ "type": "computerTurn" }));
-        Ok(())
+        self.runtime.turn_started = host.now();
+        fx.push(Effect::ComputerTurn);
+        Ok(fx)
     }
 
-    /// `takeback()`: undo back to the player's last turn. A time-out is final: undoing it left the
-    /// flagged side on 0 ms, to lose on time again on its next move.
-    fn takeback(&mut self, reads: &mut Reads) -> Flow<()> {
-        if self.rt.disposed || self.state.moves.is_empty() || self.state.flagged.is_some() {
-            return Ok(());
+    /// Undo back to the player's last turn. A time-out is final: undoing it left the flagged
+    /// side on 0 ms, to lose on time again on its next move.
+    pub fn takeback(&mut self, host: &mut dyn Host) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        if self.runtime.disposed || self.state.moves.is_empty() || self.state.flagged.is_some() {
+            return fx;
         }
-        self.cancel();
+        self.cancel(&mut fx);
         self.state.resigned = false;
-        self.wrote("resigned");
         self.state.flagged = None;
-        self.wrote("flagged");
-        let mut kept = self.state.moves.clone();
-        kept.pop();
-        while !kept.is_empty()
-            && position_info(&self.state.setup, &kept)?.turn != self.state.color.as_str()
-        {
-            kept.pop();
+        let mut kept = self.state.moves.len() - 1;
+        while kept > 0 && self.board.turn_after(kept) != self.state.color.as_str() {
+            kept -= 1;
         }
-        self.state.moves = kept;
-        self.wrote("moves");
+        let moves = self.state.moves[..kept].to_vec();
+        if let Ok(board) = Board::new(self.state.setup.clone(), moves) {
+            self.set_board(board);
+        }
         self.state.ply = self.state.moves.len();
-        self.wrote("ply");
-        self.rt.turn_started = reads.now()?;
-        self.fx.push(json!({ "type": "computerTurn" }));
-        Ok(())
+        self.runtime.turn_started = host.now();
+        fx.push(Effect::ComputerTurn);
+        fx
     }
 
-    fn resign(&mut self) -> Flow<()> {
-        if self.rt.disposed || self.state.moves.is_empty() || self.over()? {
-            return Ok(());
+    pub fn resign(&mut self) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        if self.runtime.disposed || self.state.moves.is_empty() || self.over() {
+            return fx;
         }
-        self.cancel();
+        self.cancel(&mut fx);
         self.state.resigned = true;
-        self.wrote("resigned");
         self.state.ply = self.state.moves.len();
-        self.wrote("ply");
-        Ok(())
+        fx
     }
 
-    /// `availabilityChanged()`: freeze the clocks and cancel the engine when assistance stops.
-    fn availability(&mut self, reads: &mut Reads) -> Flow<()> {
-        let permitted = reads.allowed()?;
-        let at = reads.now()?;
-        if self.rt.permitted && !permitted {
+    /// Assistance was allowed or stopped: freeze the clocks and cancel the engine when it stops.
+    pub fn availability_changed(&mut self, host: &mut dyn Host) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        let permitted = host.allowed();
+        let at = host.now();
+        if self.runtime.permitted && !permitted {
             if self.state.times.is_some() {
-                self.state.times = Some(self.times_at(at)?);
-                self.wrote("times");
+                self.state.times = Some(self.clocking().times_at(at));
             }
-            self.cancel();
+            self.cancel(&mut fx);
         }
-        if permitted != self.rt.permitted {
-            self.rt.turn_started = at;
+        if permitted != self.runtime.permitted {
+            self.runtime.turn_started = at;
         }
-        self.rt.permitted = permitted;
-        Ok(())
+        self.runtime.permitted = permitted;
+        fx
     }
 
-    /// `snapshot()`: the saved session, with each side's remaining time.
-    fn snapshot(&self, reads: &mut Reads) -> Flow<Value> {
-        let times = self.saved_times(reads)?;
-        let clock = match self.state.clock {
-            Some(clock) => json!({ "minutes": clock.minutes, "increment": clock.increment }),
-            None => Value::Null,
-        };
-        Ok(json!({
-            "moves": self.state.moves,
-            "ply": self.state.ply,
-            "level": self.state.level,
-            "color": self.state.color,
-            "resigned": self.state.resigned,
-            "setup": self.state.setup.json(),
-            "clock": clock,
-            "times": times,
-            "flagged": self.state.flagged,
-        }))
+    /// The session to save, with each side's remaining time at `at`.
+    pub fn snapshot(&self, at: f64) -> Saved {
+        Saved {
+            moves: Some(self.state.moves.clone()),
+            ply: Some(self.state.ply),
+            level: Some(self.state.level.clone()),
+            color: Some(self.state.color.clone()),
+            resigned: Some(self.state.resigned),
+            setup: Some(self.state.setup.clone()),
+            clock: self.state.clock,
+            times: self.state.times.map(|_| self.clocking().times_at(at)),
+            flagged: self.state.flagged.clone(),
+        }
     }
 
-    /// `archiveSnapshot()`: the game as the archive stores it.
-    fn archive_snapshot(&self) -> Result<Value, String> {
-        let level = engine_level(&self.state.level)?;
-        let label = level
-            .get("label")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let engine = format!("Stockfish ({label})");
+    /// The game as the archive stores it.
+    pub fn archive_snapshot(&self) -> Result<Archived, String> {
+        let engine = format!("Stockfish ({})", level_info(&self.state.level)?.label);
         let (white, black) = if self.state.color == "white" {
             ("You".to_string(), engine)
         } else {
             (engine, "You".to_string())
         };
-        let over = self.over()?;
-        let winner = self.winner()?;
-        let result = pgn_result(over, winner.as_deref())?;
+        let winner = self.winner();
         let reason = self
-            .result()?
-            .get("detail")
-            .and_then(Value::as_str)
-            .unwrap_or("In progress")
-            .to_string();
+            .result()
+            .map_or_else(|| "In progress".to_string(), |verdict| verdict.detail);
         let time_control = match self.state.clock {
             Some(clock) => format!(
                 "{}+{}",
@@ -491,132 +574,20 @@ impl Game {
             ),
             None => "-".to_string(),
         };
-        Ok(json!({
-            "source": "computer",
-            "setup": self.state.setup.json(),
-            "moves": self.state.moves,
-            "white": white,
-            "black": black,
-            "result": result,
-            "reason": reason,
-            "timeControl": time_control,
-        }))
-    }
-
-    /// The getters, by name.
-    fn view(&self, reads: &mut Reads, query: &Value) -> Flow<Value> {
-        let name = query
-            .get("view")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        Ok(match name {
-            "over" => json!(self.over()?),
-            "winner" => json!(self.winner()?),
-            "result" => self.result()?,
-            "running" => json!(self.running()?),
-            "draw" => json!(self.draw()?),
-            "remaining" => self.remaining_view(reads, query)?,
-            "snapshot" => self.snapshot(reads)?,
-            "archiveSnapshot" => self.archive_snapshot()?,
-            other => return Err(super::Stop::Error(format!("unknown computer view {other}"))),
+        Ok(Archived {
+            source: "computer",
+            setup: self.state.setup.clone(),
+            moves: self.state.moves.clone(),
+            white,
+            black,
+            result: pgn_result(self.over(), winner.as_deref()),
+            reason,
+            time_control,
         })
     }
 }
 
-/// The runtime of a new game: the clock and availability as the host reports them now.
-pub fn init(args: &[Value]) -> Result<Value, String> {
-    transition(args, |_, reads| {
-        let turn_started = reads.now()?;
-        let permitted = reads.allowed()?;
-        let runtime = Runtime {
-            turn_started,
-            permitted,
-            disposed: false,
-        };
-        Ok(Done {
-            runtime: Some(to_value(&runtime)?),
-            ..Done::default()
-        })
-    })
-}
-
-/// A getter of the game (`computerView`), without changing it.
-pub fn view(args: &[Value]) -> Result<Value, String> {
-    Game::query(args, |game, reads, query| game.view(reads, query))
-}
-
-pub fn availability(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, _, reads| {
-        game.availability(reads)?;
-        Ok(Value::Null)
-    })
-}
-
-pub fn expire(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, inputs, reads| {
-        let at = reads.now_or(inputs.get(2).and_then(Value::as_f64))?;
-        Ok(json!(game.expire_at(at)?))
-    })
-}
-
-pub fn play(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, inputs, reads| {
-        let uci: String = arg(inputs, 2, "uci")?;
-        Ok(json!(game.play(reads, &uci)?))
-    })
-}
-
-pub fn search_start(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, _, reads| {
-        Ok(game.search_start(reads)?.unwrap_or(Value::Null))
-    })
-}
-
-pub fn search_reply(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, inputs, reads| {
-        let reply: Reply = arg(inputs, 2, "reply")?;
-        game.search_reply(reads, &reply)?;
-        Ok(Value::Null)
-    })
-}
-
-pub fn search_failed(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, inputs, _| {
-        let epoch: Epoch = arg(inputs, 2, "epoch")?;
-        game.search_failed(epoch.epoch);
-        Ok(Value::Null)
-    })
-}
-
-pub fn search_end(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, inputs, _| {
-        let epoch: Epoch = arg(inputs, 2, "epoch")?;
-        game.search_end(epoch.epoch);
-        Ok(Value::Null)
-    })
-}
-
-pub fn start(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, inputs, reads| {
-        let setup: Setup = arg(inputs, 2, "setup")?;
-        let clock = optional_arg::<Clock>(inputs, 3)?
-            .map(Clock::checked)
-            .transpose()?;
-        game.start(reads, setup, clock)?;
-        Ok(Value::Null)
-    })
-}
-
-pub fn takeback(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, _, reads| {
-        game.takeback(reads)?;
-        Ok(Value::Null)
-    })
-}
-
-pub fn resign(args: &[Value]) -> Result<Value, String> {
-    Game::step(args, |game, _, _| {
-        game.resign()?;
-        Ok(Value::Null)
-    })
+/// The ladder entry for an engine level; an error for an unknown one.
+fn level_info(level: &str) -> Result<&'static engine_levels::EngineLevelInfo, String> {
+    engine_levels::info(level)?.ok_or_else(|| format!("unknown engine level {level}"))
 }
