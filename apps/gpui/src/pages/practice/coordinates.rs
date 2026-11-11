@@ -8,11 +8,11 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::types::{CoordinateMode, RunKind, RunRecord, RunSummary};
+use kchess_contracts::types::{CoordinateMode, RunKind, RunRecord};
 use serde_json::{Value, json};
 use shakmaty::{Color, Square};
 
-use super::run::{self, RunClock};
+use super::run::{self, Drill, DrillRun, Stage, Tally};
 use crate::assets::icon;
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
 use crate::game::{STANDARD_FEN, random_unit};
@@ -45,13 +45,6 @@ enum Mode {
 }
 
 const MODES: [Mode; 3] = [Mode::Find, Mode::Name, Mode::Voice];
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Stage {
-    Idle,
-    Running,
-    Over,
-}
 
 /// A square that is not `previous`, from `allowed` when given; the rules pick from the draws in
 /// order, and want one more draw each time the first ones give `previous`.
@@ -130,22 +123,17 @@ fn toggled(list: &[String], item: &str) -> Vec<String> {
 
 pub struct Coordinates {
     mode: Mode,
-    stage: Stage,
+    run: DrillRun,
+    tally: Tally,
     side: &'static str,
     orientation: Color,
     target: String,
     upcoming: String,
-    score: u32,
-    mistakes: u32,
     pending_file: Option<String>,
     flash: Option<(String, bool)>,
     run_limited: bool,
-    clock: RunClock,
-    summary: Option<RunSummary>,
-    is_best: bool,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
-    timers: Vec<Task<()>>,
     /// Clears the answer's flash; the next answer replaces it, so a long run keeps only one.
     flash_timer: Option<Task<()>>,
     /// Say the square: the voice switch, its log, and a start waiting for voice to load.
@@ -193,22 +181,17 @@ impl Coordinates {
         ];
         let mut drill = Coordinates {
             mode: Mode::Find,
-            stage: Stage::Idle,
+            run: DrillRun::default(),
+            tally: Tally::default(),
             side: "white",
             orientation: Color::White,
             target: "e4".into(),
             upcoming: "d5".into(),
-            score: 0,
-            mistakes: 0,
             pending_file: None,
             flash: None,
             run_limited: false,
-            clock: RunClock::default(),
-            summary: None,
-            is_best: false,
             board,
             layout: PlayLayout::default(),
-            timers: Vec::new(),
             flash_timer: None,
             voice: Control::new(false, cx),
             voice_log: DrillLog::default(),
@@ -217,10 +200,7 @@ impl Coordinates {
             question: 0,
             _subscriptions: subscriptions,
         };
-        run::load_summary(RunKind::Coordinates, cx, |this, summary, cx| {
-            this.summary = Some(summary);
-            cx.notify();
-        });
+        DrillRun::load(RunKind::Coordinates, cx);
         drill.redraw(cx);
         drill
     }
@@ -264,7 +244,7 @@ impl Coordinates {
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
-        if self.stage == Stage::Running
+        if self.run.running()
             || (self.mode == Mode::Voice && !self.voice.gate(&mut self.starting, cx))
         {
             cx.notify();
@@ -276,38 +256,24 @@ impl Coordinates {
         if let Some(orientation) = crate::game::drawn(crate::game::draw_color(self.side)) {
             self.orientation = orientation;
         }
-        self.score = 0;
-        self.mistakes = 0;
+        self.tally = Tally::default();
         self.pending_file = None;
-        self.is_best = false;
         self.run_limited = crate::prefs::get(cx, LIMITED, false);
         let allowed = Self::allowed(cx);
         self.target = random_square(None, allowed.as_deref());
         self.upcoming = random_square(Some(&self.target), allowed.as_deref());
-        self.stage = Stage::Running;
-        self.clock.start(Self::length(cx));
-        self.timers = vec![crate::timer::every(crate::timer::TICK, cx, |this, cx| {
-            if this.stage != Stage::Running {
-                return false;
-            }
-            if this.clock.expired() {
-                this.finish(cx);
-                return false;
-            }
-            cx.notify();
-            true
-        })];
+        self.run.begin(Self::length(cx), cx);
         self.redraw(cx);
     }
 
     /// The timers the drill keeps: its clock and the flash of the last answer.
     #[cfg(test)]
     pub(crate) fn timer_count(&self) -> usize {
-        self.timers.len() + usize::from(self.flash_timer.is_some())
+        usize::from(self.run.ticking()) + usize::from(self.flash_timer.is_some())
     }
 
     fn answer(&mut self, square: &str, cx: &mut Context<Self>) {
-        if self.stage != Stage::Running {
+        if !self.run.running() {
             return;
         }
         let correct = square == self.target;
@@ -319,15 +285,14 @@ impl Coordinates {
                 this.redraw(cx);
             });
         }));
+        self.tally.record(correct);
         if correct {
-            self.score += 1;
             self.question += 1;
             let allowed = Self::allowed(cx);
             self.target = std::mem::take(&mut self.upcoming);
             self.upcoming = random_square(Some(&self.target), allowed.as_deref());
             self.pending_file = None;
         } else {
-            self.mistakes += 1;
             self.pending_file = None;
             crate::sound::play_at(crate::sound::Sound::LowTime, 0.5, cx);
         }
@@ -335,7 +300,7 @@ impl Coordinates {
     }
 
     fn voice_heard(&mut self, event: &VoiceEvent, cx: &mut Context<Self>) {
-        if !self.voice.owns(event) || self.stage != Stage::Running || self.mode != Mode::Voice {
+        if !self.voice.owns(event) || !self.run.running() || self.mode != Mode::Voice {
             return;
         }
         let asked = format!("{}:{}", self.run_epoch, self.question);
@@ -381,7 +346,7 @@ impl Coordinates {
 
     /// Name mode: a file then a rank, from the buttons or the keyboard.
     fn press(&mut self, key: &str, cx: &mut Context<Self>) {
-        if self.mode != Mode::Name || self.stage != Stage::Running {
+        if self.mode != Mode::Name || !self.run.running() {
             return;
         }
         if FILES.contains(&key) {
@@ -404,45 +369,8 @@ impl Coordinates {
         }
     }
 
-    fn accuracy(&self) -> u32 {
-        let total = self.score + self.mistakes;
-        if total == 0 {
-            0
-        } else {
-            (f64::from(self.score) / f64::from(total) * 100.).round() as u32
-        }
-    }
-
-    fn finish(&mut self, cx: &mut Context<Self>) {
-        if self.stage != Stage::Running {
-            return;
-        }
-        self.clock.stop();
-        self.stage = Stage::Over;
-        self.redraw(cx);
-        // An untimed score only grows with time, and some files and ranks are easier: never records.
-        if self.clock.untimed || self.run_limited {
-            return;
-        }
-        let run = run::input(
-            RunKind::Coordinates,
-            self.record_variant(cx),
-            f64::from(self.score),
-            json!({
-                "mistakes": self.mistakes,
-                "accuracy": self.accuracy(),
-                "side": if self.orientation == Color::White { "white" } else { "black" },
-            }),
-        );
-        run::save_run(run, cx, |this, saved, cx| {
-            this.is_best = saved.is_best;
-            this.summary = Some(saved.summary);
-            cx.notify();
-        });
-    }
-
     fn redraw(&mut self, cx: &mut Context<Self>) {
-        let running = self.stage == Stage::Running;
+        let running = self.run.running();
         self.voice.sync(
             crate::voice::grammar(crate::voice::Grammar::Coordinate),
             running && self.mode == Mode::Voice,
@@ -515,6 +443,7 @@ impl Coordinates {
     fn side_scores(&self, cx: &App) -> Vec<(&'static str, Vec<f64>, f64)> {
         let variant = self.record_variant(cx);
         let runs: Vec<&RunRecord> = self
+            .run
             .summary
             .iter()
             .flat_map(|summary| &summary.recent)
@@ -585,10 +514,38 @@ impl Coordinates {
     }
 }
 
+impl Drill for Coordinates {
+    fn run(&mut self) -> &mut DrillRun {
+        &mut self.run
+    }
+
+    fn finish(&mut self, cx: &mut Context<Self>) {
+        if !self.run.end() {
+            return;
+        }
+        self.redraw(cx);
+        // An untimed score only grows with time, and some files and ranks are easier: never records.
+        if self.run.clock.untimed || self.run_limited {
+            return;
+        }
+        let run = run::input(
+            RunKind::Coordinates,
+            self.record_variant(cx),
+            f64::from(self.tally.score),
+            json!({
+                "mistakes": self.tally.mistakes,
+                "accuracy": self.tally.accuracy(),
+                "side": if self.orientation == Color::White { "white" } else { "black" },
+            }),
+        );
+        DrillRun::save(run, cx);
+    }
+}
+
 impl Render for Coordinates {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let running = self.stage == Stage::Running;
+        let running = self.run.running();
         // The board alone in its column: no player lines take height.
         let board_size = self
             .layout
@@ -699,8 +656,8 @@ impl Render for Coordinates {
         // The run first: with limits showing, the settings fill the panel.
         let mut drill = v_flex().gap(px(12.));
         drill = drill.child(run::hud(
-            &self.clock,
-            f64::from(self.score),
+            &self.run.clock,
+            f64::from(self.tally.score),
             "correct",
             &palette,
         ));
@@ -840,17 +797,20 @@ impl Render for Coordinates {
             });
         if !running {
             let variant = self.record_variant(cx);
-            let best = run::best(self.summary.as_ref(), &variant);
-            if self.stage == Stage::Over {
-                let is_best = !self.clock.untimed && self.is_best;
+            let best = self.run.best(&variant);
+            if self.run.stage == Stage::Over {
+                let is_best = !self.run.clock.untimed && self.run.is_best;
                 let detail = if self.run_limited {
                     "Not saved: some files & ranks only".to_string()
-                } else if self.clock.untimed {
-                    format!("in {}", self.clock.text())
+                } else if self.run.clock.untimed {
+                    format!("in {}", self.run.clock.text())
                 } else if is_best {
                     "New personal best".to_string()
                 } else {
-                    format!("Best so far: {}", best.unwrap_or(f64::from(self.score)))
+                    format!(
+                        "Best so far: {}",
+                        best.unwrap_or(f64::from(self.tally.score))
+                    )
                 };
                 panel = panel.child(
                     widgets::StatusBanner::new(
@@ -860,7 +820,12 @@ impl Render for Coordinates {
                         } else {
                             icon("timer")
                         },
-                        format!("{} correct · {}% accuracy", self.score, self.accuracy()).into(),
+                        format!(
+                            "{} correct · {}% accuracy",
+                            self.tally.score,
+                            self.tally.accuracy()
+                        )
+                        .into(),
                     )
                     .announce()
                     .detail(detail.into()),
@@ -889,7 +854,7 @@ impl Render for Coordinates {
                     );
                 }
             }
-            if self.stage != Stage::Over && length != 0 {
+            if self.run.stage != Stage::Over && length != 0 {
                 panel = panel.child(
                     div()
                         .text_size(px(12.))
@@ -912,7 +877,7 @@ impl Render for Coordinates {
                     .large()
                     .w_full()
                     .icon(icon("play"))
-                    .label(if self.stage == Stage::Over {
+                    .label(if self.run.stage == Stage::Over {
                         "Play again"
                     } else {
                         "Start"

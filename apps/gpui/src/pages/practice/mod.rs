@@ -170,6 +170,11 @@ impl PracticePage {
     }
 
     #[cfg(test)]
+    pub(crate) fn colors(&self) -> Option<Entity<square_color::SquareColors>> {
+        self.colors.clone()
+    }
+
+    #[cfg(test)]
     pub(crate) fn mistakes(&self) -> Option<Entity<mistakes::Mistakes>> {
         self.mistakes.clone()
     }
