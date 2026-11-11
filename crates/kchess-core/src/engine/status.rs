@@ -294,6 +294,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_platform_without_an_official_build_cannot_download_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut locations = locations(dir.path());
+        assert!(engine_status(&QUIET, &locations, "").await.can_download);
+        locations.target = Target {
+            platform: "freebsd",
+            arch: "x64",
+        };
+        assert!(!engine_status(&QUIET, &locations, "").await.can_download);
+    }
+
+    #[tokio::test]
     async fn missing_configured_engine_falls_back_and_reports_the_configured_path() {
         let dir = tempfile::tempdir().unwrap();
         let locations = locations(dir.path());

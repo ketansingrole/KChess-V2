@@ -168,4 +168,42 @@ mod tests {
             "sf"
         );
     }
+
+    #[test]
+    fn a_stop_or_a_newer_epoch_ends_a_job() {
+        let (open, stopped) = (CancellationToken::new(), CancellationToken::new());
+        stopped.cancel();
+        assert!(still_wanted(&open, 3, 3).is_ok());
+        assert!(still_wanted(&stopped, 3, 3).unwrap_err().aborted);
+        assert_eq!(still_wanted(&open, 2, 3).unwrap_err(), search_cancelled());
+    }
+
+    #[test]
+    fn a_stop_or_an_abort_is_an_interruption_and_anything_else_a_failure() {
+        let (open, stopped) = (CancellationToken::new(), CancellationToken::new());
+        stopped.cancel();
+        let failure = CoreError::new("broken");
+        for (token, cause, expected, level) in [
+            (&stopped, &failure, true, "debug"),
+            (&open, &signal_aborted(), true, "debug"),
+            (&open, &failure, false, "warn"),
+        ] {
+            let host = crate::test_host::TestHost::new();
+            let interrupted = interrupted(
+                &*host,
+                "engine",
+                ("Stopped", "Failed"),
+                "review",
+                cause,
+                token,
+            );
+            assert_eq!(interrupted, expected, "{}", cause.message);
+            let label = if expected { "Stopped" } else { "Failed" };
+            assert!(
+                host.logs()[0].starts_with(&format!("{level} [engine] {label}: review")),
+                "{:?}",
+                host.logs()
+            );
+        }
+    }
 }

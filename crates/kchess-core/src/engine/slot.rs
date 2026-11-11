@@ -134,3 +134,70 @@ impl EngineSlot {
             .is_none_or(|engine| engine.uci.failed().is_none())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::managed::Target;
+    use crate::engine::scheduler::Scheduler;
+    use crate::engine::status::EngineLocations;
+    use crate::engine::uci::EngineHub;
+    use crate::host::Host;
+    use crate::test_host::{QUIET, TestHost};
+
+    /// A slot whose engine is this test program listing no tests: a process that starts and
+    /// ends, enough for the slot's bookkeeping.
+    fn slot(idle_after: Duration) -> Arc<EngineSlot> {
+        let host: Arc<dyn Host> = TestHost::quiet();
+        let dir = std::env::temp_dir().join("kchess-slot-no-engines");
+        let locations = EngineLocations {
+            managed_dir: dir.join("managed"),
+            target: Target::current(),
+            bundled: dir.join("stockfish"),
+            variant: dir.join("fairy-stockfish"),
+        };
+        let hub = Arc::new(EngineHub::new(Arc::clone(&host)));
+        let scheduler = Arc::new(Scheduler::with_budget(1, || false));
+        let mut ctx = EngineContext::new(host, hub, scheduler, locations);
+        ctx.command = Arc::new(|_| {
+            let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+            command.args(["--exact", "no such test"]);
+            command
+        });
+        EngineSlot::new(ctx, idle_after)
+    }
+
+    async fn open(slot: &EngineSlot) {
+        let located = Located {
+            status: engine_status(&QUIET, &slot.ctx.locations, "").await,
+            key: "engine".into(),
+        };
+        slot.open(&located).unwrap();
+    }
+
+    fn engine_open(slot: &EngineSlot) -> bool {
+        lock(&slot.state).engine.is_some()
+    }
+
+    #[tokio::test]
+    async fn an_idle_engine_closes_unless_work_keeps_it() {
+        let slot = slot(Duration::from_millis(20));
+        assert!(slot.healthy(), "no engine open");
+        slot.release();
+        assert!(lock(&slot.state).idle.is_none(), "nothing to count down");
+        open(&slot).await;
+        slot.release();
+        slot.keep();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(engine_open(&slot), "kept past its idle time");
+        slot.release();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while engine_open(&slot) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the idle engine closed");
+        slot.close();
+    }
+}
