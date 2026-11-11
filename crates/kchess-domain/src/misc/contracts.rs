@@ -551,13 +551,8 @@ pub fn validate_arguments(method: &str, args: &[Value]) -> Option<Result<(), Str
     Some(check(method, &values))
 }
 
-/// The normalized value validator `name` gives for `args` (`assertX(...)` in the TypeScript).
+/// The normalized value validator `name` gives for `args`, a JSON `null` being `undefined`.
 pub fn normalize(name: &str, args: &[Value]) -> Result<Value, String> {
-    run(name, args)
-}
-
-/// Runs validator `name` on `args`; a JSON `null` is `undefined`, as an absent argument is.
-fn run(name: &str, args: &[Value]) -> Result<Value, String> {
     let values = args
         .iter()
         .map(|value| {
