@@ -839,10 +839,10 @@ async fn pump(s: Arc<Shared>) {
     send_status(&s);
     let (arm_idle, asked) = {
         let state = lock(&s.state);
-        let present = state.host.is_some();
-        (
-            present && state.running.is_none() && state.asked.is_empty(),
-            present && !state.asked.is_empty(),
+        after_pass(
+            state.host.is_some(),
+            state.running.is_some(),
+            !state.asked.is_empty(),
         )
     };
     // A review asked for while this pass was deciding it had nothing to do found it still
@@ -854,6 +854,12 @@ async fn pump(s: Arc<Shared>) {
     if arm_idle {
         s.engine.release();
     }
+}
+
+/// After a pass, with the queue still set up (`present`): whether the engine's idle countdown
+/// starts (nothing runs or is asked for), and whether reviews are asked for.
+fn after_pass(present: bool, running: bool, asked: bool) -> (bool, bool) {
+    (present && !running && !asked, present && asked)
 }
 
 /// Works through the queue; whether it ended because it found nothing to do. A pass that ends
@@ -1271,4 +1277,50 @@ async fn search_once(
             Ok(result)
         })
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_score_is_centipawns_or_mate() {
+        let cp = ReviewEval {
+            cp: Some(0.0),
+            ..ReviewEval::default()
+        };
+        let mate = ReviewEval {
+            mate: Some(2.0),
+            ..ReviewEval::default()
+        };
+        assert!(has_score(Some(&cp)) && has_score(Some(&mate)));
+        assert!(!has_score(Some(&ReviewEval::default())));
+        assert!(!has_score(None));
+    }
+
+    #[test]
+    fn the_engine_idles_only_when_nothing_runs_or_is_asked_for() {
+        for (present, running, asked, expected) in [
+            (true, false, false, (true, false)),
+            (true, false, true, (false, true)),
+            (true, true, false, (false, false)),
+            (false, false, false, (false, false)),
+            (false, false, true, (false, false)),
+        ] {
+            assert_eq!(
+                after_pass(present, running, asked),
+                expected,
+                "{present} {running} {asked}"
+            );
+        }
+    }
+
+    /// A game's end needs no engine: a draw is level, a mate is mate.
+    #[test]
+    fn the_end_of_a_game_is_scored_without_the_engine() {
+        assert_eq!(end_eval("stalemate", "white").cp, Some(0.0));
+        assert_eq!(end_eval("stalemate", "white").mate, None);
+        assert_eq!(end_eval("checkmate", "black").mate, Some(0.0));
+        assert_eq!(end_eval("checkmate", "black").cp, None);
+    }
 }

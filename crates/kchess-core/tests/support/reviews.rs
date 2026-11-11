@@ -138,6 +138,8 @@ pub struct ScriptedHost {
     pub settings_reads: AtomicUsize,
     /// When set, the next update panics, as a broken window would.
     pub panic_on_update: AtomicBool,
+    /// When set, every Lichess lookup fails, as one made offline does.
+    pub fail_lookups: AtomicBool,
 }
 
 impl ScriptedHost {
@@ -153,6 +155,7 @@ impl ScriptedHost {
             hold_settings: Mutex::new(None),
             settings_reads: AtomicUsize::new(0),
             panic_on_update: AtomicBool::new(false),
+            fail_lookups: AtomicBool::new(false),
         })
     }
 
@@ -212,6 +215,9 @@ impl ReviewHost for ScriptedHost {
                 .lock()
                 .expect("fetched")
                 .push((account, ids.clone()));
+            if self.fail_lookups.load(Ordering::SeqCst) {
+                return Err(kchess_contracts::error::CoreError::new("offline"));
+            }
             // What the real host does: the games are marked checked, nothing came back.
             self.store.mark_checked(ids).await?;
             Ok(Vec::new())
