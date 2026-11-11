@@ -14,7 +14,7 @@
 mod corpus;
 
 /// Methods whose rules are gone: nothing but the corpus called them.
-const RETIRED: &[&str] = &[];
+const RETIRED: &[&str] = &["computerDispose", "puzzleSessionSyncs"];
 
 use std::io::{Read, Write};
 use std::path::Path;

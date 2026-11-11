@@ -327,9 +327,6 @@ fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
                 crate::training::call,
                 crate::records::call,
                 crate::misc::call,
-                crate::games::call,
-                crate::online_game::call,
-                crate::trainer::call,
                 crate::theme::call,
             ];
             return match moved.iter().find_map(|call| call(method, args)) {
@@ -651,16 +648,16 @@ mod tests {
     #[test]
     fn rejects_nesting_that_would_overflow_the_stack() {
         assert_eq!(
-            call("pathOf", &nested(50_000)).unwrap_err(),
+            call("reviewMoment", &nested(50_000)).unwrap_err(),
             "arguments nest too deeply"
         );
         assert_eq!(
-            call("pathOf", &nested(MAX_JSON_DEPTH + 1)).unwrap_err(),
+            call("reviewMoment", &nested(MAX_JSON_DEPTH + 1)).unwrap_err(),
             "arguments nest too deeply"
         );
         // Brackets inside strings are text, not nesting.
         let text = format!("[[\"{}\\\"\"]]", "[".repeat(MAX_JSON_DEPTH * 2));
-        assert!(call("pathOf", &text).is_ok());
+        assert!(call("reviewMoment", &text).is_ok());
     }
 
     /// A board's destinations castle onto the king's square too, a Chess960 board's onto the
@@ -733,7 +730,7 @@ mod tests {
     fn call_value_bounds_and_moves_deep_work_off_the_callers_stack() {
         let too_deep = nested_value(MAX_JSON_DEPTH + 1);
         assert_eq!(
-            call_value("pathOf", std::slice::from_ref(&too_deep)).unwrap_err(),
+            call_value("reviewMoment", std::slice::from_ref(&too_deep)).unwrap_err(),
             "arguments nest too deeply"
         );
         on_large_stack(move || {
@@ -742,9 +739,12 @@ mod tests {
         })
         .unwrap();
         let deep = nested_value(MAX_JSON_DEPTH - 8);
-        assert!(needs_large_stack("pathOf", std::slice::from_ref(&deep)));
+        assert!(needs_large_stack(
+            "reviewMoment",
+            std::slice::from_ref(&deep)
+        ));
         // Answered, whatever the answer, without overflowing the small stack.
-        on_small_stack(|| drop(call_value("pathOf", std::slice::from_ref(&deep))));
+        on_small_stack(|| drop(call_value("reviewMoment", std::slice::from_ref(&deep))));
         on_large_stack(move || {
             drop(deep);
             Ok(())
@@ -755,9 +755,18 @@ mod tests {
         for _ in 0..DEEP_JSON {
             object = json!({ "a": object });
         }
-        assert!(needs_large_stack("pathOf", std::slice::from_ref(&object)));
-        assert!(!needs_large_stack("pathOf", &[nested_value(DEEP_JSON - 1)]));
-        assert!(needs_large_stack("pathOf", &[nested_value(DEEP_JSON)]));
+        assert!(needs_large_stack(
+            "reviewMoment",
+            std::slice::from_ref(&object)
+        ));
+        assert!(!needs_large_stack(
+            "reviewMoment",
+            &[nested_value(DEEP_JSON - 1)]
+        ));
+        assert!(needs_large_stack(
+            "reviewMoment",
+            &[nested_value(DEEP_JSON)]
+        ));
         assert!(needs_large_stack("treeFromPgn", &[json!("1. e4 *")]));
         assert!(!needs_large_stack("replay", &[json!("1. e4 *")]));
 
@@ -783,7 +792,7 @@ mod tests {
     /// The deepest accepted input is parsed and dropped whatever stack the caller has.
     #[test]
     fn accepts_the_depth_limit_on_a_small_stack() {
-        let result = on_small_stack(|| call("pathOf", &nested(MAX_JSON_DEPTH)));
+        let result = on_small_stack(|| call("reviewMoment", &nested(MAX_JSON_DEPTH)));
         assert_ne!(result, Err("arguments nest too deeply".to_string()));
     }
 
