@@ -8,9 +8,7 @@ use kchess_core::store::{
     reviews,
 };
 use serde_json::{Value, json};
-use support::store::{
-    Secrets, Store, canonical, check_page_query, library_game, list, profile,
-};
+use support::store::{Secrets, Store, canonical, check_page_query, library_game, list, profile};
 
 const SYNCED_AT: i64 = 1_790_812_800_000;
 

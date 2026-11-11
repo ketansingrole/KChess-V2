@@ -838,6 +838,36 @@ mod tests {
         puzzles.close().await;
     }
 
+    /// A task that panicked holding the running download's lock poisoned it, and the poisoned
+    /// lock read as no download: `delete` then cleared the database under the download's writes.
+    #[tokio::test]
+    async fn a_download_whose_lock_was_poisoned_still_counts_as_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let (puzzles, _host) = service(dir.path());
+        let download = Arc::new(Download {
+            cancel: CancellationToken::new(),
+        });
+        *lock(&puzzles.inner.running) = Some(Arc::clone(&download));
+        let inner = Arc::clone(&puzzles.inner);
+        std::thread::spawn(move || {
+            let _held = inner.running.lock().unwrap();
+            panic!("a download task failed holding the lock");
+        })
+        .join()
+        .expect_err("the thread panicked");
+        assert!(puzzles.inner.running.is_poisoned());
+
+        assert!(puzzles.status().await.unwrap().busy);
+        let refused = puzzles.delete().await.expect_err("the download still runs");
+        assert_eq!(
+            refused.message,
+            "Cancel the download before deleting puzzles."
+        );
+        puzzles.cancel();
+        assert!(download.cancel.is_cancelled());
+        puzzles.close().await;
+    }
+
     #[tokio::test]
     async fn the_first_open_takes_over_the_puzzles_of_the_main_database_once() {
         let dir = tempfile::tempdir().unwrap();

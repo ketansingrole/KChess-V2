@@ -65,29 +65,56 @@ pub(crate) fn migrate_studies(db: &Connection) -> Result<()> {
 
 pub(crate) fn read_studies(db: &Connection) -> Result<Vec<Value>> {
     migrate_studies(db)?;
+    read_study_rows(db, StudyBodies::All)
+}
+
+/// Which stored studies a read decodes; the rest are their id alone.
+pub(crate) enum StudyBodies<'a> {
+    All,
+    /// Only the study with this id (none: no study at all).
+    Only(Option<&'a str>),
+}
+
+/// The `studies` table in order. A damaged row, one stored under another id, or more studies
+/// than the library holds refuses the whole read, so no edit can drop what it could not read.
+pub(crate) fn read_study_rows(db: &Connection, bodies: StudyBodies) -> Result<Vec<Value>> {
+    let (all, target) = match bodies {
+        StudyBodies::All => (true, None),
+        StudyBodies::Only(target) => (false, target),
+    };
     let mut statement = db
-        .prepare("SELECT id, body FROM studies ORDER BY position")
+        .prepare(
+            "SELECT id, CASE WHEN ?1 OR id = ?2 THEN body ELSE NULL END FROM studies
+             ORDER BY position",
+        )
         .sql()?;
     let rows = statement
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        .query_map(params![all, target], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
         })
         .sql()?;
     let mut items = Vec::new();
     for row in rows {
         let (id, body) = row.sql()?;
-        let raw = parse_text(&body).ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
-        let study = kchess_domain::library::decode_study(&raw)
-            .ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
-        if id_of(&study) != Some(id.as_str()) {
-            return Err(CoreError::new(DAMAGED_STUDIES));
-        }
-        items.push(study);
+        items.push(match body {
+            Some(body) => decode_study_row(&id, &body)?,
+            None => json!({ "id": id }),
+        });
     }
     if items.len() > MAX_STUDIES {
         return Err(CoreError::new(DAMAGED_STUDIES));
     }
     Ok(items)
+}
+
+fn decode_study_row(id: &str, body: &str) -> Result<Value> {
+    let damaged = || CoreError::new(DAMAGED_STUDIES);
+    let raw = parse_text(body).ok_or_else(damaged)?;
+    let study = kchess_domain::library::decode_study(&raw).ok_or_else(damaged)?;
+    if id_of(&study) != Some(id) {
+        return Err(damaged());
+    }
+    Ok(study)
 }
 
 pub(crate) fn read_mistakes(db: &Connection) -> Result<Vec<Value>> {

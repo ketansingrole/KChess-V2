@@ -4,10 +4,10 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
 
-use super::documents::{DAMAGED_STUDIES, parse_text, read_document_text, write_document};
+use super::documents::{DAMAGED_STUDIES, read_document_text, write_document};
 use super::json_codec::{clean_name, js_json, js_slice, utf16_len};
 use super::library::{STUDIES, STUDY_LIBRARY_MAX_TEXT, num, object, random_uuid, truthy};
-use super::library_import::{migrate_studies, read_studies};
+use super::library_import::{StudyBodies, migrate_studies, read_studies, read_study_rows};
 use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
 use kchess_domain::js;
@@ -204,37 +204,7 @@ fn read_command_studies(db: &Connection, command: &Map<String, Value>) -> Result
         None
     };
     let target = offline_id.as_deref().or(target);
-    let mut statement = db
-        .prepare(
-            "SELECT id, CASE WHEN id = ?1 THEN body ELSE NULL END FROM studies ORDER BY position",
-        )
-        .sql()?;
-    let rows = statement
-        .query_map(params![target], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-        })
-        .sql()?;
-    let mut items = Vec::new();
-    for row in rows {
-        let (id, body) = row.sql()?;
-        let study = match body {
-            Some(body) => {
-                let raw = parse_text(&body).ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
-                let study = kchess_domain::library::decode_study(&raw)
-                    .ok_or_else(|| CoreError::new(DAMAGED_STUDIES))?;
-                if id_of(&study) != Some(id.as_str()) {
-                    return Err(CoreError::new(DAMAGED_STUDIES));
-                }
-                study
-            }
-            None => json!({ "id": id }),
-        };
-        items.push(study);
-    }
-    if items.len() > MAX_STUDIES {
-        return Err(CoreError::new(DAMAGED_STUDIES));
-    }
-    Ok(items)
+    read_study_rows(db, StudyBodies::Only(target))
 }
 
 /// `studyCommand(command, now)`: one change to the study library, stored on success.
