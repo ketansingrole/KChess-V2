@@ -115,3 +115,20 @@ async fn another_clients_audio_finish_and_stop_leave_the_owner_listening() {
         .expect("B is still listening");
     core.close().await;
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_owners_stop_ends_its_session() {
+    let dir = tempfile::tempdir().expect("data folder");
+    let core = open(&dir);
+    let a = core.connect(ClientInfo::app());
+    core.call_as(a, "voiceStart", vec![json!(["e four"]), json!(16000)])
+        .await
+        .expect("A starts");
+    core.call_as(a, "voiceStop", vec![]).await.expect("A stops");
+    let refused = core
+        .call_as(a, "voiceAccept", vec![json!(SILENCE)])
+        .await
+        .expect_err("the session is stopped");
+    assert_eq!(refused.message, "Voice input isn’t listening.");
+    core.close().await;
+}

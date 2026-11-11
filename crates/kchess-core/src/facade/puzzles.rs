@@ -10,7 +10,6 @@ use kchess_contracts::types::{
 };
 use serde_json::Value;
 
-use super::PUZZLE_DB_URL;
 use crate::core::Core;
 use crate::lichess::puzzles as lichess;
 use crate::store::{runs, voice_log};
@@ -54,7 +53,7 @@ impl PuzzlesApi for Core {
     }
 
     async fn puzzle_db_install(&self) -> Result<PuzzleDbStatus> {
-        self.puzzles.install(PUZZLE_DB_URL.into()).await
+        self.puzzles.install(self.puzzle_db_url.clone()).await
     }
 
     async fn puzzle_db_cancel(&self) -> Result<()> {

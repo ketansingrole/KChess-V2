@@ -78,6 +78,9 @@ pub struct Core {
     pub(crate) voice_model: crate::voice::VoiceModelCache,
     /// Network accounting counters, batched before they reach the database.
     pub(crate) usage: Arc<UsageBatch>,
+    /// Where `puzzleDbInstall` downloads the puzzle database from: Lichess's, or the test
+    /// origin's `/database` in its place.
+    pub(crate) puzzle_db_url: String,
     /// Managed engine installs and deletes in progress, by request id.
     installs: Mutex<HashMap<u64, CancellationToken>>,
     /// Whether a live online game (or its recovery) blocks the engines, as of the last state.
@@ -173,6 +176,10 @@ impl Core {
             Arc::clone(&host),
             config.data_dir.clone(),
         );
+        let puzzle_db_url = test.lichess_origin.as_deref().map_or_else(
+            || crate::facade::PUZZLE_DB_URL.to_string(),
+            |origin| format!("{origin}/database/lichess_db_puzzle.csv.zst"),
+        );
         let services = Services::new(
             Arc::clone(&host),
             Arc::clone(&database),
@@ -228,6 +235,7 @@ impl Core {
             chesscom,
             services,
             usage,
+            puzzle_db_url,
             installs: Mutex::new(HashMap::new()),
             busy,
             closed,
