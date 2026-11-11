@@ -199,7 +199,7 @@ fn set_up(scenario: Scenario, window: &mut Window, cx: &mut App) {
             if let Some(analysis) = shell::view::<AnalysisPage>(cx) {
                 let engine = scenario != Scenario::BoardAnimation;
                 // A search that never finishes, so the lines keep streaming for the whole run.
-                crate::prefs::set(cx, "kchess:analysis-infinite", engine);
+                crate::prefs::set(cx, crate::pages::analysis::INFINITE, engine);
                 analysis.update(cx, |analysis, cx| {
                     let line: Vec<String> = LINE.iter().map(|uci| uci.to_string()).collect();
                     analysis.load_line(&line, cx);

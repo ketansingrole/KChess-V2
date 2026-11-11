@@ -32,9 +32,38 @@ fn fit_select(label: &str) -> Pixels {
 }
 pub(crate) const DAY_MS: f64 = 86_400_000.;
 /// Ratings are padded by this much above and below (`ratingYDomain`).
-pub(crate) const RATING_PAD: f64 = 15.;
+const RATING_PAD: f64 = 15.;
 /// Longer than this, dates read as month and year (`spansRatingYears`).
-pub(crate) const YEARS_SPAN_MS: f64 = 400. * DAY_MS;
+const YEARS_SPAN_MS: f64 = 400. * DAY_MS;
+
+/// A rating chart's date, short under the axis and long in its tooltip: with the year once the
+/// chart spans `first` to `last` over a year.
+pub(crate) fn chart_dates(first: f64, last: f64) -> impl Fn(f64) -> (SharedString, SharedString) {
+    let years = last - first > YEARS_SPAN_MS;
+    move |millis| {
+        let format = |pattern: &str| {
+            chrono::DateTime::from_timestamp_millis(millis as i64)
+                .map(|date| date.format(pattern).to_string())
+                .unwrap_or_default()
+        };
+        (
+            format(if years { "%b %y" } else { "%b %-d" }).into(),
+            format("%b %-d, %Y").into(),
+        )
+    }
+}
+
+/// The ratings' lowest and highest, the chart's range padded around them; 0 to 1 for none.
+pub(crate) fn rating_domain(ratings: impl Iterator<Item = f64>) -> (f64, f64) {
+    let (low, high) = ratings.fold((f64::MAX, f64::MIN), |(low, high), rating| {
+        (low.min(rating), high.max(rating))
+    });
+    if low > high {
+        (0., 1.)
+    } else {
+        (low - RATING_PAD, high + RATING_PAD)
+    }
+}
 
 pub type Retry = Rc<dyn Fn(&mut Window, &mut App)>;
 
@@ -253,33 +282,27 @@ impl RatingHistory {
             .into_iter()
             .filter(|(date, _)| *date >= start)
             .collect();
-        let years = points.len() > 1
-            && points.last().map(|p| p.0).unwrap_or_default()
-                - points.first().map(|p| p.0).unwrap_or_default()
-                > YEARS_SPAN_MS;
-        let format = |millis: f64, pattern: &str| {
-            chrono::DateTime::from_timestamp_millis(millis as i64)
-                .map(|date| date.format(pattern).to_string())
-                .unwrap_or_default()
-        };
+        let dates = chart_dates(
+            points.first().map_or(0., |point| point.0),
+            points.last().map_or(0., |point| point.0),
+        );
         let chart_points: Vec<ChartPoint> = points
             .iter()
-            .map(|(date, rating)| ChartPoint {
-                value: *rating,
-                short: format(*date, if years { "%b %y" } else { "%b %-d" }).into(),
-                long: format(*date, "%b %-d, %Y").into(),
+            .map(|(date, rating)| {
+                let (short, long) = dates(*date);
+                ChartPoint {
+                    value: *rating,
+                    short,
+                    long,
+                }
             })
             .collect();
+        let domain = rating_domain(points.iter().map(|point| point.1));
         let (low, high) = points
             .iter()
             .fold((f64::MAX, f64::MIN), |(low, high), (_, rating)| {
                 (low.min(*rating), high.max(*rating))
             });
-        let domain = if points.is_empty() {
-            (0., 1.)
-        } else {
-            (low - RATING_PAD, high + RATING_PAD)
-        };
         let label = MODES
             .iter()
             .find(|(mode, _)| *mode == self.mode)

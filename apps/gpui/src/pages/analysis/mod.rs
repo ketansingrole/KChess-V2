@@ -95,7 +95,7 @@ const CLOUD_DELAY: Duration = Duration::from_millis(300);
 const EVAL_GAP: Pixels = px(8.);
 const ENGINE_ON: &str = "kchess:analysis-engine";
 const ENGINE_LINES: &str = "kchess:analysis-lines";
-const INFINITE: &str = "kchess:analysis-infinite";
+pub(crate) const INFINITE: &str = "kchess:analysis-infinite";
 const ARROWS: &str = "kchess:analysis-arrows";
 const TOOL: &str = "kchess:analysis-tool";
 

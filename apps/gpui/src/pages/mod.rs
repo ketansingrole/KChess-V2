@@ -472,7 +472,9 @@ fn create<V: PageView>(window: &mut Window, cx: &mut App) -> Rc<dyn AnyPage> {
 }
 
 /// Every page, in `Page`'s order, which is the sidebar's.
-static REGISTRY: [Registered; 17] = [
+static REGISTRY: [Registered; 17] = PAGES;
+
+const PAGES: [Registered; 17] = [
     register::<home::HomePage>(),
     register::<computer::ComputerPage>(),
     register::<local::LocalPage>(),
@@ -491,6 +493,18 @@ static REGISTRY: [Registered; 17] = [
     register::<players::PlayersPage>(),
     register::<settings::SettingsPage>(),
 ];
+
+// The registry is indexed by `Page`: each page sits at its own place, or the build fails.
+const _: () = {
+    let mut index = 0;
+    while index < PAGES.len() {
+        assert!(
+            PAGES[index].info.page as usize == index,
+            "a page out of its place"
+        );
+        index += 1;
+    }
+};
 
 /// Every page's places inside it (its tabs), in the sidebar's order.
 pub fn places(cx: &App) -> Vec<PageCommand> {
@@ -656,25 +670,13 @@ impl PageHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::{Page, REGISTRY};
+    use super::Page;
 
     #[test]
     fn a_remembered_page_is_found_by_its_name() {
         assert_eq!(Page::named("Analysis"), Some(Page::Analysis));
         assert_eq!(Page::named("Settings"), Some(Page::Settings));
         assert_eq!(Page::named("Gone"), None);
-    }
-
-    /// The registry is indexed by `Page`: each page sits at its own place.
-    #[test]
-    fn each_page_is_registered_at_its_place() {
-        for (index, registered) in REGISTRY.iter().enumerate() {
-            assert_eq!(
-                registered.info.page as usize, index,
-                "{:?}",
-                registered.info.page
-            );
-        }
     }
 
     /// Shortened under their headings, the open sidebar's rows still name one page each, and
