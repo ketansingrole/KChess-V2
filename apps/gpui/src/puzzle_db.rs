@@ -13,7 +13,7 @@ use crate::assets::icon;
 use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, format_bytes};
-use kchess_contracts::types::{PuzzleDbPhase, PuzzleDbProgress, PuzzleDbStatus};
+use kchess_contracts::types::{ProfileArea, PuzzleDbPhase, PuzzleDbProgress, PuzzleDbStatus};
 
 pub struct PuzzleDb {
     pub status: PuzzleDbStatus,
@@ -45,6 +45,10 @@ pub fn init(cx: &mut App) {
     });
     cx.set_global(PuzzleDbHandle(db.clone()));
     db.update(cx, |db, cx| db.refresh(cx));
+    // Another window downloaded or deleted the database: its card and modes follow at once.
+    crate::core::on_profile_change(cx, &[ProfileArea::Puzzles], move |cx| {
+        db.update(cx, |db, cx| db.refresh(cx));
+    });
 }
 
 impl PuzzleDb {
