@@ -528,7 +528,9 @@ impl FriendsPage {
                                             .on_click({
                                                 let name = name.clone();
                                                 move |_, window, cx| {
-                                                    crate::shell::open_player(&name, window, cx)
+                                                    crate::pages::players::open_player(
+                                                        &name, window, cx,
+                                                    )
                                                 }
                                             })
                                             .child(format!("@{name}")),
@@ -621,7 +623,7 @@ impl FriendsPage {
                             .icon(icon("tv"))
                             .label("Watch")
                             .on_click(move |_, window, cx| {
-                                crate::shell::watch_game(&id, window, cx)
+                                crate::pages::watch::watch_game(&id, window, cx)
                             })
                     }))
                     .child(
@@ -631,7 +633,7 @@ impl FriendsPage {
                             .icon(icon("swords"))
                             .label("Challenge")
                             .on_click(move |_, window, cx| {
-                                crate::shell::challenge(&challenge_name, window, cx)
+                                crate::pages::online::challenge(&challenge_name, window, cx)
                             }),
                     )
                     .child(
@@ -642,7 +644,7 @@ impl FriendsPage {
                             .label("Games")
                             .disabled(games <= 0.)
                             .on_click(move |_, window, cx| {
-                                crate::shell::open_history_account(&games_name, window, cx)
+                                crate::pages::history::open_account(&games_name, window, cx)
                             }),
                     )
                     .child(
@@ -1257,6 +1259,51 @@ impl Render for ImportDialog {
                             })),
                     ),
             )
+    }
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::ActionInfo;
+        match self {
+            Action::Follow => {
+                ActionInfo::new("following:follow", "Follow player", "plus", "friend add")
+            }
+            Action::Import => ActionInfo::new(
+                "following:import",
+                "Import from Lichess",
+                "download",
+                "followed players",
+            ),
+            Action::Sync => {
+                ActionInfo::new("following:sync", "Sync all", "refresh-cw", "games download")
+            }
+        }
+    }
+}
+
+impl crate::pages::PageView for FriendsPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Friends,
+        label: "Following",
+        short: "Following",
+        icon: "users",
+        group: Some(crate::pages::NavGroup::Lichess),
+        keywords: "following players",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        FriendsPage::new(window, cx)
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        FriendsPage::actions(self, cx)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.act(action, window, cx));
     }
 }
 

@@ -1042,7 +1042,7 @@ pub(super) fn open_review(game: Value, ply: usize, window: &mut Window, cx: &mut
         "black": if color == Color::Black { &account } else { &opponent },
         "player": game["color"],
     });
-    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
         analysis.open_game(&pgn, ply, Some(color), Some(origin.clone()), true, cx)
     });
 }

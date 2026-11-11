@@ -540,7 +540,7 @@ impl Mistakes {
                                 )
                             ))
                             .on_click(move |_, window, cx| {
-                                crate::shell::practise_game(
+                                crate::pages::analysis::practise_game(
                                     practised.clone(),
                                     all.clone(),
                                     window,

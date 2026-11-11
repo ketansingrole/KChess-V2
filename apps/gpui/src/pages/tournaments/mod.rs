@@ -572,7 +572,7 @@ impl TournamentsPage {
                     .and_then(|open| open.detail.as_ref())
                     .and_then(|detail| detail["me"]["gameId"].as_str().map(str::to_string));
                 if let Some(id) = game {
-                    crate::shell::open_online_game(&id, window, cx);
+                    crate::pages::online::open_game(&id, window, cx);
                 }
             }
             Action::Pause | Action::Withdraw => self.leave(window, cx),
@@ -753,6 +753,74 @@ impl Render for TournamentsPage {
                     .child(body),
             )
     }
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::ActionInfo;
+        let (id, label, glyph, keywords) = match self {
+            Action::Refresh => ("refresh", "Refresh", "refresh-cw", "reload schedule"),
+            Action::Create => ("create", "Create arena", "plus", "new tournament host"),
+            Action::Back => ("back", "All tournaments", "arrow-left", "schedule list"),
+            Action::Join => ("join", "Join", "log-in", "enter tournament"),
+            Action::Game => ("game", "Go to your game", "swords", "play pairing"),
+            Action::Pause => ("pause", "Pause", "pause", "leave arena"),
+            Action::Withdraw => ("withdraw", "Withdraw", "log-out", "leave tournament"),
+        };
+        ActionInfo::new(format!("tournaments:{id}"), label, glyph, keywords)
+    }
+}
+
+impl crate::pages::PageView for TournamentsPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Tournaments,
+        label: "Tournaments",
+        short: "Tournaments",
+        icon: "trophy",
+        group: Some(crate::pages::NavGroup::Lichess),
+        keywords: "",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        TournamentsPage::new(window, cx)
+    }
+
+    /// The open tournament refreshes only while Tournaments is shown.
+    fn shown(this: &Entity<Self>, again: bool, _window: &mut Window, cx: &mut App) {
+        if !again {
+            this.update(cx, |tournaments, cx| tournaments.shown(cx));
+        }
+    }
+
+    fn hidden(this: &Entity<Self>, _window: &mut Window, cx: &mut App) {
+        this.update(cx, |tournaments, _| tournaments.hidden());
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        TournamentsPage::actions(self, cx)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.run(action, window, cx));
+    }
+}
+
+/// A tournament's page, by its id.
+pub fn open_tournament(id: &str, window: &mut Window, cx: &mut App) {
+    let id = id.to_string();
+    crate::shell::show::<TournamentsPage>(window, cx, move |page, _, cx| {
+        page.show_known_event(&id, cx)
+    });
+}
+
+/// A tournament named by its system (`arena` or `swiss`) and id, as a pasted link names it.
+pub fn open_event(system: &'static str, id: &str, window: &mut Window, cx: &mut App) {
+    let id = id.to_string();
+    crate::shell::show::<TournamentsPage>(window, cx, move |page, _, cx| {
+        page.show_event(system, &id, cx)
+    });
 }
 
 #[cfg(test)]

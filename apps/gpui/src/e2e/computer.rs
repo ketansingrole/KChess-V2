@@ -19,11 +19,8 @@ fn computer(cx: &mut gpui_kit::TestAppContext) -> Harness {
 /// as last drawn, which can still show the game before.
 fn wait_playable(app: &mut Harness) {
     app.wait_for("the game to take moves", |_, cx| {
-        crate::shell::view_of::<crate::pages::computer::ComputerPage>(
-            crate::pages::Page::Computer,
-            cx,
-        )
-        .is_some_and(|page| page.read(cx).takes_moves())
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
+            .is_some_and(|page| page.read(cx).takes_moves())
     });
 }
 
@@ -220,7 +217,7 @@ fn quick_pick_shows_the_copy_and_new_keys(cx: &mut gpui_kit::TestAppContext) {
     let key = |id: &str| {
         keys.iter()
             .find(|(command, _)| command == id)
-            .map(|(_, keys)| *keys)
+            .map(|(_, keys)| keys.as_str())
     };
     let (copy, new) = if cfg!(target_os = "macos") {
         ("⌘ C", "⌘ N")
@@ -280,7 +277,7 @@ fn an_unfinished_game_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
 fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
     app.with_window(|window, cx| {
-        crate::shell::play_computer_from(
+        crate::pages::computer::play_from(
             crate::game::setup_from_fen("1rk4r/pppppppp/8/8/8/8/PPPPPPPP/1RK4R w HBhb - 0 1"),
             window,
             cx,
@@ -294,11 +291,8 @@ fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::Test
     app.press("enter");
     app.wait_for_moves(&["O-O-O"]);
     let variant = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::computer::ComputerPage>(
-            crate::pages::Page::Computer,
-            cx,
-        )
-        .map(|page| page.read(cx).setup_variant())
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
+            .map(|page| page.read(cx).setup_variant())
     });
     assert_eq!(variant.as_deref(), Some("chess960"));
 }
@@ -310,11 +304,8 @@ fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::Test
 fn no_move_is_taken_before_the_saved_game_is_restored(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
     app.cx.update(|cx| {
-        let page = crate::shell::view_of::<crate::pages::computer::ComputerPage>(
-            crate::pages::Page::Computer,
-            cx,
-        )
-        .expect("the page");
+        let page =
+            crate::shell::view::<crate::pages::computer::ComputerPage>(cx).expect("the page");
         page.update(cx, |page, cx| page.forget_loaded(cx));
     });
     app.click_square("e2", true);
@@ -375,11 +366,7 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
     app.click("start-game");
     app.wait_gone("start-game");
     let setup = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::computer::ComputerPage>(
-            crate::pages::Page::Computer,
-            cx,
-        )
-        .map(|page| {
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx).map(|page| {
             let page = page.read(cx);
             (page.setup_variant(), page.setup_fen())
         })
@@ -425,11 +412,8 @@ fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     app.wait_gone("start-game");
     let variant = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::computer::ComputerPage>(
-                crate::pages::Page::Computer,
-                cx,
-            )
-            .map(|page| page.read(cx).setup_variant())
+            crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
+                .map(|page| page.read(cx).setup_variant())
         })
     };
     // The first variant listed after standard chess and Chess960.
@@ -441,11 +425,8 @@ fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     // A Crazyhouse start (its FEN has pockets, which standard rules refuse) is searched in
     // Crazyhouse: the computer, White, moves.
     app.with_window(|window, cx| {
-        let page = crate::shell::view_of::<crate::pages::computer::ComputerPage>(
-            crate::pages::Page::Computer,
-            cx,
-        )
-        .expect("the page");
+        let page =
+            crate::shell::view::<crate::pages::computer::ComputerPage>(cx).expect("the page");
         page.update(cx, |page, cx| {
             page.start_from(
                 serde_json::json!({
@@ -487,13 +468,12 @@ fn undo_takes_back(cx: &mut gpui_kit::TestAppContext) {
 /// engine answers e4 alone: the player, Black to move, plays first so that answer is legal.)
 #[gpui_kit::test]
 fn a_low_clock_warns_before_it_runs_out(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::Page;
     use crate::pages::computer::ComputerPage;
     use crate::sound::{Played, Sound};
     let mut app = computer(cx);
     app.cx.update(|cx| cx.set_global(Played::default()));
     app.with_window(|window, cx| {
-        let page = crate::shell::view_of::<ComputerPage>(Page::Computer, cx).expect("the page");
+        let page = crate::shell::view::<ComputerPage>(cx).expect("the page");
         let setup = serde_json::json!({
             "variant": "standard",
             "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1",

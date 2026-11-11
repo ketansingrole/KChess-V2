@@ -1460,6 +1460,23 @@ impl Render for Repertoire {
     }
 }
 
+/// Practice → Repertoire on a study.
+pub(crate) fn train_study(id: String, window: &mut Window, cx: &mut App) {
+    crate::prefs::set(cx, STUDY, id);
+    super::open_tab(super::Tab::Openings, window, cx);
+}
+
+/// Practice → Repertoire on an opening.
+pub(crate) fn train_opening(
+    choice: &crate::pages::openings::OpeningChoice,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    crate::prefs::set(cx, OPENING_CHOICE, choice);
+    crate::prefs::set(cx, STUDY, "opening");
+    super::open_tab(super::Tab::Openings, window, cx);
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

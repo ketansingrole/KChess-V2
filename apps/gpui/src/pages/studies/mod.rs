@@ -385,13 +385,13 @@ impl StudiesPage {
 
     /// Show a study on the analysis board; never silently throw away an unsaved board.
     fn open(id: String, window: &mut Window, cx: &mut App) {
-        let shown = crate::shell::analysis_board(window, cx)
+        let shown = crate::pages::analysis::board(window, cx)
             .is_some_and(|analysis| analysis.read(cx).study_id() == id);
         if shown {
             crate::shell::open(Page::Analysis, window, cx);
             return;
         }
-        crate::shell::replace_analysis(window, cx, move |analysis, window, cx| {
+        crate::pages::analysis::replace(window, cx, move |analysis, window, cx| {
             match analysis.open_study(&id, None, cx) {
                 Ok(()) => true,
                 Err(cause) => {
@@ -405,7 +405,7 @@ impl StudiesPage {
     /// `New study`: an empty board, kept as a study at once.
     pub(crate) fn create(window: &mut Window, cx: &mut App) {
         let name = Self::library(cx).read(cx).fresh_name("Untitled study");
-        crate::shell::replace_analysis(window, cx, move |analysis, window, cx| {
+        crate::pages::analysis::replace(window, cx, move |analysis, window, cx| {
             analysis.load(None, cx);
             let saved = analysis.save_as_study(name.clone(), cx);
             window
@@ -428,9 +428,7 @@ impl StudiesPage {
 
     /// Practice → Repertoire on this study.
     fn drill(id: String, window: &mut Window, cx: &mut App) {
-        crate::prefs::set(cx, "kchess:repertoire-study", id);
-        crate::prefs::set(cx, "kchess:practice-tab", "openings");
-        crate::shell::open(Page::Practice, window, cx);
+        crate::pages::practice::repertoire::train_study(id, window, cx);
     }
 
     /// Send a command and show its answer; a failure is a notification.
@@ -588,7 +586,7 @@ impl StudiesPage {
         self.uploading = Some(id.clone());
         cx.notify();
         // The board's last edits first, when it shows this study.
-        let flushed = crate::shell::analysis_board(window, cx)
+        let flushed = crate::pages::analysis::board(window, cx)
             .map(|analysis| analysis.update(cx, |analysis, cx| analysis.flush_study(cx)));
         let core = cx.global::<AppCore>().clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -814,9 +812,7 @@ impl StudiesPage {
                             .icon(icon("cloud-upload"))
                             .disabled(busy)
                             .on_click(move |_, window, cx| {
-                                if let Some(page) =
-                                    crate::shell::view_of::<StudiesPage>(Page::Studies, cx)
-                                {
+                                if let Some(page) = crate::shell::view::<StudiesPage>(cx) {
                                     let id = upload.clone();
                                     page.update(cx, |page, cx| page.upload(id, true, window, cx));
                                 }
@@ -1500,4 +1496,70 @@ mod tests {
         );
         assert!(import_chapters("[Variant \"Chess960\"]\n[FEN \"bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w HFhf - 0 1\"]\n\n1. e4 *").is_ok());
     }
+}
+
+/// The Studies page's header actions.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Action {
+    New,
+    Import,
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::{ActionInfo, ActionRole};
+        match self {
+            Action::New => ActionInfo::new("studies:new", "New study", "plus", "create chapter")
+                .role(ActionRole::New),
+            Action::Import => ActionInfo::new(
+                "studies:import",
+                "Import PGN",
+                "import",
+                "paste games study",
+            ),
+        }
+    }
+}
+
+impl crate::pages::PageView for StudiesPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Studies,
+        label: "Studies",
+        short: "Studies",
+        icon: "library-big",
+        group: Some(crate::pages::NavGroup::Review),
+        keywords: "pgn chapters notes",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        StudiesPage::new(window, cx)
+    }
+
+    fn shown(this: &Entity<Self>, _again: bool, _window: &mut Window, cx: &mut App) {
+        this.update(cx, |studies, cx| studies.shown(cx));
+    }
+
+    fn search_fields(&self) -> Vec<Entity<InputState>> {
+        StudiesPage::search_fields(self)
+    }
+
+    fn actions(&self, _: &App) -> Vec<Action> {
+        vec![Action::New, Action::Import]
+    }
+
+    fn act(_this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        match action {
+            Action::New => StudiesPage::create(window, cx),
+            Action::Import => StudiesPage::open_import(window, cx),
+        }
+    }
+}
+
+/// Studies at its Lichess tab: the connected account's own studies.
+pub fn open_lichess(window: &mut Window, cx: &mut App) {
+    crate::shell::show::<StudiesPage>(window, cx, |studies, window, cx| {
+        studies.show_lichess(window, cx)
+    });
 }

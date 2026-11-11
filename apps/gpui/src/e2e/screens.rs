@@ -221,8 +221,7 @@ fn crazyhouse() {
         .expect("the window");
         settle(&mut cx, window);
         cx.update_window(window, |_, window, cx| {
-            let local = crate::shell::view_of::<crate::pages::local::LocalPage>(Page::Local, cx)
-                .expect("the page");
+            let local = crate::shell::view::<crate::pages::local::LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
                 let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
@@ -279,8 +278,7 @@ fn figurines() {
         .expect("the window");
         settle(&mut cx, window);
         cx.update_window(window, |_, window, cx| {
-            let local = crate::shell::view_of::<crate::pages::local::LocalPage>(Page::Local, cx)
-                .expect("the page");
+            let local = crate::shell::view::<crate::pages::local::LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 for uci in [
                     "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5c6", "d7c6", "e1g1", "f7f6",
@@ -331,8 +329,7 @@ fn computer_variant() {
         settle(&mut cx, window);
         cx.update_window(window, |_, window, cx| {
             let page =
-                crate::shell::view_of::<crate::pages::computer::ComputerPage>(Page::Computer, cx)
-                    .expect("the page");
+                crate::shell::view::<crate::pages::computer::ComputerPage>(cx).expect("the page");
             page.update(cx, |page, cx| {
                 let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
                 let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
@@ -500,7 +497,7 @@ fn players_search() {
                 if state == "player" {
                     connect_showcase(&mut cx, window, profile.path(), "Rattiestword5");
                     cx.update_window(window, |_, window, cx| {
-                        crate::shell::open_player("Rattiestword5", window, cx)
+                        crate::pages::players::open_player("Rattiestword5", window, cx)
                     })
                     .expect("the window");
                 }
@@ -541,10 +538,8 @@ fn lichess_history_search() {
                 connect_showcase(&mut cx, window, profile.path(), "Rattiestword5");
                 cx.update_window(window, |_, window, cx| {
                     crate::shell::open(Page::History, window, cx);
-                    if let Some(page) = crate::shell::view_of::<crate::pages::history::HistoryPage>(
-                        Page::History,
-                        cx,
-                    ) {
+                    if let Some(page) = crate::shell::view::<crate::pages::history::HistoryPage>(cx)
+                    {
                         page.update(cx, |page, cx| page.search_lichess(search, window, cx));
                     }
                 })
@@ -740,7 +735,7 @@ fn low_clock() {
         cx.update(|cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance));
         cx.update_window(window, |_, window, cx| {
             crate::shell::open(Page::Local, window, cx);
-            let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+            let local = crate::shell::view::<LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 let setup =
                     serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
@@ -782,7 +777,7 @@ fn over_the_board() {
         cx.update(|cx| crate::settings::change(cx, |s| s.frontend.appearance = Appearance::Dark));
         cx.update_window(window, |_, window, cx| {
             crate::shell::open(Page::Local, window, cx);
-            let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+            let local = crate::shell::view::<LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 let setup =
                     serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
@@ -832,7 +827,7 @@ fn import_dialog() {
         .expect("the window");
         settle(&mut cx, window);
         cx.update_window(window, |_, window, cx| {
-            let board = crate::shell::analysis_board(window, cx).expect("the analysis board");
+            let board = crate::pages::analysis::board(window, cx).expect("the analysis board");
             board.update(cx, |board, cx| board.open_import(window, cx));
         })
         .expect("the window");
@@ -999,7 +994,7 @@ fn content(out: &Path, appearance: Appearance) {
     shoot(&mut cx, "history", 1);
     let line = moves.clone();
     cx.update_window(window, move |_, window, cx| {
-        crate::shell::open_analysis_line(line, window, cx)
+        crate::pages::analysis::open_line(line, window, cx)
     })
     .expect("the window");
     shoot(&mut cx, "analysis-moves", 1);
@@ -1017,12 +1012,15 @@ fn content(out: &Path, appearance: Appearance) {
         open(&mut cx, page);
         shoot(&mut cx, name, 5);
     }
-    click(&mut cx, ("watch-tabs", 2usize).into());
+    click(
+        &mut cx,
+        super::tab("watch-tabs", crate::pages::watch::Tab::Broadcasts).into(),
+    );
     shoot(&mut cx, "watch-broadcasts", 5);
     open(&mut cx, Page::Players);
     shoot(&mut cx, "players-leaderboard", 4);
     cx.update_window(window, |_, window, cx| {
-        crate::shell::open_player("thibault", window, cx)
+        crate::pages::players::open_player("thibault", window, cx)
     })
     .expect("the window");
     shoot(&mut cx, "player", 6);
@@ -1071,8 +1069,8 @@ fn tabs(out: &Path, appearance: Appearance) {
             .save(out.join(format!("{name}.png")))
             .expect("the screenshot saves");
     };
-    for (page, label, _) in crate::shell::nav().iter() {
-        let (page, label) = (*page, *label);
+    for page in Page::in_sidebar() {
+        let label = page.info().label;
         cx.update_window(window, |_, window, cx| crate::shell::open(page, window, cx))
             .expect("the window");
         let name = slug(label);
@@ -1119,11 +1117,8 @@ fn capture(out: &Path, width: f32, height: f32, differ: &mut Vec<String>) {
     std::fs::create_dir_all(out).expect("the screenshot folder");
     let profile = tempfile::tempdir().expect("a temporary profile");
     let (mut cx, window) = start(profile.path(), width, height);
-    let mut pages: Vec<(Page, &str)> = crate::shell::nav()
-        .iter()
-        .map(|(page, label, _)| (*page, *label))
-        .collect();
-    pages.push((Page::Settings, "Settings"));
+    let pages: Vec<(Page, &'static str)> =
+        Page::all().map(|page| (page, page.info().label)).collect();
     for (page, label) in pages {
         cx.update_window(window, |_, window, cx| crate::shell::open(page, window, cx))
             .expect("the window");

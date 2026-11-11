@@ -975,7 +975,7 @@ impl PlayersPage {
         };
         match action {
             Action::Follow => follow(username, window, cx),
-            Action::Challenge => crate::shell::challenge(&username, window, cx),
+            Action::Challenge => crate::pages::online::challenge(&username, window, cx),
             Action::Message => self.open_message(window, cx),
             Action::Watch => {
                 let playing = self
@@ -983,7 +983,7 @@ impl PlayersPage {
                     .as_ref()
                     .and_then(|status| status["playingId"].as_str().map(str::to_string));
                 if let Some(id) = playing {
-                    crate::shell::watch_game(&id, window, cx);
+                    crate::pages::watch::watch_game(&id, window, cx);
                 }
             }
         }
@@ -1252,7 +1252,11 @@ impl PlayersPage {
                                         .icon(icon("swords"))
                                         .label("Challenge")
                                         .on_click(move |_, window, cx| {
-                                            crate::shell::challenge(&challenge_name, window, cx)
+                                            crate::pages::online::challenge(
+                                                &challenge_name,
+                                                window,
+                                                cx,
+                                            )
                                         }),
                                 )
                                 .child(
@@ -1273,7 +1277,7 @@ impl PlayersPage {
                                     .icon(icon("tv"))
                                     .label("Watch")
                                     .on_click(move |_, window, cx| {
-                                        crate::shell::watch_game(&id, window, cx)
+                                        crate::pages::watch::watch_game(&id, window, cx)
                                     })
                             }))
                             .children(self.relation.as_ref().map(|relation| {
@@ -1811,7 +1815,7 @@ pub fn open_fetched(
                     window.push_notification("The analysis board cannot open this game", cx)
                 }
                 Ok(pgn) => {
-                    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+                    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
                         analysis.open_game(&pgn, ply, orientation, origin.clone(), false, cx)
                     });
                 }
@@ -1865,7 +1869,7 @@ pub fn player_link(id: impl Into<ElementId>, name: String, ring: Hsla) -> Statef
         .on_click(move |_, window, cx| {
             // A name inside a clickable row opens the player, not the row.
             cx.stop_propagation();
-            crate::shell::open_player(&name, window, cx)
+            crate::pages::players::open_player(&name, window, cx)
         })
 }
 
@@ -2071,6 +2075,64 @@ impl Render for MessageDialog {
                     ),
             )
     }
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::ActionInfo;
+        match self {
+            Action::Follow => {
+                ActionInfo::new("players:follow", "Follow player", "user-plus", "friend add")
+            }
+            Action::Challenge => ActionInfo::new(
+                "players:challenge",
+                "Challenge",
+                "swords",
+                "play game invite",
+            ),
+            Action::Message => {
+                ActionInfo::new("players:message", "Message", "message-circle", "send write")
+            }
+            Action::Watch => ActionInfo::new("players:watch", "Watch", "tv", "spectate game"),
+        }
+    }
+}
+
+impl crate::pages::PageView for PlayersPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Players,
+        label: "Players",
+        short: "Players",
+        icon: "user-search",
+        group: Some(crate::pages::NavGroup::Lichess),
+        keywords: "lookup profile user",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        PlayersPage::new(window, cx)
+    }
+
+    fn search_fields(&self) -> Vec<Entity<InputState>> {
+        PlayersPage::search_fields(self)
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        PlayersPage::actions(self, cx)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.act(action, window, cx));
+    }
+}
+
+/// A player's profile on Players.
+pub fn open_player(username: &str, window: &mut Window, cx: &mut App) {
+    let username = username.to_string();
+    crate::shell::show::<PlayersPage>(window, cx, move |players, window, cx| {
+        players.show_player(&username, window, cx)
+    });
 }
 
 #[cfg(test)]

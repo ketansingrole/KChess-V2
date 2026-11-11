@@ -25,6 +25,7 @@ mod game_image;
 #[cfg(test)]
 mod gpui_patches;
 mod interface_zoom;
+mod links;
 mod log;
 mod menu;
 mod microphone;

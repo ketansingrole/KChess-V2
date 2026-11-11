@@ -456,7 +456,7 @@ fn a_seek_waits_for_the_check_for_a_game_in_progress(cx: &mut gpui_kit::TestAppC
     app.open("Play on Lichess");
     assert!(!app.shows("online-start"));
     // Quick pick's Play online, while Lichess has not answered.
-    app.with_window(|window, cx| crate::shell::play_online(10., 0., false, window, cx));
+    app.with_window(|window, cx| crate::pages::online::play(10., 0., false, window, cx));
     app.settle();
     assert_ne!(
         app.with_window(|_, cx| crate::online::handle(cx).read(cx).phase),
@@ -754,4 +754,18 @@ fn a_correspondence_move_is_played_from_its_notification(cx: &mut gpui_kit::Test
         writes(&lichess),
         ["POST /api/board/game/E2eCorr1/move/e2e4"]
     );
+}
+
+/// Zen mode reaches a Lichess game: Z and the Zen button hide the sidebar there, as on a game
+/// against the computer. Both lit up and left the sidebar in place.
+#[gpui_kit::test]
+fn zen_mode_hides_the_sidebar_in_a_lichess_game(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = in_a_game(cx);
+    app.find("sidebar");
+    app.press("z");
+    app.wait_gone("sidebar");
+    app.click("zen");
+    app.find("sidebar");
+    app.click("zen");
+    app.wait_gone("sidebar");
 }

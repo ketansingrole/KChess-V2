@@ -272,7 +272,7 @@ fn analysable(game: &Value) -> bool {
 /// Open the saved game on the analysis board.
 fn analyse(game: &Value, window: &mut Window, cx: &mut App) {
     let Some(pgn) = pgn(game) else { return };
-    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
         analysis.open_game(&pgn, 0, None, None, false, cx)
     });
 }
@@ -1540,6 +1540,124 @@ impl Render for HistoryPage {
             )
             .into_any_element()
     }
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::ActionInfo;
+        match self {
+            Action::AllGames => {
+                ActionInfo::new("history:all", "All games", "arrow-left", "back list")
+            }
+            Action::Export => {
+                ActionInfo::new("history:export", "Export PGN", "download", "save file")
+            }
+            Action::Analyse => ActionInfo::new(
+                "history:analyse",
+                "Open analysis",
+                "chart-line",
+                "analysis board",
+            ),
+            Action::Review => ActionInfo::new(
+                "history:review",
+                "Review",
+                "chart-line",
+                "analysis accuracy",
+            ),
+            Action::Sync => ActionInfo::new(
+                "history:sync",
+                "Sync games",
+                "refresh-cw",
+                "lichess download",
+            ),
+            Action::ClearFilters => {
+                ActionInfo::new("history:clear", "Clear filters", "x", "reset all")
+            }
+        }
+    }
+}
+
+impl crate::pages::PageView for HistoryPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: Page::History,
+        label: "Game history",
+        short: "Game history",
+        icon: "history",
+        group: Some(crate::pages::NavGroup::Review),
+        keywords: "past games archive",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        HistoryPage::new(window, cx)
+    }
+
+    fn can_step(&self, direction: crate::swipe::Direction, cx: &App) -> bool {
+        HistoryPage::can_step(self, direction, cx)
+    }
+
+    fn step(
+        &mut self,
+        direction: crate::swipe::Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        HistoryPage::step(self, direction, window, cx);
+    }
+
+    fn search_fields(&self) -> Vec<Entity<InputState>> {
+        HistoryPage::search_fields(self)
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        HistoryPage::actions(self, cx)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.act(action, window, cx));
+    }
+
+    fn places(_: &App) -> Vec<crate::pages::PageCommand> {
+        vec![crate::pages::PageCommand {
+            info: crate::pages::ActionInfo::new(
+                "history:lichess",
+                "Lichess games",
+                "history",
+                "synced online played",
+            ),
+            detail: Some(Self::INFO.label.into()),
+            run: std::rc::Rc::new(open_lichess),
+        }]
+    }
+}
+
+/// Game history's Lichess tab showing one account's games.
+pub fn open_account(account: &str, window: &mut Window, cx: &mut App) {
+    let account = account.to_string();
+    crate::shell::show::<HistoryPage>(window, cx, move |history, window, cx| {
+        history.show_lichess_account(account, window, cx)
+    });
+}
+
+/// Game history's Lichess tab.
+pub fn open_lichess(window: &mut Window, cx: &mut App) {
+    crate::shell::show::<HistoryPage>(window, cx, |history, _, cx| history.show_lichess(cx));
+}
+
+/// Open a synced Lichess game in Game history.
+pub fn open_lichess_game(game: Value, window: &mut Window, cx: &mut App) {
+    crate::shell::show::<HistoryPage>(window, cx, move |history, window, cx| {
+        history.show_lichess_game(game, window, cx)
+    });
+}
+
+/// Open a played game in Game history (Home's recent games).
+pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
+    let id = id.to_string();
+    crate::shell::show::<HistoryPage>(window, cx, move |history, window, cx| {
+        history.show_game(&id, window, cx)
+    });
 }
 
 #[cfg(test)]

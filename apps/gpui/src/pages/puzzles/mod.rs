@@ -33,10 +33,66 @@ mod rush;
 pub(crate) use rush::RushAction;
 mod stats;
 
+use crate::pages::{PageTab, TabInfo};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, Pill, Tone};
 
-const TAB: &str = "kchess:puzzle-tab";
+/// Puzzles' tabs, in order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tab {
+    Train,
+    Daily,
+    Rush,
+    Stats,
+    History,
+}
+
+impl PageTab for Tab {
+    const ALL: &'static [Tab] = &[Tab::Train, Tab::Daily, Tab::Rush, Tab::Stats, Tab::History];
+    const KEY: &'static str = "kchess:puzzle-tab";
+
+    fn info(self) -> TabInfo {
+        let (key, label, title, icon, keywords) = match self {
+            Tab::Train => (
+                "train",
+                "Train",
+                "Puzzle training",
+                "puzzle",
+                "tactics solve themes motifs mate patterns",
+            ),
+            Tab::Daily => ("daily", "Daily", "Daily puzzle", "calendar-days", "today"),
+            Tab::Rush => (
+                "rush",
+                "Storm · Streak · Rush",
+                "Puzzle Storm, Streak and Rush",
+                "zap",
+                "timed race survival",
+            ),
+            Tab::Stats => (
+                "stats",
+                "Lichess stats",
+                "Puzzle stats",
+                "chart-column",
+                "rating progress",
+            ),
+            Tab::History => (
+                "history",
+                "History",
+                "Puzzle history",
+                "history",
+                "solved attempts",
+            ),
+        };
+        TabInfo {
+            key,
+            label,
+            title,
+            icon,
+            keywords,
+        }
+    }
+}
+
 const MODE: &str = "kchess:puzzle-mode";
 const ANGLE: &str = "kchess:puzzle-angle";
 const DIFFICULTY: &str = "kchess:puzzle-difficulty";
@@ -633,7 +689,7 @@ impl PuzzlesPage {
 
     /// `retry`: play an earlier puzzle again on the Train tab (unrated, not counted).
     pub(crate) fn retry(&mut self, puzzle: Value, cx: &mut Context<Self>) {
-        crate::prefs::set(cx, TAB, "train");
+        Tab::Train.store(cx);
         let step = self.session.apply(
             "puzzleSessionRetry",
             json!({ "puzzle": puzzle, "selection": self.selection(cx) }),
@@ -645,7 +701,7 @@ impl PuzzlesPage {
 
     /// `startTheme('mix', 'offline')`: train any theme from the downloaded puzzles.
     fn use_downloaded(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        crate::prefs::set(cx, TAB, "train");
+        Tab::Train.store(cx);
         crate::prefs::set(cx, MODE, "offline");
         self.choose_angle("mix", window, cx);
     }
@@ -670,7 +726,7 @@ impl PuzzlesPage {
 
     /// Train a theme from another tab or a finished puzzle's themes: back on Train, with it chosen.
     pub(crate) fn train_theme(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        crate::prefs::set(cx, TAB, "train");
+        Tab::Train.store(cx);
         self.choose_angle(key, window, cx);
     }
 
@@ -698,7 +754,7 @@ impl PuzzlesPage {
             },
         );
         crate::prefs::set(cx, ANGLE, key);
-        crate::prefs::set(cx, TAB, "train");
+        Tab::Train.store(cx);
     }
 
     /// The opening chosen with [`Self::choose_opening`], on a page made before it.
@@ -721,7 +777,7 @@ impl PuzzlesPage {
 /// Train a theme on the Puzzles page, after the click that asked for it.
 fn train_theme(key: String, window: &mut Window, cx: &mut App) {
     window.defer(cx, move |window, cx| {
-        if let Some(page) = crate::shell::view_of::<PuzzlesPage>(crate::pages::Page::Puzzles, cx) {
+        if let Some(page) = crate::shell::view::<PuzzlesPage>(cx) {
             page.update(cx, |page, cx| page.train_theme(&key, window, cx));
         }
     });
@@ -980,7 +1036,12 @@ pub(crate) fn status_panel(
                         .label("Analyse")
                         .tooltip("Analysis board")
                         .on_click(move |_, window, cx| {
-                            crate::shell::analyse_puzzle(studied.clone(), wrong.clone(), window, cx)
+                            crate::pages::analysis::analyse_puzzle(
+                                studied.clone(),
+                                wrong.clone(),
+                                window,
+                                cx,
+                            )
                         })
                         .into_any_element()
                         .into(),
@@ -1376,7 +1437,7 @@ impl PuzzlesPage {
                                 PopupMenuItem::new("Analysis board")
                                     .icon(icon("microscope"))
                                     .on_click(move |_, window, cx| {
-                                        crate::shell::analyse_puzzle(
+                                        crate::pages::analysis::analyse_puzzle(
                                             studied.clone(),
                                             wrong.clone(),
                                             window,
@@ -1636,7 +1697,7 @@ impl PuzzlesPage {
     }
 
     fn shown_board(&self, cx: &App) -> Option<(Entity<PuzzleBoard>, bool)> {
-        match crate::prefs::get::<String>(cx, TAB, "train".into()).as_str() {
+        match Tab::stored(cx).info().key {
             "train" => (self.puzzle.read(cx).puzzle().is_some() && self.session.phase() == "ready")
                 .then(|| (self.puzzle.clone(), true)),
             "daily" => self
@@ -1657,7 +1718,7 @@ impl PuzzlesPage {
 
     /// The Storm · Streak · Rush view, while its tab is shown.
     fn shown_rush(&self, cx: &App) -> Option<Entity<rush::PuzzleRush>> {
-        (crate::prefs::get::<String>(cx, TAB, "train".into()) == "rush")
+        (Tab::stored(cx) == Tab::Rush)
             .then(|| self.rush.clone())
             .flatten()
     }
@@ -1727,7 +1788,7 @@ impl PuzzlesPage {
         };
         let wrong = board.wrong_moves().to_vec();
         window.defer(cx, move |window, cx| {
-            crate::shell::analyse_puzzle(puzzle, wrong, window, cx)
+            crate::pages::analysis::analyse_puzzle(puzzle, wrong, window, cx)
         });
     }
 
@@ -1778,7 +1839,7 @@ impl PuzzlesPage {
 
     /// Show a linked puzzle on the Daily tab's board.
     pub fn open_puzzle(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        crate::prefs::set(cx, TAB, "daily");
+        Tab::Daily.store(cx);
         self.daily_view(window, cx)
             .update(cx, |daily, cx| daily.open(id, cx));
         cx.notify();
@@ -1788,33 +1849,13 @@ impl PuzzlesPage {
 impl Render for PuzzlesPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let tab = crate::prefs::get::<String>(cx, TAB, "train".into());
-        let tabs = [
-            ("train", "Train"),
-            ("daily", "Daily"),
-            ("rush", "Storm · Streak · Rush"),
-            ("stats", "Lichess stats"),
-            ("history", "History"),
-        ];
+        let tab = Tab::stored(cx).info().key;
         let tab_row = widgets::pills(
             "puzzle-tabs",
-            tabs.iter()
-                .map(|(key, label)| Pill {
-                    icon: Some(match *key {
-                        "train" => icon("puzzle"),
-                        "daily" => icon("calendar-days"),
-                        "rush" => icon("zap"),
-                        "stats" => icon("chart-column"),
-                        _ => icon("history"),
-                    }),
-                    label: (*label).into(),
-                    badge: None,
-                    disabled: false,
-                })
-                .collect(),
-            tabs.iter().position(|(key, _)| *key == tab).unwrap_or(0),
+            Tab::pills(),
+            Tab::stored(cx).index(),
             move |index, window, cx| {
-                crate::prefs::set(cx, TAB, tabs[index].0);
+                Tab::ALL[index].store(cx);
                 window.refresh();
             },
             false,
@@ -1835,7 +1876,7 @@ impl Render for PuzzlesPage {
                         |this, _, event: &history::HistoryEvent, window, cx| match event {
                             history::HistoryEvent::Retry(puzzle) => this.retry(puzzle.clone(), cx),
                             history::HistoryEvent::Analyse(puzzle, wrong) => {
-                                crate::shell::analyse_puzzle(
+                                crate::pages::analysis::analyse_puzzle(
                                     puzzle.clone(),
                                     wrong.clone(),
                                     window,
@@ -1843,7 +1884,7 @@ impl Render for PuzzlesPage {
                                 )
                             }
                             history::HistoryEvent::Train => {
-                                crate::prefs::set(cx, TAB, "train");
+                                Tab::Train.store(cx);
                                 cx.notify();
                             }
                             history::HistoryEvent::Reconnect => {
@@ -1892,7 +1933,7 @@ impl Render for PuzzlesPage {
         {
             rush.update(cx, |rush, cx| rush.leave(cx));
         }
-        self.shown_tab = tab;
+        self.shown_tab = tab.to_string();
         v_flex()
             .size_full()
             .track_focus(&self.focus)
@@ -1967,4 +2008,104 @@ mod link_tests {
             assert_eq!(puzzle_link(text).as_deref(), id, "{text}");
         }
     }
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::{ActionInfo, ActionRole};
+        let (id, label, glyph, keywords) = match self {
+            Action::Hint => ("hint", "Hint", "lightbulb", "clue help"),
+            Action::Solution => ("solution", "Solution", "eye", "show answer give up"),
+            Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            Action::Analyse => (
+                "analyse",
+                "Analysis board",
+                "microscope",
+                "analyse study review",
+            ),
+            Action::Next => ("next", "Next puzzle", "arrow-right", "another skip"),
+            Action::Rush(action) => match action {
+                RushAction::Start => ("rush-start", "Start run", "play", "storm streak rush begin"),
+                RushAction::Skip => ("rush-skip", "Skip puzzle", "skip-forward", "pass"),
+                RushAction::End => ("rush-end", "End run", "flag", "stop finish quit"),
+                RushAction::Again => ("rush-again", "Play again", "rotate-ccw", "restart retry"),
+                RushAction::Back => ("rush-back", "Back to modes", "arrow-left", "menu"),
+            },
+        };
+        let info = ActionInfo::new(format!("puzzle:{id}"), label, glyph, keywords);
+        if *self == Action::Flip {
+            info.role(ActionRole::Flip)
+        } else {
+            info
+        }
+    }
+}
+
+impl crate::pages::PageView for PuzzlesPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Puzzles,
+        label: "Puzzles",
+        short: "Puzzles",
+        icon: "puzzle",
+        group: Some(crate::pages::NavGroup::Train),
+        keywords: "",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        PuzzlesPage::new(window, cx)
+    }
+
+    fn shown(this: &Entity<Self>, _again: bool, window: &mut Window, cx: &mut App) {
+        this.update(cx, |puzzles, cx| puzzles.shown(window, cx));
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        PuzzlesPage::actions(self, cx)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| match action {
+            Action::Analyse => page.analyse(window, cx),
+            action => page.act(action, cx),
+        });
+    }
+
+    fn places(_: &App) -> Vec<crate::pages::PageCommand> {
+        crate::pages::tab_places::<Self, Tab>("puzzles", |_, _, _, cx| cx.notify())
+    }
+}
+
+/// Open a Lichess puzzle by its id on Puzzles → Daily.
+/// A Lichess account was signed out: forget the account puzzles were trained on and, with no
+/// account left, the Lichess mode and tab too.
+pub fn signed_out(accounts_left: bool, cx: &mut App) {
+    crate::prefs::forget(cx, ACCOUNT);
+    if !accounts_left {
+        crate::prefs::forget(cx, MODE);
+        crate::prefs::forget(cx, Tab::KEY);
+    }
+}
+
+pub fn open_puzzle(id: String, window: &mut Window, cx: &mut App) {
+    crate::shell::show::<PuzzlesPage>(window, cx, move |puzzles, window, cx| {
+        puzzles.open_puzzle(id, window, cx)
+    });
+}
+
+/// Puzzles from one opening, by the key Lichess names its puzzles by.
+pub fn open_opening(name: &str, window: &mut Window, cx: &mut App) {
+    let Some(key) = crate::game::rules("openingKey", &[json!(name)])
+        .ok()
+        .and_then(|key| key.as_str().map(str::to_string))
+    else {
+        return;
+    };
+    PuzzlesPage::choose_opening(&key, name, cx);
+    // A page made now starts with the opening; one made before is told.
+    if let Some(puzzles) = crate::shell::view::<PuzzlesPage>(cx) {
+        puzzles.update(cx, |puzzles, cx| puzzles.opening_chosen(window, cx));
+    }
+    crate::shell::open(crate::pages::Page::Puzzles, window, cx);
 }

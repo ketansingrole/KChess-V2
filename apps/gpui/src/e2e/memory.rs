@@ -26,10 +26,9 @@ fn press(app: &mut Harness, n: usize) {
 
 /// The pictures of the turned faces as the page draws them now.
 fn faces(app: &mut Harness) -> Vec<std::sync::Arc<gpui_kit::RenderImage>> {
-    use crate::pages::Page;
     use crate::pages::local::LocalPage;
     app.with_window(|_, cx| {
-        crate::shell::view_of::<LocalPage>(Page::Local, cx)
+        crate::shell::view::<LocalPage>(cx)
             .expect("the page")
             .read(cx)
             .turned_faces()

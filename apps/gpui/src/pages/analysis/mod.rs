@@ -5,7 +5,9 @@
 mod edits;
 mod engine;
 mod import;
+mod load;
 mod notes;
+mod page;
 mod practice;
 mod review;
 mod study;
@@ -15,6 +17,7 @@ use engine::{prefs_lines, stop_analysis};
 use kchess_contracts::calls;
 use tree_view::{TreeView, flow};
 
+pub use load::{analyse_puzzle, board, new_board, open_line, practise_game, replace};
 pub use review::classification_look;
 
 use crate::voice::moves::{Access, Action, BoardBar, Reply, Turn, VoiceMoves, board_bar};
@@ -1603,20 +1606,25 @@ impl AnalysisPage {
                             PopupMenuItem::new("Edit this position")
                                 .icon(icon("pencil-ruler"))
                                 .on_click(leave(|setup, orientation, window, cx| {
-                                    crate::shell::edit_position(setup, orientation, window, cx)
+                                    crate::pages::editor::edit_position(
+                                        setup,
+                                        orientation,
+                                        window,
+                                        cx,
+                                    )
                                 })),
                         )
                         .item(
                             PopupMenuItem::new("Play Stockfish from here")
                                 .icon(icon("cpu"))
                                 .disabled(over)
-                                .on_click(play(crate::shell::play_computer_from)),
+                                .on_click(play(crate::pages::computer::play_from)),
                         )
                         .item(
                             PopupMenuItem::new("Play a friend from here")
                                 .icon(icon("users-round"))
                                 .disabled(over)
-                                .on_click(play(crate::shell::play_local_from)),
+                                .on_click(play(crate::pages::local::play_from)),
                         )
                         .separator()
                         .item(

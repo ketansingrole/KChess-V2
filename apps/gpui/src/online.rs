@@ -439,6 +439,18 @@ impl OnlineState {
     }
 
     /// `startOnline`: the form's game, or a rematch's options over it.
+    /// Seek a real-time game against anyone: this clock, rated or casual, either colour.
+    pub fn seek(&mut self, minutes: f64, increment: f64, rated: bool, cx: &mut Context<Self>) {
+        let form = &mut self.form;
+        form.minutes = minutes;
+        form.increment = increment;
+        form.rated = rated;
+        form.color = "random".into();
+        form.target.clear();
+        form.correspondence = false;
+        self.start(None, cx);
+    }
+
     pub fn start(&mut self, rematch: Option<Value>, cx: &mut Context<Self>) {
         let form = self.form.clone();
         let correspondence = match &rematch {

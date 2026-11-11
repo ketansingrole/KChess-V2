@@ -775,7 +775,7 @@ impl LocalPage {
         let Ok(Value::String(pgn)) = pgn else { return };
         let ply = self.shown_ply();
         let origin = json!({ "white": "White", "black": "Black" });
-        crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+        crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
             analysis.open_game(&pgn, ply, None, Some(origin.clone()), false, cx)
         });
     }
@@ -944,10 +944,6 @@ impl LocalPage {
             return;
         }
         let key = event.keystroke.key.as_str();
-        if self.mode(cx) != Mode::Clock && crate::shell::zen_key(key, cx) {
-            cx.stop_propagation();
-            return;
-        }
         if self.mode(cx) == Mode::Clock {
             match key {
                 "space" => {
@@ -2201,4 +2197,79 @@ fn clock_face(millis: f64) -> String {
         .ok()
         .and_then(|text| text.as_str().map(str::to_string))
         .unwrap_or_default()
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::{ActionInfo, ActionRole};
+        match self {
+            Action::TakeBack => ActionInfo::new("local:takeback", "Take back", "undo-2", "undo"),
+            Action::Pause => ActionInfo::new("local:pause", "Pause", "pause", "clock stop"),
+            Action::Resume => ActionInfo::new("local:resume", "Resume", "play", "clock continue"),
+            Action::Draw => ActionInfo::new("local:draw", "Draw", "handshake", "agree"),
+            Action::Resign => ActionInfo::new("local:resign", "Resign", "flag", "give up"),
+            Action::NewGame => ActionInfo::new("local:new-game", "New game", "plus", "restart")
+                .role(ActionRole::New),
+            Action::Flip => ActionInfo::new(
+                "local:flip",
+                "Flip board",
+                "refresh-cw",
+                "turn rotate orientation",
+            )
+            .role(ActionRole::Flip),
+            Action::CopyPgn => {
+                ActionInfo::new("local:copy-pgn", "Copy PGN", "copy", "game moves clipboard")
+                    .role(ActionRole::Copy)
+            }
+            Action::Analyse => {
+                ActionInfo::new("local:analyse", "Analyse", "microscope", "analysis review")
+            }
+        }
+    }
+}
+
+impl crate::pages::PageView for LocalPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Local,
+        label: "Over the board",
+        short: "Over the board",
+        icon: "swords",
+        group: Some(crate::pages::NavGroup::Play),
+        keywords: "otb friend two players pass and play clock",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        LocalPage::new(window, cx)
+    }
+
+    fn zen(&self, _: &App) -> bool {
+        true
+    }
+
+    /// The chess clock alone keeps its keys for the clock.
+    fn zen_key(&self, cx: &App) -> bool {
+        self.mode(cx) != Mode::Clock
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        LocalPage::actions(self, cx)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.act(action, window, cx));
+    }
+}
+
+/// A game over the board from a setup's position. A position that cannot be played only opens
+/// the page.
+pub fn play_from(setup: Value, window: &mut Window, cx: &mut App) {
+    if !crate::pages::computer::playable(&setup) {
+        crate::shell::open(crate::pages::Page::Local, window, cx);
+        return;
+    }
+    crate::shell::show::<LocalPage>(window, cx, move |page, window, cx| {
+        page.start_from(setup, window, cx)
+    });
 }

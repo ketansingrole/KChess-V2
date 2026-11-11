@@ -886,7 +886,9 @@ impl WatchPage {
                         .aria_label(name.clone())
                         .cursor_pointer()
                         .pressable_link()
-                        .on_click(move |_, window, cx| crate::shell::open_player(&link, window, cx))
+                        .on_click(move |_, window, cx| {
+                            crate::pages::players::open_player(&link, window, cx)
+                        })
                         .child(shown)
                         .into_any_element()
                 } else {
@@ -1051,7 +1053,7 @@ impl WatchPage {
                 let ply = self.live.shown_ply();
                 // Once this page is no longer being updated: leaving Watch tells it it is hidden.
                 window.defer(cx, move |window, cx| {
-                    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+                    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
                         analysis.open_game(
                             &pgn,
                             ply,

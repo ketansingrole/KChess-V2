@@ -497,7 +497,7 @@ impl OnlinePage {
                             })
                             .on_click(move |_, window, cx| {
                                 if !playable {
-                                    crate::shell::watch_game(&id, window, cx);
+                                    crate::pages::watch::watch_game(&id, window, cx);
                                     return;
                                 }
                                 if !open_now {

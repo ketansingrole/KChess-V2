@@ -331,12 +331,11 @@ fn deleting_a_game_asks_first_and_is_kept_after_a_restart(cx: &mut gpui_kit::Tes
 /// at, and opens on the analysis board in Crazyhouse.
 #[gpui_kit::test]
 fn a_crazyhouse_game_shows_its_pockets(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::Page;
     use crate::pages::local::LocalPage;
     let mut app = Harness::start(cx);
     app.open("Over the board");
     app.with_window(|window, cx| {
-        let local = crate::shell::view_of::<LocalPage>(Page::Local, cx).expect("the page");
+        let local = crate::shell::view::<LocalPage>(cx).expect("the page");
         local.update(cx, |local, cx| {
             let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
             let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
@@ -370,13 +369,13 @@ fn a_crazyhouse_game_shows_its_pockets(cx: &mut gpui_kit::TestAppContext) {
 /// for that variant's games alone.
 #[gpui_kit::test]
 fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::{Page, insights::InsightsPage};
+    use crate::pages::insights::InsightsPage;
     use gpui_kit::test::TestQueryExt as _;
     let (mut app, _lichess) = Harness::signed_in(cx, false);
     app.open("Insights");
     let page = |app: &mut Harness| {
         app.cx
-            .update(|cx| crate::shell::view_of::<InsightsPage>(Page::Insights, cx))
+            .update(|cx| crate::shell::view::<InsightsPage>(cx))
             .expect("the Insights page")
     };
     app.wait_for("the first report", |_, cx| page_loaded(cx));
@@ -404,8 +403,7 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
     );
 
     fn page_loaded(cx: &gpui_kit::App) -> bool {
-        crate::shell::view_of::<InsightsPage>(Page::Insights, cx)
-            .is_some_and(|page| page.read(cx).loaded())
+        crate::shell::view::<InsightsPage>(cx).is_some_and(|page| page.read(cx).loaded())
     }
 }
 
@@ -415,7 +413,7 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
 /// (`insights_show_time_use_once_games_have_clocks` timed out waiting for the first report).
 #[gpui_kit::test]
 fn insights_read_again_when_a_sync_ends(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::{Page, insights::InsightsPage};
+    use crate::pages::insights::InsightsPage;
     let mut app = Harness::start(cx);
     let lichess = app.connect_with("Showcase", false, |session| {
         session.showcase = true;
@@ -424,12 +422,11 @@ fn insights_read_again_when_a_sync_ends(cx: &mut gpui_kit::TestAppContext) {
     app.open("Insights");
     let page = |app: &mut Harness| {
         app.cx
-            .update(|cx| crate::shell::view_of::<InsightsPage>(Page::Insights, cx))
+            .update(|cx| crate::shell::view::<InsightsPage>(cx))
             .expect("the Insights page")
     };
     app.wait_for("the report before the games", |_, cx| {
-        crate::shell::view_of::<InsightsPage>(Page::Insights, cx)
-            .is_some_and(|page| page.read(cx).loaded())
+        crate::shell::view::<InsightsPage>(cx).is_some_and(|page| page.read(cx).loaded())
     });
     let insights = page(&mut app);
     assert!(
@@ -462,12 +459,12 @@ fn insights_read_again_when_a_sync_ends(cx: &mut gpui_kit::TestAppContext) {
 /// against the opponent's, blunders short of time and time by phase.
 #[gpui_kit::test]
 fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::{Page, insights::InsightsPage};
+    use crate::pages::insights::InsightsPage;
     use gpui_kit::test::TestWindowExt as _;
     let (mut app, _lichess) = Harness::signed_in_showcase(cx);
     app.open("Insights");
     app.wait_for("the first report", |_, cx| {
-        crate::shell::view_of::<InsightsPage>(Page::Insights, cx).is_some_and(|page| {
+        crate::shell::view::<InsightsPage>(cx).is_some_and(|page| {
             let page = page.read(cx);
             // A failed report is not asked for again: name it rather than wait out the timeout
             // (Windows CI once timed out here with no word of what the page held).
@@ -506,7 +503,7 @@ fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppConte
 
     let insights = app
         .cx
-        .update(|cx| crate::shell::view_of::<InsightsPage>(Page::Insights, cx))
+        .update(|cx| crate::shell::view::<InsightsPage>(cx))
         .expect("the Insights page");
     app.cx.update(|cx| {
         insights.update(cx, |page, cx| {
@@ -540,7 +537,7 @@ fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppConte
 /// The Lichess tab's games, once listed: the total and each game's opening.
 fn lichess_listed(app: &mut Harness, what: &str, ready: impl Fn(usize, &[String]) -> bool) {
     app.wait_for(what, |_, cx| {
-        crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+        crate::shell::view::<crate::pages::history::HistoryPage>(cx)
             .and_then(|page| page.read(cx).lichess_listed())
             .is_some_and(|(total, openings)| ready(total, &openings))
     });
@@ -614,22 +611,22 @@ fn a_lichess_game_steps_to_the_next_and_previous(cx: &mut gpui_kit::TestAppConte
     lichess_listed(&mut app, "the synced games", |total, _| total == 40);
     let open = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+            crate::shell::view::<crate::pages::history::HistoryPage>(cx)
                 .map(|page| page.read(cx).lichess_open())
                 .unwrap_or_default()
         })
     };
     let wait_open = |app: &mut Harness, row: usize| {
         app.wait_for("the game to open", |_, cx| {
-            crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
+            crate::shell::view::<crate::pages::history::HistoryPage>(cx)
                 .map(|page| page.read(cx).lichess_open())
                 .is_some_and(|(open, ids)| open.as_ref() == ids.get(row))
         });
     };
 
     app.with_window(|window, cx| {
-        let page = crate::shell::view_of::<crate::pages::history::HistoryPage>(Page::History, cx)
-            .expect("the history page");
+        let page =
+            crate::shell::view::<crate::pages::history::HistoryPage>(cx).expect("the history page");
         page.update(cx, |page, cx| page.open_first_lichess(window, cx));
     });
     wait_open(&mut app, 0);

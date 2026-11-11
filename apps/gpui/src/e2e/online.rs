@@ -101,7 +101,11 @@ fn watch_shows_its_feed_failing_and_the_following_and_broadcast_tabs(
     cx: &mut gpui_kit::TestAppContext,
 ) {
     let mut app = open(cx, "Watch", true);
-    assert_eq!(app.find(("watch-tabs", 0usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab("watch-tabs", crate::pages::watch::Tab::Tv))
+            .selected(),
+        Some(true)
+    );
     // Neither the channels nor the feed load: the page says so once, and can be asked again.
     assert!(app.enabled("watch-try-again"));
     assert!(!app.shows("watch-retry"));
@@ -109,19 +113,33 @@ fn watch_shows_its_feed_failing_and_the_following_and_broadcast_tabs(
     app.click("watch-try-again");
     app.find("watch-try-again");
 
-    app.click(("watch-tabs", 1usize));
-    assert_eq!(app.find(("watch-tabs", 1usize)).selected(), Some(true));
+    app.click(super::tab("watch-tabs", crate::pages::watch::Tab::Friends));
+    assert_eq!(
+        app.find(super::tab("watch-tabs", crate::pages::watch::Tab::Friends))
+            .selected(),
+        Some(true)
+    );
     assert!(app.enabled("watch-friends-refresh"));
     // Nobody is followed: the header says where to follow players, and nothing more.
     assert!(!app.shows("watch-friends-none"));
 
-    app.click(("watch-tabs", 2usize));
-    assert_eq!(app.find(("watch-tabs", 2usize)).selected(), Some(true));
+    app.click(super::tab(
+        "watch-tabs",
+        crate::pages::watch::Tab::Broadcasts,
+    ));
+    assert_eq!(
+        app.find(super::tab(
+            "watch-tabs",
+            crate::pages::watch::Tab::Broadcasts
+        ))
+        .selected(),
+        Some(true)
+    );
     assert!(app.enabled("broadcasts-retry"));
     // TV's failure stays on TV: Broadcasts says only its own.
     assert!(!app.shows("watch-error"));
 
-    app.click(("watch-tabs", 0usize));
+    app.click(super::tab("watch-tabs", crate::pages::watch::Tab::Tv));
     assert!(app.enabled("watch-try-again"));
 }
 
@@ -401,11 +419,8 @@ fn a_player_is_messaged_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     app.open("Players");
     app.find("players-lookup");
     app.cx.update(|cx| {
-        let page = crate::shell::view_of::<crate::pages::players::PlayersPage>(
-            crate::pages::Page::Players,
-            cx,
-        )
-        .expect("the Players page");
+        let page =
+            crate::shell::view::<crate::pages::players::PlayersPage>(cx).expect("the Players page");
         page.update(cx, |page, cx| {
             page.show_profile(
                 serde_json::json!({ "id": "rival", "username": "Rival", "count": { "all": 3 } }),
@@ -441,8 +456,12 @@ fn watch_says_when_no_followed_player_is_playing(cx: &mut gpui_kit::TestAppConte
     });
     // The follow's toasts are still up; they leave the page's tabs in reach.
     app.open("Watch");
-    app.click(("watch-tabs", 1usize));
-    assert_eq!(app.find(("watch-tabs", 1usize)).selected(), Some(true));
+    app.click(super::tab("watch-tabs", crate::pages::watch::Tab::Friends));
+    assert_eq!(
+        app.find(super::tab("watch-tabs", crate::pages::watch::Tab::Friends))
+            .selected(),
+        Some(true)
+    );
     app.find("watch-friends-none");
 }
 

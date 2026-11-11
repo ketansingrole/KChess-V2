@@ -9,7 +9,7 @@ use super::fake_lichess::ARENA;
 #[gpui_kit::test]
 fn return_in_the_entry_code_joins(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, lichess) = Harness::signed_in(cx, false);
-    app.with_window(|window, cx| crate::shell::open_tournament(ARENA, window, cx));
+    app.with_window(|window, cx| crate::pages::tournaments::open_tournament(ARENA, window, cx));
     app.wait_for("the arena's Join button", |window, _| {
         window
             .try_find("tournament-join")
@@ -35,7 +35,7 @@ fn return_in_the_entry_code_joins(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn escape_goes_back_to_all_tournaments(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
-    app.with_window(|window, cx| crate::shell::open_tournament(ARENA, window, cx));
+    app.with_window(|window, cx| crate::pages::tournaments::open_tournament(ARENA, window, cx));
     app.find("tournament-join");
     app.press("escape");
     app.wait_gone("tournament-join");
@@ -55,18 +55,19 @@ fn a_late_reply_for_another_tournament_is_not_shown(cx: &mut gpui_kit::TestAppCo
     app.online();
     let shown = |app: &mut Harness| {
         app.with_window(|_, cx| {
-            crate::shell::view_of::<crate::pages::tournaments::TournamentsPage>(
-                crate::pages::Page::Tournaments,
-                cx,
-            )
-            .and_then(|page| page.read(cx).shown_name())
+            crate::shell::view::<crate::pages::tournaments::TournamentsPage>(cx)
+                .and_then(|page| page.read(cx).shown_name())
         })
     };
-    app.with_window(|window, cx| crate::shell::open_tournament(HELD_ARENA, window, cx));
+    app.with_window(|window, cx| {
+        crate::pages::tournaments::open_tournament(HELD_ARENA, window, cx)
+    });
     app.wait_for("the first arena to be asked for", |_, _| {
         HELD_ARENA_ASKED.load(Ordering::SeqCst)
     });
-    app.with_window(|window, cx| crate::shell::open_tournament(HELD_ARENA_B, window, cx));
+    app.with_window(|window, cx| {
+        crate::pages::tournaments::open_tournament(HELD_ARENA_B, window, cx)
+    });
     // The first arena's details come while the second is open.
     HELD_ARENA_RELEASED.store(true, Ordering::SeqCst);
     app.wait_for("the second arena to be asked for", |_, _| {
@@ -85,12 +86,9 @@ fn a_late_reply_for_another_tournament_is_not_shown(cx: &mut gpui_kit::TestAppCo
         "the first arena shown as the second"
     );
     app.wait_for("the second arena's details", |_, cx| {
-        crate::shell::view_of::<crate::pages::tournaments::TournamentsPage>(
-            crate::pages::Page::Tournaments,
-            cx,
-        )
-        .and_then(|page| page.read(cx).shown_name())
-        .as_deref()
+        crate::shell::view::<crate::pages::tournaments::TournamentsPage>(cx)
+            .and_then(|page| page.read(cx).shown_name())
+            .as_deref()
             == Some("Second Arena")
     });
 }

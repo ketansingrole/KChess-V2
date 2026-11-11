@@ -548,7 +548,7 @@ impl ComputerPage {
             "black": black,
             "player": if color == Color::White { "white" } else { "black" },
         });
-        crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+        crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
             analysis.open_game(&pgn, ply, Some(color), Some(origin.clone()), true, cx)
         });
     }
@@ -1785,10 +1785,6 @@ impl Render for ComputerPage {
                 {
                     return;
                 }
-                if crate::shell::zen_key(&event.keystroke.key, cx) {
-                    cx.stop_propagation();
-                    return;
-                }
                 let moves = this.moves().len();
                 if let Some(ply) =
                     crate::game::view::navigate(event.keystroke.key.as_str(), this.ply(), moves)
@@ -1798,4 +1794,99 @@ impl Render for ComputerPage {
                 }
             }))
     }
+}
+
+impl crate::pages::PageAction for Action {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::{ActionInfo, ActionRole};
+        match self {
+            Action::TakeBack => ActionInfo::new("computer:takeback", "Take back", "undo-2", "undo"),
+            Action::Resign => ActionInfo::new("computer:resign", "Resign", "flag", "give up"),
+            Action::NewGame => {
+                ActionInfo::new("computer:new-game", "New game", "rotate-ccw", "restart")
+                    .role(ActionRole::New)
+            }
+            Action::SwitchSides => ActionInfo::new(
+                "computer:switch-sides",
+                "Switch sides",
+                "repeat",
+                "colour color",
+            ),
+            Action::CopyPgn => ActionInfo::new(
+                "computer:copy-pgn",
+                "Copy PGN",
+                "copy",
+                "game moves clipboard",
+            )
+            .role(ActionRole::Copy),
+            Action::Review => ActionInfo::new(
+                "computer:review",
+                "Review game",
+                "microscope",
+                "analyse analysis",
+            ),
+        }
+    }
+}
+
+impl crate::pages::PageView for ComputerPage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: crate::pages::Page::Computer,
+        label: "Play with computer",
+        short: "Computer",
+        icon: "bot",
+        group: Some(crate::pages::NavGroup::Play),
+        keywords: "stockfish bot ai engine vs",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        ComputerPage::new(window, cx)
+    }
+
+    fn zen(&self, _: &App) -> bool {
+        true
+    }
+
+    fn actions(&self, _: &App) -> Vec<Action> {
+        ComputerPage::actions(self)
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        this.update(cx, |page, cx| page.act(action, window, cx));
+    }
+}
+
+/// Whether a game can start from `setup` (`{ variant, fen }`): a standard position the engine
+/// takes (not one with too many pieces), or a legal one in its variant.
+pub(crate) fn playable(setup: &Value) -> bool {
+    let variant = setup["variant"].as_str().unwrap_or("standard");
+    let fen = setup["fen"].as_str().unwrap_or_default();
+    if crate::game::standard_rules(variant) {
+        crate::game::position_problem(fen).is_none()
+    } else {
+        kchess_domain::rules::setup_start(variant, fen).is_some()
+    }
+}
+
+/// Play Stockfish at a level and side, from Quick Pick.
+pub fn play_level(level: &str, color: &'static str, window: &mut Window, cx: &mut App) {
+    let level = level.to_string();
+    crate::shell::show::<ComputerPage>(window, cx, move |page, window, cx| {
+        page.play_level(&level, color, window, cx)
+    });
+}
+
+/// Play Stockfish (Fairy-Stockfish in another variant) from a setup's position, as the side to
+/// move. A position that cannot be played only opens the page.
+pub fn play_from(setup: Value, window: &mut Window, cx: &mut App) {
+    let color = crate::links::side_to_move(setup["fen"].as_str().unwrap_or_default());
+    if !playable(&setup) {
+        crate::shell::open(crate::pages::Page::Computer, window, cx);
+        return;
+    }
+    crate::shell::show::<ComputerPage>(window, cx, move |page, window, cx| {
+        page.start_from(setup, color, window, cx)
+    });
 }

@@ -9,10 +9,13 @@ fn practice(cx: &mut gpui_kit::TestAppContext) -> Harness {
     app
 }
 
-/// Open a tab of the page ("Knight paths" is 2).
-fn tab(app: &mut Harness, index: usize) {
-    app.click(("practice-tabs", index));
-    assert_eq!(app.find(("practice-tabs", index)).selected(), Some(true));
+/// Open a tab of the page.
+fn tab(app: &mut Harness, tab: crate::pages::practice::Tab) {
+    app.click(super::tab("practice-tabs", tab));
+    assert_eq!(
+        app.find(super::tab("practice-tabs", tab)).selected(),
+        Some(true)
+    );
 }
 
 fn page(app: &mut Harness) -> Option<Page> {
@@ -53,17 +56,24 @@ fn is_light(square: &str) -> bool {
 #[gpui_kit::test]
 fn every_trainer_opens_without_an_account(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    assert_eq!(app.find(("practice-tabs", 0usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab(
+            "practice-tabs",
+            crate::pages::practice::Tab::Coordinates
+        ))
+        .selected(),
+        Some(true)
+    );
     app.find("coordinates-start");
-    tab(&mut app, 1);
+    tab(&mut app, crate::pages::practice::Tab::Colors);
     app.find("square-colors-start");
-    tab(&mut app, 2);
+    tab(&mut app, crate::pages::practice::Tab::Knight);
     app.find("knight-start");
-    tab(&mut app, 3);
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
     app.find("card-checkmate-patterns-1");
-    tab(&mut app, 4);
+    tab(&mut app, crate::pages::practice::Tab::Openings);
     app.find("open-studies");
-    tab(&mut app, 5);
+    tab(&mut app, crate::pages::practice::Tab::Mistakes);
     app.find("review-a-game");
 }
 
@@ -101,7 +111,7 @@ fn a_coordinates_run_keeps_one_flash_timer(cx: &mut gpui_kit::TestAppContext) {
         app.click_square(wrong, true);
     }
     let timers = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
             .and_then(|page| page.read(cx).coordinates())
             .expect("the coordinates drill")
             .read(cx)
@@ -134,7 +144,7 @@ fn a_coordinates_run_can_be_limited_to_some_files_and_ranks(cx: &mut gpui_kit::T
 #[gpui_kit::test]
 fn the_square_colour_drill_scores_keys_and_buttons(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    tab(&mut app, 1);
+    tab(&mut app, crate::pages::practice::Tab::Colors);
     app.click("square-colors-start");
     assert_eq!(app.find("square-score").label(), Some("0 correct"));
 
@@ -165,7 +175,7 @@ fn the_square_colour_drill_scores_keys_and_buttons(cx: &mut gpui_kit::TestAppCon
 #[gpui_kit::test]
 fn a_knight_run_asks_for_a_path_and_a_skip_shows_the_shortest(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    tab(&mut app, 2);
+    tab(&mut app, crate::pages::practice::Tab::Knight);
     app.click("knight-start");
     let target = app.find("knight-target").label().unwrap().to_string();
     assert!(target.starts_with("Reach "), "{target:?}");
@@ -183,7 +193,7 @@ fn a_knight_run_asks_for_a_path_and_a_skip_shows_the_shortest(cx: &mut gpui_kit:
 #[gpui_kit::test]
 fn endgame_drills_open_and_return_to_the_courses(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    tab(&mut app, 3);
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
     reveal(&mut app, "endgame-courses", "card-drills");
     app.click("card-drills");
     app.find("chess-board");
@@ -198,13 +208,13 @@ fn endgame_drills_open_and_return_to_the_courses(cx: &mut gpui_kit::TestAppConte
 #[gpui_kit::test]
 fn f_flips_an_endgame_drill(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    tab(&mut app, 3);
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
     reveal(&mut app, "endgame-courses", "card-drills");
     app.click("card-drills");
     app.find("drill-hint");
     let flipped = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+            crate::shell::view::<crate::pages::practice::PracticePage>(cx)
                 .and_then(|page| page.read(cx).drills(cx))
                 .map(|drills| drills.read(cx).flipped())
         })
@@ -220,13 +230,14 @@ fn f_flips_an_endgame_drill(cx: &mut gpui_kit::TestAppContext) {
 fn an_endgame_drill_is_flipped_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     let mut app = practice(cx);
-    tab(&mut app, 3);
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
     reveal(&mut app, "endgame-courses", "card-drills");
     app.click("card-drills");
     app.find("drill-hint");
     app.press("secondary-k");
     app.type_text(">");
-    super::palette::wait_for_first(&mut app, "Hint");
+    // Zen mode leads, as on every page it applies to.
+    super::palette::wait_for_first(&mut app, "Zen mode");
     let listed: Vec<String> = app.with_window(|window, _| {
         (0..6usize)
             .filter_map(|index| window.try_find(("palette-item", index)))
@@ -234,13 +245,13 @@ fn an_endgame_drill_is_flipped_from_quick_pick(cx: &mut gpui_kit::TestAppContext
             .collect()
     });
     // Nothing was played, so there is nothing to take back.
-    assert_eq!(&listed[..3], ["Hint", "Flip board", "Restart"]);
+    assert_eq!(&listed[1..4], ["Hint", "Flip board", "Restart"]);
     app.type_text("Flip board");
     super::palette::wait_for_first(&mut app, "Flip board");
     app.press("enter");
     super::palette::wait_until_closed(&mut app);
     let flipped = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
             .and_then(|page| page.read(cx).drills(cx))
             .map(|drills| drills.read(cx).flipped())
     });
@@ -252,7 +263,7 @@ fn a_checkmate_lesson_takes_back_a_wrong_move_and_accepts_the_mate(
     cx: &mut gpui_kit::TestAppContext,
 ) {
     let mut app = practice(cx);
-    tab(&mut app, 3);
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
     app.click("card-checkmate-patterns-2");
     app.click("training-cp2-balestra");
     app.click("lesson-next");
@@ -270,7 +281,7 @@ fn a_checkmate_lesson_takes_back_a_wrong_move_and_accepts_the_mate(
 #[gpui_kit::test]
 fn a_lesson_is_stepped_through_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    tab(&mut app, 3);
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
     app.click("card-checkmate-patterns-2");
     app.click("training-cp2-balestra");
     app.find("lesson-next");
@@ -292,13 +303,13 @@ fn a_lesson_is_stepped_through_from_quick_pick(cx: &mut gpui_kit::TestAppContext
 #[gpui_kit::test]
 fn an_empty_repertoire_and_empty_mistakes_lead_elsewhere(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    tab(&mut app, 4);
+    tab(&mut app, crate::pages::practice::Tab::Openings);
     assert!(app.enabled("browse-openings"));
     app.click("open-studies");
     assert_eq!(page(&mut app), Some(Page::Studies));
 
     app.open("Practice");
-    tab(&mut app, 5);
+    tab(&mut app, crate::pages::practice::Tab::Mistakes);
     assert!(!app.shows("practice-due"));
     app.click("review-a-game");
     assert_eq!(page(&mut app), Some(Page::History));
@@ -309,10 +320,10 @@ fn an_empty_repertoire_and_empty_mistakes_lead_elsewhere(cx: &mut gpui_kit::Test
 #[gpui_kit::test]
 fn a_crazyhouse_mistake_is_solved_with_a_drop(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    tab(&mut app, 5);
+    tab(&mut app, crate::pages::practice::Tab::Mistakes);
     app.find("review-a-game");
     let mistakes = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
             .and_then(|page| page.read(cx).mistakes())
             .expect("the mistakes trainer")
     });
@@ -348,13 +359,12 @@ fn a_crazyhouse_mistake_is_solved_with_a_drop(cx: &mut gpui_kit::TestAppContext)
 fn a_mistake_is_practised_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     let mut app = practice(cx);
-    tab(&mut app, 5);
+    tab(&mut app, crate::pages::practice::Tab::Mistakes);
     app.find("review-a-game");
     app.cx.update(|cx| {
-        let mistakes =
-            crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
-                .and_then(|page| page.read(cx).mistakes())
-                .expect("the mistakes trainer");
+        let mistakes = crate::shell::view::<crate::pages::practice::PracticePage>(cx)
+            .and_then(|page| page.read(cx).mistakes())
+            .expect("the mistakes trainer");
         mistakes.update(cx, |mistakes, cx| {
             mistakes.seed(
                 vec![serde_json::json!({
@@ -401,10 +411,10 @@ fn a_mistake_is_practised_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn a_solved_mistake_is_stepped_through_and_turned(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    tab(&mut app, 5);
+    tab(&mut app, crate::pages::practice::Tab::Mistakes);
     app.find("review-a-game");
     let mistakes = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
             .and_then(|page| page.read(cx).mistakes())
             .expect("the mistakes trainer")
     });
@@ -445,10 +455,10 @@ fn a_solved_mistake_is_stepped_through_and_turned(cx: &mut gpui_kit::TestAppCont
 #[gpui_kit::test]
 fn return_goes_on_to_the_next_due_mistake(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    tab(&mut app, 5);
+    tab(&mut app, crate::pages::practice::Tab::Mistakes);
     app.find("review-a-game");
     let mistakes = app.cx.update(|cx| {
-        crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
+        crate::shell::view::<crate::pages::practice::PracticePage>(cx)
             .and_then(|page| page.read(cx).mistakes())
             .expect("the mistakes trainer")
     });
@@ -501,7 +511,7 @@ fn return_goes_on_to_the_next_due_mistake(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn return_goes_on_through_a_lesson(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    tab(&mut app, 3);
+    tab(&mut app, crate::pages::practice::Tab::Endgames);
     app.click("card-checkmate-patterns-2");
     app.click("training-cp2-balestra");
     app.find("lesson-next");
@@ -529,7 +539,7 @@ fn return_goes_on_through_a_lesson(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn a_pasted_game_is_guessed_through_and_scored(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    tab(&mut app, 6);
+    tab(&mut app, crate::pages::practice::Tab::Guess);
     assert!(!app.enabled("guess-start"));
     app.click_label("Game PGN");
     app.type_text("[White \"Morphy\"]\n[Black \"Duke\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *");
@@ -568,9 +578,21 @@ fn a_pasted_game_is_guessed_through_and_scored(cx: &mut gpui_kit::TestAppContext
 fn a_game_opened_for_guessing_starts_as_its_side(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
     app.with_window(|window, cx| {
-        crate::shell::guess_moves("1. d4 d5 2. c4 *", Some(shakmaty::Color::Black), window, cx)
+        crate::pages::practice::guess_moves(
+            "1. d4 d5 2. c4 *",
+            Some(shakmaty::Color::Black),
+            window,
+            cx,
+        )
     });
-    assert_eq!(app.find(("practice-tabs", 6usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab(
+            "practice-tabs",
+            crate::pages::practice::Tab::Guess
+        ))
+        .selected(),
+        Some(true)
+    );
     // White's first move is played for Black to answer.
     app.wait_for_moves(&["d4"]);
     app.drag_square("d7", "d5", false);
@@ -592,12 +614,10 @@ fn a_game_opened_for_guessing_starts_as_its_side(cx: &mut gpui_kit::TestAppConte
 #[gpui_kit::test]
 fn a_guess_before_the_engine_answers_waits_for_it(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    tab(&mut app, 6);
+    tab(&mut app, crate::pages::practice::Tab::Guess);
     let guess = app
         .cx
-        .update(|cx| {
-            crate::shell::view_of::<crate::pages::practice::PracticePage>(Page::Practice, cx)
-        })
+        .update(|cx| crate::shell::view::<crate::pages::practice::PracticePage>(cx))
         .and_then(|practice| app.cx.update(|cx| practice.read(cx).guess()))
         .expect("the Guess the move tab");
     app.wait_for("the engine's status", |_, cx| {
@@ -607,7 +627,12 @@ fn a_guess_before_the_engine_answers_waits_for_it(cx: &mut gpui_kit::TestAppCont
     app.cx
         .update(|cx| guess.update(cx, |guess, _| guess.engine_status_known(true)));
     app.with_window(|window, cx| {
-        crate::shell::guess_moves("1. d4 d5 2. c4 *", Some(shakmaty::Color::Black), window, cx)
+        crate::pages::practice::guess_moves(
+            "1. d4 d5 2. c4 *",
+            Some(shakmaty::Color::Black),
+            window,
+            cx,
+        )
     });
     app.wait_for_moves(&["d4"]);
     app.drag_square("d7", "d5", false);
@@ -627,7 +652,7 @@ fn the_square_colors_card_is_a_panels_width(cx: &mut gpui_kit::TestAppContext) {
         app.window,
         gpui_kit::size(gpui_kit::px(width), gpui_kit::px(height)),
     );
-    tab(&mut app, 1);
+    tab(&mut app, crate::pages::practice::Tab::Colors);
     let card = app.find("square-colors-card").bounds();
     assert!(
         card.size.width <= crate::play_layout::PANEL_MAX,
@@ -641,7 +666,7 @@ fn the_square_colors_card_is_a_panels_width(cx: &mut gpui_kit::TestAppContext) {
 #[gpui_kit::test]
 fn a_famous_game_is_guessed_as_its_winner(cx: &mut gpui_kit::TestAppContext) {
     let mut app = practice(cx);
-    tab(&mut app, 6);
+    tab(&mut app, crate::pages::practice::Tab::Guess);
     app.click(("guess-classic", 5usize));
     app.wait_for_moves(&["Nf3"]);
     assert_eq!(app.find(("guess-side", 1usize)).selected(), Some(true));
@@ -652,7 +677,7 @@ fn a_famous_game_is_guessed_as_its_winner(cx: &mut gpui_kit::TestAppContext) {
 fn a_players_game_is_found_and_guessed_as_them(cx: &mut gpui_kit::TestAppContext) {
     let (mut app, _session) = Harness::signed_in_showcase(cx);
     app.with_window(|window, cx| crate::shell::open(Page::Practice, window, cx));
-    tab(&mut app, 6);
+    tab(&mut app, crate::pages::practice::Tab::Guess);
     app.click_label("Lichess username");
     app.type_text("Showcase");
     app.click("guess-player-games");
@@ -669,4 +694,22 @@ fn a_players_game_is_found_and_guessed_as_them(cx: &mut gpui_kit::TestAppContext
         crate::prefs::get::<Vec<String>>(cx, crate::pages::players::RECENT_KEY, Vec::new())
     });
     assert_eq!(recent.first().map(String::as_str), Some("Showcase"));
+}
+
+/// Zen mode reaches the trainers that show it: the Zen button and Z hide the sidebar on Knight
+/// paths, where both lit up and left it in place. A page without a zen layout keeps its sidebar.
+#[gpui_kit::test]
+fn zen_mode_hides_the_sidebar_in_a_trainer(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = practice(cx);
+    tab(&mut app, crate::pages::practice::Tab::Knight);
+    app.click("knight-start");
+    app.find("sidebar");
+    app.press("z");
+    app.wait_gone("sidebar");
+    app.press("z");
+    app.find("sidebar");
+    app.click("zen");
+    app.wait_gone("sidebar");
+    app.with_window(|window, cx| crate::shell::open(Page::Dashboard, window, cx));
+    app.find("sidebar");
 }

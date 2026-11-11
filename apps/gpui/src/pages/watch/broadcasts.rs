@@ -1293,7 +1293,7 @@ fn analyse_board(
     window: &mut Window,
     cx: &mut App,
 ) {
-    crate::shell::replace_analysis(window, cx, move |analysis, _, cx| {
+    crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
         analysis.open_game(
             &pgn,
             ply,

@@ -534,7 +534,7 @@ impl PositionExplorer {
                     "black": game["black"],
                     "gameId": (!masters).then_some(id),
                 });
-                crate::shell::replace_analysis(window, cx, move |analysis, window, cx| {
+                crate::pages::analysis::replace(window, cx, move |analysis, window, cx| {
                     let opened = analysis.open_game(&pgn, 0, None, Some(origin.clone()), false, cx);
                     if !opened {
                         window.push_notification(
@@ -564,7 +564,7 @@ impl PositionExplorer {
         cx.spawn_in(window, async move |_, cx| {
             let outcome = call.await;
             let _ = cx.update(|window, cx| match outcome {
-                Ok(pgn) => crate::shell::guess_moves(
+                Ok(pgn) => crate::pages::practice::guess_moves(
                     pgn.as_str().unwrap_or_default(),
                     Some(side),
                     window,

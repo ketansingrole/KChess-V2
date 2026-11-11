@@ -232,10 +232,21 @@ impl OnlinePage {
         crate::online::handle(cx).update(cx, |online, cx| online.refresh_ongoing(cx));
     }
 
-    /// Challenge a player casually (`challengeFriend`).
+    /// Challenge a player casually.
     pub fn challenge(&mut self, username: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.challenge_rated(username, false, window, cx);
+    }
+
+    /// Challenge a player, rated or casual.
+    pub fn challenge_rated(
+        &mut self,
+        username: &str,
+        rated: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         crate::online::handle(cx).update(cx, |online, cx| {
-            online.form.rated = false;
+            online.form.rated = rated;
             cx.notify();
         });
         self.challenge_keeping_rated(username, window, cx);
@@ -860,6 +871,131 @@ impl Render for OnlinePage {
             )
             .into_any_element()
     }
+}
+
+impl crate::pages::PageAction for game::LiveAction {
+    fn info(&self) -> crate::pages::ActionInfo {
+        use crate::pages::{ActionInfo, ActionRole};
+        use game::LiveAction;
+        let (id, label, glyph, keywords) = match self {
+            LiveAction::Berserk => ("berserk", "Berserk", "flame", "arena half time"),
+            LiveAction::Takeback => ("takeback", "Takeback", "undo-2", "undo take back"),
+            LiveAction::OfferDraw => ("draw", "Offer draw", "handshake", "agree"),
+            LiveAction::Resign => ("resign", "Resign", "flag", "give up"),
+            LiveAction::Abort => ("abort", "Abort", "ban", "cancel"),
+            LiveAction::Rematch => ("rematch", "Rematch", "repeat", "again"),
+            LiveAction::NewOpponent => (
+                "new-opponent",
+                "New opponent",
+                "users",
+                "seek again same time control",
+            ),
+            LiveAction::Analyse => ("analyse", "Analyse", "microscope", "analysis review"),
+            LiveAction::NewGame => ("new-game", "New game", "plus", "another seek"),
+            LiveAction::CancelSeek => ("cancel-seek", "Cancel seek", "x", "stop waiting"),
+            LiveAction::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+        };
+        let info = ActionInfo::new(format!("online:{id}"), label, glyph, keywords);
+        match self {
+            LiveAction::Flip => info.role(ActionRole::Flip),
+            LiveAction::NewGame => info.role(ActionRole::New),
+            _ => info,
+        }
+    }
+}
+
+/// The page shows a game: one being played, or just over, with an account to play it.
+fn shows_game(cx: &App) -> bool {
+    let online = crate::online::handle(cx).read(cx);
+    matches!(
+        online.phase,
+        Phase::Playing | Phase::Finished | Phase::Disconnected
+    ) && !crate::accounts::handle(cx).read(cx).connected().is_empty()
+}
+
+impl crate::pages::PageView for OnlinePage {
+    const INFO: crate::pages::PageInfo = crate::pages::PageInfo {
+        page: Page::Online,
+        label: "Play on Lichess",
+        short: "Play",
+        icon: "globe-2",
+        group: Some(crate::pages::NavGroup::Lichess),
+        keywords: "lichess seek pairing",
+    };
+
+    type Action = game::LiveAction;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        OnlinePage::new(window, cx)
+    }
+
+    fn shown(this: &Entity<Self>, again: bool, _window: &mut Window, cx: &mut App) {
+        if !again {
+            this.update(cx, |online, cx| online.shown(cx));
+        }
+    }
+
+    /// Zen mode leaves the game and its panel, as on the other game pages.
+    fn zen(&self, cx: &App) -> bool {
+        shows_game(cx)
+    }
+
+    /// The live game's actions, as its buttons offer them.
+    fn actions(&self, cx: &App) -> Vec<game::LiveAction> {
+        game::live_actions(crate::online::handle(cx).read(cx))
+    }
+
+    fn act(_this: &Entity<Self>, action: game::LiveAction, window: &mut Window, cx: &mut App) {
+        game::run_live_action(action, window, cx);
+    }
+}
+
+/// A live Lichess game of the account's on Play on Lichess.
+pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
+    let online = crate::online::handle(cx);
+    let (shown, account) = {
+        let online = online.read(cx);
+        (
+            online.id() == id && online.phase == Phase::Playing,
+            crate::accounts::handle(cx)
+                .read(cx)
+                .active(cx)
+                .unwrap_or_default(),
+        )
+    };
+    // The game already on the board needs no new stream.
+    if !shown {
+        let id = id.to_string();
+        online.update(cx, |online, cx| online.open(&account, &id, cx));
+    }
+    crate::shell::open(Page::Online, window, cx);
+}
+
+/// Look for a real-time game on Lichess, from Quick Pick.
+pub fn play(minutes: f64, increment: f64, rated: bool, window: &mut Window, cx: &mut App) {
+    crate::shell::open(Page::Online, window, cx);
+    let online = crate::online::handle(cx);
+    if online.read(cx).busy_with_game() {
+        crate::online::notice(cx, "Finish or cancel your game before starting another");
+        return;
+    }
+    online.update(cx, |online, cx| online.seek(minutes, increment, rated, cx));
+}
+
+/// Challenge a player to a casual game on Lichess.
+pub fn challenge(username: &str, window: &mut Window, cx: &mut App) {
+    let username = username.to_string();
+    crate::shell::show::<OnlinePage>(window, cx, move |page, window, cx| {
+        page.challenge(&username, window, cx)
+    });
+}
+
+/// Challenge a player, rated or casual.
+pub fn challenge_rated(username: &str, rated: bool, window: &mut Window, cx: &mut App) {
+    let username = username.to_string();
+    crate::shell::show::<OnlinePage>(window, cx, move |page, window, cx| {
+        page.challenge_rated(&username, rated, window, cx)
+    });
 }
 
 #[cfg(test)]

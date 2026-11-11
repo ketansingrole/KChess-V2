@@ -15,10 +15,14 @@ use shakmaty::Color;
 use crate::assets::icon;
 use crate::core::{AppCore, CoreEvent};
 use crate::online::OnlineHandle;
+use crate::pages::{
+    ActionInfo, ActionRole, NavGroup, Page, PageAction, PageCommand, PageInfo, PageTab, PageView,
+    TabInfo,
+};
 use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
-use crate::widgets::{self, KeyboardFocus as _, Look, Pill};
+use crate::widgets::{self, KeyboardFocus as _, Look};
 
 mod broadcast_engine;
 mod broadcasts;
@@ -36,8 +40,9 @@ const HEADER: Pixels = px(48.);
 /// Updates that arrive before the core says which session they belong to (kept, newest last).
 const EARLY_KEPT: usize = 8;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Tab {
+/// Watch's tabs, in order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tab {
     Tv,
     Friends,
     Broadcasts,
@@ -45,18 +50,38 @@ enum Tab {
 
 impl Tab {
     fn key(self) -> &'static str {
-        match self {
-            Tab::Tv => "tv",
-            Tab::Friends => "friends",
-            Tab::Broadcasts => "broadcasts",
-        }
+        self.info().key
     }
+}
 
-    fn of(key: &str) -> Tab {
-        match key {
-            "friends" => Tab::Friends,
-            "broadcasts" => Tab::Broadcasts,
-            _ => Tab::Tv,
+impl PageTab for Tab {
+    const ALL: &'static [Tab] = &[Tab::Tv, Tab::Friends, Tab::Broadcasts];
+    const KEY: &'static str = TAB_KEY;
+
+    fn info(self) -> TabInfo {
+        let (key, label, title, icon, keywords) = match self {
+            Tab::Tv => ("tv", "TV", "Lichess TV", "tv", "channels top rated"),
+            Tab::Friends => (
+                "friends",
+                "Following",
+                "Following games",
+                "users",
+                "friends players live",
+            ),
+            Tab::Broadcasts => (
+                "broadcasts",
+                "Broadcasts",
+                "Broadcasts",
+                "radio",
+                "over the board events rounds",
+            ),
+        };
+        TabInfo {
+            key,
+            label,
+            title,
+            icon,
+            keywords,
         }
     }
 }
@@ -203,7 +228,7 @@ impl WatchPage {
             // A broadcast's cover arrived.
             cx.observe(&covers, |_, _, cx| cx.notify()),
         ];
-        let tab = Tab::of(&crate::prefs::get::<String>(cx, TAB_KEY, "tv".into()));
+        let tab = Tab::stored(cx);
         WatchPage {
             tab,
             channels: Vec::new(),
@@ -346,9 +371,9 @@ impl WatchPage {
         }
     }
 
-    /// Show a tab by its key (`tv`, `friends` or `broadcasts`), as its pill does.
-    pub fn show_tab(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.choose_tab(Tab::of(key), window, cx);
+    /// Show a tab, as its pill does.
+    pub fn show_tab(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {
+        self.choose_tab(tab, window, cx);
     }
 
     fn choose_tab(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {
@@ -918,18 +943,10 @@ fn list_card(palette: &Palette) -> Div {
 impl Render for WatchPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
-        let tabs = [
-            (Tab::Tv, "TV", icon("tv")),
-            (Tab::Friends, "Following", icon("users")),
-            (Tab::Broadcasts, "Broadcasts", icon("radio")),
-        ];
-        let selected = tabs
-            .iter()
-            .position(|(tab, _, _)| *tab == self.tab)
-            .unwrap_or(0);
+        let selected = self.tab.index();
         let page = cx.entity().downgrade();
         let choose = move |index: usize, window: &mut Window, cx: &mut App| {
-            let tab = [Tab::Tv, Tab::Friends, Tab::Broadcasts][index];
+            let tab = Tab::ALL[index];
             let _ = page.update(cx, |page, cx| page.choose_tab(tab, window, cx));
         };
         let header = h_flex()
@@ -943,14 +960,7 @@ impl Render for WatchPage {
             )
             .child(widgets::header_pills(
                 "watch-tabs",
-                tabs.into_iter()
-                    .map(|(_, label, glyph)| Pill {
-                        icon: Some(glyph),
-                        label: label.into(),
-                        badge: None,
-                        disabled: false,
-                    })
-                    .collect(),
+                Tab::pills(),
                 selected,
                 choose,
                 &palette,
@@ -1097,4 +1107,130 @@ pub(super) fn stop_watching(session: Option<f64>, cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// Watch's actions: the watched game's, as its panel's buttons offer them, and the other TV
+/// channels.
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) enum Action {
+    Live(live::Action),
+    /// A channel's key and name.
+    Channel(String, String),
+}
+
+impl PageAction for Action {
+    fn info(&self) -> ActionInfo {
+        match self {
+            Action::Live(action) => {
+                let (id, label, glyph, keywords) = match action {
+                    live::Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+                    live::Action::AllBoards => {
+                        ("all-boards", "All boards", "layout-grid", "round broadcast")
+                    }
+                    live::Action::Analyse => ("analyse", "Analyse", "microscope", "analysis"),
+                    live::Action::Stop => ("stop", "Stop watching", "square", "close end"),
+                };
+                let info = ActionInfo::new(format!("watch:{id}"), label, glyph, keywords);
+                if *action == live::Action::Flip {
+                    info.role(ActionRole::Flip)
+                } else {
+                    info
+                }
+            }
+            Action::Channel(key, name) => ActionInfo::new(
+                format!("watch:channel:{key}"),
+                format!("Watch {name}"),
+                "tv",
+                "tv channel",
+            ),
+        }
+    }
+}
+
+impl PageView for WatchPage {
+    const INFO: PageInfo = PageInfo {
+        page: Page::Watch,
+        label: "Watch",
+        short: "Watch",
+        icon: "tv",
+        group: Some(NavGroup::Lichess),
+        keywords: "tv broadcast",
+    };
+
+    type Action = Action;
+
+    fn create(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        WatchPage::new(window, cx)
+    }
+
+    /// Watching streams only while Watch is shown.
+    fn shown(this: &Entity<Self>, again: bool, window: &mut Window, cx: &mut App) {
+        if !again {
+            this.update(cx, |watch, cx| watch.shown(window, cx));
+        }
+    }
+
+    fn hidden(this: &Entity<Self>, _window: &mut Window, cx: &mut App) {
+        this.update(cx, |watch, cx| watch.hidden(cx));
+    }
+
+    fn can_step(&self, direction: crate::swipe::Direction, _cx: &App) -> bool {
+        WatchPage::can_step(self, direction)
+    }
+
+    fn step(
+        &mut self,
+        direction: crate::swipe::Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        WatchPage::step(self, direction, window, cx);
+    }
+
+    fn search_fields(&self) -> Vec<Entity<gpui_kit::component::input::InputState>> {
+        WatchPage::search_fields(self)
+    }
+
+    fn actions(&self, cx: &App) -> Vec<Action> {
+        WatchPage::actions(self)
+            .into_iter()
+            .map(Action::Live)
+            .chain(
+                self.other_channels(cx)
+                    .into_iter()
+                    .map(|(key, name)| Action::Channel(key, name)),
+            )
+            .collect()
+    }
+
+    fn act(this: &Entity<Self>, action: Action, window: &mut Window, cx: &mut App) {
+        match action {
+            Action::Live(action) => this.update(cx, |watch, cx| watch.act(action, window, cx)),
+            Action::Channel(key, _) => open_channel(key, window, cx),
+        }
+    }
+
+    fn places(_: &App) -> Vec<PageCommand> {
+        crate::pages::tab_places::<Self, Tab>("watch", WatchPage::show_tab)
+    }
+}
+
+/// Watch a Lichess TV channel.
+pub fn open_channel(channel: String, window: &mut Window, cx: &mut App) {
+    crate::shell::show::<WatchPage>(window, cx, move |watch, window, cx| {
+        watch.open_channel(channel, window, cx)
+    });
+}
+
+/// Watch a game being played on Lichess.
+pub fn watch_game(id: &str, window: &mut Window, cx: &mut App) {
+    let id = id.to_string();
+    crate::shell::show::<WatchPage>(window, cx, move |watch, _, cx| watch.watch_game(&id, cx));
+}
+
+/// Open a Lichess broadcast link on Watch → Broadcasts.
+pub fn open_broadcast(link: crate::game::BroadcastLink, window: &mut Window, cx: &mut App) {
+    crate::shell::show::<WatchPage>(window, cx, move |watch, window, cx| {
+        watch.open_broadcast(link, window, cx)
+    });
 }

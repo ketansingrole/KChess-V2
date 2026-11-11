@@ -101,7 +101,7 @@ impl AnalysisPage {
             let Some(path) = paths.first() else {
                 return;
             };
-            let text = crate::shell::read_game_file(path);
+            let text = crate::links::read_game_file(path);
             let _ = this.update_in(cx, |this, window, cx| match text {
                 Some(text) => {
                     this.import
@@ -138,11 +138,13 @@ impl AnalysisPage {
         if text.is_empty() {
             return;
         }
-        if let Some(link) = crate::game::game_link(&text) {
-            return self.import_game(link, window, cx);
-        }
-        if let Some((study, chapter)) = crate::game::study_link(&text) {
-            return self.import_study(study, chapter, window, cx);
+        // A Lichess game or study link is read as Paste and Quick Pick read it.
+        match crate::links::classify(&text) {
+            Some(crate::links::Link::Game(link)) => return self.import_game(link, window, cx),
+            Some(crate::links::Link::StudyChapter { study, chapter }) => {
+                return self.import_study(study, chapter, window, cx);
+            }
+            _ => {}
         }
         self.importing = None;
         if let Some(fen) = crate::game::editor_setup(&text)

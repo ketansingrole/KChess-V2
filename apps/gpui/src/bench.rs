@@ -182,7 +182,7 @@ fn set_up(scenario: Scenario, window: &mut Window, cx: &mut App) {
         Scenario::HomeIdle => {}
         Scenario::LocalClock => {
             shell::open(Page::Local, window, cx);
-            if let Some(local) = shell::view_of::<LocalPage>(Page::Local, cx) {
+            if let Some(local) = shell::view::<LocalPage>(cx) {
                 local.update(cx, |local, cx| {
                     let clock = json!({
                         "white": { "minutes": 5, "increment": 3 },
@@ -196,7 +196,7 @@ fn set_up(scenario: Scenario, window: &mut Window, cx: &mut App) {
         }
         Scenario::BoardAnimation | Scenario::AnalysisEngine | Scenario::AnalysisStepping => {
             shell::open(Page::Analysis, window, cx);
-            if let Some(analysis) = shell::view_of::<AnalysisPage>(Page::Analysis, cx) {
+            if let Some(analysis) = shell::view::<AnalysisPage>(cx) {
                 let engine = scenario != Scenario::BoardAnimation;
                 // A search that never finishes, so the lines keep streaming for the whole run.
                 crate::prefs::set(cx, "kchess:analysis-infinite", engine);
@@ -314,11 +314,8 @@ fn decode(value: &str) -> String {
 
 /// The pages `pages-tour` opens in turn: the sidebar's, then Settings.
 fn tour() -> Vec<(Page, &'static str)> {
-    let mut pages: Vec<(Page, &'static str)> = shell::nav()
-        .iter()
-        .map(|(page, label, _)| (*page, *label))
-        .collect();
-    pages.push((Page::Settings, "Settings"));
+    let mut pages: Vec<(Page, &'static str)> =
+        Page::all().map(|page| (page, page.info().label)).collect();
     // `KCHESS_BENCH_TOUR=Openings,Home`: those pages alone, in that order, so a page's first
     // opening is measured without the pages before it.
     if let Ok(only) = std::env::var("KCHESS_BENCH_TOUR") {
@@ -334,7 +331,7 @@ fn tour() -> Vec<(Page, &'static str)> {
 fn step(scenario: Scenario, ply: &mut usize, window: &mut Window, cx: &mut App) {
     match scenario {
         Scenario::BoardAnimation | Scenario::AnalysisStepping => {
-            if let Some(analysis) = shell::view_of::<AnalysisPage>(Page::Analysis, cx) {
+            if let Some(analysis) = shell::view::<AnalysisPage>(cx) {
                 analysis.update(cx, |analysis, cx| {
                     if *ply == LINE.len() {
                         *ply = 0;

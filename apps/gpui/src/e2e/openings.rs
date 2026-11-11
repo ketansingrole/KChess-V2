@@ -129,7 +129,7 @@ fn openings_that_leave_recent_let_their_preview_go(cx: &mut gpui_kit::TestAppCon
     }
     let kept = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<OpeningsPage>(Page::Openings, cx)
+            crate::shell::view::<OpeningsPage>(cx)
                 .expect("the page")
                 .read(cx)
                 .kept_previews()
@@ -143,7 +143,7 @@ fn openings_that_leave_recent_let_their_preview_go(cx: &mut gpui_kit::TestAppCon
     );
     // The boards shown stay from one frame to the next, not made afresh each time.
     app.cx.update(|cx| {
-        crate::shell::view_of::<OpeningsPage>(Page::Openings, cx)
+        crate::shell::view::<OpeningsPage>(cx)
             .expect("the page")
             .update(cx, |_, cx| cx.notify());
     });
@@ -157,7 +157,14 @@ fn a_popular_opening_is_trained_in_the_repertoire_trainer(cx: &mut gpui_kit::Tes
     reveal(&mut app, "train-Sicilian Defense");
     app.click("train-Sicilian Defense");
     assert_eq!(page(&mut app), Some(Page::Practice));
-    assert_eq!(app.find(("practice-tabs", 4usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab(
+            "practice-tabs",
+            crate::pages::practice::Tab::Openings
+        ))
+        .selected(),
+        Some(true)
+    );
     app.find("restart-line");
 }
 
@@ -167,7 +174,14 @@ fn a_line_can_be_drilled_and_saved_as_a_study(cx: &mut gpui_kit::TestAppContext)
     open_kieseritzky(&mut app);
     app.click(("opening-move", 2usize));
     app.click("train-line");
-    assert_eq!(app.find(("practice-tabs", 4usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab(
+            "practice-tabs",
+            crate::pages::practice::Tab::Openings
+        ))
+        .selected(),
+        Some(true)
+    );
 
     // White plays the line's moves; Black answers from it.
     app.click_square("e2", true);
@@ -254,7 +268,8 @@ fn a_drilled_line_is_saved_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     app.find("save-opening");
     app.press("secondary-k");
     app.type_text(">");
-    super::palette::wait_for_first(&mut app, "Show move");
+    // Zen mode leads, as on every page it applies to.
+    super::palette::wait_for_first(&mut app, "Zen mode");
     let listed: Vec<String> = app.with_window(|window, _| {
         (0..6usize)
             .filter_map(|index| window.try_find(("palette-item", index)))
@@ -262,7 +277,10 @@ fn a_drilled_line_is_saved_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
             .collect()
     });
     // Nothing missed yet: there are no mistakes to forget.
-    assert_eq!(&listed[..3], ["Show move", "Restart line", "Save as study"]);
+    assert_eq!(
+        &listed[1..4],
+        ["Show move", "Restart line", "Save as study"]
+    );
     app.type_text("Save as study");
     super::palette::wait_for_first(&mut app, "Save as study");
     app.press("enter");
@@ -386,7 +404,7 @@ fn f_flips_an_openings_board(cx: &mut gpui_kit::TestAppContext) {
     open_kieseritzky(&mut app);
     let orientation = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::openings::OpeningsPage>(Page::Openings, cx)
+            crate::shell::view::<crate::pages::openings::OpeningsPage>(cx)
                 .map(|page| page.read(cx).orientation())
         })
     };
@@ -404,7 +422,7 @@ fn escape_goes_back_to_all_openings(cx: &mut gpui_kit::TestAppContext) {
     open_kieseritzky(&mut app);
     let orientation = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::openings::OpeningsPage>(Page::Openings, cx)
+            crate::shell::view::<crate::pages::openings::OpeningsPage>(cx)
                 .map(|page| page.read(cx).orientation())
         })
     };

@@ -8,10 +8,13 @@ fn puzzles(cx: &mut gpui_kit::TestAppContext) -> Harness {
     app
 }
 
-/// Open a tab of the page ("Daily" is 1).
-fn tab(app: &mut Harness, index: usize) {
-    app.click(("puzzle-tabs", index));
-    assert_eq!(app.find(("puzzle-tabs", index)).selected(), Some(true));
+/// Open a tab of the page.
+fn tab(app: &mut Harness, tab: crate::pages::puzzles::Tab) {
+    app.click(super::tab("puzzle-tabs", tab));
+    assert_eq!(
+        app.find(super::tab("puzzle-tabs", tab)).selected(),
+        Some(true)
+    );
 }
 
 /// Wait until a mode's pill is (not) the chosen one.
@@ -58,18 +61,22 @@ fn rated_puzzles_ask_for_an_account_and_offer_another_mode(cx: &mut gpui_kit::Te
 #[gpui_kit::test]
 fn the_daily_puzzle_offline_can_fall_back_to_downloaded_puzzles(cx: &mut gpui_kit::TestAppContext) {
     let mut app = puzzles(cx);
-    tab(&mut app, 1);
+    tab(&mut app, crate::pages::puzzles::Tab::Daily);
     assert!(app.enabled("daily-retry"));
     app.click("daily-downloaded");
     wait_for_mode(&mut app, 1, true);
-    assert_eq!(app.find(("puzzle-tabs", 0usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab("puzzle-tabs", crate::pages::puzzles::Tab::Train))
+            .selected(),
+        Some(true)
+    );
     app.find("db-install");
 }
 
 #[gpui_kit::test]
 fn storm_streak_and_rush_wait_for_the_downloaded_puzzles(cx: &mut gpui_kit::TestAppContext) {
     let mut app = puzzles(cx);
-    tab(&mut app, 2);
+    tab(&mut app, crate::pages::puzzles::Tab::Rush);
     // A run needs the downloaded puzzles; a score is only saved to an account.
     app.find("db-install");
     assert!(!app.enabled("rush-start"));
@@ -79,26 +86,37 @@ fn storm_streak_and_rush_wait_for_the_downloaded_puzzles(cx: &mut gpui_kit::Test
 #[gpui_kit::test]
 fn lichess_stats_ask_for_an_account(cx: &mut gpui_kit::TestAppContext) {
     let mut app = puzzles(cx);
-    tab(&mut app, 3);
+    tab(&mut app, crate::pages::puzzles::Tab::Stats);
     assert!(app.enabled("stats-connect"));
 }
 
 #[gpui_kit::test]
 fn an_empty_history_leads_back_to_training(cx: &mut gpui_kit::TestAppContext) {
     let mut app = puzzles(cx);
-    tab(&mut app, 4);
+    tab(&mut app, crate::pages::puzzles::Tab::History);
     app.click("puzzle-history-train");
-    assert_eq!(app.find(("puzzle-tabs", 0usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab("puzzle-tabs", crate::pages::puzzles::Tab::Train))
+            .selected(),
+        Some(true)
+    );
     app.find(("puzzle-mode", 0usize));
 }
 
 #[gpui_kit::test]
 fn the_chosen_tab_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppContext) {
     let mut app = puzzles(cx);
-    tab(&mut app, 4);
+    tab(&mut app, crate::pages::puzzles::Tab::History);
     let mut app = app.restart();
     app.open("Puzzles");
-    assert_eq!(app.find(("puzzle-tabs", 4usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab(
+            "puzzle-tabs",
+            crate::pages::puzzles::Tab::History
+        ))
+        .selected(),
+        Some(true)
+    );
     app.find("puzzle-history-train");
 }
 
@@ -122,7 +140,11 @@ fn a_pasted_puzzle_link_opens_the_puzzle(cx: &mut gpui_kit::TestAppContext) {
     }
     app.press("enter");
     app.find("daily-today");
-    assert_eq!(app.find(("puzzle-tabs", 1usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab("puzzle-tabs", crate::pages::puzzles::Tab::Daily))
+            .selected(),
+        Some(true)
+    );
     // Scholar's mate: the queen takes f7.
     {
         use gpui_kit::test::TestWindowExt as _;
@@ -203,7 +225,7 @@ fn quick_pick_starts_and_ends_a_storm_run(cx: &mut gpui_kit::TestAppContext) {
         kchess_core::puzzles::write_database(profile, &rows).expect("the fixture's puzzles");
     });
     app.open("Puzzles");
-    tab(&mut app, 2);
+    tab(&mut app, crate::pages::puzzles::Tab::Rush);
     app.wait_for("the downloaded puzzles", |window, _| {
         use gpui_kit::test::TestWindowExt as _;
         window
@@ -261,11 +283,8 @@ fn f_flips_the_puzzle(cx: &mut gpui_kit::TestAppContext) {
     super::palette::wait_until_closed(&mut app);
     let flipped = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::puzzles::PuzzlesPage>(
-                crate::pages::Page::Puzzles,
-                cx,
-            )
-            .and_then(|page| page.read(cx).shown_flipped(cx))
+            crate::shell::view::<crate::pages::puzzles::PuzzlesPage>(cx)
+                .and_then(|page| page.read(cx).shown_flipped(cx))
         })
     };
     assert_eq!(flipped(&mut app), Some(false));
@@ -292,11 +311,8 @@ fn return_goes_on_to_the_next_puzzle(cx: &mut gpui_kit::TestAppContext) {
     app.open("Puzzles");
     let key = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::puzzles::PuzzlesPage>(
-                crate::pages::Page::Puzzles,
-                cx,
-            )
-            .map(|page| page.read(cx).puzzle_key())
+            crate::shell::view::<crate::pages::puzzles::PuzzlesPage>(cx)
+                .map(|page| page.read(cx).puzzle_key())
         })
     };
     let playable = |app: &mut Harness| {
@@ -355,11 +371,8 @@ fn a_finished_puzzle_is_stepped_through(cx: &mut gpui_kit::TestAppContext) {
     });
     let viewing = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view_of::<crate::pages::puzzles::PuzzlesPage>(
-                crate::pages::Page::Puzzles,
-                cx,
-            )
-            .and_then(|page| page.read(cx).viewing(cx))
+            crate::shell::view::<crate::pages::puzzles::PuzzlesPage>(cx)
+                .and_then(|page| page.read(cx).viewing(cx))
         })
     };
     app.click("chess-board");
@@ -427,12 +440,9 @@ fn a_finished_puzzle_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppConte
     super::palette::wait_for_first(&mut app, "Analysis board");
     app.press("enter");
     let pgn = |cx: &gpui_kit::App| {
-        crate::shell::view_of::<crate::pages::analysis::AnalysisPage>(
-            crate::pages::Page::Analysis,
-            cx,
-        )
-        .map(|page| page.read(cx).pgn())
-        .unwrap_or_default()
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .map(|page| page.read(cx).pgn())
+            .unwrap_or_default()
     };
     app.wait_for("the puzzle on the analysis board", |_, cx| {
         pgn(cx).contains("Qxf7#")
@@ -476,7 +486,7 @@ fn a_finished_puzzles_theme_is_trained(cx: &mut gpui_kit::TestAppContext) {
     app.wait_for("Train with the theme chosen", |window, cx| {
         crate::prefs::get::<String>(cx, "kchess:puzzle-angle", String::new()) == "mateIn1"
             && window
-                .try_find(("puzzle-tabs", 0usize))
+                .try_find(super::tab("puzzle-tabs", crate::pages::puzzles::Tab::Train))
                 .is_some_and(|tab| tab.selected() == Some(true))
     });
 }
@@ -515,7 +525,7 @@ fn history_shows_the_puzzles_not_solved(cx: &mut gpui_kit::TestAppContext) {
             .expect("the attempt is kept");
     }
     app.open("Puzzles");
-    tab(&mut app, 4);
+    tab(&mut app, crate::pages::puzzles::Tab::History);
     app.find(("puzzle-retry", 2usize));
     app.click(("puzzle-history-result", 1usize));
     app.find(("puzzle-retry", 0usize));
@@ -564,14 +574,19 @@ fn puzzle_history_rows_fit_every_window(cx: &mut gpui_kit::TestAppContext) {
         .block_test(saved)
         .expect("the attempt is kept");
     app.open("Puzzles");
-    tab(&mut app, 4);
+    tab(&mut app, crate::pages::puzzles::Tab::History);
     for (width, height) in super::SIZES {
         app.cx
             .simulate_window_resize(app.window, size(px(width), px(height)));
         for _ in 0..20 {
             app.tick();
         }
-        let page = app.find(("puzzle-tabs", 4usize)).bounds();
+        let page = app
+            .find(super::tab(
+                "puzzle-tabs",
+                crate::pages::puzzles::Tab::History,
+            ))
+            .bounds();
         let analyse = app.find(("puzzle-analyse", 0usize)).bounds();
         assert!(
             analyse.right() <= page.right(),
@@ -609,7 +624,7 @@ fn a_puzzle_failed_before_quitting_is_kept(cx: &mut gpui_kit::TestAppContext) {
     });
     let mut app = app.restart();
     app.open("Puzzles");
-    tab(&mut app, 4);
+    tab(&mut app, crate::pages::puzzles::Tab::History);
     app.find(("puzzle-retry", 0usize));
 }
 
@@ -619,7 +634,7 @@ fn lichess_stat_cards_are_one_height(cx: &mut gpui_kit::TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
     let (mut app, _session) = Harness::signed_in(cx, false);
     app.open("Puzzles");
-    tab(&mut app, 3);
+    tab(&mut app, crate::pages::puzzles::Tab::Stats);
     app.wait_for("the stat cards", |window, _| {
         window.try_find(("puzzle-stat", 3usize)).is_some()
     });

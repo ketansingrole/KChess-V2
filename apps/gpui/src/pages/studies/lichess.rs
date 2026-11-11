@@ -319,7 +319,7 @@ impl StudiesPage {
         self.lichess.message.clear();
         cx.notify();
         // The board's own edits reach the library before the cloud copy is merged in.
-        let flushed = crate::shell::analysis_board(window, cx)
+        let flushed = crate::pages::analysis::board(window, cx)
             .map(|analysis| analysis.update(cx, |analysis, cx| analysis.flush_study(cx)));
         cx.spawn_in(window, async move |this, cx| {
             if let Some(flushed) = flushed {
@@ -340,7 +340,7 @@ impl StudiesPage {
             window,
             cx,
             move |saved, conflict, window, cx| {
-                if let Some(analysis) = crate::shell::analysis_board(window, cx)
+                if let Some(analysis) = crate::pages::analysis::board(window, cx)
                     && analysis.read(cx).study_id() == saved
                 {
                     let chapter = analysis.read(cx).chapter_id().to_string();
@@ -376,7 +376,7 @@ impl StudiesPage {
 
     /// `send`: the analysis board as a chapter of a study (or a new private one).
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(analysis) = crate::shell::analysis_board(window, cx) else {
+        let Some(analysis) = crate::pages::analysis::board(window, cx) else {
             return;
         };
         let (pgn, chapter_name) = {
