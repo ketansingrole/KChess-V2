@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn a_whole_name_beats_longer_labels_it_starts() {
         let exact = match_query("appearance", "Appearance", "Settings").unwrap();
-        let longer = match_query("appearance", "Appearance: Match system", "").unwrap();
+        let longer = match_query("appearance", "Appearance: System", "").unwrap();
         assert!(exact.score > longer.score);
     }
 

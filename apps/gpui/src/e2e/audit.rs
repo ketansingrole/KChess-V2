@@ -353,7 +353,7 @@ fn every_tab_and_settings_section_lays_out_its_controls(
                 );
             }
         }
-        for (section, label, _) in crate::pages::settings::sections() {
+        for (section, label) in crate::pages::settings::Section::ALL.map(|s| (s, s.label())) {
             let states = if section == crate::pages::settings::Section::Voice {
                 microphone_states()
             } else {

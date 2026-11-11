@@ -8,7 +8,6 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::types::{Appearance, CoordinateMode};
 
 use crate::assets::icon;
 use crate::online::Phase;
@@ -238,37 +237,27 @@ fn toggles(page: bool, cx: &App) -> impl Iterator<Item = Command> + '_ {
 fn settings_commands(cx: &App) -> Vec<Command> {
     let settings = cx.global::<SettingsHandle>().0.read(cx).settings.clone();
     let front = &settings.frontend;
-    let mut list: Vec<Command> = [
-        (
-            Appearance::System,
-            "Appearance: Match system",
-            icon("sun-moon"),
-        ),
-        (Appearance::Light, "Appearance: Light", icon("sun")),
-        (Appearance::Dark, "Appearance: Dark", icon("moon")),
-    ]
-    .into_iter()
-    .map(|(appearance, label, glyph)| {
-        Command::new(
-            format!("setting:appearance:{appearance:?}"),
-            label,
-            glyph,
-            move |_, cx| crate::settings::change(cx, move |s| s.frontend.appearance = appearance),
-        )
-        .keywords("theme mode color scheme")
-        .hint((front.appearance == appearance).then_some("Current"))
-    })
-    .collect();
+    let mut list: Vec<Command> = crate::pages::settings::APPEARANCES
+        .into_iter()
+        .map(|(appearance, label, glyph)| {
+            Command::new(
+                format!("setting:appearance:{appearance:?}"),
+                format!("Appearance: {label}"),
+                icon(glyph),
+                move |_, cx| {
+                    crate::settings::change(cx, move |s| s.frontend.appearance = appearance)
+                },
+            )
+            .keywords("theme mode color scheme")
+            .hint((front.appearance == appearance).then_some("Current"))
+        })
+        .collect();
     list.extend(toggles(false, cx));
-    for (mode, label) in [
-        (CoordinateMode::None, "Coordinates: Hidden"),
-        (CoordinateMode::Inside, "Coordinates: Inside the board"),
-        (CoordinateMode::Outside, "Coordinates: Outside the board"),
-    ] {
+    for (mode, label) in crate::pages::settings::COORDINATES {
         list.push(
             Command::new(
                 format!("setting:coordinates:{mode:?}"),
-                label,
+                format!("Coordinates: {label}"),
                 icon("grid-3x3"),
                 move |_, cx| crate::settings::change(cx, move |s| s.frontend.coordinates = mode),
             )
@@ -276,12 +265,12 @@ fn settings_commands(cx: &App) -> Vec<Command> {
             .hint((front.coordinates == mode).then_some("Current")),
         );
     }
-    for (section, label, glyph) in crate::pages::settings::sections() {
+    for section in Section::ALL {
         list.push(
             Command::new(
                 format!("settings:{section:?}"),
-                label,
-                glyph,
+                section.label(),
+                section.icon(),
                 move |window, cx| crate::shell::open_settings(section, window, cx),
             )
             .kind(Kind::Section)

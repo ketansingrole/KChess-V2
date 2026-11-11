@@ -657,19 +657,21 @@ impl Harness {
         if !self.shows(SETTINGS_SHOWN) {
             self.click("settings");
         }
-        let index = crate::pages::settings::sections()
-            .iter()
-            .position(|(_, name, _)| *name == label)
+        use crate::pages::settings::{Section, SectionGroup};
+        let section = Section::ALL
+            .into_iter()
+            .find(|section| section.label() == label)
             .unwrap_or_else(|| panic!("no Settings category {label:?}"));
         // A block for each group of categories, numbered from 1.
-        let (mut block, mut row) = (1, index);
-        for (_, size) in crate::pages::settings::SECTION_GROUPS {
-            if row < size {
-                break;
-            }
-            row -= size;
-            block += 1;
-        }
+        let group = section.group();
+        let block = 1 + SectionGroup::ALL
+            .iter()
+            .position(|shown| *shown == group)
+            .expect("its group");
+        let row = group
+            .sections()
+            .position(|shown| shown == section)
+            .expect("its row");
         self.click(format!("s{block}-{row}"));
     }
 }

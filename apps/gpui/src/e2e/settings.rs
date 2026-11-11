@@ -181,11 +181,11 @@ fn moves_can_be_shown_with_piece_symbols(cx: &mut gpui_kit::TestAppContext) {
 /// ⌘K finds a category by any row title it shows, so a new row is found as soon as it is added.
 #[gpui_kit::test]
 fn every_settings_row_is_found_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::settings::{section_keywords, sections};
+    use crate::pages::settings::{Section, section_keywords};
     use gpui_kit::test::TestQueryExt as _;
     let mut app = Harness::start(cx);
     let mut checked = 0;
-    for (section, label, _) in sections() {
+    for (section, label) in Section::ALL.map(|s| (s, s.label())) {
         app.open_settings(label);
         let titles: Vec<String> = app.with_window(|window, _| {
             window

@@ -12,7 +12,7 @@ use gpui_kit::*;
 use std::time::Duration;
 
 use crate::assets::icon;
-use crate::pages::settings::{SECTION_GROUPS, Section, sections};
+use crate::pages::settings::{Section, SectionGroup};
 use crate::pages::{ActionRole, NavGroup, Page, PageCommand, PageView, Pages};
 use crate::part::Part;
 use crate::settings::{SettingsChanged, SettingsHandle};
@@ -879,19 +879,10 @@ impl Workspace {
     /// Scroll Settings' categories to the group of the one it shows, which the palette may have
     /// chosen, or Settings remembered, out of a short window's sight.
     fn scroll_to_section(&self, section: Section) {
-        let row = sections()
+        let group = SectionGroup::ALL
             .iter()
-            .position(|(shown, _, _)| *shown == section);
-        let group = row.map_or(0, |row| {
-            SECTION_GROUPS
-                .iter()
-                .scan(0, |end, (_, size)| {
-                    *end += size;
-                    Some(*end)
-                })
-                .take_while(|end| *end <= row)
-                .count()
-        });
+            .position(|group| *group == section.group())
+            .unwrap_or(0);
         self.sections_scroll.scroll_to_item(group);
         self.sections_pending.set(Some(group));
     }
@@ -952,23 +943,20 @@ impl Workspace {
             .pages
             .get::<crate::pages::settings::SettingsPage>()
             .map_or(Section::Appearance, |page| page.read(cx).section());
-        let mut rows = sections().into_iter();
-        SECTION_GROUPS
+        SectionGroup::ALL
             .into_iter()
-            .map(|(heading, size)| {
+            .map(|group| {
                 NavBlock::Group(
-                    heading,
-                    Box::new(
-                        SidebarMenu::new()
-                            .gap_0()
-                            .children(rows.by_ref().take(size).map(|(section, label, glyph)| {
-                                nav_item(label, glyph).active(shown == section).on_click(
-                                    cx.listener(move |this, _, _, cx| {
-                                        this.choose_section(section, cx)
-                                    }),
-                                )
-                            })),
-                    ),
+                    group.heading(),
+                    Box::new(SidebarMenu::new().gap_0().children(group.sections().map(
+                        |section| {
+                            nav_item(section.label(), section.icon())
+                                .active(shown == section)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.choose_section(section, cx)
+                                }))
+                        },
+                    ))),
                 )
             })
             .collect()
