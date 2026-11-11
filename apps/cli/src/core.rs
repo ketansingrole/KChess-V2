@@ -11,11 +11,8 @@ use kchess_core::{Config, Core, Host};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-/// One core event (`CoreEvents` names, and `host:request`).
-pub struct Event {
-    pub name: String,
-    pub payload: Value,
-}
+pub use kchess_contracts::CoreEvent;
+pub use kchess_service::ClientEvent;
 
 /// How the login page reaches the person.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -43,7 +40,7 @@ pub struct CoreClient {
 
 /// Diagnostics go to stderr, so JSON on stdout stays usable in pipelines.
 struct StderrHost {
-    events: mpsc::UnboundedSender<Event>,
+    events: mpsc::UnboundedSender<ClientEvent>,
 }
 
 impl Host for StderrHost {
@@ -53,11 +50,8 @@ impl Host for StderrHost {
         }
     }
 
-    fn emit(&self, event: &str, payload: Value) {
-        let _ = self.events.send(Event {
-            name: event.to_string(),
-            payload,
-        });
+    fn emit(&self, event: CoreEvent) {
+        let _ = self.events.send(ClientEvent::Event(event));
     }
 }
 
@@ -151,7 +145,7 @@ impl CoreClient {
     /// Opens the profile's core and starts delivering its events.
     pub async fn open(
         options: &Options,
-    ) -> Result<(CoreClient, mpsc::UnboundedReceiver<Event>), String> {
+    ) -> Result<(CoreClient, mpsc::UnboundedReceiver<ClientEvent>), String> {
         std::fs::create_dir_all(&options.data_dir)
             .map_err(|cause| format!("The profile folder is unavailable: {cause}"))?;
         let config = config(options);
@@ -182,18 +176,7 @@ impl CoreClient {
                         .map_err(|error| error.to_string())?;
                 tokio::spawn(async move {
                     while let Some(event) = incoming.recv().await {
-                        match event {
-                            kchess_service::ClientEvent::Event { name, payload } => {
-                                let _ = events.send(Event { name, payload });
-                            }
-                            kchess_service::ClientEvent::Closed => {
-                                let _ = events.send(Event {
-                                    name: "core:closed".into(),
-                                    payload: Value::Null,
-                                });
-                                break;
-                            }
-                        }
+                        let _ = events.send(event);
                     }
                 });
                 Backend::Service(client)

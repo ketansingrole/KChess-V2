@@ -3,12 +3,13 @@
 //! newest to the oldest. Not part of `check`; it prints the figures:
 //! `cargo test --release -p kchess-core --test store_speed -- --ignored --nocapture`
 
+use kchess_contracts::CoreEvent;
 use std::time::{Duration, Instant};
 
 use kchess_core::store::{self, StoreCache, StoreContext, games, library};
 use kchess_core::{Config, CoreError, Host, Level};
 use rusqlite::{Connection, params};
-use serde_json::{Value, json};
+use serde_json::json;
 use shakmaty::uci::UciMove;
 use shakmaty::{CastlingMode, Chess, Position};
 
@@ -16,7 +17,7 @@ struct Quiet;
 
 impl Host for Quiet {
     fn log(&self, _: Level, _: &str, _: &str) {}
-    fn emit(&self, _: &str, _: Value) {}
+    fn emit(&self, _event: CoreEvent) {}
 }
 
 /// xorshift64: the same games on every run.

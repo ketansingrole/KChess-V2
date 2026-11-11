@@ -7,9 +7,7 @@ use crate::support;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use kchess_core::engine::analysis::{
-    ANALYSIS_EVENT, Analysis, AnalysisSink, AnalysisUpdate, Reason,
-};
+use kchess_core::engine::analysis::{Analysis, AnalysisSink, AnalysisUpdate, Reason};
 use kchess_domain::replay::replay_positions;
 use serde_json::json;
 use support::{context, fake_path, log_path, received, scheduler, wait_until};
@@ -91,7 +89,6 @@ async fn streams_scored_lines_for_a_position() {
 
 #[tokio::test]
 async fn the_update_payload_is_the_engine_analysis_shape() {
-    assert_eq!(ANALYSIS_EVENT, "engine:analysis");
     let log = log_path("analysis-shape");
     let (analysis, _) = analysis_with("search", &log);
     let (updates, sink) = recorder();

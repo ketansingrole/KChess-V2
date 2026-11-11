@@ -20,7 +20,7 @@ use super::guess_find::{Found, GameFinder};
 use super::run;
 use crate::assets::icon;
 use crate::board::{Arrow, BoardEvent, ChessBoard};
-use crate::core::{AppCore, CoreEvent};
+use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::game::tree::TreeNode;
 use crate::game::view;
 use crate::online::OnlineHandle;
@@ -221,9 +221,9 @@ impl GuessMoves {
                     }
                 },
             ),
-            cx.subscribe(&events, |this, _, event: &CoreEvent, cx| {
-                if event.name == "engine:analysis" {
-                    this.engine_update(&event.payload, cx);
+            cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
+                if let ClientEvent::Event(CoreEvent::Analysis(update)) = event {
+                    this.engine_update(update, cx);
                 }
             }),
         ];

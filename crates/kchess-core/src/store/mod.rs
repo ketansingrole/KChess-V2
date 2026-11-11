@@ -273,7 +273,7 @@ pub(crate) fn in_memory<T>(work: impl FnOnce(&StoreContext) -> T) -> T {
     struct Quiet;
     impl Host for Quiet {
         fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _: &str, _: Value) {}
+        fn emit(&self, _event: crate::host::CoreEvent) {}
     }
     let db = Connection::open_in_memory().expect("open");
     migrations::migrate(&db).expect("migrate");
@@ -333,13 +333,14 @@ pub(crate) fn restrict_database(_path: &Path, _host: &dyn Host, _tag: &str) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kchess_contracts::CoreEvent;
     use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     struct Quiet;
     impl Host for Quiet {
         fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _: &str, _: Value) {}
+        fn emit(&self, _event: CoreEvent) {}
     }
 
     fn database() -> (tempfile::TempDir, Arc<Database>) {

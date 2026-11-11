@@ -9,7 +9,7 @@ use gpui_kit::{App, AppContext as _, Context, Entity, Global, Subscription};
 use kchess_contracts::Level;
 use serde_json::{Value, json};
 
-use crate::core::{AppCore, CoreEvent};
+use crate::core::{AppCore, ClientEvent, CoreEvent};
 
 /// Full reviews kept in memory, least recently seen dropped first; the core keeps them all.
 const CACHE_SIZE: usize = 24;
@@ -70,19 +70,19 @@ pub fn init(cx: &mut App) {
         cache: ReviewCache::default(),
         status: json!({ "waiting": 0 }),
         status_events: 0,
-        _events: cx.subscribe(&events, |this, _, event: &CoreEvent, cx| {
-            match event.name.as_str() {
-                "review:update" => {
-                    this.cache.remember(event.payload["review"].clone());
+        _events: cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
+            match event {
+                ClientEvent::Event(CoreEvent::ReviewUpdate(update)) => {
+                    this.cache.remember(update["review"].clone());
                     cx.notify();
                 }
-                "review:status" => {
+                ClientEvent::Event(CoreEvent::ReviewStatus(status)) => {
                     this.status_events += 1;
-                    this.status = event.payload.clone();
+                    this.status = status.clone();
                     cx.notify();
                 }
                 // The events missed meanwhile are not sent again.
-                crate::core::RECONNECTED => this.resynchronize(cx),
+                ClientEvent::Reconnected => this.resynchronize(cx),
                 _ => {}
             }
         }),

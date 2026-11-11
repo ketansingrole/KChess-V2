@@ -12,7 +12,7 @@ use kchess_contracts::types::{AppTheme, CustomThemeReport, Settings};
 use kchess_contracts::{CoreError, Level};
 use serde_json::Value;
 
-use crate::core::{Answer, AppCore, BoxedSave, CoreEvent, Reads};
+use crate::core::{Answer, AppCore, BoxedSave, ClientEvent, CoreEvent, Reads};
 
 /// How long edits settle before they are saved.
 const SAVE_DELAY: Duration = Duration::from_millis(400);
@@ -104,9 +104,12 @@ pub fn init(cx: &mut App) {
     let events = cx.global::<AppCore>().events.clone();
     cx.subscribe(&events, {
         let entity = entity.clone();
-        move |_, event: &CoreEvent, cx| {
+        move |_, event: &ClientEvent, cx| {
             // Another window saved, or this one reconnected and may have missed a save.
-            if event.name == "settings:saved" || event.name == crate::core::RECONNECTED {
+            if matches!(
+                event,
+                ClientEvent::Event(CoreEvent::SettingsSaved(_)) | ClientEvent::Reconnected
+            ) {
                 reload(&entity, cx);
             }
         }

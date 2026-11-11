@@ -24,8 +24,8 @@ use reqwest::header::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::usage::Meter;
 use crate::error::{CoreError, Result};
+use crate::usage::Meter;
 
 /// The message of a download stopped by its caller.
 pub const ABORTED: &str = "This operation was aborted";

@@ -3,6 +3,7 @@
 //! stop engines, account sessions and the close sequence. The generated dispatch checks the
 //! arguments, refuses assistance during a live game and reports the profile areas a call changed.
 
+use kchess_contracts::CoreEvent;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -136,15 +137,15 @@ impl Host for GatedHost {
         self.inner.log(level, scope, message);
     }
 
-    fn emit(&self, event: &str, payload: Value) {
-        if event == "host:request" || !self.closed.load(Ordering::SeqCst) {
-            self.inner.emit(event, payload);
+    fn emit(&self, event: CoreEvent) {
+        if matches!(event, CoreEvent::HostRequest(_)) || !self.closed.load(Ordering::SeqCst) {
+            self.inner.emit(event);
         }
     }
 
-    fn emit_to(&self, connection: u64, event: &str, payload: Value) {
-        if event == "host:request" || !self.closed.load(Ordering::SeqCst) {
-            self.inner.emit_to(connection, event, payload);
+    fn emit_to(&self, connection: u64, event: CoreEvent) {
+        if matches!(event, CoreEvent::HostRequest(_)) || !self.closed.load(Ordering::SeqCst) {
+            self.inner.emit_to(connection, event);
         }
     }
 }
@@ -166,9 +167,6 @@ pub fn core_data(data: &Value) -> Result<Value> {
     Ok(Value::Object(out))
 }
 
-/// The event a write to the profile reports (`ProfileChange` in `kchess-contracts`).
-pub const PROFILE_CHANGED: &str = "profile:changed";
-
 impl CoreApi for Core {
     fn assistance_blocked(&self) -> bool {
         self.services.online().assistance_blocked()
@@ -183,10 +181,9 @@ impl CoreApi for Core {
     }
 
     fn changed(&self, areas: &'static [ProfileArea]) {
-        self.host.emit(
-            PROFILE_CHANGED,
+        self.host.emit(CoreEvent::ProfileChanged(
             json!({ "areas": areas, "origin": crate::connection::current_or_app() }),
-        );
+        ));
     }
 }
 
@@ -363,7 +360,8 @@ impl Core {
             self.analysis.stop_analysis(true);
             self.reviews.restart_review_engine();
         }
-        self.host.emit("settings:saved", core_settings(&saved)?);
+        self.host
+            .emit(CoreEvent::SettingsSaved(core_settings(&saved)?));
         self.reviews.reviews_changed();
         Ok(saved)
     }

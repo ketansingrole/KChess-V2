@@ -688,6 +688,7 @@ mod tests {
     use super::*;
     use crate::store::documents::{DAMAGED_STUDIES, read_document_text};
     use crate::store::library_import::read_studies;
+    use kchess_contracts::CoreEvent;
 
     #[test]
     fn stored_text_matches_javascript_stringify() {
@@ -730,7 +731,7 @@ mod tests {
 
     impl Host for Quiet {
         fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _: &str, _: Value) {}
+        fn emit(&self, _event: CoreEvent) {}
     }
 
     /// An arena that has ended is dropped when the next one is remembered, and

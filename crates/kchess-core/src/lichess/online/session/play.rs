@@ -1,5 +1,6 @@
 //! The live online game: its stream, moves, chat, presence, actions, logout and close.
 
+use kchess_contracts::CoreEvent;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -122,7 +123,7 @@ impl OnlineSession {
         }
         let mut payload = event;
         payload["id"] = json!(game_id);
-        self.emit("online:event", payload);
+        self.emit(CoreEvent::OnlineEvent(payload));
     }
 
     /// Sets the hook run before each state is reported, given whether a live game is in progress

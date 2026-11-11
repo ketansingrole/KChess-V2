@@ -16,7 +16,7 @@ use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use kchess_domain::training::clock::{ClockState, SetData, format_clock};
 use serde_json::{Value, json};
 
-use crate::core::{AppCore, CoreEvent};
+use crate::core::{AppCore, ClientEvent, CoreEvent};
 
 /// Clocks and the low-time alert are read this often during a game.
 const TICK: Duration = Duration::from_millis(250);
@@ -901,18 +901,18 @@ impl OnlineState {
     }
 
     fn receive(&mut self, event: &CoreEvent, cx: &mut Context<Self>) {
-        match event.name.as_str() {
-            "online:event" => {
+        match event {
+            CoreEvent::OnlineEvent(payload) => {
                 // Not for a game the Board API cannot play, such as one started on another device.
-                let starts = event.payload["type"] == json!("gameStart")
-                    && event.payload["game"]["speed"] != json!("correspondence")
-                    && event.payload["game"]["compat"]["board"] != json!(false);
-                self.transition(online_game::event, vec![event.payload.clone()], None, cx);
+                let starts = payload["type"] == json!("gameStart")
+                    && payload["game"]["speed"] != json!("correspondence")
+                    && payload["game"]["compat"]["board"] != json!(false);
+                self.transition(online_game::event, vec![payload.clone()], None, cx);
                 // The event stream announces a game whose board stream already failed for good
                 // (on launch the two race): the failure stands, as the core opens no new stream.
-                if event.payload["type"] == json!("gameStart")
+                if payload["type"] == json!("gameStart")
                     && let Some(failed) = self.failed_state.clone()
-                    && failed["gameId"] == event.payload["game"]["gameId"]
+                    && failed["gameId"] == payload["game"]["gameId"]
                 {
                     self.transition(online_game::connection, vec![failed], None, cx);
                 }
@@ -929,40 +929,34 @@ impl OnlineState {
                     });
                 }
             }
-            "online:state" => {
-                let kind = event.payload["kind"].as_str().map(str::to_string);
-                if event.payload["lane"] == json!("game") {
+            CoreEvent::OnlineState(payload) => {
+                let kind = payload["kind"].as_str().map(str::to_string);
+                if payload["lane"] == json!("game") {
                     // Only a failure that ended the stream carries a kind.
-                    self.failed_state = kind.is_some().then(|| event.payload.clone());
+                    self.failed_state = kind.is_some().then(|| payload.clone());
                     self.failure = kind;
                 } else if kind.is_some() {
                     // The event stream's own states never clear the game's failure.
                     self.failure = kind;
                 }
-                self.transition(
-                    online_game::connection,
-                    vec![event.payload.clone()],
-                    None,
-                    cx,
-                );
+                self.transition(online_game::connection, vec![payload.clone()], None, cx);
             }
-            "online:error" => {
-                if let Some(message) = event.payload.as_str() {
+            CoreEvent::OnlineError(payload) => {
+                if let Some(message) = payload.as_str() {
                     notice(cx, message.to_string());
                 }
             }
-            "online:lobby" => {
-                self.lobby = Some(event.payload.clone()).filter(|lobby| !lobby.is_null());
+            CoreEvent::OnlineLobby(payload) => {
+                self.lobby = Some(payload.clone()).filter(|lobby| !lobby.is_null());
                 cx.notify();
             }
-            "online:ongoing-changed" => self.refresh_ongoing(cx),
-            "challenges:update" => {
-                self.challenges = event.payload.as_array().cloned().unwrap_or_default();
+            CoreEvent::OngoingChanged(_) => self.refresh_ongoing(cx),
+            CoreEvent::ChallengesUpdate(payload) => {
+                self.challenges = payload.as_array().cloned().unwrap_or_default();
                 cx.notify();
             }
             // A new challenge for one of the accounts: Accept and Decline from its notification.
-            "challenge:received" if event.payload["direction"] == json!("in") => {
-                let challenge = &event.payload;
+            CoreEvent::ChallengeReceived(challenge) if challenge["direction"] == json!("in") => {
                 let (title, body) = challenge_alert(challenge);
                 // The notification's buttons find it here, before the inbox's next update.
                 let id = challenge["id"].as_str().unwrap_or_default().to_string();
@@ -1071,11 +1065,8 @@ pub fn init(cx: &mut App) {
     let events = cx.global::<AppCore>().events.clone();
     cx.subscribe(&events, {
         let state = state.clone();
-        move |_, event: &CoreEvent, cx| {
-            if event.name.starts_with("online:")
-                || event.name == "challenges:update"
-                || event.name == "challenge:received"
-            {
+        move |_, event: &ClientEvent, cx| {
+            if let Some(event) = event.core() {
                 state.update(cx, |state, cx| state.receive(event, cx));
             }
         }
@@ -1085,8 +1076,8 @@ pub fn init(cx: &mut App) {
     // never replaying a move that was pending on the old core.
     cx.subscribe(&events, {
         let state = state.clone();
-        move |_, event: &CoreEvent, cx| {
-            if event.name != crate::core::RECONNECTED {
+        move |_, event: &ClientEvent, cx| {
+            if *event != ClientEvent::Reconnected {
                 return;
             }
             state.update(cx, |state, cx| {

@@ -26,9 +26,9 @@ pub mod recognizer;
 
 use crate::archive::{self, Refusal};
 use crate::download;
-use crate::usage::Meter;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use crate::usage::Meter;
 
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -764,6 +764,7 @@ fn unpack(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kchess_contracts::CoreEvent;
 
     fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
         let pairs: Vec<(String, String)> = pairs
@@ -788,7 +789,7 @@ mod tests {
 
     impl Host for Silent {
         fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _: &str, _: serde_json::Value) {}
+        fn emit(&self, _event: CoreEvent) {}
     }
 
     /// A call cancelled while the model is being prepared stops listening: before, its listener

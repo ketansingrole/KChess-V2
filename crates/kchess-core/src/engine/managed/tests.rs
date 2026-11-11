@@ -2,6 +2,7 @@
 //! archive traversal and links, failed handoff, failed probe, cancellation. A local HTTP server
 //! stands in for GitHub; archives are generated in the test.
 
+use kchess_contracts::CoreEvent;
 use std::collections::HashMap;
 use std::future::Future;
 use std::io::{Cursor, Write};
@@ -36,7 +37,8 @@ impl Host for RecordingHost {
             .push(format!("[{scope}] {message}"));
     }
 
-    fn emit(&self, event: &str, payload: Value) {
+    fn emit(&self, event: CoreEvent) {
+        let (event, payload) = (event.name(), event.into_payload());
         self.events
             .lock()
             .unwrap()

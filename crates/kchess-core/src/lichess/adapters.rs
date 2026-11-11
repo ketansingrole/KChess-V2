@@ -375,13 +375,14 @@ impl LookupCache for DbLookups {
 mod tests {
     use super::*;
     use crate::host::{Config, Host, Level};
+    use kchess_contracts::CoreEvent;
     use serde_json::json;
 
     struct Quiet;
 
     impl Host for Quiet {
         fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _: &str, _: Value) {}
+        fn emit(&self, _event: CoreEvent) {}
     }
 
     /// A saved explorer lookup written by the cache comes back as the same JSON, so a refresh that

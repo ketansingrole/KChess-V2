@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use kchess_contracts::CoreEvent;
 use kchess_core::Config;
 use kchess_service::protocol::{self, Frame, RefuseReason, read_frame, write_frame};
 use kchess_service::server::{ServeOptions, serve};
@@ -53,7 +54,7 @@ async fn event(events: &mut UnboundedReceiver<ClientEvent>, name: &str) -> Value
     tokio::time::timeout(WAIT, async {
         loop {
             match events.recv().await {
-                Some(ClientEvent::Event { name: got, payload }) if got == name => return payload,
+                Some(ClientEvent::Event(got)) if got.name() == name => return got.into_payload(),
                 Some(_) => {}
                 None => panic!("the events ended before {name}"),
             }
@@ -328,8 +329,8 @@ async fn a_host_request_reaches_only_the_window_that_answers_it() {
     let elsewhere = tokio::time::timeout(Duration::from_millis(500), async {
         loop {
             match second_events.recv().await {
-                Some(ClientEvent::Event { name, payload })
-                    if name == "host:request" && payload["kind"] == "openExternal" =>
+                Some(ClientEvent::Event(CoreEvent::HostRequest(payload)))
+                    if payload["kind"] == "openExternal" =>
                 {
                     return;
                 }
@@ -415,10 +416,9 @@ async fn a_window_that_joins_learns_which_window_alerts() {
         .expect("open");
     assert_eq!(
         first,
-        ClientEvent::Event {
-            name: "alerts:owner".into(),
-            payload: json!({ "connection": gpui.connection() }),
-        }
+        ClientEvent::Event(CoreEvent::AlertsOwner(
+            json!({ "connection": gpui.connection() })
+        ))
     );
     drop((gpui, second));
     service.abort();

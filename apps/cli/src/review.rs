@@ -7,7 +7,7 @@ use kchess_domain::review::{analyse_review, san_to_uci};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::core::{CoreClient, Event};
+use crate::core::{ClientEvent, CoreClient, CoreEvent};
 
 const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -124,7 +124,7 @@ pub fn report(line: &Line, review: &Value) -> Option<Value> {
 
 pub async fn run(
     core: &CoreClient,
-    events: &mut UnboundedReceiver<Event>,
+    events: &mut UnboundedReceiver<ClientEvent>,
     pgn: &str,
 ) -> Result<Value, String> {
     let line = main_line(pgn)?;
@@ -157,17 +157,17 @@ pub async fn run(
             }
             event = events.recv() => match event {
                 None => return Err("The core closed.".into()),
-                Some(event) if event.name == "core:closed" => return Err("The core closed.".into()),
-                Some(event) if event.name == "host:request" => core.answer(&event.payload).await,
-                Some(event) if event.name == "review:update" && ours(&event.payload["review"]) => {
-                    stored = event.payload["review"].clone();
+                Some(ClientEvent::Closed) => return Err("The core closed.".into()),
+                Some(ClientEvent::Event(CoreEvent::HostRequest(request))) => core.answer(&request).await,
+                Some(ClientEvent::Event(CoreEvent::ReviewUpdate(update))) if ours(&update["review"]) => {
+                    stored = update["review"].clone();
                 }
-                Some(event) if event.name == "review:status"
-                    && event.payload["failed"]["key"].as_str().is_some_and(|failed| {
+                Some(ClientEvent::Event(CoreEvent::ReviewStatus(status)))
+                    if status["failed"]["key"].as_str().is_some_and(|failed| {
                         failed == stored["key"].as_str().unwrap_or(&key)
                     }) =>
                 {
-                    let message = event.payload["failed"]["message"].as_str().unwrap_or_default();
+                    let message = status["failed"]["message"].as_str().unwrap_or_default();
                     return Err(format!("The review failed: {message}"));
                 }
                 Some(_) => {}

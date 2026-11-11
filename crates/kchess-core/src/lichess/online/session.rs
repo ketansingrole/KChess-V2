@@ -1,3 +1,4 @@
+use kchess_contracts::CoreEvent;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
@@ -64,8 +65,8 @@ impl OnlineSession {
         lock(&self.inner.state)
     }
 
-    fn emit(&self, event: &str, payload: Value) {
-        self.inner.host.emit(event, payload);
+    fn emit(&self, event: CoreEvent) {
+        self.inner.host.emit(event);
     }
 
     fn log(&self, level: Level, message: String) {
@@ -73,7 +74,7 @@ impl OnlineSession {
     }
 
     fn emit_error(&self, message: &str) {
-        self.emit("online:error", json!(message));
+        self.emit(CoreEvent::OnlineError(json!(message)));
     }
 
     fn emit_state(
@@ -123,7 +124,7 @@ impl OnlineSession {
         }
         let live_game = super::state::reports_live_game(phase, game_id);
         self.run_state_hook(live_game, self.assistance_blocked());
-        self.emit("online:state", payload);
+        self.emit(CoreEvent::OnlineState(payload));
     }
 
     /// An error the user should see, unless it is a cancellation; a refusal of a request
@@ -503,15 +504,14 @@ impl OnlineSession {
             }
             self.refresh_assistance();
         }
-        self.emit("online:event", event);
+        self.emit(CoreEvent::OnlineEvent(event));
     }
 
     fn on_challenge(&self, account: &str, event: &Value) {
         if let Some(info) = self.inner.challenges.ingest(account, event) {
-            self.emit(
-                "challenge:received",
+            self.emit(CoreEvent::ChallengeReceived(
                 serde_json::to_value(info).unwrap_or(Value::Null),
-            );
+            ));
         }
     }
 
@@ -535,7 +535,7 @@ impl OnlineSession {
                 st.announced.remove(0);
             }
         }
-        self.emit("online:event", event);
+        self.emit(CoreEvent::OnlineEvent(event));
     }
 
     /// `ongoingChanged`: report the change once the burst of stream events has passed.
@@ -547,7 +547,7 @@ impl OnlineSession {
         }
         st.ongoing_timer = Some(tokio::spawn(async move {
             tokio::time::sleep(ONGOING_DEBOUNCE).await;
-            this.emit("online:ongoing-changed", Value::Null);
+            this.emit(CoreEvent::OngoingChanged(Value::Null));
         }));
     }
 }

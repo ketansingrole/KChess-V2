@@ -2,17 +2,17 @@
 //! as its own task and `Client::call` has no deadline, so a panic used to leave the caller (a
 //! page's spinner, a command-line command) waiting for an answer that never came.
 
+use kchess_contracts::CoreEvent;
 use std::sync::Arc;
 use std::time::Duration;
 
 use kchess_core::{Config, Core, Host, Level};
-use serde_json::Value;
 
 struct Quiet;
 
 impl Host for Quiet {
     fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-    fn emit(&self, _event: &str, _payload: Value) {}
+    fn emit(&self, _event: CoreEvent) {}
 }
 
 #[tokio::test]

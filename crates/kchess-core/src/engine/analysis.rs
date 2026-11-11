@@ -26,8 +26,6 @@ use crate::host::Level;
 use kchess_domain::misc::{validate, value::J};
 use kchess_domain::training::uci_info::parse_info;
 
-/// The event analysis updates are delivered as.
-pub const ANALYSIS_EVENT: &str = "engine:analysis";
 /// Depth a bounded analysis searches to.
 pub const DEPTH_LIMIT: u32 = 26;
 /// Time a bounded analysis may take.

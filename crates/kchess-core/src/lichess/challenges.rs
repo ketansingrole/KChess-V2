@@ -6,6 +6,7 @@
 //! may be absent but not null, lengths count UTF-16 units, and a malformed event is not a
 //! challenge at all. The variant mapping comes from `kchess_domain`.
 
+use kchess_contracts::CoreEvent;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
@@ -177,7 +178,7 @@ impl ChallengeInbox {
     /// `changed(list())`: the whole list as `challenges:update` carries it.
     fn emit(&self, entries: &[ChallengeInfo]) {
         let payload = serde_json::to_value(sorted(entries)).unwrap_or(Value::Array(Vec::new()));
-        self.host.emit("challenges:update", payload);
+        self.host.emit(CoreEvent::ChallengesUpdate(payload));
     }
 }
 
@@ -192,6 +193,7 @@ fn sorted(entries: &[ChallengeInfo]) -> Vec<ChallengeInfo> {
 mod tests {
     use super::*;
     use crate::host::Level;
+    use kchess_contracts::CoreEvent;
     use serde_json::Number;
     use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
@@ -288,7 +290,8 @@ mod tests {
 
     impl Host for Updates {
         fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, event: &str, _: Value) {
+        fn emit(&self, event: CoreEvent) {
+            let event = event.name();
             assert_eq!(event, "challenges:update");
             self.0.fetch_add(1, Ordering::SeqCst);
         }

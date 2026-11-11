@@ -14,12 +14,12 @@ use serde_json::{Value, json};
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::core::{CoreClient, Event};
+use crate::core::{ClientEvent, CoreClient, CoreEvent};
 
 /// Awaits `work` while answering the core's host requests; other events are dropped.
 async fn answering<T>(
     core: &CoreClient,
-    events: &mut UnboundedReceiver<Event>,
+    events: &mut UnboundedReceiver<ClientEvent>,
     work: impl Future<Output = T>,
 ) -> T {
     tokio::pin!(work);
@@ -27,8 +27,8 @@ async fn answering<T>(
         tokio::select! {
             done = &mut work => return done,
             Some(event) = events.recv() => {
-                if event.name == "host:request" {
-                    core.answer(&event.payload).await;
+                if let ClientEvent::Event(CoreEvent::HostRequest(request)) = event {
+                    core.answer(&request).await;
                 }
             }
         }
@@ -356,7 +356,7 @@ impl Session<'_> {
     }
 
     /// The engine's move, when it is its turn; repeated while the rules ask for another search.
-    async fn computer_turn(&mut self, events: &mut UnboundedReceiver<Event>) {
+    async fn computer_turn(&mut self, events: &mut UnboundedReceiver<ClientEvent>) {
         loop {
             let host = self.host();
             let Game::Computer(game) = &mut self.game else {
@@ -660,7 +660,7 @@ impl Session<'_> {
 
     /// Plays typed lines, clock ticks and core events until the player quits, stdin ends, the
     /// core closes or Ctrl-C.
-    async fn play(&mut self, events: &mut UnboundedReceiver<Event>) {
+    async fn play(&mut self, events: &mut UnboundedReceiver<ClientEvent>) {
         let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
         let mut ticks = tokio::time::interval(std::time::Duration::from_millis(100));
         let interrupted = tokio::signal::ctrl_c();
@@ -674,13 +674,13 @@ impl Session<'_> {
                         self.show();
                     }
                 }
-                Some(event) = events.recv() => {
-                    if event.name == "host:request" {
-                        self.core.answer(&event.payload).await;
-                    } else if event.name == "core:closed" {
-                        break;
+                Some(event) = events.recv() => match event {
+                    ClientEvent::Event(CoreEvent::HostRequest(request)) => {
+                        self.core.answer(&request).await;
                     }
-                }
+                    ClientEvent::Closed => break,
+                    _ => {}
+                },
                 line = lines.next_line() => {
                     let Ok(Some(line)) = line else { break };
                     match self.typed(line.trim()).await {
@@ -699,7 +699,7 @@ impl Session<'_> {
 
 pub async fn interactive(
     core: &CoreClient,
-    events: &mut UnboundedReceiver<Event>,
+    events: &mut UnboundedReceiver<ClientEvent>,
     computer: bool,
     level: Option<String>,
     color: Option<String>,

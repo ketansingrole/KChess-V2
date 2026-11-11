@@ -4,6 +4,7 @@
 //! the process environment.
 #![allow(dead_code)]
 
+use kchess_contracts::CoreEvent;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use kchess_core::store::games;
@@ -28,7 +29,8 @@ impl Host for SignedIn {
             .push(format!("[{scope}] {message}"));
     }
 
-    fn emit(&self, event: &str, payload: Value) {
+    fn emit(&self, event: CoreEvent) {
+        let (event, payload) = (event.name(), event.into_payload());
         if event != "host:request" {
             self.events
                 .lock()

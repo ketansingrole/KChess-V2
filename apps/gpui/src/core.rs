@@ -15,20 +15,16 @@ use kchess_contracts::{CoreError, Level};
 use kchess_core::{Config, Core, Host};
 use serde_json::{Value, json};
 
-/// A core event, by its `CoreEvents` name.
-#[derive(Clone, Debug)]
-pub struct CoreEvent {
-    pub name: String,
-    pub payload: Value,
-}
+pub use kchess_contracts::CoreEvent;
+pub use kchess_service::ClientEvent;
 
-/// What views subscribe to for core events.
+/// What views subscribe to for core events, and for `ClientEvent::Reconnected`.
 pub struct CoreEvents;
 
-impl EventEmitter<CoreEvent> for CoreEvents {}
+impl EventEmitter<ClientEvent> for CoreEvents {}
 
 struct ChannelHost {
-    events: mpsc::UnboundedSender<CoreEvent>,
+    events: mpsc::UnboundedSender<ClientEvent>,
 }
 
 impl Host for ChannelHost {
@@ -36,12 +32,9 @@ impl Host for ChannelHost {
         crate::log::write(level, scope, message);
     }
 
-    fn emit(&self, event: &str, payload: Value) {
+    fn emit(&self, event: CoreEvent) {
         // The UI has gone when the receiver is dropped; late events have nowhere to go.
-        let _ = self.events.unbounded_send(CoreEvent {
-            name: event.to_string(),
-            payload,
-        });
+        let _ = self.events.unbounded_send(ClientEvent::Event(event));
     }
 }
 
@@ -61,10 +54,6 @@ pub struct CoreBridge {
     /// new connection to the shared core.
     focused: Arc<std::sync::atomic::AtomicU8>,
 }
-
-/// What the app hears when it reached the shared core again (`core:reconnected`): what it had
-/// started there ended with the old connection, and its owners start it again.
-pub const RECONNECTED: &str = "core:reconnected";
 
 /// How the app reaches its core: `KCHESS_CORE_MODE=service` or `embedded`; otherwise the shared
 /// service when its binary ships beside the app.
@@ -134,7 +123,7 @@ impl CoreBridge {
 
     /// Opens a core in this process over `config`'s profile; fails when another KChess app has
     /// it open.
-    fn open(config: Config) -> Result<(CoreBridge, mpsc::UnboundedReceiver<CoreEvent>), String> {
+    fn open(config: Config) -> Result<(CoreBridge, mpsc::UnboundedReceiver<ClientEvent>), String> {
         let runtime = Self::runtime()?;
         let (events, receiver) = mpsc::unbounded();
         let core = {
@@ -153,7 +142,11 @@ impl CoreBridge {
 
     /// Connects to the profile's shared core, starting it when none runs. If it stops, the app
     /// starts it again and carries on with the new connection.
-    fn connect(config: Config) -> Result<(CoreBridge, mpsc::UnboundedReceiver<CoreEvent>), String> {
+    /// What it had started there ended with the old connection; its owners start it again on
+    /// `ClientEvent::Reconnected`.
+    fn connect(
+        config: Config,
+    ) -> Result<(CoreBridge, mpsc::UnboundedReceiver<ClientEvent>), String> {
         let runtime = Self::runtime()?;
         let binary = service_binary().ok_or("The KChess core service is missing")?;
         let profile = config.data_dir.clone();
@@ -180,12 +173,10 @@ impl CoreBridge {
             runtime.spawn(async move {
                 loop {
                     while let Some(event) = received.recv().await {
-                        match event {
-                            kchess_service::ClientEvent::Event { name, payload } => {
-                                let _ = events.unbounded_send(CoreEvent { name, payload });
-                            }
-                            kchess_service::ClientEvent::Closed => break,
+                        if event == ClientEvent::Closed {
+                            break;
                         }
+                        let _ = events.unbounded_send(event);
                     }
                     crate::log::write(Level::Warn, "core", "The core stopped; reconnecting.");
                     let mut delay = std::time::Duration::from_millis(200);
@@ -200,10 +191,7 @@ impl CoreBridge {
                                     *current = client;
                                 }
                                 received = reconnected;
-                                let _ = events.unbounded_send(CoreEvent {
-                                    name: RECONNECTED.into(),
-                                    payload: Value::Null,
-                                });
+                                let _ = events.unbounded_send(ClientEvent::Reconnected);
                                 break;
                             }
                             Err(error) => {
@@ -603,18 +591,17 @@ pub fn on_profile_change(
     reload: impl Fn(&mut App) + 'static,
 ) {
     let events = cx.global::<AppCore>().events.clone();
-    cx.subscribe(&events, move |_, event: &CoreEvent, cx| {
-        if event.name == RECONNECTED {
-            return reload(cx);
-        }
-        if event.name != "profile:changed" {
-            return;
-        }
+    cx.subscribe(&events, move |_, event: &ClientEvent, cx| {
+        let change = match event {
+            ClientEvent::Reconnected => return reload(cx),
+            ClientEvent::Event(CoreEvent::ProfileChanged(change)) => change,
+            _ => return,
+        };
         let own = cx.global::<AppCore>().bridge.connection();
-        if event.payload["origin"].as_u64() == Some(own) {
+        if change["origin"].as_u64() == Some(own) {
             return;
         }
-        let changed = event.payload["areas"].as_array().is_some_and(|changed| {
+        let changed = change["areas"].as_array().is_some_and(|changed| {
             changed
                 .iter()
                 .any(|area| area.as_str().is_some_and(|area| areas.contains(&area)))
@@ -692,12 +679,12 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
     cx.set_global(core.clone());
     cx.spawn(async move |cx| {
         while let Some(event) = receiver.next().await {
-            if event.name == "host:request" {
-                cx.update(|cx| answer_host(&event.payload, cx));
+            if let ClientEvent::Event(CoreEvent::HostRequest(request)) = &event {
+                cx.update(|cx| answer_host(request, cx));
                 continue;
             }
-            if event.name == "alerts:owner" {
-                let owner = event.payload["connection"].as_u64();
+            if let ClientEvent::Event(CoreEvent::AlertsOwner(owner)) = &event {
+                let owner = owner["connection"].as_u64();
                 cx.update(|cx| cx.set_global(AlertOwner(owner)));
             }
             core.events.update(cx, |_, cx| cx.emit(event));

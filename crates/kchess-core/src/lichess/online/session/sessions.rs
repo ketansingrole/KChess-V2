@@ -1,5 +1,6 @@
 //! Cancelling, attaching to, resuming and listing the online session's games.
 
+use kchess_contracts::CoreEvent;
 use kchess_contracts::types::OnlinePhase;
 use serde_json::Value;
 
@@ -524,10 +525,9 @@ impl OnlineSession {
             return;
         };
         for info in fresh {
-            self.emit(
-                "challenge:received",
+            self.emit(CoreEvent::ChallengeReceived(
                 serde_json::to_value(info).unwrap_or(Value::Null),
-            );
+            ));
         }
     }
 }

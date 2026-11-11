@@ -2,12 +2,12 @@
 //! same profile is refused even when the first core lives in another process (a second
 //! app launch, the CLI on the same data dir), where the in-process map cannot see it.
 
+use kchess_contracts::CoreEvent;
 use std::fs::File;
 use std::sync::Arc;
 
 use kchess_core::facade::ProfileClaim;
 use kchess_core::{Config, Core, Host, Level};
-use serde_json::Value;
 
 /// The lock file the claim holds (`PROFILE_LOCK`, `crates/kchess-core/src/facade.rs`).
 const LOCK: &str = "profile.lock";
@@ -21,7 +21,7 @@ struct Wire;
 impl Host for Wire {
     fn log(&self, _level: Level, _scope: &str, _message: &str) {}
 
-    fn emit(&self, _event: &str, _payload: Value) {}
+    fn emit(&self, _event: CoreEvent) {}
 }
 
 /// Holds the OS lock from a separately opened handle: `flock`/`LockFileEx` conflict

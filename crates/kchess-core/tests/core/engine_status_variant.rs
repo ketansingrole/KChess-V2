@@ -2,17 +2,18 @@
 //! Chess960, the bundled Fairy-Stockfish for the others. The computer page checks it before a
 //! variant game, so a missing Fairy-Stockfish shows "not found" rather than a failed move.
 
+use kchess_contracts::CoreEvent;
 use std::sync::Arc;
 
 use kchess_core::{Config, Core, Host, Level};
-use serde_json::{Value, json};
+use serde_json::json;
 
 struct Quiet;
 
 impl Host for Quiet {
     fn log(&self, _level: Level, _scope: &str, _message: &str) {}
 
-    fn emit(&self, _event: &str, _payload: Value) {}
+    fn emit(&self, _event: CoreEvent) {}
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

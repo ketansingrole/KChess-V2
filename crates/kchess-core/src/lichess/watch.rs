@@ -6,6 +6,7 @@
 //! `watch:frame` and `watch:broadcast` on the host). Lining a TV game up with its delayed export
 //! runs in the background and fails quietly: the board works without it.
 
+use kchess_contracts::CoreEvent;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -247,34 +248,31 @@ impl HostSink {
         }
     }
 
-    fn emit(&self, event: &str, payload: Value) {
+    fn emit(&self, event: CoreEvent) {
         match self.connection {
-            Some(connection) => self.host.emit_to(connection, event, payload),
-            None => self.host.emit(event, payload),
+            Some(connection) => self.host.emit_to(connection, event),
+            None => self.host.emit(event),
         }
     }
 }
 
 impl WatchSink for HostSink {
     fn frame(&self, frame: WatchFrame) {
-        self.emit(
-            "watch:frame",
+        self.emit(CoreEvent::WatchFrame(
             serde_json::to_value(frame).unwrap_or(Value::Null),
-        );
+        ));
     }
 
     fn state(&self, state: WatchState) {
-        self.emit(
-            "watch:state",
+        self.emit(CoreEvent::WatchState(
             serde_json::to_value(state).unwrap_or(Value::Null),
-        );
+        ));
     }
 
     fn broadcast(&self, update: BroadcastUpdate) {
-        self.emit(
-            "watch:broadcast",
+        self.emit(CoreEvent::WatchBroadcast(
             serde_json::to_value(update).unwrap_or(Value::Null),
-        );
+        ));
     }
 }
 

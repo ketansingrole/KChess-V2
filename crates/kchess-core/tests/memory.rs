@@ -12,6 +12,7 @@
 
 mod support;
 
+use kchess_contracts::CoreEvent;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::Path;
 use std::sync::Arc;
@@ -20,7 +21,7 @@ use std::time::Duration;
 
 use kchess_core::connection::ClientInfo;
 use kchess_core::{Config, Core, Host, Level};
-use serde_json::{Value, json};
+use serde_json::json;
 
 /// Counts the bytes live on the heap.
 struct Counting;
@@ -80,7 +81,7 @@ struct Quiet;
 
 impl Host for Quiet {
     fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-    fn emit(&self, _event: &str, _payload: Value) {}
+    fn emit(&self, _event: CoreEvent) {}
 }
 
 /// The live heap once background work has settled: once no more than `tasks` tasks are alive (or

@@ -5,6 +5,7 @@
 
 mod support;
 
+use kchess_contracts::CoreEvent;
 use std::net::TcpListener;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -26,7 +27,8 @@ struct Wire {
 impl Host for Wire {
     fn log(&self, _level: Level, _scope: &str, _message: &str) {}
 
-    fn emit(&self, event: &str, payload: Value) {
+    fn emit(&self, event: CoreEvent) {
+        let (event, payload) = (event.name(), event.into_payload());
         self.events
             .lock()
             .expect("events lock")

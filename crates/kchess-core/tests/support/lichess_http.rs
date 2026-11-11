@@ -4,6 +4,7 @@
 //! that records logs and events, and the in-memory store and token source the account code uses.
 #![allow(dead_code)]
 
+use kchess_contracts::CoreEvent;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -385,7 +386,8 @@ impl Host for Recording {
             .push((level, scope.to_string(), message.to_string()));
     }
 
-    fn emit(&self, event: &str, payload: Value) {
+    fn emit(&self, event: CoreEvent) {
+        let (event, payload) = (event.name(), event.into_payload());
         self.events
             .lock()
             .unwrap()

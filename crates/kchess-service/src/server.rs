@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use kchess_contracts::CoreEvent;
 use kchess_core::connection::ClientInfo;
 use kchess_core::{Config, Core, Host, Level};
 use serde_json::Value;
@@ -27,15 +28,6 @@ const HELLO_DEADLINE: Duration = Duration::from_secs(5);
 const HANDSHAKES: usize = 32;
 /// Frames waiting for a client that reads slowly.
 const QUEUE: usize = 1024;
-/// Progress events a slow client may miss: the next one carries the whole state. Their last,
-/// terminal update (`terminal`) is never dropped. The voice model's download has none: its
-/// method's answer ends it.
-const COALESCED: [&str; 4] = [
-    "engine:analysis",
-    "watch:frame",
-    "puzzledb:progress",
-    "voicemodel:progress",
-];
 /// How long a leaving client's queued frames may take to flush.
 const FLUSH_DEADLINE: Duration = Duration::from_secs(2);
 /// The service log is started afresh beyond this size.
@@ -104,36 +96,30 @@ impl ServiceHost {
         }
     }
 
-    /// Queues an event for one client. A full queue drops a progress event; for any other event,
-    /// a terminal update included, the client is cut off, and reconnects to read the state afresh.
-    fn send(&self, connection: u64, sender: &mpsc::Sender<Frame>, event: &str, payload: Value) {
-        let droppable = COALESCED.contains(&event) && !terminal(event, &payload);
-        let frame = Frame::Event {
-            name: event.to_string(),
-            payload,
-        };
-        if let Err(mpsc::error::TrySendError::Full(_)) = sender.try_send(frame)
+    /// Queues an event for one client. A full queue drops a progress event
+    /// (`CoreEvent::coalesced`); for any other event, a terminal update included, the client is
+    /// cut off, and reconnects to read the state afresh.
+    fn send(&self, connection: u64, sender: &mpsc::Sender<Frame>, event: CoreEvent) {
+        let droppable = event.coalesced();
+        let name = event.name();
+        if let Err(mpsc::error::TrySendError::Full(_)) = sender.try_send(frame(event))
             && !droppable
         {
             self.log(
                 Level::Warn,
                 "service",
-                &format!("Client {connection} fell behind on {event}; disconnecting it."),
+                &format!("Client {connection} fell behind on {name}; disconnecting it."),
             );
             self.cut_off(connection);
         }
     }
 }
 
-/// The last update of a progress event: no later one follows to carry the state.
-fn terminal(event: &str, payload: &Value) -> bool {
-    match event {
-        "engine:analysis" => payload["done"].as_bool().unwrap_or(false),
-        "puzzledb:progress" => matches!(
-            payload["phase"].as_str(),
-            Some("done" | "cancelled" | "failed")
-        ),
-        _ => false,
+/// The frame an event crosses in.
+fn frame(event: CoreEvent) -> Frame {
+    Frame::Event {
+        name: event.name().to_string(),
+        payload: event.into_payload(),
     }
 }
 
@@ -152,7 +138,7 @@ impl Host for ServiceHost {
         }
     }
 
-    fn emit(&self, event: &str, payload: Value) {
+    fn emit(&self, event: CoreEvent) {
         let clients: Vec<(u64, mpsc::Sender<Frame>)> = self
             .clients
             .lock()
@@ -164,18 +150,18 @@ impl Host for ServiceHost {
             })
             .unwrap_or_default();
         for (connection, sender) in clients {
-            self.send(connection, &sender, event, payload.clone());
+            self.send(connection, &sender, event.clone());
         }
     }
 
-    fn emit_to(&self, connection: u64, event: &str, payload: Value) {
+    fn emit_to(&self, connection: u64, event: CoreEvent) {
         let sender = self
             .clients
             .lock()
             .ok()
             .and_then(|clients| clients.get(&connection).map(|(tx, _)| tx.clone()));
         if let Some(sender) = sender {
-            self.send(connection, &sender, event, payload);
+            self.send(connection, &sender, event);
         }
     }
 }
@@ -451,10 +437,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
         protocol: state.protocol.clone(),
     });
     state.core.with_alert_owner(|owner| {
-        let _ = sender.try_send(Frame::Event {
-            name: "alerts:owner".into(),
-            payload: owner,
-        });
+        let _ = sender.try_send(frame(owner));
         state.host.add(connection, sender.clone(), Arc::clone(&cut));
     });
     state.changed.notify_one();
@@ -658,26 +641,11 @@ mod tests {
         let connected = |host: &ServiceHost| host.clients.lock().expect("clients").contains_key(&1);
         let (sender, _queue) = mpsc::channel(1);
         host.add(1, sender.clone(), Arc::new(Notify::new()));
-        host.send(1, &sender, "watch:frame", json!({}));
-        host.send(1, &sender, "watch:frame", json!({}));
+        host.send(1, &sender, CoreEvent::WatchFrame(json!({})));
+        host.send(1, &sender, CoreEvent::WatchFrame(json!({})));
         assert!(connected(&host), "a progress frame is dropped");
-        host.send(1, &sender, "engine:analysis", json!({ "done": true }));
+        host.send(1, &sender, CoreEvent::Analysis(json!({ "done": true })));
         assert!(!connected(&host), "a terminal update is never dropped");
-    }
-
-    #[test]
-    fn a_progress_events_last_update_is_terminal() {
-        assert!(!terminal("engine:analysis", &json!({ "done": false })));
-        assert!(terminal(
-            "engine:analysis",
-            &json!({ "done": true, "state": "interrupted" })
-        ));
-        assert!(!terminal(
-            "puzzledb:progress",
-            &json!({ "phase": "importing" })
-        ));
-        assert!(terminal("puzzledb:progress", &json!({ "phase": "failed" })));
-        assert!(!terminal("watch:frame", &json!({})));
     }
 
     /// A call in the middle of a step when its connection goes finishes that step before the

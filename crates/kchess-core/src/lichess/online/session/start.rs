@@ -1,5 +1,6 @@
 //! Starting online games and answering challenges.
 
+use kchess_contracts::CoreEvent;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -228,7 +229,7 @@ impl OnlineSession {
             form: Some(form),
         };
         let emit_self = self.clone();
-        let emit: Emitter = Arc::new(move |event| emit_self.emit("online:event", event));
+        let emit: Emitter = Arc::new(move |event| emit_self.emit(CoreEvent::OnlineEvent(event)));
         let mut options_listen = self.listen_options(Lane::Seek, false, None, None);
         options_listen.refused = Some(SEEK_REJECTED);
         let listen_self = self.clone();

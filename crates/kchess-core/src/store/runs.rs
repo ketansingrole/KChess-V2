@@ -134,13 +134,14 @@ pub fn clear_runs(db: &Connection, kind: Option<&str>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kchess_contracts::CoreEvent;
 
     struct Logged(std::sync::Mutex<Vec<String>>);
     impl Host for Logged {
         fn log(&self, _: Level, scope: &str, message: &str) {
             self.0.lock().unwrap().push(format!("{scope}: {message}"));
         }
-        fn emit(&self, _: &str, _: Value) {}
+        fn emit(&self, _event: CoreEvent) {}
     }
 
     fn database() -> Connection {

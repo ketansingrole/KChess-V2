@@ -7,6 +7,7 @@ pub mod attempts;
 pub mod queries;
 mod zst;
 
+use kchess_contracts::CoreEvent;
 use rusqlite::Connection;
 use serde_json::json;
 use std::path::Path;
@@ -15,11 +16,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
-use crate::usage::Meter;
 use crate::error::{CoreError, Result};
 use crate::host::{Config, Host, Level};
 use crate::store::sql::{Lane, LaneMessages, Sql as _, transaction};
 use crate::tasks::lock;
+use crate::usage::Meter;
 use kchess_domain::puzzle::{Random, Sampler};
 use queries::{LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleDbStatus};
 
@@ -501,13 +502,14 @@ impl Progress {
         if let Some(message) = message {
             payload["message"] = json!(message);
         }
-        self.host.emit("puzzledb:progress", payload);
+        self.host.emit(CoreEvent::PuzzleDbProgress(payload));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kchess_contracts::CoreEvent;
     use serde_json::Value;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -523,7 +525,8 @@ mod tests {
         fn log(&self, _: Level, scope: &str, message: &str) {
             self.1.lock().unwrap().push(format!("{scope}: {message}"));
         }
-        fn emit(&self, event: &str, payload: Value) {
+        fn emit(&self, event: CoreEvent) {
+            let (event, payload) = (event.name(), event.into_payload());
             self.0.lock().unwrap().push((event.to_string(), payload));
         }
     }

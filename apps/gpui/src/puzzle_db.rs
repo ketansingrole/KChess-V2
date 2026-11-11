@@ -11,7 +11,7 @@ use kchess_contracts::calls;
 use serde_json::{Value, json};
 
 use crate::assets::icon;
-use crate::core::{AppCore, CoreEvent};
+use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::theme::{Palette, radii};
 use crate::widgets::{self, format_bytes};
 
@@ -35,9 +35,9 @@ pub fn init(cx: &mut App) {
         status: Value::Null,
         progress: None,
         error: None,
-        _events: cx.subscribe(&events, |this, _, event: &CoreEvent, cx| {
-            if event.name == "puzzledb:progress" {
-                this.progress = Some(event.payload.clone());
+        _events: cx.subscribe(&events, |this, _, event: &ClientEvent, cx| {
+            if let ClientEvent::Event(CoreEvent::PuzzleDbProgress(progress)) = event {
+                this.progress = Some(progress.clone());
                 cx.notify();
             }
         }),

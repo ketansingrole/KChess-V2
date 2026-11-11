@@ -9,6 +9,7 @@
 #[cfg(test)]
 mod tests;
 
+use kchess_contracts::CoreEvent;
 use std::collections::HashMap;
 use std::fs;
 use std::future::Future;
@@ -28,9 +29,9 @@ use tokio_util::sync::CancellationToken;
 use super::uci::{EngineHub, UciController};
 use crate::archive::{self, Refusal, hex};
 use crate::download;
-use crate::usage::{Meter, Unmetered};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use crate::usage::{Meter, Unmetered};
 
 /// The GitHub endpoint for the latest official Stockfish release.
 pub const RELEASE_URL: &str =
@@ -437,7 +438,8 @@ async fn install(
         .tempdir()
         .map_err(|cause| CoreError::new(format!("Could not create a staging folder: {cause}")))?;
     let archive = staging.path().join(&asset.name);
-    let (digest, received) = download_archive(&*location.meter, &client, &url, &archive, cancel).await?;
+    let (digest, received) =
+        download_archive(&*location.meter, &client, &url, &archive, cancel).await?;
     if received as f64 != size {
         return Err(CoreError::new("Stockfish download was incomplete."));
     }
@@ -783,7 +785,7 @@ async fn probe_engine(path: &Path) -> Result<()> {
     struct Quiet;
     impl Host for Quiet {
         fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _: &str, _: serde_json::Value) {}
+        fn emit(&self, _event: CoreEvent) {}
     }
     let hub = EngineHub::new(Arc::new(Quiet));
     let engine = UciController::start(&hub, tokio::process::Command::new(path), PROBE_TIMEOUT)

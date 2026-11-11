@@ -243,12 +243,13 @@ impl Meter for UsageBatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kchess_contracts::CoreEvent;
 
     struct Quiet;
 
     impl Host for Quiet {
         fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _: &str, _: Value) {}
+        fn emit(&self, _event: CoreEvent) {}
     }
 
     fn batch(dir: &Path) -> Arc<UsageBatch> {

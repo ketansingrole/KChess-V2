@@ -5,6 +5,7 @@ mod play;
 mod puzzle;
 mod review;
 
+use crate::core::{ClientEvent, CoreEvent};
 use kchess_contracts::calls;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -258,8 +259,8 @@ async fn arguments(args: &[String]) -> Result<Vec<Value>, String> {
 /// Until Ctrl-C (or the core closing), answering host requests and handing other events to `on`.
 async fn until_interrupted(
     core: &CoreClient,
-    events: &mut tokio::sync::mpsc::UnboundedReceiver<core::Event>,
-    mut on: impl FnMut(&core::Event),
+    events: &mut tokio::sync::mpsc::UnboundedReceiver<ClientEvent>,
+    mut on: impl FnMut(&CoreEvent),
 ) {
     let interrupted = tokio::signal::ctrl_c();
     tokio::pin!(interrupted);
@@ -268,9 +269,10 @@ async fn until_interrupted(
             _ = &mut interrupted => return,
             event = events.recv() => match event {
                 None => return,
-                Some(event) if event.name == "core:closed" => return,
-                Some(event) if event.name == "host:request" => core.answer(&event.payload).await,
-                Some(event) => on(&event),
+                Some(ClientEvent::Closed) => return,
+                Some(ClientEvent::Event(CoreEvent::HostRequest(request))) => core.answer(&request).await,
+                Some(ClientEvent::Event(event)) => on(&event),
+                Some(_) => {}
             },
         }
     }
@@ -363,8 +365,8 @@ async fn with_core(
                     tokio::select! {
                         answer = &mut login => break answer?,
                         Some(event) = events.recv() => {
-                            if event.name == "host:request" {
-                                core.answer(&event.payload).await;
+                            if let ClientEvent::Event(CoreEvent::HostRequest(request)) = event {
+                                core.answer(&request).await;
                             }
                         }
                     }
@@ -389,8 +391,8 @@ async fn with_core(
                     tokio::select! {
                         answer = &mut call => break answer?,
                         Some(event) = events.recv() => {
-                            if event.name == "host:request" {
-                                core.answer(&event.payload).await;
+                            if let ClientEvent::Event(CoreEvent::HostRequest(request)) = event {
+                                core.answer(&request).await;
                             }
                         }
                     }
@@ -402,8 +404,8 @@ async fn with_core(
                 core.request(calls::ResumeOnline {}).await?;
                 core.request(calls::StartAnalysis { request }).await?;
                 until_interrupted(&core, &mut events, |event| {
-                    if event.name == "engine:analysis" {
-                        print(&event.payload);
+                    if let CoreEvent::Analysis(update) = event {
+                        print(update);
                     }
                 })
                 .await;
@@ -566,7 +568,7 @@ fn live_round(tour: &Value) -> Option<String> {
 /// until Ctrl-C; an error, or the round's end, ends it.
 async fn watch_frames(
     core: &CoreClient,
-    events: &mut tokio::sync::mpsc::UnboundedReceiver<core::Event>,
+    events: &mut tokio::sync::mpsc::UnboundedReceiver<ClientEvent>,
 ) -> Result<(), String> {
     let interrupted = tokio::signal::ctrl_c();
     tokio::pin!(interrupted);
@@ -575,20 +577,20 @@ async fn watch_frames(
             _ = &mut interrupted => return Ok(()),
             event = events.recv() => match event {
                 None => return Err("The core closed.".into()),
-                Some(event) if event.name == "core:closed" => return Err("The core closed.".into()),
-                Some(event) if event.name == "host:request" => core.answer(&event.payload).await,
-                Some(event) if event.name == "watch:frame" => print(&event.payload),
-                Some(event) if event.name == "watch:broadcast" => {
-                    if let Some(error) = event.payload["error"].as_str() {
+                Some(ClientEvent::Closed) => return Err("The core closed.".into()),
+                Some(ClientEvent::Event(CoreEvent::HostRequest(request))) => core.answer(&request).await,
+                Some(ClientEvent::Event(CoreEvent::WatchFrame(frame))) => print(&frame),
+                Some(ClientEvent::Event(CoreEvent::WatchBroadcast(update))) => {
+                    if let Some(error) = update["error"].as_str() {
                         return Err(error.to_string());
                     }
-                    print(&event.payload);
-                    if event.payload["ended"] == json!(true) {
+                    print(&update);
+                    if update["ended"] == json!(true) {
                         return Ok(());
                     }
                 }
-                Some(event) if event.name == "watch:state" && event.payload["phase"] == "error" => {
-                    let message = event.payload["message"].as_str().unwrap_or("Watching failed.");
+                Some(ClientEvent::Event(CoreEvent::WatchState(state))) if state["phase"] == "error" => {
+                    let message = state["message"].as_str().unwrap_or("Watching failed.");
                     return Err(message.to_string());
                 }
                 Some(_) => {}

@@ -11,6 +11,7 @@ name = "kchess-service"
 path = "src/bin/kchess-service.rs"
 
 [dependencies]
+kchess-contracts = { path = "../kchess-contracts" }
 kchess-core = { path = "../kchess-core" }
 serde.workspace = true
 serde_json.workspace = true

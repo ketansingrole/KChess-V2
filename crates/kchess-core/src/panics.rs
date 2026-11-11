@@ -60,7 +60,8 @@ fn describe(info: &PanicHookInfo<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
+    use kchess_contracts::CoreEvent;
+
     use std::sync::Mutex;
 
     #[derive(Default)]
@@ -72,7 +73,7 @@ mod tests {
                 .unwrap()
                 .push(format!("{} [{scope}] {message}", level.name()));
         }
-        fn emit(&self, _event: &str, _payload: Value) {}
+        fn emit(&self, _event: CoreEvent) {}
     }
 
     #[test]

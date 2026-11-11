@@ -3,6 +3,7 @@
 //! archives, and responsiveness while a large model is prepared. A local HTTP server stands in
 //! for the model's host, and archives are generated in the test.
 
+use kchess_contracts::CoreEvent;
 use std::fs;
 use std::io::{Cursor, Write};
 use std::path::Path;
@@ -34,7 +35,7 @@ impl Host for Logs {
             .push(format!("{} [{scope}] {message}", level.name()));
     }
 
-    fn emit(&self, _event: &str, _payload: serde_json::Value) {}
+    fn emit(&self, _event: CoreEvent) {}
 }
 
 /// One scripted answer to a request.

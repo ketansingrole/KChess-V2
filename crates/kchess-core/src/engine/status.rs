@@ -240,13 +240,13 @@ fn executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
+    use kchess_contracts::CoreEvent;
 
     struct SilentHost;
 
     impl Host for SilentHost {
         fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-        fn emit(&self, _event: &str, _payload: Value) {}
+        fn emit(&self, _event: CoreEvent) {}
     }
 
     fn locations(dir: &Path) -> EngineLocations {

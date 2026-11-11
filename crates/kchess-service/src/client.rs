@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use kchess_contracts::CoreEvent;
 use kchess_core::{Config, CoreError, ErrorKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -40,10 +41,22 @@ pub struct Hello {
 /// What reaches a client without being asked.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientEvent {
-    /// A core event (`CoreEvents` names, and `host:request`).
-    Event { name: String, payload: Value },
+    Event(CoreEvent),
     /// The connection closed: the core stopped, or cut this client off.
     Closed,
+    /// A frontend that reconnects after `Closed` reached a core again: what it had started on
+    /// the old connection ended with it. The frontend reports this itself.
+    Reconnected,
+}
+
+impl ClientEvent {
+    /// The core event this is, if it is one.
+    pub fn core(&self) -> Option<&CoreEvent> {
+        match self {
+            ClientEvent::Event(event) => Some(event),
+            _ => None,
+        }
+    }
 }
 
 /// Why a client could not connect.
@@ -215,8 +228,11 @@ impl Client {
                                 });
                             }
                         }
+                        // The handshake matched the protocol, so every name is known.
                         Frame::Event { name, payload } => {
-                            let _ = events.send(ClientEvent::Event { name, payload });
+                            if let Some(event) = CoreEvent::from_wire(&name, payload) {
+                                let _ = events.send(ClientEvent::Event(event));
+                            }
                         }
                         _ => {}
                     }

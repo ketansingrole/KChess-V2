@@ -1,5 +1,6 @@
 //! The online session's idle event stream.
 
+use kchess_contracts::CoreEvent;
 use std::sync::Arc;
 
 use kchess_contracts::types::OnlinePhase;
@@ -84,7 +85,7 @@ impl OnlineSession {
         if let Some(message) = message {
             payload["message"] = json!(message);
         }
-        self.emit("online:lobby", payload);
+        self.emit(CoreEvent::OnlineLobby(payload));
     }
 
     async fn run_lobby(&self, account: String, auth: Auth, cancel: CancellationToken) {

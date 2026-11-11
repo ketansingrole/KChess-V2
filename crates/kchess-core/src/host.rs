@@ -1,22 +1,22 @@
 //! What the core needs from its host while services are split between the languages:
 //! somewhere to log, somewhere to send events, and the directories it owns.
 
-use serde_json::Value;
 use std::path::PathBuf;
 
+pub use kchess_contracts::CoreEvent;
 pub use kchess_contracts::error::Level;
 
 /// Host callbacks. They must not block: the core calls them from its worker threads.
 pub trait Host: Send + Sync + 'static {
     /// One log line under a `[scope]`, as `logDebug/logInfo/logWarn/logError` write it.
     fn log(&self, level: Level, scope: &str, message: &str);
-    /// An event for the host to deliver (`CoreEvents` names, or internal `host:*` requests).
-    fn emit(&self, event: &str, payload: Value);
+    /// An event for the host to deliver.
+    fn emit(&self, event: CoreEvent);
     /// An event for one client only (`crate::connection`): an analysis's updates, a watch's
     /// frames, a host request. A host with one client delivers it like any event.
-    fn emit_to(&self, connection: u64, event: &str, payload: Value) {
+    fn emit_to(&self, connection: u64, event: CoreEvent) {
         let _ = connection;
-        self.emit(event, payload);
+        self.emit(event);
     }
 }
 

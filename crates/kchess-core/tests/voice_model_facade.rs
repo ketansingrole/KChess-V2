@@ -4,6 +4,7 @@
 //! the test switch for the whole process (`kchess_core::env`), so these tests have a binary of
 //! their own.
 
+use kchess_contracts::CoreEvent;
 use std::io::{Cursor, Write};
 use std::sync::{Arc, Mutex};
 
@@ -34,7 +35,8 @@ impl Events {
 impl Host for Events {
     fn log(&self, _level: Level, _scope: &str, _message: &str) {}
 
-    fn emit(&self, event: &str, payload: Value) {
+    fn emit(&self, event: CoreEvent) {
+        let (event, payload) = (event.name(), event.into_payload());
         self.0
             .lock()
             .expect("events")

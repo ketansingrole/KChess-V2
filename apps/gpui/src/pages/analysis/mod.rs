@@ -47,7 +47,7 @@ use shakmaty::{Color, Position as _, Square};
 
 use crate::assets::icon;
 use crate::board::{Arrow, Badge, BoardEvent, BoardState, ChessBoard, Circle};
-use crate::core::{AppCore, BoxedSave, CoreEvent};
+use crate::core::{AppCore, BoxedSave, ClientEvent, CoreEvent};
 use crate::engine_view::EVAL_BAR;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
 use crate::export::{Exporter, GameExport};
@@ -449,14 +449,11 @@ impl AnalysisPage {
                     cx.notify();
                 }
             }),
-            cx.subscribe(&events, |this, _, event: &CoreEvent, cx| {
-                if event.name == "engine:analysis" {
-                    this.receive(event.payload.clone(), cx);
-                }
+            cx.subscribe(&events, |this, _, event: &ClientEvent, cx| match event {
+                ClientEvent::Event(CoreEvent::Analysis(update)) => this.receive(update.clone(), cx),
                 // A search on a lost connection ended with it: the board's is started again.
-                if event.name == crate::core::RECONNECTED {
-                    this.analyse(cx);
-                }
+                ClientEvent::Reconnected => this.analyse(cx),
+                _ => {}
             }),
         ];
         let edits = edits::Edits::new(&root, &path);

@@ -287,7 +287,15 @@ impl Policy {
         lifetime: CancellationToken,
         timeout: Duration,
     ) -> Arc<Policy> {
-        Policy::build(host, meter, http, lifetime, timeout, false, Arc::new(monotonic_ms))
+        Policy::build(
+            host,
+            meter,
+            http,
+            lifetime,
+            timeout,
+            false,
+            Arc::new(monotonic_ms),
+        )
     }
 
     /// The policy of one lookup origin (the explorer, the tablebase): a request during a
@@ -300,7 +308,15 @@ impl Policy {
         now: Clock,
     ) -> Arc<Policy> {
         // A lookup counts no traffic (`record`).
-        Policy::build(host, Arc::new(Unmetered), http, lifetime, timeout, true, now)
+        Policy::build(
+            host,
+            Arc::new(Unmetered),
+            http,
+            lifetime,
+            timeout,
+            true,
+            now,
+        )
     }
 
     fn build(
@@ -670,6 +686,7 @@ fn url_path(url: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kchess_contracts::CoreEvent;
 
     /// reqwest says "error sending request" for every failed connection; the log carries what
     /// lies beneath, so a failure on CI says whether it was refused, reset or out of ports.
@@ -734,7 +751,7 @@ mod tests {
 
     impl Host for Quiet {
         fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _: &str, _: serde_json::Value) {}
+        fn emit(&self, _event: CoreEvent) {}
     }
 
     fn quiet_policy() -> Arc<Policy> {

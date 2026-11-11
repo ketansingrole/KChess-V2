@@ -215,6 +215,7 @@ fn iso_time(ms: f64) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kchess_contracts::CoreEvent;
 
     #[test]
     fn dates_read_as_javascript_reads_them() {
@@ -243,7 +244,7 @@ mod tests {
                 .expect("log")
                 .push(format!("{scope}: {message}"));
         }
-        fn emit(&self, _: &str, _: Value) {}
+        fn emit(&self, _event: CoreEvent) {}
     }
 
     fn database() -> Connection {

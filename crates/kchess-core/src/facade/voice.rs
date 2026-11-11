@@ -3,6 +3,7 @@
 //! speech model it loads (`voiceModelStatus`, `voiceModelInstall`, reporting
 //! `voicemodel:progress`).
 
+use kchess_contracts::CoreEvent;
 use std::sync::Arc;
 
 use kchess_contracts::core_api::VoiceApi;
@@ -99,7 +100,7 @@ impl VoiceApi for Core {
         let host = Arc::clone(&self.host);
         let progress: crate::voice::Listener = Arc::new(move |progress| {
             if let Ok(payload) = serde_json::to_value(progress) {
-                host.emit("voicemodel:progress", payload);
+                host.emit(CoreEvent::VoiceModelProgress(payload));
             }
         });
         self.voice_model.ensure(Some(progress)).await?;

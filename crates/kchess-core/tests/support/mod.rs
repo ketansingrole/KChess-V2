@@ -1,6 +1,7 @@
 //! Helpers shared by the engine integration tests.
 #![allow(dead_code)]
 
+use kchess_contracts::CoreEvent;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -31,7 +32,8 @@ impl Host for Recording {
             .push(format!("{} [{scope}] {message}", level.name()));
     }
 
-    fn emit(&self, event: &str, payload: serde_json::Value) {
+    fn emit(&self, event: CoreEvent) {
+        let (event, payload) = (event.name(), event.into_payload());
         self.events
             .lock()
             .expect("event lock")

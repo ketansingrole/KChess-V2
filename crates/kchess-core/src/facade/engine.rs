@@ -1,5 +1,6 @@
 //! The computer's engine, analysis and game review.
 
+use kchess_contracts::CoreEvent;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -93,11 +94,7 @@ impl EngineApi for Core {
                 request,
                 configured,
                 Arc::new(move |update| {
-                    host.emit_to(
-                        connection,
-                        crate::engine::analysis::ANALYSIS_EVENT,
-                        json!(update),
-                    )
+                    host.emit_to(connection, CoreEvent::Analysis(json!(update)))
                 }),
             )
             .await

@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use shakmaty::Color;
 
 use crate::assets::icon;
-use crate::core::{AppCore, CoreEvent};
+use crate::core::{AppCore, ClientEvent, CoreEvent};
 use crate::online::OnlineHandle;
 use crate::pages::{
     ActionInfo, ActionRole, NavGroup, Page, PageAction, PageCommand, PageInfo, PageTab, PageView,
@@ -204,17 +204,22 @@ impl WatchPage {
         let accounts = crate::accounts::handle(cx);
         let covers = crate::remote_image::handle(cx);
         let subscriptions = vec![
-            cx.subscribe_in(&events, window, |this, _, event: &CoreEvent, window, cx| {
-                if event.name.starts_with("watch:") {
-                    this.receive(event.clone(), cx);
-                }
-                if event.name == "engine:analysis" {
-                    this.engine_update(&event.payload, cx);
-                }
-                if event.name == crate::core::RECONNECTED {
-                    this.reconnected(window, cx);
-                }
-            }),
+            cx.subscribe_in(
+                &events,
+                window,
+                |this, _, event: &ClientEvent, window, cx| match event {
+                    ClientEvent::Event(
+                        event @ (CoreEvent::WatchFrame(_)
+                        | CoreEvent::WatchState(_)
+                        | CoreEvent::WatchBroadcast(_)),
+                    ) => this.receive(event.clone(), cx),
+                    ClientEvent::Event(CoreEvent::Analysis(update)) => {
+                        this.engine_update(update, cx)
+                    }
+                    ClientEvent::Reconnected => this.reconnected(window, cx),
+                    _ => {}
+                },
+            ),
             // The player's own game pauses the engine and leaves an explored line.
             cx.observe(&online, |this, online, cx| {
                 if !online.read(cx).assistance_allowed() {
@@ -543,7 +548,7 @@ impl WatchPage {
 
     /// A feed's update: a frame, the connection's state, or a broadcast round's games.
     fn receive(&mut self, event: CoreEvent, cx: &mut Context<Self>) {
-        let round = event.name == "watch:broadcast";
+        let round = matches!(event, CoreEvent::WatchBroadcast(_));
         if self.pending
             == Some(if round {
                 Pending::Round
@@ -557,28 +562,27 @@ impl WatchPage {
             }
             return;
         }
-        let session = event.payload["session"].as_f64();
-        match event.name.as_str() {
-            "watch:frame" if session.is_some() && session == self.session => {
+        let session = event.payload()["session"].as_f64();
+        match event {
+            CoreEvent::WatchFrame(frame) if session.is_some() && session == self.session => {
                 self.phase = Some("connected".into());
-                self.live.set_frame(event.payload, cx);
+                self.live.set_frame(frame, cx);
             }
-            "watch:state" if session.is_some() && session == self.session => {
-                let phase = event.payload["phase"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string();
+            CoreEvent::WatchState(state) if session.is_some() && session == self.session => {
+                let phase = state["phase"].as_str().unwrap_or_default().to_string();
                 if phase != "connected" && self.phase.as_deref() == Some("connected") {
                     self.live.freeze_clock();
                 }
-                if let Some(message) = event.payload["message"].as_str() {
+                if let Some(message) = state["message"].as_str() {
                     self.error = Some(message.to_string().into());
                 }
-                self.failure = event.payload["kind"].as_str().map(str::to_string);
+                self.failure = state["kind"].as_str().map(str::to_string);
                 self.phase = Some(phase);
             }
-            "watch:broadcast" if session.is_some() && session == self.round_session => {
-                if let Some(error) = self.broadcasts.update(&event.payload) {
+            CoreEvent::WatchBroadcast(update)
+                if session.is_some() && session == self.round_session =>
+            {
+                if let Some(error) = self.broadcasts.update(&update) {
                     self.error = Some(error.into());
                 }
                 self.engine_games_changed(cx);

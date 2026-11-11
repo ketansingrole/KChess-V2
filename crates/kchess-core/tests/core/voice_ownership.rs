@@ -3,18 +3,19 @@
 //! A single-thread runtime makes the release task run only when the test yields, so the
 //! interleavings below are deterministic. The helper is the scripted `kchess-fake-voice`.
 
+use kchess_contracts::CoreEvent;
 use std::sync::Arc;
 
 use kchess_core::connection::ClientInfo;
 use kchess_core::{Config, Core, Host, Level};
-use serde_json::{Value, json};
+use serde_json::json;
 
 struct Quiet;
 
 impl Host for Quiet {
     fn log(&self, _level: Level, _scope: &str, _message: &str) {}
 
-    fn emit(&self, _event: &str, _payload: Value) {}
+    fn emit(&self, _event: CoreEvent) {}
 }
 
 fn open(dir: &tempfile::TempDir) -> Core {

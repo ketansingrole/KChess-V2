@@ -6,6 +6,7 @@
 //! With the profile's own credentials (`Config::system_credentials`) the core seals and opens every
 //! token itself (`secrets.rs`); without them (tests, `--no-credentials`) the host does.
 
+use kchess_contracts::CoreEvent;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -131,8 +132,8 @@ impl Capabilities {
         });
         let request = json!({ "id": id, "kind": kind, "payload": payload });
         match target {
-            Some(target) => self.host.emit_to(target, "host:request", request),
-            None => self.host.emit("host:request", request),
+            Some(target) => self.host.emit_to(target, CoreEvent::HostRequest(request)),
+            None => self.host.emit(CoreEvent::HostRequest(request)),
         }
         let answer = tokio::time::timeout(deadline, receive).await;
         match answer {
@@ -273,13 +274,15 @@ pub fn opens_in_browser(url: &str) -> bool {
 mod tests {
     use super::*;
     use crate::host::Level;
+    use kchess_contracts::CoreEvent;
 
     /// Answers every request on another task, as a JavaScript host answers through `host.reply`.
     struct Echo(Mutex<Option<Arc<Capabilities>>>);
 
     impl Host for Echo {
         fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, event: &str, payload: Value) {
+        fn emit(&self, event: CoreEvent) {
+            let (event, payload) = (event.name(), event.into_payload());
             assert_eq!(event, "host:request");
             let caps = self.0.lock().unwrap().clone().unwrap();
             tokio::spawn(async move {
@@ -389,7 +392,7 @@ mod tests {
 
     impl Host for Silent {
         fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _: &str, _: Value) {
+        fn emit(&self, _event: CoreEvent) {
             *self.0.lock().unwrap() += 1;
         }
     }

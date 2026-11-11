@@ -243,13 +243,14 @@ fn usable_connection<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
+    use kchess_contracts::CoreEvent;
+
     use std::sync::atomic::AtomicUsize;
 
     struct Quiet;
     impl Host for Quiet {
         fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _: &str, _: Value) {}
+        fn emit(&self, _event: CoreEvent) {}
     }
 
     const MESSAGES: LaneMessages = LaneMessages {

@@ -2,6 +2,7 @@
 //! (`tests/support/fake_voice.rs`): startup, ordering, results, and recovery from a helper that
 //! refuses, crashes or hangs.
 
+use kchess_contracts::CoreEvent;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -23,7 +24,7 @@ impl Host for Logs {
             .push(format!("{} [{scope}] {message}", level.name()));
     }
 
-    fn emit(&self, _event: &str, _payload: serde_json::Value) {}
+    fn emit(&self, _event: CoreEvent) {}
 }
 
 fn helper() -> PathBuf {

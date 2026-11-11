@@ -139,10 +139,10 @@ fn install_model(
     let listening = Arc::new(std::sync::Mutex::new(Some(progress)));
     let hearing = Arc::clone(&listening);
     let events = cx.global::<AppCore>().events.clone();
-    let reports = cx.subscribe(&events, move |_, event: &crate::core::CoreEvent, _| {
+    let reports = cx.subscribe(&events, move |_, event: &crate::core::ClientEvent, _| {
         let listener = hearing.lock().ok().and_then(|listener| listener.clone());
         if let Some(listener) = listener
-            && let Some(update) = progress_of(event)
+            && let Some(update) = event.core().and_then(progress_of)
         {
             listener(&update);
         }
@@ -160,10 +160,12 @@ fn install_model(
 
 /// The model's progress, when `event` reports it.
 fn progress_of(event: &crate::core::CoreEvent) -> Option<model::Progress> {
-    if event.name != "voicemodel:progress" {
-        return None;
+    match event {
+        crate::core::CoreEvent::VoiceModelProgress(progress) => {
+            serde_json::from_value(progress.clone()).ok()
+        }
+        _ => None,
     }
-    serde_json::from_value(event.payload.clone()).ok()
 }
 
 /// Download and prepare the model ahead of use; `progress` hears how far.
@@ -599,8 +601,8 @@ pub fn init(cx: &mut App) {
     let events = cx.global::<AppCore>().events.clone();
     cx.subscribe(&events, {
         let voice = voice.downgrade();
-        move |_, event: &crate::core::CoreEvent, cx| {
-            if event.name == crate::core::RECONNECTED {
+        move |_, event: &crate::core::ClientEvent, cx| {
+            if *event == crate::core::ClientEvent::Reconnected {
                 let _ = voice.update(cx, |voice, cx| voice.reset(cx));
             }
         }
@@ -724,7 +726,7 @@ mod tests {
     use super::{ErrorKind, Grammar, grammar, handle, heard_of, model, progress_of};
     use crate::e2e::Harness;
     use kchess_contracts::CoreError;
-    use serde_json::{Value, json};
+    use serde_json::json;
 
     /// A build without the speech helper said "The offline voice model couldn’t load. Voice input
     /// isn’t available in this build.", cut off after "Voice input isn’t…", though no model failed.
@@ -764,22 +766,19 @@ mod tests {
 
     #[test]
     fn only_the_model_s_progress_reaches_its_listener() {
-        let event = |name: &str, payload: Value| crate::core::CoreEvent {
-            name: name.into(),
-            payload,
-        };
+        use crate::core::CoreEvent;
         let report = json!({ "phase": "downloading", "received": 3, "total": 9 });
         assert_eq!(
-            progress_of(&event("voicemodel:progress", report.clone())),
+            progress_of(&CoreEvent::VoiceModelProgress(report.clone())),
             Some(model::Progress {
                 phase: model::Phase::Downloading,
                 received: 3,
                 total: Some(9),
             })
         );
-        assert_eq!(progress_of(&event("puzzledb:progress", report)), None);
+        assert_eq!(progress_of(&CoreEvent::PuzzleDbProgress(report)), None);
         assert_eq!(
-            progress_of(&event("voicemodel:progress", json!("noise"))),
+            progress_of(&CoreEvent::VoiceModelProgress(json!("noise"))),
             None
         );
     }

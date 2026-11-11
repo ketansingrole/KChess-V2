@@ -4,12 +4,13 @@
 //! It sets the test Lichess origin for the whole process (`kchess_core::env`), so it is the only
 //! test in this binary: no other test can inherit the origin.
 
+use kchess_contracts::CoreEvent;
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
 
 use kchess_core::{Config, Core, Host, Level};
-use serde_json::{Value, json};
+use serde_json::json;
 
 /// What a closed core answers (`createKChessCore`'s closed check).
 const CLOSED: &str = "The KChess core is closed.";
@@ -21,7 +22,7 @@ struct Quiet;
 
 impl Host for Quiet {
     fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-    fn emit(&self, _event: &str, _payload: Value) {}
+    fn emit(&self, _event: CoreEvent) {}
 }
 
 #[tokio::test]

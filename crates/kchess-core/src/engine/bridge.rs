@@ -6,6 +6,7 @@
 //! The battery reading never makes a lease wait for the host: a refresh asks the host in the
 //! background and the next lease uses whatever reading has arrived.
 
+use kchess_contracts::CoreEvent;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -348,17 +349,17 @@ impl ReviewHost for ReviewBridge {
     }
 
     fn update(&self, update: ReviewUpdate) {
-        self.emit("review:update", json!(update));
+        self.emit(CoreEvent::ReviewUpdate(json!(update)));
     }
 
     fn status(&self, status: ReviewStatus) {
-        self.emit("review:status", json!(status));
+        self.emit(CoreEvent::ReviewStatus(json!(status)));
     }
 }
 
 impl ReviewBridge {
-    fn emit(&self, event: &str, payload: Value) {
-        self.host.emit(event, payload);
+    fn emit(&self, event: CoreEvent) {
+        self.host.emit(event);
     }
 }
 
