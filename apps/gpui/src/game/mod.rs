@@ -75,10 +75,7 @@ pub fn opening_at<S: AsRef<str>>(setup: &Value, moves: &[S], ply: usize) -> Opti
 
 /// A computer level's search profile; none for a level the ladder does not know.
 pub fn engine_level(level: &str) -> Option<&'static EngineLevelInfo> {
-    engine_levels::info(level).unwrap_or_else(|cause| {
-        crate::log::write(Level::Warn, "engine-levels", &cause);
-        None
-    })
+    engine_levels::info(level)
 }
 
 /// "Grandmaster · ~2550"; empty for a level the ladder does not know.

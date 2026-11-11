@@ -28,7 +28,7 @@ struct Line {
     moves: Vec<String>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 struct Data {
     lines: Vec<(String, String, String)>,
 }
@@ -36,7 +36,7 @@ struct Data {
 fn lines() -> &'static [Line] {
     static LINES: OnceLock<Vec<Line>> = OnceLock::new();
     LINES.get_or_init(|| {
-        let data: Data = serde_json::from_str(OPENINGS_JSON).unwrap_or_default();
+        let data: Data = crate::embedded::parse("openings", OPENINGS_JSON);
         data.lines
             .into_iter()
             .map(|(eco, name, moves)| Line {

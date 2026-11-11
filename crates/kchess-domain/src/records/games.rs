@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use shakmaty::variant::VariantPosition;
 use shakmaty::{Color, Position};
-use std::collections::HashMap;
 
 use crate::js;
 use crate::variant::Variant;
@@ -104,18 +103,13 @@ fn ended(pos: &VariantPosition) -> bool {
 /// Threefold repetition or the fifty-move rule over `moves` from `pos`, reading each move
 /// trimmed when `trim`; the count stops at the first move that is not legal.
 fn repetition(mut pos: VariantPosition, moves: &[&str]) -> Option<&'static str> {
-    let mut seen: HashMap<String, u32> = HashMap::new();
-    seen.insert(rules::repetition_key(&rules::make_fen(&pos)).to_string(), 1);
+    let mut seen = rules::Repetitions::starting_at(&rules::make_fen(&pos));
     for &uci in moves {
         let Some(m) = rules::parse_uci(uci).and_then(|u| rules::legal_move(&pos, u)) else {
             break;
         };
         pos.play_unchecked(m);
-        let count = seen
-            .entry(rules::repetition_key(&rules::make_fen(&pos)).to_string())
-            .or_insert(0);
-        *count += 1;
-        if *count >= 3 {
+        if seen.reached(&rules::make_fen(&pos)) {
             return Some("Threefold repetition");
         }
     }

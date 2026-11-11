@@ -47,14 +47,9 @@ pub fn now_ms() -> f64 {
 pub fn typed_uci(variant: Variant, fen: &str, text: &str) -> Option<String> {
     let text = text.trim();
     let position = kchess_domain::rules::setup_start(variant, fen)?;
-    let bytes = text.as_bytes();
-    let is_uci = bytes.len() >= 4
-        && bytes[0].is_ascii_lowercase()
-        && bytes[1].is_ascii_digit()
-        && bytes[2].is_ascii_lowercase()
-        && bytes[3].is_ascii_digit();
-    if is_uci {
-        kchess_domain::position::play_uci(&position, text).map(|_| text.to_lowercase())
+    let uci = text.to_lowercase();
+    if kchess_domain::rules::is_uci_text(&uci) {
+        kchess_domain::position::play_uci(&position, &uci).map(|_| uci)
     } else {
         kchess_domain::position::play_san(&position, text).map(|played| played.uci)
     }

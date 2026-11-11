@@ -382,24 +382,23 @@ impl SettingsPage {
             ),
         ];
         let ladder = engine_levels::ladder()
-            .and_then(|ladder| {
-                ladder
-                    .iter()
-                    .map(|rung| {
-                        Ok(Rung {
-                            id: level_id(&rung.id)?,
-                            label: rung.label.clone(),
-                            elo: rung.elo,
-                        })
-                    })
-                    .collect()
+            .iter()
+            .map(|rung| {
+                Ok(Rung {
+                    id: level_id(&rung.id)?,
+                    label: rung.label.clone(),
+                    elo: rung.elo,
+                })
             })
+            .collect::<Result<_, String>>()
             .unwrap_or_else(|cause| {
                 crate::log::write(Level::Warn, "settings", &cause);
                 Vec::new()
             });
         let default_levels = engine_levels::default_levels()
-            .and_then(|levels| levels.iter().map(|id| level_id(id)).collect())
+            .iter()
+            .map(|id| level_id(id))
+            .collect::<Result<_, String>>()
             .unwrap_or_else(|cause| {
                 crate::log::write(Level::Warn, "settings", &cause);
                 Vec::new()

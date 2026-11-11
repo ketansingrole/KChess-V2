@@ -422,8 +422,7 @@ fn settings_from_values(values: &[SqlValue]) -> Result<Settings> {
     // `Number(x) || 0` turns NaN into 0, then the value is clamped to 0..=120.
     let poll = if poll.is_nan() { 0.0 } else { poll };
     let levels: Vec<String> = text("engineLevels").split(',').map(str::to_owned).collect();
-    let engine_levels =
-        kchess_domain::training::engine_levels::normalize(&levels).map_err(CoreError::new)?;
+    let engine_levels = kchess_domain::training::engine_levels::normalize(&levels);
     let coordinates = text("coordinates");
     let promotion = text("promotion");
     let piece_animation = text("pieceAnimation");

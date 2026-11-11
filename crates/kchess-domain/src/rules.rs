@@ -31,6 +31,25 @@ pub fn repetition_key(fen: &str) -> &str {
     fen
 }
 
+/// The positions a game has reached, counted as repetition counts them (`repetition_key`).
+pub struct Repetitions(std::collections::HashMap<String, u32>);
+
+impl Repetitions {
+    /// The count of a game starting at `fen`, which counts once.
+    pub fn starting_at(fen: &str) -> Repetitions {
+        let mut repetitions = Repetitions(std::collections::HashMap::new());
+        repetitions.reached(fen);
+        repetitions
+    }
+
+    /// `fen` is reached: whether it has now been on the board three times.
+    pub fn reached(&mut self, fen: &str) -> bool {
+        let count = self.0.entry(repetition_key(fen).to_string()).or_insert(0);
+        *count += 1;
+        *count >= 3
+    }
+}
+
 /// Half-moves since the game's start: 0 is White's first move still to play.
 pub fn ply_of<P: Position>(pos: &P) -> u32 {
     (pos.fullmoves().get() - 1) * 2 + u32::from(!pos.turn().is_white())

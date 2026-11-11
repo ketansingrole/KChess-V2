@@ -365,7 +365,6 @@ fn prepare(moves: Value, options: Value, level: &str, configured: &str) -> Resul
 /// The level's search profile (`engineLevelInfo`).
 fn level_profile(level: &str) -> Result<LevelProfile> {
     let info = kchess_domain::training::engine_levels::info(level)
-        .map_err(CoreError::new)?
         .ok_or_else(|| CoreError::new(format!("Unknown engine level {level}.")))?;
     Ok(LevelProfile {
         time: info.time,

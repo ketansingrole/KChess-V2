@@ -54,8 +54,8 @@ fn stepped(state: impl Serialize, result: impl Serialize) -> Out {
 pub fn call(method: &str, args: &[Value]) -> Option<Out> {
     Some(match method {
         // Puzzle runs.
-        "rushConfigs" => data().and_then(|d| to_value(&d.rush_configs)),
-        "rushChoices" => data().and_then(|d| to_value(&d.rush_choices)),
+        "rushConfigs" => to_value(&data().rush_configs),
+        "rushChoices" => to_value(&data().rush_choices),
         "newRush" => value_arg::<RushConfig>(args, 0, "config")
             .and_then(|config| to_value(RushState::new(&config))),
         "correctMove" => state_and_config(args).and_then(|(mut state, config)| {
@@ -122,7 +122,7 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         "playerColor" => value_arg::<Value>(args, 0, "puzzle")
             .and_then(|puzzle| to_value(puzzle::player_color(&puzzle))),
         // Endgame drills.
-        "endgameDrills" => data().and_then(|d| to_value(&d.endgame_drills)),
+        "endgameDrills" => to_value(&data().endgame_drills),
         "evaluateEndgame" => (|| {
             let fen: String = value_arg(args, 0, "fen")?;
             let moves: Vec<String> = value_arg(args, 1, "moves")?;
@@ -136,8 +136,8 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
             to_value(endgames::san_from(&fen, &moves))
         })(),
         // Lessons.
-        "lessonCourses" => lessons::data().and_then(|d| to_value(&d.courses)),
-        "lessonProblems" => lessons::data().and_then(|d| to_value(lessons::problems(d))),
+        "lessonCourses" => to_value(&lessons::data().courses),
+        "lessonProblems" => to_value(lessons::problems(lessons::data())),
         "lessonStatus" => step_args(args)
             .and_then(|(fen, task, moves)| lessons::status(&fen, &task, &moves))
             .and_then(to_value),
@@ -182,17 +182,16 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
         }),
         "formatClock" => Ok(Value::String(format_clock(number_arg(args, 0)))),
         // Engine levels.
-        "engineLadder" => engine_levels::ladder().and_then(to_value),
-        "defaultEngineLevels" => engine_levels::default_levels().and_then(to_value),
-        "engineLevelInfo" => text_arg(args, 0, "id")
-            .and_then(engine_levels::info)
-            .and_then(|entry| to_value(entry.cloned())),
+        "engineLadder" => to_value(engine_levels::ladder()),
+        "defaultEngineLevels" => to_value(engine_levels::default_levels()),
+        "engineLevelInfo" => {
+            text_arg(args, 0, "id").and_then(|id| to_value(engine_levels::info(id).cloned()))
+        }
         "engineLevelLabel" => text_arg(args, 0, "id")
             .and_then(engine_levels::label)
             .map(Value::String),
         "normalizeEngineLevels" => value_arg::<Vec<String>>(args, 0, "levels")
-            .and_then(|levels| engine_levels::normalize(&levels))
-            .and_then(to_value),
+            .and_then(|levels| to_value(engine_levels::normalize(&levels))),
         // UCI `info` lines.
         "parseInfo" => text_arg(args, 0, "text").map(|text| {
             let white_to_move = arg(args, 1).and_then(Value::as_bool).unwrap_or(false);

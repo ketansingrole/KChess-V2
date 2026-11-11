@@ -680,7 +680,7 @@ impl ComputerGame {
 
 /// The ladder entry for an engine level; an error for an unknown one.
 fn level_info(level: &str) -> Result<&'static engine_levels::EngineLevelInfo, String> {
-    engine_levels::info(level)?.ok_or_else(|| format!("unknown engine level {level}"))
+    engine_levels::info(level).ok_or_else(|| format!("unknown engine level {level}"))
 }
 
 #[cfg(test)]

@@ -10,7 +10,6 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::Level;
 use kchess_domain::training::data::data;
 use kchess_domain::training::rush::{RushConfig, RushState, combo_progress, format_run_clock};
 use serde_json::{Map, Value, json};
@@ -33,14 +32,7 @@ const BONUS_SHOWN: Duration = Duration::from_millis(1200);
 
 /// The kinds of run, and the order the menu offers them in.
 fn runs() -> (&'static BTreeMap<String, RushConfig>, &'static [String]) {
-    static NONE: BTreeMap<String, RushConfig> = BTreeMap::new();
-    match data() {
-        Ok(data) => (&data.rush_configs, &data.rush_choices),
-        Err(cause) => {
-            crate::log::write(Level::Warn, "rush", &cause);
-            (&NONE, &[])
-        }
-    }
+    (&data().rush_configs, &data().rush_choices)
 }
 
 /// The state before any run: nothing scored, no clock.
