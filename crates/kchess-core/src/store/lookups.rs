@@ -45,12 +45,11 @@ pub fn explorer_account(db: &Connection) -> Result<Value> {
 
 /// Store an entry as its JSON text, keyed by `key`, and keep only the newest entries.
 pub fn write(db: &Connection, key: &str, value: &Value) -> Result<Value> {
-    let fetched_at = match value.get("fetchedAt").and_then(Value::as_f64) {
-        Some(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => Sql::Integer(n as i64),
-        Some(n) => Sql::Real(n),
+    let fetched_at = match super::sql::number(value.get("fetchedAt")) {
         // Missing or malformed timestamps sort first under `ORDER BY fetchedAt DESC`
         // (SQLite NULLs first on DESC) and would evict good rows first; coerce to 0.
-        None => Sql::Integer(0),
+        Sql::Null => Sql::Integer(0),
+        number => number,
     };
     db.execute(
         "INSERT OR REPLACE INTO position_lookups (key, data, fetchedAt) VALUES (?1, ?2, ?3)",
