@@ -12,10 +12,12 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
+/// A file, executable only where files have a mode (Windows has none, and reads every file as
+/// not executable).
 fn file(data: &[u8], executable: bool) -> Node {
     Node::File {
         data: data.to_vec(),
-        executable,
+        executable: executable && cfg!(unix),
     }
 }
 
@@ -40,7 +42,10 @@ fn install(tree: &Tree, root: &Path) {
         match node {
             Node::File { data, .. } => std::fs::write(&at, data).unwrap(),
             Node::Dir => std::fs::create_dir_all(&at).unwrap(),
+            #[cfg(unix)]
             Node::Link(target) => std::os::unix::fs::symlink(target, &at).unwrap(),
+            #[cfg(not(unix))]
+            Node::Link(_) => panic!("{path}: no links on this system"),
         }
     }
 }
@@ -76,7 +81,10 @@ fn releases() -> Release {
     new.insert("readme.txt", file(b"version two, with more to say", false));
     new.insert("notice.txt", file(b"a new file", false));
     new.insert("empty", Node::Dir);
-    new.insert("current", Node::Link("bin/app".into()));
+    // Windows installations hold no links.
+    if cfg!(unix) {
+        new.insert("current", Node::Link("bin/app".into()));
+    }
     Release { old, new, engine }
 }
 
@@ -307,16 +315,17 @@ fn a_tree_reads_a_folder_as_installed() {
     let release = releases();
     install(&release.new, &dir);
     std::fs::write(dir.join("Uninstall KChess.exe"), b"made by the installer").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(dir.join("bin/app"), std::fs::Permissions::from_mode(0o755)).unwrap();
-    std::fs::set_permissions(
-        dir.join("engines/engine"),
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for program in ["bin/app", "engines/engine"] {
+            std::fs::set_permissions(dir.join(program), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+    }
     let read = Tree::read(&dir, |path| path.starts_with("Uninstall ")).unwrap();
     assert_eq!(read, release.new);
-    assert_eq!(read.len(), 6);
+    assert_eq!(read.len(), if cfg!(unix) { 6 } else { 5 });
     assert!(!read.is_empty() && Tree::new().is_empty());
 
     let mut bundle = Tree::new();

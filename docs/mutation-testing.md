@@ -34,8 +34,10 @@ CI first counts a pull request's mutants (`cargo xtask mutants --plan`, which bu
 then splits them over a runner per 15, up to 8 (`--shard k/n`), one at a time on each, in the
 checkout itself (`--in-place`), built incrementally from the crates.io dependencies each push to
 `main` keeps built, and gives each runner half an hour: a change whose mutants take longer is
-too large for one pull request. A change with no mutants starts no runner. The app's mutants (`apps/gpui`) each rebuild the app, so pull requests leave them
-out; the weekly run's `gpui` job tests the mutants of the lines the past week changed in the app.
+too large for one pull request. A change with no mutants starts no runner. The app's mutants (`apps/gpui`) each rebuild the app, so
+`cargo xtask mutants` leaves them out of a run of changed lines (pull requests, the pre-push hook);
+`--app` tests the app's alone, as the weekly run's `gpui` job does for the lines the past week
+changed in the app.
 
 The pre-push hook (`cargo xtask install-hooks`) runs it before every push of a branch, on the
 lines new since that branch's last push, and refuses the push while a mutant survives: a survivor

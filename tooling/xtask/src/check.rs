@@ -97,7 +97,7 @@ fn nextest() -> bool {
 /// The app, whose tests run under `cargo test`: they are one binary, so nextest gains no
 /// parallelism there, and each test in its own process starts GPUI afresh (2026-11-06, 546 tests:
 /// 60 s under `cargo test`, 74 s under nextest).
-const APP: &str = "kchess-gpui";
+pub const APP: &str = "kchess-gpui";
 
 /// The packages outside the coverage totals: the app's views are checked by its end-to-end
 /// suite, and this tooling by running it. Their tests still run.
@@ -446,6 +446,17 @@ struct Packages {
     uses: Vec<(String, Vec<String>)>,
 }
 
+/// The workspace's members.
+pub fn members() -> Result<Vec<String>> {
+    let text = output(
+        "cargo",
+        &["metadata", "--no-deps", "--format-version", "1", "--locked"],
+    )?;
+    let metadata: serde_json::Value =
+        serde_json::from_str(&text).map_err(|cause| cause.to_string())?;
+    Ok(packages_in(&metadata).members)
+}
+
 /// The workspace's packages, from `cargo metadata` with its resolved dependencies (half a second).
 fn workspace_packages() -> Result<Packages> {
     let text = output("cargo", &["metadata", "--format-version", "1", "--locked"])?;
@@ -640,8 +651,8 @@ fn mutants_base(remote: &str, is_ancestor: impl Fn(&str) -> bool) -> Option<&str
     (!remote.bytes().all(|b| b == b'0') && is_ancestor(remote)).then_some(remote)
 }
 
-/// `cargo xtask mutants`' arguments for a branch push from `base`: CI's, with the results in
-/// `checkout`'s `mutants.out`, where the pusher looks for them.
+/// `cargo xtask mutants`' arguments for a branch push from `base`: CI's (the app left out), with
+/// the results in `checkout`'s `mutants.out`, where the pusher looks for them.
 ///
 /// One mutant at a time, in place, in a tree kept built, rather than four at once in copies built
 /// afresh: 2026-11-10, the 4 kchess-core mutants of 9e39cc7f took 92 s on the next push against
@@ -649,18 +660,9 @@ fn mutants_base(remote: &str, is_ancestor: impl Fn(&str) -> bool) -> Option<&str
 /// same outcomes.
 fn branch_mutants_args(base: &str, checkout: &Path) -> Vec<String> {
     let out = checkout.to_string_lossy();
-    [
-        "--base",
-        base,
-        "--in-place",
-        "--",
-        "--exclude",
-        "apps/gpui/**",
-        "--output",
-        &out,
-    ]
-    .map(String::from)
-    .to_vec()
+    ["--base", base, "--in-place", "--", "--output", &out]
+        .map(String::from)
+        .to_vec()
 }
 
 /// Point Git at the repository's hooks, unless the clone already uses others on purpose.
@@ -741,8 +743,6 @@ mod tests {
                 "abc",
                 "--in-place",
                 "--",
-                "--exclude",
-                "apps/gpui/**",
                 "--output",
                 "/work/kchess"
             ]

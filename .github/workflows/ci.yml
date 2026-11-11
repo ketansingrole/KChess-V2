@@ -154,27 +154,7 @@ jobs:
         with:
           tools: cargo-llvm-cov,cargo-nextest,cargo-hakari
       - run: rustup component add llvm-tools-preview
-      # The official Stockfish, so the tests that need a real engine run (`tests/support`), and
-      # Fairy-Stockfish, built from its pinned source, so the variant-analysis tests run too.
-      # Kept between runs, keyed by their pins: fetching them built the fetcher and Fairy-Stockfish
-      # anew each time (2026-11-09: 70 s of this job and of each mutants shard).
-      - id: engines
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ${{ runner.temp }}/stockfish
-            target/fairy-stockfish/bin
-          key: engines-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/kchess-core/src/engine/managed.rs', 'tooling/xtask/src/fairy.rs') }}
-      - name: Fetch the engines
-        if: steps.engines.outputs.cache-hit != 'true'
-        run: cargo xtask engines --github-env "$RUNNER_TEMP/stockfish"
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - name: Name the kept engines
-        if: steps.engines.outputs.cache-hit == 'true'
-        run: |
-          echo "KCHESS_ENGINE_PATH=$RUNNER_TEMP/stockfish/stockfish" >> "$GITHUB_ENV"
-          echo "KCHESS_VARIANT_ENGINE_PATH=$PWD/target/fairy-stockfish/bin/fairy-stockfish" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/engines
       - run: cargo xtask check --without-app-tests
       - if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         uses: ./.github/actions/drop-caches
@@ -204,10 +184,10 @@ jobs:
       - run: cargo deny --manifest-path fuzz/Cargo.toml check
 
   # The app's unit and end-to-end tests (`src/e2e`, headless) on every platform; `headless` runs
-  # the rest beside it on Windows, the app's lints included. On macOS this job runs them itself,
-  # after the app's tests: GitHub runs short of macOS arm64 runners (2026-11-11: jobs cancelled
-  # after 15 minutes waiting for one), and the app's tests and these (2026-11-11: 3 to 5 minutes
-  # each, a minute of it setup) still end before Windows `headless` (7 to 9 minutes).
+  # the rest beside it on Windows, the workspace's lints included. On macOS this job runs them
+  # itself, after the app's tests: GitHub runs short of macOS arm64 runners (2026-11-11: jobs
+  # cancelled after 15 minutes waiting for one), and the app's tests and these (2026-11-11: 3 to 5
+  # minutes each, a minute of it setup) still end before Windows `headless` (7 to 9 minutes).
   gpui:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -220,9 +200,6 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    env:
-      # The packages besides the app that macOS lints and tests.
-      MACOS_HEADLESS: -p kchess-cli -p xtask
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -245,32 +222,11 @@ jobs:
           shared-key: gpui
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The vendored GPUI (`vendor/`) heads the app's longest chain of crates, and was compiled
-      # anew on every run (2026-11-09: most of the 5 to 6 minutes the app's test build took):
-      # rust-cache keeps only crates from outside the repository, and Cargo rebuilds a path crate
-      # whose files are newer than its build, as a fresh checkout's are. So its files get a fixed
-      # old date and its build a cache of its own, keyed by those files: Cargo finds it up to date,
-      # and with it the registry crates built on it, until a file of it changes.
-      - name: Date the vendored sources
-        shell: bash
-        run: find vendor -type f -exec touch -t 200001010000 {} +
+      # On macOS the lint build too (below), so its name tells it from a cache without one.
       - id: vendor
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: ./.github/actions/vendor-gpui
         with:
-          # Their libraries are named gpui, gpui_apple, gpui_macos and gpui_windows.
-          path: |
-            target/**/deps/libgpui-*
-            target/**/deps/gpui-*.d
-            target/**/deps/libgpui_apple-*
-            target/**/deps/gpui_apple-*.d
-            target/**/deps/libgpui_macos-*
-            target/**/deps/gpui_macos-*.d
-            target/**/deps/libgpui_windows-*
-            target/**/deps/gpui_windows-*.d
-            target/**/.fingerprint/gpui-pre*
-            target/**/build/gpui-pre*
-          # On macOS the lint build too (below), so its key tells it from a cache without one.
-          key: vendor-gpui-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}${{ runner.os == 'macOS' && '-lint' || '' }}
+          name: vendor-gpui-v2${{ runner.os == 'macOS' && '-lint' || '' }}
       # The app's tests under `cargo test`: each starts GPUI, so a process per test (nextest) is slower.
       # They mostly wait on the app's timers and tasks (2026-11-09, three threads: 57 s of CPU in
       # 320 s), so more threads than the runners' 3 or 4 cores finish them sooner. Not on Windows:
@@ -279,44 +235,31 @@ jobs:
       - run: cargo test -p kchess-gpui --locked
         env:
           RUST_TEST_THREADS: ${{ runner.os == 'Windows' && 4 || 8 }}
-      # What `headless` runs on Windows, here for macOS: one runner fewer per run.
+      # What `headless` runs on Windows, here for macOS: one runner fewer per run. Every member
+      # but the app (whose tests ran above), so a new one is tested here without naming it.
       - if: runner.os == 'macOS'
         uses: ./.github/actions/install-tools
         with:
           tools: cargo-nextest
       - if: runner.os == 'macOS'
-        run: cargo clippy -p kchess-gpui ${{ env.MACOS_HEADLESS }} --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - if: runner.os == 'macOS'
-        run: cargo nextest run ${{ env.MACOS_HEADLESS }} --locked
+        run: cargo nextest run --workspace --exclude kchess-gpui --locked
       - if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
         uses: ./.github/actions/drop-caches
         with:
           rust-cache: gpui
-      - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
-        uses: ./.github/actions/drop-caches
+      - uses: ./.github/actions/vendor-gpui
         with:
-          prefix: vendor-gpui-v2-${{ runner.os }}-${{ runner.arch }}-
-      - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          # Their libraries are named gpui, gpui_apple, gpui_macos and gpui_windows.
-          path: |
-            target/**/deps/libgpui-*
-            target/**/deps/gpui-*.d
-            target/**/deps/libgpui_apple-*
-            target/**/deps/gpui_apple-*.d
-            target/**/deps/libgpui_macos-*
-            target/**/deps/gpui_macos-*.d
-            target/**/deps/libgpui_windows-*
-            target/**/deps/gpui_windows-*.d
-            target/**/.fingerprint/gpui-pre*
-            target/**/build/gpui-pre*
-          key: ${{ steps.vendor.outputs.cache-primary-key }}
+          name: vendor-gpui-v2${{ runner.os == 'macOS' && '-lint' || '' }}
+          save: true
+          cache-hit: ${{ steps.vendor.outputs.cache-hit }}
 
-  # Everything else on Windows, beside `gpui` rather than after it: the app's lints (`check` lints
-  # it on Linux, the macOS `gpui` job its macOS code; here its Windows code), the command line and
-  # xtask, and the headless packages, which `check` runs on Linux; here they keep building and
-  # passing on Windows: named pipes, CRLF checkouts, Unix-only test helpers.
+  # Everything else on Windows, beside `gpui` rather than after it: the workspace's lints (`check`
+  # lints it on Linux, the macOS `gpui` job its macOS code; here its Windows code) and every
+  # member's tests but the app's, which `check` runs on Linux; here they keep building and passing
+  # on Windows: named pipes, CRLF checkouts, Unix-only test helpers, the updater's patches, the
+  # speech helper's MinGW libvosk. The whole workspace, so a new member is tested without naming it.
   headless:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -324,14 +267,7 @@ jobs:
       contents: read
       # The drop-caches action.
       actions: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # `check` runs these on Linux; here they keep building and passing on Windows.
-          - os: windows-latest
-            packages: -p kchess-cli -p xtask -p kchess-domain -p kchess-core -p kchess-service
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -340,7 +276,6 @@ jobs:
       # Microsoft's; the packages that ship keep Microsoft's. Set before the cache, whose key
       # holds Cargo's variables, and on Windows only, so the other caches stay as they are.
       - name: Link with rust-lld
-        if: runner.os == 'Windows'
         shell: bash
         run: echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld.exe" >> "$GITHUB_ENV"
       # The gpui job's dependencies, read only: a cache of its own held 554 to 602 MB more per
@@ -351,50 +286,22 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}
           save-if: false
       # The vendored GPUI's lint build, kept as the gpui job keeps its test build.
-      - name: Date the vendored sources
-        shell: bash
-        run: find vendor -type f -exec touch -t 200001010000 {} +
       - id: vendor
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: ./.github/actions/vendor-gpui
         with:
-          path: |
-            target/**/deps/libgpui-*
-            target/**/deps/gpui-*.d
-            target/**/deps/libgpui_apple-*
-            target/**/deps/gpui_apple-*.d
-            target/**/deps/libgpui_macos-*
-            target/**/deps/gpui_macos-*.d
-            target/**/deps/libgpui_windows-*
-            target/**/deps/gpui_windows-*.d
-            target/**/.fingerprint/gpui-pre*
-            target/**/build/gpui-pre*
-          key: vendor-headless-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}
+          name: vendor-headless
       - uses: ./.github/actions/install-tools
         with:
           tools: cargo-nextest
       # One clippy and one nextest over all of them: separate runs resolved features apart and
       # rebuilt the dependencies they share.
-      - run: cargo clippy -p kchess-gpui ${{ matrix.packages }} --all-targets --locked -- -D warnings
-      - run: cargo nextest run ${{ matrix.packages }} --locked
-      - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
-        uses: ./.github/actions/drop-caches
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo nextest run --workspace --exclude kchess-gpui --locked
+      - uses: ./.github/actions/vendor-gpui
         with:
-          prefix: vendor-headless-${{ runner.os }}-${{ runner.arch }}-
-      - if: github.ref == 'refs/heads/main' && steps.vendor.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            target/**/deps/libgpui-*
-            target/**/deps/gpui-*.d
-            target/**/deps/libgpui_apple-*
-            target/**/deps/gpui_apple-*.d
-            target/**/deps/libgpui_macos-*
-            target/**/deps/gpui_macos-*.d
-            target/**/deps/libgpui_windows-*
-            target/**/deps/gpui_windows-*.d
-            target/**/.fingerprint/gpui-pre*
-            target/**/build/gpui-pre*
-          key: ${{ steps.vendor.outputs.cache-primary-key }}
+          name: vendor-headless
+          save: true
+          cache-hit: ${{ steps.vendor.outputs.cache-hit }}
 
   # The packages as the Release workflow makes them (ad hoc signed on macOS), with the release
   # profile's dependencies cached apart from the tests' debug ones. `windows-upgrade` packages
@@ -545,9 +452,7 @@ jobs:
         id: plan
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
-        run: >-
-          cargo xtask mutants --plan --base "$(git merge-base "$BASE" HEAD)"
-          -- --exclude 'apps/gpui/**' >> "$GITHUB_OUTPUT"
+        run: cargo xtask mutants --plan --base "$(git merge-base "$BASE" HEAD)" >> "$GITHUB_OUTPUT"
 
   # Mutation testing of the lines a pull request changes (`cargo xtask mutants`,
   # docs/mutation-testing.md): every change arrives with its mutants killed, while the weekly
@@ -597,51 +502,29 @@ jobs:
         uses: ./.github/actions/install-tools
         with:
           tools: cargo-nextest,cargo-mutants
-      # One package at a time, as cargo-mutants builds each mutant's package, so the features
-      # each is built with are the ones a mutant of it asks for.
       - if: env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true'
         name: Build the mutants' dependencies
         env:
           CARGO_INCREMENTAL: 1
-        run: |
-          for package in $(cargo metadata --no-deps --format-version 1 --locked \
-              | jq -r '.packages[].name | select(. != "kchess-gpui")'); do
-            cargo nextest run --no-run --locked --package="$package"
-          done
+        run: cargo xtask mutants --warm
       - if: env.WARM == 'true' && steps.deps.outputs.cache-hit != 'true'
         uses: ./.github/actions/drop-caches
         with:
           rust-cache: mutants
-      # The engines `check` gives the tests, so the mutants they kill there die here too; kept as
-      # `check` keeps them.
+      # The engines `check` gives the tests, so the mutants they kill there die here too.
       - if: github.event_name == 'pull_request'
-        id: engines
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ${{ runner.temp }}/stockfish
-            target/fairy-stockfish/bin
-          key: engines-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/kchess-core/src/engine/managed.rs', 'tooling/xtask/src/fairy.rs') }}
-      - if: github.event_name == 'pull_request' && steps.engines.outputs.cache-hit != 'true'
-        name: Fetch the engines
-        run: cargo xtask engines --github-env "$RUNNER_TEMP/stockfish"
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - if: github.event_name == 'pull_request' && steps.engines.outputs.cache-hit == 'true'
-        name: Name the kept engines
-        run: |
-          echo "KCHESS_ENGINE_PATH=$RUNNER_TEMP/stockfish/stockfish" >> "$GITHUB_ENV"
-          echo "KCHESS_VARIANT_ENGINE_PATH=$PWD/target/fairy-stockfish/bin/fairy-stockfish" >> "$GITHUB_ENV"
+        uses: ./.github/actions/engines
       - if: github.event_name == 'pull_request'
         name: Mutants of the changed lines
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           SHARD: ${{ matrix.shard }}
           SHARDS: ${{ needs.mutants-plan.outputs.total }}
-        # In the checkout itself, built incrementally (`--in-place`, tooling/xtask/src/mutants.rs).
+        # In the checkout itself, built incrementally (`--in-place`, tooling/xtask/src/mutants.rs),
+        # the app's left out (xtask's default).
         run: >-
           cargo xtask mutants --in-place --base "$(git merge-base "$BASE" HEAD)"
-          -- --shard "$SHARD/$SHARDS" --exclude 'apps/gpui/**'
+          -- --shard "$SHARD/$SHARDS"
       - if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

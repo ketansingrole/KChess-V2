@@ -87,16 +87,13 @@ jobs:
         with:
           tools: cargo-nextest,cargo-mutants
       # The engines CI's `check` gives the tests, as a pull request's mutants job does.
-      - name: Fetch the engines
-        run: cargo xtask engines --github-env "$RUNNER_TEMP/stockfish"
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: ./.github/actions/engines
       - name: Mutants of the app's lines changed this week
         env:
           SHARD: ${{ matrix.shard }}
         run: >-
-          cargo xtask mutants --in-place --base "$(git rev-list -1 --before='7 days ago' HEAD)"
-          -- --file 'apps/gpui/**' --shard "$SHARD/4"
+          cargo xtask mutants --app --in-place --base "$(git rev-list -1 --before='7 days ago' HEAD)"
+          -- --shard "$SHARD/4"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:

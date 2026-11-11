@@ -46,6 +46,32 @@ fn passed_through(args: &[String]) -> &[String] {
     }
 }
 
+/// The app's sources. Each of its mutants rebuilds the app, so a run of changed lines (a pull
+/// request's, a branch push's) leaves them out, and the weekly run's `gpui` job tests them
+/// (`--app`).
+const APP_FILES: &str = "apps/gpui/**";
+
+/// cargo-mutants' arguments for the files a run of changed lines covers: everything but the app,
+/// or with `--app` the app alone. A run of `--all` names its own files or packages.
+fn files_of(args: &[String]) -> Vec<String> {
+    if has(args, "--all") {
+        return Vec::new();
+    }
+    let flag = if has(args, "--app") {
+        "--file"
+    } else {
+        "--exclude"
+    };
+    vec![flag.to_string(), APP_FILES.to_string()]
+}
+
+/// cargo-mutants' arguments: the files the run covers, then those after `--`.
+fn cargo_mutants_args(args: &[String]) -> Vec<String> {
+    let mut out = files_of(args);
+    out.extend(passed_through(args).iter().cloned());
+    out
+}
+
 /// Whether a unified diff changes any Rust source, the only files cargo-mutants mutates.
 fn changes_rust(diff: &str) -> bool {
     diff.lines()
@@ -300,7 +326,7 @@ fn plan(args: &[String]) -> Result {
         let mut list: Vec<String> = ["mutants", "--in-diff", DIFF, "--list"]
             .map(String::from)
             .to_vec();
-        list.extend(passed_through(args).iter().cloned());
+        list.extend(cargo_mutants_args(args));
         let out = Command::new("cargo")
             .args(&list)
             .current_dir(&repo)
@@ -328,12 +354,37 @@ fn count_listed(list: &str) -> usize {
     list.lines().filter(|line| !line.trim().is_empty()).count()
 }
 
-/// `mutants [--plan] [--base <ref> | --all] [--in-place] [-- <cargo-mutants arguments>]`.
+/// `mutants [--plan | --warm] [--app] [--base <ref> | --all] [--in-place] [-- <cargo-mutants
+/// arguments>]`.
 pub fn run(args: &[String]) -> Result {
-    if args.first().map(String::as_str) == Some("--plan") {
-        return plan(&args[1..]);
+    match args.first().map(String::as_str) {
+        Some("--plan") => plan(&args[1..]),
+        Some("--warm") => warm(),
+        _ => run_in(&root(), "cargo", args),
     }
-    run_in(&root(), "cargo", args)
+}
+
+/// `--warm`: build the tests of every package a run of changed lines mutates (all but the app),
+/// one package at a time, as cargo-mutants builds each mutant's package, so the features each is
+/// built with are the ones a mutant of it asks for (CI's mutants cache).
+fn warm() -> Result {
+    for package in crate::check::members()? {
+        if package == crate::check::APP {
+            continue;
+        }
+        crate::util::run(
+            "cargo",
+            &[
+                "nextest",
+                "run",
+                "--no-run",
+                "--locked",
+                "--package",
+                &package,
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 /// What a run tests: the mutants of the lines changed since a base, or (`--all`) every mutant
@@ -379,9 +430,9 @@ pub(crate) fn run_in(repo: &Path, cargo: &str, args: &[String]) -> Result {
             say(&format!(
                 "Testing the mutants of the lines changed since {base}…"
             ));
-            mutants_args(Some(DIFF), nextest, passed_through(args))
+            mutants_args(Some(DIFF), nextest, &cargo_mutants_args(args))
         }
-        None => mutants_args(None, nextest, passed_through(args)),
+        None => mutants_args(None, nextest, &cargo_mutants_args(args)),
     };
     let mut command = Command::new(cargo);
     // From the pre-push hook, Git's variables name the pushing checkout, not `repo`.
@@ -413,6 +464,29 @@ mod tests {
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()
+    }
+
+    /// A run of changed lines leaves the app out unless `--app` asks for it alone; `--all` names
+    /// its own.
+    #[test]
+    fn the_app_is_left_out_unless_asked_for() {
+        assert_eq!(
+            cargo_mutants_args(&strings(&["--base", "abc", "--", "--shard", "1/4"])),
+            ["--exclude", APP_FILES, "--shard", "1/4"]
+        );
+        assert_eq!(
+            cargo_mutants_args(&strings(&["--app", "--base", "abc"])),
+            ["--file", APP_FILES]
+        );
+        assert_eq!(
+            cargo_mutants_args(&strings(&["--all", "--", "-p", "kchess-domain"])),
+            ["-p", "kchess-domain"]
+        );
+        // After `--`, a flag is cargo-mutants', not this command's.
+        assert_eq!(
+            cargo_mutants_args(&strings(&["--", "--app"])),
+            ["--exclude", APP_FILES, "--app"]
+        );
     }
 
     #[test]
@@ -840,7 +914,9 @@ mod tests {
         let calls = std::fs::read_to_string(tools.path().join("calls")).unwrap();
         assert_eq!(
             calls.trim(),
-            format!("mutants --in-diff {DIFF} --no-shuffle --test-tool nextest -j 2")
+            format!(
+                "mutants --in-diff {DIFF} --no-shuffle --test-tool nextest --exclude {APP_FILES} -j 2"
+            )
         );
         let seen = std::fs::read_to_string(tools.path().join("seen.patch")).unwrap();
         assert!(seen.contains("+fn new() {}"), "{seen}");
@@ -879,7 +955,7 @@ mod tests {
         assert_eq!(
             calls,
             format!(
-                "mutants --in-diff {DIFF} --no-shuffle --test-tool nextest --shard 1/2 --in-place"
+                "mutants --in-diff {DIFF} --no-shuffle --test-tool nextest --exclude {APP_FILES} --shard 1/2 --in-place"
             )
         );
         assert_eq!(incremental, "unset");

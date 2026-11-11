@@ -1,0 +1,70 @@
+name: Vendored GPUI build
+description: >-
+  The vendored GPUI (`vendor/`) heads the app's longest chain of crates, and was compiled anew on
+  every run (2026-11-09: most of the 5 to 6 minutes the app's test build took): rust-cache keeps
+  only crates from outside the repository, and Cargo rebuilds a path crate whose files are newer
+  than its build, as a fresh checkout's are. So its files get a fixed old date and its build a
+  cache of its own, keyed by those files: Cargo finds it up to date, and with it the registry
+  crates built on it, until a file of it changes. Use it twice: at the start of the job to restore,
+  and at its end with `save: true` and the restore's `cache-hit`, which on main replaces the cache
+  when the restore missed.
+
+inputs:
+  name:
+    description: The cache's name, the start of its key (one per kind of build).
+    required: true
+  save:
+    description: "'true' at the end of the job."
+    default: 'false'
+  cache-hit:
+    description: The restore's `cache-hit` output, when saving.
+    default: ''
+
+outputs:
+  cache-hit:
+    description: Whether the restore found this exact build.
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Date the vendored sources
+      if: inputs.save != 'true'
+      shell: bash
+      run: find vendor -type f -exec touch -t 200001010000 {} +
+    - id: restore
+      if: inputs.save != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        # Its libraries are named gpui, gpui_apple, gpui_macos and gpui_windows.
+        path: |
+          target/**/deps/libgpui-*
+          target/**/deps/gpui-*.d
+          target/**/deps/libgpui_apple-*
+          target/**/deps/gpui_apple-*.d
+          target/**/deps/libgpui_macos-*
+          target/**/deps/gpui_macos-*.d
+          target/**/deps/libgpui_windows-*
+          target/**/deps/gpui_windows-*.d
+          target/**/.fingerprint/gpui-pre*
+          target/**/build/gpui-pre*
+        key: ${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}
+    - if: inputs.save == 'true' && github.ref == 'refs/heads/main' && inputs.cache-hit != 'true'
+      uses: ./.github/actions/drop-caches
+      with:
+        prefix: ${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-
+    - if: inputs.save == 'true' && github.ref == 'refs/heads/main' && inputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          target/**/deps/libgpui-*
+          target/**/deps/gpui-*.d
+          target/**/deps/libgpui_apple-*
+          target/**/deps/gpui_apple-*.d
+          target/**/deps/libgpui_macos-*
+          target/**/deps/gpui_macos-*.d
+          target/**/deps/libgpui_windows-*
+          target/**/deps/gpui_windows-*.d
+          target/**/.fingerprint/gpui-pre*
+          target/**/build/gpui-pre*
+        key: ${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'Cargo.lock', 'rust-toolchain.toml') }}
