@@ -22,7 +22,7 @@ pub fn lichess_path(text: &str) -> Option<&str> {
         .strip_prefix("lichess.org/")
 }
 
-/// `USERNAME`: what Lichess accepts as a name.
+/// What Lichess accepts as a name.
 pub fn is_username(name: &str) -> bool {
     (2..=30).contains(&name.len())
         && name

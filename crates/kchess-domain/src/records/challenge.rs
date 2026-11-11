@@ -1,9 +1,9 @@
 //! The reader of a challenge event from an account's event stream, a pure rule beside
 //! `online::validate`.
 //!
-//! Unknown keys pass, an optional key
-//! may be absent but not null, lengths count UTF-16 units, and a malformed event is not a
-//! challenge at all. The variant mapping comes from `crate::online_game`.
+//! Unknown keys pass, an optional key may be absent but not null, lengths count UTF-16 units,
+//! and a malformed event is not a challenge at all. The variant mapping comes from
+//! `crate::online_game`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
@@ -28,7 +28,6 @@ pub struct PlayerRef {
     pub online: Option<bool>,
 }
 
-/// `ChallengeTimeControl`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum TimeControl {
@@ -37,7 +36,7 @@ pub enum TimeControl {
     Unlimited,
 }
 
-/// `ChallengeInfo`: a pending challenge to or from one of the connected accounts.
+/// A pending challenge to or from one of the connected accounts.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChallengeInfo {
@@ -61,7 +60,7 @@ pub struct ChallengeInfo {
     pub playable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub problem: Option<String>,
-    /// Milliseconds since the Unix epoch, as `Date.now()` gives.
+    /// Milliseconds since the Unix epoch.
     pub received_at: i64,
 }
 
@@ -76,12 +75,12 @@ pub struct ChallengeEvent {
 
 type Object = Map<String, Value>;
 
-/// Characters a JavaScript string counts for `maxLength` (UTF-16 code units).
+/// A text's length in UTF-16 code units, as Lichess's limits count it.
 fn units(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
-/// `v.optional(check)` for one key: `Some(None)` when absent, `Some(Some(_))` when it passes,
+/// One optional key: `Some(None)` when absent, `Some(Some(_))` when it passes,
 /// `None` when it is present and fails (null fails too).
 fn optional<'a, T>(
     object: &'a Object,
@@ -94,19 +93,18 @@ fn optional<'a, T>(
     }
 }
 
-/// `v.string()` within `max` UTF-16 units.
+/// A string within `max` UTF-16 units.
 fn text(value: &Value, max: usize) -> Option<&str> {
     value.as_str().filter(|text| units(text) <= max)
 }
 
-/// `v.pipe(v.number(), v.finite(), v.minValue(0))`.
+/// A number, at least 0.
 fn non_negative(value: &Value) -> Option<Number> {
     let number = value.as_number()?;
     number.as_f64().filter(|n| *n >= 0.0)?;
     Some(number.clone())
 }
 
-/// `v.picklist(options)`.
 fn picklist<'a>(value: &'a Value, options: &[&str]) -> Option<&'a str> {
     value.as_str().filter(|text| options.contains(text))
 }
@@ -115,7 +113,6 @@ fn game_id(value: &Value) -> Option<&str> {
     value.as_str().filter(|text| is_game_id(text))
 }
 
-/// `userSchema`.
 struct User {
     id: String,
     name: String,
@@ -130,7 +127,7 @@ fn user(value: &Value) -> Option<User> {
     let id = text(object.get("id")?, 40)?.to_string();
     let name = text(object.get("name")?, 40)?.to_string();
     let rating = optional(object, "rating", non_negative_any)?;
-    // `v.optional(v.nullable(text(8)))`: a null title is read as no title.
+    // A null title is read as no title.
     let title = optional(object, "title", |v| {
         if v.is_null() {
             Some(None)
@@ -151,7 +148,7 @@ fn user(value: &Value) -> Option<User> {
     })
 }
 
-/// A finite number of any sign (`v.pipe(v.number(), v.finite())`).
+/// A finite number of any sign.
 fn non_negative_any(value: &Value) -> Option<Number> {
     value.as_number().cloned()
 }
@@ -187,7 +184,7 @@ const DIRECTIONS: &[&str] = &["in", "out"];
 
 fn challenge(object: &Object) -> Option<Challenge> {
     let id = game_id(object.get("id")?)?.to_string();
-    // `v.optional(text(20))`: a status is checked for length and otherwise unused.
+    // A status is checked for length and otherwise unused.
     optional(object, "status", |v| text(v, 20))?;
     let challenger = nullable_user(object, "challenger")?;
     let dest_user = nullable_user(object, "destUser")?;
@@ -217,7 +214,7 @@ fn challenge(object: &Object) -> Option<Challenge> {
     })
 }
 
-/// `v.variant('type', [clock, correspondence, unlimited])`.
+/// A `clock`, `correspondence` or `unlimited` time control, by its `type`.
 fn time_control(value: &Value) -> Option<TimeControl> {
     let object = value.as_object()?;
     match object.get("type")?.as_str()? {
@@ -240,7 +237,7 @@ fn time_control(value: &Value) -> Option<TimeControl> {
     }
 }
 
-/// `readChallengeEvent(account, raw, now)`: the challenge a stream event carries, seen from
+/// The challenge a stream event carries, seen from
 /// `account`'s side; None when the event is not a challenge event or does not match the schema.
 pub fn read_challenge_event(account: &str, raw: &Value, now: i64) -> Option<ChallengeEvent> {
     let object = raw.as_object()?;

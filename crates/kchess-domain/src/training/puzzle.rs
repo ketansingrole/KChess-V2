@@ -9,7 +9,7 @@ use shakmaty::{Position as _, Role};
 use crate::variant::Variant;
 use crate::{js, position, rules};
 
-/// `PuzzleState`: where a solve stands. `index` is the solution move the player must make next.
+/// Where a solve stands. `index` is the solution move the player must make next.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleState {
@@ -88,7 +88,7 @@ pub fn from_api(raw: &Value) -> Option<Value> {
             .split(js::is_space)
             .filter(|token| !token.is_empty() && !is_move_number(token))
             .collect();
-        // `initialPly` is read as JavaScript's `Number(…)`: an absent one is NaN, which slices nothing.
+        // An absent `initialPly` reads as NaN, which slices nothing.
         let initial_ply = js::to_number(puzzle.get("initialPly"));
         let end = super::js_slice_end(sans.len(), initial_ply + 1.0);
         let wanted = &sans[..end];
@@ -155,7 +155,7 @@ fn coords(square: &str) -> (i32, i32) {
     )
 }
 
-/// `castlingSide`: `'h'` or `'a'` when a king's move from `from` to `to` castles, else None.
+/// `'h'` or `'a'` when a king's move from `from` to `to` castles, else None.
 fn castling_side(pos: &VariantPosition, from: &str, to: &str) -> Option<char> {
     let board = pos.board();
     let piece = |square: &str| rules::parse_square(square).and_then(|sq| board.piece_at(sq));
@@ -171,7 +171,7 @@ fn castling_side(pos: &VariantPosition, from: &str, to: &str) -> Option<char> {
     Some(if delta > 0 { 'h' } else { 'a' })
 }
 
-/// `moveSquares`: the squares to highlight for a UCI move. Castling shows the king's two-square
+/// The squares to highlight for a UCI move. Castling shows the king's two-square
 /// step, not "king takes rook".
 fn squares_for(pos: Option<&VariantPosition>, uci: &str) -> Option<Vec<String>> {
     let (from, to) = uci_squares(uci)?;
@@ -224,7 +224,7 @@ pub fn start_puzzle(puzzle: &Value) -> PuzzleState {
     }
 }
 
-/// `applyMove`: `uci` played from the state's position, or None when it is illegal.
+/// `uci` played from the state's position, or None when it is illegal.
 fn apply_move(state: &PuzzleState, uci: &str) -> Option<PuzzleState> {
     let pos = position_of(state)?;
     apply_move_at(&pos, state, uci)

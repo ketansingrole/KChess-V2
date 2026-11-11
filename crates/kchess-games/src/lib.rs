@@ -14,8 +14,7 @@ pub use shakmaty::Color;
 
 use kchess_domain::variant::Variant;
 
-/// A random number in [0, 1), like `Math.random()`; an error when the system has no randomness
-/// to give (it used to draw 0 every time).
+/// A random number in [0, 1); an error when the system has no randomness to give.
 pub fn random_unit() -> Result<f64, String> {
     let mut bytes = [0u8; 8];
     getrandom::fill(&mut bytes).map_err(|error| format!("No random numbers: {error}"))?;
@@ -36,7 +35,7 @@ pub fn draw_color(choice: &str) -> Result<Color, String> {
     })
 }
 
-/// Milliseconds since the epoch (`Date.now()`).
+/// Milliseconds since the epoch.
 pub fn now_ms() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

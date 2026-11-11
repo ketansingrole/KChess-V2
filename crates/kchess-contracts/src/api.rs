@@ -39,7 +39,6 @@ pub fn without_trailing_nulls(mut args: Vec<Value>) -> Vec<Value> {
     args
 }
 
-/// An argument of `method` as JSON.
 pub fn arg(method: &str, value: impl Serialize) -> Result<Value, CoreError> {
     serde_json::to_value(value).map_err(|cause| {
         CoreError::new(format!(
@@ -48,13 +47,11 @@ pub fn arg(method: &str, value: impl Serialize) -> Result<Value, CoreError> {
     })
 }
 
-/// One argument of a method.
 pub struct Param {
     pub name: &'static str,
     pub optional: bool,
 }
 
-/// One method of the core's API.
 pub struct Method {
     pub name: &'static str,
     /// What the method does, one line per doc line; empty for none.
@@ -279,7 +276,6 @@ macro_rules! core_api {
             }
         )*
 
-        /// Every method, in declaration order.
         pub const METHODS: &[Method] = &[$($(
             Method {
                 name: $method,

@@ -103,8 +103,7 @@ fn normalize(name: Option<&Value>) -> String {
     normalize_rating_key(name.and_then(Value::as_str).unwrap_or_default())
 }
 
-/// The rating key of a game's `perf`: `normalizeRatingKey(perf) || perf`. A non-string perf is
-/// its own key (undefined when absent).
+/// The rating key of a game's `perf`. A non-string perf is its own key (None when absent).
 fn perf_key(perf: Option<&Value>) -> Option<Value> {
     match perf {
         Some(Value::String(_)) => Some(json!(normalize(perf))),
@@ -112,7 +111,7 @@ fn perf_key(perf: Option<&Value>) -> Option<Value> {
     }
 }
 
-/// Stands in for the identity of a `Map` key: values are equal when their JSON is.
+/// A key's identity: values are equal when their JSON is.
 fn key_id(key: &Option<Value>) -> String {
     match key {
         None => "undefined".into(),
@@ -219,7 +218,7 @@ fn utc_date(day: f64) -> (Value, Value, Value) {
     }
 }
 
-/// Whether a history entry has points (`entry.points?.length`).
+/// Whether a history entry has points: a non-empty `points` list (or string).
 fn has_points(entry: &Value) -> bool {
     match entry.get("points") {
         Some(Value::Array(points)) => !points.is_empty(),

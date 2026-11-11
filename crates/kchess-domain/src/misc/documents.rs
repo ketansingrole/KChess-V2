@@ -21,7 +21,6 @@ fn object_or_none(v: &J) -> Option<&J> {
     v.is_object().then_some(v)
 }
 
-/// `Number.isInteger(v)` for a number.
 fn integer_of(v: Option<&J>) -> Option<f64> {
     match v {
         Some(J::Num(n)) if n.is_finite() && n.fract() == 0.0 => Some(*n),
@@ -29,7 +28,7 @@ fn integer_of(v: Option<&J>) -> Option<f64> {
     }
 }
 
-/// `text(v, max)`: a string no longer than `max` UTF-16 units.
+/// A string no longer than `max` UTF-16 units.
 fn text_of(v: Option<&J>, max: usize) -> Option<&str> {
     match v {
         Some(J::Str(s)) if js::utf16_len(s) <= max => Some(s),
@@ -37,7 +36,6 @@ fn text_of(v: Option<&J>, max: usize) -> Option<&str> {
     }
 }
 
-/// `Number.isFinite(v)` for a number.
 fn finite_of(v: Option<&J>) -> Option<f64> {
     match v {
         Some(J::Num(n)) if n.is_finite() => Some(*n),
@@ -45,7 +43,7 @@ fn finite_of(v: Option<&J>) -> Option<f64> {
     }
 }
 
-/// `typeof n === 'number' && Number.isFinite(n) ? Math.max(0, n) : 0`
+/// A finite number, at least 0; anything else is 0.
 fn ms(v: Option<&J>) -> f64 {
     finite_of(v).map_or(0.0, |n| n.max(0.0))
 }
@@ -54,7 +52,6 @@ fn variant_of(setup: Option<&J>) -> Option<Variant> {
     Variant::from_key(setup?.get("variant")?.str()?)
 }
 
-/// `{ variant, fen }` from a decoded setup.
 fn setup_object(variant: Variant, fen: &str) -> J {
     J::Obj(vec![
         ("variant".into(), J::Str(variant.key().into())),
@@ -62,7 +59,7 @@ fn setup_object(variant: Variant, fen: &str) -> J {
     ])
 }
 
-/// `playable(setup, moves)`: a list of legal UCI moves from the setup's position.
+/// A list of legal UCI moves from the setup's position.
 fn playable(variant: Variant, fen: &str, moves: Option<&J>) -> Option<Vec<String>> {
     let Some(J::Arr(items)) = moves else {
         return None;
@@ -87,7 +84,7 @@ fn moves_value(moves: &[String]) -> J {
     J::Arr(moves.iter().map(|m| J::Str(m.clone())).collect())
 }
 
-/// `clockSide(raw)`: `{ minutes, increment }` when both are whole minutes from 0 to 180.
+/// `{ minutes, increment }` when both are whole minutes from 0 to 180.
 fn clock_side(raw: Option<&J>) -> Option<(f64, f64)> {
     let raw = object_or_none(raw?)?;
     let minutes = integer_of(raw.get("minutes"))?;
@@ -125,7 +122,6 @@ thread_local! {
     static PARSED: RefCell<Option<(String, Option<TreeNode>)>> = const { RefCell::new(None) };
 }
 
-/// `decodeAnalysisSession`
 fn decode_analysis(raw: &J) -> Option<J> {
     let raw = object_or_none(raw)?;
     if raw.get("version") != Some(&J::Num(1.0)) {
@@ -181,7 +177,6 @@ fn decode_analysis(raw: &J) -> Option<J> {
 
 /* ── Local sessions ── */
 
-/// `decodeLocalSession`
 fn decode_local(raw: &J) -> Option<J> {
     if raw.get("version") != Some(&J::Num(1.0)) {
         return None;
@@ -231,7 +226,7 @@ fn decode_local(raw: &J) -> Option<J> {
     ]))
 }
 
-/// `value.slice(0, max)` in UTF-16 units; a character straddling the limit is left out.
+/// The first `max` UTF-16 units; a character straddling the limit is left out.
 fn utf16_prefix(s: &str, max: usize) -> String {
     let mut units = 0;
     let mut out = String::new();
@@ -247,7 +242,6 @@ fn utf16_prefix(s: &str, max: usize) -> String {
 
 /* ── Computer sessions ── */
 
-/// `decodeComputerSession`
 fn decode_computer(raw: &J) -> Option<J> {
     let raw = object_or_none(raw)?;
     let version = integer_of(raw.get("version"));
@@ -307,7 +301,7 @@ fn decode_computer(raw: &J) -> Option<J> {
     ]))
 }
 
-/// `String(value)`: the text a value takes in string coercion.
+/// The text a value takes in string coercion.
 fn js_string(v: &J) -> String {
     match v {
         J::Undef => "undefined".into(),
@@ -329,7 +323,6 @@ fn js_string(v: &J) -> String {
 
 /* ── Archive identities ── */
 
-/// `decodeArchiveIdentity`
 fn decode_archive_identity(raw: &J) -> Option<J> {
     let raw = object_or_none(raw)?;
     let id = text_of(raw.get("id"), 80).filter(|id| !id.is_empty())?;
@@ -340,7 +333,7 @@ fn decode_archive_identity(raw: &J) -> Option<J> {
     ]))
 }
 
-/// `SESSION_VERSION`: the on-disk version of each kind; archives have none.
+/// The on-disk version of each kind; archives have none.
 fn session_version(kind: &str) -> Option<Option<f64>> {
     Some(match kind {
         "analysis" | "local" => Some(1.0),

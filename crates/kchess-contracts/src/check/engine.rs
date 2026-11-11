@@ -7,7 +7,7 @@ use kchess_domain::variant::{VARIANTS, Variant};
 use super::*;
 use crate::types::{AnalysisRequest, BestMoveOptions, ENGINE_LEVELS, EngineLevel};
 
-/// `Number.MAX_SAFE_INTEGER`.
+/// The largest integer a JSON number holds exactly.
 const MAX_SAFE: u64 = 9_007_199_254_740_991;
 const LINES: Msg = Some("Invalid number of engine lines.");
 const THINK_TIME: Msg = Some("Invalid think time.");

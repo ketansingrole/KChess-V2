@@ -1,4 +1,4 @@
-//! Replaying games (`replaySetup`, `replay`).
+//! Replaying games.
 
 use serde::Serialize;
 use shakmaty::variant::VariantPosition;
@@ -36,7 +36,7 @@ pub fn replay_from<S: AsRef<str>>(mut pos: VariantPosition, moves: &[S]) -> Repl
     }
 }
 
-/// How many moves `replaySetup` accepts, without building SAN (the validation decoders need).
+/// How many moves `replay_setup` accepts, without building SAN (the validation decoders need).
 pub fn replay_setup_count<S: AsRef<str>>(
     variant: Variant,
     fen: &str,
@@ -46,7 +46,7 @@ pub fn replay_setup_count<S: AsRef<str>>(
     Some(count_line(&mut pos, moves))
 }
 
-/// The side to move once `replaySetup` has played what it accepts, and how many moves that is,
+/// The side to move once `replay_setup` has played what it accepts, and how many moves that is,
 /// without building SAN or a FEN.
 pub fn replay_setup_turn<S: AsRef<str>>(
     variant: Variant,
@@ -155,7 +155,7 @@ fn variant_end_of(pos: &VariantPosition) -> Option<&'static str> {
     })
 }
 
-/// `review.replay`: standard rules from `fen`, the start first, as far as the moves are legal.
+/// Standard rules from `fen`, the start first, as far as the moves are legal.
 pub fn replay_positions<S: AsRef<str>>(fen: &str, moves: &[S]) -> Vec<ReplayedPosition> {
     replay_positions_in(Variant::Standard, fen, moves)
 }

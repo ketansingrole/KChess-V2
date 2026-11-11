@@ -116,7 +116,7 @@ impl Model {
     }
 }
 
-/// `start(options)`: a seek or challenge. A game being played, a seek in progress, or Lichess
+/// A seek or challenge. A game being played, a seek in progress, or Lichess
 /// still being asked for a game in progress refuses it: the seek cut that check short, and its
 /// end put the state back to idle while Lichess held the seek.
 fn start(mut run: Run, options: Value) -> Outcome {
@@ -158,7 +158,7 @@ fn start(mut run: Run, options: Value) -> Outcome {
     run.call(Call::StartOnline(options), pending)
 }
 
-/// `stop()`: cancel the seek, and leave a game that is not being played.
+/// Cancel the seek, and leave a game that is not being played.
 fn stop(mut run: Run) -> Outcome {
     run.next_generation();
     if run.m.online_phase != "disconnected" && run.m.online_phase != "playing" {
@@ -168,14 +168,14 @@ fn stop(mut run: Run) -> Outcome {
     run.call(Call::CancelOnline, Pending::Stop)
 }
 
-/// `reconnect()`: ask Lichess for the game in progress.
+/// Ask Lichess for the game in progress.
 fn reconnect(mut run: Run) -> Outcome {
     let generation = run.next_generation();
     run.checking();
     run.call(Call::ResumeOnline, Pending::Reconnect { generation })
 }
 
-/// `open(account, id)`: open one of the account's games on the board.
+/// Open one of the account's games on the board.
 fn open(mut run: Run, account: String, id: String) -> Outcome {
     let generation = run.next_generation();
     let call = Call::OpenGame {
@@ -192,7 +192,7 @@ fn open(mut run: Run, account: String, id: String) -> Outcome {
     )
 }
 
-/// `onlineMove(uci)`: a move on the board. It is sent once; a failed reply is never retried.
+/// A move on the board. It is sent once; a failed reply is never retried.
 fn move_uci(run: Run, uci: String) -> Outcome {
     if run.m.online_id.is_empty() || run.m.online_phase != "playing" {
         return run.done();
@@ -207,7 +207,7 @@ fn move_uci(run: Run, uci: String) -> Outcome {
     run.call(Call::PlayOnline { id, uci }, pending)
 }
 
-/// `onlineAction(action)`: resign, offer or answer a draw or takeback, claim, berserk.
+/// Resign, offer or answer a draw or takeback, claim, berserk.
 fn act(run: Run, action: String) -> Outcome {
     if run.m.online_id.is_empty() {
         return run.done();
@@ -222,7 +222,7 @@ fn act(run: Run, action: String) -> Outcome {
     run.call(Call::OnlineAction { id, action }, pending)
 }
 
-/// `loadChat(id)`: the chat so far. A courtesy: a failure leaves the game running.
+/// The chat so far. A courtesy: a failure leaves the game running.
 fn chat(run: Run, id: String) -> Outcome {
     if !run.ctx.chat_enabled {
         return run.done();

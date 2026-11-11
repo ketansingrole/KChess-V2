@@ -364,8 +364,7 @@ struct Analysis {
     weights: Option<Vec<f64>>,
 }
 
-/// `analyseReview`; a start that is not a legal position is refused once a score needs a side to
-/// move.
+/// A start that is not a legal position is refused once a score needs a side to move.
 fn analyse(review: &Review) -> Result<Analysis, String> {
     // Only each position's side to move and end matter here, not its FEN. The end check is
     // skipped when every position already has a score: `eval_at` then never reads it, and the
@@ -554,7 +553,7 @@ fn weighted_accuracy(
     result
 }
 
-/// `analyseReview`: per-move labels, accuracy and chances, and both sides' figures; why not, for
+/// Per-move labels, accuracy and chances, and both sides' figures; why not, for
 /// a review that cannot be analysed.
 pub fn analyse_review(raw: &Value) -> Result<Value, String> {
     let analysis = analyse(&Review::read(raw)?)?;
@@ -606,7 +605,7 @@ pub fn phase_starts(
     Some((middle, end))
 }
 
-/// `reviewPhases`: each side's accuracy in the opening, middlegame and endgame, worked out like
+/// Each side's accuracy in the opening, middlegame and endgame, worked out like
 /// the game's, the phases divided by `phase_starts` (a simpler form of Lichess's division). None
 /// when the review cannot be analysed.
 pub fn review_phases(raw: &Value) -> Option<Value> {
@@ -770,7 +769,7 @@ fn sound_sacrifice(
     material(&line) <= baseline - 2
 }
 
-/// `summarize`: what the game list shows for a review; why not, for one that cannot be analysed.
+/// What the game list shows for a review; why not, for one that cannot be analysed.
 pub fn summarize(raw: &Value) -> Result<Value, String> {
     let analysis = analyse(&Review::read(raw)?)?;
     let [white, black] = analysis.sides;
@@ -788,7 +787,7 @@ pub fn summarize(raw: &Value) -> Result<Value, String> {
 
 /* ── Synced Lichess games ── */
 
-/// `sanToUci`: SAN moves played from `fen`, as UCI, as far as they are legal (standard rules).
+/// SAN moves played from `fen`, as UCI, as far as they are legal (standard rules).
 pub fn san_to_uci<S: AsRef<str>>(fen: &str, sans: &[S]) -> Vec<String> {
     let Some(mut pos) = rules::standard_from_fen(fen) else {
         return Vec::new();
@@ -806,7 +805,7 @@ pub fn san_to_uci<S: AsRef<str>>(fen: &str, sans: &[S]) -> Vec<String> {
 
 use crate::rules::INITIAL_FEN;
 
-/// `/\[FEN "([^"]+)"\]/.exec(pgn)?.[1]`
+/// The value of the first non-empty `[FEN "…"]` tag in a PGN.
 fn fen_tag(pgn: &str) -> Option<&str> {
     let mut from = 0;
     while let Some(at) = pgn[from..].find("[FEN \"") {
@@ -823,7 +822,7 @@ fn fen_tag(pgn: &str) -> Option<&str> {
     None
 }
 
-/// `lichessLine`: a synced game's start position (initial FEN, else its PGN's FEN tag) and its
+/// A synced game's start position (initial FEN, else its PGN's FEN tag) and its
 /// SAN moves as UCI.
 pub fn lichess_line(
     moves: &str,

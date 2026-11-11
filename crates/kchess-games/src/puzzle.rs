@@ -114,7 +114,6 @@ impl OnBoard {
     }
 }
 
-/// A move's two squares, from and to.
 fn squares(names: &[String]) -> Option<(shakmaty::Square, shakmaty::Square)> {
     Some((names.first()?.parse().ok()?, names.get(1)?.parse().ok()?))
 }
@@ -154,8 +153,8 @@ mod tests {
         assert_eq!(board.last_san(), "Qxf7#");
     }
 
-    /// The rules write the solution index as a JavaScript number (`2.0`): read as an integer it
-    /// was 0, and Solution stopped after the opponent's first reply.
+    /// The rules write the solution index as a float (`2.0`): read as an integer it was 0, and
+    /// Solution stopped after the opponent's first reply.
     #[test]
     fn the_solution_is_revealed_a_move_at_a_time() {
         let mut board = OnBoard::start(&json!({

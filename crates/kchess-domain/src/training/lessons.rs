@@ -341,7 +341,7 @@ fn finish(success: bool, reason: Reason) -> (bool, Option<bool>, Option<Reason>)
     (true, Some(success), Some(reason))
 }
 
-/// `lessonStatus`: where `task`, from `fen`, stands after `moves` (UCI).
+/// Where `task`, from `fen`, stands after `moves` (UCI).
 pub fn status<S: AsRef<str>>(fen: &str, task: &Task, moves: &[S]) -> Result<Status, String> {
     let r = replay(fen, moves)?;
     let pos = &r.pos;
@@ -529,7 +529,7 @@ pub struct Verdict {
     pub uci: Option<String>,
 }
 
-/// `lessonMove`: whether `uci`, your move after `moves`, is one the step accepts. A line wants its
+/// Whether `uci`, your move after `moves`, is one the step accepts. A line wants its
 /// next move (or any mate as its last); a mate task wants a move that keeps a forced mate within
 /// the moves left; play tasks take any legal move.
 pub fn try_move<S: AsRef<str>>(
@@ -574,7 +574,7 @@ pub fn try_move<S: AsRef<str>>(
     })
 }
 
-/// `lessonHint`: the move a line or mate task wants next; None for read and play tasks (the
+/// The move a line or mate task wants next; None for read and play tasks (the
 /// engine hints those) or when it is not your move.
 pub fn hint<S: AsRef<str>>(fen: &str, task: &Task, moves: &[S]) -> Result<Option<String>, String> {
     let r = replay(fen, moves)?;

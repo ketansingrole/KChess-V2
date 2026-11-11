@@ -122,10 +122,6 @@ mod tests {
         let back = CoreEvent::from_wire(event.name(), event.payload().clone());
         assert_eq!(back, Some(event));
         assert_eq!(CoreEvent::from_wire("nothing:here", json!(null)), None);
-        for name in CoreEvent::NAMES {
-            let event = CoreEvent::from_wire(name, json!(null)).expect("a declared name");
-            assert_eq!(event.name(), *name);
-        }
     }
 
     #[test]

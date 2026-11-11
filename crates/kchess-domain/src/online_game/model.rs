@@ -17,7 +17,7 @@ pub struct ClockConfig {
     pub increment: f64,
 }
 
-/// `FinishedGame`: the last game, kept for a rematch.
+/// The last game, kept for a rematch.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FinishedGame {
@@ -285,7 +285,7 @@ impl<'a> Run<'a> {
         self.fx.push(Effect::ClockPause);
     }
 
-    /// `RequestScope.next()`: a new request supersedes every earlier one.
+    /// A new request supersedes every earlier one.
     pub fn next_generation(&mut self) -> f64 {
         self.m.generation += 1.0;
         self.m.generation
@@ -326,8 +326,8 @@ impl<'a> Run<'a> {
 }
 
 impl Model {
-    /// `setupPositionAfter` and `setupSanHistory`: the position the moves reach and the SAN of each
-    /// move played. An illegal setup falls back to the standard start with no history.
+    /// The position the moves reach and the SAN of each move played. An illegal setup falls back
+    /// to the standard start with no history.
     pub fn replayed(&self) -> Replayed {
         let setup = &self.online_setup;
         match replay_setup(setup.variant, &setup.fen, &self.online_moves) {
@@ -412,7 +412,7 @@ impl Model {
         Some(Value::Object(out))
     }
 
-    /// A board with no game (`onlineGameState()`).
+    /// A board with no game.
     pub fn idle() -> Model {
         Model {
             online_phase: "idle".into(),
@@ -459,17 +459,17 @@ pub fn turn_of(fen: &str) -> &'static str {
     }
 }
 
-/// `obj?.key`: the entry when there is an object holding it.
+/// The entry when there is an object holding it.
 pub fn at<'a>(v: Option<&'a Value>, key: &str) -> Option<&'a Value> {
     v.and_then(|v| v.get(key))
 }
 
-/// `x ?? y`: the value unless it is absent or null.
+/// The value unless it is absent or null.
 pub fn nullish(v: Option<&Value>) -> Option<&Value> {
     v.filter(|v| !v.is_null())
 }
 
-/// `String(x ?? fallback)`: any value as text, `fallback` when absent.
+/// Any value as text, `fallback` when absent or null.
 pub fn string_or(v: Option<&Value>, fallback: &str) -> String {
     match nullish(v) {
         Some(v) => js::to_string(Some(v)),
@@ -477,7 +477,6 @@ pub fn string_or(v: Option<&Value>, fallback: &str) -> String {
     }
 }
 
-/// `Number(x ?? 0)`.
 pub fn number_or_zero(v: Option<&Value>) -> f64 {
     match nullish(v) {
         Some(v) => js::to_number(Some(v)),
@@ -485,7 +484,6 @@ pub fn number_or_zero(v: Option<&Value>) -> f64 {
     }
 }
 
-/// `isGameInProgress(status ?? null)`: the records rule, reused.
 pub fn is_running(status: Option<&Value>) -> bool {
     records::games::is_game_in_progress(nullish(status))
 }

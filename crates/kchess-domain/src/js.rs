@@ -1,7 +1,7 @@
-//! JavaScript value semantics the TypeScript core relies on (string lengths in UTF-16 units,
-//! `\s`/`trim`, `Number(…)` and `String(…)` coercion, `Math.round/max/min`, `JSON.stringify`),
-//! so decoders accept and reject exactly what the TypeScript ones do. Every crate takes these
-//! from here rather than keeping its own copy.
+//! JavaScript value semantics that stored documents and the rules corpus depend on (string
+//! lengths in UTF-16 units, `\s`/`trim`, `Number(…)` and `String(…)` coercion,
+//! `Math.round/max/min`, `JSON.stringify`). Every crate takes these from here rather than keeping
+//! its own copy.
 
 use serde_json::{Map, Value};
 

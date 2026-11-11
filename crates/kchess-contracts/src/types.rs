@@ -1750,7 +1750,7 @@ pub struct ReviewAccuracy {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredReview {
-    /// `reviewKey(fen, moves)`: the same moves from the same start share one review.
+    /// The same moves from the same start share one review.
     pub key: String,
     pub fen: String,
     /// UCI, from `fen`.

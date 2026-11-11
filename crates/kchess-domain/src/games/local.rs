@@ -125,7 +125,6 @@ impl LocalGame {
         &self.state.setup
     }
 
-    /// The game's moves, in UCI.
     pub fn moves(&self) -> &[String] {
         &self.state.moves
     }
@@ -135,12 +134,10 @@ impl LocalGame {
         self.state.clock
     }
 
-    /// The clocks run in this game.
     pub fn timed(&self) -> bool {
         self.state.times.is_some()
     }
 
-    /// The clocks are paused.
     pub fn paused(&self) -> bool {
         self.state.paused
     }

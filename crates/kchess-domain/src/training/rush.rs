@@ -56,7 +56,7 @@ fn truthy(n: f64) -> bool {
     n != 0.0 && !n.is_nan()
 }
 
-/// `comboBonusMs`: the bonus for reaching `combo`; every tenth combo past 30 earns 10 seconds.
+/// The bonus for reaching `combo`; every tenth combo past 30 earns 10 seconds.
 pub fn combo_bonus_ms(combo: f64) -> f64 {
     if let Some(&(_, ms)) = COMBO_LEVELS.iter().find(|(at, _)| f64::from(*at) == combo) {
         return ms;
@@ -68,7 +68,7 @@ pub fn combo_bonus_ms(combo: f64) -> f64 {
     }
 }
 
-/// `comboProgress`: progress toward the next bonus, from 0 to 1.
+/// Progress toward the next bonus, from 0 to 1.
 pub fn combo_progress(combo: f64) -> f64 {
     let previous = COMBO_LEVELS
         .iter()
@@ -92,7 +92,7 @@ pub fn combo_progress(combo: f64) -> f64 {
     js::min(1.0, (combo - base) / (next - base))
 }
 
-/// `formatRunClock`: `m:ss`, or `0:ss.t` under ten seconds, where tenths matter.
+/// `m:ss`, or `0:ss.t` under ten seconds, where tenths matter.
 pub fn format_run_clock(ms: f64) -> String {
     let clamped = js::max(0.0, ms);
     let total_seconds = (clamped / 1000.0).floor();
@@ -106,7 +106,6 @@ pub fn format_run_clock(ms: f64) -> String {
 }
 
 impl RushState {
-    /// `newRush(config)`
     pub fn new(config: &RushConfig) -> Self {
         Self {
             score: 0.0,
@@ -126,7 +125,7 @@ impl RushState {
         self.over.is_some()
     }
 
-    /// `correctMove`: a correct move. Returns the bonus time it earned.
+    /// A correct move. Returns the bonus time it earned.
     pub fn correct_move(&mut self, config: &RushConfig) -> f64 {
         if self.is_over() {
             return 0.0;
@@ -148,7 +147,6 @@ impl RushState {
         bonus
     }
 
-    /// `puzzleSolved`
     pub fn puzzle_solved(&mut self, rating: f64) {
         if self.is_over() {
             return;
@@ -157,7 +155,7 @@ impl RushState {
         self.highest = js::max(self.highest, rating);
     }
 
-    /// `mistake`: a wrong move breaks the combo and costs time or a strike.
+    /// A wrong move breaks the combo and costs time or a strike.
     pub fn mistake(&mut self, config: &RushConfig) {
         if self.is_over() {
             return;
@@ -180,7 +178,7 @@ impl RushState {
         }
     }
 
-    /// `skip`: spends a skip. False when none is left.
+    /// Spends a skip. False when none is left.
     pub fn skip(&mut self) -> bool {
         if self.is_over() || self.skips_left <= 0.0 {
             return false;
@@ -189,7 +187,6 @@ impl RushState {
         true
     }
 
-    /// `tick`: time passes.
     pub fn tick(&mut self, elapsed_ms: f64) {
         if self.is_over() {
             return;
@@ -203,7 +200,7 @@ impl RushState {
         }
     }
 
-    /// `finish`: ends the run for `reason`; time left is never negative.
+    /// Ends the run for `reason`; time left is never negative.
     pub fn finish(&mut self, reason: &str) {
         if self.is_over() {
             return;
@@ -214,7 +211,7 @@ impl RushState {
         }
     }
 
-    /// `accuracy`: correct moves as a percentage of all moves, rounded.
+    /// Correct moves as a percentage of all moves, rounded.
     pub fn accuracy(&self) -> f64 {
         let total = self.moves + self.mistakes;
         if truthy(total) {

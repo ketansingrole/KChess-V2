@@ -44,7 +44,7 @@ pub struct ClockState {
     pub alerted: Sides<bool>,
 }
 
-/// `set(data)`: the server's times for both sides.
+/// The server's times for both sides.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetData {
@@ -83,7 +83,6 @@ impl ClockState {
         }
     }
 
-    /// `set`
     pub fn set(&mut self, data: &SetData, now: f64) {
         self.times = Sides {
             white: js::max(0.0, data.white),
@@ -99,7 +98,7 @@ impl ClockState {
         }
     }
 
-    /// `pause`: freezes both clocks at their remaining times.
+    /// Freezes both clocks at their remaining times.
     pub fn pause(&mut self, now: f64) {
         self.times = Sides {
             white: self.remaining("white", now),
@@ -108,7 +107,6 @@ impl ClockState {
         self.ticking = None;
     }
 
-    /// `remaining(color, now)`
     pub fn remaining(&self, color: &str, now: f64) -> f64 {
         let elapsed = if self.ticking.as_deref() == Some(color) {
             js::max(0.0, now - self.last_update)
@@ -118,7 +116,7 @@ impl ClockState {
         js::max(0.0, self.times.get(color).unwrap_or(f64::NAN) - elapsed)
     }
 
-    /// `lowTimeAlert(color, now)`: true once per player, when that clock drops below the threshold.
+    /// True once per player, when that clock drops below the threshold.
     pub fn low_time_alert(&mut self, color: &str, now: f64) -> bool {
         let alerted = self.alerted.get(color).unwrap_or(true);
         if alerted || self.remaining(color, now) > self.emerg_ms {
@@ -129,7 +127,7 @@ impl ClockState {
     }
 }
 
-/// `formatClock`: tenths under ten seconds, `m:ss` under an hour, `h:mm:ss` past an
+/// Tenths under ten seconds, `m:ss` under an hour, `h:mm:ss` past an
 /// hour, and days plus hours for correspondence clocks.
 pub fn format_clock(millis: f64) -> String {
     let millis = js::max(0.0, millis);

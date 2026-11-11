@@ -54,8 +54,8 @@ fn game_id_of(url: &[u8]) -> &str {
     }
 }
 
-/// The generator the TypeScript tests use (a 32-bit mix of a Weyl sequence), so a seeded
-/// native sampler keeps exactly the rows a seeded TypeScript sampler keeps.
+/// A 32-bit mix of a Weyl sequence: a seeded sampler keeps exactly the rows the rules corpus
+/// recorded for that seed.
 #[derive(Debug, Clone)]
 pub struct Random(u32);
 
@@ -97,8 +97,8 @@ impl Reservoir {
         }
     }
 
-    /// Count the row and decide where it goes, drawing a random number exactly when the
-    /// TypeScript reservoir does; the row itself is only built when some reservoir keeps it.
+    /// Count the row and decide where it goes, drawing one random number per row a full reservoir
+    /// sees; the row itself is only built when some reservoir keeps it.
     fn offer(&mut self, random: &mut Random) -> Option<Place> {
         self.seen += 1;
         if self.rows.len() < self.size {
@@ -150,7 +150,7 @@ fn solid_for_theme(deviation: f64, popularity: f64, plays: f64) -> bool {
 /// Sampler state; `push` the decompressed bytes as they arrive, then `finish`.
 pub struct Sampler {
     random: Random,
-    /// Reservoirs in creation order, which `kept()` follows like the TypeScript `Map`s.
+    /// Reservoirs in creation order, which `kept()` follows.
     buckets: Vec<Reservoir>,
     bucket_index: FastMap<i64, usize>,
     themes: Vec<Reservoir>,
@@ -185,9 +185,8 @@ impl Sampler {
         self.add_bytes(line.as_bytes())
     }
 
-    /// One line as raw bytes. The TypeScript sampler decodes whole lines (invalid UTF-8 becoming
-    /// U+FFFD); here only cells whose text matters are decoded. A kept row's id and themes are
-    /// ASCII, so rows with other bytes there are rejected either way.
+    /// One line as raw bytes. Only cells whose text matters are decoded (invalid UTF-8 becoming
+    /// U+FFFD). A kept row's id and themes are ASCII, so rows with other bytes there are rejected.
     fn add_bytes(&mut self, line: &[u8]) -> Result<(), &'static str> {
         if line.len() > MAX_LINE && js::utf16_len(&String::from_utf8_lossy(line)) > MAX_LINE {
             return Err(OVERSIZED);
@@ -254,7 +253,7 @@ impl Sampler {
             return Ok(());
         }
         // The row is built only once a reservoir keeps it; placing at once keeps each
-        // reservoir's length, and so its random draws, as the TypeScript sampler has them.
+        // reservoir's length, and so its random draws, as if every row were built.
         let mut row: Option<Rc<DbPuzzle>> = None;
         let mut build = || {
             Rc::new(DbPuzzle {
@@ -371,7 +370,7 @@ impl Sampler {
         self.tail = Vec::new();
     }
 
-    /// Every puzzle kept, once, in the order the TypeScript sampler returns them.
+    /// Every puzzle kept, once: reservoirs in creation order, each in its own order.
     pub fn kept(&self) -> Vec<&DbPuzzle> {
         let mut order: Vec<&str> = Vec::new();
         let mut latest: HashMap<&str, &DbPuzzle> = HashMap::new();

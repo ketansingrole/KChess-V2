@@ -1,5 +1,4 @@
-//! The PGN parser (`PgnParser`, non-streaming, unbounded budget, as `parsePgn` runs it):
-//! the same headers, comments, NAGs, variations and game boundaries.
+//! The PGN parser: headers, comments, NAGs, variations and game boundaries.
 // PGN is outside input: read it without indexing that can panic. Node ids are the one
 // exception, and only through `Game::node`.
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
@@ -67,7 +66,7 @@ pub struct PgnNode {
 
 #[derive(Debug, Clone)]
 pub struct Game {
-    /// Insertion-ordered, as a JavaScript `Map`.
+    /// Insertion-ordered.
     pub headers: Vec<(String, String)>,
     pub comments: Option<Vec<String>>,
     /// Arena of move nodes; index 0 is the root (no move).
@@ -112,7 +111,7 @@ impl Game {
         }
     }
 
-    /// A game with the default headers and no moves (`defaultGame()`).
+    /// A game with the default headers and no moves.
     pub fn empty() -> Game {
         Game::new()
     }
@@ -159,7 +158,7 @@ impl Game {
             .map(|(_, v)| v.as_str())
     }
 
-    /// `headers.set(name, value)`: an existing header keeps its place.
+    /// An existing header keeps its place.
     pub fn put_header(&mut self, name: &str, value: String) {
         match self.headers.iter_mut().find(|(k, _)| k == name) {
             Some(entry) => entry.1 = value,
@@ -167,7 +166,6 @@ impl Game {
         }
     }
 
-    /// `headers.delete(name)`
     pub fn remove_header(&mut self, name: &str) {
         self.headers.retain(|(k, _)| k != name);
     }
@@ -186,7 +184,6 @@ impl Game {
     }
 }
 
-/// `makeOutcome(parseOutcome(value))`
 fn outcome(value: &str) -> &'static str {
     match value {
         "1-0" | "1–0" | "1—0" => "1-0",
@@ -706,7 +703,7 @@ struct WriteFrame {
     in_variation: bool,
 }
 
-/// `makePgn`: headers, comments, NAGs and variations exactly as PGN is written.
+/// Headers, comments, NAGs and variations exactly as PGN is written.
 pub fn make_pgn(game: &Game) -> String {
     let mut out = String::with_capacity(64 + game.nodes.len() * 8);
     if !game.headers.is_empty() {
@@ -823,8 +820,7 @@ pub fn make_pgn(game: &Game) -> String {
     out
 }
 
-/// `studyDocumentPgn`: every chapter as one PGN named by a `ChapterName` header, or None when
-/// a chapter holds no game (the TypeScript function throws there).
+/// Every chapter as one PGN named by a `ChapterName` header, or None when a chapter holds no game.
 pub fn study_document_pgn<S: AsRef<str>>(chapters: &[(S, S)]) -> Option<String> {
     let mut parts = Vec::with_capacity(chapters.len());
     for (name, pgn) in chapters {
@@ -835,13 +831,13 @@ pub fn study_document_pgn<S: AsRef<str>>(chapters: &[(S, S)]) -> Option<String> 
     Some(parts.join("\n\n"))
 }
 
-/// `studyContent(studyDocumentPgn(chapters)) === studyContent(downloaded)`: whether a study
-/// still matches the copy downloaded from Lichess. None when a chapter holds no game.
+/// Whether a study still matches the copy downloaded from Lichess. None when a chapter holds no
+/// game.
 pub fn study_matches<S: AsRef<str>>(chapters: &[(S, S)], downloaded: &str) -> Option<bool> {
     Some(study_content(&study_document_pgn(chapters)?) == study_content(downloaded))
 }
 
-/// `studyContent`: the moves and annotations, without headers Lichess adds or rewrites.
+/// The moves and annotations, without headers Lichess adds or rewrites.
 pub fn study_content(pgn: &str) -> String {
     parse_pgn(pgn)
         .into_iter()
@@ -854,7 +850,6 @@ pub fn study_content(pgn: &str) -> String {
         .join("\n\n")
 }
 
-/// `parsePgn`.
 pub fn parse_pgn(pgn: &str) -> Vec<Game> {
     let mut parser = Parser::new();
     let mut rest = pgn;

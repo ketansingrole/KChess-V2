@@ -117,7 +117,7 @@ pub struct DayStreak {
     pub best: u32,
 }
 
-/// `puzzleDayStreak`: the streak of `days` (days with a solve, in any order, repeats allowed) as of
+/// The streak of `days` (days with a solve, in any order, repeats allowed) as of
 /// `today`. Unreadable days are ignored; days after `today` (a clock moved back) end no run.
 pub fn day_streak<'a>(days: impl IntoIterator<Item = &'a str>, today: &str) -> DayStreak {
     let mut numbers: Vec<i64> = days.into_iter().filter_map(day_number).collect();

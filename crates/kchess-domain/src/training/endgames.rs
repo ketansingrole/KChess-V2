@@ -34,7 +34,7 @@ pub struct Status {
     pub fen: String,
 }
 
-/// `evaluateEndgame`: where the drill stands after `moves` (UCI, from `fen`), judged for
+/// Where the drill stands after `moves` (UCI, from `fen`), judged for
 /// `player` and the drill's `goal`.
 pub fn evaluate<S: AsRef<str>>(
     fen: &str,
@@ -119,7 +119,7 @@ pub fn evaluate<S: AsRef<str>>(
     })
 }
 
-/// `sanFrom`: SAN of a UCI move list played from `fen`; empty when the FEN is not a position.
+/// SAN of a UCI move list played from `fen`; empty when the FEN is not a position.
 pub fn san_from<S: AsRef<str>>(fen: &str, moves: &[S]) -> Vec<String> {
     rules::standard_from_fen(fen)
         .map(|start| {

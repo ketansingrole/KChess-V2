@@ -14,7 +14,6 @@ use crate::{position, rules};
 const OPENINGS_JSON: &str = include_str!("../../data/openings.json");
 use crate::rules::INITIAL_FEN as START;
 
-/// `OpeningName`
 #[derive(Debug, Serialize)]
 pub struct OpeningName {
     pub eco: String,
@@ -116,7 +115,7 @@ fn placements() -> &'static std::collections::HashSet<u64> {
     })
 }
 
-/// `openingAt`: the name of the opening reached after `ply` moves. As Lichess suggests, step back
+/// The name of the opening reached after `ply` moves. As Lichess suggests, step back
 /// from the position until a named one is found. Only games under standard rules have names.
 pub fn opening_at<S: AsRef<str>>(
     variant: &str,
@@ -162,7 +161,7 @@ pub fn opening_at<S: AsRef<str>>(
     })
 }
 
-/// `OpeningNode`: one entry of the openings tree. A family (`King's Gambit`) holds the families
+/// One entry of the openings tree. A family (`King's Gambit`) holds the families
 /// named after it (`King's Gambit Accepted`, labelled `Accepted`) and its variations, which hold
 /// their subvariations. An entry no line is named for exactly has no `eco` or `moves`.
 #[derive(Debug, Serialize)]
@@ -207,7 +206,7 @@ impl OpeningNode {
     }
 }
 
-/// `openingTree`: every named opening by family, alphabetically at each level.
+/// Every named opening by family, alphabetically at each level.
 pub fn opening_tree() -> &'static Vec<OpeningNode> {
     static TREE: OnceLock<Vec<OpeningNode>> = OnceLock::new();
     TREE.get_or_init(build_opening_tree)
@@ -313,7 +312,7 @@ pub fn line_fens<S: AsRef<str>>(moves: &[S]) -> Option<Vec<String>> {
     )
 }
 
-/// `openingKey`: the key Lichess names an opening's puzzles by: its family and first variation
+/// The key Lichess names an opening's puzzles by: its family and first variation
 /// (the depth of puzzles' `OpeningTags`), without accents or punctuation, spaces as underscores.
 /// `King's Gambit Accepted: Kieseritzky Gambit, Long Whip` → `Kings_Gambit_Accepted_Kieseritzky_Gambit`.
 pub fn opening_key(name: &str) -> String {
@@ -362,7 +361,7 @@ const REPLIES_COVER: f64 = 0.8;
 /// …each played in at least this share of them.
 const REPLY_SHARE_MIN: f64 = 0.05;
 
-/// `openingReplies`: the moves an opening drill continues with from a position the explorer knows.
+/// The moves an opening drill continues with from a position the explorer knows.
 /// The player is expected to play the most played move; the opponent answers with the popular
 /// replies (up to three, until they cover most games, none rarer than one game in twenty).
 pub fn opening_replies(moves: &[ExplorerMove], yours: bool) -> Vec<String> {

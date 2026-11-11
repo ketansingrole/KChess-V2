@@ -123,7 +123,7 @@ pub fn move_number(ply: f64, always: bool) -> String {
     }
 }
 
-/// `toFixed(digits)` for a non-negative number: the exact value rounded to the nearest multiple
+/// A non-negative number with `digits` decimals: the exact value rounded to the nearest multiple
 /// of 10^-digits, a tie going to the larger number.
 fn to_fixed(x: f64, digits: usize) -> String {
     if !x.is_finite() || x >= 1e21 {

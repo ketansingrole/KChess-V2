@@ -358,7 +358,6 @@ impl Validate for PgnText {
     }
 }
 
-/// A stored review's key (`reviewKey`).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[serde(transparent)]
 pub struct ReviewKey(pub String);
