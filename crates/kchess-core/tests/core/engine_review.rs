@@ -14,7 +14,7 @@ use kchess_core::engine::review::{Pause, ReviewEval, ReviewRequest, Reviews, Sto
 use kchess_core::engine::scheduler::Scheduler;
 use kchess_core::engine::search::Search;
 use serde_json::{Map, json};
-use support::review_store::{GameRow, MemoryStore, ScriptedHost, settings};
+use support::reviews::{GameRow, ReviewDb, ScriptedHost, settings};
 use support::{Recording, context, fake_path, log_path, received, scheduler, wait_until};
 
 const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -25,14 +25,14 @@ const WAIT: Duration = Duration::from_secs(30);
 struct Rig {
     reviews: Reviews,
     host: Arc<ScriptedHost>,
-    store: Arc<MemoryStore>,
+    store: Arc<ReviewDb>,
     recording: Arc<Recording>,
     log: PathBuf,
 }
 
-/// Reviews with the engine `mode` on `scheduler`, storing into a fresh in-memory store.
+/// Reviews with the engine `mode` on `scheduler`, storing into a fresh profile.
 fn rig_on(scheduler: Arc<Scheduler>, mode: &str, name: &str, auto: &str, on_battery: bool) -> Rig {
-    let store = MemoryStore::new();
+    let store = ReviewDb::new();
     let recording = support::host();
     let log = log_path(name);
     let mut ctx = context(&recording, scheduler, mode, &log);
@@ -40,7 +40,7 @@ fn rig_on(scheduler: Arc<Scheduler>, mode: &str, name: &str, auto: &str, on_batt
     let mut locations = support::locations();
     locations.variant = PathBuf::from(fake_path());
     ctx.locations = Arc::new(locations);
-    let reviews = Reviews::new(ctx, store.clone());
+    let reviews = Reviews::new(ctx, store.database.clone());
     let host = ScriptedHost::new(store.clone(), settings(auto, on_battery));
     reviews.setup_reviews(host.clone());
     Rig {
@@ -137,11 +137,11 @@ async fn a_quick_pass_shows_first_then_the_deep_pass_completes_and_finds_the_blu
 /// for the five-minute recheck.
 #[tokio::test]
 async fn a_review_asked_for_while_the_queue_finds_nothing_still_runs() {
-    let store = MemoryStore::new();
+    let store = ReviewDb::new();
     let recording = support::host();
     let log = log_path("asked-while-idle");
     let ctx = context(&recording, scheduler(4, false), "review", &log);
-    let reviews = Reviews::new(ctx, store.clone());
+    let reviews = Reviews::new(ctx, store.database.clone());
     let host = ScriptedHost::new(store.clone(), settings("recent", true));
     let (release, held) = tokio::sync::oneshot::channel();
     *host.hold_settings.lock().expect("hold") = Some(held);
@@ -195,8 +195,10 @@ async fn a_review_asked_for_during_a_live_game_waits_without_spinning() {
 #[tokio::test]
 async fn a_review_that_panicked_runs_when_asked_for_again() {
     let rig = rig("review", "panicked-review", false, "off", true);
-    // The request's own read passes; the review's read, once it runs, panics.
-    rig.store.panic_on_read(2);
+    // The review's first update, once it runs, panics.
+    rig.host
+        .panic_on_update
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     rig.reviews
         .request_review(request(&SCHOLARS))
         .await
@@ -242,13 +244,15 @@ async fn a_request_for_a_finished_review_answers_from_the_store() {
 #[tokio::test]
 async fn automatic_reviews_ask_lichess_first_and_review_variants_by_their_rules() {
     let rig = rig("review", "auto", false, "recent", true);
+    // One clock reading, so the games are newest first in the order they are added.
+    let now = now_ms();
     rig.store.add_game(GameRow {
         id: "scholar1".into(),
         account: "tester".into(),
         moves: "e4 e5 Qh5 Nc6 Bc4 Nf6 Qxf7#".into(),
         pgn: None,
         perf: "blitz".into(),
-        created_at: now_ms(),
+        created_at: now,
     });
     // Crazyhouse, with a drop that standard rules would stop at; Fairy-Stockfish reviews it.
     rig.store.add_game(GameRow {
@@ -257,7 +261,7 @@ async fn automatic_reviews_ask_lichess_first_and_review_variants_by_their_rules(
         moves: "e4 d5 exd5 Qxd5 Nc3 Qa5 P@d4".into(),
         pgn: None,
         perf: "crazyhouse".into(),
-        created_at: now_ms() - 1,
+        created_at: now - 1,
     });
     // Chess960, which Stockfish reviews.
     rig.store.add_game(GameRow {
@@ -266,7 +270,7 @@ async fn automatic_reviews_ask_lichess_first_and_review_variants_by_their_rules(
         moves: "e4 e5".into(),
         pgn: None,
         perf: "chess960".into(),
-        created_at: now_ms() - 2,
+        created_at: now - 2,
     });
     rig.reviews.reviews_changed();
     let host = rig.host.clone();

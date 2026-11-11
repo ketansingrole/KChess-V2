@@ -14,7 +14,7 @@ use kchess_core::engine::managed::Target;
 use kchess_core::engine::review::ReviewSettings;
 use kchess_core::engine::review::{ReviewRequest, Reviews};
 use kchess_core::engine::status::EngineLocations;
-use support::review_store::{MemoryStore, ScriptedHost};
+use support::reviews::{ReviewDb, ScriptedHost};
 use support::wait_until;
 
 const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -39,8 +39,8 @@ async fn bundled_stockfish_reviews_a_game_with_castling() {
         support::scheduler(4, false),
         locations,
     );
-    let store = MemoryStore::new();
-    let reviews = Reviews::new(ctx, store.clone());
+    let store = ReviewDb::new();
+    let reviews = Reviews::new(ctx, store.database.clone());
     let review_host = ScriptedHost::new(
         store,
         ReviewSettings {

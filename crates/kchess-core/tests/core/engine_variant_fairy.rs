@@ -106,7 +106,7 @@ async fn an_atomic_capture_that_explodes_the_king_is_mate() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_crazyhouse_game_is_reviewed_with_its_drops() {
     use kchess_core::engine::review::{ReviewRequest, ReviewSettings, Reviews};
-    use support::review_store::{MemoryStore, ScriptedHost};
+    use support::reviews::{ReviewDb, ScriptedHost};
     let Some(engine) = support::fairy_stockfish() else {
         return;
     };
@@ -119,8 +119,8 @@ async fn a_crazyhouse_game_is_reviewed_with_its_drops() {
         support::scheduler(4, false),
         locations,
     );
-    let store = MemoryStore::new();
-    let reviews = Reviews::new(ctx, store.clone());
+    let store = ReviewDb::new();
+    let reviews = Reviews::new(ctx, store.database.clone());
     let review_host = ScriptedHost::new(
         store,
         ReviewSettings {
@@ -167,7 +167,7 @@ async fn a_crazyhouse_game_is_reviewed_with_its_drops() {
 }
 
 async fn wait_until_review(
-    host: &support::review_store::ScriptedHost,
+    host: &support::reviews::ScriptedHost,
 ) -> kchess_core::engine::review::StoredReview {
     support::wait_until(Duration::from_secs(60), "the complete review", || {
         host.complete_updates().into_iter().next()

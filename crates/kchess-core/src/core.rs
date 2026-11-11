@@ -21,7 +21,7 @@ use crate::capabilities::Capabilities;
 use crate::connection::{APP, ClientInfo, Connections};
 use crate::engine::EngineContext;
 use crate::engine::analysis::Analysis;
-use crate::engine::bridge::{Battery, EngineOwners, ReviewBridge, ReviewRecords};
+use crate::engine::bridge::{Battery, EngineOwners, ReviewBridge};
 use crate::engine::managed::{
     ManagedLocation, Target, default_dir, delete_managed_engine, install_managed_engine,
 };
@@ -160,7 +160,7 @@ impl Core {
         let ctx = EngineContext::new(Arc::clone(&host), hub, scheduler, engine_locations(&config));
         let search = Search::new(ctx.clone());
         let analysis = Analysis::new(ctx.clone());
-        let reviews = Reviews::new(ctx.clone(), Arc::new(ReviewRecords(Arc::clone(&database))));
+        let reviews = Reviews::new(ctx.clone(), Arc::clone(&database));
         let busy = Arc::new(AtomicBool::new(false));
         // A live game stops the computer, the analysis and the review engine before it is reported.
         let game_stops: Arc<dyn Fn() + Send + Sync> = {

@@ -14,7 +14,7 @@ use kchess_core::engine::uci::EngineHub;
 use kchess_core::host::{Host, Level};
 use tokio::process::Command;
 
-pub mod review_store;
+pub mod reviews;
 pub mod store;
 
 /// Keeps every log line so a test can assert on what the controller reported.

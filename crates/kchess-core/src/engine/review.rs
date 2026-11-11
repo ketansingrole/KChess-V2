@@ -6,8 +6,8 @@
 //! use, and (unless allowed) not on battery. A Lichess game is first looked up on Lichess, in
 //! case it was already analysed there.
 //!
-//! Storage is reached through `ReviewStorage` and the host through `ReviewHost`. Battery state
-//! comes from the engine scheduler.
+//! Reviews are stored through `ReviewStore` and the host is reached through `ReviewHost`. Battery
+//! state comes from the engine scheduler.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,6 +30,7 @@ use super::uci::search_cancelled;
 use super::{EngineContext, after, clear_timer, replace_timer};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use crate::store::{Database, StoreContext, reviews};
 use crate::tasks::{aborted as signal_aborted, lock};
 use crate::time::now_ms;
 use kchess_domain::training::uci_info::parse_info;
@@ -188,67 +189,106 @@ pub struct GameToReview {
     pub checked: bool,
 }
 
-/// The store the review reads and writes (the functions the review calls). Implementations must be safe to call from any thread.
-///
-/// Async since the store moved off the executor (`Database::call_async`): every method returns a
-/// boxed future, so out-of-tree implementers wrap each body in `Box::pin(async move { ... })` and
-/// `.await` the trait at call sites. The `write_review_if`/`mark_checked_if` helpers keep their
-/// default bodies; only the five base methods need implementing.
-pub trait ReviewStorage: Send + Sync + 'static {
-    /// `readReview(key)`.
-    fn read_review<'a>(
-        &'a self,
-        key: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, Result<Option<StoredReview>>>;
-    /// `writeReview(review)`: saves `review` unless a better one is stored (a Lichess review
-    /// beats a local one, a finished one beats one in progress), links its game, and returns
-    /// what is stored with its summary.
-    fn write_review<'a>(
-        &'a self,
-        review: StoredReview,
-    ) -> futures_util::future::BoxFuture<'a, Result<ReviewUpdate>>;
-    /// Rechecks the owner after waiting for storage admission, before writing.
-    fn write_review_if<'a>(
-        &'a self,
-        review: StoredReview,
-        current: &'a (dyn Fn() -> bool + Sync),
-    ) -> BoxFuture<'a, Result<ReviewUpdate>> {
-        Box::pin(async move {
-            if !current() {
-                return Err(CoreError::new("Review was discarded."));
-            }
-            self.write_review(review).await
-        })
+/// The automatic reviews look at most this many games per pass.
+const REVIEW_LIMIT: usize = 300;
+
+/// The reviews in `kchess.db`, through the one shared connection.
+#[derive(Clone)]
+pub struct ReviewStore(Arc<Database>);
+
+pub(crate) fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
+    serde_json::from_value(value).map_err(|cause| CoreError::new(cause.to_string()))
+}
+
+fn to_value(value: impl Serialize) -> Result<Value> {
+    serde_json::to_value(value).map_err(|cause| CoreError::new(cause.to_string()))
+}
+
+impl ReviewStore {
+    pub fn new(database: Arc<Database>) -> ReviewStore {
+        ReviewStore(database)
     }
-    /// `hasAccount(username)`: whether the account is still on this device.
-    fn has_account<'a>(
-        &'a self,
-        username: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, Result<bool>>;
-    /// `markChecked(ids)`: Lichess was asked for these games' analysis.
-    fn mark_checked<'a>(
-        &'a self,
-        ids: &'a [String],
-    ) -> futures_util::future::BoxFuture<'a, Result<()>>;
-    fn mark_checked_if<'a>(
-        &'a self,
-        ids: &'a [String],
-        current: &'a (dyn Fn() -> bool + Sync),
-    ) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            if !current() {
-                return Err(CoreError::aborted("Review was discarded."));
-            }
-            self.mark_checked(ids).await
-        })
+
+    /// The review stored under `key`.
+    pub async fn read_review(&self, key: &str) -> Result<Option<StoredReview>> {
+        let key = key.to_string();
+        let value = self
+            .0
+            .read_async(move |ctx| reviews::read_review(ctx.host, ctx.db, &key))
+            .await?;
+        value.map(parse).transpose()
     }
-    /// `gamesToReview(accounts, since)`: finished games of these accounts with no finished
-    /// review, newest first, played after `since` (ms).
-    fn games_to_review<'a>(
-        &'a self,
-        accounts: &'a [String],
+
+    /// Saves `review` unless a better one is stored (a Lichess review beats a local one, a
+    /// finished one beats one in progress), links its game, and returns what is stored with its
+    /// summary. Nothing is written, and None returned, when `current` no longer holds once the
+    /// database admits the write.
+    pub async fn write_review_if(
+        &self,
+        review: StoredReview,
+        current: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Option<ReviewUpdate>> {
+        let review = to_value(review)?;
+        let value = self
+            .0
+            .write_admitted(|| {
+                let wanted = current();
+                Ok(move |ctx: &StoreContext| {
+                    wanted
+                        .then(|| reviews::write_review(ctx.host, ctx.db, &review))
+                        .transpose()
+                })
+            })
+            .await?;
+        value.map(parse).transpose()
+    }
+
+    /// Whether the account is still on this device.
+    pub async fn has_account(&self, username: &str) -> Result<bool> {
+        let username = username.to_string();
+        self.0
+            .read_async(move |ctx| reviews::has_account(ctx.db, &username))
+            .await
+    }
+
+    /// Marks these games as looked up on Lichess, unless `current` no longer holds once the
+    /// database admits the write. Whether they were marked.
+    pub async fn mark_checked_if(
+        &self,
+        ids: &[String],
+        current: &(dyn Fn() -> bool + Sync),
+    ) -> Result<bool> {
+        let ids = ids.to_vec();
+        self.0
+            .write_admitted(|| {
+                let wanted = current();
+                let at = now_ms() as f64;
+                Ok(move |ctx: &StoreContext| {
+                    if wanted {
+                        reviews::mark_checked(ctx.db, &ids, at)?;
+                    }
+                    Ok(wanted)
+                })
+            })
+            .await
+    }
+
+    /// Finished games of these accounts with no finished review, newest first, played after
+    /// `since` (ms).
+    pub async fn games_to_review(
+        &self,
+        accounts: &[String],
         since: i64,
-    ) -> futures_util::future::BoxFuture<'a, Result<Vec<GameToReview>>>;
+    ) -> Result<Vec<GameToReview>> {
+        let accounts = accounts.to_vec();
+        let value = self
+            .0
+            .read_async(move |ctx| {
+                reviews::games_to_review(ctx.db, &accounts, since as f64, REVIEW_LIMIT as f64)
+            })
+            .await?;
+        parse(value)
+    }
 }
 
 /// The host the review talks to: settings, the accounts, what else needs the computer, Lichess,
@@ -323,7 +363,7 @@ struct State {
 struct Shared {
     ctx: EngineContext,
     engine: Arc<EngineSlot>,
-    storage: Arc<dyn ReviewStorage>,
+    storage: ReviewStore,
     state: Mutex<State>,
     /// `true` while no pump runs; `stop_reviews` waits for it (`drain`).
     idle_tx: watch::Sender<bool>,
@@ -350,7 +390,8 @@ pub struct Reviews {
 }
 
 impl Reviews {
-    pub fn new(ctx: EngineContext, storage: Arc<dyn ReviewStorage>) -> Reviews {
+    pub fn new(ctx: EngineContext, database: Arc<Database>) -> Reviews {
+        let storage = ReviewStore::new(database);
         let (idle_tx, _) = watch::channel(true);
         Reviews {
             shared: Arc::new(Shared {
@@ -426,10 +467,9 @@ impl Reviews {
             Some(game) => {
                 let mut base = cached.unwrap_or_else(|| empty_review(&job));
                 base.game_id = Some(game.clone());
-                match s.storage.write_review_if(base, &current).await {
-                    Ok(update) => Some(update.review),
-                    Err(_) if !current() => return Ok(None),
-                    Err(cause) => return Err(cause),
+                match s.storage.write_review_if(base, &current).await? {
+                    Some(update) => Some(update.review),
+                    None => return Ok(None),
                 }
             }
             None => cached,
@@ -792,10 +832,9 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
                         return Ok(None);
                     }
                     for review in found {
-                        let update = match s.storage.write_review_if(review, &current).await {
-                            Ok(update) => update,
-                            Err(_) if !current() => return Ok(None),
-                            Err(cause) => return Err(cause),
+                        let Some(update) = s.storage.write_review_if(review, &current).await?
+                        else {
+                            return Ok(None);
                         };
                         host.update(update);
                     }
@@ -812,10 +851,8 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
                     if epoch != current_epoch(s) {
                         return Ok(None);
                     }
-                    match s.storage.mark_checked_if(&ids, &current).await {
-                        Ok(()) => {}
-                        Err(_) if !current() => return Ok(None),
-                        Err(cause) => return Err(cause),
+                    if !s.storage.mark_checked_if(&ids, &current).await? {
+                        return Ok(None);
                     }
                 }
             }
@@ -850,20 +887,12 @@ async fn next_background_job(s: &Arc<Shared>) -> Result<Option<Arc<Job>>> {
                         return Ok(None);
                     }
                     if let Some(existing) = existing.filter(|review| review.complete) {
-                        match s
-                            .storage
-                            .write_review_if(
-                                StoredReview {
-                                    game_id: Some(game.id.clone()),
-                                    ..existing
-                                },
-                                &current,
-                            )
-                            .await
-                        {
-                            Ok(_) => {}
-                            Err(_) if !current() => return Ok(None),
-                            Err(cause) => return Err(cause),
+                        let linked = StoredReview {
+                            game_id: Some(game.id.clone()),
+                            ..existing
+                        };
+                        if s.storage.write_review_if(linked, &current).await?.is_none() {
+                            return Ok(None);
                         }
                         continue;
                     }
@@ -998,10 +1027,8 @@ async fn publish(s: &Shared, job: &Job, review: StoredReview) -> Result<()> {
         return Ok(());
     };
     let current = || !job.discarded.load(Ordering::SeqCst) && host_of(s).is_some();
-    let update = match s.storage.write_review_if(review, &current).await {
-        Ok(update) => update,
-        Err(_) if !current() => return Ok(()),
-        Err(cause) => return Err(cause),
+    let Some(update) = s.storage.write_review_if(review, &current).await? else {
+        return Ok(());
     };
     // A live game began meanwhile: keep what was done, but tell no window until it is over
     // (the pages read it again then).

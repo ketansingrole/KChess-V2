@@ -21,21 +21,18 @@ use tokio_util::sync::CancellationToken;
 use super::analysis::Analysis;
 use super::managed::{EngineGuard, EngineHandoff};
 use super::review::{
-    GameToReview, Pause, ReviewHost, ReviewSettings, ReviewStatus, ReviewStorage, ReviewUpdate,
-    Reviews, StoredReview,
+    Pause, ReviewHost, ReviewSettings, ReviewStatus, ReviewUpdate, Reviews, StoredReview, parse,
 };
 use super::scheduler::Power;
 use super::search::Search;
 use super::uci::EngineHub;
 use crate::capabilities::Capabilities;
-use crate::error::{CoreError, Result};
+use crate::error::Result;
 use crate::host::{Host, Level};
-use crate::store::{Database, StoreContext, chesscom, games, reviews};
+use crate::store::{Database, chesscom, games};
 
 /// How often the battery reading is refreshed while the core runs.
 const REFRESH_EVERY: Duration = Duration::from_secs(15);
-/// Games a review pass looks at (the store's `gamesToReview` limit).
-const REVIEW_LIMIT: usize = 300;
 
 /// The battery reading the scheduler consults. A refresh asks the host once at a time, in the
 /// background.
@@ -139,125 +136,6 @@ impl Power for Arc<Battery> {
 
     fn refresh(&self) {
         Battery::refresh(self);
-    }
-}
-
-/// The review store: `kchess.db`'s review functions, through the one shared connection.
-pub struct ReviewRecords(pub Arc<Database>);
-
-fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
-    serde_json::from_value(value).map_err(|cause| CoreError::new(cause.to_string()))
-}
-
-fn to_value(value: impl serde::Serialize) -> Result<Value> {
-    serde_json::to_value(value).map_err(|cause| CoreError::new(cause.to_string()))
-}
-
-impl ReviewStorage for ReviewRecords {
-    fn write_review_if<'a>(
-        &'a self,
-        review: StoredReview,
-        current: &'a (dyn Fn() -> bool + Sync),
-    ) -> BoxFuture<'a, Result<ReviewUpdate>> {
-        Box::pin(async move {
-            let review = to_value(review)?;
-            let value = self
-                .0
-                .write_admitted(|| {
-                    if !current() {
-                        return Err(CoreError::new("Review was discarded."));
-                    }
-                    Ok(move |ctx: &StoreContext| reviews::write_review(ctx.host, ctx.db, &review))
-                })
-                .await?;
-            parse(value)
-        })
-    }
-    fn mark_checked_if<'a>(
-        &'a self,
-        ids: &'a [String],
-        current: &'a (dyn Fn() -> bool + Sync),
-    ) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            let ids = ids.to_vec();
-            self.0
-                .write_admitted(|| {
-                    if !current() {
-                        return Err(CoreError::aborted("Review was discarded."));
-                    }
-                    let at = crate::time::now_ms() as f64;
-                    Ok(move |ctx: &StoreContext| reviews::mark_checked(ctx.db, &ids, at))
-                })
-                .await
-        })
-    }
-    fn read_review<'a>(
-        &'a self,
-        key: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, Result<Option<StoredReview>>> {
-        Box::pin(async move {
-            let key = key.to_string();
-            let value = self
-                .0
-                .read_async(move |ctx| reviews::read_review(ctx.host, ctx.db, &key))
-                .await?;
-            value.map(parse).transpose()
-        })
-    }
-
-    fn write_review<'a>(
-        &'a self,
-        review: StoredReview,
-    ) -> futures_util::future::BoxFuture<'a, Result<ReviewUpdate>> {
-        Box::pin(async move {
-            let review = to_value(review)?;
-            let value = self
-                .0
-                .write_async(move |ctx| reviews::write_review(ctx.host, ctx.db, &review))
-                .await?;
-            parse(value)
-        })
-    }
-
-    fn has_account<'a>(
-        &'a self,
-        username: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, Result<bool>> {
-        Box::pin(async move {
-            let username = username.to_string();
-            self.0
-                .read_async(move |ctx| reviews::has_account(ctx.db, &username))
-                .await
-        })
-    }
-
-    fn mark_checked<'a>(
-        &'a self,
-        ids: &'a [String],
-    ) -> futures_util::future::BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            let (ids, at) = (ids.to_vec(), crate::time::now_ms() as f64);
-            self.0
-                .write_async(move |ctx| reviews::mark_checked(ctx.db, &ids, at))
-                .await
-        })
-    }
-
-    fn games_to_review<'a>(
-        &'a self,
-        accounts: &'a [String],
-        since: i64,
-    ) -> futures_util::future::BoxFuture<'a, Result<Vec<GameToReview>>> {
-        Box::pin(async move {
-            let accounts = accounts.to_vec();
-            let value = self
-                .0
-                .read_async(move |ctx| {
-                    reviews::games_to_review(ctx.db, &accounts, since as f64, REVIEW_LIMIT as f64)
-                })
-                .await?;
-            parse(value)
-        })
     }
 }
 
