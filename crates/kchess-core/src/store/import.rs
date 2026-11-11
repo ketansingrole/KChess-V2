@@ -13,7 +13,7 @@ use serde_json::{Map, Value, json};
 
 use super::StoreContext;
 use super::games::{
-    GAME_KEYS, MAX_GAMES, default_settings, in_progress, to_sql, write_settings_json,
+    GameRows, MAX_GAMES, default_settings, in_progress, keep_pending, to_sql, write_settings_json,
 };
 use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
@@ -161,8 +161,9 @@ fn from_json(ctx: &StoreContext) -> Result<bool> {
                     )
                     .sql()?;
         }
+        let mut rows = GameRows::new(ctx.db)?;
         for game in &games {
-            insert_game(ctx.db, game)?;
+            insert_game(&mut rows, ctx.db, game)?;
         }
         if let Some(tokens) = &tokens {
             let Some(entries) = tokens.as_object() else {
@@ -432,8 +433,9 @@ fn from_legacy(ctx: &StoreContext, encryption_available: bool) -> Vec<PlainToken
                     )
                     .sql()?;
         }
+        let mut rows = GameRows::new(ctx.db)?;
         for game in &games {
-            insert_game(ctx.db, game)?;
+            insert_game(&mut rows, ctx.db, game)?;
         }
         if encryption_available && null_token {
             return Err(CoreError::new("Cannot encrypt a NULL token."));
@@ -492,31 +494,16 @@ fn legacy_game(row: &[SqlValue]) -> Value {
 
 /// A live game is kept as pending (only for a tracked account), any other replaces
 /// the stored game.
-fn insert_game(db: &Connection, game: &Value) -> Result<()> {
+fn insert_game(rows: &mut GameRows<'_>, db: &Connection, game: &Value) -> Result<()> {
     if in_progress(game) {
-        let account = to_sql(game.get("account"))?;
-        db.execute(
-            "INSERT OR IGNORE INTO pending_game_sync (account, id)
-             SELECT ?, ? WHERE EXISTS (SELECT 1 FROM accounts WHERE username = ? COLLATE NOCASE)",
-            params_from_iter([account.clone(), to_sql(game.get("id"))?, account]),
-        )
-        .sql()?;
+        if let Some(account) = game.get("account").and_then(Value::as_str) {
+            keep_pending(db, account, game.get("id").unwrap_or(&Value::Null))?;
+        }
         return Ok(());
     }
-    if !importable(game) {
-        return Ok(());
+    if importable(game) {
+        rows.write(game, None)?;
     }
-    let columns = GAME_KEYS.join(", ");
-    let placeholders = vec!["?"; GAME_KEYS.len()].join(", ");
-    let params = GAME_KEYS
-        .iter()
-        .map(|key| to_sql(game.get(*key)))
-        .collect::<Result<Vec<_>>>()?;
-    db.execute(
-        &format!("INSERT OR REPLACE INTO games ({columns}) VALUES ({placeholders})"),
-        params_from_iter(params),
-    )
-    .sql()?;
     Ok(())
 }
 

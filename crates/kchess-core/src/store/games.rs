@@ -101,7 +101,14 @@ pub(super) const GAME_KEYS: [&str; 17] = [
 ];
 
 /// The list view never shows the PGN; it is fetched per game when reviewed.
-const LIST_COLUMNS: &str = "account, id, createdAt, lastMoveAt, rated, speed, perf, status, winner, color, opponent, opponentRating, playerRating, ratingDiff, opening, moves";
+fn list_columns() -> String {
+    GAME_KEYS
+        .iter()
+        .filter(|key| **key != "pgn")
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// `DEFAULT_SETTINGS`.
 /// The default settings, as the contracts define them.
@@ -520,7 +527,8 @@ pub fn game_page(ctx: &StoreContext, query: &GamePageQuery) -> Result<GamePage> 
     page_params.push(SqlValue::Integer(query.offset as i64));
     let mut statement = db
         .prepare(&format!(
-            "SELECT {LIST_COLUMNS} FROM games {filter} ORDER BY createdAt DESC, account, id LIMIT ? OFFSET ?"
+            "SELECT {} FROM games {filter} ORDER BY createdAt DESC, account, id LIMIT ? OFFSET ?",
+            list_columns()
         ))
         .sql()?;
     let games = statement
@@ -955,18 +963,65 @@ pub(super) fn in_progress(game: &Value) -> bool {
     kchess_domain::records::games::is_game_in_progress(game.get("status"))
 }
 
-pub(super) fn upsert_sql() -> String {
-    let updates = GAME_KEYS
-        .iter()
-        .filter(|key| **key != "account" && **key != "id")
-        .map(|key| format!("{key} = excluded.{key}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "INSERT INTO games ({}) VALUES ({}) ON CONFLICT(account, id) DO UPDATE SET {updates}",
-        GAME_KEYS.join(", "),
-        vec!["?"; GAME_KEYS.len()].join(", ")
+/// The one writer of `games` rows: every `GAME_KEYS` column of a game, replacing the stored game
+/// with the same account and id.
+pub(super) struct GameRows<'db> {
+    upsert: rusqlite::Statement<'db>,
+}
+
+impl<'db> GameRows<'db> {
+    pub(super) fn new(db: &'db Connection) -> Result<Self> {
+        let updates = GAME_KEYS
+            .iter()
+            .filter(|key| **key != "account" && **key != "id")
+            .map(|key| format!("{key} = excluded.{key}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "INSERT INTO games ({}) VALUES ({}) ON CONFLICT(account, id) DO UPDATE SET {updates}",
+            GAME_KEYS.join(", "),
+            vec!["?"; GAME_KEYS.len()].join(", ")
+        );
+        Ok(GameRows {
+            upsert: db.prepare(&sql).sql()?,
+        })
+    }
+
+    /// Writes `game`, under `account` when given, else under the game's own `account`.
+    pub(super) fn write(&mut self, game: &Value, account: Option<&str>) -> Result<()> {
+        let params = GAME_KEYS
+            .iter()
+            .map(|key| match (*key, account) {
+                ("account", Some(account)) => Ok(SqlValue::Text(account.to_owned())),
+                (key, _) => to_sql(game.get(key)),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.upsert.execute(params_from_iter(params)).sql()?;
+        Ok(())
+    }
+}
+
+/// A live game waits to be stored until it ends; only a tracked Lichess account's games wait.
+pub(super) fn keep_pending(db: &Connection, account: &str, id: &Value) -> Result<()> {
+    db.execute(
+        "INSERT OR IGNORE INTO pending_game_sync (account, id)
+         SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM accounts WHERE username = ?1 COLLATE NOCASE)",
+        params_from_iter([SqlValue::Text(account.to_owned()), to_sql(Some(id))?]),
     )
+    .sql()?;
+    Ok(())
+}
+
+/// The account keeps its newest `MAX_GAMES` games.
+pub(super) fn trim_games(db: &Connection, account: &str) -> Result<()> {
+    db.execute(
+        &format!(
+            "DELETE FROM games WHERE account = ?1 COLLATE NOCASE AND rowid NOT IN (SELECT rowid FROM games WHERE account = ?1 COLLATE NOCASE ORDER BY createdAt DESC LIMIT {MAX_GAMES})"
+        ),
+        [account],
+    )
+    .sql()?;
+    Ok(())
 }
 
 /// One batch of games, and the account's sync marker, in a single transaction.
@@ -990,29 +1045,16 @@ fn upsert_games(
         if exists.is_none() {
             return Err(CoreError::new("This account was removed during sync."));
         }
-        let mut upsert = db.prepare(&upsert_sql()).sql()?;
+        let mut rows = GameRows::new(db)?;
         for game in games {
+            let id = game.get("id").unwrap_or(&Value::Null);
             if in_progress(game) {
-                db.execute(
-                    "INSERT OR IGNORE INTO pending_game_sync (account, id) VALUES (?, ?)",
-                    params_from_iter([
-                        SqlValue::Text(username.to_owned()),
-                        to_sql(game.get("id"))?,
-                    ]),
-                )
-                .sql()?;
+                keep_pending(db, username, id)?;
             } else {
-                let params = GAME_KEYS
-                    .iter()
-                    .map(|key| to_sql(game.get(*key)))
-                    .collect::<Result<Vec<_>>>()?;
-                upsert.execute(params_from_iter(params)).sql()?;
+                rows.write(game, None)?;
                 db.execute(
                     "DELETE FROM pending_game_sync WHERE account = ? COLLATE NOCASE AND id = ?",
-                    params_from_iter([
-                        SqlValue::Text(username.to_owned()),
-                        to_sql(game.get("id"))?,
-                    ]),
+                    params_from_iter([SqlValue::Text(username.to_owned()), to_sql(Some(id))?]),
                 )
                 .sql()?;
             }
@@ -1022,13 +1064,7 @@ fn upsert_games(
         }
         // Trim once per completed sync rather than after every page.
         if let Some(synced_at) = synced_at {
-            db.execute(
-                &format!(
-                    "DELETE FROM games WHERE account = ? AND rowid NOT IN (SELECT rowid FROM games WHERE account = ? ORDER BY createdAt DESC LIMIT {MAX_GAMES})"
-                ),
-                [username, username],
-            )
-            .sql()?;
+            trim_games(db, username)?;
             db.execute(
                 "UPDATE accounts SET lastSyncedAt = ? WHERE username = ? COLLATE NOCASE",
                 params![synced_at, username],
