@@ -325,14 +325,7 @@ pub struct OnlineSession {
 
 pub(crate) use crate::tasks::lock;
 
-/// `Number(x)` as JavaScript writes it into a URL or form: integers without a fraction.
-pub fn js_number(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 1e15 {
-        format!("{}", value as i64)
-    } else {
-        format!("{value}")
-    }
-}
+pub use kchess_domain::js::number_to_string as js_number;
 
 #[cfg(test)]
 mod tests {

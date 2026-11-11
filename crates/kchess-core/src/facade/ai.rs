@@ -18,7 +18,9 @@ use crate::ai::{
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use crate::ids::hex;
 use crate::lichess::oauth::{Redirect, default_look, new_pkce, new_state, wait_for_redirect};
+use crate::time::now_ms;
 use kchess_domain::coach::{self, Brief};
 use kchess_domain::records::oauth::connection_page;
 use kchess_domain::tactics::Mates;
@@ -71,12 +73,6 @@ struct Request {
     mate_before: Option<f64>,
     #[serde(default)]
     mate_after: Option<f64>,
-}
-
-fn now_ms() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0)
 }
 
 fn problem(refusal: Problem) -> Value {
@@ -140,7 +136,7 @@ impl Core {
             .await
             .map_err(|_| unavailable("locked"))?;
         let tokens: Tokens = serde_json::from_str(&text).map_err(|_| unavailable("tokens"))?;
-        let now = now_ms();
+        let now = now_ms() as f64;
         if tokens.fresh(now) {
             return Ok(tokens.access);
         }
@@ -252,7 +248,7 @@ impl Core {
                 &redirect,
                 &client_id,
                 &nonce,
-                now_ms(),
+                now_ms() as f64,
             )
             .await?;
         let sealed = self.seal_tokens(&signed.tokens).await?;
@@ -505,8 +501,4 @@ impl AiApi for Core {
     async fn ai_explain(&self, request: Value) -> Result<Value> {
         self.explain(request).await
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

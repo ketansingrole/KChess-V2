@@ -27,10 +27,11 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::CancellationToken;
 
 use super::uci::{EngineHub, UciController};
-use crate::archive::{self, Refusal, hex};
+use crate::archive::{self, Refusal};
 use crate::download;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use crate::ids::hex;
 use crate::usage::{Meter, Unmetered};
 
 /// The GitHub endpoint for the latest official Stockfish release.

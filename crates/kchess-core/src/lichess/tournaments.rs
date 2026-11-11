@@ -17,6 +17,7 @@ use super::online::js_number;
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Level;
 use kchess_contracts::types::UsageKind;
+use kchess_domain::js;
 
 /// `TournamentSystem`: an arena, or a Swiss event.
 pub const ARENA: &str = "arena";
@@ -742,30 +743,9 @@ fn team_problem(cause: &CoreError) -> &'static str {
     }
 }
 
-/// JavaScript truthiness of a JSON value (`!!value`).
-fn truthy(value: Option<&Value>) -> bool {
-    match value {
-        None | Some(Value::Null) => false,
-        Some(Value::Bool(flag)) => *flag,
-        Some(Value::Number(number)) => number.as_f64().is_some_and(|n| n != 0.0),
-        Some(Value::String(text)) => !text.is_empty(),
-        Some(_) => true,
-    }
-}
-
-/// `String(value)` for a JSON value.
-fn js_text(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        Value::Null => "null".into(),
-        Value::Bool(flag) => flag.to_string(),
-        Value::Number(number) => number.to_string(),
-        other => other.to_string(),
-    }
-}
-
-fn first_chars(text: &str, max: usize) -> String {
-    text.chars().take(max).collect()
+/// The first `max` UTF-16 units of `text`, as every Lichess text is cut.
+fn first_units(text: &str, max: usize) -> String {
+    js::slice_utf16(text, max).to_string()
 }
 
 /* ── The calls ─────────────────────────────────────────────────────────── */
@@ -946,17 +926,17 @@ async fn arena_detail(
     let verdicts = object.get("verdicts").and_then(|verdicts| {
         let list = verdicts.get("list")?.as_array()?;
         Some(Verdicts {
-            accepted: truthy(verdicts.get("accepted")),
+            accepted: js::truthy(verdicts.get("accepted")),
             list: list
                 .iter()
                 .take(10)
                 .map(|entry| Verdict {
-                    condition: first_chars(
-                        &js_text(entry.get("condition").unwrap_or(&Value::Null)),
+                    condition: first_units(
+                        &js::to_string(Some(entry.get("condition").unwrap_or(&Value::Null))),
                         200,
                     ),
-                    verdict: first_chars(
-                        &js_text(entry.get("verdict").unwrap_or(&Value::Null)),
+                    verdict: first_units(
+                        &js::to_string(Some(entry.get("verdict").unwrap_or(&Value::Null))),
                         200,
                     ),
                 })
@@ -968,7 +948,7 @@ async fn arena_detail(
         description: object
             .get("description")
             .and_then(Value::as_str)
-            .map(|text| first_chars(text, 2000)),
+            .map(|text| first_units(text, 2000)),
         seconds_to_start: num_at(&raw, "secondsToStart"),
         seconds_to_finish: num_at(&raw, "secondsToFinish"),
         berserkable: Some(object.get("berserkable") == Some(&Value::Bool(true))),
@@ -991,9 +971,9 @@ fn arena_detail_summary(id: &str, raw: &Value) -> Option<TournamentSummary> {
         Some(Value::String(key)) => key.clone(),
         _ => "standard".to_string(),
     };
-    let status = if truthy(object.get("isFinished")) {
+    let status = if js::truthy(object.get("isFinished")) {
         "finished"
-    } else if truthy(object.get("secondsToStart")) {
+    } else if js::truthy(object.get("secondsToStart")) {
         "created"
     } else {
         "started"
@@ -1002,11 +982,11 @@ fn arena_detail_summary(id: &str, raw: &Value) -> Option<TournamentSummary> {
     Some(TournamentSummary {
         id: id.to_string(),
         system: ARENA.into(),
-        name: first_chars(
+        name: first_units(
             &object
                 .get("fullName")
                 .filter(|name| !name.is_null())
-                .map(js_text)
+                .map(|name| js::to_string(Some(name)))
                 .unwrap_or_else(|| id.to_string()),
             120,
         ),
@@ -1022,7 +1002,7 @@ fn arena_detail_summary(id: &str, raw: &Value) -> Option<TournamentSummary> {
         nb_players: num_at(raw, "nbPlayers").unwrap_or_else(|| Number::from(0)),
         starts_at: object
             .get("startsAt")
-            .map(|value| parse_date(&js_text(value)))
+            .map(|value| parse_date(&js::to_string(Some(value))))
             .unwrap_or(0),
         finishes_at: None,
         team: None,

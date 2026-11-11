@@ -9,9 +9,10 @@ use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::games::{GAME_KEYS, MAX_GAMES, as_json, now_ms, purge_account_data, to_sql, upsert_sql};
+use super::games::{GAME_KEYS, MAX_GAMES, as_json, purge_account_data, to_sql, upsert_sql};
 use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
+use crate::time::now_ms;
 use kchess_domain::chesscom::account_of;
 
 /// A synced Chess.com player.

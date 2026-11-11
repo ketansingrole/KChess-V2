@@ -41,6 +41,7 @@ pub mod env;
 pub mod error;
 pub mod facade;
 pub mod host;
+pub mod ids;
 pub mod lichess;
 pub mod loopback;
 mod panics;
@@ -52,6 +53,7 @@ pub mod secrets;
 pub mod store;
 mod tasks;
 pub mod themes;
+pub mod time;
 pub mod usage;
 pub mod voice;
 

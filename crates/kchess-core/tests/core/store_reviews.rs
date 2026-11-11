@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use kchess_core::engine::review::GameToReview;
-use kchess_core::store::{StoreContext, insights, library, reviews};
+use kchess_core::store::{StoreContext, insights, reviews};
 use kchess_core::{Config, Core, CoreError};
 use rusqlite::Connection;
 use serde_json::{Value, json};
@@ -81,7 +81,7 @@ impl Profile {
 
     fn insights(&self, account: &str) -> Value {
         let query = json!({ "account": account });
-        self.read(|c| insights::insights(c.host, c.db, &query, library::now_ms()?))
+        self.read(|c| insights::insights(c.host, c.db, &query, kchess_core::time::now_ms() as f64))
     }
 
     /// `reviewRequest`, which answers from the store when a review is known and otherwise

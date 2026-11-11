@@ -5,12 +5,13 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
-use super::json_codec::{js_json, utf16_len};
-use super::library::now_ms;
+use super::json_codec::js_json;
 use super::sql::Sql as _;
 use super::studies::id_of;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use crate::time::now_ms;
+use kchess_domain::js::utf16_len;
 use kchess_domain::misc::MAX_DOCUMENT;
 
 /* ── Documents: one bounded JSON value per key ── */
@@ -54,11 +55,11 @@ pub(crate) fn write_document(
     if utf16_len(&body) > MAX_DOCUMENT {
         return Err(CoreError::new(too_large));
     }
-    let now = now_ms()?;
+    let now = now_ms();
     db.execute(
         "INSERT INTO documents (key, body, updatedAt) VALUES (?1, ?2, ?3)
          ON CONFLICT(key) DO UPDATE SET body = excluded.body, updatedAt = excluded.updatedAt",
-        params![key, body, now as i64],
+        params![key, body, now],
     )
     .sql()?;
     Ok(Value::Null)

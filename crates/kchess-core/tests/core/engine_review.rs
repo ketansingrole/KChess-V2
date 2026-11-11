@@ -4,10 +4,11 @@
 //! taking the engine from a running review.
 
 use crate::support;
+use kchess_core::time::now_ms;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use kchess_core::engine::review::{Pause, ReviewEval, ReviewRequest, Reviews, StoredReview};
 use kchess_core::engine::scheduler::Scheduler;
@@ -72,12 +73,6 @@ fn request(list: &[&str]) -> ReviewRequest {
 /// `reviewKey(fen, moves)`, as the store and the queue key a review.
 fn key_of(fen: &str, list: &[&str]) -> String {
     kchess_domain::records::review::review_key(fen, list, None)
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(0))
 }
 
 fn updates_of(rig: &Rig) -> Vec<StoredReview> {

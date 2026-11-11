@@ -129,7 +129,7 @@ async fn a_joined_tournament_is_kept_until_it_is_left_withdrawn_or_finished() {
     );
 
     // Joining keeps the tournament under its name, for the joining account.
-    let before = kchess_now();
+    let before = kchess_core::time::now_ms();
     assert_eq!(
         arena("joinTournament", json!("Alice")).await.unwrap(),
         json!(true)
@@ -212,11 +212,4 @@ async fn a_joined_tournament_is_kept_until_it_is_left_withdrawn_or_finished() {
     assert_eq!(posted.header("Authorization"), Some(ALICE_LOGIN));
     assert!(posted.body.contains("name=Club+Night") || posted.body.contains("name=Club%20Night"));
     core.close().await;
-}
-
-fn kchess_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64
 }

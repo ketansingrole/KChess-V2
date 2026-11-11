@@ -5,9 +5,10 @@
 use rusqlite::{Connection, OptionalExtension, params, types::Value as Sql};
 use serde_json::Value;
 
-use super::library::{js_json, utf16_len};
+use super::library::js_json;
 use super::sql::Sql as _;
 use crate::error::Result;
+use kchess_domain::js::utf16_len;
 
 /// Stored entries beyond this size are not read back (`row.data.length > 512_000`).
 const MAX_READ_LENGTH: usize = 512_000;

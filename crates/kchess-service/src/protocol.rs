@@ -117,11 +117,7 @@ pub fn protocol() -> String {
     for kind in kchess_contracts::ErrorKind::ALL {
         add(kind.as_str());
     }
-    hex(&hash.finalize()[..8])
-}
-
-pub(crate) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    kchess_core::ids::hex(&hash.finalize()[..8])
 }
 
 /// Reads one frame; `None` when the other side closed between frames.

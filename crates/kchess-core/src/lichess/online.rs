@@ -27,22 +27,8 @@ pub use state::{
 
 #[cfg(test)]
 mod tests {
-    use super::events::truncate;
     use super::requests::game_body;
-    use super::state::{OnlineOptions, js_number};
-
-    #[test]
-    fn js_numbers_print_as_javascript_does() {
-        assert_eq!(js_number(600.0), "600");
-        assert_eq!(js_number(0.25), "0.25");
-        assert_eq!(js_number(0.0), "0");
-    }
-
-    #[test]
-    fn truncation_counts_utf16_units() {
-        assert_eq!(truncate("abcdef", 3), "abc");
-        assert_eq!(truncate("a😀b", 2), "a");
-    }
+    use super::state::OnlineOptions;
 
     #[test]
     fn game_body_follows_the_board_api_rules() {

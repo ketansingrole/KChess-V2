@@ -6,11 +6,11 @@
 use rusqlite::{Connection, params_from_iter, types::Value as Sql};
 use serde_json::{Map, Value, json};
 
-use super::library::{num, truthy};
 use super::sql::Sql as _;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use kchess_domain::js;
+use kchess_domain::js::{number_to_json as num, truthy};
 use kchess_domain::time_use::{PHASES, TimeUse, time_use};
 use kchess_domain::variant::VARIANTS;
 

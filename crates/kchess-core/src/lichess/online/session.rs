@@ -8,11 +8,12 @@ use kchess_contracts::types::OnlinePhase;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::super::accounts::{Lichess, now_ms};
+use super::super::accounts::Lichess;
 use super::super::challenges::ChallengeInbox;
 use super::super::client::{Auth, Lane as RequestLane};
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Level;
+use crate::time::now_ms;
 use kchess_contracts::types::UsageKind;
 
 use super::events::{is_challenge_event, validate_online_event};

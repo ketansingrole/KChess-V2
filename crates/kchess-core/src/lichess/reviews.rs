@@ -8,10 +8,11 @@
 use serde::Deserialize;
 use serde_json::{Map, Number, Value, json};
 
-use super::accounts::{Lichess, now_ms};
+use super::accounts::Lichess;
 use super::client::Lane;
 use super::decode::{Loose, read};
 use crate::error::{CoreError, Result as CoreResult};
+use crate::time::now_ms;
 use kchess_contracts::types::UsageKind;
 use kchess_domain::{js, records, replay, review as domain_review};
 

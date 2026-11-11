@@ -137,7 +137,7 @@ impl Credentials {
             None => {
                 let mut bytes = [0u8; 32];
                 getrandom::fill(&mut bytes).map_err(|e| CoreError::wrap("credential key", e))?;
-                let created = hex(&bytes);
+                let created = crate::ids::hex(&bytes);
                 self.keys.write(&created)?;
                 // A store that dropped the key silently would leave the token unreadable.
                 if self.keys.read()?.as_deref() != Some(created.as_str()) {
@@ -156,10 +156,6 @@ impl Credentials {
 
 fn cipher(key: &[u8; 32]) -> Aes256Gcm {
     Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn unhex(text: &str) -> Option<[u8; 32]> {
@@ -214,7 +210,7 @@ impl SystemKeys {
             None => {
                 let mut bytes = [0u8; 16];
                 getrandom::fill(&mut bytes).map_err(|e| CoreError::wrap("credential id", e))?;
-                let id = hex(&bytes);
+                let id = crate::ids::hex(&bytes);
                 write_private(&path, &id)?;
                 id
             }

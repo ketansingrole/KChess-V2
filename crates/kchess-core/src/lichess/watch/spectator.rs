@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
-use super::feed::{player_of, position_key, take_utf16, uci_or_none, variant_from_lichess};
+use super::feed::{player_of, position_key, uci_or_none, variant_from_lichess};
 use super::{
     BroadcastGame, BroadcastUpdate, LineUpTiming, MAX_PGN, PAST_GAMES, TvGame, TvPastGame,
     WatchFrame, WatchSink, WatchState, WatchTarget, align_tv_moves, broadcast_game, display_fen,
@@ -441,7 +441,7 @@ impl Inner {
                 let Some(id) = data.id.0.as_deref() else {
                     return Ok(());
                 };
-                let game_id = take_utf16(id, 12);
+                let game_id = kchess_domain::js::slice_utf16(id, 12).to_string();
                 let white = side("white");
                 let black = side("black");
                 let mut state = lock(live);
@@ -775,7 +775,7 @@ impl Inner {
                             session,
                             source: "game",
                             channel: None,
-                            game_id: take_utf16(id, 12),
+                            game_id: kchess_domain::js::slice_utf16(id, 12).to_string(),
                             white: player_of(players.get("white")),
                             black: player_of(players.get("black")),
                             orientation: current.as_ref().map_or("white", |c| c.orientation),

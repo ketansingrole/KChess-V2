@@ -6,8 +6,9 @@ use serde_json::{Map, Value};
 
 use super::StoreContext;
 use super::documents::{read_document, write_document};
-use super::json_codec::{js_json, utf16_len};
+use super::json_codec::js_json;
 use crate::error::{CoreError, Result};
+use kchess_domain::js::utf16_len;
 
 /// The document holding every preference, as `{ key: value }`.
 const VIEW_PREFERENCES: &str = "view:preferences";

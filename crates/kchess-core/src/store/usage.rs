@@ -6,9 +6,9 @@ use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
 use super::StoreContext;
-use super::library::now_ms;
 use super::sql::{Sql as _, transaction};
 use crate::error::Result;
+use crate::time::now_ms;
 
 /// The traffic of one account and kind, not yet written.
 #[derive(Clone, Debug, PartialEq)]
@@ -22,7 +22,7 @@ pub struct UsageRow {
 /// One batch of counters, added to the stored totals in one transaction.
 pub fn flush_usage(db: &Connection, rows: &[UsageRow]) -> Result<()> {
     transaction(db, || {
-        let now = now_ms()? as i64;
+        let now = now_ms();
         for row in rows {
             db.execute(
                 "INSERT INTO usage (account, kind, requests, bytesIn, since) VALUES (?1, ?2, ?3, ?4, ?5)

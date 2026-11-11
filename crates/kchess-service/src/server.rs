@@ -7,7 +7,7 @@ use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use kchess_contracts::CoreEvent;
 use kchess_core::connection::ClientInfo;
@@ -127,9 +127,7 @@ impl Host for ServiceHost {
         if let Ok(mut log) = self.log.lock()
             && let Some(file) = log.as_mut()
         {
-            let at = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |since| since.as_millis());
+            let at = kchess_core::time::now_ms();
             let message = kchess_core::redact::redact(message);
             // One write per line: `writeln!` on an unbuffered file writes each piece separately.
             let line = format!("{at} {} [{scope}] {message}\n", level.name());
@@ -184,14 +182,6 @@ struct State {
     closing: Mutex<bool>,
 }
 
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        })
-}
-
 /// Opens the profile's core and serves it until it has been idle for `options.idle`. Fails when
 /// another core holds the profile (`A KChess core is already running for this profile.`).
 pub async fn serve(options: ServeOptions) -> Result<(), String> {
@@ -220,7 +210,7 @@ pub async fn serve(options: ServeOptions) -> Result<(), String> {
         socket: socket.to_string_lossy().to_string(),
         release: protocol::release(),
         protocol: protocol::protocol(),
-        started_at: now_ms(),
+        started_at: u64::try_from(kchess_core::time::now_ms()).unwrap_or(0),
     };
     let text = serde_json::to_vec_pretty(&info).map_err(|error| error.to_string())?;
     discovery::write_private(&profile.join(discovery::INFO_FILE), &text)

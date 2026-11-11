@@ -185,7 +185,7 @@ impl ReviewStorage for ReviewRecords {
                     if !current() {
                         return Err(CoreError::aborted("Review was discarded."));
                     }
-                    let at = super::now_ms() as f64;
+                    let at = crate::time::now_ms() as f64;
                     Ok(move |ctx: &StoreContext| reviews::mark_checked(ctx.db, &ids, at))
                 })
                 .await
@@ -236,7 +236,7 @@ impl ReviewStorage for ReviewRecords {
         ids: &'a [String],
     ) -> futures_util::future::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            let (ids, at) = (ids.to_vec(), super::now_ms() as f64);
+            let (ids, at) = (ids.to_vec(), crate::time::now_ms() as f64);
             self.0
                 .write_async(move |ctx| reviews::mark_checked(ctx.db, &ids, at))
                 .await

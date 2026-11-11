@@ -4,10 +4,12 @@
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
-use super::library::{js_json, now_ms, num, object};
+use super::library::{js_json, object};
 use super::sql::Sql as _;
 use crate::error::Result;
 use crate::host::{Host, Level};
+use crate::time::now_ms;
+use kchess_domain::js::number_to_json as num;
 
 /// The most recent runs a summary lists.
 const RECENT: i64 = 20;
@@ -114,7 +116,7 @@ pub fn save_run(host: &dyn Host, db: &Connection, run: &Value) -> Result<Value> 
         .sql()?;
     db.execute(
         "INSERT INTO runs (kind, variant, score, detail, playedAt) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![kind, variant, score, detail, now_ms()? as i64],
+        params![kind, variant, score, detail, now_ms()],
     )
     .sql()?;
     let is_best = score > 0.0 && previous.is_none_or(|best| score > best);

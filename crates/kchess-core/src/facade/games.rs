@@ -5,12 +5,13 @@ use std::sync::Arc;
 use kchess_contracts::core_api::GamesApi;
 use serde_json::{Value, json};
 
-use super::args::{now_ms, text, to_json};
+use super::args::{text, to_json};
 use super::core_data;
 use crate::core::Core;
 use crate::error::Result;
 use crate::store::games::{self, as_json};
 use crate::store::insights;
+use crate::time::now_ms;
 
 impl GamesApi for Core {
     async fn sync_games(&self, username: Option<Value>) -> Result<Value> {
