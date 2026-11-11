@@ -23,7 +23,7 @@ const MAX_CHAPTERS: usize = 64;
 /// Most studies listed for an account.
 const MAX_STUDIES: usize = 300;
 
-/// `lichessStudies(account)`: the studies the account owns or belongs to (private ones too, with
+/// The studies the account owns or belongs to (private ones too, with
 /// `study:read`), most recently updated first.
 pub async fn lichess_studies(
     lichess: &Lichess,
@@ -92,7 +92,7 @@ fn study_metadata(line: &str) -> CoreResult<Option<LichessStudy>> {
     }))
 }
 
-/// `splitPgn(text)`: a multi-game PGN split into games. Lichess separates games with blank lines
+/// A multi-game PGN split into games. Lichess separates games with blank lines
 /// before a tag; each part is trimmed and kept only when it starts with a tag.
 pub fn split_pgn(text: &str) -> Vec<String> {
     let text = text.replace("\r\n", "\n");
@@ -146,7 +146,7 @@ fn tag_value(pgn: &str, name: &str) -> Option<String> {
     }
 }
 
-/// `lichessStudyChapters(account, id)`: every chapter of a study, with variations, comments and
+/// Every chapter of a study, with variations, comments and
 /// NAGs, ready for the analysis board.
 pub async fn lichess_study_chapters(
     lichess: &Lichess,
@@ -187,7 +187,7 @@ pub async fn lichess_study_chapters(
         .await
 }
 
-/// `lichessStudyChapter(id, chapter)`: one chapter of a public study, as a study link names it
+/// One chapter of a public study, as a study link names it
 /// (its first when `chapter` is empty), with variations, comments and NAGs; no login needed.
 pub async fn public_study_chapter(
     lichess: &Lichess,
@@ -229,7 +229,7 @@ pub async fn public_study_chapter(
     })
 }
 
-/// `exportToLichessStudy(account, studyId, name, pgn)`: adds a game to a Lichess study as new
+/// Adds a game to a Lichess study as new
 /// chapters, or to a new private study when `study_id` is empty. Returns the study id once
 /// Lichess reports a chapter for every game: a full study answers success yet adds none.
 pub async fn export_to_lichess_study(
@@ -297,7 +297,7 @@ fn imported_all(imported: &Value, games: usize) -> CoreResult<()> {
     Ok(())
 }
 
-/// `syncLichessStudy(request)`: uploads edits to a linked study. The cloud copy must still match
+/// Uploads edits to a linked study. The cloud copy must still match
 /// the baseline the user downloaded; otherwise nothing is written and the user is told so. Only
 /// changed chapters are updated, and new chapters are appended. Returns the study's chapters
 /// after the upload, once Lichess holds every chapter of the edit; an upload Lichess accepted
@@ -523,14 +523,14 @@ fn study_chapter_id(site: &str) -> Option<(String, String)> {
     None
 }
 
-/// A chapter with its headers as a JavaScript `Map` keeps them (first key order, last value).
+/// A chapter with its headers (first key order, last value).
 #[derive(Clone, Debug, PartialEq)]
 struct Chapter {
     headers: Vec<(String, String)>,
     pgn: String,
 }
 
-/// `validChapters(pgn)`: the games of a PGN, each replayable from its start and with legal moves.
+/// The games of a PGN, each replayable from its start and with legal moves.
 fn valid_chapters(pgn: &str) -> CoreResult<Vec<Chapter>> {
     let games = position::pgn_games(pgn);
     if games.is_empty() || games.len() > MAX_CHAPTERS {

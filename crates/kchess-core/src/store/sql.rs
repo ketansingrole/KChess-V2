@@ -239,15 +239,9 @@ fn usable_connection<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_contracts::CoreEvent;
 
+    use crate::test_host::TestHost;
     use std::sync::atomic::AtomicUsize;
-
-    struct Quiet;
-    impl Host for Quiet {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _event: CoreEvent) {}
-    }
 
     const MESSAGES: LaneMessages = LaneMessages {
         closed: "closed",
@@ -255,7 +249,7 @@ mod tests {
     };
 
     fn memory_lane(opens: Arc<AtomicUsize>) -> Arc<Lane> {
-        Arc::new(Lane::new("test", MESSAGES, Arc::new(Quiet), move |_| {
+        Arc::new(Lane::new("test", MESSAGES, TestHost::quiet(), move |_| {
             opens.fetch_add(1, Ordering::SeqCst);
             Connection::open_in_memory().sql()
         }))

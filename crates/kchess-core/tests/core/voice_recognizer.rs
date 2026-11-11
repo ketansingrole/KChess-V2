@@ -2,30 +2,15 @@
 //! (`tests/support/fake_voice.rs`): startup, ordering, results, and recovery from a helper that
 //! refuses, crashes or hangs.
 
-use kchess_contracts::CoreEvent;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use kchess_core::host::{Host, Level};
+use kchess_core::test_host::TestHost;
 use kchess_core::voice::recognizer::{Heard, Utterance, VoiceRecognizer, VoiceWord};
-
-#[derive(Default)]
-struct Logs(Mutex<Vec<String>>);
-
-impl Host for Logs {
-    fn log(&self, level: Level, scope: &str, message: &str) {
-        self.0
-            .lock()
-            .expect("log lock")
-            .push(format!("{} [{scope}] {message}", level.name()));
-    }
-
-    fn emit(&self, _event: CoreEvent) {}
-}
 
 fn helper() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_kchess-fake-voice"))
@@ -37,8 +22,8 @@ fn model(mode: &str) -> tempfile::TempDir {
     folder
 }
 
-fn recognizer(folder: &Path) -> (VoiceRecognizer, Arc<Logs>) {
-    let logs = Arc::new(Logs::default());
+fn recognizer(folder: &Path) -> (VoiceRecognizer, Arc<TestHost>) {
+    let logs = TestHost::new();
     let recognizer = VoiceRecognizer::new(logs.clone(), Some(helper()), folder.to_path_buf())
         // A healthy answer is a pipe round trip; a second is ample even on a loaded runner, and
         // still short enough that the hung-helper case stays quick.
@@ -115,7 +100,7 @@ async fn recognizes_in_order_and_reuses_one_helper() {
 #[tokio::test]
 async fn refuses_without_a_helper_a_model_or_a_valid_chunk() {
     let folder = model("normal");
-    let logs = Arc::new(Logs::default());
+    let logs = TestHost::new();
     let none = VoiceRecognizer::new(logs.clone(), None, folder.path().to_path_buf());
     assert_eq!(
         none.start(&grammar(), 16_000.0)
@@ -195,9 +180,7 @@ async fn reports_a_helper_that_cannot_load_the_model() {
         "The offline voice model couldn’t load. Try again."
     );
     assert!(
-        logs.0
-            .lock()
-            .expect("logs")
+        logs.logs()
             .iter()
             .any(|line| line.starts_with("warn [voice] Voice helper refused to start"))
     );

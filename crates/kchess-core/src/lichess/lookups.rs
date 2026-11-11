@@ -105,7 +105,7 @@ impl CloudCache {
 
 use crate::tasks::lock;
 
-/// `cloudEval(fen, lines)`: Lichess's cloud evaluation, for positions someone analysed deeply on
+/// Lichess's cloud evaluation, for positions someone analysed deeply on
 /// Lichess before. Lines are kept only as far as they are legal from the position; unknown
 /// positions give None.
 pub async fn cloud_eval(
@@ -196,10 +196,6 @@ fn decode_cloud(raw: &Value) -> CoreResult<CloudData> {
 /* ── Position lookups ── */
 
 /// The stored saved-lookup cache: the newest entries, as the store keeps them.
-///
-/// Async since the store moved off the executor (`Database::call_async`): both methods return a
-/// boxed future, so out-of-tree implementers wrap each body in `Box::pin(async move { ... })` and
-/// `.await` the trait at call sites.
 pub trait LookupCache: Send + Sync {
     /// The saved JSON for `key`, if any (a missing or unreadable entry is None).
     fn read<'a>(
@@ -223,7 +219,6 @@ fn fresh_ms(kind: Kind) -> i64 {
     }
 }
 
-/// The most bytes a response may send.
 fn max_bytes(kind: Kind) -> usize {
     match kind {
         Kind::Player => 4_000_000,
@@ -611,7 +606,7 @@ impl PositionLookups {
         }
     }
 
-    /// `mastersGame(id)`: a master game's PGN; master games never change.
+    /// A master game's PGN; master games never change.
     pub async fn masters_game(&self, id: &str) -> CoreResult<String> {
         tokio::select! {
             biased;
@@ -1094,7 +1089,7 @@ fn explorer_game(game: &Value, variant: Variant, fen: &str) -> Option<ExplorerGa
     })
 }
 
-/// `decodeLookupCache`: a saved lookup with the shape this module writes, or None.
+/// A saved lookup with the shape this module writes, or None.
 fn decode_cached(raw: Option<&Value>) -> Option<Cached> {
     let cached: Cached = read(raw?)?;
     let fits = cached.fen.len() <= 100

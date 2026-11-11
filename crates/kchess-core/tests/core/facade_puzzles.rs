@@ -22,12 +22,9 @@ async fn a_failed_puzzle_operation_is_logged_once() {
             .starts_with("Download the puzzle database first")
     );
     let warned: Vec<String> = host
-        .lines
-        .lock()
-        .expect("log lock")
-        .iter()
+        .logs()
+        .into_iter()
         .filter(|line| line.starts_with("warn [puzzles]"))
-        .cloned()
         .collect();
     assert_eq!(
         warned,

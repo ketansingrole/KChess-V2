@@ -165,7 +165,6 @@ impl CoreHandle {
         }
     }
 
-    /// The service connection in use, if any.
     fn client(&self) -> Option<Client> {
         match &self.backend {
             Backend::Embedded(_) => None,
@@ -209,7 +208,6 @@ impl CoreHandle {
         async move { kchess_contracts::calls::decode::<C>(answer?.await?) }
     }
 
-    /// The answer to the host request `id`.
     pub fn reply(
         &self,
         id: u64,
@@ -321,7 +319,6 @@ async fn pump(
     }
 }
 
-/// What starting a stopped shared core again needs.
 struct Restart {
     profile: PathBuf,
     hello: Hello,

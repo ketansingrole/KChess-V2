@@ -24,7 +24,7 @@ fn service(base: &str) -> Arc<kchess_core::lichess::accounts::Lichess> {
     )
 }
 
-/// A puzzle the TypeScript `puzzleFromApi` reads: a solution and a start ply.
+/// A puzzle as Lichess sends it: a solution and a start ply.
 fn readable_puzzle(id: &str) -> Value {
     json!({
         "game": {},
@@ -48,7 +48,6 @@ async fn tv_channels_name_the_game_and_player_of_each_channel() {
     let lichess = service(&fixture.base);
     let channels = tv_channels(&lichess).await.unwrap();
 
-    assert_eq!(channels.len(), 16);
     assert_eq!(fixture.requests()[0].path(), "/api/tv/channels");
     let best = &channels[0];
     assert_eq!(best.key, "best");

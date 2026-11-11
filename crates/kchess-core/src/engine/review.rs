@@ -53,11 +53,10 @@ const RECENT_MS: i64 = 30 * 86_400_000;
 /// Principal variation moves kept per evaluation.
 const PV_LENGTH: usize = 10;
 
-/// The settings a review reads (`CoreSettings`' review fields).
+/// The settings a review reads.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewSettings {
-    /// `'off'`, `'recent'` or `'all'`.
     #[serde(default)]
     pub review_auto: String,
     #[serde(default)]
@@ -72,7 +71,7 @@ pub use kchess_contracts::types::{
     ReviewRequest, ReviewStatus, ReviewUpdate, StoredReview,
 };
 
-/// A synced game that may be reviewed automatically (`GameToReview`).
+/// A synced game that may be reviewed automatically.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameToReview {
@@ -204,9 +203,7 @@ pub trait ReviewHost: Send + Sync + 'static {
         account: &str,
         ids: &[String],
     ) -> BoxFuture<'_, Result<Vec<StoredReview>>>;
-    /// `review:update`.
     fn update(&self, update: ReviewUpdate);
-    /// `review:status`.
     fn status(&self, status: ReviewStatus);
 }
 
@@ -301,18 +298,17 @@ impl Reviews {
         }
     }
 
-    /// `setupReviews`: installs the host and looks for automatic work soon.
+    /// Installs the host and looks for automatic work soon.
     pub fn setup_reviews(&self, host: Arc<dyn ReviewHost>) {
         lock(&self.shared.state).host = Some(host);
         schedule_recheck(&self.shared, 10_000);
     }
 
-    /// `reviewStatus`.
     pub fn review_status(&self) -> ReviewStatus {
         review_status_of(&self.shared)
     }
 
-    /// `getReview(fen, moves)`: the stored review of these moves, if any.
+    /// The stored review of these moves, if any.
     pub async fn get_review(
         &self,
         fen: &str,
@@ -329,7 +325,7 @@ impl Reviews {
         self.shared.storage.read_review(&key).await
     }
 
-    /// `requestReview(request)`: reviews a game now, ahead of automatic reviews. Returns what is
+    /// Reviews a game now, ahead of automatic reviews. Returns what is
     /// already stored (complete or not); updates arrive as the review goes on.
     pub async fn request_review(&self, request: ReviewRequest) -> Result<Option<StoredReview>> {
         let s = &self.shared;
@@ -406,7 +402,7 @@ impl Reviews {
         Ok(stored)
     }
 
-    /// `cancelReview(key)`: stops reviewing these moves (what is done so far is kept).
+    /// Stops reviewing these moves (what is done so far is kept).
     pub fn cancel_review(&self, key: &str) {
         {
             let mut state = lock(&self.shared.state);
@@ -426,7 +422,7 @@ impl Reviews {
         send_status(&self.shared);
     }
 
-    /// `discardAccountReviews(accounts)`: logout must prevent an interrupted review from restoring
+    /// Logout must prevent an interrupted review from restoring
     /// deleted account data. Queued reviews of these accounts go, and the one running is
     /// cancelled and its output dropped.
     pub fn discard_account_reviews(&self, accounts: &[String]) {
@@ -455,12 +451,12 @@ impl Reviews {
         send_status(&self.shared);
     }
 
-    /// `reviewsChanged`: settings changed or a sync finished; look again for work.
+    /// Settings changed or a sync finished; look again for work.
     pub fn reviews_changed(&self) {
         kick(&self.shared);
     }
 
-    /// `restartReviewEngine`: the engine was deleted or replaced. The review in progress stops,
+    /// The engine was deleted or replaced. The review in progress stops,
     /// keeping its work, and the engine is dropped.
     pub fn restart_review_engine(&self) {
         let state = lock(&self.shared.state);
@@ -470,7 +466,7 @@ impl Reviews {
         close_engine_locked(&self.shared, &state);
     }
 
-    /// `stopReviews`: the app is quitting. The queue empties, the running review stops, and this
+    /// The app is quitting. The queue empties, the running review stops, and this
     /// returns once no pump is running.
     pub async fn stop_reviews(&self) {
         let s = &self.shared;
@@ -514,7 +510,7 @@ fn review_key(fen: &str, moves: &[String], variant: Variant) -> String {
     kchess_domain::records::review::review_key(fen, moves, Some(variant))
 }
 
-/// `jobFor(request, background)`: the job for a request, or None when its moves reach no position.
+/// The job for a request, or None when its moves reach no position.
 /// `requested` orders requests (0 for automatic reviews).
 fn job_for(request: &ReviewRequest, background: bool, requested: u64) -> Result<Option<Job>> {
     let variant = fairy_key(request.variant.as_deref());
@@ -644,7 +640,7 @@ fn kick(s: &Arc<Shared>) {
     runtime.spawn(pump(Arc::clone(s)));
 }
 
-/// `scheduleRecheck(ms)`: looks again for work after `ms`.
+/// Looks again for work after `ms`.
 fn schedule_recheck(s: &Arc<Shared>, ms: u64) {
     let weak: Weak<Shared> = Arc::downgrade(s);
     let timer = after(ms, move || {
@@ -816,7 +812,7 @@ fn host_log(s: &Shared, level: Level, message: &str) {
     s.ctx.host.log(level, "review", message);
 }
 
-/// `pump`: works through the queue while nothing else needs the computer. Only one pump runs.
+/// Works through the queue while nothing else needs the computer. Only one pump runs.
 async fn pump(s: Arc<Shared>) {
     {
         let mut state = lock(&s.state);

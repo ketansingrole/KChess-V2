@@ -35,7 +35,7 @@ pub use kchess_domain::misc::constants::TV_CHANNELS;
 
 /// How many earlier games a TV channel keeps for the session.
 const PAST_GAMES: usize = 6;
-/// The longest broadcast PGN read, in UTF-16 units (`pgn.slice(0, 200_000)`).
+/// The longest broadcast PGN read, in UTF-16 units.
 const MAX_BROADCAST_PGN: usize = 200_000;
 /// The most PGN text the round stream keeps waiting for a game to end.
 const MAX_PGN: usize = 2_000_000;
@@ -258,7 +258,7 @@ impl Spectators {
         }
     }
 
-    /// `stopWatching`: the calling connection's watch only.
+    /// The calling connection's watch only.
     /// With `session`, only that watch: a stop sent before a newer watch began, but handled
     /// after it, must not end the newer one.
     pub fn stop_mine(&self, session: Option<u64>) {

@@ -4,58 +4,32 @@
 
 use crate::support;
 
-use kchess_contracts::CoreEvent;
 use std::net::TcpListener;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use kchess_core::{Config, Core, Host, Level};
-use serde_json::{Value, json};
+use kchess_core::engine::search;
+use kchess_core::test_host::TestHost;
+use kchess_core::{Config, Core};
+use serde_json::json;
 
-/// What a closed core answers (`createKChessCore`'s closed check).
+/// What a closed core answers.
 const CLOSED: &str = "The KChess core is closed.";
 /// How long closing may take before the test calls it stuck.
 const LIMIT: Duration = Duration::from_secs(20);
 
-/// Records the events; answers no host request (none of these calls needs one).
-#[derive(Default)]
-struct Wire {
-    events: Mutex<Vec<(String, Value)>>,
-}
-
-impl Host for Wire {
-    fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-
-    fn emit(&self, event: CoreEvent) {
-        let (event, payload) = (event.name(), event.into_payload());
-        self.events
-            .lock()
-            .expect("events lock")
-            .push((event.to_string(), payload));
-    }
-}
-
-fn open(dir: &Path, host: &Arc<Wire>) -> Arc<Core> {
+fn open(dir: &Path, host: &Arc<TestHost>) -> Arc<Core> {
     Arc::new(Core::open(Config::new(dir.to_path_buf()), host.clone()).expect("the profile opens"))
-}
-
-/// Saves `path` as the configured executable.
-fn configure_engine(core: &Core, path: &str) {
-    support::save_engine_path(core, path);
-}
-
-/// Gives the spawned search time to reach the engine (the fake engine reports nothing on the way).
-async fn let_work_start() {
-    tokio::time::sleep(Duration::from_millis(300)).await;
 }
 
 #[tokio::test]
 async fn closing_ends_an_engine_search_in_flight() {
     let dir = tempfile::tempdir().expect("profile");
-    let host = Arc::new(Wire::default());
+    let host = TestHost::new();
     let core = open(dir.path(), &host);
-    configure_engine(&core, &support::engine_copy(dir.path(), "search"));
+    let engine = support::engine_copy(dir.path(), "search");
+    support::save_engine_path(&core, &engine);
     // Assistance waits until the core has confirmed there is no live game.
     core.call("resumeOnline", vec![]).await.expect("resume");
 
@@ -66,14 +40,22 @@ async fn closing_ends_an_engine_search_in_flight() {
                 "bestMove",
                 vec![
                     json!(["e2e4"]),
-                    json!("beginner"),
-                    json!({ "movetime": 60_000 }),
+                    // A level that never plays a random move instead of searching.
+                    json!("max"),
+                    // The longest think time: the search is still running when the core closes.
+                    json!({ "movetime": 5_000 }),
                 ],
             )
             .await
         })
     };
-    let_work_start().await;
+    // The engine is searching when the core closes.
+    support::until("the engine's search", || {
+        support::received(&support::copy_log(&engine))
+            .iter()
+            .any(|line| line.starts_with("go movetime"))
+    })
+    .await;
 
     tokio::time::timeout(LIMIT, core.close())
         .await
@@ -82,7 +64,8 @@ async fn closing_ends_an_engine_search_in_flight() {
         .await
         .expect("the search ends when the core closes")
         .expect("the search task");
-    assert!(answer.is_err(), "the search was cancelled, not answered");
+    let error = answer.expect_err("the search was stopped, not answered");
+    assert_eq!(error.message, search::SUPERSEDED);
 
     let later = core
         .call("loadData", vec![])
@@ -99,7 +82,7 @@ async fn closing_ends_a_puzzle_download_in_flight() {
         silent.local_addr().expect("address").port()
     );
     let dir = tempfile::tempdir().expect("profile");
-    let host = Arc::new(Wire::default());
+    let host = TestHost::new();
     let core = open(dir.path(), &host);
 
     let install = {
@@ -135,7 +118,7 @@ async fn closing_ends_a_puzzle_download_in_flight() {
 #[tokio::test]
 async fn closing_twice_is_harmless_and_frees_the_profile() {
     let dir = tempfile::tempdir().expect("profile");
-    let host = Arc::new(Wire::default());
+    let host = TestHost::new();
     let core = open(dir.path(), &host);
     // A second core on the same profile is refused while this one runs.
     let refused = Core::open(Config::new(dir.path().to_path_buf()), host.clone());
@@ -151,7 +134,7 @@ async fn closing_twice_is_harmless_and_frees_the_profile() {
 async fn a_closed_core_refuses_later_calls() {
     // A late call must not start the battery and review services again, or reopen the database.
     let dir = tempfile::tempdir().expect("profile");
-    let host = Arc::new(Wire::default());
+    let host = TestHost::new();
     let core = open(dir.path(), &host);
     core.call("loadData", vec![]).await.expect("opened");
     core.close().await;

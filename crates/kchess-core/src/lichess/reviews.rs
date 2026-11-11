@@ -1,5 +1,5 @@
-//! Lichess's own analysis of a game, as a review (`reviewFromLichess`, `fetchLichessReviews` and
-//! the review writes of the game sync).
+//! Lichess's own analysis of a game, as a review (reading it, asking Lichess for it, and the
+//! review writes of the game sync).
 //!
 //! Reviews are JSON values shaped as `StoredReview`. Writing them
 //! goes through `LichessStore::save_reviews` and `mark_checked`, so the review store stays behind
@@ -18,7 +18,7 @@ use kchess_domain::{js, records, replay, review as domain_review};
 
 /// The standard start, which Lichess scores as +0.15 when it works out accuracy.
 const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-/// `fetchLichessReviews` asks about at most this many games at once.
+/// Lichess is asked about at most this many games at once.
 pub const MAX_REVIEW_IDS: usize = 300;
 
 /// One entry of Lichess's analysis: each field read when it has the right type.
@@ -82,7 +82,7 @@ struct RawGame {
     id: Loose<String>,
 }
 
-/// `reviewFromLichess(raw)`: Lichess's computer analysis of a game, as a review (scores from
+/// Lichess's computer analysis of a game, as a review (scores from
 /// White's side, its labels and accuracy). None when the game is unfinished, has no analysis,
 /// or is a variant reviews cannot replay.
 pub fn review_from_lichess(raw: &Value) -> Option<Value> {
@@ -183,7 +183,7 @@ pub fn review_from_lichess(raw: &Value) -> Option<Value> {
     }))
 }
 
-/// `fetchLichessReviews(account, ids)`: asks Lichess for its analysis of games already synced (up
+/// Asks Lichess for its analysis of games already synced (up
 /// to 300 per request), saves each one it has, and remembers every game asked about. Nothing is
 /// written when the account's sync was cancelled meanwhile. Returns the stored reviews.
 pub async fn fetch_lichess_reviews(
@@ -243,8 +243,7 @@ pub(crate) fn parse_record(line: &str) -> CoreResult<Value> {
         .map_err(|cause| CoreError::new(format!("Lichess sent an unreadable game record: {cause}")))
 }
 
-/// `split(/\s+/)` of JavaScript: runs of whitespace separate words, and a leading or trailing run
-/// leaves an empty word, as the regular expression does.
+/// Runs of whitespace separate words, and a leading or trailing run leaves an empty word.
 pub(crate) fn split_whitespace(text: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;

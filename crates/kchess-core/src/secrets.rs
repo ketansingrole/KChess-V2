@@ -7,7 +7,7 @@
 //!
 //! The key is named after the profile's `credentials.id`, a random id kept in the profile, so two
 //! profiles on one machine never share a key and a copied profile does not find one. Under the
-//! test switch (`KCHESS_STORE_DEBUG=1`) the key is a file in the profile instead, so automated
+//! test switches (`Config::test_switches`) the key is a file in the profile instead, so automated
 //! runs never touch the user's credential store.
 
 use aes_gcm::aead::{Aead, KeyInit};
@@ -75,7 +75,7 @@ impl Credentials {
         }
     }
 
-    /// `SecretStore.available()`: whether tokens can be sealed here.
+    /// Whether tokens can be sealed here.
     pub fn available(&self) -> bool {
         self.keys.available()
     }

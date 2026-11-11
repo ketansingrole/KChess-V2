@@ -67,7 +67,7 @@ impl Record {
     }
 }
 
-/// First-seen ordered entries with a hash index: the JavaScript `Map` the TypeScript code used.
+/// First-seen ordered entries with a hash index.
 /// A linear scan here made grouping quadratic in the number of distinct speeds, openings or
 /// endings (20k distinct opening names took hundreds of milliseconds).
 struct Slots<T> {
@@ -422,7 +422,7 @@ fn accuracy_report(
     let mut acpl_games = 0;
     let (mut inaccuracy, mut mistake, mut blunder) = (0.0, 0.0, 0.0);
     for (color, text) in &reviewed {
-        // A summary that is not JSON is left out; one that is null fails the side lookup, as before.
+        // A summary that is not JSON is left out; one that is null fails the side lookup.
         let summary = match serde_json::from_str::<Value>(text) {
             Ok(summary) => summary,
             Err(cause) => {
@@ -676,7 +676,7 @@ fn time_use_report(
     Ok((clocks.games > 0).then(|| clocks.json()))
 }
 
-/// `side.x ?? 0` as a count.
+/// A count; absent or null is 0.
 fn count_of(value: Option<&Value>) -> f64 {
     match value {
         None | Some(Value::Null) => 0.0,

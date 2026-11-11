@@ -2,7 +2,7 @@
 //! solved puzzle reported back, the daily puzzle, the account's dashboard and activity, and the
 //! public Storm dashboard.
 //!
-//! Puzzles are read with `kchess_domain` (`puzzleFromApi`). Requests that need a login run through
+//! Puzzles are read with `kchess_domain`. Requests that need a login run through
 //! `Lichess::as_account`, so a refused login answers `Reply::NeedsReconnect`.
 
 use std::collections::VecDeque;
@@ -61,7 +61,7 @@ struct ActivityEntry {
     win: Loose<bool>,
 }
 
-/// `puzzleFromApi(raw)`: a Lichess puzzle as KChess reads it.
+/// A Lichess puzzle as KChess reads it.
 pub fn puzzle_from_api(raw: &Value) -> Option<Puzzle> {
     serde_json::from_value(training::puzzle::from_api(raw)?).ok()
 }
@@ -96,7 +96,7 @@ fn pick_unseen(recent: &mut VecDeque<String>, ids: &[&str]) -> usize {
     chosen
 }
 
-/// `puzzleNext(request)`: with an account, a puzzle chosen for its rating and one it has not seen;
+/// With an account, a puzzle chosen for its rating and one it has not seen;
 /// without, a random puzzle.
 ///
 /// Lichess picks an account's puzzles near its rating plus the difficulty's offset (Harder is +300)
@@ -181,7 +181,7 @@ fn glicko(batch: &Value) -> Option<PuzzleGlicko> {
     read(batch.get("glicko")?)
 }
 
-/// `puzzleSolve(request)`: tells Lichess how a puzzle went. A rated result moves the account's
+/// Tells Lichess how a puzzle went. A rated result moves the account's
 /// Lichess puzzle rating; the rating change comes back.
 pub async fn puzzle_solve(
     lichess: &Lichess,
@@ -219,7 +219,7 @@ pub async fn puzzle_solve(
         .await
 }
 
-/// `puzzleDaily()`: today's puzzle, with no login needed.
+/// Today's puzzle, with no login needed.
 pub async fn puzzle_daily(lichess: &Lichess) -> CoreResult<Puzzle> {
     let raw: Value = lichess
         .client()
@@ -229,7 +229,7 @@ pub async fn puzzle_daily(lichess: &Lichess) -> CoreResult<Puzzle> {
     readable_puzzle(&raw)
 }
 
-/// `puzzleById(id)`: one puzzle, as a lichess.org/training link names it; no login needed.
+/// One puzzle, as a lichess.org/training link names it; no login needed.
 pub async fn puzzle_by_id(lichess: &Lichess, id: &str) -> CoreResult<Puzzle> {
     let path = format!("/api/puzzle/{}", path_segment(id));
     let raw: Value = lichess
@@ -240,7 +240,7 @@ pub async fn puzzle_by_id(lichess: &Lichess, id: &str) -> CoreResult<Puzzle> {
     readable_puzzle(&raw)
 }
 
-/// `puzzleDashboard(account, days)`: the account's results over the last `days` days, as Lichess
+/// The account's results over the last `days` days, as Lichess
 /// reports them.
 pub async fn puzzle_dashboard(
     lichess: &Lichess,
@@ -255,7 +255,7 @@ pub async fn puzzle_dashboard(
         .await
 }
 
-/// `puzzleActivity(account, max)`: the account's most recent puzzle results, newest first.
+/// The account's most recent puzzle results, newest first.
 /// Entries whose puzzle KChess cannot read are left out.
 pub async fn puzzle_activity(
     lichess: &Lichess,
@@ -295,7 +295,7 @@ pub async fn puzzle_activity(
         .await
 }
 
-/// `stormDashboard(username, days)`: anyone's public Storm results; needs no login.
+/// Anyone's public Storm results; needs no login.
 pub async fn storm_dashboard(lichess: &Lichess, username: &str, days: u32) -> CoreResult<Value> {
     let path = format!("/api/storm/dashboard/{}", path_segment(username));
     lichess

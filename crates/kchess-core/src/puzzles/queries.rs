@@ -1,7 +1,7 @@
 //! Queries over the offline puzzle database: and its schema. Only the puzzle database's single owner
 //! calls these; they take the connection, never open one.
 //!
-//! Randomness: the TypeScript uses `Math.random()`. Here the caller supplies the generator as
+//! Randomness: the caller supplies the generator as
 //! `random`, a function returning values in `[0, 1)` (the worker supplies a real one, tests a
 //! seeded one). No SQL `RANDOM()` is used, so the indexed plans stay the same.
 
@@ -144,7 +144,7 @@ fn write_sample(
             .sql()?;
         count += changes;
         if changes > 0 {
-            // Buffer.byteLength of the concatenation is the sum of the UTF-8 lengths.
+            // The UTF-8 bytes of the stored text.
             let length = row.id.len()
                 + row.fen.len()
                 + row.moves.len()
@@ -192,13 +192,13 @@ fn require_installed(db: &Connection) -> Result<()> {
     })
 }
 
-/// `puzzleFromDb`: the first move of `moves` is the opponent's, played from `fen`; the rest is
+/// The first move of `moves` is the opponent's, played from `fen`; the rest is
 /// the solution. Rows the rules cannot play are dropped.
 fn puzzle_from_db(row: &DbPuzzle) -> Option<Puzzle> {
     let mut tokens = row.moves.split(' ').filter(|token| !token.is_empty());
     let first = tokens.next()?;
     let solution: Vec<String> = tokens.map(str::to_string).collect();
-    // Position.fromFen re-derives the position from its normalized FEN before playing.
+    // The position is read again from its normalized FEN before playing.
     let start = rules::standard_from_fen(&row.fen)?;
     let normalized = rules::make_fen(&start);
     let position = rules::standard_from_fen(&normalized)?;
@@ -250,7 +250,7 @@ fn fetch(db: &Connection, sql: &str, params: &[&dyn ToSql]) -> Result<Vec<DbPuzz
 const CANDIDATE_CAP: i64 = 5_000;
 
 /// Partial Fisher-Yates over `items` (reordered in place), keeping `count` (clamped to the length,
-/// truncated like `Array.prototype.slice`).
+/// fractions dropped).
 fn take_random<T: Clone>(items: &mut [T], count: f64, random: &mut dyn FnMut() -> f64) -> Vec<T> {
     let length = items.len();
     let keep = count.min(length as f64).max(0.0);
@@ -401,7 +401,7 @@ pub fn query_puzzles(
     Ok(to_puzzles(&picked))
 }
 
-/// JavaScript's `Math.round`: halves round up, also for negative numbers.
+/// Halves round up, also for negative numbers.
 fn js_round(value: f64) -> f64 {
     (value + 0.5).floor()
 }
@@ -445,7 +445,7 @@ mod tests {
 
     const FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-    /// A seeded stand-in for `Math.random` (a 64-bit LCG, top 53 bits).
+    /// A seeded generator of [0, 1) (a 64-bit LCG, top 53 bits).
     fn seeded(seed: u64) -> impl FnMut() -> f64 {
         let mut state = seed;
         move || {

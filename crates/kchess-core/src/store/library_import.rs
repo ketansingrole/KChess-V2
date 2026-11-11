@@ -1,6 +1,5 @@
 //! The library snapshot (`library`), its readers, and the studies-table migration.
-//! Split from the library store; bodies are unchanged. Named `library_import` because
-//! `store::import` already owns the JSON-backup/legacy-database profile migration.
+//! Named `library_import` because `store::import` already owns the JSON-backup/legacy-database profile migration.
 
 use kchess_contracts::types::Library;
 use rusqlite::{Connection, params};
@@ -145,7 +144,7 @@ pub(crate) fn read_joined(host: &dyn Host, db: &Connection) -> Result<Vec<Value>
     }
 }
 
-/// `readSession(kind)`: the decoded session, or null.
+/// The decoded session, or null.
 pub(crate) fn read_session(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value> {
     let raw = read_document(host, db, &format!("session:{kind}"))?.unwrap_or(Value::Null);
     let session = kchess_domain::misc::documents::decode_stored(kind, &J::from(&raw))

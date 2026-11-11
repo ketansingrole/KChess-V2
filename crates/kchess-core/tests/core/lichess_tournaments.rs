@@ -42,7 +42,7 @@ fn lichess(base: &str, host: &Arc<Recording>, tokens: Arc<MemoryTokens>) -> Lich
     )
 }
 
-/// `arena()` of the TypeScript suite: an arena as Lichess lists it.
+/// An arena as Lichess lists it.
 fn arena(overrides: Value) -> Value {
     let mut arena = json!({
         "id": "Abcd1234",

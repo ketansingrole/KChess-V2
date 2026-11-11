@@ -1,7 +1,5 @@
-//! Lichess accounts, profiles and game sync (the account half of the Lichess services):
-//! `asOwner`, `asAnyAccount`, `asAccount`, `cancelAccountSyncs`, `invalidateLogin`, the profile
-//! cache, `followedUsers`, `primeProfiles`, `profile`, `playerPerf`, `exportGame`, `recentGames`,
-//! `sendMessage`, `crosstable`, `ratingHistory` and `syncGames`.
+//! Lichess accounts, profiles and game sync (the account half of the Lichess services): account
+//! logins and their epochs, the profile cache, followed players, game export and the game sync.
 //!
 //! Storage goes through `LichessStore`, which mirrors the store calls the sync makes, and
 //! tokens through `TokenSource` (`client.rs`). The sync also saves Lichess's analysis of each page
@@ -46,13 +44,13 @@ const PROFILE_TTL: Duration = Duration::from_secs(5 * 60);
 const PROFILE_CACHE_MAX: usize = 100;
 /// How long signing out waits for Lichess to revoke one login.
 const REVOKE_TIMEOUT: Duration = Duration::from_secs(5);
-/// `recentGames`: how many games a recent-games request returns.
+/// How many games a recent-games request returns.
 const RECENT_GAMES: usize = 10;
 const RATED_GAMES: usize = 200;
-/// `exportGame`: a longer PGN is refused (UTF-16 units, as `pgn.length` counts them).
+/// A longer PGN is refused (UTF-16 units, as `pgn.length` counts them).
 const MAX_PGN_UNITS: usize = 200_000;
 
-/// The account rows the store keeps (`loadData().accounts`).
+/// The account rows the store keeps.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AccountRow {
     pub username: String,
@@ -60,39 +58,33 @@ pub struct AccountRow {
     pub last_synced_at: Option<i64>,
 }
 
-/// A value of the persisted API cache with the time it was fetched (`readApiCache`).
+/// A value of the persisted API cache with the time it was fetched.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CachedValue {
     pub value: Value,
     pub fetched_at: i64,
 }
 
-/// What `asAccount` answers: the result, or that the account must connect again (no login, or
+/// What an account's call answers: the result, or that the account must connect again (no login, or
 /// one Lichess refuses).
 pub use kchess_contracts::types::Reply;
 
 /// The storage the Lichess services read and write, behind a trait so the wiring can plug the store in.
 /// Every method returns the store's result; `current` is the caller's "still signed in"
 /// check, read again by the store right before it writes.
-///
-/// Async since the store moved off the executor (`Database::call_async`): every method returns a
-/// boxed future, so out-of-tree implementers wrap each body in `Box::pin(async move { ... })` and
-/// `.await` the trait at call sites. `save_login` and `mark_checked` also take the caller's
-/// `current` check now, like the other writes.
 pub trait LichessStore: Send + Sync {
-    /// `loadData().accounts`.
     fn accounts<'a>(&'a self) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<AccountRow>>>;
-    /// Lowercase usernames the user dismissed as friends (`dismissedFriends`).
+    /// Lowercase usernames the user dismissed as friends.
     fn dismissed_friends<'a>(
         &'a self,
     ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<String>>>;
-    /// Games of `account` that were unfinished at the last sync (`pendingGameIds`).
+    /// Games of `account` that were unfinished at the last sync.
     fn pending_game_ids<'a>(
         &'a self,
         account: &'a str,
     ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<String>>>;
     /// Saves a page of games and the reviews Lichess returned with them, in one transaction, unless
-    /// `current` turned false (`saveGamesPage`).
+    /// `current` turned false.
     fn save_games_page<'a>(
         &'a self,
         account: &'a str,
@@ -100,26 +92,24 @@ pub trait LichessStore: Send + Sync {
         reviews: &'a [Value],
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
-    /// Moves the sync cursor of `account` to `synced_at` (`saveGames(username, [], startedAt)`).
+    /// Moves the sync cursor of `account` to `synced_at`.
     fn save_games_cursor<'a>(
         &'a self,
         account: &'a str,
         synced_at: i64,
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
-    /// `readApiCache(key)`.
     fn read_api_cache<'a>(
         &'a self,
         key: &'a str,
     ) -> futures_util::future::BoxFuture<'a, CoreResult<Option<CachedValue>>>;
-    /// `writeApiCache(key, value, current)`.
     fn write_api_cache<'a>(
         &'a self,
         key: &'a str,
         value: &'a Value,
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
-    /// `saveLogin`'s write: the encrypted token and the connected account, together.
+    /// Saves the encrypted token and the connected account, together.
     fn save_login<'a>(
         &'a self,
         username: &'a str,
@@ -127,14 +117,14 @@ pub trait LichessStore: Send + Sync {
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>>;
     /// Reviews without a page of games (the review queue's fetch): written, and the stored reviews
-    /// returned (`writeReview` for each).
+    /// returned.
     fn save_reviews<'a>(
         &'a self,
         account: &'a str,
         reviews: &'a [Value],
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<Value>>>;
-    /// The player's Lichess play time when their games were synced (`saveSyncedPlayTime`).
+    /// The player's Lichess play time when their games were synced.
     fn save_synced_play_time<'a>(
         &'a self,
         account: &'a str,
@@ -144,11 +134,11 @@ pub trait LichessStore: Send + Sync {
         let _ = (account, play_time, current);
         Box::pin(async { Ok(()) })
     }
-    /// Whether the user takes challenges (`getSettings().receiveChallenges`).
+    /// Whether the user takes challenges.
     fn receives_challenges<'a>(&'a self) -> futures_util::future::BoxFuture<'a, CoreResult<bool>> {
         Box::pin(async { Ok(true) })
     }
-    /// Games Lichess was asked about, so they are not asked again soon (`markChecked`).
+    /// Games Lichess was asked about, so they are not asked again soon.
     fn mark_checked<'a>(
         &'a self,
         ids: &'a [String],
@@ -215,7 +205,7 @@ pub struct Opening {
     pub name: String,
 }
 
-/// `playerName`: a user's name, the AI level, or "Anonymous".
+/// A user's name, the AI level, or "Anonymous".
 fn player_name(player: &Player) -> String {
     if let Some(user) = &player.user {
         return user
@@ -230,7 +220,7 @@ fn player_name(player: &Player) -> String {
     }
 }
 
-/// `normalizeGame`: the game seen from `account`'s side.
+/// The game seen from `account`'s side.
 pub fn normalize_game(raw: &GameJson, account: &str) -> LichessGame {
     let white = player_name(&raw.players.white);
     let black = player_name(&raw.players.black);
@@ -267,7 +257,7 @@ pub fn normalize_game(raw: &GameJson, account: &str) -> LichessGame {
     }
 }
 
-/// Percent-encodes one path segment (a username), as openapi-fetch does for `{username}`.
+/// Percent-encodes one path segment (a username).
 pub fn path_segment(text: &str) -> String {
     // `.` and `..` (also when percent-encoded, `%2e`) are dot segments that URL parsing resolves,
     // so an id from a response could otherwise send an authorized request to another path. As
@@ -385,7 +375,7 @@ impl Lichess {
             .unwrap_or(0)
     }
 
-    /// `invalidateLogin`: a logout. The login epoch moves, the followed-users cache is dropped
+    /// A logout. The login epoch moves, the followed-users cache is dropped
     /// and the syncs of these accounts are cancelled.
     pub fn invalidate_login(&self, accounts: &[String]) {
         self.bump_login_epoch();
@@ -485,7 +475,7 @@ impl Lichess {
         }
     }
 
-    /// `cancelAccountSyncs`: stops the running syncs of these accounts before they save anything
+    /// Stops the running syncs of these accounts before they save anything
     /// more, without ending the login.
     pub fn cancel_account_syncs(&self, accounts: &[String]) {
         for name in accounts {
@@ -500,7 +490,7 @@ impl Lichess {
         }
     }
 
-    /// `resetLichess`: ends every login epoch and running sync, and drops the in-memory profiles.
+    /// Ends every login epoch and running sync, and drops the in-memory profiles.
     pub fn reset(&self) {
         self.login_epoch.fetch_add(1, Ordering::SeqCst);
         let running: Vec<String> = lock(&self.syncs).keys().cloned().collect();
@@ -509,7 +499,7 @@ impl Lichess {
         lock(&self.last_following).clear();
     }
 
-    /// `forgetProfile`: the in-memory copies of an account's profile and rating history.
+    /// The in-memory copies of an account's profile and rating history.
     pub fn forget_profile(&self, username: &str) {
         let mut profiles = lock(&self.profiles);
         profiles.remove(&profile_key(username, "profile"));
@@ -643,7 +633,7 @@ impl Lichess {
         }
     }
 
-    /// `cachedFetch`: memory first (five minutes), then the network. The result is persisted;
+    /// Memory first (five minutes), then the network. The result is persisted;
     /// when Lichess is unreachable the last persisted copy is served instead of an error.
     /// Concurrent callers for the same key and account epoch share one network request.
     pub(super) async fn cached_fetch<F, Fut>(
@@ -786,7 +776,7 @@ impl Lichess {
         profiles.insert(key.to_string(), (Instant::now(), value.clone()));
     }
 
-    /// `cachedProfile`: the last persisted profile and rating history, with no network.
+    /// The last persisted profile and rating history, with no network.
     pub async fn cached_profile(&self, username: &str) -> CoreResult<CachedProfile> {
         let profile = self
             .read_cache_or_log(&profile_key(username, "profile"), username)
@@ -815,7 +805,7 @@ impl Lichess {
         }
     }
 
-    /// `followedUsers`: everyone the connected accounts follow. Needs `follow:read`; accounts
+    /// Everyone the connected accounts follow. Needs `follow:read`; accounts
     /// connected before it was requested come back as a problem to reconnect.
     pub async fn followed_users(&self) -> CoreResult<FollowingReport> {
         let epoch = self.login_epoch();
@@ -914,8 +904,8 @@ impl Lichess {
         Ok(FollowingReport { users, problems })
     }
 
-    /// `primeProfiles`: saves the profiles `followedUsers` just fetched for the players added.
-    /// Writes are keyed to the epoch that produced the `followedUsers` snapshot: a logout
+    /// Saves the profiles `followed_users` just fetched for the players added.
+    /// Writes are keyed to the epoch that produced that snapshot: a logout
     /// between the two calls invalidates the primed keys instead of caching after logout.
     pub async fn prime_profiles(&self, usernames: &[String]) -> CoreResult<()> {
         let snapshot_epoch = self.last_following_epoch.load(Ordering::SeqCst);
@@ -941,7 +931,7 @@ impl Lichess {
         Ok(())
     }
 
-    /// `profile`: a Lichess user as Lichess sent it, cached. A missing user names the user.
+    /// A Lichess user as Lichess sent it, cached. A missing user names the user.
     pub async fn profile(&self, username: &str) -> CoreResult<Value> {
         let key = profile_key(username, "profile");
         self.cached_fetch(&key, username, || async {
@@ -955,7 +945,7 @@ impl Lichess {
         .await
     }
 
-    /// `playerPerf`: one player's record in one rating category (public).
+    /// One player's record in one rating category (public).
     pub async fn player_perf(&self, username: &str, perf: PerfType) -> CoreResult<PerfStats> {
         let path = format!(
             "/api/user/{}/perf/{}",
@@ -971,7 +961,7 @@ impl Lichess {
         Ok(perf_stats(perf, raw))
     }
 
-    /// `exportGame`: a finished game as PGN with clocks, for the analysis board. A game fetched
+    /// A finished game as PGN with clocks, for the analysis board. A game fetched
     /// once is kept (the newest of them), so without a connection it still opens, and a kept game
     /// that had finished opens from the copy: a finished game does not change.
     pub async fn export_game(&self, id: &str) -> CoreResult<String> {
@@ -1028,7 +1018,7 @@ impl Lichess {
         Ok(pgn)
     }
 
-    /// `recentGames`: a player's latest public games, newest first, seen from their side. `rated`
+    /// A player's latest public games, newest first, seen from their side. `rated`
     /// asks for more of their rated games, to chart their ratings.
     pub async fn recent_games(&self, username: &str, rated: bool) -> CoreResult<Vec<LichessGame>> {
         let max = if rated { RATED_GAMES } else { RECENT_GAMES };
@@ -1074,7 +1064,7 @@ impl Lichess {
         })
     }
 
-    /// `sendMessage`: a private message from `account`. A login made before messaging was
+    /// A private message from `account`. A login made before messaging was
     /// requested answers "reconnect".
     pub async fn send_message(
         &self,
@@ -1093,7 +1083,7 @@ impl Lichess {
         .await
     }
 
-    /// `crosstable`: lifetime score between two players, and their current matchup if playing.
+    /// Lifetime score between two players, and their current matchup if playing.
     pub async fn crosstable(&self, a: &str, b: &str) -> CoreResult<Crosstable> {
         let raw: CrosstableRaw = self
             .client
@@ -1114,7 +1104,7 @@ impl Lichess {
         })
     }
 
-    /// `ratingHistory`: the rating history of a player, cached.
+    /// The rating history of a player, cached.
     pub async fn rating_history(&self, username: &str) -> CoreResult<Value> {
         let key = profile_key(username, "rating");
         self.cached_fetch(&key, username, || async {
@@ -1129,7 +1119,7 @@ impl Lichess {
         .await
     }
 
-    /// `syncGames`: syncs the connected accounts (or one of them), in turn. Every account still
+    /// Syncs the connected accounts (or one of them), in turn. Every account still
     /// syncs when one fails; the first failure is reported afterwards.
     pub async fn sync_games(&self, username: Option<&str>) -> CoreResult<()> {
         let rows = self.store.accounts().await?;

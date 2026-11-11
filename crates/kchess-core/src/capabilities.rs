@@ -134,7 +134,7 @@ impl Capabilities {
             let replier = crate::connection::current();
             match pending.waiting.get(&id) {
                 // In-process callers run outside any connection's scope; every socket client's
-                // call is scoped (`Core::call_client`).
+                // call is scoped (`Core::call_as`).
                 Some((Some(target), _)) if replier.is_some_and(|replier| replier != *target) => {
                     None
                 }
@@ -155,7 +155,7 @@ impl Capabilities {
         pending.waiting.clear();
     }
 
-    /// `SecretStore.available()`, or whether the profile's credentials can be used.
+    /// Whether tokens can be sealed: by the profile's credentials, or else by the host.
     pub async fn secrets_available(&self) -> Result<bool> {
         if let Some(credentials) = &self.credentials {
             let credentials = Arc::clone(credentials);
@@ -164,7 +164,7 @@ impl Capabilities {
         Ok(self.request(HostRequest::SecretsAvailable).await?.as_bool() == Some(true))
     }
 
-    /// Seal a token: with the profile's credentials, or `SecretStore.encrypt(plain)`.
+    /// Seal a token: with the profile's credentials, or else by the host.
     pub async fn encrypt(&self, plain: &str) -> Result<String> {
         if let Some(credentials) = &self.credentials {
             let (credentials, plain) = (Arc::clone(credentials), plain.to_string());
@@ -176,8 +176,7 @@ impl Capabilities {
         )
     }
 
-    /// Open a token: with the profile's credentials, or `SecretStore.decrypt(base64)` when the host
-    /// seals them.
+    /// Open a token: with the profile's credentials, or else by the host.
     pub async fn decrypt(&self, ciphertext: &str) -> Result<String> {
         let Some(credentials) = &self.credentials else {
             if secrets::is_sealed(ciphertext) {
@@ -206,12 +205,10 @@ impl Capabilities {
             .map(|_| ())
     }
 
-    /// Brings the window forward.
     pub async fn focus(&self) -> Result<()> {
         self.request(HostRequest::Focus).await.map(|_| ())
     }
 
-    /// Whether the computer runs on battery.
     pub async fn on_battery(&self) -> Result<bool> {
         Ok(self.request(HostRequest::OnBattery).await?.as_bool() == Some(true))
     }
@@ -255,10 +252,11 @@ pub fn opens_in_browser(url: &str) -> bool {
 mod tests {
     use super::*;
     use crate::host::Level;
+    use crate::test_host::TestHost;
     use kchess_contracts::CoreEvent;
     use serde_json::json;
 
-    /// Answers every request on another task, as a JavaScript host answers through `host.reply`.
+    /// Answers every request on another task, as a service client answers through `host.reply`.
     struct Echo(Mutex<Option<Arc<Capabilities>>>);
 
     impl Host for Echo {
@@ -374,22 +372,11 @@ mod tests {
         assert_eq!(receive.await.unwrap(), Ok(json!("real")));
     }
 
-    /// Hears requests and never answers, like the closing core's gated host.
-    #[derive(Default)]
-    struct Silent(Mutex<usize>);
-
-    impl Host for Silent {
-        fn log(&self, _: Level, _: &str, _: &str) {}
-        fn emit(&self, _event: CoreEvent) {
-            *self.0.lock().unwrap() += 1;
-        }
-    }
-
     /// A request made once the capabilities have closed fails at once, unheard: it is no longer
     /// left waiting `DEADLINE` for an answer that cannot come.
     #[tokio::test]
     async fn a_request_after_close_fails_at_once() {
-        let host = Arc::new(Silent::default());
+        let host = TestHost::new();
         let caps = Capabilities::new(host.clone());
         caps.close();
         let answer = tokio::time::timeout(Duration::from_secs(1), caps.on_battery())
@@ -399,7 +386,7 @@ mod tests {
             answer.unwrap_err().message,
             "The host closed before answering."
         );
-        assert_eq!(*host.0.lock().unwrap(), 0, "the host was asked");
+        assert!(host.events().is_empty(), "the host was asked");
         assert!(caps.pending.lock().unwrap().waiting.is_empty());
     }
 
@@ -409,7 +396,7 @@ mod tests {
     /// (`tests/memory.rs`, `cores_opened_and_closed`). The refresh now ends with the core.
     #[tokio::test]
     async fn a_battery_refresh_that_starts_after_close_ends_at_once() {
-        let host: Arc<dyn Host> = Arc::new(Silent::default());
+        let host: Arc<dyn Host> = TestHost::new();
         let caps = Arc::new(Capabilities::new(Arc::clone(&host)));
         let battery = crate::engine::bridge::Battery::new(host, Arc::clone(&caps));
         let alive = || {

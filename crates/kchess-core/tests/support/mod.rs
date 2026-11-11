@@ -1,9 +1,8 @@
-//! Helpers shared by the engine integration tests.
+//! Helpers shared by the integration tests.
 #![allow(dead_code)]
 
-use kchess_contracts::CoreEvent;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use kchess_core::engine::EngineContext;
@@ -11,49 +10,18 @@ use kchess_core::engine::managed::Target;
 use kchess_core::engine::scheduler::Scheduler;
 use kchess_core::engine::status::EngineLocations;
 use kchess_core::engine::uci::EngineHub;
-use kchess_core::host::{Host, Level};
+use kchess_core::test_host::TestHost;
 use tokio::process::Command;
 
 pub mod reviews;
 pub mod store;
 pub mod wire;
 
-/// Keeps every log line so a test can assert on what the controller reported.
-#[derive(Default)]
-pub struct Recording {
-    pub lines: Mutex<Vec<String>>,
-    pub events: Mutex<Vec<(String, serde_json::Value)>>,
-}
-
-impl Host for Recording {
-    fn log(&self, level: Level, scope: &str, message: &str) {
-        self.lines
-            .lock()
-            .expect("log lock")
-            .push(format!("{} [{scope}] {message}", level.name()));
-    }
-
-    fn emit(&self, event: CoreEvent) {
-        let (event, payload) = (event.name(), event.into_payload());
-        self.events
-            .lock()
-            .expect("event lock")
-            .push((event.to_string(), payload));
-    }
-}
-
-impl Recording {
-    pub fn contains(&self, needle: &str) -> bool {
-        self.lines
-            .lock()
-            .expect("log lock")
-            .iter()
-            .any(|line| line.contains(needle))
-    }
-}
+/// The engine tests' host: it keeps every log line and event.
+pub type Recording = TestHost;
 
 pub fn host() -> Arc<Recording> {
-    Arc::new(Recording::default())
+    TestHost::new()
 }
 
 pub fn hub(host: &Arc<Recording>) -> EngineHub {
@@ -84,6 +52,11 @@ pub fn engine_copy(dir: &Path, mode: &str) -> String {
     let path = dir.join(format!("engine-{mode}{}", std::env::consts::EXE_SUFFIX));
     std::fs::copy(fake_path(), &path).expect("the engine copy");
     path.display().to_string()
+}
+
+/// The command log of an `engine_copy`: every line the engine received, once it has started.
+pub fn copy_log(engine: &str) -> PathBuf {
+    Path::new(engine).with_extension("log")
 }
 
 /// Saves `path` as the engine executable in the core's settings, as the settings page does.

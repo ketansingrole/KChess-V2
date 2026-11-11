@@ -1,5 +1,5 @@
-//! Network accounting in the database: the counters `flushUsage`
-//! writes, `resetUsage` clears and `usageReport` reads. The in-memory batching, the flush timer
+//! Network accounting in the database: the counters a flush writes, a reset clears and the usage
+//! report reads. The in-memory batching, the flush timer
 //! and the request contexts are `crate::usage`'s.
 
 use kchess_contracts::types::{AccountStorage, UsageCell, UsageReport};
@@ -40,7 +40,7 @@ pub fn reset_usage(db: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// The database part of `usageReport`: per-account totals and kinds, the storage each account
+/// The database part of the usage report: per-account totals and kinds, the storage each account
 /// occupies in games and cached responses, and the earliest counting time.
 pub fn usage_report(ctx: &StoreContext) -> Result<UsageReport> {
     let db = ctx.db;

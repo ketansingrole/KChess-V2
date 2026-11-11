@@ -13,14 +13,13 @@ use super::super::accounts::Lichess;
 use super::super::challenges::ChallengeInbox;
 use crate::host::Host;
 
-/// `MAX_RECONNECTS`: how many times a dropped game or event stream is re-opened without progress.
+/// How many times a dropped game or event stream is re-opened without progress.
 pub(crate) const MAX_RECONNECTS: u32 = 6;
-/// `ongoingChanged` debounce: streams that start or end together are reported once.
+/// Streams that start or end together within this time are reported once.
 pub(crate) const ONGOING_DEBOUNCE: Duration = Duration::from_millis(750);
-/// `presenceCache`: a status answer is reused this long (`ttl: 4000`), at most 100 of them.
+/// A status answer is reused this long, at most `PRESENCE_MAX` of them.
 pub(crate) const PRESENCE_TTL: Duration = Duration::from_millis(4000);
 pub(crate) const PRESENCE_MAX: usize = 100;
-/// The announced-games set keeps this many ids.
 pub(crate) const ANNOUNCED_MAX: usize = 200;
 pub(crate) const SEEK_REJECTED: &str = "Lichess rejected this public seek. The Board API allows Rapid and slower for matchmaking (Blitz and faster need a direct challenge). Pick a longer control or add a username.";
 pub(crate) const LOST_CONNECTION: &str =
@@ -77,7 +76,7 @@ pub(crate) struct State {
     pub(crate) presence: Vec<(String, Instant, PresenceReport)>,
 }
 
-/// What a game Lichess says started does to the board (`State::started`).
+/// What a game Lichess says started (`gameStart`) does to the board (`State::started`).
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Started {
     OnBoard,
@@ -149,7 +148,7 @@ impl State {
         self.is_live(id) || self.protected_game == id
     }
 
-    /// Game `id`'s stream (`handle_id`) ended (`.finally`): the game leaves the board when it
+    /// Game `id`'s stream (`handle_id`) ended: the game leaves the board when it
     /// finished and the stream is still the board's; a stream that only dropped keeps it.
     pub(crate) fn stream_ended(&mut self, id: &str, handle_id: u64, finished: bool) {
         if finished && super::ongoing::finished_check(self, handle_id) {
@@ -182,7 +181,7 @@ impl State {
     }
 }
 
-/// One stream controller: `id` identifies it (the TypeScript compares controller identity).
+/// One stream controller: `id` identifies it.
 #[derive(Clone)]
 pub(crate) struct Handle {
     pub(crate) id: u64,

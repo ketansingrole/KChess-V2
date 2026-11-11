@@ -44,7 +44,7 @@ pub enum ClientEvent {
     /// The connection closed: the core stopped, or cut this client off.
     Closed,
     /// A frontend that reconnects after `Closed` reached a core again: what it had started on
-    /// the old connection ended with it. The frontend reports this itself.
+    /// the old connection ended with it. The handle reports this once it has reconnected.
     Reconnected,
 }
 
@@ -252,12 +252,10 @@ impl Client {
         ))
     }
 
-    /// This client's connection id on the core.
     pub fn connection(&self) -> u64 {
         self.connection
     }
 
-    /// The release of the core it is connected to.
     pub fn release(&self) -> &str {
         &self.release
     }
@@ -302,7 +300,6 @@ impl Client {
         }
     }
 
-    /// Tells the core this client's window gained or lost focus.
     pub fn focus(&self, focused: bool) {
         let _ = self.sender.try_send(Frame::Focus { focused });
     }

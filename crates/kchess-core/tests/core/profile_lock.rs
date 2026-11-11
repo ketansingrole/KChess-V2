@@ -2,27 +2,17 @@
 //! same profile is refused even when the first core lives in another process (a second
 //! app launch, the CLI on the same data dir), where the in-process map cannot see it.
 
-use kchess_contracts::CoreEvent;
 use std::fs::File;
 use std::sync::Arc;
 
 use kchess_core::profile_lock::ProfileClaim;
-use kchess_core::{Config, Core, Host, Level};
+use kchess_core::test_host::TestHost;
+use kchess_core::{Config, Core};
 
-/// The lock file the claim holds (`PROFILE_LOCK`, `crates/kchess-core/src/facade.rs`).
+/// The lock file the claim holds (`PROFILE_LOCK`, `src/profile_lock.rs`).
 const LOCK: &str = "profile.lock";
 /// The refusal a second core sees while the profile is claimed.
 const RUNNING: &str = "A KChess core is already running for this profile.";
-
-/// Records nothing; none of these calls needs a host answer.
-#[derive(Default)]
-struct Wire;
-
-impl Host for Wire {
-    fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-
-    fn emit(&self, _event: CoreEvent) {}
-}
 
 /// Holds the OS lock from a separately opened handle: `flock`/`LockFileEx` conflict
 /// across open file descriptions, which is exactly how a second process opens the file.
@@ -66,7 +56,7 @@ fn dropping_the_claim_releases_the_os_lock() {
 #[tokio::test]
 async fn a_second_process_lock_refuses_core_open() {
     let dir = tempfile::tempdir().expect("profile");
-    let host = Arc::new(Wire);
+    let host = TestHost::quiet();
     let holder = hold(&dir.path().join(LOCK));
     let refused = Core::open(Config::new(dir.path().to_path_buf()), host.clone());
     let err = refused.err().expect("held profile refuses the core");

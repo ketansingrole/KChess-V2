@@ -91,8 +91,8 @@ pub fn default_dir(data_dir: &Path, managed_override: Option<&Path>) -> PathBuf 
         .unwrap_or_else(|| data_dir.join("engines").join("stockfish").join("current"))
 }
 
-/// The Node names of the running platform (`process.platform` / `process.arch`), which the
-/// asset choice is written in. Unsupported values map to "", which matches no asset.
+/// The running platform as the asset choice names it (`darwin`, `win32`, `linux`). Unsupported
+/// values map to "", which matches no asset.
 pub fn node_platform() -> &'static str {
     match std::env::consts::OS {
         "macos" => "darwin",
@@ -801,7 +801,8 @@ async fn discard(paths: &[PathBuf]) {
     }
 }
 
-/// The asset of a release for `platform` (a Node `process.platform`) and `arch` (`process.arch`).
+/// The asset of a release for `platform` and `arch`, named as `node_platform` and `node_arch`
+/// name them.
 pub fn pick_stockfish_asset<'a>(
     assets: &'a [ReleaseAsset],
     platform: &str,
@@ -855,7 +856,7 @@ pub fn pick_mac_asset<'a>(assets: &'a [ReleaseAsset], arch: &str) -> Option<&'a 
         })
 }
 
-/// `/first.*second/i` on one name: `second` occurs somewhere after `first`, ignoring ASCII case.
+/// Whether `second` occurs somewhere after `first`, ignoring ASCII case.
 fn matches_in_order(name: &str, first: &str, second: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower

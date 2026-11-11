@@ -1,4 +1,4 @@
-//! Lichess sign-in (`connectLichess`): PKCE with S256, a
+//! Lichess sign-in: PKCE with S256, a
 //! random state, a loopback callback server on 127.0.0.1 that serves only `/callback` with the
 //! right `state` and only once, the page the browser lands on, the token exchange, the account
 //! check and the save of the login.
@@ -60,7 +60,7 @@ fn random_bytes<const N: usize>() -> CoreResult<[u8; N]> {
     Ok(bytes)
 }
 
-/// `randomBytes(32).toString('base64url')` as the verifier, and its SHA-256 as the challenge.
+/// 32 random bytes in unpadded base64url as the verifier, and its SHA-256 as the challenge.
 pub fn new_pkce() -> CoreResult<Pkce> {
     let verifier = URL_SAFE_NO_PAD.encode(random_bytes::<32>()?);
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
@@ -70,7 +70,7 @@ pub fn new_pkce() -> CoreResult<Pkce> {
     })
 }
 
-/// The state that ties the callback to this login (`randomBytes(24)`).
+/// The state that ties the callback to this login.
 pub fn new_state() -> CoreResult<String> {
     Ok(URL_SAFE_NO_PAD.encode(random_bytes::<24>()?))
 }
@@ -148,7 +148,7 @@ fn not_found() -> &'static [u8] {
     b"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
 }
 
-/// The callback response: the page, with the headers `connectLichess` sets.
+/// The callback response: the page, with its headers.
 fn page_response(status: u16, body: &str) -> Vec<u8> {
     let reason = if status == 200 { "OK" } else { "Bad Request" };
     format!(
@@ -305,7 +305,7 @@ pub struct Connected {
 }
 
 impl Lichess {
-    /// `connectLichess`: signs an account in through the browser.
+    /// Signs an account in through the browser.
     pub async fn connect_lichess(
         &self,
         look: Option<&Value>,
@@ -315,7 +315,7 @@ impl Lichess {
             .await
     }
 
-    /// `connectLichess` with a callback deadline of `timeout` (`CALLBACK_TIMEOUT` in the app).
+    /// Signs an account in with a callback deadline of `timeout`.
     pub async fn connect_lichess_within(
         &self,
         look: Option<&Value>,
@@ -392,7 +392,7 @@ impl Lichess {
         })
     }
 
-    /// `saveLogin`: the token is encrypted by the host's credential store and saved with the
+    /// The token is encrypted by the host's credential store and saved with the
     /// account, unless a logout ran since the login began.
     async fn save_login(&self, username: &str, token: &str, epoch: u64) -> CoreResult<()> {
         if epoch != self.login_epoch() {

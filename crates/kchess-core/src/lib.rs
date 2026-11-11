@@ -52,6 +52,8 @@ pub mod redact;
 pub mod secrets;
 pub mod store;
 pub mod tasks;
+#[doc(hidden)]
+pub mod test_host;
 pub mod themes;
 pub mod time;
 pub mod usage;

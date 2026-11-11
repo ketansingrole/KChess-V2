@@ -4,7 +4,6 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use crate::fixtures::{Recording, Reply, default_answers, http_client, serve};
 use base64::Engine as _;
@@ -177,14 +176,7 @@ async fn a_refused_effort_keeps_the_renewed_tokens() {
         let core = Arc::clone(&core);
         async move { core.call("aiExplain", vec![request("e1f1")]).await }
     });
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while fixture.to("/v1/responses").len() == asked {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "the request is sent"
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    fixture.requested("/v1/responses", asked + 1).await;
     core.call("aiSetOptions", vec![json!("gpt-a"), json!("high")])
         .await
         .unwrap();

@@ -3,7 +3,6 @@
 //! archives, and responsiveness while a large model is prepared. A local HTTP server stands in
 //! for the model's host, and archives are generated in the test.
 
-use kchess_contracts::CoreEvent;
 use std::fs;
 use std::io::{Cursor, Write};
 use std::path::Path;
@@ -11,8 +10,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use kchess_core::host::{Host, Level};
 use kchess_core::loopback::close_after_client;
+use kchess_core::test_host::TestHost;
 use kchess_core::voice::{
     Archive, Listener, MAX_DOWNLOAD_BYTES, Phase, Progress, Status, VoiceModel, VoiceModelCache,
 };
@@ -22,21 +21,6 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 
 const NAME: &str = "test-model";
-
-/// Keeps every log line, as `Recording` does for the engine tests.
-#[derive(Default)]
-struct Logs(Mutex<Vec<String>>);
-
-impl Host for Logs {
-    fn log(&self, level: Level, scope: &str, message: &str) {
-        self.0
-            .lock()
-            .expect("log lock")
-            .push(format!("{} [{scope}] {message}", level.name()));
-    }
-
-    fn emit(&self, _event: CoreEvent) {}
-}
 
 /// One scripted answer to a request.
 #[derive(Clone)]
@@ -179,8 +163,8 @@ fn model_for(base: &str, zip: &[u8]) -> VoiceModel {
     }
 }
 
-fn cache_in(directory: &Path, base: &str, zip: &[u8]) -> (VoiceModelCache, Arc<Logs>) {
-    let logs = Arc::new(Logs::default());
+fn cache_in(directory: &Path, base: &str, zip: &[u8]) -> (VoiceModelCache, Arc<TestHost>) {
+    let logs = TestHost::new();
     let cache = VoiceModelCache::new(
         logs.clone(),
         Arc::new(kchess_core::usage::Unmetered),
@@ -371,13 +355,7 @@ async fn downloads_when_an_earlier_release_archive_is_unusable() {
         entries(directory.path()),
         vec!["model".to_string(), "model.json".to_string()]
     );
-    assert!(
-        logs.0
-            .lock()
-            .expect("logs")
-            .iter()
-            .any(|line| line.contains("could not be reused"))
-    );
+    assert!(logs.logged("could not be reused"));
 }
 
 #[tokio::test]
@@ -401,15 +379,21 @@ async fn reports_shared_preparation_while_a_download_is_in_flight() {
     })
     .await
     .expect("request");
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let busy = cache.status().await;
+    // The held download reports itself: busy, not installed, downloading.
+    let busy = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let status = cache.status().await;
+            if status.progress.as_ref().map(|progress| progress.phase) == Some(Phase::Downloading) {
+                return status;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the download reports itself");
     assert!(busy.busy);
     assert!(!busy.installed);
-    assert_eq!(
-        busy.progress.map(|progress| progress.phase),
-        Some(Phase::Downloading)
-    );
 
     gate.notify_one();
     pending.await.expect("join").expect("ensure");
@@ -449,7 +433,7 @@ async fn shares_concurrent_downloads_and_reuses_a_verified_cache_offline() {
     );
 }
 
-fn cache_at_unreachable(directory: &Path, zip: &[u8]) -> (VoiceModelCache, Arc<Logs>) {
+fn cache_at_unreachable(directory: &Path, zip: &[u8]) -> (VoiceModelCache, Arc<TestHost>) {
     cache_in(directory, "http://127.0.0.1:9", zip)
 }
 
@@ -476,13 +460,7 @@ async fn rejects_a_bad_checksum_without_publishing_a_cache_then_permits_retry() 
         "Couldn’t prepare voice input. Voice model checksum mismatch. Try downloading it again."
     );
     assert!(entries(directory.path()).is_empty());
-    assert!(
-        logs.0
-            .lock()
-            .expect("logs")
-            .iter()
-            .any(|line| line.contains("preparation failed"))
-    );
+    assert!(logs.logged("preparation failed"));
 
     assert_eq!(cache.ensure(None).await.expect("retry"), cache.path());
     assert_eq!(server.requests(), 2);

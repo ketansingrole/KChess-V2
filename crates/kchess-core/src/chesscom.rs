@@ -273,7 +273,7 @@ impl Chesscom {
         }
     }
 
-    /// `addChesscomAccount`: adds a player Chess.com knows, then syncs their games. A removal
+    /// Adds a player Chess.com knows, then syncs their games. A removal
     /// of the player before it ends wins: the player is not added back, and the add fails.
     pub async fn add(&self, name: &str) -> Result<Vec<ChesscomAccount>> {
         let epoch = self.epoch(name);
@@ -302,7 +302,7 @@ impl Chesscom {
             .await
     }
 
-    /// `removeChesscomAccount`: stops an add or sync in flight, then deletes the player.
+    /// Stops an add or sync in flight, then deletes the player.
     pub async fn remove(&self, name: &str) -> Result<Vec<ChesscomAccount>> {
         let key = name.to_lowercase();
         *lock(&self.epochs).entry(key.clone()).or_insert(0) += 1;
@@ -314,7 +314,7 @@ impl Chesscom {
             .await
     }
 
-    /// `syncChesscomGames`: one player's games, or every player's in turn. Every player still
+    /// One player's games, or every player's in turn. Every player still
     /// syncs when one fails; the first failure is reported afterwards.
     pub async fn sync(&self, name: Option<&str>) -> Result<Vec<ChesscomAccount>> {
         // Taken before the players are read: a removal after this stops that player's sync.

@@ -1,4 +1,4 @@
-//! Panics reach the host's log. A panic is caught at the N-API boundary (`catch_unwind`) or by
+//! Panics reach the host's log. A panic is caught around each core call (`tasks::caught`) or by
 //! tokio when a task panics, so the process survives; without this hook its message would go
 //! only to stderr, which a packaged app does not keep.
 
@@ -60,25 +60,11 @@ fn describe(info: &PanicHookInfo<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_contracts::CoreEvent;
-
-    use std::sync::Mutex;
-
-    #[derive(Default)]
-    struct Lines(Mutex<Vec<String>>);
-    impl Host for Lines {
-        fn log(&self, level: Level, scope: &str, message: &str) {
-            self.0
-                .lock()
-                .unwrap()
-                .push(format!("{} [{scope}] {message}", level.name()));
-        }
-        fn emit(&self, _event: CoreEvent) {}
-    }
+    use crate::test_host::TestHost;
 
     #[test]
     fn logs_a_caught_panic_to_the_host() {
-        let lines = Arc::new(Lines::default());
+        let lines = TestHost::new();
         let host: Arc<dyn Host> = lines.clone();
         report_to(&host);
         let caught = std::thread::Builder::new()
@@ -87,7 +73,7 @@ mod tests {
             .unwrap()
             .join();
         assert!(caught.is_err());
-        let logged = lines.0.lock().unwrap().clone();
+        let logged = lines.logs();
         assert!(
             logged.iter().any(|line| line
                 .starts_with("error [panic] thread 'panicking' panicked at ")
@@ -95,9 +81,11 @@ mod tests {
                 && line.ends_with(": boom 7")),
             "{logged:?}"
         );
-        // A dropped host is not called (nor kept alive).
+        // The hook keeps no host alive, and a panic after the host went is still caught.
+        let weak = Arc::downgrade(&lines);
         drop(host);
         drop(lines);
-        let _ = std::thread::spawn(|| panic!("after")).join();
+        assert!(weak.upgrade().is_none(), "the hook keeps the host alive");
+        assert!(std::thread::spawn(|| panic!("after")).join().is_err());
     }
 }

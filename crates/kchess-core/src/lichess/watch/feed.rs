@@ -1,5 +1,4 @@
-//! Decoding the TV and game feeds and broadcast PGN, all pure (moved from `watch.rs` without
-//! changes).
+//! Decoding the TV and game feeds and broadcast PGN, all pure.
 // Feed data is outside input: read it without indexing that can panic.
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 
@@ -14,7 +13,7 @@ use kchess_domain::{js, position, rules};
 
 /* ── Feed decoding (pure) ── */
 
-/// `displayFen(raw)`: the board and side to move only; Crazyhouse pockets and other fields are
+/// The board and side to move only; Crazyhouse pockets and other fields are
 /// dropped. None when the placement is not eight ranks of known squares.
 pub fn display_fen(raw: &str) -> Option<String> {
     let parts: Vec<&str> = split_whitespace(js::trim(raw));
@@ -36,7 +35,7 @@ pub fn display_fen(raw: &str) -> Option<String> {
     ))
 }
 
-/// `/\[[^\]]*\]$/` removed from the end of the placement.
+/// The placement without a trailing bracketed pocket (`[...]`).
 fn strip_trailing_pocket(board: &str) -> &str {
     if let Some(stripped) = board.strip_suffix(']')
         && let Some(open) = stripped.rfind('[')
@@ -144,7 +143,7 @@ struct RawPlayer {
     name: Option<Text<40>>,
 }
 
-/// A player record of the feed (`playerOf`): a name, title and rating, or `?` when unreadable.
+/// A player record of the feed: a name, title and rating, or `?` when unreadable.
 pub(super) fn player_of(raw: Option<&Value>) -> WatchPlayer {
     let Some(player) = raw
         .filter(|value| value.is_object())
@@ -175,7 +174,7 @@ pub(super) fn player_of(raw: Option<&Value>) -> WatchPlayer {
     }
 }
 
-/// The details the TV feed leaves out: rated flag, speed and time control (`parseGameDetails`).
+/// The details the TV feed leaves out: rated flag, speed and time control.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GameDetails {
     pub rated: Option<bool>,
@@ -199,7 +198,7 @@ struct RawDetails {
     clock: Option<RawClock>,
 }
 
-/// `parseGameDetails(raw)`: each field kept when it has the right type; an unreadable clock or
+/// Each field kept when it has the right type; an unreadable clock or
 /// speed drops all details.
 pub fn parse_game_details(raw: &Value) -> GameDetails {
     if !raw.is_object() {
@@ -249,7 +248,7 @@ struct RawTvGame {
     winner: Option<Winner>,
 }
 
-/// `parseTvGame(raw)`: the start, moves and result of a game export. A malformed export keeps
+/// The start, moves and result of a game export. A malformed export keeps
 /// its details and gets no moves.
 pub fn parse_tv_game(raw: &Value) -> TvGame {
     let details = parse_game_details(raw);
@@ -296,7 +295,7 @@ pub fn parse_tv_game(raw: &Value) -> TvGame {
     }
 }
 
-/// `alignTvMoves(setup, san, feed, live)`: the export's moves joined to the moves the feed sent
+/// The export's moves joined to the moves the feed sent
 /// after it. `feed` holds the positions the feed showed, and `live[i]` is the move from `feed[i]`
 /// to `feed[i + 1]`. Undefined until the export reaches a position the feed sent.
 pub fn align_tv_moves(
@@ -336,13 +335,13 @@ pub fn align_tv_moves(
     None
 }
 
-/// `replaySetup(setup, moves)`: how many UCI moves replay and the position after them.
+/// How many UCI moves replay and the position after them.
 fn replay_uci(setup: &Setup, moves: &[String]) -> Option<(usize, String)> {
     let replay = kchess_domain::replay::replay_setup(setup.variant, &setup.fen, moves)?;
     Some((replay.played.len(), replay.fen))
 }
 
-/// `broadcastGame(pgn)`: one broadcast board, with the main line replayed and checked.
+/// One broadcast board, with the main line replayed and checked.
 pub fn broadcast_game(pgn: &str) -> Option<BroadcastGame> {
     let text = js::slice_utf16(pgn, MAX_BROADCAST_PGN).to_string();
     let game = position::pgn_mainline(&text, 1001)?;

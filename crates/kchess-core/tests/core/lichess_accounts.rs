@@ -622,7 +622,7 @@ async fn tokens_never_reach_the_host_log() {
 }
 
 /// A store that saves reviews only with their page of games: its `save_reviews` refuses, so a sync
-/// that wrote reviews on its own would fail (`saveGamesPage` wrote both in one transaction).
+/// that wrote reviews on its own would fail.
 struct PageOnly(Arc<MemoryStore>);
 
 impl LichessStore for PageOnly {

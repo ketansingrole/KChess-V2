@@ -44,7 +44,7 @@ type Matcher = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 type OnLine = Box<dyn FnMut(&str) + Send>;
 type LineSink = Arc<Mutex<OnLine>>;
 
-/// `SearchCancelled`: the search was stopped on purpose. Crosses the bridge as `AbortError`.
+/// The search was stopped on purpose.
 pub fn search_cancelled() -> CoreError {
     CoreError::aborted("Engine search cancelled.")
 }

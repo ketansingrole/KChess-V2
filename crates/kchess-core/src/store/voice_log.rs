@@ -14,7 +14,7 @@ use crate::time::now_ms;
 /// Oldest entries beyond this are dropped; enough to study, small enough to never matter on disk.
 const MAX_ENTRIES: i64 = 5000;
 
-/// `saveVoiceAttempt(attempt)`: the new entry's id.
+/// The new entry's id.
 pub fn save_voice_attempt(db: &Connection, attempt: &VoiceAttemptInput) -> Result<i64> {
     let words =
         serde_json::to_value(&attempt.words).map_err(|cause| CoreError::new(cause.to_string()))?;
@@ -44,7 +44,7 @@ pub fn save_voice_attempt(db: &Connection, attempt: &VoiceAttemptInput) -> Resul
     Ok(id)
 }
 
-/// `updateVoiceAttempt(id, update)`: a new outcome and expected move, when given.
+/// A new outcome and expected move, when given.
 pub fn update_voice_attempt(db: &Connection, id: i64, update: &VoiceUpdate) -> Result<()> {
     if let Some(outcome) = update.outcome {
         db.execute(
@@ -63,7 +63,7 @@ pub fn update_voice_attempt(db: &Connection, id: i64, update: &VoiceUpdate) -> R
     Ok(())
 }
 
-/// `voiceHistory(limit)`: the newest entries first.
+/// The newest entries first.
 pub fn voice_history(host: &dyn Host, db: &Connection, limit: u32) -> Result<Vec<VoiceAttempt>> {
     let mut statement = db
         .prepare("SELECT * FROM voice_log ORDER BY id DESC LIMIT ?1")
@@ -134,7 +134,7 @@ pub fn voice_history(host: &dyn Host, db: &Connection, limit: u32) -> Result<Vec
     Ok(entries)
 }
 
-/// `voiceHistoryDocument()`: the whole log as an indented JSON document for export.
+/// The whole log as an indented JSON document for export.
 pub fn clear_voice_history(db: &Connection) -> Result<()> {
     db.execute("DELETE FROM voice_log", []).sql()?;
     Ok(())
@@ -158,7 +158,7 @@ pub fn voice_history_document(host: &dyn Host, db: &Connection) -> Result<String
     Ok(out)
 }
 
-/// `JSON.stringify(value, null, 2)`.
+/// JSON indented by two spaces.
 fn write_pretty(value: &Value, depth: usize, out: &mut String) {
     let indent = |out: &mut String, level: usize| out.push_str(&"  ".repeat(level));
     match value {
@@ -199,7 +199,8 @@ fn iso_time(ms: f64) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_contracts::CoreEvent;
+
+    use crate::test_host::TestHost;
 
     #[test]
     fn dates_read_as_javascript_reads_them() {
@@ -220,17 +221,6 @@ mod tests {
         assert_eq!(out, "{\n  \"a\": [\n    1,\n    {}\n  ],\n  \"b\": []\n}");
     }
 
-    struct Logged(std::sync::Mutex<Vec<String>>);
-    impl Host for Logged {
-        fn log(&self, _: Level, scope: &str, message: &str) {
-            self.0
-                .lock()
-                .expect("log")
-                .push(format!("{scope}: {message}"));
-        }
-        fn emit(&self, _event: CoreEvent) {}
-    }
-
     fn database() -> Connection {
         let db = Connection::open_in_memory().expect("database");
         crate::store::migrations::migrate(&db).expect("migrate");
@@ -247,14 +237,14 @@ mod tests {
         update_voice_attempt(db, id, &update).expect("update");
     }
 
-    fn history(host: &Logged, db: &Connection, limit: u32) -> Value {
+    fn history(host: &TestHost, db: &Connection, limit: u32) -> Value {
         json!(voice_history(host, db, limit).expect("history"))
     }
 
     #[test]
     fn attempts_are_saved_corrected_and_listed_newest_first() {
         let db = database();
-        let host = Logged(Default::default());
+        let host = TestHost::default();
         let first = save(
             &db,
             json!({
@@ -328,7 +318,7 @@ mod tests {
     #[test]
     fn the_export_dates_every_entry_and_reads_bad_words_as_none() {
         let db = database();
-        let host = Logged(Default::default());
+        let host = TestHost::default();
         db.execute(
             "INSERT INTO voice_log (at, source, heard, confidence, words, outcome)
              VALUES (1700000000123, 'local', 'e4', 0.5, 'not json', 'played'),
@@ -348,9 +338,9 @@ mod tests {
         assert_eq!(parsed["entries"][0]["words"], json!([]));
         assert!(parsed["exportedAt"].as_f64().is_some());
         assert_eq!(parsed["entries"].as_array().map(Vec::len), Some(1));
-        let logged = host.0.lock().expect("log");
-        assert!(logged[0].starts_with("voice: Voice log row 2 is not readable"));
-        assert!(logged[1].starts_with("voice: Voice log row has invalid words JSON"));
+        let logged = host.logs();
+        assert!(logged[0].contains("[voice] Voice log row 2 is not readable"));
+        assert!(logged[1].contains("[voice] Voice log row has invalid words JSON"));
     }
 
     /// The row a saved phrase leaves, as earlier builds wrote it: whole confidences without a

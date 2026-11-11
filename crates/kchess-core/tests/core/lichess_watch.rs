@@ -537,7 +537,7 @@ fn reads_a_broadcast_board_players_clocks_moves_and_its_chapter_id() {
     assert_eq!(game.black_clock, Some(1780.0));
     assert!(game.ongoing);
     assert_eq!(game.start_fen, INITIAL);
-    // A text without a game has no moves (the TypeScript test accepts no game as well).
+    // A text without a game has no moves.
     assert!(
         broadcast_game("not a game")
             .map(|g| g.moves)
@@ -672,7 +672,7 @@ fn refuses_a_list_with_a_gap_or_that_ends_somewhere_else_than_the_board() {
 }
 
 /// A round's PGN is split at the two blank lines that end each game, and each read sends the games
-/// that have arrived (`readPgnStream` in the TypeScript spectator): a game that is still arriving
+/// that have arrived: a game that is still arriving
 /// waits for its separator.
 #[tokio::test]
 async fn a_round_feed_is_sent_per_chunk_with_the_games_that_have_arrived() {

@@ -1,4 +1,4 @@
-//! Lichess analysis as a review (`reviewFromLichess`).
+//! Lichess analysis as a review.
 
 use kchess_core::lichess::reviews::review_from_lichess;
 use kchess_domain::review::analyse_review;

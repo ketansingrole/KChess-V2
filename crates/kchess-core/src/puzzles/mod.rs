@@ -67,7 +67,6 @@ pub struct PuzzleService {
     inner: Arc<Inner>,
 }
 
-/// What `report` sends: `PuzzleDbProgress`.
 #[derive(Clone, Copy)]
 enum Phase {
     Downloading,
@@ -159,7 +158,7 @@ fn restrict(path: &Path, host: &dyn Host) {
     crate::store::restrict_database(path, host, "puzzles");
 }
 
-/// A random sampler seed, as `randomInt(2 ** 32)` gave one.
+/// A random sampler seed.
 fn seed() -> u32 {
     use std::hash::{BuildHasher, Hasher};
     let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
@@ -171,7 +170,7 @@ fn seed() -> u32 {
     hasher.finish() as u32
 }
 
-/// `Math.random()` for the queries' shuffles.
+/// Uniform numbers in [0, 1) for the queries' shuffles.
 fn random() -> impl FnMut() -> f64 {
     let mut generator = Random::new(seed());
     move || generator.next_f64()
@@ -508,45 +507,11 @@ impl Progress {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kchess_contracts::CoreEvent;
-    use serde_json::Value;
+    use crate::test_host::TestHost;
+
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-
-    #[derive(Default)]
-    struct Events(
-        Mutex<Vec<(String, Value)>>,
-        Mutex<Vec<String>>,
-        Arc<crate::usage::UsageLog>,
-    );
-    impl Host for Events {
-        fn log(&self, _: Level, scope: &str, message: &str) {
-            self.1.lock().unwrap().push(format!("{scope}: {message}"));
-        }
-        fn emit(&self, event: CoreEvent) {
-            let (event, payload) = (event.name(), event.into_payload());
-            self.0.lock().unwrap().push((event.to_string(), payload));
-        }
-    }
-
-    impl Events {
-        fn phases(&self) -> Vec<String> {
-            self.of("puzzledb:progress")
-                .iter()
-                .map(|payload| payload["phase"].as_str().unwrap().to_string())
-                .collect()
-        }
-        fn of(&self, event: &str) -> Vec<Value> {
-            self.0
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|(name, _)| name == event)
-                .map(|(_, payload)| payload.clone())
-                .collect()
-        }
-    }
 
     fn csv(rows: &[(&str, u32, &str)]) -> Vec<u8> {
         let mut text = String::from(
@@ -635,7 +600,7 @@ mod tests {
     #[tokio::test]
     async fn a_download_cut_off_halfway_resumes_and_installs() {
         let dir = tempfile::tempdir().unwrap();
-        let (puzzles, host) = service(dir.path());
+        let (puzzles, host, usage) = service(dir.path());
         let body = csv(&[
             ("aaa", 1200, "fork short"),
             ("bbb", 1500, "pin middlegame"),
@@ -647,33 +612,44 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(status.count, 3);
-        let done = host.of("puzzledb:progress").pop().unwrap();
+        let done = host.named("puzzledb:progress").pop().unwrap();
         // Each byte arrived once: the resumed request asked only for the rest.
         assert_eq!(done["received"], json!(length));
         // The request and the one that resumed it, with every byte counted once.
-        let usage = host.2.counted();
+        let usage = usage.counted();
         assert_eq!(usage.len(), 1);
         assert_eq!(usage[0]["requests"], json!(2));
         assert_eq!(usage[0]["bytes"], json!(length));
     }
 
-    fn service(dir: &Path) -> (PuzzleService, Arc<Events>) {
-        let host = Arc::new(Events::default());
+    /// The service, its host and the usage it counts.
+    fn service(dir: &Path) -> (PuzzleService, Arc<TestHost>, Arc<crate::usage::UsageLog>) {
+        let host = TestHost::new();
+        let usage = Arc::new(crate::usage::UsageLog::default());
         let config = Config::new(dir.to_path_buf());
         (
             PuzzleService::new(
                 config,
                 Arc::clone(&host) as Arc<dyn Host>,
-                Arc::clone(&host.2) as Arc<dyn Meter>,
+                Arc::clone(&usage) as Arc<dyn Meter>,
             ),
             host,
+            usage,
         )
+    }
+
+    /// The phases the progress events reported, in order.
+    fn phases(host: &TestHost) -> Vec<String> {
+        host.named("puzzledb:progress")
+            .iter()
+            .map(|payload| payload["phase"].as_str().unwrap().to_string())
+            .collect()
     }
 
     #[tokio::test]
     async fn installs_a_download_then_answers_queries_until_deleted() {
         let dir = tempfile::tempdir().unwrap();
-        let (puzzles, host) = service(dir.path());
+        let (puzzles, host, usage) = service(dir.path());
         assert!(!puzzles.status().await.unwrap().installed);
         let url = serve(
             200,
@@ -689,14 +665,14 @@ mod tests {
         assert_eq!(status.count, 3);
         assert!(!status.busy);
         assert!(status.imported_at.is_some());
-        let phases = host.phases();
+        let phases = phases(&host);
         assert_eq!(phases.first().map(String::as_str), Some("downloading"));
         assert_eq!(&phases[phases.len() - 2..], ["importing", "done"]);
-        let done = host.of("puzzledb:progress").pop().unwrap();
+        let done = host.named("puzzledb:progress").pop().unwrap();
         assert_eq!(done["kept"], json!(3));
         assert!(done["total"].as_u64().is_some_and(|total| total > 0));
         // One request and the bytes it brought.
-        let usage = host.2.counted();
+        let usage = usage.counted();
         assert_eq!(usage.len(), 1);
         assert_eq!(usage[0]["requests"], json!(1));
         assert_eq!(usage[0]["bytes"], done["received"]);
@@ -735,7 +711,7 @@ mod tests {
     #[tokio::test]
     async fn a_refused_download_fails_and_keeps_the_stored_puzzles() {
         let dir = tempfile::tempdir().unwrap();
-        let (puzzles, host) = service(dir.path());
+        let (puzzles, host, _usage) = service(dir.path());
         let good = serve(200, Some(csv(&[("aaa", 1200, "fork")]))).await;
         puzzles.install(good).await.unwrap();
         let refused = serve(404, Some(b"gone".to_vec())).await;
@@ -744,20 +720,14 @@ mod tests {
             error.message,
             "Lichess answered 404 for the puzzle database."
         );
-        let failed = host.of("puzzledb:progress").pop().unwrap();
+        let failed = host.named("puzzledb:progress").pop().unwrap();
         assert_eq!(failed["phase"], json!("failed"));
         assert_eq!(failed["message"], json!(error.message));
         // Not zstd: the sampler's error is the download's.
         let garbage = serve(200, Some(b"definitely not zstd".to_vec())).await;
         assert!(puzzles.install(garbage).await.is_err());
         assert_eq!(puzzles.status().await.unwrap().count, 1);
-        assert!(
-            host.1
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|line| line.starts_with("puzzles: Puzzle operation install failed"))
-        );
+        assert!(host.logged("[puzzles] Puzzle operation install failed"));
         puzzles.close().await;
     }
 
@@ -776,7 +746,7 @@ mod tests {
     #[tokio::test]
     async fn a_running_download_blocks_another_and_deletion_until_cancelled() {
         let dir = tempfile::tempdir().unwrap();
-        let (puzzles, host) = service(dir.path());
+        let (puzzles, host, _usage) = service(dir.path());
         let puzzles = Arc::new(puzzles);
         let stalled = serve(200, None).await;
         let first = tokio::spawn({
@@ -797,9 +767,9 @@ mod tests {
         // Cancelling resolves with the current status; the phase tells it from completion.
         let status = first.await.unwrap().unwrap();
         assert!(!status.installed && !status.busy);
-        assert_eq!(host.phases().last().map(String::as_str), Some("cancelled"));
+        assert_eq!(phases(&host).last().map(String::as_str), Some("cancelled"));
         assert!(
-            host.of("puzzledb:progress")
+            host.named("puzzledb:progress")
                 .last()
                 .unwrap()
                 .get("message")
@@ -813,7 +783,7 @@ mod tests {
     #[tokio::test]
     async fn an_aborted_install_stops_its_download() {
         let dir = tempfile::tempdir().unwrap();
-        let (puzzles, _host) = service(dir.path());
+        let (puzzles, _host, _) = service(dir.path());
         let puzzles = Arc::new(puzzles);
         let stalled = serve(200, None).await;
         let first = tokio::spawn({
@@ -833,7 +803,7 @@ mod tests {
     #[tokio::test]
     async fn a_download_whose_lock_was_poisoned_still_counts_as_running() {
         let dir = tempfile::tempdir().unwrap();
-        let (puzzles, _host) = service(dir.path());
+        let (puzzles, _host, _) = service(dir.path());
         let download = Arc::new(Download {
             cancel: CancellationToken::new(),
         });
@@ -871,13 +841,13 @@ mod tests {
             ))
             .unwrap();
         }
-        let (puzzles, _) = service(dir.path());
+        let (puzzles, ..) = service(dir.path());
         let status = puzzles.status().await.unwrap();
         assert_eq!((status.count, status.imported_at), (1, Some(5)));
         puzzles.delete().await.unwrap();
         puzzles.close().await;
         // Deleted puzzles are not taken over again from the untouched main database.
-        let (puzzles, _) = service(dir.path());
+        let (puzzles, ..) = service(dir.path());
         assert!(!puzzles.status().await.unwrap().installed);
         puzzles.close().await;
     }
@@ -889,7 +859,7 @@ mod tests {
             .unwrap()
             .execute_batch("CREATE TABLE unrelated (id INTEGER)")
             .unwrap();
-        let (puzzles, _) = service(dir.path());
+        let (puzzles, ..) = service(dir.path());
         assert!(!puzzles.status().await.unwrap().installed);
         puzzles.close().await;
         {
@@ -902,7 +872,7 @@ mod tests {
             ))
             .unwrap();
         }
-        let (puzzles, _) = service(dir.path());
+        let (puzzles, ..) = service(dir.path());
         assert_eq!(puzzles.status().await.unwrap().count, 1);
         puzzles.close().await;
     }

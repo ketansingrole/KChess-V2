@@ -156,7 +156,7 @@ fn logged<T: serde::de::DeserializeOwned>(row: &Row<'_>, column: &str) -> rusqli
     })
 }
 
-/// `PuzzleTotals` of first attempts, of one day or of all.
+/// The totals of first attempts, of one day or of all.
 fn totals(db: &Connection, day: Option<&str>) -> Result<PuzzleTotals> {
     let mut statement = db
         .prepare(

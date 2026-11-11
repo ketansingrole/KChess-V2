@@ -654,7 +654,7 @@ impl LichessStore for MemoryStore {
     }
 }
 
-/// Tokens by account, as `getToken` would read them (already decrypted).
+/// Tokens by account, already decrypted.
 #[derive(Default)]
 pub struct MemoryTokens {
     pub tokens: Mutex<HashMap<String, String>>,

@@ -532,7 +532,8 @@ async fn one_exported_game_does_not_wait_for_a_running_bulk_export() {
                 .await
         })
     };
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // The bulk export holds its lane when the single game is asked for.
+    fixture.requested("/api/games/user/Alice", 1).await;
     let pgn = tokio::time::timeout(
         Duration::from_secs(2),
         client

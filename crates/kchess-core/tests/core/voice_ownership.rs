@@ -3,26 +3,16 @@
 //! A single-thread runtime makes the release task run only when the test yields, so the
 //! interleavings below are deterministic. The helper is the scripted `kchess-fake-voice`.
 
-use kchess_contracts::CoreEvent;
-use std::sync::Arc;
-
 use kchess_core::connection::ClientInfo;
-use kchess_core::{Config, Core, Host, Level};
+use kchess_core::test_host::TestHost;
+use kchess_core::{Config, Core};
 use serde_json::json;
-
-struct Quiet;
-
-impl Host for Quiet {
-    fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-
-    fn emit(&self, _event: CoreEvent) {}
-}
 
 fn open(dir: &tempfile::TempDir) -> Core {
     std::fs::create_dir_all(kchess_core::voice::model_dir(dir.path())).expect("model folder");
     let mut config = Config::new(dir.path().into());
     config.voice_helper_path = Some(env!("CARGO_BIN_EXE_kchess-fake-voice").into());
-    Core::open(config, Arc::new(Quiet)).expect("core")
+    Core::open(config, TestHost::quiet()).expect("core")
 }
 
 /// Silent audio: the scripted helper answers a partial "e" while it is listening.

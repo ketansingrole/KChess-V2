@@ -5,63 +5,24 @@
 
 use crate::support;
 
-use kchess_contracts::CoreEvent;
 use std::net::TcpListener;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use kchess_core::engine::scheduler::default_budget;
-use kchess_core::{Config, Core, Host, Level};
+use kchess_core::test_host::TestHost;
+use kchess_core::{Config, Core};
 use serde_json::{Value, json};
 
 const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const WAIT: Duration = Duration::from_secs(20);
 
-/// Records every event the core emits; answers nothing.
-#[derive(Default)]
-struct Wire {
-    events: Mutex<Vec<(String, Value)>>,
-}
-
-impl Host for Wire {
-    fn log(&self, _level: Level, _scope: &str, _message: &str) {}
-
-    fn emit(&self, event: CoreEvent) {
-        let (event, payload) = (event.name(), event.into_payload());
-        self.events
-            .lock()
-            .expect("events lock")
-            .push((event.to_string(), payload));
-    }
-}
-
-impl Wire {
-    /// Payloads of one event, in emission order.
-    fn named(&self, event: &str) -> Vec<Value> {
-        self.events
-            .lock()
-            .expect("events lock")
-            .iter()
-            .filter(|(name, _)| name == event)
-            .map(|(_, payload)| payload.clone())
-            .collect()
-    }
-
-    /// `host:request` payloads of one capability kind.
-    fn requests(&self, kind: &str) -> Vec<Value> {
-        self.named("host:request")
-            .into_iter()
-            .filter(|payload| payload["kind"] == kind)
-            .collect()
-    }
-}
-
 fn profile() -> tempfile::TempDir {
     tempfile::tempdir().expect("temporary profile")
 }
 
-fn core(host: &Arc<Wire>, dir: &Path) -> Core {
+fn core(host: &Arc<TestHost>, dir: &Path) -> Core {
     Core::open(Config::new(dir.to_path_buf()), host.clone()).expect("the profile opens")
 }
 
@@ -81,7 +42,7 @@ fn expected_threads_on_battery() -> usize {
 #[tokio::test]
 async fn a_lease_never_waits_on_an_unanswered_battery_request() {
     let dir = profile();
-    let host = Arc::new(Wire::default());
+    let host = TestHost::new();
     let core = core(&host, dir.path());
     let script = support::engine_copy(dir.path(), "search");
     with_engine(&core, &script).await;
@@ -107,7 +68,7 @@ async fn a_lease_never_waits_on_an_unanswered_battery_request() {
 #[tokio::test]
 async fn the_hosts_battery_reading_reaches_the_thread_budget() {
     let dir = profile();
-    let host = Arc::new(Wire::default());
+    let host = TestHost::new();
     let core = core(&host, dir.path());
     // The first call starts the battery refresh; the reading is still the default (off battery).
     core.call("loadData", vec![]).await.expect("loadData");
@@ -138,7 +99,7 @@ async fn the_hosts_battery_reading_reaches_the_thread_budget() {
 #[tokio::test]
 async fn managed_replacement_stops_running_engines_before_it_publishes() {
     let dir = profile();
-    let host = Arc::new(Wire::default());
+    let host = TestHost::new();
     let core = core(&host, dir.path());
     let script = support::engine_copy(dir.path(), "search");
     with_engine(&core, &script).await;
@@ -176,7 +137,7 @@ async fn managed_replacement_stops_running_engines_before_it_publishes() {
 #[tokio::test]
 async fn analysis_and_review_events_carry_the_contract_payloads() {
     let dir = profile();
-    let host = Arc::new(Wire::default());
+    let host = TestHost::new();
     let core = core(&host, dir.path());
     let script = support::engine_copy(dir.path(), "search");
     with_engine(&core, &script).await;
@@ -240,7 +201,7 @@ async fn analysis_and_review_events_carry_the_contract_payloads() {
 #[tokio::test]
 async fn a_review_update_carries_the_stored_review_and_its_summary() {
     let dir = profile();
-    let host = Arc::new(Wire::default());
+    let host = TestHost::new();
     let core = core(&host, dir.path());
     let script = support::engine_copy(dir.path(), "review");
     // Point the review at the scripted engine through the settings the store keeps.
@@ -267,7 +228,7 @@ async fn a_review_update_carries_the_stored_review_and_its_summary() {
 #[tokio::test]
 async fn online_play_pauses_automatic_reviews() {
     let dir = profile();
-    let host = Arc::new(Wire::default());
+    let host = TestHost::new();
     let core = core(&host, dir.path());
     core.call("loadData", vec![]).await.expect("loadData");
     core.set_engines_busy_for_tests(true);
@@ -286,7 +247,7 @@ async fn online_play_pauses_automatic_reviews() {
 #[tokio::test]
 async fn closing_the_core_cancels_an_install_and_stops_engines() {
     let dir = profile();
-    let host = Arc::new(Wire::default());
+    let host = TestHost::new();
     let core = Arc::new(core(&host, dir.path()));
     let script = support::engine_copy(dir.path(), "search");
     with_engine(&core, &script).await;
@@ -312,12 +273,8 @@ async fn closing_the_core_cancels_an_install_and_stops_engines() {
                 .await
         })
     };
-    // Let the install reach its download before the core closes.
-    support::wait_until(WAIT, "the install to request the release", || {
-        (!host.named("host:request").is_empty() || !engine_dir.exists()).then_some(())
-    })
-    .await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // The install is waiting on its download when the core closes.
+    let _download = support::accepted(&silent).await;
     core.close().await;
     let outcome = tokio::time::timeout(WAIT, installing)
         .await
@@ -337,7 +294,7 @@ async fn closing_the_core_cancels_an_install_and_stops_engines() {
 async fn account_calls_use_the_username_as_validated() {
     // `" Alice "` passed validation trimmed but reached the store untrimmed, matching nothing.
     let dir = profile();
-    let host = Arc::new(Wire::default());
+    let host = TestHost::new();
     let core = core(&host, dir.path());
     core.call("addAccount", vec![json!("Alice")])
         .await

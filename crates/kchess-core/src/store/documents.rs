@@ -1,6 +1,5 @@
-//! One bounded JSON document per key (`readDocument`/`writeDocument` in the TypeScript
-//! library): raw text access, parsing, decoding, and the damaged-study guard.
-//! Split from the library store; bodies are unchanged.
+//! One bounded JSON document per key: raw text access, parsing, decoding, and the damaged-study
+//! guard.
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
@@ -14,8 +13,6 @@ use crate::time::now_ms;
 use kchess_domain::js::utf16_len;
 use kchess_domain::misc::MAX_DOCUMENT;
 
-/* ── Documents: one bounded JSON value per key ── */
-
 pub(crate) fn read_document_text(db: &Connection, key: &str) -> Result<Option<String>> {
     db.query_row(
         "SELECT body FROM documents WHERE key = ?1",
@@ -26,7 +23,7 @@ pub(crate) fn read_document_text(db: &Connection, key: &str) -> Result<Option<St
     .sql()
 }
 
-/// The parsed document; None when it is missing or not JSON (`readDocument` in the TypeScript).
+/// The parsed document; None when it is missing or not JSON.
 pub fn read_document(host: &dyn Host, db: &Connection, key: &str) -> Result<Option<Value>> {
     let Some(body) = read_document_text(db, key)? else {
         return Ok(None);
@@ -44,7 +41,7 @@ pub fn read_document(host: &dyn Host, db: &Connection, key: &str) -> Result<Opti
     }
 }
 
-/// `writeDocument`: a document within its size limit, stored with its update time.
+/// A document within its size limit, stored with its update time.
 pub(crate) fn write_document(
     db: &Connection,
     key: &str,
