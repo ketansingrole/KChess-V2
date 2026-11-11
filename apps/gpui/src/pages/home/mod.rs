@@ -8,9 +8,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Variant;
 use kchess_contracts::calls;
-use kchess_contracts::types::PlayedGame;
+use kchess_contracts::types::{ComputerSession, HistoryKind, PlayedGame, SessionDocument};
 use kchess_domain::variant::Setup;
-use serde_json::Value;
 use shakmaty::{Color, Position as _};
 
 use crate::assets::icon;
@@ -51,7 +50,7 @@ const COLUMN_GAP: Pixels = px(24.);
 
 pub struct HomePage {
     /// The computer game left unfinished, and how Home names it.
-    continue_game: Option<(Unfinished, Value)>,
+    continue_game: Option<(Unfinished, ComputerSession)>,
     /// The position on the board, and what it was drawn from.
     board: Option<(String, Entity<ChessBoard>)>,
     /// The last game's opening, by the game and its length, worked out once.
@@ -83,13 +82,13 @@ struct Unfinished {
 }
 
 /// The level, the move to play, your side and whose turn it is, as the game holds them.
-fn continue_line(session: &Value) -> Option<Unfinished> {
+fn continue_line(session: &ComputerSession) -> Option<Unfinished> {
     let host = Host {
         now: 0.,
         allowed: true,
         ready: false,
     };
-    let game = ComputerGame::resume(Some(session), &host).ok()?;
+    let game = ComputerGame::resume(Some(session.clone().into()), &host).ok()?;
     let moves = game.moves();
     if moves.is_empty() || game.over() {
         return None;
@@ -164,7 +163,7 @@ fn played_games(cx: &App, limit: usize) -> Vec<PlayedGame> {
         .read(cx)
         .games()
         .iter()
-        .filter(|game| game.source != "clock")
+        .filter(|game| game.source != HistoryKind::Clock)
         .collect();
     games.sort_by(|a, b| b.started_at.total_cmp(&a.started_at));
     games.into_iter().take(limit).cloned().collect()
@@ -256,9 +255,12 @@ impl HomePage {
             let _ = this.update(cx, |this, cx| {
                 match session {
                     Ok(session) => {
-                        this.continue_game = session.and_then(|session| {
-                            continue_line(&session).map(|line| (line, session.clone()))
-                        });
+                        this.continue_game = match session {
+                            Some(SessionDocument::Computer(session)) => {
+                                continue_line(&session).map(|line| (line, session))
+                            }
+                            _ => None,
+                        };
                     }
                     // The card stays as it was; a failed read is not the game being over.
                     Err(cause) => crate::log::write(
@@ -272,26 +274,6 @@ impl HomePage {
         })
         .detach();
     }
-}
-
-/// The side to see a game from: yours, when you played Black.
-fn orientation(game: &Value) -> Color {
-    if game["color"] == "black" || game["black"] == "You" {
-        Color::Black
-    } else {
-        Color::White
-    }
-}
-
-/// `game`'s setup and moves, as the board shows them.
-fn line(game: &Value) -> (Setup, Vec<String>) {
-    let moves = serde_json::from_value(game["moves"].clone()).unwrap_or_default();
-    (setup_of(game), moves)
-}
-
-/// A game's setup; one that cannot be read shows no position.
-fn setup_of(game: &Value) -> Setup {
-    crate::game::setup_of(&game["setup"]).unwrap_or_else(|| Setup::standard_at(""))
 }
 
 /// Whether the board goes over the rest for a page `width` wide, and how many tiles share a
@@ -434,18 +416,13 @@ impl Render for HomePage {
         let session = self.continue_game.as_ref().map(|(_, session)| session);
         let latest = games.first().cloned();
         let (setup, moves, side) = match (session, &latest) {
-            (Some(session), _) => {
-                let (setup, moves) = line(session);
-                (setup, moves, orientation(session))
-            }
-            (None, Some(game)) => {
-                let side = if game.black == "You" {
-                    Color::Black
-                } else {
-                    Color::White
-                };
-                (game.setup.clone(), game.moves.clone(), side)
-            }
+            (Some(session), _) => (session.setup.clone(), session.moves.clone(), session.color),
+            // Seen from your side, when you played Black.
+            (None, Some(game)) => (
+                game.setup.clone(),
+                game.moves.clone(),
+                game.player_side().unwrap_or(Color::White),
+            ),
             (None, None) => (Setup::standard_at(""), Vec::new(), Color::White),
         };
         let drawn = format!("{setup:?}{moves:?}{side:?}");
@@ -882,11 +859,10 @@ impl crate::pages::PageView for HomePage {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use shakmaty::Color;
 
     use gpui_kit::px;
 
-    use super::{TILE, arrangement, line, orientation};
+    use super::{TILE, arrangement};
 
     /// A 1000px window with the sidebar open leaves Home about 680px: the tiles once shared
     /// what was left beside the board and were cut short ("Analysis bo…").
@@ -911,8 +887,16 @@ mod tests {
     /// analysis board with Black to move at move 4, and the usual start.
     #[test]
     fn an_unfinished_game_says_whose_move_from_its_own_start() {
-        let card = |session: serde_json::Value| {
-            super::continue_line(&session)
+        let card = |saved: serde_json::Value| {
+            let host = kchess_domain::games::Host {
+                now: 0.,
+                allowed: true,
+                ready: false,
+            };
+            let saved = serde_json::from_value(saved).expect("a saved game");
+            let game = kchess_domain::games::computer::ComputerGame::resume(Some(saved), &host)
+                .expect("a game");
+            super::continue_line(&game.session(0.))
                 .expect("an unfinished game")
                 .state
         };
@@ -941,20 +925,5 @@ mod tests {
             "color": "black",
         });
         assert_eq!(card(usual), ["Move 2", "You play Black", "Your move"]);
-    }
-
-    #[test]
-    fn the_board_shows_the_game_from_your_side() {
-        assert_eq!(orientation(&json!({ "color": "black" })), Color::Black);
-        assert_eq!(
-            orientation(&json!({ "white": "Expert", "black": "You" })),
-            Color::Black
-        );
-        assert_eq!(
-            orientation(&json!({ "white": "You", "black": "Sam" })),
-            Color::White
-        );
-        let (_, moves) = line(&json!({ "moves": ["e2e4", "e7e5"] }));
-        assert_eq!(moves, ["e2e4", "e7e5"]);
     }
 }

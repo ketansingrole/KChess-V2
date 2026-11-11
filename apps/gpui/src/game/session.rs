@@ -6,13 +6,11 @@
 //! replace the saved game. A read that fails is said on the page and keeps the profile's session
 //! as it is, until the player starts a game of their own (`SessionSaver::open`).
 
-use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui_kit::*;
-use kchess_contracts::types::SessionKind;
+use kchess_contracts::types::{SessionDocument, SessionKind, Sessions};
 use kchess_contracts::{CoreError, Level, calls};
-use serde_json::Value;
 
 use crate::core::AppCore;
 use crate::played::PlayedHandle;
@@ -25,21 +23,11 @@ pub trait Resumes: Sized + 'static {
     fn saver(&mut self) -> &mut SessionSaver<Self>;
 
     /// The session to save now.
-    fn snapshot(&mut self, cx: &mut Context<Self>) -> Value;
+    fn snapshot(&mut self, cx: &mut Context<Self>) -> SessionDocument;
 
-    /// The saved sessions were read (each null when there is none); `None` when the read
-    /// failed, which the saver says on the page.
+    /// The saved sessions were read: its own and its places in Game history, each none when
+    /// there is none; `None` when the read failed, which the saver says on the page.
     fn resume(&mut self, saved: Option<Sessions>, window: &mut Window, cx: &mut Context<Self>);
-}
-
-/// The sessions a page resumes from: its own, and its places in Game history.
-pub struct Sessions(HashMap<String, Value>);
-
-impl Sessions {
-    /// The `kind` session, null when there is none.
-    pub fn take(&mut self, kind: &str) -> Value {
-        self.0.remove(kind).unwrap_or(Value::Null)
-    }
 }
 
 /// Where the read of the saved session is.
@@ -54,21 +42,25 @@ pub enum Resume {
 
 /// What the reads' answers mean for the page: the sessions to resume, or why there are none to
 /// trust. A failed read is never taken for an empty profile.
-pub fn resumed(reads: Vec<(String, Result<Option<Value>, CoreError>)>) -> Result<Sessions, String> {
-    let mut sessions = HashMap::new();
+pub fn resumed(
+    reads: Vec<(SessionKind, Result<Option<SessionDocument>, CoreError>)>,
+) -> Result<Sessions, String> {
+    let mut sessions = Sessions::default();
     for (kind, read) in reads {
         let session = read.map_err(|cause| {
             format!("Your unfinished game could not be read: {}", cause.message)
         })?;
-        sessions.insert(kind, session.unwrap_or(Value::Null));
+        if let Some(session) = session {
+            sessions.insert(kind, session);
+        }
     }
-    Ok(Sessions(sessions))
+    Ok(sessions)
 }
 
 type Waiting<V> = Box<dyn FnOnce(&mut V, &mut Window, &mut Context<V>)>;
 
 pub struct SessionSaver<V> {
-    kind: &'static str,
+    kind: SessionKind,
     state: Resume,
     save: Option<Task<()>>,
     /// Work that needs the saved session, run once it is read.
@@ -80,24 +72,17 @@ impl<V: Resumes> SessionSaver<V> {
     /// in Game history); the page resumes them once read. Its changes are saved as `kind` from
     /// then on, and before the app quits.
     pub fn start(
-        kind: &'static str,
-        also: &[String],
+        kind: SessionKind,
+        also: &[SessionKind],
         window: &mut Window,
         cx: &mut Context<V>,
     ) -> Self {
         let core = cx.global::<AppCore>();
-        let reads: Vec<_> = std::iter::once(kind.to_string())
-            .chain(also.iter().cloned())
+        let reads: Vec<_> = std::iter::once(kind)
+            .chain(also.iter().copied())
             .map(|kind| {
-                let read = SessionKind::from_key(&kind)
-                    .map(|named| core.request(calls::Session { kind: named }));
-                async move {
-                    let read = match read {
-                        Some(read) => read.await,
-                        None => Err(CoreError::new(format!("No session is kept as {kind}."))),
-                    };
-                    (kind, read)
-                }
+                let read = core.request(calls::Session { kind });
+                async move { (kind, read.await) }
             })
             .collect();
         cx.spawn_in(window, async move |this, cx| {
@@ -109,7 +94,11 @@ impl<V: Resumes> SessionSaver<V> {
                         Some(saved)
                     }
                     Err(cause) => {
-                        crate::log::write(Level::Warn, "library", &format!("{kind}: {cause}"));
+                        crate::log::write(
+                            Level::Warn,
+                            "library",
+                            &format!("{}: {cause}", kind.as_str()),
+                        );
                         this.saver().state = Resume::Failed(cause);
                         None
                     }
@@ -227,7 +216,7 @@ impl<V: Resumes> SessionSaver<V> {
         cx.global::<PlayedHandle>()
             .0
             .read(cx)
-            .save_session(kind.to_string(), snapshot);
+            .save_session(kind, snapshot);
     }
 }
 
@@ -235,24 +224,42 @@ impl<V: Resumes> SessionSaver<V> {
 mod tests {
     use super::resumed;
     use kchess_contracts::CoreError;
-    use serde_json::{Value, json};
+    use kchess_contracts::types::{HistoryKind, SessionDocument, SessionKind};
+    use kchess_domain::games::archive::Identity;
+    use kchess_domain::games::local::LocalGame;
 
     /// A session that could not be read is not an empty profile: the page says so, rather than
     /// starting a new game over the saved one.
     #[test]
     fn a_failed_read_is_not_a_fresh_start() {
+        let mut game = LocalGame::resume(None, 0.).expect("a new game");
+        game.play("e2e4", 1.);
+        let local = game.session(1.);
         let mut read = resumed(vec![
-            ("local".into(), Ok(Some(json!({ "moves": ["e2e4"] })))),
-            ("archive:board".into(), Ok(None)),
+            (
+                SessionKind::Local,
+                Ok(Some(SessionDocument::Local(local.clone()))),
+            ),
+            (SessionKind::ArchiveBoard, Ok(None)),
         ])
         .expect("both read");
-        assert_eq!(read.take("local"), json!({ "moves": ["e2e4"] }));
-        assert_eq!(read.take("archive:board"), Value::Null);
-        assert_eq!(read.take("archive:clock"), Value::Null);
+        assert_eq!(read.local.take(), Some(local));
+        assert_eq!(read.take_identity(HistoryKind::Board), None);
+        assert_eq!(read.take_identity(HistoryKind::Clock), None);
+        let identity = Identity {
+            id: "g".into(),
+            started_at: 5.,
+        };
+        let mut read = resumed(vec![(
+            SessionKind::ArchiveClock,
+            Ok(Some(SessionDocument::Archive(identity.clone()))),
+        )])
+        .expect("read");
+        assert_eq!(read.take_identity(HistoryKind::Clock), Some(identity));
         let failed = resumed(vec![
-            ("local".into(), Ok(None)),
+            (SessionKind::Local, Ok(None)),
             (
-                "archive:board".into(),
+                SessionKind::ArchiveBoard,
                 Err(CoreError::new("the profile is locked")),
             ),
         ]);

@@ -88,6 +88,26 @@ pub fn number_value(n: f64) -> serde_json::Value {
     }
 }
 
+/// `#[serde(with = "whole")]`: a value written with its integral numbers as integers, as the
+/// stored documents keep them (see [`integral`]); read as it is.
+pub mod whole {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<T: Serialize, S: Serializer>(
+        value: &T,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let value = serde_json::to_value(value).map_err(serde::ser::Error::custom)?;
+        super::integral(value).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<T, D::Error> {
+        T::deserialize(deserializer)
+    }
+}
+
 /// Integral floating-point numbers of `value` as integers (see [`number_value`]).
 pub fn integral(value: serde_json::Value) -> serde_json::Value {
     use serde_json::Value;

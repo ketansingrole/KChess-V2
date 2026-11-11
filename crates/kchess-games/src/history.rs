@@ -2,10 +2,9 @@
 //! (`kchess_domain::games::archive`) decide when the game is saved, replaced or dropped, and the
 //! frontend carries out the writes they ask for, in order.
 
-use serde_json::{Value, json};
-
 use kchess_domain::games::archive::{Effect, Host, Identity, Snapshot, State};
 use kchess_domain::library::PlayedGame;
+use kchess_domain::misc::constants::{HistoryKind, SessionKind};
 
 /// A write to the profile's library a Game history place asks for.
 #[derive(Clone, Debug, PartialEq)]
@@ -14,15 +13,18 @@ pub enum Write {
     SaveGame(Box<PlayedGame>),
     /// Remove the played game with this id.
     RemoveGame(String),
-    /// Keep the place's identity as the session `archive:<kind>`.
-    SaveSession { kind: String, identity: Value },
+    /// Keep the place's identity as the `kind` session.
+    SaveSession {
+        kind: SessionKind,
+        identity: Identity,
+    },
 }
 
-/// The place in Game history of a `kind` game (`computer`, `board`, `clock`).
+/// The place in Game history of a `kind` game.
 pub struct HistoryPlace {
-    kind: &'static str,
-    archive: Option<State>,
-    saved_identity: Value,
+    kind: HistoryKind,
+    archive: State,
+    saved_identity: Option<Identity>,
 }
 
 /// What the archive is told of the game now.
@@ -58,41 +60,26 @@ fn new_id() -> String {
     )
 }
 
-/// The session a `kind` game's identity is kept as.
-pub fn session_kind(kind: &str) -> String {
-    format!("archive:{kind}")
-}
-
 impl HistoryPlace {
-    /// The place kept by `identity` (the `archive:<kind>` session, null when there is none),
+    /// The place kept by `identity` (its kind's `archive:` session, none when there is none),
     /// among the played `games`; `resume` continues the saved game's entry instead of starting a
-    /// new one. A place the rules could not start keeps nothing, and says why.
+    /// new one.
     pub fn new(
-        kind: &'static str,
-        identity: Value,
+        kind: HistoryKind,
+        identity: Option<Identity>,
         resume: bool,
         source: Option<Snapshot>,
         has_play: bool,
         games: &[PlayedGame],
-    ) -> (HistoryPlace, Result<Vec<Write>, String>) {
+    ) -> (HistoryPlace, Vec<Write>) {
+        let host = host(source.as_ref(), has_play, games);
         let mut place = HistoryPlace {
             kind,
-            archive: None,
-            saved_identity: identity.clone(),
+            archive: State::new(identity.clone(), &host),
+            saved_identity: identity,
         };
-        let kept = (!identity.is_null())
-            .then(|| serde_json::from_value::<Identity>(identity))
-            .transpose();
-        let writes = match kept {
-            Ok(kept) => {
-                let host = host(source.as_ref(), has_play, games);
-                let mut archive = State::new(kept, &host);
-                let effects = archive.init(resume, &host);
-                place.archive = Some(archive);
-                Ok(place.writes(effects))
-            }
-            Err(cause) => Err(format!("Game history could not start ({kind}): {cause}")),
-        };
+        let effects = place.archive.init(resume, &host);
+        let writes = place.writes(effects);
         (place, writes)
     }
 
@@ -134,10 +121,7 @@ impl HistoryPlace {
         has_play: bool,
         games: &[PlayedGame],
     ) -> Vec<Write> {
-        let Some(archive) = self.archive.as_mut() else {
-            return Vec::new();
-        };
-        let effects = step(archive, &host(source, has_play, games));
+        let effects = step(&mut self.archive, &host(source, has_play, games));
         self.writes(effects)
     }
 
@@ -150,13 +134,12 @@ impl HistoryPlace {
                 Effect::Remove(id) => Write::RemoveGame(id),
             })
             .collect();
-        if let Some(identity) = self.archive.as_ref().map(|archive| json!(archive.identity))
-            && identity != self.saved_identity
-        {
-            self.saved_identity = identity.clone();
+        let identity = &self.archive.identity;
+        if self.saved_identity.as_ref() != Some(identity) {
+            self.saved_identity = Some(identity.clone());
             writes.push(Write::SaveSession {
-                kind: session_kind(self.kind),
-                identity,
+                kind: self.kind.session(),
+                identity: identity.clone(),
             });
         }
         writes
@@ -199,10 +182,13 @@ mod tests {
     /// Restored after a restart, a game whose only move is taken back leaves no entry behind.
     #[test]
     fn a_resumed_game_taken_back_to_its_start_leaves_no_entry() {
-        let identity = json!({ "id": "resumed-game", "startedAt": 1.0e12 });
+        let identity = Some(Identity {
+            id: "resumed-game".into(),
+            started_at: 1.0e12,
+        });
         let saved = vec![played("resumed-game")];
         let source = Some(Snapshot {
-            source: "computer".into(),
+            source: HistoryKind::Computer,
             setup: kchess_domain::variant::Setup::standard(),
             moves: Vec::new(),
             white: "You".into(),
@@ -212,9 +198,15 @@ mod tests {
             time_control: "-".into(),
             clock_summary: None,
         });
-        let (mut place, writes) =
-            HistoryPlace::new("computer", identity, true, source.clone(), false, &saved);
-        assert_eq!(writes, Ok(Vec::new()));
+        let (mut place, writes) = HistoryPlace::new(
+            HistoryKind::Computer,
+            identity,
+            true,
+            source.clone(),
+            false,
+            &saved,
+        );
+        assert_eq!(writes, Vec::new());
         let writes = place.save(false, source, false, &saved);
         assert_eq!(writes, vec![Write::RemoveGame("resumed-game".into())]);
     }
@@ -226,23 +218,22 @@ mod tests {
         let mut games = Vec::new();
         let mut game = kchess_domain::games::local::LocalGame::resume(None, 0.).unwrap();
         let (mut place, writes) = HistoryPlace::new(
-            "board",
-            Value::Null,
+            HistoryKind::Board,
+            None,
             true,
             Some(game.archive_snapshot()),
             false,
             &games,
         );
-        let writes = writes.unwrap();
         let [Write::SaveSession { kind, identity }] = writes.as_slice() else {
             panic!("a new place keeps its identity: {writes:?}");
         };
-        assert_eq!(kind, "archive:board");
+        assert_eq!(*kind, SessionKind::ArchiveBoard);
         game.play("e2e4", 1.);
         let source = Some(game.archive_snapshot());
         let writes = place.save(false, source.clone(), true, &games);
         assert!(
-            matches!(writes.first(), Some(Write::SaveGame(game)) if game.id == identity["id"]),
+            matches!(writes.first(), Some(Write::SaveGame(game)) if game.id == identity.id),
             "{writes:?}"
         );
         apply_to(&mut games, &writes);
@@ -258,26 +249,10 @@ mod tests {
         assert!(
             writes.iter().any(|write| matches!(
                 write,
-                Write::SaveSession { identity: next, .. } if next["id"] != identity["id"]
+                Write::SaveSession { identity: next, .. } if next.id != identity.id
             )),
             "{writes:?}"
         );
-    }
-
-    /// Each history kind's identity is a session the library keeps.
-    #[test]
-    fn every_place_is_kept_as_a_known_session() {
-        use kchess_domain::misc::constants::SessionKind;
-        for kind in [
-            kchess_domain::games::computer::HISTORY,
-            kchess_domain::games::local::HISTORY,
-            kchess_domain::games::local::CLOCK_HISTORY,
-        ] {
-            assert!(
-                SessionKind::from_key(&session_kind(kind)).is_some(),
-                "{kind}"
-            );
-        }
     }
 
     #[test]
@@ -291,7 +266,7 @@ mod tests {
     fn played(id: &str) -> PlayedGame {
         PlayedGame {
             id: id.into(),
-            source: "computer".into(),
+            source: HistoryKind::Computer,
             started_at: 1.0e12,
             updated_at: 1.0e12,
             white: "You".into(),

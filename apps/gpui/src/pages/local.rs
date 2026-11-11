@@ -40,10 +40,10 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_contracts::types::{HistoryKind, SessionDocument, SessionKind, Sessions};
 use kchess_domain::games::archive::Snapshot;
 use kchess_domain::games::otb_clock::{Config, OtbClock, Side};
 use kchess_games::Outcome;
-use kchess_games::history::session_kind;
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -52,7 +52,7 @@ use crate::board::{BoardEvent, ChessBoard};
 use crate::export::Exporter;
 use crate::game::history::HistoryPlace;
 use crate::game::played::PlayedGame;
-use crate::game::session::{Resumes, SessionSaver, Sessions};
+use crate::game::session::{Resumes, SessionSaver};
 use crate::game::surface::{self, Faces, MoveBox, Steps};
 use crate::game::{chess960, view};
 use crate::part::Part;
@@ -174,17 +174,16 @@ impl Resumes for LocalPage {
         &mut self.saver
     }
 
-    fn snapshot(&mut self, _: &mut Context<Self>) -> Value {
-        json!(self.game.snapshot(self.now()))
+    fn snapshot(&mut self, _: &mut Context<Self>) -> SessionDocument {
+        SessionDocument::Local(self.game.session(self.now()))
     }
 
     /// The board game and its history places resume from their sessions alone: reading the
     /// whole library replays every played game.
     fn resume(&mut self, saved: Option<Sessions>, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(mut saved) = saved {
-            let game = saved.take(local::SESSION);
-            if !game.is_null() {
-                match LocalGame::resume(Some(&game), self.now()) {
+            if let Some(game) = saved.local.take() {
+                match LocalGame::resume(Some(game.into()), self.now()) {
                     Ok(game) => self.game = game,
                     Err(cause) => crate::log::write(
                         Level::Warn,
@@ -195,8 +194,8 @@ impl Resumes for LocalPage {
             }
             let (source, has_play) = (self.game.archive_snapshot(), self.has_play());
             self.history = Some(HistoryPlace::new(
-                local::HISTORY,
-                saved.take(&session_kind(local::HISTORY)),
+                HistoryKind::Board,
+                saved.take_identity(HistoryKind::Board),
                 true,
                 source,
                 has_play,
@@ -204,8 +203,8 @@ impl Resumes for LocalPage {
             ));
             let clock_source = self.clock_snapshot();
             self.clock_history = Some(HistoryPlace::new(
-                local::CLOCK_HISTORY,
-                saved.take(&session_kind(local::CLOCK_HISTORY)),
+                HistoryKind::Clock,
+                saved.take_identity(HistoryKind::Clock),
                 false,
                 clock_source,
                 false,
@@ -311,11 +310,8 @@ impl LocalPage {
             }));
         }
         let saver = SessionSaver::start(
-            local::SESSION,
-            &[
-                session_kind(local::HISTORY),
-                session_kind(local::CLOCK_HISTORY),
-            ],
+            SessionKind::Local,
+            &[HistoryKind::Board.session(), HistoryKind::Clock.session()],
             window,
             cx,
         );
@@ -636,8 +632,8 @@ impl LocalPage {
             Some(history) => history.reset(source, has_play, cx),
             None => {
                 self.history = Some(HistoryPlace::new(
-                    local::HISTORY,
-                    Value::Null,
+                    HistoryKind::Board,
+                    None,
                     true,
                     source,
                     has_play,
@@ -822,7 +818,7 @@ impl LocalPage {
 
     fn clock_snapshot(&self) -> Snapshot {
         Snapshot {
-            source: "clock".into(),
+            source: HistoryKind::Clock,
             setup: Setup::standard(),
             moves: Vec::new(),
             white: "Bottom player".into(),

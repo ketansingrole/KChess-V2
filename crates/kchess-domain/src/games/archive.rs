@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::library::PlayedGame;
+use crate::misc::constants::HistoryKind;
 use crate::variant::Setup;
 
 /// The archive entry an unfinished session keeps updating.
@@ -26,8 +27,7 @@ pub struct State {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
-    /// `computer`, `board` or `clock`.
-    pub source: String,
+    pub source: HistoryKind,
     pub setup: Setup,
     pub moves: Vec<String>,
     pub white: String,
@@ -111,14 +111,14 @@ impl State {
         }
         self.had_play = true;
         let open = snapshot.result == "*";
-        let reason = if finished && open && snapshot.source != "clock" {
+        let reason = if finished && open && snapshot.source != HistoryKind::Clock {
             STOPPED.to_string()
         } else {
             snapshot.reason.clone()
         };
         fx.push(Effect::Save(Box::new(PlayedGame {
             id: self.identity.id.clone(),
-            source: snapshot.source.clone(),
+            source: snapshot.source,
             started_at: self.identity.started_at,
             updated_at: host.now,
             white: snapshot.white.clone(),
@@ -145,7 +145,7 @@ impl State {
                 } else {
                     previous.result.clone()
                 };
-                let reason = if result == "*" && latest.source != "clock" {
+                let reason = if result == "*" && latest.source != HistoryKind::Clock {
                     STOPPED.to_string()
                 } else if open {
                     latest.reason.clone()

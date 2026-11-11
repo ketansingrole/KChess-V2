@@ -2,26 +2,26 @@
 //! is no longer wanted.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use shakmaty::Color;
 
 use super::archive::Snapshot;
+use super::session::ComputerSession;
 use super::{Board, Clock, Clocking, Host, Outcome, Setup, Times};
 use crate::js;
+use crate::misc::constants::{EngineLevel, HistoryKind};
 use crate::training::engine_levels;
 use crate::variant::Variant;
 
-/// The session a computer game is saved as, and the Game history kind it keeps its place by.
-pub const SESSION: &str = "computer";
-pub const HISTORY: &str = "computer";
+/// What a computer game names the player's side.
+pub const PLAYER: &str = "You";
 /// Its PGN's `Event`.
 pub const EVENT: &str = "Computer game (KChess)";
 
 /// White's and Black's names in a game the player plays as `color` against `engine`.
 pub fn players(color: Color, engine: &str) -> (&str, &str) {
     match color {
-        Color::White => ("You", engine),
-        Color::Black => (engine, "You"),
+        Color::White => (PLAYER, engine),
+        Color::Black => (engine, PLAYER),
     }
 }
 
@@ -182,14 +182,11 @@ impl ComputerGame {
     }
 
     /// A game from a saved session, or a new one; a session on an illegal setup is refused.
-    pub fn resume(saved: Option<&Value>, host: &Host) -> Result<ComputerGame, String> {
-        let saved: Saved = match saved {
-            Some(saved) => {
-                Saved::deserialize(saved).map_err(|error| format!("the saved game: {error}"))?
-            }
-            None => Saved::default(),
-        };
-        ComputerGame::new(State::from_saved(saved), Runtime::start(host))
+    pub fn resume(saved: Option<Saved>, host: &Host) -> Result<ComputerGame, String> {
+        ComputerGame::new(
+            State::from_saved(saved.unwrap_or_default()),
+            Runtime::start(host),
+        )
     }
 
     /// The game's start.
@@ -627,6 +624,22 @@ impl ComputerGame {
         }
     }
 
+    /// The session to save, as the library keeps it; a level it does not know is saved as `club`,
+    /// the level it is played at.
+    pub fn session(&self, at: f64) -> ComputerSession {
+        ComputerSession {
+            moves: self.state.moves.clone(),
+            ply: self.state.ply,
+            level: EngineLevel::from_key(&self.state.level).unwrap_or(EngineLevel::Club),
+            color: self.state.color,
+            resigned: self.state.resigned,
+            setup: self.state.setup.clone(),
+            clock: self.state.clock,
+            times: self.state.times.map(|_| self.clocking().times_at(at)),
+            flagged: self.state.flagged,
+        }
+    }
+
     /// The game as the archive stores it.
     pub fn archive_snapshot(&self) -> Result<Snapshot, String> {
         let engine = format!("Stockfish ({})", level_info(&self.state.level)?.label);
@@ -644,7 +657,7 @@ impl ComputerGame {
             None => "-".to_string(),
         };
         Ok(Snapshot {
-            source: "computer".into(),
+            source: HistoryKind::Computer,
             setup: self.state.setup.clone(),
             moves: self.state.moves.clone(),
             white,
@@ -666,7 +679,7 @@ fn level_info(level: &str) -> Result<&'static engine_levels::EngineLevelInfo, St
 mod tests {
     use super::*;
     use crate::games::ILLEGAL_SETUP;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn host(now: f64) -> Host {
         Host {
@@ -766,9 +779,14 @@ mod tests {
     /// from the standard start, refusing every move.
     #[test]
     fn a_saved_game_on_an_illegal_setup_is_refused() {
-        let saved =
-            json!({ "setup": { "variant": "standard", "fen": "8/8/8/8/8/8/8/8 w - - 0 1" } });
-        let error = ComputerGame::resume(Some(&saved), &host(0.)).err();
+        let saved = Saved {
+            setup: Some(Setup {
+                variant: Variant::Standard,
+                fen: "8/8/8/8/8/8/8/8 w - - 0 1".into(),
+            }),
+            ..Saved::default()
+        };
+        let error = ComputerGame::resume(Some(saved), &host(0.)).err();
         assert_eq!(error.as_deref(), Some(ILLEGAL_SETUP));
     }
 
@@ -879,7 +897,11 @@ mod tests {
             "times": { "white": 170000.0, "black": 175000.0 },
             "flagged": null,
         });
-        let game = ComputerGame::resume(Some(&stored), &host(0.)).unwrap();
+        let game = ComputerGame::resume(
+            Some(serde_json::from_value(stored.clone()).unwrap()),
+            &host(0.),
+        )
+        .unwrap();
         assert_eq!(game.color(), Color::Black);
         assert!(!game.flagged());
         let mut written = json!(game.snapshot(0.));
@@ -888,7 +910,8 @@ mod tests {
         written["version"] = json!(2);
         assert_eq!(written, stored);
         let flagged = json!({ "color": "white", "flagged": "white", "moves": ["e2e4"] });
-        let game = ComputerGame::resume(Some(&flagged), &host(0.)).unwrap();
+        let game = ComputerGame::resume(Some(serde_json::from_value(flagged).unwrap()), &host(0.))
+            .unwrap();
         assert_eq!(json!(game.snapshot(0.))["flagged"], "white");
     }
 

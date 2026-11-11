@@ -604,22 +604,25 @@ fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
         allowed: true,
         ready: false,
     };
-    let session = serde_json::json!({
-        "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4"],
-        "color": "white",
-        "level": "club",
-    });
-    let snapshot = serde_json::json!(
-        ComputerGame::resume(Some(&session), &host)
+    let saved = kchess_domain::games::computer::Saved {
+        moves: Some(
+            ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4"]
+                .map(str::to_string)
+                .to_vec(),
+        ),
+        ..Default::default()
+    };
+    let session = kchess_contracts::types::SessionDocument::Computer(
+        ComputerGame::resume(Some(saved), &host)
             .expect("the computer game")
-            .snapshot(host.now)
+            .session(host.now),
     );
     if unfinished {
         let saved = cx.update(|cx| {
             cx.global::<crate::core::AppCore>()
                 .request(kchess_contracts::calls::SaveSession {
                     kind: kchess_contracts::types::SessionKind::Computer,
-                    session: kchess_contracts::check::SessionObject(snapshot),
+                    session: kchess_contracts::check::SessionObject::of(&session),
                 })
         });
         cx.foreground_executor()

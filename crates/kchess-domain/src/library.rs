@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::js::{self, finite, integer, string, text};
+use crate::misc::constants::HistoryKind;
 use crate::replay;
 use crate::tree;
 
@@ -125,13 +126,12 @@ pub fn decode_studies(raw: &Value) -> Option<Vec<Value>> {
 
 /* ── Played games ── */
 
-/// A game played in KChess as Game history keeps it: against the computer (`computer`), two
-/// people at one board (`board`) or the chess clock (`clock`).
+/// A game played in KChess as Game history keeps it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayedGame {
     pub id: String,
-    pub source: String,
+    pub source: HistoryKind,
     /// When its first move was played, in milliseconds since the epoch.
     pub started_at: f64,
     pub updated_at: f64,
@@ -152,22 +152,26 @@ pub struct PlayedGame {
 }
 
 impl PlayedGame {
-    /// The side named “You” in a computer game; none for a game at the board.
+    /// The player's side in a computer game: the one `computer::players` named
+    /// `computer::PLAYER`. A game at the board or on the clock has none.
     pub fn player_side(&self) -> Option<shakmaty::Color> {
-        if self.white == "You" {
+        use crate::games::computer::PLAYER;
+        if self.source != HistoryKind::Computer {
+            None
+        } else if self.white == PLAYER {
             Some(shakmaty::Color::White)
-        } else if self.black == "You" {
+        } else if self.black == PLAYER {
             Some(shakmaty::Color::Black)
         } else {
             None
         }
     }
 
-    /// How the game ended for its player: `win`, `loss` or `draw` for the side named “You”, the
+    /// How the game ended for its player: `win`, `loss` or `draw` for the player's side, the
     /// winning colour (`white`, `black`) or `draw` at the board; `unfinished`, `ongoing` or
     /// `clock` when it has no result.
     pub fn outcome(&self) -> &'static str {
-        if self.source == "clock" {
+        if self.source == HistoryKind::Clock {
             return "clock";
         }
         match self.result.as_str() {
@@ -194,7 +198,7 @@ impl PlayedGame {
 pub fn decode_archived_game(raw: &Value) -> Option<PlayedGame> {
     let g = object(Some(raw))?;
     let id = text(g.get("id"), 80)?;
-    let source = string(g.get("source")).filter(|s| ["computer", "board", "clock"].contains(s))?;
+    let source = string(g.get("source")).and_then(HistoryKind::from_key)?;
     let started_at = finite(g.get("startedAt"))?;
     let updated_at = finite(g.get("updatedAt"))?;
     let result = string(g.get("result")).filter(|s| ["*", "1-0", "0-1", "1/2-1/2"].contains(s))?;
@@ -230,7 +234,7 @@ pub fn decode_archived_game(raw: &Value) -> Option<PlayedGame> {
     }
     Some(PlayedGame {
         id: id.into(),
-        source: source.into(),
+        source,
         started_at,
         updated_at,
         white: white.into(),
@@ -369,7 +373,7 @@ mod tests {
     fn played_games_end_for_their_player_or_by_colour() {
         let computer = |white: &str, black: &str, result: &str| {
             let mut game = decode_archived_game(&game(&[])).unwrap();
-            game.source = "computer".into();
+            game.source = HistoryKind::Computer;
             (game.white, game.black, game.result) = (white.into(), black.into(), result.into());
             game.finished = true;
             game
@@ -384,7 +388,7 @@ mod tests {
         let board = decode_archived_game(&game(&[])).unwrap();
         assert_eq!(board.outcome(), "ongoing");
         let clock = PlayedGame {
-            source: "clock".into(),
+            source: HistoryKind::Clock,
             result: "1-0".into(),
             ..board
         };
@@ -394,6 +398,10 @@ mod tests {
             Some(shakmaty::Color::Black)
         );
         assert_eq!(computer("White", "Black", "*").player_side(), None);
+        let mut named_at_the_board = computer("You", "Black", "1-0");
+        named_at_the_board.source = HistoryKind::Board;
+        assert_eq!(named_at_the_board.player_side(), None);
+        assert_eq!(named_at_the_board.outcome(), "white");
     }
 
     #[test]

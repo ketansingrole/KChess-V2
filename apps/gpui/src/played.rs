@@ -9,9 +9,7 @@ use gpui_kit::{App, AppContext as _, Context, Entity, Global, WeakEntity};
 use kchess_contracts::Level;
 use kchess_contracts::calls;
 use kchess_contracts::check::{ArchivedGame, LibraryId, SessionObject};
-use kchess_contracts::types::SessionKind;
-use kchess_contracts::types::{Library, PlayedGame, ProfileArea};
-use serde_json::Value;
+use kchess_contracts::types::{Library, PlayedGame, ProfileArea, SessionDocument, SessionKind};
 
 use crate::core::{Answer, AppCore, Reads};
 use crate::quit::BoxedSave;
@@ -19,8 +17,8 @@ use crate::quit::BoxedSave;
 enum Write {
     Game(PlayedGame),
     Remove(String),
-    /// A page's place in history (`archive:<kind>`), kept with the games it names.
-    Session(String, Value),
+    /// A page's session, or its place in history, kept with the games it names.
+    Session(SessionKind, SessionDocument),
     /// Done once every write before it was answered (with `true`, after those refused were tried
     /// again): with why one still failed, if any did.
     Flushed(oneshot::Sender<crate::quit::Saved>, bool),
@@ -32,7 +30,7 @@ impl Write {
         match self {
             Self::Game(game) => format!("game:{}", game.id),
             Self::Remove(id) => format!("game:{id}"),
-            Self::Session(key, _) => format!("session:{key}"),
+            Self::Session(kind, _) => format!("session:{}", kind.as_str()),
             Self::Flushed(..) => String::new(),
         }
     }
@@ -149,13 +147,10 @@ async fn send(core: &AppCore, write: &Write) -> Result<(), kchess_contracts::Cor
             })
             .await
         }
-        Write::Session(key, value) => {
-            let kind = SessionKind::from_key(key).ok_or_else(|| {
-                kchess_contracts::CoreError::new(format!("No session is kept as {key}."))
-            })?;
+        Write::Session(kind, session) => {
             core.request(calls::SaveSession {
-                kind,
-                session: SessionObject(value.clone()),
+                kind: *kind,
+                session: SessionObject::of(session),
             })
             .await
         }
@@ -240,8 +235,8 @@ impl PlayedGames {
     }
 
     /// Keep a page's session after the game writes sent before it.
-    pub fn save_session(&self, key: String, value: Value) {
-        let _ = self.writes.unbounded_send(Write::Session(key, value));
+    pub fn save_session(&self, kind: SessionKind, session: SessionDocument) {
+        let _ = self.writes.unbounded_send(Write::Session(kind, session));
     }
 
     /// Wait for every write sent so far, trying refused ones again: with why one still failed.

@@ -7,6 +7,7 @@ pub mod archive;
 pub mod computer;
 pub mod local;
 pub mod otb_clock;
+pub mod session;
 
 use serde::{Deserialize, Serialize};
 use shakmaty::Color;

@@ -6,8 +6,8 @@ use kchess_contracts::check::{
 };
 use kchess_contracts::core_api::LibraryApi;
 use kchess_contracts::types::{
-    Drill, JoinedTournament, Library, MistakeGame, MistakesAdded, SessionKind, StudyCommand,
-    StudyCommandResult,
+    Drill, JoinedTournament, Library, MistakeGame, MistakesAdded, SessionDocument, SessionKind,
+    StudyCommand, StudyCommandResult,
 };
 use kchess_domain::misc::documents;
 use kchess_domain::misc::value::J;
@@ -102,7 +102,7 @@ impl LibraryApi for Core {
             .await
     }
 
-    async fn session(&self, kind: SessionKind) -> Result<Option<Value>> {
+    async fn session(&self, kind: SessionKind) -> Result<Option<SessionDocument>> {
         self.database
             .read_async(move |ctx| library::session(ctx.host, ctx.db, kind))
             .await

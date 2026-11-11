@@ -537,7 +537,7 @@ core_api! {
         JoinedTournaments = "joinedTournaments" fn joined_tournaments() -> Vec<JoinedTournament>;
         /// The unfinished game or analysis of this kind kept to resume, or null; the library's
         /// `sessions` alone.
-        Session = "session" fn session(kind: SessionKind) -> Option<Value>;
+        Session = "session" fn session(kind: SessionKind) -> Option<SessionDocument>;
         /// The mistake drills; the library's `mistakes` alone.
         Mistakes = "mistakes" fn mistakes() -> Vec<Drill>;
         /// Answers every repertoire's missed positions.
