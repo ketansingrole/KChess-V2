@@ -119,11 +119,12 @@ impl PlayedGame {
         }
     }
 
-    /// The game for the analysis board: its own document, or its moves from its start.
-    pub fn analysis_pgn(&self) -> String {
+    /// The game for the analysis board: its own document, or its moves from its start; `None`
+    /// when that start is not a legal position.
+    pub fn analysis_pgn(&self) -> Option<String> {
         match &self.pgn {
-            Some(pgn) => pgn.clone(),
-            None => kchess_domain::pgn::setup_pgn(&self.variant, &self.fen, &self.moves, &[]),
+            Some(pgn) => Some(pgn.clone()),
+            None => kchess_domain::pgn::setup_pgn(&self.variant, &self.fen, &self.moves, &[]).ok(),
         }
     }
 }

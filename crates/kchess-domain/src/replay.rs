@@ -23,12 +23,16 @@ pub struct Replay {
 /// Replay UCI moves under a setup's rules, stopping at the first illegal move; `None` when the
 /// setup is not a legal position. Castling may be king-to-rook or king-two-squares.
 pub fn replay_setup<S: AsRef<str>>(variant: &str, fen: &str, moves: &[S]) -> Option<Replay> {
-    let mut pos = rules::setup_start(variant, fen)?;
+    Some(replay_from(rules::setup_start(variant, fen)?, moves))
+}
+
+/// `replay_setup` from a position.
+pub fn replay_from<S: AsRef<str>>(mut pos: VariantPosition, moves: &[S]) -> Replay {
     let played = play_line(&mut pos, moves, true);
-    Some(Replay {
+    Replay {
         fen: rules::make_fen(&pos),
         played,
-    })
+    }
 }
 
 /// How many moves `replaySetup` accepts, without building SAN (the validation decoders need).

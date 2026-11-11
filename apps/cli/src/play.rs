@@ -140,12 +140,7 @@ impl Session<'_> {
             ("Result", result),
             ("White", white),
         ];
-        Ok(kchess_domain::pgn::setup_pgn(
-            &setup.variant,
-            &setup.fen,
-            self.moves(),
-            &headers,
-        ))
+        kchess_domain::pgn::setup_pgn(&setup.variant, &setup.fen, self.moves(), &headers)
     }
 
     fn show(&self) {

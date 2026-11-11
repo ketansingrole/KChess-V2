@@ -94,7 +94,7 @@ impl MemoryStore {
 fn summary_of(review: &StoredReview) -> Value {
     serde_json::to_value(review)
         .ok()
-        .and_then(|value| kchess_domain::review::summarize(&value))
+        .and_then(|value| kchess_domain::review::summarize(&value).ok())
         .unwrap_or(Value::Null)
 }
 

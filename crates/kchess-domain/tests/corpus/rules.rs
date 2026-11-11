@@ -134,7 +134,7 @@ fn answer(method: &str, args: &[Value]) -> Result<Option<Value>, String> {
                 fen,
                 &texts(args, 1, "moves")?,
                 &headers,
-            ))
+            )?)
         }
         "setupDrawReason" => {
             let (variant, fen) = setup(args, 0)?;

@@ -37,7 +37,7 @@ pub use kchess_domain::links::{
 pub use kchess_games::{computer, draw_color, local, random_chess960, random_unit, whole};
 
 /// A `{ variant, fen }` setup's UCI moves as PGN, as far as they are legal, after `headers` (a
-/// JSON object of strings). `None` when the setup or a header is not one.
+/// JSON object of strings). `None` when the setup is not a legal one or a header is not one.
 pub fn setup_pgn(setup: &Value, moves: &[String], headers: &Value) -> Option<String> {
     let (variant, fen) = (setup["variant"].as_str()?, setup["fen"].as_str()?);
     let headers: Vec<(&str, &str)> = match headers {
@@ -47,7 +47,7 @@ pub fn setup_pgn(setup: &Value, moves: &[String], headers: &Value) -> Option<Str
             .collect::<Option<_>>()?,
         _ => Vec::new(),
     };
-    Some(kchess_domain::pgn::setup_pgn(variant, fen, moves, &headers))
+    kchess_domain::pgn::setup_pgn(variant, fen, moves, &headers).ok()
 }
 
 use kchess_contracts::Level;

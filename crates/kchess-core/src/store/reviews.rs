@@ -91,15 +91,17 @@ fn with_game_id(review: &Value, game_id: Option<Value>) -> Result<Map<String, Va
 /// core could not have written.
 pub fn summarize_stored(review: &Value) -> Result<Value> {
     let input = review_input(review)?;
-    kchess_domain::review::summarize(&input)
-        .ok_or_else(|| CoreError::new("This review cannot be analysed."))
+    kchess_domain::review::summarize(&input).map_err(cannot_analyse)
 }
 
 /// `analyseReview`: labels, accuracy and chances for every move of a stored review.
 pub fn analyse_stored(review: &Value) -> Result<Value> {
     let input = review_input(review)?;
-    kchess_domain::review::analyse_review(&input)
-        .ok_or_else(|| CoreError::new("This review cannot be analysed."))
+    kchess_domain::review::analyse_review(&input).map_err(cannot_analyse)
+}
+
+fn cannot_analyse(reason: String) -> CoreError {
+    CoreError::new(format!("This review cannot be analysed: {reason}."))
 }
 
 /// `reviewInput`: the fields the review analysis reads (scores without engine lines).

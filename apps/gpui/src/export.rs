@@ -107,7 +107,7 @@ fn game_pgn(game: &PlayedGame) -> Option<String> {
     }
     let result = kchess_games::Outcome::tag(game.result);
     let date = chrono::Local::now().format("%Y.%m.%d").to_string();
-    Some(kchess_domain::pgn::setup_pgn(
+    kchess_domain::pgn::setup_pgn(
         &game.variant,
         &game.fen,
         &game.moves,
@@ -117,7 +117,8 @@ fn game_pgn(game: &PlayedGame) -> Option<String> {
             ("Result", result),
             ("White", &game.white),
         ],
-    ))
+    )
+    .ok()
 }
 
 /// The FEN of the position shown: a variation's end when it is off the moves, else the move

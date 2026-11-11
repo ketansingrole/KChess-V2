@@ -219,7 +219,7 @@ impl AnalysisPage {
         {
             return Some(analysed.clone());
         }
-        let analysis = kchess_domain::review::analyse_review(&review)?;
+        let analysis = kchess_domain::review::analyse_review(&review).ok()?;
         let classes: Vec<Option<String>> = kchess_domain::review::review_classifications(&review)
             .and_then(|classes| serde_json::from_value(classes).ok())
             .unwrap_or_default();
@@ -565,7 +565,10 @@ impl AnalysisPage {
             origin: Some(game.origin()),
             review,
         };
-        self.open_pgn(&game.analysis_pgn(), opening, cx)
+        let Some(pgn) = game.analysis_pgn() else {
+            return false;
+        };
+        self.open_pgn(&pgn, opening, cx)
     }
 
     /// Study a puzzle (`usePuzzleAnalysis().open`): its solution is the line, each move tried
@@ -582,7 +585,9 @@ impl AnalysisPage {
         let Some(fen) = puzzle["fen"].as_str() else {
             return false;
         };
-        let pgn = kchess_domain::pgn::setup_pgn("standard", fen, &solution, &[]);
+        let Ok(pgn) = kchess_domain::pgn::setup_pgn("standard", fen, &solution, &[]) else {
+            return false;
+        };
         if !self.load_pgn(&pgn, cx) {
             return false;
         }
@@ -680,11 +685,13 @@ impl AnalysisPage {
             return false;
         }
         self.tried_done.push(path.to_string());
-        let judgment = kchess_domain::review::analyse_review(review).and_then(|analysis| {
-            analysis["moves"][0]["judgment"]
-                .as_str()
-                .map(str::to_string)
-        });
+        let judgment = kchess_domain::review::analyse_review(review)
+            .ok()
+            .and_then(|analysis| {
+                analysis["moves"][0]["judgment"]
+                    .as_str()
+                    .map(str::to_string)
+            });
         // The board still holds this puzzle and the variation was not deleted.
         let held =
             self.root.fen == start && self.root.nodes_along(path).len() == moves_of(path).len() + 1;

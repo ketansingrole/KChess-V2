@@ -90,8 +90,9 @@ pub fn main_line(pgn: &str) -> Result<Line, String> {
 }
 
 /// Each side's figures and the faulted moves, numbered as in the game.
-pub fn report(line: &Line, review: &Value) -> Option<Value> {
-    let analysis = analyse_review(review)?;
+pub fn report(line: &Line, review: &Value) -> Result<Value, String> {
+    let analysis = analyse_review(review)
+        .map_err(|reason| format!("The review could not be read: {reason}."))?;
     let white_first = line.fen.split(' ').nth(1) != Some("b");
     let first_number: usize = line
         .fen
@@ -100,8 +101,9 @@ pub fn report(line: &Line, review: &Value) -> Option<Value> {
         .and_then(|number| number.parse().ok())
         .unwrap_or(1);
     let faults: Vec<Value> = analysis["moves"]
-        .as_array()?
-        .iter()
+        .as_array()
+        .into_iter()
+        .flatten()
         .zip(&line.sans)
         .enumerate()
         .filter_map(|(ply, (entry, san))| {
@@ -115,7 +117,7 @@ pub fn report(line: &Line, review: &Value) -> Option<Value> {
             }))
         })
         .collect();
-    Some(json!({
+    Ok(json!({
         "white": analysis["white"],
         "black": analysis["black"],
         "faults": faults,
@@ -174,7 +176,7 @@ pub async fn run(
             },
         }
     }
-    report(&line, &stored).ok_or_else(|| "The review could not be read.".into())
+    report(&line, &stored)
 }
 
 #[cfg(test)]
