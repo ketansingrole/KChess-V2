@@ -96,7 +96,7 @@ fn no_such_player(name: &str) -> CoreError {
 
 /// The current month (UTC) as an archive names it, `2024/03`.
 fn this_month() -> String {
-    let days = crate::lichess::accounts::now_ms().div_euclid(86_400_000);
+    let days = crate::time::now_ms().div_euclid(86_400_000);
     let (year, month, _) = kchess_domain::calendar::civil_from_days(days).unwrap_or((1970, 1, 1));
     format!("{year:04}/{month:02}")
 }
@@ -402,7 +402,7 @@ impl Chesscom {
 
     async fn run(&self, name: &str, epoch: u64) -> Result<usize> {
         let current = || self.current(name, epoch);
-        let started_at = crate::lichess::accounts::now_ms();
+        let started_at = crate::time::now_ms();
         let player = name.to_lowercase();
         let list = self
             .get(

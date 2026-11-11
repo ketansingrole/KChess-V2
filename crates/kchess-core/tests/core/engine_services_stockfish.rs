@@ -12,10 +12,12 @@ use kchess_core::engine::status::EngineLocations;
 use serde_json::json;
 
 #[tokio::test]
+#[cfg_attr(
+    not(kchess_stockfish),
+    ignore = "needs a native Stockfish: set KCHESS_ENGINE_PATH"
+)]
 async fn bundled_stockfish_answers_a_move_for_the_position() {
-    let Some(engine) = support::stockfish() else {
-        return;
-    };
+    let engine = support::engine("KCHESS_ENGINE_PATH");
 
     let host = support::host();
     let locations = EngineLocations {

@@ -4,10 +4,11 @@
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
-use super::library::{js_json, now_ms, object};
+use super::library::{js_json, object};
 use super::sql::Sql as _;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use crate::time::now_ms;
 
 /// Oldest entries beyond this are dropped; enough to study, small enough to never matter on disk.
 const MAX_ENTRIES: i64 = 5000;
@@ -43,7 +44,7 @@ pub fn save_voice_attempt(db: &Connection, attempt: &Value) -> Result<i64> {
         "INSERT INTO voice_log (at, source, heard, confidence, words, outcome, parsed, expected, fen, retryOf)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
-            now_ms()? as i64,
+            now_ms(),
             source,
             heard,
             confidence,
@@ -167,7 +168,7 @@ pub fn voice_history_document(host: &dyn Host, db: &Connection) -> Result<String
         }
         entries.push(entry);
     }
-    let document = json!({ "exportedAt": now_ms()?, "entries": entries });
+    let document = json!({ "exportedAt": now_ms(), "entries": entries });
     let mut out = String::new();
     write_pretty(&document, 0, &mut out);
     out.push('\n');

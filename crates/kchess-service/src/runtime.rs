@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::discovery;
-use crate::protocol::{self, hex};
+use crate::protocol;
+use kchess_core::ids::hex;
 
 fn digest(path: &Path) -> std::io::Result<String> {
     let mut hash = Sha256::new();

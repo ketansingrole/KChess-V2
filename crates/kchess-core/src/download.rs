@@ -24,11 +24,10 @@ use reqwest::header::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{CoreError, Result};
+use crate::error::{CoreError, ErrorKind, Result};
 use crate::usage::Meter;
 
-/// The message of a download stopped by its caller.
-pub const ABORTED: &str = "This operation was aborted";
+pub use crate::tasks::ABORTED;
 
 /// The HTTP client of a download. It asks for the body as published (no gzip on top), so the
 /// length is the progress total, digests are of the published file and a body can resume.
@@ -66,6 +65,17 @@ pub struct Wording {
     pub too_large: &'static str,
 }
 
+/// A request that failed or timed out, in `wording`'s words: an `Offline` (or `TimedOut`) error,
+/// so a caller can tell the person to check the connection only when the connection failed.
+fn network_error(wording: &Wording, cause: &reqwest::Error) -> CoreError {
+    let kind = if cause.is_timeout() {
+        ErrorKind::TimedOut
+    } else {
+        ErrorKind::Offline
+    };
+    CoreError::new((wording.network)(cause)).with_kind(kind)
+}
+
 /// Where a download's traffic is counted.
 #[derive(Clone, Copy)]
 pub struct Usage<'a> {
@@ -98,9 +108,9 @@ pub async fn open<'a>(
     let mut requests = 0;
     let sent = tokio::select! {
         biased;
-        () = cancel.cancelled() => Err(CoreError::aborted(ABORTED)),
+        () = cancel.cancelled() => Err(crate::tasks::aborted()),
         sent = send_retrying(request, limits.deadline, &mut requests) => {
-            sent.map_err(|cause| CoreError::new((wording.network)(&cause)))
+            sent.map_err(|cause| network_error(wording, &cause))
         }
     };
     let counted = |requests| usage.meter.count("", usage.kind, requests, 0);
@@ -148,10 +158,10 @@ impl Body<'_> {
     pub async fn next(&mut self) -> Result<Option<bytes::Bytes>> {
         let chunk = tokio::select! {
             biased;
-            () = self.cancel.cancelled() => return Err(CoreError::aborted(ABORTED)),
+            () = self.cancel.cancelled() => return Err(crate::tasks::aborted()),
             chunk = self.body.chunk() => chunk,
         };
-        let chunk = chunk.map_err(|cause| CoreError::new((self.wording.network)(&cause)))?;
+        let chunk = chunk.map_err(|cause| network_error(self.wording, &cause))?;
         if let Some(chunk) = &chunk {
             self.received += chunk.len() as u64;
             if self.received > self.limits.max_bytes {

@@ -238,8 +238,8 @@ impl Database {
         result
     }
 
-    /// Occupies the async execution lane until the permit drops (`Core::hold_storage_for_tests`).
-    pub(crate) async fn hold_execution(&self) -> Result<tokio::sync::OwnedSemaphorePermit> {
+    /// Occupies the async execution lane until the permit drops: a test holds the store busy.
+    pub async fn hold_execution(&self) -> Result<tokio::sync::OwnedSemaphorePermit> {
         self.lane.hold().await
     }
 

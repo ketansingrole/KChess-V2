@@ -4,10 +4,12 @@
 use rusqlite::{Connection, OptionalExtension, params, types::Value as Sql};
 use serde_json::{Map, Value, json};
 
-use super::library::{js_json, now_ms, num, truthy};
+use super::library::js_json;
 use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use crate::time::now_ms;
+use kchess_domain::js::truthy;
 
 /// `parse` for a stored review or summary: a failure is logged.
 fn parse_logged(host: &dyn Host, text: &str) -> Option<Value> {
@@ -177,7 +179,7 @@ pub fn write_review(host: &dyn Host, db: &Connection, input: &Value) -> Result<V
         .cloned();
     let game_id = coalesce(input.get("gameId"), existing_game.as_ref());
     let mut merged = with_game_id(input, game_id.clone())?;
-    merged.insert("updatedAt".into(), num(now_ms()?));
+    merged.insert("updatedAt".into(), json!(now_ms()));
     let merged = Value::Object(merged);
     let summary = summarize_stored(&merged)?;
     let data = js_json(&merged);

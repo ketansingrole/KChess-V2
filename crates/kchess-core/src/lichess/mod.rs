@@ -24,7 +24,4 @@ pub fn is_lichess_id(text: &str) -> bool {
     text.len() == 8 && text.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
 
-/// The error of a request or stream that was cancelled.
-pub(crate) fn aborted() -> crate::error::CoreError {
-    crate::error::CoreError::aborted("This operation was aborted")
-}
+pub(crate) use crate::tasks::aborted;

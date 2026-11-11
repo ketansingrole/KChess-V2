@@ -118,7 +118,7 @@ The goal is to keep **exactly one core per profile** and let **any number of cli
   - `result`: `{ id, value }` or `{ id, error }`, with the core's `CoreError` message unchanged.
   - `cancel`: `{ id }`. Cancellation must reach the work (the repository rule for `UciController`
     and `RequestScope`), so the service maps it to the task's cancellation, not to dropping the
-    reply.
+    reply. A client sends it when the caller drops a call before its answer (`Client::call`).
   - `event`: `{ name, payload }`, a `CoreEvent` (`kchess-contracts/src/events.rs`), including the
     change events below.
   - `host:request` / `host:reply`: the core's capability round trip (`HostAsk` and `HostReply`

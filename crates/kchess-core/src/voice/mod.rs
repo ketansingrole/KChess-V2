@@ -26,7 +26,7 @@ pub mod recognizer;
 
 use crate::archive::{self, Refusal};
 use crate::download;
-use crate::error::{CoreError, Result};
+use crate::error::{CoreError, ErrorKind, Result};
 use crate::host::{Host, Level};
 use crate::usage::Meter;
 
@@ -278,10 +278,7 @@ impl VoiceModelCache {
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
-        match self.inner.state.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        }
+        crate::tasks::lock(&self.inner.state)
     }
 
     fn report(&self, progress: Progress) {
@@ -381,10 +378,19 @@ impl VoiceModelCache {
             })?;
         match self.stage(staging.path()).await {
             Ok(()) => Ok(self.path()),
-            Err(cause) => Err(CoreError::new(format!(
-                "Couldn’t prepare voice input. {} Connect to the internet and try again.",
-                cause.message
-            ))),
+            Err(cause) => {
+                // Connection guidance only when the connection is what failed.
+                let advice = match cause.kind {
+                    Some(ErrorKind::Offline | ErrorKind::TimedOut) => {
+                        " Connect to the internet and try again."
+                    }
+                    _ => "",
+                };
+                Err(CoreError::new(format!(
+                    "Couldn’t prepare voice input. {}{advice}",
+                    cause.message
+                )))
+            }
         }
     }
 
@@ -419,17 +425,17 @@ impl VoiceModelCache {
         remove_dir_if_present(&path).await?;
         tokio::fs::rename(&prepared, &path)
             .await
-            .map_err(|cause| io_error("Could not publish the voice model", cause))?;
+            .map_err(|cause| CoreError::wrap("Could not publish the voice model", cause))?;
         let ready = staging.join("ready.json");
         let text = serde_json::to_vec(&marker).map_err(|cause| {
             CoreError::new(format!("Could not record the voice model: {cause}"))
         })?;
         tokio::fs::write(&ready, text)
             .await
-            .map_err(|cause| io_error("Could not record the voice model", cause))?;
+            .map_err(|cause| CoreError::wrap("Could not record the voice model", cause))?;
         tokio::fs::rename(&ready, &marker_file)
             .await
-            .map_err(|cause| io_error("Could not record the voice model", cause))
+            .map_err(|cause| CoreError::wrap("Could not record the voice model", cause))
     }
 
     /// Unpack an earlier release's verified `model.tar.gz` into `staging/unpacked`, so upgrading
@@ -481,7 +487,7 @@ impl VoiceModelCache {
                 }
                 tokio::fs::copy(source, zip)
                     .await
-                    .map_err(|cause| io_error("Could not stage the voice model", cause))?;
+                    .map_err(|cause| CoreError::wrap("Could not stage the voice model", cause))?;
                 self.report(Progress {
                     phase: Phase::Downloading,
                     received: length,
@@ -510,11 +516,11 @@ impl VoiceModelCache {
             download::open(&client, || client.get(url), limits, &never, usage, &WORDING).await?;
         let mut file = tokio::fs::File::create(zip)
             .await
-            .map_err(|cause| io_error("Could not stage the voice model", cause))?;
+            .map_err(|cause| CoreError::wrap("Could not stage the voice model", cause))?;
         while let Some(chunk) = body.next().await? {
             file.write_all(&chunk)
                 .await
-                .map_err(|cause| io_error("Could not stage the voice model", cause))?;
+                .map_err(|cause| CoreError::wrap("Could not stage the voice model", cause))?;
             self.report(Progress {
                 phase: Phase::Downloading,
                 received: body.received(),
@@ -523,7 +529,7 @@ impl VoiceModelCache {
         }
         file.flush()
             .await
-            .map_err(|cause| io_error("Could not stage the voice model", cause))?;
+            .map_err(|cause| CoreError::wrap("Could not stage the voice model", cause))?;
         Ok(body.received())
     }
 
@@ -568,7 +574,7 @@ async fn remove_if_present(path: &Path) -> Result<()> {
     match tokio::fs::remove_file(path).await {
         Ok(()) => Ok(()),
         Err(cause) if cause.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(cause) => Err(io_error("Could not replace the voice model", cause)),
+        Err(cause) => Err(CoreError::wrap("Could not replace the voice model", cause)),
     }
 }
 
@@ -576,7 +582,7 @@ async fn remove_dir_if_present(path: &Path) -> Result<()> {
     match tokio::fs::remove_dir_all(path).await {
         Ok(()) => Ok(()),
         Err(cause) if cause.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(cause) => Err(io_error("Could not replace the voice model", cause)),
+        Err(cause) => Err(CoreError::wrap("Could not replace the voice model", cause)),
     }
 }
 
@@ -592,10 +598,10 @@ fn verify(folder: &Path, marker: &Marker) -> Result<Option<u64>> {
             Ok(metadata) if metadata.is_file() && metadata.len() == file.size => {}
             Ok(_) => return Ok(None),
             Err(cause) if cause.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(cause) => return Err(io_error("Could not check the voice model", cause)),
+            Err(cause) => return Err(CoreError::wrap("Could not check the voice model", cause)),
         }
         let digest = archive::sha256_file(&path)
-            .map_err(|cause| io_error("Could not check the voice model", cause))?;
+            .map_err(|cause| CoreError::wrap("Could not check the voice model", cause))?;
         if digest != file.sha256 {
             return Ok(None);
         }
@@ -635,10 +641,6 @@ fn describe(folder: &Path) -> io::Result<Vec<MarkerFile>> {
     Ok(files)
 }
 
-fn io_error(context: &str, cause: io::Error) -> CoreError {
-    CoreError::new(format!("{context}: {cause}"))
-}
-
 /// How the model download words its failures.
 const WORDING: download::Wording = download::Wording {
     network: error_text,
@@ -672,14 +674,14 @@ fn build(
     cancel: &CancellationToken,
 ) -> Result<Marker> {
     let digest = archive::sha256_file(zip)
-        .map_err(|cause| io_error("Could not read the voice model archive", cause))?;
+        .map_err(|cause| CoreError::wrap("Could not read the voice model archive", cause))?;
     if digest != model.sha256 {
         return Err(CoreError::new(CHECKSUM_MESSAGE));
     }
     let extracted = staging.join("unpacked");
     extract(zip, &extracted, &model.name, cancel)?;
     let files = describe(&extracted.join(&model.name))
-        .map_err(|cause| io_error("Could not record the voice model", cause))?;
+        .map_err(|cause| CoreError::wrap("Could not record the voice model", cause))?;
     Ok(Marker {
         source: model.sha256.clone(),
         files,
@@ -695,7 +697,7 @@ fn unpack_legacy(archive: &Path, staging: &Path, model: &VoiceModel) -> Result<M
         archive::unpack_tar(reader(file), to)
     })?;
     let files = describe(&extracted.join(&model.name))
-        .map_err(|cause| io_error("Could not record the voice model", cause))?;
+        .map_err(|cause| CoreError::wrap("Could not record the voice model", cause))?;
     Ok(Marker {
         source: model.sha256.clone(),
         files,
@@ -719,9 +721,9 @@ fn unpack(
     unpack: impl FnOnce(File, &archive::Unpack) -> std::result::Result<usize, Refusal>,
 ) -> Result<()> {
     fs::create_dir_all(root)
-        .map_err(|cause| io_error("Could not unpack the voice model", cause))?;
+        .map_err(|cause| CoreError::wrap("Could not unpack the voice model", cause))?;
     let file = File::open(source)
-        .map_err(|cause| io_error("Could not read the voice model archive", cause))?;
+        .map_err(|cause| CoreError::wrap("Could not read the voice model archive", cause))?;
     let folder = format!("{name}/");
     let to = archive::Unpack {
         root,
@@ -735,7 +737,7 @@ fn unpack(
         Err(Refusal::Cancelled) => {
             Err(CoreError::aborted("Voice model preparation was cancelled."))
         }
-        Err(Refusal::Io(cause)) => Err(io_error("Could not unpack the voice model", cause)),
+        Err(Refusal::Io(cause)) => Err(CoreError::wrap("Could not unpack the voice model", cause)),
         Err(_) => Err(CoreError::new(INVALID_MESSAGE)),
     }
 }

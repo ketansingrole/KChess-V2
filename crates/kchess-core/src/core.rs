@@ -21,7 +21,7 @@ use crate::capabilities::Capabilities;
 use crate::connection::{APP, ClientInfo, Connections};
 use crate::engine::EngineContext;
 use crate::engine::analysis::Analysis;
-use crate::engine::bridge::{Battery, EngineOwners, ReviewBridge, ReviewRecords};
+use crate::engine::bridge::{Battery, EngineOwners, ReviewBridge};
 use crate::engine::managed::{
     ManagedLocation, Target, default_dir, delete_managed_engine, install_managed_engine,
 };
@@ -160,7 +160,7 @@ impl Core {
         let ctx = EngineContext::new(Arc::clone(&host), hub, scheduler, engine_locations(&config));
         let search = Search::new(ctx.clone());
         let analysis = Analysis::new(ctx.clone());
-        let reviews = Reviews::new(ctx.clone(), Arc::new(ReviewRecords(Arc::clone(&database))));
+        let reviews = Reviews::new(ctx.clone(), Arc::clone(&database));
         let busy = Arc::new(AtomicBool::new(false));
         // A live game stops the computer, the analysis and the review engine before it is reported.
         let game_stops: Arc<dyn Fn() + Send + Sync> = {
@@ -270,6 +270,13 @@ impl Core {
         id
     }
 
+    /// The frontend that embeds this core, with the host requests it can answer: the others are
+    /// refused rather than sent to it (an embedded command line has no window to focus).
+    pub fn embedded_by(&self, info: ClientInfo) {
+        self.connections.set_app(info);
+        self.report_alert_owner();
+    }
+
     /// The shared service serves its own clients: the embedding app's connection goes.
     pub fn serve_connections(&self) {
         self.connections.without_app();
@@ -349,12 +356,14 @@ impl Core {
                 .map_err(|_| CoreError::new("Invalid host reply."))?;
             return self.host_reply(id, reply).map(|()| Value::Null);
         }
-        if !self.closed.load(Ordering::SeqCst) {
-            self.start();
-        }
         // Tracked before the closed check: closing waits for every call that got this far.
         let _in_flight = self.tracker.token();
         self.refuse_closed()?;
+        // An earlier release's profile is imported before anything reads the store.
+        self.ensure_migrated().await?;
+        if !self.closed.load(Ordering::SeqCst) {
+            self.start();
+        }
         // Boxed: the method table is one large future, too big to lay out on a worker's stack.
         Box::pin(kchess_contracts::core_api::dispatch(self, method, args)).await
     }

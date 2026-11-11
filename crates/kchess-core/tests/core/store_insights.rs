@@ -2,7 +2,7 @@
 
 use crate::support;
 
-use kchess_core::store::{games, insights, library};
+use kchess_core::store::{games, insights};
 use serde_json::{Value, json};
 use support::store::{Store, game, list, profile};
 
@@ -48,7 +48,7 @@ fn insights(store: &Store) -> Value {
                 c.host,
                 c.db,
                 &json!({ "account": "Alice" }),
-                library::now_ms()?,
+                kchess_core::time::now_ms() as f64,
             )
         })
         .expect("insights")
@@ -278,7 +278,7 @@ fn variant_games_are_counted_apart_from_standard_chess() {
                     c.host,
                     c.db,
                     &json!({ "account": "Alice", "variant": variant }),
-                    library::now_ms()?,
+                    kchess_core::time::now_ms() as f64,
                 )
             })
             .expect("insights")

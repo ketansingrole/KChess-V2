@@ -2,6 +2,7 @@
 //! `kchess.db`. Logins arrive already encrypted: the caller seals them with the operating system's
 //! credential store.
 
+use crate::time::now_ms;
 use std::collections::{BTreeMap, HashMap};
 
 use rusqlite::types::Value as SqlValue;
@@ -316,14 +317,6 @@ pub fn import_token_ciphertext(
     )
     .sql()?;
     Ok(())
-}
-
-pub(super) fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
-        })
 }
 
 // ---- Values: SQLite and JavaScript semantics ------------------------------------------------

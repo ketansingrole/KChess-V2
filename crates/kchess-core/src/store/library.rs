@@ -6,15 +6,13 @@
 //! `json_codec`, `documents`, `studies` and `library_import` modules; this module keeps the
 //! helpers the other storage modules share and the games/mistakes/tournaments writers.
 
-use getrandom::fill;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::sql::Sql as _;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
-use kchess_domain::js;
+use kchess_domain::js::{self, utf16_len};
 use kchess_domain::library::{MAX_ARCHIVED_GAMES, MAX_MISTAKES};
 use kchess_domain::misc::MAX_DOCUMENT;
 use kchess_domain::misc::value::J;
@@ -92,14 +90,6 @@ pub fn save_session(db: &Connection, kind: &str, value: Value) -> Result<Value> 
 
 /* ── Shared helpers (also used by the other storage modules) ── */
 
-/// Milliseconds since the Unix epoch.
-pub fn now_ms() -> Result<f64> {
-    let elapsed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| CoreError::new(e.to_string()))?;
-    Ok(elapsed.as_millis() as f64)
-}
-
 /// A JSON number: whole numbers without a fraction, as `JSON.stringify` writes them.
 pub fn num(n: f64) -> Value {
     if n.fract() == 0.0 && n.abs() < 9.0e15 {
@@ -107,16 +97,6 @@ pub fn num(n: f64) -> Value {
     } else {
         serde_json::Number::from_f64(n).map_or(Value::Null, Value::Number)
     }
-}
-
-/// `crypto.randomUUID()`: a version 4 UUID.
-pub fn random_uuid() -> Result<String> {
-    let mut bytes = [0u8; 16];
-    fill(&mut bytes).map_err(|e| CoreError::new(e.to_string()))?;
-    Ok(uuid::Builder::from_random_bytes(bytes)
-        .into_uuid()
-        .hyphenated()
-        .to_string())
 }
 
 /// `Boolean(v)` for an optional JSON value; absent is false.
@@ -165,7 +145,7 @@ module now; their bodies moved unchanged. The re-exports keep every
 
 pub use super::documents::read_document;
 pub(crate) use super::documents::{assert_replaceable, write_document};
-pub use super::json_codec::{clean_name, js_json, js_slice, utf16_len};
+pub use super::json_codec::{clean_name, js_json};
 pub use super::library_import::{cached_library, library};
 pub(crate) use super::library_import::{
     read_joined, read_misses, read_mistakes, read_schedule_lines, read_session, until_after,
@@ -697,27 +677,12 @@ mod tests {
             js_json(&value),
             r#"{"b":1,"a":[0.5,null,true,"é\n"],"n":-2}"#
         );
-        assert_eq!(num(3.0), json!(3));
-        assert_eq!(num(0.25), json!(0.25));
     }
 
     #[test]
-    fn lengths_and_slices_count_utf16_units() {
-        assert_eq!(utf16_len("a😀"), 3);
-        // The emoji takes two units, so a cut at three keeps only the letters before it.
-        assert_eq!(js_slice("ab😀cd", 3), "ab");
-        assert_eq!(js_slice("ab😀cd", 4), "ab😀");
+    fn names_are_trimmed_and_cut() {
         assert_eq!(clean_name("  Name  "), "Name");
         assert_eq!(clean_name(&"x".repeat(200)).len(), 120);
-    }
-
-    #[test]
-    fn uuids_are_version_four() {
-        let id = random_uuid().expect("random bytes");
-        assert_eq!(id.len(), 36);
-        assert_eq!(&id[14..15], "4");
-        assert!(matches!(&id[19..20], "8" | "9" | "a" | "b"));
-        assert_ne!(id, random_uuid().expect("random bytes"));
     }
 
     #[test]

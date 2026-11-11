@@ -4,7 +4,7 @@
 use serde_json::{Value, json};
 
 use super::StoreContext;
-use super::documents::{read_document, write_document};
+use super::documents::{read_document, read_document_text, write_document};
 use crate::error::Result;
 
 const CONNECTION: &str = "ai:connection";
@@ -12,9 +12,9 @@ const EXPLANATIONS: &str = "ai:explanations";
 /// Explanations kept, oldest dropped first.
 const MAX_EXPLANATIONS: usize = 200;
 
-/// The stored connection, or null.
-pub fn connection(ctx: &StoreContext) -> Result<Value> {
-    Ok(read_document(ctx.host, ctx.db, CONNECTION)?.unwrap_or(Value::Null))
+/// The stored connection's text, when there is one.
+pub fn connection(ctx: &StoreContext) -> Result<Option<String>> {
+    read_document_text(ctx.db, CONNECTION)
 }
 
 pub fn save_connection(ctx: &StoreContext, connection: &Value) -> Result<()> {

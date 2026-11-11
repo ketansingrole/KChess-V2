@@ -4,14 +4,6 @@ use serde_json::{Value, json};
 use crate::error::{CoreError, Result};
 use crate::lichess::accounts::Reply;
 
-/// `Date.now()`.
-pub(crate) fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as i64)
-        .unwrap_or(0)
-}
-
 /// A normalized string value; anything else is empty.
 pub(crate) fn text(value: &Value) -> String {
     value.as_str().unwrap_or_default().to_string()

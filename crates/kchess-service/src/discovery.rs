@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::protocol::hex;
+use kchess_core::ids::hex;
 
 /// The file in the profile that names the running core.
 pub const INFO_FILE: &str = "core.json";
@@ -189,8 +189,8 @@ pub fn same_token(given: &str, expected: &str) -> bool {
 /// The user's KChess runtime folder: the service binary of each release runs from here, outside
 /// any app and any profile (`docs/shared-core.md`, "Where the service runs from").
 pub fn runtime_dir() -> Option<PathBuf> {
-    // Tests and development builds keep their copies elsewhere.
-    if let Some(dir) = kchess_core::env::var_os("KCHESS_RUNTIME_DIR") {
+    // Tests and development runs keep their copies elsewhere.
+    if let Some(dir) = kchess_core::dev_override("KCHESS_RUNTIME_DIR") {
         return Some(PathBuf::from(dir).join("core"));
     }
     #[cfg(target_os = "macos")]

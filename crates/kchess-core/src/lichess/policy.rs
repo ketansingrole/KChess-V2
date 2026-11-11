@@ -243,9 +243,7 @@ pub(crate) fn timed_out() -> CoreError {
     CoreError::new("Lichess didn’t answer in time.").with_kind(ErrorKind::TimedOut)
 }
 
-fn aborted() -> CoreError {
-    super::aborted()
-}
+use crate::tasks::aborted;
 
 /// The cooldown a 429 starts: `Retry-After` in seconds, at most 5 minutes; 60 seconds when the
 /// header is missing or not a number, and at least a second when it says 0.

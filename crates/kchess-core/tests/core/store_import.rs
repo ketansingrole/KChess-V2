@@ -364,3 +364,33 @@ fn an_earlier_database_that_fails_to_read_is_not_half_imported() {
         json!(true)
     );
 }
+
+/// 2026-11-11: each method that read the store migrated an earlier release's profile first, by
+/// hand, and `insights` did not, so opened first it found no games. Every call now runs after the
+/// import.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_call_finds_an_earlier_releases_games_whatever_it_is() {
+    let (_earlier, legacy) = earlier_database(
+        "CREATE TABLE lichess_accounts (username TEXT, auth_kind TEXT, last_synced_at INTEGER);
+         INSERT INTO lichess_accounts VALUES ('Carol', 'oauth', 5);
+         CREATE TABLE lichess_games (game_id TEXT, account_username TEXT, played_at INTEGER, rated INTEGER,
+           speed TEXT, perf TEXT, status TEXT, winner TEXT, color TEXT, opponent_name TEXT,
+           opponent_rating INTEGER, player_rating INTEGER, rating_diff INTEGER, opening_name TEXT, moves TEXT);
+         INSERT INTO lichess_games VALUES ('Legacy01', 'Carol', 7, 1, 'bullet', 'bullet', 'resign', 'black',
+           'white', 'Dan', 1500, 1510, -4, NULL, 'e4 e5');",
+    );
+    let profile = tempfile::tempdir().expect("profile");
+    let config = kchess_core::Config {
+        legacy_database_path: Some(legacy),
+        system_credentials: true,
+        test: Some(kchess_core::TestSwitches::default()),
+        ..kchess_core::Config::new(profile.path().to_path_buf())
+    };
+    let core = kchess_core::Core::open(config, support::host()).expect("opens");
+    let report = core
+        .call("insights", vec![json!({ "account": "Carol" })])
+        .await
+        .expect("insights");
+    assert_eq!(report["total"], json!(1), "{report}");
+    core.close().await;
+}

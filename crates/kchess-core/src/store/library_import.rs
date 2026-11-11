@@ -10,12 +10,13 @@ use super::documents::{
     DAMAGED_STUDIES, decode_archived_game_text, decode_mistakes_text, parse_text, read_document,
     read_document_text, stored_studies, write_document,
 };
-use super::json_codec::{js_json, utf16_len};
-use super::library::{JOINED, MISSES, MISTAKES, SCHEDULE, SESSION_KINDS, STUDIES, truthy};
+use super::json_codec::js_json;
+use super::library::{JOINED, MISSES, MISTAKES, SCHEDULE, SESSION_KINDS, STUDIES};
 use super::sql::{Sql as _, transaction};
 use super::studies::id_of;
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
+use kchess_domain::js::{truthy, utf16_len};
 use kchess_domain::library::MAX_STUDIES;
 use kchess_domain::misc::value::J;
 

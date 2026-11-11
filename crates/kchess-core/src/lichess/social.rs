@@ -264,12 +264,7 @@ impl Lichess {
     /// `importGame`: upload `pgn` to Lichess as `account`, or anonymously when it is empty or its
     /// login is unavailable.
     pub async fn import_game(&self, account: &str, pgn: &str) -> CoreResult<ImportedGame> {
-        let mut auth = self.client().counted(account, UsageKind::Profile);
-        if !account.is_empty()
-            && let Ok(Some(token)) = self.stored_login(account).await
-        {
-            auth = auth.with_token(token);
-        }
+        let auth = self.optional_login(account, UsageKind::Profile).await;
         let answer: Value = self
             .client()
             .post("/api/import", &auth)

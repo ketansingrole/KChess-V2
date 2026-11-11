@@ -8,7 +8,7 @@ use crate::support;
 
 use kchess_core::store::{
     games::{self, MAX_GAMES},
-    insights, library, reviews, usage,
+    insights, reviews, usage,
 };
 use serde_json::{Value, json};
 use support::store::{Store, profile};
@@ -140,7 +140,9 @@ fn reads() -> Vec<(&'static str, Read)> {
             Box::new(|store: &Store| {
                 let query = json!({ "account": "Alice" });
                 store
-                    .read_direct(|c| insights::insights(c.host, c.db, &query, library::now_ms()?))
+                    .read_direct(|c| {
+                        insights::insights(c.host, c.db, &query, kchess_core::time::now_ms() as f64)
+                    })
                     .expect("insights")
             }),
         ),

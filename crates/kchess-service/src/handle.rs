@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use kchess_contracts::calls::CoreCall;
 use kchess_contracts::{CoreError, CoreEvent, HostAsk, HostReply, HostRequest, Level};
-use kchess_core::connection::APP;
+use kchess_core::connection::{APP, ClientInfo};
 use kchess_core::{Config, Core, Host};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -21,6 +21,20 @@ const STOPPED: &str = "The KChess core stopped.";
 /// The first wait before starting a stopped core again, doubled up to `RESTART_LIMIT`.
 const RESTART_FIRST: Duration = Duration::from_millis(200);
 const RESTART_LIMIT: Duration = Duration::from_secs(5);
+
+/// The stack of every thread the core runs on: what macOS and Linux give a main thread. Windows
+/// gives its main thread 1 MB, and a sign-in overflowed a smaller stack in a debug build; in the
+/// shared service an overflow aborts the core for every window and command at once.
+pub const CORE_STACK: usize = 8 * 1024 * 1024;
+
+/// The runtime a frontend (or the service) runs its core on.
+pub fn core_runtime() -> std::io::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("kchess-core")
+        .thread_stack_size(CORE_STACK)
+        .build()
+}
 
 /// Where a frontend writes a log line.
 pub type Log = Arc<dyn Fn(Level, &str, &str) + Send + Sync>;
@@ -91,7 +105,7 @@ pub struct CoreHandle {
 
 impl CoreHandle {
     /// Opens the profile's core (`options.config.data_dir`) and starts delivering its events.
-    /// Must run in a Tokio runtime, where the core and its event pump then run.
+    /// Must run in a Tokio runtime (`core_runtime`), where the core and its event pump then run.
     pub async fn open(
         options: Options,
     ) -> Result<(CoreHandle, mpsc::UnboundedReceiver<ClientEvent>), ConnectError> {
@@ -114,6 +128,11 @@ impl CoreHandle {
                 });
                 let core = Core::open(config, host)
                     .map_err(|cause| ConnectError::Failed(cause.message))?;
+                core.embedded_by(ClientInfo {
+                    kind: hello.kind,
+                    release: crate::protocol::release(),
+                    capabilities: hello.capabilities,
+                });
                 let core = Arc::new(core);
                 let weak = WeakBackend::Embedded(Arc::downgrade(&core));
                 tokio::spawn(pump(weak, incoming, events, answer));
@@ -385,17 +404,30 @@ async fn service_pump(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kchess_core::connection::Capability;
 
     fn quiet() -> Log {
         Arc::new(|_, _, _| {})
     }
 
     fn embedded(profile: &std::path::Path, answer: Option<Answer>) -> Options {
+        embedded_as(
+            profile,
+            answer,
+            vec![Capability::Browser, Capability::Focus],
+        )
+    }
+
+    fn embedded_as(
+        profile: &std::path::Path,
+        answer: Option<Answer>,
+        capabilities: Vec<Capability>,
+    ) -> Options {
         Options {
             config: Config::new(profile.to_path_buf()),
             hello: Hello {
                 kind: "test".into(),
-                capabilities: Vec::new(),
+                capabilities,
             },
             mode: Mode::Embedded,
             reconnect: false,
@@ -474,5 +506,46 @@ mod tests {
         core.close().await;
         let refused = core.call("library", Vec::new()).await;
         assert!(refused.is_err(), "a closed core answers nothing");
+    }
+
+    /// 2026-11-11: an embedded core sent every host request to its frontend, whatever the
+    /// frontend declared, so an embedded command line was asked to focus a window it does not
+    /// have. It hears only what it said it can answer, as the shared core's clients do.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_embedded_core_asks_only_what_its_frontend_can_answer() {
+        let profile = tempfile::tempdir().expect("profile");
+        let options = embedded_as(profile.path(), None, vec![Capability::Browser]);
+        let (core, _events) = CoreHandle::open(options).await.expect("opens");
+        let Backend::Embedded(inner) = &core.backend else {
+            panic!("embedded");
+        };
+        let connections = inner.connections();
+        let info = connections.info(APP).expect("the frontend");
+        assert_eq!(info.kind, "test");
+        assert_eq!(info.capabilities, [Capability::Browser]);
+        assert_eq!(connections.route(Capability::Focus, Some(APP)), None);
+        assert_eq!(connections.alert_owner(), None);
+        assert_eq!(connections.route(Capability::Browser, Some(APP)), Some(APP));
+        core.close().await;
+    }
+
+    /// 2026-11-11: the app built its own runtime on the default 2 MiB worker stack, so its
+    /// embedded core ran on less than the command line's and the service's. Every frontend's core
+    /// runs on `core_runtime`, whose threads hold a deep call.
+    #[test]
+    fn the_core_runtime_holds_a_deep_call() {
+        #[inline(never)]
+        fn deep(depth: usize) -> u8 {
+            let frame = std::hint::black_box([depth as u8; 64 * 1024]);
+            if depth == 0 {
+                frame[0]
+            } else {
+                deep(depth - 1).wrapping_add(frame[frame.len() - 1])
+            }
+        }
+        let runtime = core_runtime().expect("runtime");
+        // Past the default 2 MiB worker stack (at least 3 MiB of frames), within the core's.
+        let answer = runtime.block_on(async { tokio::spawn(async { deep(48) }).await });
+        assert!(answer.is_ok());
     }
 }

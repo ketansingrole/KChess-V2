@@ -24,7 +24,6 @@ use crate::usage::Meter;
 use kchess_domain::puzzle::{Random, Sampler};
 use queries::{LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleDbStatus};
 
-pub const PUZZLE_DB_URL: &str = "https://database.lichess.org/lichess_db_puzzle.csv.zst";
 /// How long the puzzle database download may go without a byte before it fails.
 const DOWNLOAD_SILENCE: std::time::Duration = std::time::Duration::from_secs(60);
 /// The most the download may bring: the compressed database is some 300 MB (2026).
@@ -220,7 +219,7 @@ impl PuzzleService {
         }
     }
 
-    async fn logged<T>(&self, method: &str, result: Result<T>) -> Result<T> {
+    fn logged<T>(&self, method: &str, result: Result<T>) -> Result<T> {
         if let Err(error) = &result {
             self.inner.failed(method, error);
         }
@@ -233,7 +232,7 @@ impl PuzzleService {
             .inner
             .with_db(move |db| queries::read_status(db, running))
             .await;
-        self.logged("status", result).await
+        self.logged("status", result)
     }
 
     pub async fn query(&self, query: LocalPuzzleQuery) -> Result<Vec<Puzzle>> {
@@ -241,7 +240,7 @@ impl PuzzleService {
             .inner
             .with_db(move |db| queries::query_puzzles(db, &query, &mut random()))
             .await;
-        self.logged("query", result).await
+        self.logged("query", result)
     }
 
     pub async fn ladder(&self, query: LocalLadderQuery) -> Result<Vec<Puzzle>> {
@@ -249,7 +248,7 @@ impl PuzzleService {
             .inner
             .with_db(move |db| queries::query_ladder(db, &query, &mut random()))
             .await;
-        self.logged("ladder", result).await
+        self.logged("ladder", result)
     }
 
     /// Keep a training attempt; the progress it leaves, as of the attempt's own day.
@@ -260,7 +259,7 @@ impl PuzzleService {
         let result = self
             .inner
             .with_db(move |db| {
-                attempts::record(db, &attempt, queries::now_ms())?;
+                attempts::record(db, &attempt, crate::time::now_ms())?;
                 let query = attempts::ProgressQuery {
                     today: attempt.day,
                     limit: attempts::RECENT,
@@ -268,7 +267,7 @@ impl PuzzleService {
                 attempts::progress(db, &query)
             })
             .await;
-        self.logged("recordAttempt", result).await
+        self.logged("recordAttempt", result)
     }
 
     pub async fn progress(&self, query: attempts::ProgressQuery) -> Result<serde_json::Value> {
@@ -276,7 +275,7 @@ impl PuzzleService {
             .inner
             .with_db(move |db| attempts::progress(db, &query))
             .await;
-        self.logged("progress", result).await
+        self.logged("progress", result)
     }
 
     pub async fn delete(&self) -> Result<PuzzleDbStatus> {
@@ -292,7 +291,7 @@ impl PuzzleService {
                 })
                 .await
         };
-        self.logged("delete", result).await
+        self.logged("delete", result)
     }
 
     /// Stop a running download; it resolves with the current status.
@@ -360,7 +359,7 @@ impl PuzzleService {
             }
             Err(error) => Err(error),
         };
-        self.logged("install", result).await
+        self.logged("install", result)
     }
 
     async fn download(

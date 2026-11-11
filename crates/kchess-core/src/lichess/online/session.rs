@@ -8,11 +8,12 @@ use kchess_contracts::types::OnlinePhase;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::super::accounts::{Lichess, now_ms};
+use super::super::accounts::Lichess;
 use super::super::challenges::ChallengeInbox;
 use super::super::client::{Auth, Lane as RequestLane};
 use crate::error::{CoreError, ErrorKind, Result as CoreResult};
 use crate::host::Level;
+use crate::time::now_ms;
 use kchess_contracts::types::UsageKind;
 
 use super::events::{is_challenge_event, validate_online_event};
@@ -148,11 +149,6 @@ impl OnlineSession {
                 .counted(account, UsageKind::Play)
                 .with_token(token)
         }))
-    }
-
-    /// `account`'s login for play, or the error asking to reconnect it.
-    async fn required_login(&self, account: &str) -> CoreResult<Auth> {
-        self.inner.lichess.signed_in(account, UsageKind::Play).await
     }
 
     fn next_handle(&self, st: &mut State) -> Handle {

@@ -5,19 +5,16 @@ use kchess_domain::misc::documents;
 use kchess_domain::misc::value::J;
 use serde_json::Value;
 
-use super::args::{now_ms, text};
+use super::args::text;
 use super::{archived_game, study_command};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::store::{library, library_import, view_preferences};
-
-fn now() -> f64 {
-    now_ms() as f64
-}
+use crate::time::now_ms;
 
 impl LibraryApi for Core {
     async fn library(&self) -> Result<Value> {
-        let now = now();
+        let now = now_ms() as f64;
         self.database
             .read_async(move |ctx| library_import::cached_library(ctx, now))
             .await
@@ -29,7 +26,7 @@ impl LibraryApi for Core {
         incremental: Option<Value>,
         based_on: Option<Value>,
     ) -> Result<Value> {
-        let (command, now) = (study_command(&command)?, now());
+        let (command, now) = (study_command(&command)?, now_ms() as f64);
         let incremental = incremental == Some(Value::Bool(true));
         let based_on = based_on
             .as_ref()
@@ -59,7 +56,7 @@ impl LibraryApi for Core {
     }
 
     async fn add_mistakes(&self, review_key: Value, color: Option<Value>) -> Result<Value> {
-        let (key, now) = (text(&review_key), now());
+        let (key, now) = (text(&review_key), now_ms() as f64);
         let color = color.as_ref().and_then(Value::as_str).map(str::to_string);
         self.database
             .write_async(move |ctx| {
@@ -69,7 +66,7 @@ impl LibraryApi for Core {
     }
 
     async fn answer_mistake(&self, id: Value, solved: Value) -> Result<Value> {
-        let (id, solved, now) = (text(&id), solved == Value::Bool(true), now());
+        let (id, solved, now) = (text(&id), solved == Value::Bool(true), now_ms() as f64);
         self.database
             .write_async(move |ctx| library::answer_mistake(ctx.db, &id, solved, now))
             .await
@@ -91,7 +88,7 @@ impl LibraryApi for Core {
     }
 
     async fn joined_tournaments(&self) -> Result<Value> {
-        let now = now();
+        let now = now_ms() as f64;
         self.database
             .read_async(move |ctx| library::joined_tournaments(ctx.host, ctx.db, now))
             .await
@@ -140,7 +137,7 @@ impl LibraryApi for Core {
         correct: Value,
     ) -> Result<Value> {
         let (key, line) = (text(&key), text(&line));
-        let (correct, now) = (correct == Value::Bool(true), now());
+        let (correct, now) = (correct == Value::Bool(true), now_ms() as f64);
         self.database
             .write_async(move |ctx| {
                 library::review_repertoire_line(ctx.host, ctx.db, &key, &line, correct, now)

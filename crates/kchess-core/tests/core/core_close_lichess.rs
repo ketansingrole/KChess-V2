@@ -50,8 +50,7 @@ async fn closing_ends_a_lichess_request_in_flight() {
         let core = Arc::clone(&core);
         tokio::spawn(async move { core.call("profile", vec![json!("someone")]).await })
     };
-    // Waits until the spawned call has started its work.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    let _asked = crate::support::accepted(&silent).await;
 
     tokio::time::timeout(LIMIT, core.close())
         .await

@@ -244,7 +244,7 @@ impl LichessStore for DbLichessStore {
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
-            let now = super::accounts::now_ms();
+            let now = crate::time::now_ms();
             let ids = ids.to_vec();
             self.database
                 .write_admitted(|| {

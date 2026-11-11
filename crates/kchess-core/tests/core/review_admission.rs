@@ -1,49 +1,25 @@
 use crate::support;
-use futures_util::future::BoxFuture;
-use kchess_core::engine::review::{
-    GameToReview, ReviewRequest, ReviewStorage, ReviewUpdate, Reviews, StoredReview,
-};
-use kchess_core::error::Result;
-use std::{sync::Arc, time::Duration};
-use tokio::sync::Notify;
-struct Gated {
-    read: Notify,
-    release: Notify,
-}
-impl ReviewStorage for Gated {
-    fn read_review<'a>(&'a self, _: &'a str) -> BoxFuture<'a, Result<Option<StoredReview>>> {
-        Box::pin(async move {
-            self.read.notify_one();
-            self.release.notified().await;
-            Ok(None)
-        })
-    }
-    fn write_review<'a>(&'a self, _: StoredReview) -> BoxFuture<'a, Result<ReviewUpdate>> {
-        Box::pin(async { unreachable!() })
-    }
-    fn has_account<'a>(&'a self, _: &'a str) -> BoxFuture<'a, Result<bool>> {
-        Box::pin(async { Ok(true) })
-    }
-    fn mark_checked<'a>(&'a self, _: &'a [String]) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async { Ok(()) })
-    }
-    fn games_to_review<'a>(
-        &'a self,
-        _: &'a [String],
-        _: i64,
-    ) -> BoxFuture<'a, Result<Vec<GameToReview>>> {
-        Box::pin(async { Ok(vec![]) })
+use kchess_core::engine::review::{ReviewRequest, Reviews};
+use std::task::Poll;
+use std::time::Duration;
+use support::reviews::ReviewDb;
+
+fn request(fen: &str) -> ReviewRequest {
+    ReviewRequest {
+        fen: fen.into(),
+        moves: vec!["e2e4".into()],
+        game_id: None,
+        account: None,
+        variant: None,
     }
 }
+
 #[tokio::test]
 async fn cancel_during_storage_admission_does_not_enqueue_later() {
     // How long admission may take before the test calls it stuck (a regression
     // must fail here, not hang CI until the job timeout).
     const LIMIT: Duration = Duration::from_secs(5);
-    let store = Arc::new(Gated {
-        read: Notify::new(),
-        release: Notify::new(),
-    });
+    let store = ReviewDb::new();
     let recording = support::host();
     let context = support::context(
         &recording,
@@ -51,45 +27,33 @@ async fn cancel_during_storage_admission_does_not_enqueue_later() {
         "review",
         &support::log_path("audit-cancel"),
     );
-    let reviews = Reviews::new(context, store.clone());
+    let reviews = Reviews::new(context, store.database.clone());
     let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-    let moves = vec!["e2e4".to_string()];
-    let key = kchess_domain::records::review::review_key(fen, &moves, None);
-    let pending = reviews.request_review(ReviewRequest {
-        fen: fen.into(),
-        moves,
-        game_id: None,
-        account: None,
-        variant: None,
-    });
+    let key = kchess_domain::records::review::review_key(fen, &["e2e4".to_string()], None);
+    // The store is busy, so the request waits for it with its review admitted.
+    let held = store
+        .database
+        .hold_execution()
+        .await
+        .expect("hold the store");
+    let pending = reviews.request_review(request(fen));
     tokio::pin!(pending);
-    tokio::time::timeout(LIMIT, async {
-        tokio::select! { _ = &mut pending => panic!("request should wait"), _ = store.read.notified() => {} }
-    })
-    .await
-    .expect("admission reaches storage");
+    assert!(
+        matches!(futures_util::poll!(&mut pending), Poll::Pending),
+        "the request waits for the store"
+    );
     reviews.cancel_review(&key);
-    store.release.notify_one();
+    drop(held);
     tokio::time::timeout(LIMIT, &mut pending)
         .await
         .expect("the cancelled request returns after storage")
         .unwrap();
     let waiting = reviews.review_status().waiting;
     // A later explicit request of the same key is independent of the cancelled one.
-    store.release.notify_one();
-    tokio::time::timeout(
-        LIMIT,
-        reviews.request_review(ReviewRequest {
-            fen: fen.into(),
-            moves: vec!["e2e4".into()],
-            game_id: None,
-            account: None,
-            variant: None,
-        }),
-    )
-    .await
-    .expect("a later request completes")
-    .unwrap();
+    tokio::time::timeout(LIMIT, reviews.request_review(request(fen)))
+        .await
+        .expect("a later request completes")
+        .unwrap();
     assert_eq!(
         reviews.review_status().waiting,
         1,

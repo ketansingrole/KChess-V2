@@ -18,12 +18,15 @@ use crate::ai::{
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use crate::ids::hex;
 use crate::lichess::oauth::{Redirect, default_look, new_pkce, new_state, wait_for_redirect};
+use crate::time::now_ms;
 use kchess_domain::coach::{self, Brief};
 use kchess_domain::records::oauth::connection_page;
 use kchess_domain::tactics::Mates;
 
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
+const UNREADABLE: &str = "The ChatGPT connection saved in this profile could not be read.";
 /// How long the engine looks for the answer to a wrong puzzle move, in milliseconds.
 const REFUTATION_TIME: u64 = 500;
 
@@ -72,23 +75,26 @@ struct Request {
     mate_after: Option<f64>,
 }
 
-fn now_ms() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0)
-}
-
 fn problem(refusal: Problem) -> Value {
     json!({ "problem": refusal })
 }
 
 impl Core {
+    /// The saved connection; none yet is the default. One this release cannot read (damaged,
+    /// or written by another release) is an error, so nothing is saved over it.
     async fn ai_connection(&self) -> Result<Connection> {
         let stored = self
             .database
             .read_async(crate::store::ai::connection)
             .await?;
-        Ok(serde_json::from_value(stored).unwrap_or_default())
+        let Some(text) = stored else {
+            return Ok(Connection::default());
+        };
+        serde_json::from_str(&text).map_err(|cause| {
+            self.host
+                .log(Level::Warn, "ai", &format!("{UNREADABLE} {cause}"));
+            CoreError::new(UNREADABLE)
+        })
     }
 
     async fn save_ai_connection(&self, connection: &Connection) -> Result<()> {
@@ -130,7 +136,7 @@ impl Core {
             .await
             .map_err(|_| unavailable("locked"))?;
         let tokens: Tokens = serde_json::from_str(&text).map_err(|_| unavailable("tokens"))?;
-        let now = now_ms();
+        let now = now_ms() as f64;
         if tokens.fresh(now) {
             return Ok(tokens.access);
         }
@@ -242,7 +248,7 @@ impl Core {
                 &redirect,
                 &client_id,
                 &nonce,
-                now_ms(),
+                now_ms() as f64,
             )
             .await?;
         let sealed = self.seal_tokens(&signed.tokens).await?;
@@ -495,8 +501,4 @@ impl AiApi for Core {
     async fn ai_explain(&self, request: Value) -> Result<Value> {
         self.explain(request).await
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

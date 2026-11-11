@@ -86,20 +86,6 @@ pub(crate) fn validated<T: serde::Serialize, U: serde::de::DeserializeOwned>(
     serde_json::from_value(value).map_err(|cause| CoreError::new(cause.to_string()))
 }
 
-/// `Date.now()`: milliseconds since the Unix epoch.
-pub(crate) fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
-        })
-}
-
-/// `String(n)` for an engine option value: whole numbers carry no fraction.
-pub(crate) fn js_number(value: f64) -> String {
-    format!("{value}")
-}
-
 /// Runs `action` after `ms`, unless the returned handle is aborted first (`setTimeout`). Without
 /// a Tokio runtime nothing is scheduled.
 pub(crate) fn after(ms: u64, action: impl FnOnce() + Send + 'static) -> Option<AbortHandle> {

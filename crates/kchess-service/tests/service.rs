@@ -345,6 +345,55 @@ async fn a_host_request_reaches_only_the_window_that_answers_it() {
     service.abort();
 }
 
+/// 2026-11-11: no client sent `cancel`, so a call whose caller gave up (a page that moved on, a
+/// command stopped) kept running in the shared core until it ended. Dropping the call cancels
+/// it there: the sign-in it started stops listening for the browser's return.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dropped_call_stops_its_work_in_the_core() {
+    let profile = tempfile::tempdir().expect("profile");
+    let service = spawn_service(profile.path(), Duration::from_secs(30));
+    let (gpui, mut events) = connect(profile.path(), "gpui").await;
+    // The client stays connected: only the call goes.
+    let signing_in = tokio::spawn(gpui.call("connectLichess", vec![]));
+    let request = loop {
+        let request = event(&mut events, "host:request").await;
+        if request["kind"] == "openExternal" {
+            break request;
+        }
+    };
+    let page = request["payload"].as_str().expect("the sign-in page");
+    let port: u16 = page
+        .split("redirect_uri=http%3A%2F%2F127.0.0.1%3A")
+        .nth(1)
+        .and_then(|rest| rest.split('%').next())
+        .and_then(|port| port.parse().ok())
+        .unwrap_or_else(|| panic!("a loopback redirect in {page}"));
+    assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok(),
+        "the sign-in listens for the browser"
+    );
+    signing_in.abort();
+    let stopped = tokio::time::timeout(WAIT, async {
+        while tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok()
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(
+        stopped.is_ok(),
+        "the sign-in still listens after its call was dropped"
+    );
+    gpui.call("library", vec![])
+        .await
+        .expect("the client is still connected");
+    service.abort();
+}
+
 /// A client may cancel a call it made: the call stops and is answered as cancelled.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cancelled_call_is_answered_as_cancelled() {

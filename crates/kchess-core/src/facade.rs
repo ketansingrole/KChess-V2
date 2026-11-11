@@ -101,6 +101,13 @@ impl CoreApi for Core {
     }
 
     fn changed(&self, areas: &'static [ProfileArea]) {
+        // New games or accounts: the automatic reviews look for work again.
+        if areas
+            .iter()
+            .any(|area| matches!(area, ProfileArea::LichessGames | ProfileArea::Accounts))
+        {
+            self.reviews.reviews_changed();
+        }
         self.host.emit(CoreEvent::ProfileChanged(
             json!({ "areas": areas, "origin": crate::connection::current_or_app() }),
         ));
@@ -108,8 +115,8 @@ impl CoreApi for Core {
 }
 
 impl Core {
-    /// Migrates an earlier release's profile once, before the first store read (`ensureMigrated`).
-    /// The plaintext tokens of an earlier database are encrypted with the OS store here.
+    /// Migrates an earlier release's profile once, before the first call reads the store. The
+    /// plaintext tokens of an earlier database are encrypted with the OS store here.
     pub(crate) async fn ensure_migrated(&self) -> Result<()> {
         self.migrated
             .get_or_try_init(|| async { self.migrate().await })
@@ -186,22 +193,15 @@ impl Core {
         Ok(())
     }
 
-    /// The saved settings (`getSettings`).
+    /// The saved settings.
     pub(crate) async fn get_settings(&self) -> Result<Value> {
-        self.ensure_migrated().await?;
         self.database
             .read_async(|ctx| store::games::get_settings(ctx.db))
             .await
     }
 
-    /// Settings, accounts and the library size, once the profile is migrated.
+    /// Settings, accounts and the library size.
     pub(crate) async fn app_data(&self) -> Result<Value> {
-        self.ensure_migrated().await?;
-        self.stored_app_data().await
-    }
-
-    /// Settings, accounts and the library size as stored.
-    pub(crate) async fn stored_app_data(&self) -> Result<Value> {
         self.database
             .read_async(|ctx| store::games::as_json(store::games::load_app_data(ctx.db)?))
             .await
@@ -209,36 +209,58 @@ impl Core {
 
     /// The Lichess accounts that are signed in, as names; `username` restricts the list.
     pub(crate) async fn connected_accounts(&self, username: Option<&str>) -> Result<Vec<String>> {
-        let data = self.app_data().await?;
-        Ok(data["accounts"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .filter(|account| account["connected"].as_bool() == Some(true))
-            .filter_map(|account| account["username"].as_str().map(str::to_string))
+        let accounts = self.services.lichess().connected_accounts().await?;
+        Ok(accounts
+            .into_iter()
             .filter(|name| {
                 username.is_none_or(|wanted| name.to_lowercase() == wanted.to_lowercase())
             })
             .collect())
     }
 
-    /// Ends everything a signed-in account has running: login, syncs, live play, reviews, usage
-    /// (`endSessions`). Returns the accounts it ended.
+    /// Ends the sessions of the signed-in accounts (`username`, or every one): their login, live
+    /// play and all their work. Returns the accounts it ended.
     pub(crate) async fn end_sessions(&self, username: Option<&str>) -> Result<Vec<String>> {
         let accounts = self.connected_accounts(username).await?;
-        self.services.lichess().invalidate_login(&accounts);
-        let online = self.services.online();
-        online.logout(username.is_some().then_some(accounts.as_slice()));
-        self.reviews.discard_account_reviews(&accounts);
+        self.services
+            .online()
+            .logout(username.is_some().then_some(accounts.as_slice()));
+        self.end_account_work(&accounts, true).await?;
+        Ok(accounts)
+    }
+
+    /// Ends what these accounts have running: syncs, reviews, challenges, usage and joined
+    /// tournaments. `signed_out` also ends the login in progress.
+    pub(crate) async fn end_account_work(
+        &self,
+        accounts: &[String],
+        signed_out: bool,
+    ) -> Result<()> {
+        let lichess = self.services.lichess();
+        if signed_out {
+            lichess.invalidate_login(accounts);
+        } else {
+            lichess.cancel_account_syncs(accounts);
+        }
+        self.reviews.discard_account_reviews(accounts);
         self.usage.flush().await;
-        self.services.forget_usage(&accounts);
-        for name in &accounts {
-            online.challenges().forget(name);
+        self.services.forget_usage(accounts);
+        for name in accounts {
+            self.services.online().challenges().forget(name);
         }
         // Tournaments joined as a signed-out account would otherwise reopen its event streams.
-        self.forget_tournaments_of(accounts.clone()).await?;
-        Ok(accounts)
+        self.forget_tournaments_of(accounts.to_vec()).await
+    }
+
+    /// Signs `username` (or every account) out: sessions, logins kept by Lichess and the stored
+    /// connection.
+    pub(crate) async fn sign_out(&self, username: Option<String>) -> Result<Value> {
+        self.end_sessions(username.as_deref()).await?;
+        self.services
+            .lichess()
+            .revoke_logins(username.as_ref().map(std::slice::from_ref))
+            .await;
+        self.logout_accounts(username.as_deref()).await
     }
 
     /// Forgets the tournaments these accounts joined.
@@ -268,7 +290,6 @@ impl Core {
                 "Choose the Stockfish executable with the file picker.",
             ));
         }
-        self.ensure_migrated().await?;
         let settings: store::games::Settings = serde_json::from_value(settings)
             .map_err(|cause| CoreError::new(format!("Invalid settings: {cause}")))?;
         let saved = self
@@ -301,7 +322,6 @@ impl Core {
 
     /// Logs a user's logout result after the sessions have ended (`logoutAccounts`).
     pub(crate) async fn logout_accounts(&self, username: Option<&str>) -> Result<Value> {
-        self.ensure_migrated().await?;
         let username = username.map(str::to_string);
         self.database
             .write_async(move |ctx| {

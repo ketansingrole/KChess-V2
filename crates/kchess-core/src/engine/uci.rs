@@ -32,6 +32,9 @@ const STOP_DEADLINE: Duration = Duration::from_secs(2);
 const TERMINATION_DEADLINE: Duration = Duration::from_secs(1);
 /// How long maintenance and shutdown wait for engines to exit.
 pub const EXIT_DEADLINE: Duration = Duration::from_secs(4);
+/// Engines that outlived `EXIT_DEADLINE` during a replacement.
+pub(crate) const EXIT_TIMEOUT_MESSAGE: &str =
+    "Stockfish did not exit. The previous engine was retained.";
 /// The longest output line an engine may write; a longer one fails the engine.
 const LINE_LIMIT: u64 = 1_000_000;
 /// Bytes of stderr kept for failure diagnostics.
@@ -46,12 +49,7 @@ pub fn search_cancelled() -> CoreError {
     CoreError::aborted("Engine search cancelled.")
 }
 
-/// `AbortSignal.throwIfAborted()` without a reason: the default `AbortError` message.
-pub(crate) fn signal_aborted() -> CoreError {
-    CoreError::aborted("This operation was aborted.")
-}
-
-pub(crate) use crate::tasks::lock;
+use crate::tasks::lock;
 
 /// Resolves when `cancel` fires; never resolves without a token.
 pub(crate) async fn cancelled_or_pending(cancel: Option<&CancellationToken>) {
@@ -100,8 +98,7 @@ impl EngineHub {
         self.maintenance.store(true, Ordering::SeqCst);
         let hold = MaintenanceHold(Arc::clone(&self.maintenance));
         stop_owners();
-        self.close_all("Stockfish did not exit. The previous engine was retained.")
-            .await?;
+        self.close_all(EXIT_TIMEOUT_MESSAGE).await?;
         Ok(hold)
     }
 
@@ -241,10 +238,6 @@ impl UciController {
         self.inner.write(command)
     }
 
-    pub async fn sync(&self) -> Result<String> {
-        self.inner.sync().await
-    }
-
     /// Sends `command` and waits for the first line matching `matches`. `on_line` sees every
     /// line while the wait lasts. A `timeout` that elapses fails the whole engine.
     pub async fn command(
@@ -269,11 +262,6 @@ impl UciController {
         self.inner.search(command, on_line, timeout, cancel).await
     }
 
-    /// Asks the active search (if any) to stop, as cancelling its token does.
-    pub fn stop(&self) {
-        self.inner.stop();
-    }
-
     /// Fails the engine with `search_cancelled()`, terminates the process and forgets its options.
     pub fn close(&self) {
         self.inner.close();
@@ -288,11 +276,6 @@ impl UciController {
     /// once when anything changed. Order follows `options`.
     pub async fn ensure_options(&self, options: &[(&str, &str)]) -> Result<()> {
         self.inner.ensure_options(options).await
-    }
-
-    /// Forgets which options this process has confirmed; the next `ensure_options` resends them.
-    pub fn clear_engine_options(&self) {
-        self.inner.clear_engine_options();
     }
 }
 
@@ -481,7 +464,7 @@ impl Inner {
         cancel: Option<&CancellationToken>,
     ) -> Result<String> {
         if cancel.is_some_and(CancellationToken::is_cancelled) {
-            return Err(signal_aborted());
+            return Err(crate::tasks::aborted());
         }
         let stop = CancellationToken::new();
         {
@@ -534,13 +517,6 @@ impl Inner {
             return Err(search_cancelled());
         }
         Ok(line)
-    }
-
-    fn stop(&self) {
-        let token = lock(&self.state).stop.clone();
-        if let Some(token) = token {
-            token.cancel();
-        }
     }
 
     fn close(&self) {

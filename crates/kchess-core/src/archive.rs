@@ -194,11 +194,6 @@ fn write_member(
     Ok(Member::Written)
 }
 
-/// Lowercase hexadecimal of `bytes`.
-pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 /// The lowercase SHA-256 of a file, read in chunks.
 pub fn sha256_file(path: &Path) -> io::Result<String> {
     let mut file = fs::File::open(path)?;
@@ -211,7 +206,7 @@ pub fn sha256_file(path: &Path) -> io::Result<String> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(hex(&hasher.finalize()))
+    Ok(crate::ids::hex(&hasher.finalize()))
 }
 
 #[cfg(test)]

@@ -107,16 +107,7 @@ impl OnlineSession {
         label: &str,
         handle: &Handle,
     ) -> CoreResult<StartResult> {
-        let connected: Vec<String> = self
-            .inner
-            .lichess
-            .store()
-            .accounts()
-            .await?
-            .into_iter()
-            .filter(|row| row.connected)
-            .map(|row| row.username)
-            .collect();
+        let connected = self.inner.lichess.connected_accounts().await?;
         if handle.token.is_cancelled() {
             return Err(crate::lichess::aborted());
         }
@@ -328,7 +319,11 @@ impl OnlineSession {
                 ));
             }
         }
-        let auth = self.required_login(&challenge.account).await?;
+        let auth = self
+            .inner
+            .lichess
+            .signed_in(&challenge.account, kchess_contracts::types::UsageKind::Play)
+            .await?;
         let path = format!("/api/challenge/{}/accept", path_segment(&challenge.id));
         self.challenge_post(&auth, &path, &[]).await?;
         // The game has the challenge's id. Open it now rather than wait for the event stream,
@@ -347,7 +342,11 @@ impl OnlineSession {
         challenge: &ChallengeInfo,
         reason: &str,
     ) -> CoreResult<()> {
-        let auth = self.required_login(&challenge.account).await?;
+        let auth = self
+            .inner
+            .lichess
+            .signed_in(&challenge.account, kchess_contracts::types::UsageKind::Play)
+            .await?;
         let path = format!("/api/challenge/{}/decline", path_segment(&challenge.id));
         self.challenge_post(&auth, &path, &[("reason", reason)])
             .await
@@ -355,7 +354,11 @@ impl OnlineSession {
 
     /// Withdraw an outgoing challenge.
     pub async fn withdraw_challenge(&self, challenge: &ChallengeInfo) -> CoreResult<()> {
-        let auth = self.required_login(&challenge.account).await?;
+        let auth = self
+            .inner
+            .lichess
+            .signed_in(&challenge.account, kchess_contracts::types::UsageKind::Play)
+            .await?;
         {
             let mut st = self.st();
             if st.pending_challenge.as_deref() == Some(challenge.id.as_str()) {

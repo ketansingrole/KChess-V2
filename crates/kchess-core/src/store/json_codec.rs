@@ -49,28 +49,7 @@ fn write_js_json(value: &Value, out: &mut String) {
     }
 }
 
-/// `s.length`: UTF-16 code units.
-pub fn utf16_len(s: &str) -> usize {
-    js::utf16_len(s)
-}
-
-/// `s.slice(0, max)` in UTF-16 units. A cut inside a surrogate pair drops the whole character
-/// (JavaScript would keep a lone surrogate, which a Rust string cannot hold).
-pub fn js_slice(s: &str, max: usize) -> String {
-    let mut units = 0;
-    let mut end = 0;
-    for (index, c) in s.char_indices() {
-        let next = units + c.len_utf16();
-        if next > max {
-            break;
-        }
-        units = next;
-        end = index + c.len_utf8();
-    }
-    s[..end].to_string()
-}
-
 /// `name.trim().slice(0, 120)`
 pub fn clean_name(name: &str) -> String {
-    js_slice(js::trim(name), 120)
+    js::slice_utf16(js::trim(name), 120).to_string()
 }

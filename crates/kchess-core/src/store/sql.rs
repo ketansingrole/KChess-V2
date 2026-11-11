@@ -88,10 +88,6 @@ impl Lane {
         }
     }
 
-    pub fn host(&self) -> &dyn Host {
-        self.host.as_ref()
-    }
-
     /// Runs `work` on this thread, opening the file first. Blocking: it must never run on an async
     /// executor thread.
     pub fn run_here<T>(&self, work: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {

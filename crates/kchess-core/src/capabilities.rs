@@ -76,11 +76,6 @@ impl Capabilities {
         self
     }
 
-    /// A log line through the host.
-    pub fn log(&self, level: crate::host::Level, scope: &str, message: &str) {
-        self.host.log(level, scope, message);
-    }
-
     /// Ask the host; its error message becomes the error.
     pub async fn request(&self, request: HostRequest) -> Result<Value> {
         self.request_within(request, DEADLINE).await

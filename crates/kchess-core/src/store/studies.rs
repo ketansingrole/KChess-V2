@@ -5,12 +5,14 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
 
 use super::documents::{DAMAGED_STUDIES, read_document_text, write_document};
-use super::json_codec::{clean_name, js_json, js_slice, utf16_len};
-use super::library::{STUDIES, STUDY_LIBRARY_MAX_TEXT, num, object, random_uuid, truthy};
+use super::json_codec::{clean_name, js_json};
+use super::library::{STUDIES, STUDY_LIBRARY_MAX_TEXT, object};
 use super::library_import::{StudyBodies, migrate_studies, read_studies, read_study_rows};
 use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
+use crate::ids::random_uuid;
 use kchess_domain::js;
+use kchess_domain::js::{number_to_json as num, truthy, utf16_len};
 use kchess_domain::library::{MAX_CHAPTERS, MAX_STUDIES};
 use kchess_domain::misc::MAX_DOCUMENT;
 
@@ -125,7 +127,7 @@ impl Studies {
             let chapter_name = chapter
                 .get("name")
                 .and_then(Value::as_str)
-                .map(|n| js_slice(n, 120))
+                .map(|n| js::slice_utf16(n, 120))
                 .unwrap_or_default();
             let pgn = chapter.get("pgn").cloned().unwrap_or(Value::Null);
             saved.push(json!({ "id": chapter_id, "name": chapter_name, "pgn": pgn }));
@@ -467,7 +469,7 @@ pub(crate) fn study_command(
             copy.insert("id".into(), json!(copy_id));
             copy.insert(
                 "name".into(),
-                json!(format!("{} (copy)", js_slice(original_name, 113))),
+                json!(format!("{} (copy)", js::slice_utf16(original_name, 113))),
             );
             chapters.push(Value::Object(copy));
             studies.commit(spread(
@@ -669,7 +671,7 @@ pub(crate) fn study_command(
                     .unwrap_or_default();
                 let chapters = study.get("chapters").cloned().unwrap_or(Value::Null);
                 let id = studies.save_chapters(
-                    &format!("{} (copy)", js_slice(study_name, 113)),
+                    &format!("{} (copy)", js::slice_utf16(study_name, 113)),
                     &chapters,
                     None,
                 )?;
