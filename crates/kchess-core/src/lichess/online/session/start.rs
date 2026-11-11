@@ -72,7 +72,7 @@ impl OnlineSession {
             handle
         };
         match self
-            .start_inner(options, &target, correspondence, &perf, &label, &handle)
+            .start_inner(options, &target, correspondence, perf, &label, &handle)
             .await
         {
             Ok(result) => Ok(result),

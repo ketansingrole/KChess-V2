@@ -39,8 +39,6 @@ const INCREMENTS: [f64; 7] = [0., 1., 2., 3., 5., 10., 20.];
 /// `CORRESPONDENCE_DAYS`.
 const DAYS: [f64; 7] = [1., 2., 3., 5., 7., 10., 14.];
 
-/// `data/variants.json`: each variant's key, name and what sets it apart.
-
 /// "5+3 · Rapid · Casual", or "3 days per move · Casual" (`summary`).
 pub fn summary(form: &crate::online::Form, variant_label: Option<&str>) -> String {
     let variant = variant_label
