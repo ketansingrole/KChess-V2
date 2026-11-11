@@ -103,6 +103,7 @@ async fn the_update_payload_is_the_engine_analysis_shape() {
         find(&updates, |u| u.id == id && u.done)
     })
     .await;
+    support::wire::assert_wire_steady("engine-analysis.completed", &done, &["context", "engine"]);
     let value = serde_json::to_value(&done).expect("json");
     for key in [
         "id", "fen", "depth", "lines", "done", "context", "clientId", "reason", "engine",

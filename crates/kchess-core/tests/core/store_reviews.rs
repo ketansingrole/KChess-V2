@@ -12,7 +12,7 @@ use kchess_core::store::{StoreContext, insights, reviews};
 use kchess_core::{Config, Core, CoreError};
 use rusqlite::Connection;
 use serde_json::{Value, json};
-use support::Recording;
+use support::{Recording, wire};
 
 const INITIAL_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -218,6 +218,7 @@ async fn a_requesting_game_is_linked_before_a_cached_lichess_review_is_returned(
         .request_review(json!({ "fen": INITIAL_FEN, "moves": moves(), "gameId": "Game0002" }))
         .await;
     assert_eq!(answer["gameId"], json!("Game0002"));
+    wire::assert_wire_steady("reviewRequest.cached-lichess", &answer, &["updatedAt"]);
     assert_eq!(
         profile
             .review_summaries(&["Game0001", "Game0002"])
@@ -225,6 +226,62 @@ async fn a_requesting_game_is_linked_before_a_cached_lichess_review_is_returned(
             .map(|map| map.len()),
         Some(2)
     );
+    let summaries = profile
+        .core
+        .call("reviewSummaries", vec![json!(["Game0002", "Game0001"])])
+        .await
+        .expect("the summaries");
+    wire::assert_wire("reviewSummaries.two-games", &summaries);
+    let found = profile
+        .core
+        .call("reviewGet", vec![json!(INITIAL_FEN), moves()])
+        .await
+        .expect("the stored review");
+    wire::assert_wire_steady("reviewGet.lichess", &found, &["updatedAt"]);
+    let missing = profile
+        .core
+        .call("reviewGet", vec![json!(INITIAL_FEN), json!(["d2d4"])])
+        .await
+        .expect("no review");
+    wire::assert_wire("reviewGet.none", &missing);
+    profile.core.close().await;
+}
+
+/// A review Lichess made keeps its own labels and accuracy figures, as Lichess sent them.
+#[tokio::test]
+async fn a_lichess_review_is_read_with_its_labels_and_accuracy() {
+    let profile = fresh();
+    profile.write_review(&review(
+        Some("Game0001"),
+        &[
+            ("source", json!("lichess")),
+            ("depth", json!(0)),
+            (
+                "evals",
+                json!([{ "cp": 15 }, { "cp": 20, "best": "g1f3", "pv": ["g1f3"] }, null]),
+            ),
+            ("judgments", json!([null, "mistake"])),
+            ("accuracy", json!({ "white": 87, "black": 64.5 })),
+        ],
+    ));
+    profile
+        .core
+        .call("resumeOnline", vec![])
+        .await
+        .expect("no game to resume");
+    let found = profile
+        .core
+        .call("reviewGet", vec![json!(INITIAL_FEN), moves()])
+        .await
+        .expect("the stored review");
+    wire::assert_wire_steady("reviewGet.lichess-labels", &found, &["updatedAt"]);
+    let summaries = profile
+        .core
+        .call("reviewSummaries", vec![json!(["Game0001"])])
+        .await
+        .expect("the summaries");
+    wire::assert_wire("reviewSummaries.lichess", &summaries);
+    profile.core.close().await;
 }
 
 #[tokio::test]

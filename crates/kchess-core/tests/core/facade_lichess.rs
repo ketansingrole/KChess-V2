@@ -223,6 +223,7 @@ async fn lichess_methods_reach_their_endpoints_as_the_account() {
         &json!({ "following": false, "blocking": false })
     );
     assert_eq!(answers["cloudEval"].as_ref().unwrap()["depth"], json!(30));
+    crate::support::wire::assert_wire("cloudEval.dispatch", answers["cloudEval"].as_ref().unwrap());
     assert_eq!(
         fixture.to("/api/cloud-eval")[0].query("multiPv").as_deref(),
         Some("1")

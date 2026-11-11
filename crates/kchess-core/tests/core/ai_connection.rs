@@ -153,26 +153,32 @@ async fn a_plan_connects_explains_and_disconnects() {
     // Nothing is connected, and a game may still be in progress.
     let status = core.call("aiStatus", vec![]).await.unwrap();
     assert_eq!(status["connected"], false);
+    crate::support::wire::assert_wire("aiStatus.fresh", &status);
     let blocked = core.call("aiExplain", vec![request("e1e2")]).await;
     assert!(blocked.unwrap_err().message.contains("live Lichess game"));
     core.call("resumeOnline", vec![]).await.unwrap();
     let unconnected = core.call("aiExplain", vec![request("e1e2")]).await.unwrap();
     assert_eq!(unconnected["problem"], "connect");
+    crate::support::wire::assert_wire("aiExplain.connect", &unconnected);
 
     let status = core.call("aiConnect", vec![]).await.unwrap();
     assert_eq!(status["connected"], true);
     assert_eq!(status["email"], "player@example.test");
+    crate::support::wire::assert_wire("aiConnect.signed-in", &status);
     let models = core.call("aiModels", vec![]).await.unwrap();
     assert_eq!(models["models"][0]["slug"], "gpt-a");
+    crate::support::wire::assert_wire("aiModels.listed", &models);
     let status = core
         .call("aiSetOptions", vec![json!("gpt-a"), json!("low")])
         .await
         .unwrap();
     assert_eq!(status["effort"], "low");
+    crate::support::wire::assert_wire("aiSetOptions.low", &status);
 
     // The invented move is thrown away and the second, faithful answer shown.
     let told = core.call("aiExplain", vec![request("e1e2")]).await.unwrap();
     assert!(told["text"].as_str().unwrap().contains("Nc7+"), "{told}");
+    crate::support::wire::assert_wire("aiExplain.told", &told);
     assert_eq!(answers.load(Ordering::SeqCst), 2);
     let sent: Value = serde_json::from_str(&seen_bodies.lock().unwrap()[0]).unwrap();
     assert_eq!(sent["model"], "gpt-a");
@@ -189,6 +195,7 @@ async fn a_plan_connects_explains_and_disconnects() {
     let before = seen_bodies.lock().unwrap().len();
     let limited = core.call("aiExplain", vec![request("e1d1")]).await.unwrap();
     assert_eq!(limited["problem"], "limit");
+    crate::support::wire::assert_wire("aiExplain.limit", &limited);
     assert_eq!(seen_bodies.lock().unwrap().len(), before + 1);
     let status = core.call("aiStatus", vec![]).await.unwrap();
     assert_eq!(status["connected"], true);
@@ -201,6 +208,7 @@ async fn a_plan_connects_explains_and_disconnects() {
     let status = core.call("aiDisconnect", vec![]).await.unwrap();
     assert_eq!(status["connected"], false);
     assert_eq!(status["registered"], true);
+    crate::support::wire::assert_wire("aiDisconnect.kept", &status);
     let after = core.call("aiExplain", vec![request("e1d1")]).await.unwrap();
     assert_eq!(after["problem"], "connect");
 

@@ -252,6 +252,7 @@ async fn appends_new_chapters_to_the_linked_cloud_study_without_duplicating_the_
         panic!("the account needs reconnecting");
     };
     assert_eq!(chapters.len(), 2);
+    crate::support::wire::assert_wire("syncLichessStudy.appended", &chapters);
     let posts = posts(&fixture);
     assert_eq!(posts.len(), 1);
     assert_eq!(posts[0].path(), "/api/study/Study001/import-pgn");
@@ -369,6 +370,7 @@ async fn names_chapters_from_their_tags_and_numbers_the_rest() {
         .map(|chapter| chapter.name.as_str())
         .collect();
     assert_eq!(names, ["Example", "Other", "Named"]);
+    crate::support::wire::assert_wire("lichessStudyChapters.named", &chapters);
 }
 
 #[tokio::test]

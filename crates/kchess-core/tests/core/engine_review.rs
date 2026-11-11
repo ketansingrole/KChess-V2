@@ -238,6 +238,21 @@ async fn a_request_for_a_finished_review_answers_from_the_store() {
         .expect("the request")
         .expect("the stored review");
     assert!(stored.complete);
+    support::wire::assert_wire_steady("reviewRequest.stored", &stored, &["updatedAt", "engine"]);
+    let update = rig
+        .host
+        .updates
+        .lock()
+        .expect("updates")
+        .iter()
+        .find(|update| update.review.complete)
+        .cloned()
+        .expect("the complete update");
+    support::wire::assert_wire_steady(
+        "review-update.complete",
+        &update,
+        &["review/updatedAt", "review/engine"],
+    );
     rig.reviews.stop_reviews().await;
 }
 
@@ -288,6 +303,7 @@ async fn automatic_reviews_ask_lichess_first_and_review_variants_by_their_rules(
     assert_eq!(crazyhouse.moves.len(), 7, "every move, the drop too");
     assert_eq!(crazyhouse.moves.last().map(String::as_str), Some("P@d4"));
     assert!(crazyhouse.fen.contains('['), "{}", crazyhouse.fen);
+    support::wire::assert_wire_steady("review.crazyhouse", &crazyhouse, &["updatedAt", "engine"]);
     let chess960 = wait_until(WAIT, "the Chess960 review", reviewed("c960")).await;
     assert_eq!(chess960.moves, moves(&["e2e4", "e7e5"]));
     // Lichess is asked first, for all of them at once.
@@ -595,6 +611,7 @@ async fn a_cached_lichess_review_is_linked_to_the_requesting_game() {
         .expect("the request")
         .expect("the cached review");
     assert_eq!(stored.game_id.as_deref(), Some("Game0002"));
+    support::wire::assert_wire_steady("reviewRequest.linked", &stored, &["updatedAt", "engine"]);
     assert!(
         rig.store.linked("Game0002", &key),
         "linked before the cached review is returned"

@@ -33,3 +33,42 @@ pub fn assert_wire(name: &str, answer: &impl Serialize) {
         "{name}: the answer's bytes changed"
     );
 }
+
+/// `answer` as `assert_wire` compares it, with the values that change from run to run (times,
+/// temporary paths) at `paths` (`/`-separated keys, `*` for every item of a list) replaced by
+/// one of the same kind: a whole number by `0`, a fractional one by `0.0`, a string by `"…"`.
+pub fn assert_wire_steady(name: &str, answer: &impl Serialize, paths: &[&str]) {
+    let mut value = serde_json::to_value(answer).expect("the answer is JSON");
+    for path in paths {
+        let keys: Vec<&str> = path.split('/').collect();
+        steady(&mut value, &keys);
+    }
+    assert_wire(name, &value);
+}
+
+fn steady(value: &mut serde_json::Value, keys: &[&str]) {
+    use serde_json::{Value, json};
+    match keys.split_first() {
+        None => {
+            let replaced = match &*value {
+                Value::Number(n) if n.is_f64() => json!(0.0),
+                Value::Number(_) => json!(0),
+                Value::String(_) => json!("…"),
+                _ => return,
+            };
+            *value = replaced;
+        }
+        Some((&"*", rest)) => {
+            if let Value::Array(items) = value {
+                for item in items {
+                    steady(item, rest);
+                }
+            }
+        }
+        Some((key, rest)) => {
+            if let Some(inner) = value.get_mut(*key) {
+                steady(inner, rest);
+            }
+        }
+    }
+}

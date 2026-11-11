@@ -233,6 +233,7 @@ async fn analysis_and_review_events_carry_the_contract_payloads() {
         json!("Stockfish could not be found. Choose an engine in Settings.")
     );
     assert!(failed["failed"]["key"].is_string(), "{failed}");
+    support::wire::assert_wire("review-status.failed", &failed);
     core.close().await;
 }
 

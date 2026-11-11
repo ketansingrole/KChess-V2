@@ -31,6 +31,11 @@ async fn engine_status_reports_the_engine_that_plays_the_variant() {
         .expect("a status");
     assert_eq!(status["ready"], false);
     assert_eq!(status["path"], json!(fairy));
+    crate::support::wire::assert_wire_steady(
+        "engineStatus.variant-missing",
+        &status,
+        &["path", "managed/path"],
+    );
 
     // Stockfish plays standard chess and Chess960, with or without the argument.
     for args in [vec![], vec![json!("standard")], vec![json!("chess960")]] {

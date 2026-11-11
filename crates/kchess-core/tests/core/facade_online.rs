@@ -108,6 +108,10 @@ async fn online_methods_check_their_arguments_and_reach_lichess() {
         "@Alice's Lichess login is unavailable. Reconnect it in Settings."
     );
     // A fresh profile's reviews have nothing waiting.
+    crate::support::wire::assert_wire(
+        "reviewStatus.idle",
+        &core.call("reviewStatus", vec![]).await.unwrap(),
+    );
     assert_eq!(
         core.call("reviewStatus", vec![]).await.unwrap(),
         json!({ "waiting": 0 })

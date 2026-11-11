@@ -307,6 +307,7 @@ async fn sibling_openings_reuse_their_shared_positions_history() {
         .await
         .unwrap();
     assert_eq!(king.len(), 1);
+    crate::support::wire::assert_wire("openingPopularity.month", &king);
     // The Vienna shares 1. e4 e5 with the King's Gambit: only its own position is asked.
     lookups
         .service
@@ -726,6 +727,7 @@ async fn cloud_evaluation_keeps_legal_lines_and_remembers_unknown_positions() {
     assert_eq!(found.lines.len(), 1);
     assert_eq!(found.lines[0].rank, 1);
     assert_eq!(found.lines[0].pv, ["e2e4", "e7e5", "g1f3"]);
+    crate::support::wire::assert_wire("cloudEval.lines", &found);
     let missing = "8/8/8/8/8/8/8/K6k w - - 0 1";
     assert_eq!(
         cloud_eval(&lichess, &cache, missing, 1).await.unwrap(),
@@ -870,4 +872,28 @@ async fn a_wikibooks_refusal_does_not_ask_to_connect_lichess() {
     );
     assert!(!error.message.contains("Lichess"));
     assert_eq!(fixture.to("/wikibooks/w/api.php").len(), 1);
+}
+
+#[tokio::test]
+async fn an_opening_description_is_read_from_wikibooks() {
+    let fixture = serve(|_| {
+        Reply::Json(
+            200,
+            json!({ "query": { "pages": [{
+                "title": "Chess Opening Theory/1. e4",
+                "extract": "\n1. e4 · King's pawn\nWhite takes the centre.\n\n\nHistory\nAn old move."
+            }] } })
+            .to_string(),
+        )
+    })
+    .await;
+    let lookups = lookups(&fixture.base, 1_000);
+    let page = lookups
+        .service
+        .opening_description(&json!(["e2e4"]))
+        .await
+        .unwrap()
+        .expect("a description");
+    assert!(page.blocks.iter().any(|block| block.heading));
+    crate::support::wire::assert_wire("openingDescription.e4", &page);
 }
