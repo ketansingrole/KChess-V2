@@ -69,11 +69,8 @@ const RELEASE_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 const EXTRACT_TIMEOUT: Duration = Duration::from_secs(60);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
-/// How long the handoff may take to stop the engine owners before the install gives up.
-pub const DEFAULT_EXIT_DEADLINE: Duration = Duration::from_secs(4);
 const VERSION_FILE: &str = "VERSION";
 
-const EXIT_TIMEOUT_MESSAGE: &str = "Stockfish did not exit. The previous engine was retained.";
 const COULD_NOT_START: &str =
     "The downloaded Stockfish could not start. The previous engine was retained.";
 
@@ -167,7 +164,7 @@ impl ManagedLocation {
             target: Target::current(),
             handoff: None,
             cancel: CancellationToken::new(),
-            exit_deadline: DEFAULT_EXIT_DEADLINE,
+            exit_deadline: super::uci::EXIT_DEADLINE,
             pinned: None,
             meter: Arc::new(Unmetered),
         }
@@ -275,10 +272,7 @@ impl ManagedEngine {
 fn dir_lock(dir: &Path) -> Arc<AsyncMutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> = OnceLock::new();
     let locks = LOCKS.get_or_init(Default::default);
-    let mut locks = match locks.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    let mut locks = crate::tasks::lock(locks);
     locks.retain(|_, lock| lock.strong_count() > 0);
     if let Some(lock) = locks.get(dir).and_then(Weak::upgrade) {
         return lock;
@@ -346,7 +340,7 @@ where
     };
     let guard = tokio::time::timeout(location.exit_deadline, handoff.suspend())
         .await
-        .map_err(|_| CoreError::new(EXIT_TIMEOUT_MESSAGE))??;
+        .map_err(|_| CoreError::new(super::uci::EXIT_TIMEOUT_MESSAGE))??;
     let result = commit().await;
     drop(guard);
     result
@@ -457,7 +451,7 @@ async fn install(
 
     tokio::fs::create_dir_all(&dir)
         .await
-        .map_err(|cause| io_error("Could not create the Stockfish folder", cause))?;
+        .map_err(|cause| CoreError::wrap("Could not create the Stockfish folder", cause))?;
     let path = dir.join(executable_name());
     let pending = dir.join(format!("{}.pending", executable_name()));
     let pending_version = dir.join(format!("{VERSION_FILE}.pending"));
@@ -465,14 +459,14 @@ async fn install(
     let prepared = async {
         tokio::fs::copy(&source, &pending)
             .await
-            .map_err(|cause| io_error("Could not stage the Stockfish executable", cause))?;
+            .map_err(|cause| CoreError::wrap("Could not stage the Stockfish executable", cause))?;
         set_executable(&pending)?;
         // Verify UCI before replacing the working engine; this catches wrong architecture and
         // broken downloads.
         probe_engine(&pending).await?;
         tokio::fs::write(&pending_version, &version_text)
             .await
-            .map_err(|cause| io_error("Could not stage the Stockfish version", cause))
+            .map_err(|cause| CoreError::wrap("Could not stage the Stockfish version", cause))
     }
     .await;
     if let Err(error) = prepared {
@@ -487,7 +481,7 @@ async fn install(
         Some(handoff) => {
             let suspended = tokio::time::timeout(location.exit_deadline, handoff.suspend())
                 .await
-                .map_err(|_| CoreError::new(EXIT_TIMEOUT_MESSAGE))
+                .map_err(|_| CoreError::new(super::uci::EXIT_TIMEOUT_MESSAGE))
                 .and_then(|suspended| suspended);
             match suspended {
                 Ok(suspended) => Some(suspended),
@@ -504,10 +498,11 @@ async fn install(
         let (pending_version, version_path) = (pending_version.clone(), dir.join(VERSION_FILE));
         tokio::task::spawn_blocking(move || {
             let _guards = (held, suspended);
-            std::fs::rename(&pending, &path)
-                .map_err(|cause| io_error("Could not replace the Stockfish executable", cause))?;
+            std::fs::rename(&pending, &path).map_err(|cause| {
+                CoreError::wrap("Could not replace the Stockfish executable", cause)
+            })?;
             std::fs::rename(&pending_version, &version_path)
-                .map_err(|cause| io_error("Could not record the Stockfish version", cause))
+                .map_err(|cause| CoreError::wrap("Could not record the Stockfish version", cause))
         })
     };
     let committed = renamed
@@ -639,17 +634,17 @@ async fn download_archive(
     .await?;
     let mut file = tokio::fs::File::create(archive)
         .await
-        .map_err(|cause| io_error("Could not stage the Stockfish download", cause))?;
+        .map_err(|cause| CoreError::wrap("Could not stage the Stockfish download", cause))?;
     let mut hasher = Sha256::new();
     while let Some(chunk) = body.next().await? {
         hasher.update(&chunk);
         file.write_all(&chunk)
             .await
-            .map_err(|cause| io_error("Could not stage the Stockfish download", cause))?;
+            .map_err(|cause| CoreError::wrap("Could not stage the Stockfish download", cause))?;
     }
     file.flush()
         .await
-        .map_err(|cause| io_error("Could not stage the Stockfish download", cause))?;
+        .map_err(|cause| CoreError::wrap("Could not stage the Stockfish download", cause))?;
     Ok((hex(&hasher.finalize()), body.received()))
 }
 
@@ -720,9 +715,9 @@ fn extract(
     cancel: Option<&CancellationToken>,
 ) -> Result<()> {
     fs::create_dir_all(root)
-        .map_err(|cause| io_error("Could not extract the Stockfish archive", cause))?;
+        .map_err(|cause| CoreError::wrap("Could not extract the Stockfish archive", cause))?;
     let file = fs::File::open(archive)
-        .map_err(|cause| io_error("Could not read the Stockfish archive", cause))?;
+        .map_err(|cause| CoreError::wrap("Could not read the Stockfish archive", cause))?;
     let to = archive::Unpack {
         root,
         budget: MAX_EXTRACTED_BYTES,
@@ -747,21 +742,23 @@ fn extract(
         Refusal::Unsupported => CoreError::new("Stockfish archive contains an unsupported entry."),
         Refusal::TooLarge => CoreError::new("Stockfish archive is unexpectedly large."),
         Refusal::Cancelled => CoreError::new("Stockfish archive could not be extracted."),
-        Refusal::Io(cause) => io_error("Could not extract the Stockfish archive", cause),
+        Refusal::Io(cause) => CoreError::wrap("Could not extract the Stockfish archive", cause),
     })
 }
 
 /// The executable inside an extracted release: the first `stockfish*` file that is not
 /// documentation. Links are not followed.
 fn find_binary(root: &Path) -> Result<Option<PathBuf>> {
-    let entries = fs::read_dir(root)
-        .map_err(|cause| io_error("Could not read the extracted Stockfish archive", cause))?;
+    let entries = fs::read_dir(root).map_err(|cause| {
+        CoreError::wrap("Could not read the extracted Stockfish archive", cause)
+    })?;
     for entry in entries {
-        let entry = entry
-            .map_err(|cause| io_error("Could not read the extracted Stockfish archive", cause))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|cause| io_error("Could not read the extracted Stockfish archive", cause))?;
+        let entry = entry.map_err(|cause| {
+            CoreError::wrap("Could not read the extracted Stockfish archive", cause)
+        })?;
+        let file_type = entry.file_type().map_err(|cause| {
+            CoreError::wrap("Could not read the extracted Stockfish archive", cause)
+        })?;
         let path = entry.path();
         if file_type.is_dir() {
             if let Some(found) = find_binary(&path)? {
@@ -796,16 +793,13 @@ async fn probe_engine(path: &Path) -> Result<()> {
     ready.map_err(|_| CoreError::new(COULD_NOT_START))
 }
 
-fn io_error(context: &str, cause: io::Error) -> CoreError {
-    CoreError::new(format!("{context}: {cause}"))
-}
-
 fn set_executable(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-            .map_err(|cause| io_error("Could not make the Stockfish executable runnable", cause))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).map_err(|cause| {
+            CoreError::wrap("Could not make the Stockfish executable runnable", cause)
+        })?;
     }
     #[cfg(not(unix))]
     let _ = path;

@@ -20,12 +20,11 @@ use tokio_util::sync::CancellationToken;
 use super::scheduler::Priority;
 use super::slot::EngineSlot;
 use super::status::{EngineTrust, computer_playing, fairy_variant};
-use super::uci::{
-    UciController, error_summary, lock, search_cancelled, signal_aborted, truncate_for_log,
-};
+use super::uci::{UciController, error_summary, search_cancelled, truncate_for_log};
 use super::{EngineContext, random_unit};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use crate::tasks::{aborted as signal_aborted, lock};
 use crate::time::now_ms;
 use kchess_domain::js::number_to_string as js_number;
 use kchess_domain::misc::{validate, value::J};

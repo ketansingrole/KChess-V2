@@ -365,7 +365,7 @@ impl ReviewBridge {
 
 /// How long an engine replacement, or closing the core, waits for a stopped analysis to end after
 /// its engine exited.
-pub(crate) const SETTLE_DEADLINE: Duration = Duration::from_secs(4);
+pub(crate) const SETTLE_DEADLINE: Duration = super::uci::EXIT_DEADLINE;
 
 /// The engine owners a replacement of the executable stops: the computer's search, the analysis
 /// engine and the review engine. Their processes must have exited before the file changes.

@@ -8,6 +8,16 @@ use std::panic::AssertUnwindSafe;
 
 use futures_util::FutureExt;
 
+use crate::error::CoreError;
+
+/// The message of work stopped because its caller cancelled it.
+pub const ABORTED: &str = "This operation was aborted";
+
+/// The error of work stopped because its caller cancelled it.
+pub(crate) fn aborted() -> CoreError {
+    CoreError::aborted(ABORTED)
+}
+
 /// `work` panicked; the panic hook has logged where.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Panicked;

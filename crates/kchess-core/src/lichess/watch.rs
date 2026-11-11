@@ -297,10 +297,7 @@ impl Spectators {
     /// The calling connection's watch, made on first use.
     pub fn mine(&self) -> Spectator {
         let connection = crate::connection::current_or_app();
-        let mut watches = self
-            .watches
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut watches = crate::tasks::lock(&self.watches);
         watches
             .entry(connection)
             .or_insert_with(|| {

@@ -8,9 +8,10 @@ use std::time::Duration;
 use tokio::task::AbortHandle;
 
 use super::status::{EngineStatus, engine_identity, engine_status, variant_engine_status};
-use super::uci::{UciController, lock};
+use super::uci::UciController;
 use super::{EngineContext, after, clear_timer, replace_timer};
 use crate::error::{CoreError, ErrorKind, Result};
+use crate::tasks::lock;
 
 /// The message when no engine is configured or found.
 pub(crate) const NO_ENGINE: &str = "Stockfish could not be found. Choose an engine in Settings.";

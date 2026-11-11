@@ -27,8 +27,7 @@ use tokio_util::sync::CancellationToken;
 use crate::error::{CoreError, ErrorKind, Result};
 use crate::usage::Meter;
 
-/// The message of a download stopped by its caller.
-pub const ABORTED: &str = "This operation was aborted";
+pub use crate::tasks::ABORTED;
 
 /// The HTTP client of a download. It asks for the body as published (no gzip on top), so the
 /// length is the progress total, digests are of the published file and a body can resume.
@@ -109,7 +108,7 @@ pub async fn open<'a>(
     let mut requests = 0;
     let sent = tokio::select! {
         biased;
-        () = cancel.cancelled() => Err(CoreError::aborted(ABORTED)),
+        () = cancel.cancelled() => Err(crate::tasks::aborted()),
         sent = send_retrying(request, limits.deadline, &mut requests) => {
             sent.map_err(|cause| network_error(wording, &cause))
         }
@@ -159,7 +158,7 @@ impl Body<'_> {
     pub async fn next(&mut self) -> Result<Option<bytes::Bytes>> {
         let chunk = tokio::select! {
             biased;
-            () = self.cancel.cancelled() => return Err(CoreError::aborted(ABORTED)),
+            () = self.cancel.cancelled() => return Err(crate::tasks::aborted()),
             chunk = self.body.chunk() => chunk,
         };
         let chunk = chunk.map_err(|cause| network_error(self.wording, &cause))?;

@@ -26,10 +26,11 @@ use tokio_util::sync::CancellationToken;
 use super::scheduler::Priority;
 use super::slot::{EngineSlot, OpenEngine};
 use super::status::fairy_variant;
-use super::uci::{lock, search_cancelled, signal_aborted};
+use super::uci::search_cancelled;
 use super::{EngineContext, after, clear_timer, replace_timer};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
+use crate::tasks::{aborted as signal_aborted, lock};
 use crate::time::now_ms;
 use kchess_domain::training::uci_info::parse_info;
 

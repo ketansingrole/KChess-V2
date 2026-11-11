@@ -208,10 +208,7 @@ impl EngineTrust {
     }
 
     fn with_paths<T>(&self, action: impl FnOnce(&mut HashSet<OsString>) -> T) -> T {
-        let mut paths = match self.paths.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let mut paths = crate::tasks::lock(&self.paths);
         action(&mut paths)
     }
 }

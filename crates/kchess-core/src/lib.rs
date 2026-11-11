@@ -51,7 +51,7 @@ pub mod puzzles;
 pub mod redact;
 pub mod secrets;
 pub mod store;
-mod tasks;
+pub mod tasks;
 pub mod themes;
 pub mod time;
 pub mod usage;

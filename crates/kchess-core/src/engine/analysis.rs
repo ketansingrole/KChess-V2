@@ -19,10 +19,11 @@ use tokio_util::sync::CancellationToken;
 use super::scheduler::Priority;
 use super::slot::EngineSlot;
 use super::status::fairy_variant;
-use super::uci::{error_summary, lock, signal_aborted, truncate_for_log};
+use super::uci::{error_summary, truncate_for_log};
 use super::{EngineContext, validated};
 use crate::error::Result;
 use crate::host::Level;
+use crate::tasks::{aborted as signal_aborted, lock};
 use kchess_domain::misc::{validate, value::J};
 use kchess_domain::training::uci_info::parse_info;
 
