@@ -14,6 +14,7 @@ use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::Username;
 use kchess_contracts::types::{LichessGame, Reply};
+use kchess_domain::variant::{Setup, Variant};
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -79,11 +80,12 @@ pub(crate) fn opening_names_shown(cx: &App) -> bool {
 /// A played game's opening, with its ECO code ("C20 King's Pawn Game"); none for a variant or a
 /// line no opening names.
 pub(crate) fn opening_name(game: &Value) -> Option<String> {
-    if game["setup"]["variant"].as_str().unwrap_or("standard") != "standard" {
+    let setup = crate::game::setup_of(&game["setup"])?;
+    if setup.variant != Variant::Standard {
         return None;
     }
     let moves: Vec<String> = serde_json::from_value(game["moves"].clone()).ok()?;
-    let opening = crate::game::opening_at(&game["setup"], &moves, moves.len())?;
+    let opening = crate::game::opening_at(&setup, &moves, moves.len())?;
     Some(format!("{} {}", opening.eco, opening.name))
 }
 
@@ -217,7 +219,7 @@ fn pgn(game: &Value) -> Option<String> {
         headers["BlackTimeControl"] = json!(clocks[1]);
     }
     let moves: Vec<String> = serde_json::from_value(game["moves"].clone()).ok()?;
-    crate::game::setup_pgn(&game["setup"], &moves, &headers)
+    crate::game::setup_pgn(&crate::game::setup_of(&game["setup"])?, &moves, &headers)
 }
 
 /// PGN's `Date`: the UTC day the game started, "2026.10.22".
@@ -246,7 +248,7 @@ pub(crate) enum Action {
 
 /// Whether the analysis board plays the saved game.
 fn analysable(game: &Value) -> bool {
-    crate::game::analysable(game["setup"]["variant"].as_str().unwrap_or("standard"))
+    crate::game::setup_of(&game["setup"]).is_some()
 }
 
 /// Open the saved game on the analysis board.
@@ -669,7 +671,8 @@ impl HistoryPage {
         let moves: Vec<String> = serde_json::from_value(game["moves"].clone()).unwrap_or_default();
         let replay = cx.new(|cx| {
             GameReplay::new(
-                game["setup"].clone(),
+                // A game in a variant KChess does not play replays no move.
+                crate::game::setup_of(&game["setup"]).unwrap_or_else(|| Setup::standard_at("")),
                 moves,
                 Color::White,
                 text(&game, "white").to_string(),
@@ -1201,7 +1204,8 @@ impl HistoryPage {
                 // Why it ended, and the opening it reached, as a Lichess game's line has; in a
                 // narrow list, which leaves the game's column out, its variant first.
                 let details = [
-                    (narrow && variant != "standard").then(|| crate::game::variant_label(variant)),
+                    (narrow && variant != "standard")
+                        .then(|| crate::game::variant_label(variant).to_string()),
                     Some(details(game)),
                     self.opening(game).filter(|_| opening_names_shown(cx)),
                 ]

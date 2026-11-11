@@ -48,33 +48,11 @@ const WEEKDAYS: [&str; 7] = [
     "Saturday",
 ];
 
-/// How games ended, in words.
-fn ending(status: &str) -> &str {
-    match status {
-        "mate" => "Checkmate",
-        "resign" => "Resignation",
-        "outoftime" => "Time out",
-        "timeout" => "Left the game",
-        "draw" => "Draw",
-        "stalemate" => "Stalemate",
-        "aborted" => "Aborted",
-        "noStart" => "Never started",
-        "cheat" => "Cheat detected",
-        "variantEnd" => "Variant win",
-        other => other,
-    }
-}
-
-/// Lichess's speed keys, as titles.
+/// A Lichess speed key's name; the key itself for one that names no speed.
 fn speed_name(key: &str) -> String {
-    if key == "ultraBullet" {
-        return "UltraBullet".into();
-    }
-    let mut chars = key.chars();
-    chars
-        .next()
-        .map(|first| first.to_uppercase().chain(chars).collect())
-        .unwrap_or_default()
+    kchess_domain::perf::Speed::from_key(key)
+        .map_or(key, |speed| speed.label())
+        .to_string()
 }
 
 fn record(value: &Value) -> (f64, f64, f64) {
@@ -701,7 +679,8 @@ impl Render for InsightsPage {
         let palette = *cx.global::<Palette>();
         let names = Self::names(cx);
         self.sync_variants(window, cx);
-        let variant_label = crate::game::variant_label(&Self::chosen(&self.variant, cx));
+        let variant_label =
+            crate::game::variant_label(&Self::chosen(&self.variant, cx)).to_string();
         let filters = h_flex()
             .gap(px(8.))
             .flex_wrap()
@@ -910,7 +889,10 @@ impl InsightsPage {
             (
                 "How games ended",
                 list("endings", &|entry| {
-                    ending(entry["status"].as_str().unwrap_or_default()).to_string()
+                    kchess_domain::records::games::status_label(
+                        entry["status"].as_str().unwrap_or_default(),
+                    )
+                    .to_string()
                 }),
             ),
         ];
@@ -1069,6 +1051,7 @@ mod tests {
         assert_eq!(best_and_weakest(&openings[..1]), None);
         assert_eq!(speed_name("ultraBullet"), "UltraBullet");
         assert_eq!(speed_name("blitz"), "Blitz");
+        assert_eq!(speed_name("correspondence"), "Correspondence");
     }
 
     #[test]

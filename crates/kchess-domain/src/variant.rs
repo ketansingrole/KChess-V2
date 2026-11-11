@@ -223,6 +223,14 @@ impl Setup {
         }
     }
 
+    /// Standard chess from `fen`.
+    pub fn standard_at(fen: impl Into<String>) -> Setup {
+        Setup {
+            variant: Variant::Standard,
+            fen: fen.into(),
+        }
+    }
+
     /// A game of `variant` from its usual start.
     pub fn of(variant: Variant) -> Setup {
         Setup {

@@ -131,7 +131,9 @@ impl AnalysisPage {
             }),
             client_id: Some(request),
             // Fairy-Stockfish analyses the other variants.
-            variant: self.fairy_variant().map(str::to_string),
+            variant: self
+                .fairy_variant()
+                .map(|variant| variant.key().to_string()),
         };
         let start = cx
             .global::<AppCore>()
@@ -640,7 +642,7 @@ impl AnalysisPage {
                 Some(best) => {
                     let pv: Vec<String> =
                         serde_json::from_value(best["pv"].clone()).unwrap_or_default();
-                    let first = pv_san(&self.node().fen, &pv, 1, self.root.variant().key())
+                    let first = pv_san(&self.node().fen, &pv, 1, self.root.variant())
                         .first()
                         .map(|played| played.san.clone())
                         .unwrap_or_default();
@@ -719,7 +721,7 @@ impl AnalysisPage {
                     crate::engine_view::engine_lines(
                         crate::engine_view::EngineLines {
                             fen: &self.engine_fen(),
-                            variant: self.root.variant().key(),
+                            variant: self.root.variant(),
                             lines: &lines,
                             pending: if using_cloud { 0 } else { prefs_lines(cx) },
                             ended: over.map(|_| "Nothing to analyse"),

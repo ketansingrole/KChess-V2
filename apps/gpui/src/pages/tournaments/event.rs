@@ -462,7 +462,7 @@ impl TournamentsPage {
         };
         let mut state = BoardState::shown(
             featured["fen"].as_str().unwrap_or_default(),
-            "standard",
+            kchess_domain::variant::Variant::Standard,
             orientation,
             featured["lastMove"]
                 .as_str()

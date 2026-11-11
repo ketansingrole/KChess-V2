@@ -7,7 +7,7 @@
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::*;
-use serde_json::Value;
+use kchess_domain::variant::Setup;
 
 use super::control::Control;
 use super::{Entry, Heard, VoiceEvent};
@@ -68,20 +68,16 @@ pub struct VoiceMoves {
     position_line: Vec<String>,
 }
 
-/// Every legal move the words could be in a `{ variant, fen }` setup: a move with its choices,
-/// confirm, cancel, or nothing; nothing too when the setup is not a legal position.
-pub fn spoken_move(text: &str, setup: &Value) -> SpokenMove {
-    let field = |key: &str| setup[key].as_str().unwrap_or_default();
-    match crate::game::setup_position(field("variant"), field("fen")) {
+/// Every legal move the words could be in a setup: a move with its choices, confirm, cancel, or
+/// nothing; nothing too when the setup is not a legal position.
+pub fn spoken_move(text: &str, setup: &Setup) -> SpokenMove {
+    match setup.position() {
         Some(pos) => kchess_domain::voice::spoken_move(text, &pos),
         None => {
             crate::log::write(
                 kchess_contracts::Level::Warn,
                 "voice",
-                &format!(
-                    "a phrase was heard at an illegal position: {}",
-                    field("fen")
-                ),
+                &format!("a phrase was heard at an illegal position: {}", setup.fen),
             );
             SpokenMove::Invalid
         }
@@ -230,7 +226,7 @@ impl VoiceMoves {
     pub fn hear(
         &mut self,
         heard: &Heard,
-        setup: &Value,
+        setup: &Setup,
         turn: Turn,
         command: impl FnOnce(&str) -> Option<Reply>,
         cx: &mut App,
@@ -243,7 +239,7 @@ impl VoiceMoves {
         if !self.control.enabled {
             return Action::Nothing;
         }
-        let fen = setup["fen"].as_str().unwrap_or_default().to_string();
+        let fen = setup.fen.clone();
         self.control.heard = Some(heard.text.clone().into());
         if let Some(reply) = command(&heard.text) {
             let outcome = if reply.understood {
@@ -554,8 +550,7 @@ pub fn board_bar<V: 'static>(
 
 #[cfg(test)]
 mod tests {
-    use super::{SpokenMove, meant, spoken_move};
-    use serde_json::json;
+    use super::{Setup, SpokenMove, meant, spoken_move};
 
     #[test]
     fn phrases_learn_the_move_played_next_and_nothing_else() {
@@ -570,10 +565,7 @@ mod tests {
 
     #[test]
     fn spoken_words_become_legal_moves() {
-        let start = json!({
-            "variant": "standard",
-            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        });
+        let start = Setup::standard();
         let first = |text: &str| match spoken_move(text, &start) {
             SpokenMove::Move { choices } => choices[0].clone(),
             other => panic!("{text}: {other:?}"),
@@ -583,7 +575,7 @@ mod tests {
         assert_eq!(first("knight f three").uci, "g1f3");
         assert_eq!(spoken_move("confirm", &start), SpokenMove::Confirm);
         // An illegal setup hears no move.
-        let empty = json!({ "variant": "standard", "fen": "8/8/8/8/8/8/8/8 w - - 0 1" });
+        let empty = Setup::standard_at("8/8/8/8/8/8/8/8 w - - 0 1");
         assert_eq!(spoken_move("e four", &empty), SpokenMove::Invalid);
     }
 }

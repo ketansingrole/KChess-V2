@@ -20,6 +20,7 @@ use kchess_contracts::{CoreError, Level};
 use kchess_domain::online_game::model::{Call, Ctx, Effect, Model, Op, Outcome, Reply, View};
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use kchess_domain::training::clock::{ClockState, SetData, format_clock};
+use kchess_domain::variant::{Setup, Variant};
 use serde_json::{Value, json};
 
 use crate::core::{AppCore, ClientEvent, CoreEvent};
@@ -50,7 +51,7 @@ pub struct Form {
     /// `random`, `white` or `black`.
     pub color: String,
     pub rated: bool,
-    pub variant: String,
+    pub variant: Variant,
     pub correspondence: bool,
     pub days: f64,
 }
@@ -63,7 +64,7 @@ impl Default for Form {
             target: String::new(),
             color: "random".into(),
             rated: false,
-            variant: "standard".into(),
+            variant: Variant::Standard,
             correspondence: false,
             days: 3.,
         }
@@ -165,8 +166,8 @@ impl OnlineState {
         self.model.online_moves.clone()
     }
 
-    pub fn setup(&self) -> Value {
-        json!(self.model.online_setup)
+    pub fn setup(&self) -> &Setup {
+        &self.model.online_setup
     }
 
     pub fn color(&self) -> shakmaty::Color {
@@ -454,7 +455,7 @@ impl OnlineState {
         if !account.is_empty() {
             wanted["account"] = json!(account);
         }
-        if form.variant != "standard" {
+        if form.variant != Variant::Standard {
             wanted["variant"] = json!(form.variant);
         }
         if correspondence && rematch.is_none() {
@@ -514,10 +515,7 @@ impl OnlineState {
             target: String::new(),
             color: "random".into(),
             rated: options["rated"] == json!(true),
-            variant: options["variant"]
-                .as_str()
-                .unwrap_or("standard")
-                .to_string(),
+            variant: Variant::from_lichess(options["variant"].as_str())?,
             correspondence: false,
             days: self.form.days,
         })

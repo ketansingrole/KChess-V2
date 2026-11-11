@@ -7,7 +7,7 @@ use futures::FutureExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{Fen, GameId};
 use kchess_contracts::types::{
-    ExplorerGame, LookupMove, LookupOptions, PositionLookup, PositionLookupKind,
+    ExplorerGame, ExplorerSpeed, LookupMove, LookupOptions, PositionLookup, PositionLookupKind,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -23,7 +23,6 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use shakmaty::Color;
 
 use crate::assets::icon;
@@ -37,6 +36,8 @@ use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill};
 use kchess_domain::misc::constants::EXPLORER_RATINGS;
+use kchess_domain::perf::Speed;
+use kchess_domain::variant::Variant;
 
 const PREFS: &str = "kchess:explorer";
 /// Following moves waits for the board to settle.
@@ -45,36 +46,57 @@ const FOLLOW_DELAY: Duration = Duration::from_millis(350);
 const TILE_MIN: Pixels = px(120.);
 const TILE_GAP: Pixels = px(10.);
 
-const KINDS: [(&str, &str); 4] = [
-    ("opening", "Lichess"),
-    ("masters", "Masters"),
-    ("player", "Player"),
-    ("tablebase", "Tablebase"),
-];
-/// The databases that hold games of other variants: Masters games and the tablebase are standard
-/// chess only.
-fn holds_variants(kind: &str) -> bool {
-    matches!(kind, "opening" | "player")
-}
-/// `EXPLORER_SPEEDS` and their labels.
-const SPEEDS: [(&str, &str); 6] = [
-    ("ultraBullet", "UltraBullet"),
-    ("bullet", "Bullet"),
-    ("blitz", "Blitz"),
-    ("rapid", "Rapid"),
-    ("classical", "Classical"),
-    ("correspondence", "Corr"),
+/// The databases in the order the explorer offers them.
+const KINDS: [PositionLookupKind; 4] = [
+    PositionLookupKind::Opening,
+    PositionLookupKind::Masters,
+    PositionLookupKind::Player,
+    PositionLookupKind::Tablebase,
 ];
 
-/// The explorer's settings, as the profile keeps them.
+fn kind_label(kind: PositionLookupKind) -> &'static str {
+    match kind {
+        PositionLookupKind::Opening => "Lichess",
+        PositionLookupKind::Masters => "Masters",
+        PositionLookupKind::Player => "Player",
+        PositionLookupKind::Tablebase => "Tablebase",
+    }
+}
+
+/// The databases that hold games of other variants: Masters games and the tablebase are standard
+/// chess only.
+fn holds_variants(kind: PositionLookupKind) -> bool {
+    matches!(
+        kind,
+        PositionLookupKind::Opening | PositionLookupKind::Player
+    )
+}
+
+/// A speed's name on its filter button: correspondence is shortened to fit the row.
+fn speed_label(speed: ExplorerSpeed) -> &'static str {
+    match Speed::from_key(speed.as_str()) {
+        Some(Speed::Correspondence) => "Corr",
+        Some(speed) => speed.label(),
+        None => speed.as_str(),
+    }
+}
+
+/// The explorer's settings, as the profile keeps them. A value no version of the app writes
+/// reads as the default, so an old or damaged preference still loads.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct Prefs {
-    kind: String,
-    speeds: Vec<String>,
+    #[serde(deserialize_with = "lenient")]
+    kind: PositionLookupKind,
+    #[serde(deserialize_with = "known_speeds")]
+    speeds: Vec<ExplorerSpeed>,
     ratings: Vec<f64>,
     player: String,
-    color: String,
+    #[serde(
+        serialize_with = "kchess_domain::color::by_name::serialize",
+        deserialize_with = "lenient_color"
+    )]
+    color: Color,
     since: String,
     follow: bool,
 }
@@ -82,45 +104,65 @@ struct Prefs {
 impl Default for Prefs {
     fn default() -> Prefs {
         Prefs {
-            kind: "opening".into(),
-            speeds: vec!["blitz".into(), "rapid".into(), "classical".into()],
+            kind: PositionLookupKind::Opening,
+            speeds: vec![
+                ExplorerSpeed::Blitz,
+                ExplorerSpeed::Rapid,
+                ExplorerSpeed::Classical,
+            ],
             ratings: Vec::new(),
             player: String::new(),
-            color: "white".into(),
+            color: Color::White,
             since: String::new(),
             follow: false,
         }
     }
 }
 
+/// The stored database, or Lichess's games for a name this app does not know.
+fn lenient<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<PositionLookupKind, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).unwrap_or(PositionLookupKind::Opening))
+}
+
+/// The stored speeds this app knows.
+fn known_speeds<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<ExplorerSpeed>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|speed| serde_json::from_value(speed.clone()).ok())
+        .collect())
+}
+
+fn lenient_color<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Color, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value
+        .as_str()
+        .and_then(kchess_domain::color::from_name)
+        .unwrap_or(Color::White))
+}
+
 impl Prefs {
-    /// The database chosen; the Lichess games for a name no app writes.
-    fn kind(&self) -> PositionLookupKind {
-        serde_json::from_value(json!(self.kind)).unwrap_or(PositionLookupKind::Opening)
-    }
-
-    /// The speeds chosen that the explorer knows.
-    fn speeds(&self) -> Vec<kchess_contracts::types::ExplorerSpeed> {
-        self.speeds
-            .iter()
-            .filter_map(|speed| serde_json::from_value(json!(speed)).ok())
-            .collect()
-    }
-
     /// The filters the chosen database takes; an unset one is left out.
     fn options(&self) -> LookupOptions {
         let since = (!self.since.is_empty()).then(|| self.since.clone());
-        let kind = self.kind();
+        let kind = self.kind;
         let options = match kind {
             PositionLookupKind::Opening => LookupOptions {
-                speeds: Some(self.speeds()),
+                speeds: Some(self.speeds.clone()),
                 ratings: Some(self.ratings.iter().map(|rating| *rating as u32).collect()),
                 ..LookupOptions::default()
             },
             PositionLookupKind::Player => LookupOptions {
                 player: Some(self.player.trim().to_string()),
-                color: kchess_domain::color::from_name(&self.color),
-                speeds: Some(self.speeds()),
+                color: Some(self.color),
+                speeds: Some(self.speeds.clone()),
                 ..LookupOptions::default()
             },
             _ => LookupOptions::default(),
@@ -227,6 +269,26 @@ pub fn result_bar(entry: &LookupMove, min_label: u64, palette: &Palette) -> impl
         ))
 }
 
+/// How the explorer shows a position's continuations.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Layout {
+    /// A list of moves on the analysis board, looked up when asked or while following moves.
+    List,
+    /// A grid of boards beside an opening's line, looked up whenever the position changes.
+    /// It offers no tablebase and names each continuation's opening instead of the position's.
+    Grid,
+}
+
+impl Layout {
+    fn always_follows(self) -> bool {
+        self == Layout::Grid
+    }
+
+    fn offers(self, kind: PositionLookupKind) -> bool {
+        self == Layout::List || kind != PositionLookupKind::Tablebase
+    }
+}
+
 pub enum ExplorerEvent {
     /// A move chosen from the results.
     Play(String),
@@ -235,8 +297,7 @@ pub enum ExplorerEvent {
 impl EventEmitter<ExplorerEvent> for PositionExplorer {}
 
 pub struct PositionExplorer {
-    /// Continuations as a grid of boards, looked up whenever the position changes.
-    grid: bool,
+    layout: Layout,
     fen: String,
     /// The moves from the starting position to `fen`: each continuation is named after its opening.
     moves: Option<Vec<String>>,
@@ -249,7 +310,7 @@ pub struct PositionExplorer {
     player: Entity<InputState>,
     since: Entity<InputState>,
     /// The variant whose games are looked up; None is standard chess.
-    variant: Option<String>,
+    variant: Option<Variant>,
     lookup_task: Option<Task<()>>,
     follow_task: Option<Task<()>>,
     previews: HashMap<String, Entity<ChessBoard>>,
@@ -258,7 +319,7 @@ pub struct PositionExplorer {
 }
 
 impl PositionExplorer {
-    pub fn new(grid: bool, window: &mut Window, cx: &mut Context<Self>) -> PositionExplorer {
+    pub fn new(layout: Layout, window: &mut Window, cx: &mut Context<Self>) -> PositionExplorer {
         let prefs = Self::prefs(cx);
         let player = cx.new(|cx| {
             InputState::new(window, cx)
@@ -291,18 +352,18 @@ impl PositionExplorer {
                 }
             }),
         ];
-        // A database the grid cannot show falls back to Lichess's.
-        if grid && prefs.kind == "tablebase" {
+        // A database this layout cannot show falls back to Lichess's.
+        if !layout.offers(prefs.kind) {
             Self::save_prefs(
                 cx,
                 Prefs {
-                    kind: "opening".into(),
+                    kind: PositionLookupKind::Opening,
                     ..prefs
                 },
             );
         }
         let mut explorer = PositionExplorer {
-            grid,
+            layout,
             fen: String::new(),
             moves: None,
             result: None,
@@ -332,26 +393,25 @@ impl PositionExplorer {
     /// from another start, so the masters' games and the tablebase still do.
     fn variants_only(&self) -> bool {
         self.variant
-            .as_deref()
-            .is_some_and(|variant| variant != "chess960")
+            .is_some_and(|variant| variant != Variant::Chess960)
     }
 
     /// The settings as this position uses them: a variant is looked up in Lichess's database
     /// when the chosen one holds standard chess only, and the variant goes with the filters.
     fn shown_prefs(&self, cx: &App) -> Prefs {
         let mut prefs = Self::prefs(cx);
-        if self.variants_only() && !holds_variants(&prefs.kind) {
-            prefs.kind = "opening".into();
+        if self.variants_only() && !holds_variants(prefs.kind) {
+            prefs.kind = PositionLookupKind::Opening;
         }
         prefs
     }
 
     fn options(&self, prefs: &Prefs) -> LookupOptions {
         let mut options = prefs.options();
-        if let Some(variant) = &self.variant
-            && holds_variants(&prefs.kind)
+        if let Some(variant) = self.variant
+            && holds_variants(prefs.kind)
         {
-            options.variant = kchess_contracts::Variant::from_key(variant);
+            options.variant = Some(variant);
         }
         options
     }
@@ -398,26 +458,26 @@ impl PositionExplorer {
     }
 
     fn following(&self, cx: &App) -> bool {
-        self.grid || Self::prefs(cx).follow
+        self.layout.always_follows() || Self::prefs(cx).follow
     }
 
     fn needs_player(&self, cx: &App) -> bool {
         let prefs = self.shown_prefs(cx);
-        prefs.kind == "player" && !crate::game::is_username(prefs.player.trim())
+        prefs.kind == PositionLookupKind::Player && !crate::game::is_username(prefs.player.trim())
     }
 
     /// Show a position (`opened`: the explorer just came into view). Following moves looks up
     /// another position once the board settles, and the one shown when the explorer opens.
     pub fn show(
         &mut self,
-        variant: Option<&str>,
+        variant: Variant,
         fen: &str,
         moves: Option<Vec<String>>,
         opened: bool,
         cx: &mut Context<Self>,
     ) {
-        let variant = variant.filter(|variant| *variant != "standard");
-        if self.fen == fen && self.moves == moves && self.variant.as_deref() == variant {
+        let variant = Some(variant).filter(|variant| *variant != Variant::Standard);
+        if self.fen == fen && self.moves == moves && self.variant == variant {
             if opened
                 && self.following(cx)
                 && self.result.is_none()
@@ -430,7 +490,7 @@ impl PositionExplorer {
         }
         self.fen = fen.to_string();
         self.moves = moves;
-        self.variant = variant.map(str::to_string);
+        self.variant = variant;
         self.epoch += 1;
         self.result = None;
         self.error.clear();
@@ -451,7 +511,7 @@ impl PositionExplorer {
 
     /// The grid follows its position: another filter looks it up again.
     fn filters_changed(&mut self, cx: &mut Context<Self>) {
-        if self.grid {
+        if self.layout.always_follows() {
             self.follow_lookup(cx);
         }
     }
@@ -460,7 +520,7 @@ impl PositionExplorer {
     /// missing player name takes the focus.
     fn lookup(
         &mut self,
-        kind: Option<&str>,
+        kind: Option<PositionLookupKind>,
         asked: bool,
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
@@ -468,7 +528,7 @@ impl PositionExplorer {
         if let Some(kind) = kind
             && kind != self.shown_prefs(cx).kind
         {
-            self.update_prefs(cx, |prefs| prefs.kind = kind.to_string());
+            self.update_prefs(cx, |prefs| prefs.kind = kind);
             self.result = None;
             self.error.clear();
         }
@@ -489,7 +549,7 @@ impl PositionExplorer {
         let request = self.epoch;
         let prefs = self.shown_prefs(cx);
         let call = cx.global::<AppCore>().request(calls::PositionLookup {
-            kind: prefs.kind(),
+            kind: prefs.kind,
             fen: Fen(self.fen.clone()),
             options: Some(self.options(&prefs)),
         });
@@ -611,8 +671,8 @@ impl PositionExplorer {
         self.previews
             .entry(key)
             .or_insert_with(|| {
-                let variant = self.variant.as_deref().unwrap_or("standard");
-                let position = crate::game::setup_position(variant, fen).unwrap_or_default();
+                let variant = self.variant.unwrap_or_default();
+                let position = kchess_domain::rules::setup_start(variant, fen).unwrap_or_default();
                 let last = uci
                     .get(0..2)
                     .and_then(|from| from.parse().ok())
@@ -627,7 +687,7 @@ impl PositionExplorer {
     fn heading(&self, result: &PositionLookup, prefs: &Prefs) -> String {
         let saved = &result.saved;
         if let Some(opening) = &saved.opening
-            && !self.grid
+            && self.layout == Layout::List
         {
             return opening.clone();
         }
@@ -638,7 +698,11 @@ impl PositionExplorer {
             ),
             PositionLookupKind::Masters => "Master games (over the board)".into(),
             PositionLookupKind::Player => {
-                format!("Games of {} as {}", prefs.player, prefs.color)
+                format!(
+                    "Games of {} as {}",
+                    prefs.player,
+                    kchess_domain::color::name(prefs.color)
+                )
             }
             PositionLookupKind::Opening => "Lichess games".into(),
         }
@@ -655,24 +719,24 @@ impl PositionExplorer {
         v_flex()
             .gap(px(8.))
             .text_size(px(12.))
-            .when(prefs.kind != "masters", |filters| {
-                filters.child(h_flex().flex_wrap().gap(px(4.)).children(SPEEDS.map(
-                    |(speed, label)| {
+            .when(prefs.kind != PositionLookupKind::Masters, |filters| {
+                filters.child(h_flex().flex_wrap().gap(px(4.)).children(
+                    ExplorerSpeed::ALL.iter().map(|&speed| {
                         toggle(
-                            SharedString::from(format!("speed-{speed}")),
-                            label.into(),
-                            prefs.speeds.iter().any(|chosen| chosen == speed),
+                            SharedString::from(format!("speed-{}", speed.as_str())),
+                            speed_label(speed).into(),
+                            prefs.speeds.contains(&speed),
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.update_prefs(cx, |prefs| {
-                                prefs.speeds = toggled(&prefs.speeds, &speed.to_string())
+                                prefs.speeds = toggled(&prefs.speeds, &speed)
                             });
                             this.filters_changed(cx);
                         }))
-                    },
-                )))
+                    }),
+                ))
             })
-            .when(prefs.kind == "opening", |filters| {
+            .when(prefs.kind == PositionLookupKind::Opening, |filters| {
                 filters.child(
                     h_flex()
                         .flex_wrap()
@@ -709,7 +773,7 @@ impl PositionExplorer {
     }
 
     fn render_player(&self, prefs: &Prefs, cx: &mut Context<Self>, palette: &Palette) -> Div {
-        let colors = ["white", "black"];
+        let colors = [Color::White, Color::Black];
         let chosen = colors
             .iter()
             .position(|color| *color == prefs.color)
@@ -759,7 +823,7 @@ impl PositionExplorer {
                     let explorer = cx.entity().downgrade();
                     move |index, _, cx| {
                         let _ = explorer.update(cx, |this, cx| {
-                            this.update_prefs(cx, |prefs| prefs.color = colors[index].into());
+                            this.update_prefs(cx, |prefs| prefs.color = colors[index]);
                             this.filters_changed(cx);
                         });
                     }
@@ -777,7 +841,7 @@ impl PositionExplorer {
     ) -> AnyElement {
         let moves = &result.saved.moves;
         let tablebase = result.saved.kind == PositionLookupKind::Tablebase;
-        if self.grid {
+        if self.layout == Layout::Grid {
             let fen = result.saved.fen.clone();
             let total = result
                 .saved
@@ -1029,19 +1093,19 @@ impl Render for PositionExplorer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let prefs = self.shown_prefs(cx);
-        let kinds: Vec<(&str, &str)> = KINDS
+        let kinds: Vec<PositionLookupKind> = KINDS
             .into_iter()
-            .filter(|(kind, _)| !self.grid || *kind != "tablebase")
-            .filter(|(kind, _)| !self.variants_only() || holds_variants(kind))
+            .filter(|kind| self.layout.offers(*kind))
+            .filter(|kind| !self.variants_only() || holds_variants(*kind))
             .collect();
         let chosen = kinds
             .iter()
-            .position(|(kind, _)| *kind == prefs.kind)
+            .position(|kind| *kind == prefs.kind)
             .unwrap_or_default();
         let needs_player = self.needs_player(cx);
         let choose_kind = {
             let explorer = cx.entity().downgrade();
-            let kinds: Vec<&'static str> = kinds.iter().map(|(kind, _)| *kind).collect();
+            let kinds = kinds.clone();
             move |index: usize, window: &mut Window, cx: &mut App| {
                 let kind = kinds[index];
                 let _ = explorer.update(cx, |this, cx| {
@@ -1056,9 +1120,9 @@ impl Render for PositionExplorer {
                 "explorer-kind",
                 kinds
                     .iter()
-                    .map(|(_, label)| Pill {
+                    .map(|kind| Pill {
                         icon: None,
-                        label: (*label).into(),
+                        label: kind_label(*kind).into(),
                         badge: None,
                         disabled: false,
                     })
@@ -1069,7 +1133,10 @@ impl Render for PositionExplorer {
                 &palette,
             ))
             .when(
-                prefs.kind != "tablebase" && prefs.kind != "masters",
+                !matches!(
+                    prefs.kind,
+                    PositionLookupKind::Tablebase | PositionLookupKind::Masters
+                ),
                 |head| {
                     head.child(
                         Button::new("explorer-filters")
@@ -1102,7 +1169,7 @@ impl Render for PositionExplorer {
                     .child(icon("info").size(px(14.))),
             );
         let status = if self.busy {
-            Some(if prefs.kind == "player" {
+            Some(if prefs.kind == PositionLookupKind::Player {
                 "Indexing the player’s games — this can take a while the first time…"
             } else {
                 "Loading position lookup…"
@@ -1173,13 +1240,14 @@ impl Render for PositionExplorer {
             .gap(px(8.))
             .child(self.area.probe(cx))
             .child(head)
-            .when(prefs.kind == "player", |explorer| {
+            .when(prefs.kind == PositionLookupKind::Player, |explorer| {
                 explorer.child(self.render_player(&prefs, cx, &palette))
             })
-            .when(self.show_filters && prefs.kind != "tablebase", |explorer| {
-                explorer.child(self.render_filters(&prefs, cx, &palette))
-            })
-            .when(!self.grid, |explorer| {
+            .when(
+                self.show_filters && prefs.kind != PositionLookupKind::Tablebase,
+                |explorer| explorer.child(self.render_filters(&prefs, cx, &palette)),
+            )
+            .when(self.layout == Layout::List, |explorer| {
                 explorer.child(
                     h_flex()
                         .flex_wrap()
@@ -1239,9 +1307,11 @@ impl Render for PositionExplorer {
 
 #[cfg(test)]
 mod tests {
-    use super::{PositionExplorer, Prefs, category, toggled};
+    use super::{Layout, PositionExplorer, Prefs, category, speed_label, toggled};
     use crate::e2e::Harness;
     use gpui_kit::AppContext as _;
+    use kchess_contracts::types::{ExplorerSpeed, PositionLookupKind};
+    use shakmaty::Color;
 
     /// Choosing the player database with no name yet left a lookup for the other database
     /// current: its answer then showed under the player tab, and the spinner stayed on until it.
@@ -1251,11 +1321,11 @@ mod tests {
     ) {
         let mut app = Harness::start(cx);
         let (busy, stale) = app.with_window(|window, cx| {
-            let explorer = cx.new(|cx| PositionExplorer::new(false, window, cx));
+            let explorer = cx.new(|cx| PositionExplorer::new(Layout::List, window, cx));
             explorer.update(cx, |explorer, cx| {
-                explorer.lookup(Some("masters"), false, None, cx);
+                explorer.lookup(Some(PositionLookupKind::Masters), false, None, cx);
                 let asked = explorer.epoch;
-                explorer.lookup(Some("player"), false, None, cx);
+                explorer.lookup(Some(PositionLookupKind::Player), false, None, cx);
                 (explorer.busy, explorer.epoch == asked)
             })
         });
@@ -1271,11 +1341,48 @@ mod tests {
             json!(prefs.options()),
             json!({ "speeds": ["blitz", "rapid", "classical"], "ratings": [] })
         );
-        prefs.kind = "masters".into();
+        prefs.kind = PositionLookupKind::Masters;
         prefs.since = "2019-05".into();
         assert_eq!(json!(prefs.options()), json!({ "since": "2019" }));
-        prefs.kind = "tablebase".into();
+        prefs.kind = PositionLookupKind::Tablebase;
         assert_eq!(json!(prefs.options()), json!({}));
+    }
+
+    /// The preference an earlier version stored reads as it did when its values are all known,
+    /// and saves back the same; a value this app does not know reads as the default.
+    #[test]
+    fn stored_preferences_still_load() {
+        let stored = json!({
+            "kind": "player",
+            "speeds": ["bullet", "correspondence"],
+            "ratings": [1600.0, 2000.0],
+            "player": "DrNykterstein",
+            "color": "black",
+            "since": "2020-01",
+            "follow": true,
+        });
+        let prefs: Prefs = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(prefs.kind, PositionLookupKind::Player);
+        assert_eq!(
+            prefs.speeds,
+            [ExplorerSpeed::Bullet, ExplorerSpeed::Correspondence]
+        );
+        assert_eq!(prefs.color, Color::Black);
+        assert_eq!(json!(prefs), stored);
+
+        let odd: Prefs = serde_json::from_value(json!({
+            "kind": "lichess",
+            "speeds": ["blitz", "hyperBullet"],
+            "color": "green",
+        }))
+        .unwrap();
+        assert_eq!(odd.kind, PositionLookupKind::Opening);
+        assert_eq!(odd.speeds, [ExplorerSpeed::Blitz]);
+        assert_eq!(odd.color, Color::White);
+        let empty: Prefs = serde_json::from_value(json!({ "speeds": "fast" })).unwrap();
+        assert_eq!(empty.speeds, Vec::<ExplorerSpeed>::new());
+        assert_eq!(speed_label(ExplorerSpeed::Correspondence), "Corr");
+        assert_eq!(speed_label(ExplorerSpeed::UltraBullet), "UltraBullet");
     }
 
     #[test]

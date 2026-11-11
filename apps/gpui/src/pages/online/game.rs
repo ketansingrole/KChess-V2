@@ -65,9 +65,7 @@ pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
                     actions.push(LiveAction::NewOpponent);
                 }
             }
-            if crate::game::analysable(online.setup()["variant"].as_str().unwrap_or("standard")) {
-                actions.push(LiveAction::Analyse);
-            }
+            actions.push(LiveAction::Analyse);
             actions.extend([LiveAction::NewGame, LiveAction::Flip]);
             actions
         }
@@ -704,11 +702,10 @@ impl OnlinePage {
         let moves = online.moves();
         let setup = online.setup();
         let ply = online.ply();
-        let sans = view::sans(&setup, &moves);
+        let sans = view::sans(setup, &moves);
         let opponent = model.online_opponent.clone();
         let reviewing = playing && !can_play(online);
-        let variant = setup["variant"].as_str().unwrap_or("standard");
-        let variant_name = (variant != "standard").then(|| crate::game::variant_label(variant));
+        let variant_name = (!setup.variant.is_standard()).then(|| setup.variant.label());
         let rated = model.online_game_rated;
         let status = model.online_status.clone();
         let banner: Option<(&'static str, String, String)> = if reviewing {
@@ -1144,7 +1141,13 @@ impl OnlinePage {
             player: Some(online.color()),
             lichess_id: Some(online.id().to_string()).filter(|id| !id.is_empty()),
             account: Some(model.online_account.clone()),
-            ..PlayedGame::new(&setup, online.moves(), online.orientation(), white, black)
+            ..PlayedGame::new(
+                setup.clone(),
+                online.moves(),
+                online.orientation(),
+                white,
+                black,
+            )
         }
     }
 }
@@ -1165,7 +1168,7 @@ fn analyse(window: &mut Window, cx: &mut App) {
         player: Some(color),
         lichess_id: Some(model.online_id.clone()),
         account: Some(model.online_account.clone()),
-        ..PlayedGame::new(&online.setup(), online.moves(), color, white, black)
+        ..PlayedGame::new(online.setup().clone(), online.moves(), color, white, black)
     };
     crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
         analysis.open_played(&game, true, cx)

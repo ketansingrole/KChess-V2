@@ -560,7 +560,10 @@ fn the_editor_sets_up_a_variant_position(cx: &mut gpui_kit::TestAppContext) {
         crate::shell::view::<crate::pages::editor::EditorPage>(cx)
             .map(|page| page.read(cx).game_setup())
     });
-    assert_eq!(variant.expect("the editor")["variant"], "crazyhouse");
+    assert_eq!(
+        variant.expect("the editor").variant,
+        kchess_domain::variant::Variant::Crazyhouse
+    );
 }
 
 /// The spare pieces are buttons a screen reader names, chosen as the tools beside them are.
@@ -909,7 +912,7 @@ fn a_crazyhouse_drop_is_played_from_the_pocket(cx: &mut gpui_kit::TestAppContext
     app.wait_for("a Crazyhouse game from the drop", |_, cx| {
         crate::shell::view::<crate::pages::computer::ComputerPage>(cx).is_some_and(|page| {
             let page = page.read(cx);
-            page.setup_variant() == "crazyhouse"
+            page.setup_variant() == kchess_domain::variant::Variant::Crazyhouse
                 && page
                     .setup_fen()
                     .starts_with("rnb1kbnr/ppp1pppp/8/3q4/8/4P3/PPPP1PPP/")

@@ -23,6 +23,7 @@ use kchess_domain::misc::constants::CORRESPONDENCE_DAYS;
 use kchess_domain::records::time_control::{
     can_direct_challenge, can_play_online, perf_for, total_seconds,
 };
+use kchess_domain::variant::Variant;
 
 mod chat;
 pub(crate) mod game;
@@ -42,7 +43,7 @@ const INCREMENTS: [f64; 7] = [0., 1., 2., 3., 5., 10., 20.];
 /// "5+3 · Rapid · Casual", or "3 days per move · Casual" (`summary`).
 pub fn summary(form: &crate::online::Form, variant_label: Option<&str>) -> String {
     let variant = variant_label
-        .filter(|_| form.variant != "standard")
+        .filter(|_| form.variant != Variant::Standard)
         .map(|label| format!("{label} · "))
         .unwrap_or_default();
     let mode = if form.rated { "Rated" } else { "Casual" };
@@ -106,7 +107,7 @@ impl OnlinePage {
         let board = cx.new(|_| {
             ChessBoard::new(crate::board::BoardState::shown(
                 "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w",
-                "standard",
+                kchess_domain::variant::Variant::Standard,
                 shakmaty::Color::White,
                 None,
             ))
@@ -119,9 +120,9 @@ impl OnlinePage {
         });
         let variant_select = cx.new(|cx| {
             SelectState::new(
-                crate::game::variants()
+                Variant::ALL
                     .iter()
-                    .map(|text| Choice::new(text.key.clone(), text.label.clone()))
+                    .map(|variant| Choice::new(variant.key(), variant.label()))
                     .collect(),
                 None,
                 window,
@@ -129,7 +130,7 @@ impl OnlinePage {
             )
         });
         variant_select.update(cx, |select, cx| {
-            select.set_selected_value(&SharedString::from(form.variant.clone()), window, cx)
+            select.set_selected_value(&SharedString::from(form.variant.key()), window, cx)
         });
         let account_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let chat_input =
@@ -165,8 +166,9 @@ impl OnlinePage {
             cx.subscribe(
                 &variant_select,
                 |_, _, event: &SelectEvent<Vec<Choice>>, cx| {
-                    if let SelectEvent::Confirm(Some(variant)) = event {
-                        let variant = variant.to_string();
+                    if let SelectEvent::Confirm(Some(variant)) = event
+                        && let Some(variant) = Variant::from_key(variant)
+                    {
                         crate::online::handle(cx).update(cx, |online, cx| {
                             online.form.variant = variant;
                             cx.notify();
@@ -353,7 +355,7 @@ impl OnlinePage {
                 self.pending = None;
                 return;
             }
-            let setup = online.setup();
+            let setup = online.setup().clone();
             let mut moves = online.moves();
             let mut ply = online.ply();
             let can_play = game::can_play(online);
@@ -444,11 +446,7 @@ impl OnlinePage {
             && !can_play_online(form.minutes, form.increment, false)
             && can_direct_challenge(form.minutes, form.increment);
         let perf = perf_for(form.minutes, form.increment);
-        let (variant_label, variant_hint) = crate::game::variants()
-            .iter()
-            .find(|text| text.key == form.variant)
-            .map(|text| (text.label.clone(), text.hint.clone()))
-            .unwrap_or_default();
+        let (variant_label, variant_hint) = (form.variant.label(), form.variant.hint());
         let estimated = total_seconds(form.minutes, form.increment) / 60.;
         let set = |change: fn(&mut crate::online::Form, f64), value: f64| {
             move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
@@ -589,7 +587,7 @@ impl OnlinePage {
             ))
             .child(field(
                 "Variant",
-                Some(variant_hint),
+                Some(variant_hint.to_string()),
                 Select::new(&self.variant_select)
                     .accessibility_label("Variant")
                     .into_any_element(),
@@ -691,7 +689,7 @@ impl OnlinePage {
             card = card.child(widgets::StatusBanner::new(widgets::Tone::Plain, icon("info"), "A public correspondence seek stays open on Lichess".into()).detail("Lichess has no way for apps to withdraw it; it closes when someone joins. Add a username to send a challenge you can withdraw instead.".into()));
         }
         let downloaded = crate::accounts::handle(cx).read(cx).downloaded(&active);
-        let summary_line = summary(&form, Some(variant_label.as_str()));
+        let summary_line = summary(&form, Some(variant_label));
         card.child(
             h_flex()
                 .justify_between()
@@ -752,10 +750,7 @@ impl OnlinePage {
             .filter(|status| !status.is_empty())
             .unwrap_or("Looking for an opponent…")
             .to_string();
-        let label = crate::game::variants()
-            .iter()
-            .find(|text| text.key == online.form.variant)
-            .map(|text| text.label.clone());
+        let label = Some(online.form.variant.label());
         h_flex().flex_1().items_center().justify_center().child(
             widgets::card(palette)
                 .w(px(420.))
@@ -763,10 +758,7 @@ impl OnlinePage {
                 .gap(px(12.))
                 .child(widgets::spinner(px(28.)).color(palette.primary))
                 .child(widgets::heading(status, palette))
-                .child(widgets::hint(
-                    summary(&online.form, label.as_deref()),
-                    palette,
-                ))
+                .child(widgets::hint(summary(&online.form, label), palette))
                 .child(
                     Button::new("online-cancel")
                         .outline()
@@ -985,6 +977,7 @@ pub fn challenge_rated(username: &str, rated: bool, window: &mut Window, cx: &mu
 mod tests {
     use super::summary;
     use crate::online::Form;
+    use kchess_domain::variant::Variant;
 
     #[test]
     fn the_summary_names_the_game() {
@@ -993,7 +986,7 @@ mod tests {
         form.correspondence = true;
         form.rated = true;
         form.days = 1.;
-        form.variant = "atomic".into();
+        form.variant = Variant::Atomic;
         assert_eq!(
             summary(&form, Some("Atomic")),
             "Atomic · 1 day per move · Rated"

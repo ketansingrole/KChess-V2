@@ -404,7 +404,7 @@ impl EndgameLesson {
     fn typed_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let fen = self.status().fen;
         let text = self.move_input.read(cx).value().trim().to_string();
-        let setup = json!({ "variant": "standard", "fen": fen });
+        let setup = kchess_domain::variant::Setup::standard_at(fen.clone());
         let typed =
             kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &fen)
                 .and_then(|position| view::typed_uci(&setup, &position, &text));

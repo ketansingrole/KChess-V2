@@ -6,6 +6,7 @@ use kchess_contracts::calls;
 use kchess_contracts::check::{BroadcastQuery, LichessId};
 use kchess_contracts::types::{BroadcastSection, BroadcastSummary, BroadcastTourDetail};
 use kchess_domain::training::clock::format_clock;
+use kchess_domain::variant::Setup;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -116,8 +117,8 @@ fn result_text(game: &Value) -> String {
     }
 }
 
-pub(super) fn setup_of(game: &Value) -> Value {
-    json!({ "variant": "standard", "fen": game["startFen"] })
+pub(super) fn setup_of(game: &Value) -> Setup {
+    Setup::standard_at(game["startFen"].as_str().unwrap_or_default())
 }
 
 pub(super) fn moves_of(game: &Value) -> Vec<String> {
@@ -198,7 +199,7 @@ impl Broadcasts {
             board: cx.new(|_| {
                 ChessBoard::new(BoardState::shown(
                     "8/8/8/8/8/8/8/8 w",
-                    "standard",
+                    kchess_domain::variant::Variant::Standard,
                     Color::White,
                     None,
                 ))
@@ -306,7 +307,7 @@ impl Broadcasts {
         } else {
             BoardState::shown(
                 game["fen"].as_str().unwrap_or_default(),
-                "standard",
+                kchess_domain::variant::Variant::Standard,
                 self.orientation,
                 game["lastMove"].as_str(),
             )
@@ -347,7 +348,7 @@ impl Broadcasts {
             .or_insert_with(|| {
                 let mut state = BoardState::shown(
                     game["fen"].as_str().unwrap_or_default(),
-                    "standard",
+                    kchess_domain::variant::Variant::Standard,
                     Color::White,
                     game["lastMove"].as_str(),
                 );

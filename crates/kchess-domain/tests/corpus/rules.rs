@@ -213,7 +213,9 @@ fn answer(method: &str, args: &[Value]) -> Result<Option<Value>, String> {
                 .default_fen(),
         ),
         "fenSetup" => to_value(position::fen_setup(text(args, 0, "fen")?))?,
-        "fenProblem" => to_value(position::fen_problem(text(args, 0, "fen")?))?,
+        "fenProblem" => to_value(
+            position::fen_problem(text(args, 0, "fen")?).map(position::FenProblem::as_str),
+        )?,
         "pgnGames" => to_value(position::pgn_games(text(args, 0, "pgn")?))?,
         "pgnMainline" => {
             let limit = arg(args, 1).and_then(Value::as_u64).unwrap_or(u64::MAX);

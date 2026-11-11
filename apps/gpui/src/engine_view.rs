@@ -102,12 +102,12 @@ pub fn eval_bar(line: Option<&Value>, orientation: Color, result: Option<&str>) 
     .flex_none()
 }
 
-/// What the engine panel lists (`engine_lines`): the `lines` searched from `fen` (in `variant`, a
-/// Lichess key), how many rows wait for lines still to come (`pending`), and, when there is
-/// nothing to search, why (`ended`).
+/// What the engine panel lists (`engine_lines`): the `lines` searched from `fen` in `variant`, how
+/// many rows wait for lines still to come (`pending`), and, when there is nothing to search, why
+/// (`ended`).
 pub struct EngineLines<'a> {
     pub fen: &'a str,
-    pub variant: &'a str,
+    pub variant: kchess_domain::variant::Variant,
     pub lines: &'a [Value],
     pub pending: usize,
     pub ended: Option<&'static str>,

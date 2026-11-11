@@ -76,6 +76,7 @@ use crate::theme::{Palette, radii, tint};
 use crate::widgets;
 use crate::widgets::KeyboardFocus as _;
 use crate::widgets::Pressable as _;
+use kchess_domain::variant::{Setup, Variant};
 
 /// Why the board left its study: another window changed the chapter it was saving to.
 const STALE_COPY: &str = "This study was changed in another KChess window. Your board is kept as an unsaved copy; save it under a new name or reopen the study.";
@@ -131,14 +132,14 @@ fn now_square(uci: &str, range: std::ops::Range<usize>) -> Option<Square> {
     uci.get(range)?.parse().ok()
 }
 
-/// A position of the tree, read by its variant's rules (a Lichess key).
-fn position_of(variant: &str, fen: &str) -> Option<VariantPosition> {
-    crate::game::setup_position(variant, fen)
+/// A position of the tree, read by its variant's rules.
+fn position_of(variant: Variant, fen: &str) -> Option<VariantPosition> {
+    kchess_domain::rules::setup_start(variant, fen)
 }
 
 /// The position with the other side to move (a null move), whose best line is the threat; `None`
 /// in check, where the side to move cannot pass.
-fn threat_fen(variant: &str, fen: &str) -> Option<String> {
+fn threat_fen(variant: Variant, fen: &str) -> Option<String> {
     let position = position_of(variant, fen)?;
     if position.is_check() {
         return None;
@@ -340,7 +341,7 @@ impl AnalysisPage {
         let study_bar = cx.new(|cx| StudyBar::new(page, window, cx));
         let board = cx.new(|_| {
             ChessBoard::new(BoardState::of(
-                &position_of("standard", STANDARD_FEN).unwrap_or_default(),
+                &position_of(Variant::Standard, STANDARD_FEN).unwrap_or_default(),
                 orientation,
                 None,
                 None,
@@ -376,7 +377,8 @@ impl AnalysisPage {
                 .rows(2)
                 .placeholder("What's the idea here?")
         });
-        let explorer = cx.new(|cx| PositionExplorer::new(false, window, cx));
+        let explorer =
+            cx.new(|cx| PositionExplorer::new(crate::explorer::Layout::List, window, cx));
         let subscriptions = vec![
             cx.subscribe(&explorer, |this, _, event: &ExplorerEvent, cx| {
                 let ExplorerEvent::Play(uci) = event;
@@ -560,28 +562,28 @@ impl AnalysisPage {
     }
 
     fn position(&self) -> Option<VariantPosition> {
-        position_of(self.root.variant().key(), &self.node().fen)
+        position_of(self.root.variant(), &self.node().fen)
     }
 
     /// Whether the game on the board is played by standard rules (standard chess or Chess960):
     /// cloud evaluation and the editor are theirs.
     fn standard_rules(&self) -> bool {
-        crate::game::standard_rules(self.root.variant().key())
+        self.root.variant().standard_rules()
     }
 
     /// The position shown, as a game to play from: in the game's variant, or (standard chess)
     /// castling as Chess960 when its rooks need it.
-    fn play_setup(&self) -> Value {
+    fn play_setup(&self) -> Setup {
         let fen = self.node().fen.clone();
         match self.fairy_variant() {
-            Some(variant) => json!({ "variant": variant, "fen": fen }),
+            Some(variant) => Setup { variant, fen },
             None => crate::game::setup_from_fen(&fen),
         }
     }
 
-    /// The Lichess key of the game's variant when Fairy-Stockfish analyses and reviews it.
-    pub(super) fn fairy_variant(&self) -> Option<&'static str> {
-        (!self.standard_rules()).then(|| self.root.variant().key())
+    /// The game's variant when Fairy-Stockfish analyses and reviews it.
+    pub(super) fn fairy_variant(&self) -> Option<Variant> {
+        (!self.standard_rules()).then(|| self.root.variant())
     }
 
     fn context(&self) -> String {
@@ -592,7 +594,7 @@ impl AnalysisPage {
     /// could pass.
     fn threat_position(&self) -> Option<String> {
         self.threat
-            .then(|| threat_fen(self.root.variant().key(), &self.node().fen))
+            .then(|| threat_fen(self.root.variant(), &self.node().fen))
             .flatten()
     }
 
@@ -744,17 +746,15 @@ impl AnalysisPage {
     }
 
     /// Analyse a position set up in the board editor, facing as it did there.
-    /// The board editor's position (`{ variant, fen }`), in its variant. False when the board
-    /// cannot take it.
+    /// The board editor's position, in its variant. False when the board cannot take it.
     pub fn analyse_setup(
         &mut self,
-        setup: &Value,
+        setup: &Setup,
         orientation: Color,
         cx: &mut Context<Self>,
     ) -> bool {
-        let variant = setup["variant"].as_str().unwrap_or("standard");
-        let fen = setup["fen"].as_str().unwrap_or(STANDARD_FEN);
-        if crate::game::standard_rules(variant) {
+        let fen = setup.fen.as_str();
+        if setup.variant.standard_rules() {
             self.orientation = orientation;
             self.load(Some(fen), cx);
             return true;
@@ -762,7 +762,7 @@ impl AnalysisPage {
         // Another variant opens as a game of it from that position.
         let pgn = format!(
             "[Variant \"{}\"]\n[FEN \"{fen}\"]\n[SetUp \"1\"]\n\n*",
-            crate::game::variant_label(variant)
+            setup.variant.label()
         );
         let loaded = self.load_pgn(&pgn, cx);
         if loaded {
@@ -884,7 +884,10 @@ impl AnalysisPage {
         if text.is_empty() {
             return;
         }
-        let setup = json!({ "variant": self.root.variant().key(), "fen": self.node().fen });
+        let setup = Setup {
+            variant: self.root.variant(),
+            fen: self.node().fen.clone(),
+        };
         let typed = self
             .position()
             .and_then(|position| view::typed_uci(&setup, &position, &text));
@@ -1014,7 +1017,7 @@ impl AnalysisPage {
     fn redraw(&mut self, cx: &mut Context<Self>) {
         self.sync_voice(cx);
         let node = self.node();
-        let position = position_of(self.root.variant().key(), &node.fen).unwrap_or_default();
+        let position = position_of(self.root.variant(), &node.fen).unwrap_or_default();
         let last_move = now_square(&node.uci, 0..2).zip(now_square(&node.uci, 2..4));
         let mut state = BoardState::of(
             &position,
@@ -1160,7 +1163,10 @@ impl AnalysisPage {
             }
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
         };
-        let setup = json!({ "variant": self.root.variant().key(), "fen": fen });
+        let setup = Setup {
+            variant: self.root.variant(),
+            fen,
+        };
         // The threat's best move is the opponent's: "best move" waits for the position's own.
         let best = (Self::assistance_allowed(cx)
             && !self.hides_engine()
@@ -1230,15 +1236,14 @@ impl AnalysisPage {
             self.path.split(' ').count()
         };
         PlayedGame {
-            variant: if self.standard_rules() {
-                crate::game::setup_from_fen(&self.root.fen)["variant"]
-                    .as_str()
-                    .unwrap_or("standard")
-                    .into()
+            setup: if self.standard_rules() {
+                crate::game::setup_from_fen(&self.root.fen)
             } else {
-                self.root.variant().key().into()
+                Setup {
+                    variant: self.root.variant(),
+                    fen: self.root.fen.clone(),
+                }
             },
-            fen: self.root.fen.clone(),
             ply: Some(depth.min(mainline.len())),
             moves: mainline,
             orientation: self.orientation,
@@ -1451,7 +1456,7 @@ impl AnalysisPage {
             .settings
             .frontend
             .show_opening_name;
-        if !shown || self.root.variant().key() != "standard" {
+        if !shown || self.root.variant() != Variant::Standard {
             return None;
         }
         let moves = moves_of(&self.path);
@@ -1553,7 +1558,7 @@ impl AnalysisPage {
                         // Leaving for another page takes the position and orientation first: the
                         // switch stops this page's engine, which must not happen inside an update
                         // of this page.
-                        let leave = |run: fn(Value, Color, &mut Window, &mut App)| {
+                        let leave = |run: fn(Setup, Color, &mut Window, &mut App)| {
                             let page = page.clone();
                             move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                                 let Some(page) = page.upgrade() else { return };
@@ -1565,7 +1570,7 @@ impl AnalysisPage {
                             }
                         };
                         // The same, with the position's setup: its variant and FEN.
-                        let play = |run: fn(Value, &mut Window, &mut App)| {
+                        let play = |run: fn(Setup, &mut Window, &mut App)| {
                             let page = page.clone();
                             move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                                 let Some(page) = page.upgrade() else { return };
@@ -1759,9 +1764,9 @@ impl AnalysisPage {
                         .into_any_element(),
                     None => {
                         let (fen, opened) = (self.node().fen.clone(), !self.explorer_open);
-                        let variant = self.root.variant().key().to_string();
+                        let variant = self.root.variant();
                         self.explorer.update(cx, |explorer, cx| {
-                            explorer.show(Some(&variant), &fen, None, opened, cx)
+                            explorer.show(variant, &fen, None, opened, cx)
                         });
                         div()
                             .id("analysis-explorer")

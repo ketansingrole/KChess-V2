@@ -7,6 +7,7 @@ use gpui_kit::component::{Disableable as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
+use kchess_domain::variant::Setup;
 use serde_json::Value;
 use shakmaty::{Color, Position as _};
 
@@ -30,7 +31,7 @@ fn variant_of(game: &Value) -> Option<String> {
     game["setup"]["variant"]
         .as_str()
         .filter(|variant| *variant != "standard")
-        .map(crate::game::variant_label)
+        .map(|variant| crate::game::variant_label(variant).to_string())
 }
 
 /// Recent games on Home.
@@ -100,14 +101,13 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
     // Whose move it is and the move number, from the position reached: a game started from a
     // position (Black to move, or at move 30) does not count from the usual start. White moves
     // on even plies when the position cannot be replayed.
-    let (to_move, number) = view::position_at(&serde_json::json!(game.setup()), moves, moves.len())
-        .map_or_else(
-            || {
-                let even = moves.len().is_multiple_of(2);
-                (Color::from_white(even), moves.len() / 2 + 1)
-            },
-            |reached| (reached.turn(), reached.fullmoves().get() as usize),
-        );
+    let (to_move, number) = view::position_at(game.setup(), moves, moves.len()).map_or_else(
+        || {
+            let even = moves.len().is_multiple_of(2);
+            (Color::from_white(even), moves.len() / 2 + 1)
+        },
+        |reached| (reached.turn(), reached.fullmoves().get() as usize),
+    );
     let level = crate::game::engine_level(game.level());
     let name = level.map_or("", |level| level.label.as_str());
     let strength = level.map(|level| match level.elo {
@@ -117,7 +117,7 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
     // A variant is named first, as the game page names it.
     let variant = Some(game.setup().variant)
         .filter(|variant| *variant != kchess_domain::variant::Variant::Standard)
-        .map(|variant| crate::game::variant_label(variant.key()));
+        .map(|variant| variant.label().to_string());
     Some(Unfinished {
         opponent: (format!("Stockfish · {name}"), strength),
         state: variant
@@ -288,9 +288,14 @@ fn orientation(game: &Value) -> Color {
 }
 
 /// `game`'s setup and moves, as the board shows them.
-fn line(game: &Value) -> (Value, Vec<String>) {
+fn line(game: &Value) -> (Setup, Vec<String>) {
     let moves = serde_json::from_value(game["moves"].clone()).unwrap_or_default();
-    (game["setup"].clone(), moves)
+    (setup_of(game), moves)
+}
+
+/// A game's setup; one that cannot be read shows no position.
+fn setup_of(game: &Value) -> Setup {
+    crate::game::setup_of(&game["setup"]).unwrap_or_else(|| Setup::standard_at(""))
 }
 
 /// Whether the board goes over the rest for a page `width` wide, and how many tiles share a
@@ -434,11 +439,11 @@ impl Render for HomePage {
         let latest = games.first().cloned();
         let (setup, moves) = session
             .or(latest.as_ref())
-            .map_or_else(Default::default, line);
+            .map_or_else(|| (Setup::standard_at(""), Vec::new()), line);
         let side = session
             .or(latest.as_ref())
             .map_or(Color::White, orientation);
-        let drawn = format!("{setup}{moves:?}{side:?}");
+        let drawn = format!("{setup:?}{moves:?}{side:?}");
         if self.board.as_ref().is_none_or(|(shown, _)| *shown != drawn) {
             let mut state = view::board_state(&setup, &moves, moves.len(), side, None);
             state.preview = true;

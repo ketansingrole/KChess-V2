@@ -7,6 +7,7 @@ use std::time::Duration;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
+use kchess_domain::variant::Setup;
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -563,11 +564,15 @@ impl PuzzleBoard {
         if !self.voice.owns(event) {
             return;
         }
-        let (fen, variant) = self
+        let setup = self
             .on_board
             .as_ref()
-            .map(|board| (board.fen().to_string(), board.variant().key().to_string()))
-            .unwrap_or_default();
+            .map(|board| Setup {
+                variant: board.variant(),
+                fen: board.fen().to_string(),
+            })
+            .unwrap_or_else(|| Setup::standard_at(""));
+        let fen = setup.fen.clone();
         let heard = match event {
             crate::voice::VoiceEvent::Missed { heard, .. } => {
                 self.voice.missed(heard, &fen, self.playing(), cx);
@@ -575,7 +580,6 @@ impl PuzzleBoard {
             }
             crate::voice::VoiceEvent::Heard { heard, .. } => heard.clone(),
         };
-        let setup = json!({ "variant": variant, "fen": fen });
         let turn = Turn {
             taking: self.playing(),
             idle: None,
@@ -593,7 +597,10 @@ impl PuzzleBoard {
         if text.is_empty() || !self.playing() {
             return;
         }
-        let setup = json!({ "variant": board.variant(), "fen": board.fen() });
+        let setup = Setup {
+            variant: board.variant(),
+            fen: board.fen().to_string(),
+        };
         let typed = kchess_domain::rules::setup_start(board.variant(), board.fen())
             .and_then(|position| view::typed_uci(&setup, &position, &text));
         match typed {

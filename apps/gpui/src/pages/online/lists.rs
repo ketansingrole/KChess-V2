@@ -366,7 +366,7 @@ impl OnlinePage {
                 };
                 let mut state = BoardState::shown(
                     &game.fen,
-                    "standard",
+                    kchess_domain::variant::Variant::Standard,
                     orientation,
                     game.last_move.as_deref().filter(|uci| uci.len() >= 4),
                 );

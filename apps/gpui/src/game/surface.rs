@@ -165,7 +165,7 @@ impl MoveBox {
     /// Otherwise it says what it takes. `None` too when nothing is typed.
     pub fn take(
         &mut self,
-        variant: &str,
+        variant: kchess_domain::variant::Variant,
         position: Option<&VariantPosition>,
         window: &mut Window,
         cx: &mut App,
@@ -175,11 +175,7 @@ impl MoveBox {
             return None;
         }
         let uci = position.and_then(|position| {
-            kchess_games::typed_uci(
-                kchess_domain::variant::Variant::from_key(variant)?,
-                &kchess_domain::rules::make_fen(position),
-                &text,
-            )
+            kchess_games::typed_uci(variant, &kchess_domain::rules::make_fen(position), &text)
         });
         match &uci {
             Some(_) => {

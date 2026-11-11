@@ -12,7 +12,8 @@ use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::{GameAccount, GameId, GameIds};
 use kchess_contracts::types::{GamePageQuery, GameResultFilter, Keyed, LichessGame, ReviewSummary};
-use serde_json::{Value, json};
+use kchess_domain::variant::Setup;
+use serde_json::Value;
 use shakmaty::Color;
 
 use super::HistoryPage;
@@ -73,14 +74,20 @@ fn result_of(game: &LichessGame) -> &'static str {
 }
 
 /// The PGN's setup and main line, for the replay, in the variant its header names.
-fn line_of(pgn: &str) -> Option<(Value, Vec<String>)> {
-    let variant = crate::game::pgn_variant_key(pgn)?;
-    if !crate::game::standard_rules(variant) {
+fn line_of(pgn: &str) -> Option<(Setup, Vec<String>)> {
+    let variant = crate::game::pgn_variant(pgn)?;
+    if !variant.standard_rules() {
         // Replayed under the variant's own rules.
         let line = kchess_domain::position::pgn_mainline(pgn, usize::MAX)?;
         let start = line.start?;
         let moves = line.moves.into_iter().map(|entry| entry.uci).collect();
-        return Some((json!({ "variant": variant, "fen": start }), moves));
+        return Some((
+            Setup {
+                variant,
+                fen: start,
+            },
+            moves,
+        ));
     }
     let tree = TreeNode::from_pgn(pgn)?;
     let mut moves = Vec::new();
@@ -89,7 +96,13 @@ fn line_of(pgn: &str) -> Option<(Value, Vec<String>)> {
         moves.push(next.uci.clone());
         node = next;
     }
-    Some((json!({ "variant": variant, "fen": tree.fen }), moves))
+    Some((
+        Setup {
+            variant,
+            fen: tree.fen.clone(),
+        },
+        moves,
+    ))
 }
 
 pub fn new_tab(
@@ -1038,6 +1051,7 @@ pub(super) fn open_review(game: LichessGame, ply: usize, window: &mut Window, cx
 mod tests {
     use super::{line_of, result_of};
     use kchess_contracts::types::LichessGame;
+    use kchess_domain::variant::Variant;
     use serde_json::json;
 
     #[test]
@@ -1062,15 +1076,15 @@ mod tests {
     fn a_pgn_gives_the_replay_its_line() {
         let (setup, moves) = line_of("1. e4 e5 2. Nf3 (2. Bc4) Nc6 *").unwrap();
         assert_eq!(moves, vec!["e2e4", "e7e5", "g1f3", "b8c6"]);
-        assert_eq!(setup["variant"], json!("standard"));
+        assert_eq!(setup.variant, Variant::Standard);
         // A variant's moves follow its own rules: in Atomic, Qxf7 explodes the king.
         let (setup, moves) =
             line_of("[Variant \"Atomic\"]\n\n1. e4 e5 2. Qh5 Nc6 3. Qxf7# *").unwrap();
-        assert_eq!(setup["variant"], json!("atomic"));
+        assert_eq!(setup.variant, Variant::Atomic);
         assert_eq!(moves.len(), 5);
         let (setup, moves) =
             line_of("[Variant \"Crazyhouse\"]\n\n1. e4 d5 2. exd5 Qxd5 3. P@e3 *").unwrap();
-        assert_eq!(setup["variant"], json!("crazyhouse"));
+        assert_eq!(setup.variant, Variant::Crazyhouse);
         assert_eq!(moves.last().map(String::as_str), Some("P@e3"));
     }
 }

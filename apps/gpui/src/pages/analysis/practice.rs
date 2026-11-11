@@ -9,6 +9,7 @@ use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::calls;
 use kchess_contracts::check::LibraryId;
+use kchess_domain::variant::Variant;
 use serde_json::Value;
 use shakmaty::{Color, Square};
 
@@ -54,9 +55,9 @@ pub struct Practice {
     orientation: Color,
 }
 
-/// A move's SAN from a FEN, by the rules of `variant` (the game's, a Lichess key).
-fn san(variant: &str, fen: &str, uci: &str) -> Option<String> {
-    let position = crate::game::setup_position(variant, fen)?;
+/// A move's SAN from a FEN, by the rules of `variant` (the game's).
+fn san(variant: Variant, fen: &str, uci: &str) -> Option<String> {
+    let position = kchess_domain::rules::setup_start(variant, fen)?;
     kchess_domain::position::play_uci(&position, uci).map(|played| played.san)
 }
 
@@ -151,7 +152,7 @@ impl AnalysisPage {
         let label = format!(
             "{number}{} {}",
             if color == Color::Black { "…" } else { "." },
-            san(self.root.variant().key(), fen, &uci)?
+            san(self.root.variant(), fen, &uci)?
         );
         Some((
             uci,
@@ -225,7 +226,7 @@ impl AnalysisPage {
         if !self.at_position() || !self.practice.as_ref().is_some_and(Practice::hides_engine) {
             return None;
         }
-        let variant = self.root.variant().key().to_string();
+        let variant = self.root.variant();
         let practice = self.practice.as_mut()?;
         let (_, item) = practice.current()?.clone();
         if Some(uci.to_string()) == practice.answer() {
@@ -241,7 +242,7 @@ impl AnalysisPage {
         }
         practice.tried = item["fen"]
             .as_str()
-            .and_then(|fen| san(&variant, fen, uci))
+            .and_then(|fen| san(variant, fen, uci))
             .unwrap_or_else(|| uci.to_string());
         practice.helped = true;
         practice.status = Status::Wrong;
@@ -393,7 +394,7 @@ impl AnalysisPage {
             .current()
             .and_then(|(_, item)| {
                 san(
-                    self.root.variant().key(),
+                    self.root.variant(),
                     item["fen"].as_str()?,
                     &practice.answer()?,
                 )

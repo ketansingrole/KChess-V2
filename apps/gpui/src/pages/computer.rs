@@ -7,6 +7,7 @@ use kchess_contracts::calls;
 use kchess_contracts::check::Moves;
 use kchess_contracts::types::EngineLevel;
 use kchess_domain::training::clock::format_clock;
+use kchess_domain::variant::{Setup, Variant};
 use std::time::Instant;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -170,15 +171,8 @@ impl ComputerPage {
             Ok(game) => game,
             Err(cause) => panic!("a new computer game always starts: {cause}"),
         };
-        let board = cx.new(|_| {
-            ChessBoard::new(view::board_state(
-                &json!(game.setup()),
-                &[],
-                0,
-                game.color(),
-                None,
-            ))
-        });
+        let board = cx
+            .new(|_| ChessBoard::new(view::board_state(game.setup(), &[], 0, game.color(), None)));
         let (levels, labels) = level_choices(cx);
         let selected = levels.iter().position(|id| id == game.level());
         let level = cx.new(|cx| SelectState::new(labels, selected.map(IndexPath::new), window, cx));
@@ -473,7 +467,7 @@ impl ComputerPage {
         }
         let position = self.position_at(self.ply());
         let variant = self.setup_variant();
-        match self.moves.take(&variant, position.as_ref(), window, cx) {
+        match self.moves.take(variant, position.as_ref(), window, cx) {
             Some(uci) => self.play(&uci, cx),
             None => cx.notify(),
         }
@@ -485,7 +479,7 @@ impl ComputerPage {
         let user = self.user_color();
         let (white, black) = computer::players(user, engine);
         let mut game = PlayedGame::new(
-            &json!(self.game.setup()),
+            self.game.setup().clone(),
             self.game.moves().to_vec(),
             self.orientation(),
             white,
@@ -548,8 +542,8 @@ impl ComputerPage {
         }
     }
 
-    pub(crate) fn setup_variant(&self) -> String {
-        self.game.setup().variant.key().to_string()
+    pub(crate) fn setup_variant(&self) -> Variant {
+        self.game.setup().variant
     }
 
     /// The FEN the game started from.
@@ -564,11 +558,11 @@ impl ComputerPage {
 
     /// The position after the first `ply` moves.
     fn position_at(&self, ply: usize) -> Option<shakmaty::variant::VariantPosition> {
-        view::position_at(&json!(self.game.setup()), &self.moves(), ply)
+        view::position_at(self.game.setup(), &self.moves(), ply)
     }
 
     fn sans(&self) -> Vec<String> {
-        view::sans(&json!(self.game.setup()), &self.moves())
+        view::sans(self.game.setup(), &self.moves())
     }
 
     /// The player may move now: it is their turn at the latest position, and not before the
@@ -629,7 +623,7 @@ impl ComputerPage {
         let interactive = self.interactive();
         let live = self.game.result().is_none();
         let mut state = view::board_state(
-            &json!(self.game.setup()),
+            self.game.setup(),
             &self.moves(),
             self.ply(),
             self.orientation(),
@@ -678,7 +672,7 @@ impl ComputerPage {
     /// New game against Stockfish, from the options the player chose.
     fn open_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = Current {
-            setup: json!(self.game.setup()),
+            setup: self.game.setup().clone(),
             clock: json!(self.game.clock()),
             color: kchess_domain::color::name(self.user_color()).to_string(),
             level: self.game.level().to_string(),
@@ -703,7 +697,7 @@ impl ComputerPage {
     /// move, at the level and clock chosen last.
     pub fn start_from(
         &mut self,
-        setup: Value,
+        setup: Setup,
         color: Color,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -742,7 +736,7 @@ impl ComputerPage {
             self,
             move |this, window, cx| {
                 let chosen = Chosen {
-                    setup: json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN }),
+                    setup: Setup::standard(),
                     clock: json!(this.game.clock()),
                     color: kchess_domain::color::name(color),
                     level,
@@ -774,10 +768,10 @@ impl ComputerPage {
         self.flipped = false;
         self.reset_archive(cx);
         let host = self.host();
-        let effects = serde_json::from_value(chosen.setup)
-            .and_then(|setup| Ok((setup, serde_json::from_value(chosen.clock)?)))
+        let setup = chosen.setup;
+        let effects = serde_json::from_value(chosen.clock)
             .map_err(|error| format!("the chosen game: {error}"))
-            .and_then(|(setup, clock)| self.game.start(Some(setup), Some(clock), &host));
+            .and_then(|clock| self.game.start(Some(setup), Some(clock), &host));
         self.perform(effects, cx);
         self.select_level(window, cx);
         self.changed(cx);
@@ -994,14 +988,12 @@ impl ComputerPage {
         }
         let setup = self
             .position_at(self.moves().len())
-            .map(|position| {
-                json!({
-                    "variant": self.game.setup().variant.key(),
-                    "fen": kchess_domain::rules::make_fen(&position),
-                })
+            .map(|position| Setup {
+                variant: self.game.setup().variant,
+                fen: kchess_domain::rules::make_fen(&position),
             })
-            .unwrap_or(Value::Null);
-        let fen = setup["fen"].as_str().unwrap_or_default().to_string();
+            .unwrap_or_else(|| Setup::standard_at(""));
+        let fen = setup.fen.clone();
         let heard = match event {
             crate::voice::VoiceEvent::Missed { heard, .. } => {
                 self.voice.missed(heard, &fen, self.voice_taking(), cx);
@@ -1116,8 +1108,7 @@ impl ComputerPage {
 
     /// The opening the moves on the board reached, as `(eco, name)`.
     fn opening(&self) -> Option<(SharedString, SharedString)> {
-        let opening =
-            crate::game::opening_at(&json!(self.game.setup()), &self.moves(), self.ply())?;
+        let opening = crate::game::opening_at(self.game.setup(), &self.moves(), self.ply())?;
         Some((opening.eco.into(), opening.name.into()))
     }
 
@@ -1132,7 +1123,7 @@ impl ComputerPage {
     fn render_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
         if self.engine == Engine::Missing {
             let checking = self.engine == Engine::Checking;
-            let standard = crate::game::standard_rules(&self.setup_variant());
+            let standard = self.setup_variant().standard_rules();
             let banner = widgets::StatusBanner::new(
                 Tone::Alert,
                 icon("triangle-alert"),
@@ -1263,7 +1254,7 @@ impl Render for ComputerPage {
         let moves = self.moves();
         let ply = self.ply();
         let interactive = self.interactive();
-        let first = view::first_move(&json!(self.game.setup()));
+        let first = view::first_move(self.game.setup());
         let in_progress = self.in_progress();
         let result = self.game.result();
         let side_of = |color: Color| {
@@ -1401,8 +1392,8 @@ impl Render for ComputerPage {
             .map(|clock| widgets::time_control(clock.minutes, clock.increment));
         let frontend = crate::settings::frontend(cx);
         let zen = frontend.zen_mode;
-        let show_opening = frontend.show_opening_name && self.setup_variant() == "standard";
-        let setup_label = crate::game::setup_label(&json!(self.game.setup()));
+        let show_opening = frontend.show_opening_name && self.setup_variant() == Variant::Standard;
+        let setup_label = crate::game::setup_label(self.game.setup());
         let opening = show_opening.then(|| self.opening()).flatten();
         let panel = widgets::side_panel(&palette)
             .relative()
@@ -1606,15 +1597,13 @@ impl crate::pages::PageView for ComputerPage {
     }
 }
 
-/// Whether a game can start from `setup` (`{ variant, fen }`): a standard position the engine
-/// takes (not one with too many pieces), or a legal one in its variant.
-pub(crate) fn playable(setup: &Value) -> bool {
-    let variant = setup["variant"].as_str().unwrap_or("standard");
-    let fen = setup["fen"].as_str().unwrap_or_default();
-    if crate::game::standard_rules(variant) {
-        crate::game::position_problem(fen).is_none()
+/// Whether a game can start from `setup`: a standard position the engine takes (not one with
+/// too many pieces), or a legal one in its variant.
+pub(crate) fn playable(setup: &Setup) -> bool {
+    if setup.variant.standard_rules() {
+        crate::game::position_problem(&setup.fen).is_none()
     } else {
-        crate::game::setup_position(variant, fen).is_some()
+        setup.position().is_some()
     }
 }
 
@@ -1628,8 +1617,8 @@ pub fn play_level(level: &str, color: &'static str, window: &mut Window, cx: &mu
 
 /// Play Stockfish (Fairy-Stockfish in another variant) from a setup's position, as the side to
 /// move. A position that cannot be played only opens the page.
-pub fn play_from(setup: Value, window: &mut Window, cx: &mut App) {
-    let color = crate::links::side_to_move(setup["fen"].as_str().unwrap_or_default());
+pub fn play_from(setup: Setup, window: &mut Window, cx: &mut App) {
+    let color = crate::links::side_to_move(&setup.fen);
     if !playable(&setup) {
         crate::shell::open(crate::pages::Page::Computer, window, cx);
         return;

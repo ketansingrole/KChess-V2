@@ -13,6 +13,7 @@ use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_domain::training::guess::{self, Eval, Evals, Flaw, Grade, Judged};
+use kchess_domain::variant::{Setup, Variant};
 use serde_json::{Value, json};
 use shakmaty::{Color, Position as _};
 
@@ -42,7 +43,7 @@ const LINES: usize = 3;
 /// A game to guess through: its start, its moves and who played it.
 #[derive(Clone)]
 struct Game {
-    setup: Value,
+    setup: Setup,
     moves: Vec<String>,
     sans: Vec<String>,
     white: String,
@@ -54,7 +55,7 @@ struct Game {
 impl Game {
     /// The mainline of a standard game's PGN, or why it cannot be guessed.
     fn from_pgn(pgn: &str) -> Result<Game, &'static str> {
-        if crate::game::pgn_variant_key(pgn) != Some("standard") {
+        if crate::game::pgn_variant(pgn) != Some(Variant::Standard) {
             return Err("Only standard chess games can be guessed");
         }
         let root = TreeNode::from_pgn(pgn).ok_or("That PGN could not be read")?;
@@ -67,7 +68,7 @@ impl Game {
         if moves.is_empty() {
             return Err("That game has no moves");
         }
-        let setup = json!({ "variant": "standard", "fen": root.fen });
+        let setup = Setup::standard_at(root.fen.clone());
         let sans = view::sans(&setup, &moves);
         if sans.len() != moves.len() {
             return Err("That PGN could not be read");
@@ -186,7 +187,7 @@ impl GuessMoves {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> GuessMoves {
         let board = cx.new(|_| {
             ChessBoard::new(view::board_state(
-                &json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN }),
+                &Setup::standard(),
                 &[],
                 0,
                 Color::White,
@@ -604,7 +605,7 @@ impl GuessMoves {
         };
         let request = json!({
             "fen": kchess_domain::rules::make_fen(&position),
-            "rootFen": game.setup["fen"],
+            "rootFen": game.setup.fen,
             "moves": history,
             "lines": if matches!(probe, Probe::Best(_)) { LINES } else { 1 },
             "infinite": true,
@@ -1119,7 +1120,7 @@ impl Render for GuessMoves {
 
 /// A PGN's moves and start as guessing would play them through, or why it cannot be guessed.
 #[cfg(test)]
-pub(super) fn loaded(pgn: &str) -> Result<(Vec<String>, Value), &'static str> {
+pub(super) fn loaded(pgn: &str) -> Result<(Vec<String>, Setup), &'static str> {
     Game::from_pgn(pgn).map(|game| (game.moves, game.setup))
 }
 

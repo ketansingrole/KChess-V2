@@ -6,6 +6,7 @@ use kchess_contracts::calls;
 use kchess_contracts::check::Username;
 use kchess_contracts::types::Crosstable;
 use kchess_domain::training::clock::format_clock;
+use kchess_domain::variant::{Setup, Variant};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -30,34 +31,16 @@ use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 
-/// How a game ended, as Lichess names its status.
-fn ending(status: &str) -> &str {
-    match status {
-        "mate" => "Checkmate",
-        "resign" => "Resignation",
-        "outoftime" => "Time out",
-        "timeout" => "Opponent left",
-        "draw" => "Draw",
-        "stalemate" => "Stalemate",
-        "aborted" => "Aborted",
-        "noStart" => "Did not start",
-        "cheat" => "Cheat detected",
-        "variantEnd" => "Variant win",
-        other => other,
-    }
+/// Whether KChess plays the variant of a game Lichess sends (standard chess when it names none).
+fn plays_variant(frame: &Value) -> bool {
+    frame["variant"]
+        .as_str()
+        .is_none_or(|key| Variant::from_key(key).is_some())
 }
 
-/// `SPEEDS`: a speed's name.
+/// A speed's name.
 fn speed_label(speed: &str) -> Option<&'static str> {
-    Some(match speed {
-        "ultraBullet" => "UltraBullet",
-        "bullet" => "Bullet",
-        "blitz" => "Blitz",
-        "rapid" => "Rapid",
-        "classical" => "Classical",
-        "correspondence" => "Correspondence",
-        _ => return None,
-    })
+    kchess_domain::perf::Speed::from_key(speed).map(kchess_domain::perf::Speed::label)
 }
 
 fn speed_icon(speed: &str) -> Option<gpui_kit::component::Icon> {
@@ -77,7 +60,10 @@ pub fn result_line(frame: &Value) -> String {
     if frame["finished"] != json!(true) {
         return "Live".into();
     }
-    let how = frame["status"].as_str().map(ending).unwrap_or_default();
+    let how = frame["status"]
+        .as_str()
+        .map(kchess_domain::records::games::status_label)
+        .unwrap_or_default();
     match frame["winner"].as_str() {
         Some(winner) => format!(
             "{} won{}",
@@ -113,7 +99,7 @@ pub fn info_line(frame: &Value, channels: &[kchess_contracts::types::TvChannel])
         frame["variant"]
             .as_str()
             .filter(|variant| *variant != "standard")
-            .map(crate::game::variant_label)
+            .map(|variant| crate::game::variant_label(variant).to_string())
     };
     let mut parts = Vec::new();
     if let (Some(initial), Some(increment)) = (
@@ -214,7 +200,7 @@ impl Live {
             board: cx.new(|_| {
                 ChessBoard::new(BoardState::shown(
                     "8/8/8/8/8/8/8/8 w",
-                    "standard",
+                    kchess_domain::variant::Variant::Standard,
                     Color::White,
                     None,
                 ))
@@ -295,13 +281,13 @@ impl Live {
         self.frame_at = Instant::now();
     }
 
-    /// The game's start and moves, once Lichess's delayed export lines up with the feed.
-    fn setup(&self) -> Option<Value> {
+    /// The game's start and moves, once Lichess's delayed export lines up with the feed; none
+    /// for a variant KChess does not play.
+    fn setup(&self) -> Option<Setup> {
         let frame = self.frame.as_ref()?;
         let fen = frame["startFen"].as_str()?;
-        frame["moves"].is_array().then(
-            || json!({ "variant": frame["variant"].as_str().unwrap_or("standard"), "fen": fen }),
-        )
+        let setup = crate::game::setup_of(&json!({ "variant": frame["variant"], "fen": fen }))?;
+        frame["moves"].is_array().then_some(setup)
     }
 
     fn moves(&self) -> Vec<String> {
@@ -360,7 +346,8 @@ impl Live {
         let state = replayed.unwrap_or_else(|| {
             let mut state = BoardState::shown(
                 fen,
-                frame["variant"].as_str().unwrap_or("standard"),
+                kchess_domain::variant::Variant::from_lichess(frame["variant"].as_str())
+                    .unwrap_or_default(),
                 orientation,
                 frame["lastMove"].as_str(),
             );
@@ -466,7 +453,7 @@ impl Live {
                     .or_insert_with(|| {
                         let mut state = BoardState::shown(
                             entry["fen"].as_str().unwrap_or_default(),
-                            "standard",
+                            kchess_domain::variant::Variant::Standard,
                             orientation,
                             entry["lastMove"].as_str().filter(|uci| !uci.contains('@')),
                         );
@@ -734,9 +721,7 @@ impl WatchPage {
                             .w_full()
                             .icon(icon("microscope"))
                             .label("Analyse")
-                            .disabled(!crate::game::analysable(
-                                frame["variant"].as_str().unwrap_or("standard"),
-                            ))
+                            .disabled(!plays_variant(&frame))
                             .on_click(cx.listener(|this, _, window, cx| this.analyse(window, cx)))
                             .into_any_element()
                             .into(),
@@ -953,7 +938,7 @@ impl WatchPage {
             return Vec::new();
         };
         let mut actions = vec![Action::Flip];
-        if crate::game::analysable(frame["variant"].as_str().unwrap_or("standard")) {
+        if plays_variant(frame) {
             actions.push(Action::Analyse);
         }
         actions.push(Action::Stop);

@@ -810,7 +810,7 @@ impl Repertoire {
             return;
         };
         let text = self.move_input.read(cx).value().trim().to_string();
-        let setup = json!({ "variant": "standard", "fen": node.fen });
+        let setup = kchess_domain::variant::Setup::standard_at(node.fen.clone());
         let typed =
             kchess_domain::rules::setup_start(kchess_domain::variant::Variant::Standard, &node.fen)
                 .and_then(|position| view::typed_uci(&setup, &position, &text));

@@ -227,7 +227,10 @@ fn crazyhouse() {
             let local = crate::shell::view::<crate::pages::local::LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
-                let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
+                let setup = kchess_domain::variant::Setup {
+                    variant: kchess_domain::variant::Variant::Crazyhouse,
+                    fen: fen.into(),
+                };
                 local.replace_game(setup, serde_json::Value::Null, window, cx);
                 for uci in [
                     "e2e4", "d7d5", "e4d5", "d8d5", "b1c3", "d5a5", "f1b5", "c7c6", "b5c6",
@@ -335,7 +338,10 @@ fn computer_variant() {
                 crate::shell::view::<crate::pages::computer::ComputerPage>(cx).expect("the page");
             page.update(cx, |page, cx| {
                 let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
-                let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
+                let setup = kchess_domain::variant::Setup {
+                    variant: kchess_domain::variant::Variant::Crazyhouse,
+                    fen: fen.into(),
+                };
                 page.start_from(setup, shakmaty::Color::White, window, cx);
             });
         })
@@ -754,8 +760,7 @@ fn low_clock() {
             crate::shell::open(Page::Local, window, cx);
             let local = crate::shell::view::<LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
-                let setup =
-                    serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+                let setup = kchess_domain::variant::Setup::standard();
                 let clock = serde_json::json!({
                     "white": { "minutes": 0.15, "increment": 0 },
                     "black": { "minutes": 0.15, "increment": 0 },
@@ -796,8 +801,7 @@ fn over_the_board() {
             crate::shell::open(Page::Local, window, cx);
             let local = crate::shell::view::<LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
-                let setup =
-                    serde_json::json!({ "variant": "standard", "fen": crate::game::STANDARD_FEN });
+                let setup = kchess_domain::variant::Setup::standard();
                 let clock = serde_json::json!({
                     "white": { "minutes": 5, "increment": 3 },
                     "black": { "minutes": 5, "increment": 3 },
