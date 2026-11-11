@@ -407,9 +407,7 @@ fn a_finished_game_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppContext
     app.type_text(">Analyse");
     super::palette::wait_for_first(&mut app, "Analyse");
     app.press("enter");
-    app.wait_for("the analysis board", |_, cx| {
-        crate::shell::current_page(cx) == Some(crate::pages::Page::Analysis)
-    });
+    app.wait_for_page(crate::pages::Page::Analysis);
 }
 
 /// While a seek waits for an opponent, Quick Pick cancels it as the page's Cancel does.

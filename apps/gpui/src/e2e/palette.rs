@@ -5,10 +5,6 @@ use crate::pages::Page;
 use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
 use serde_json::json;
 
-fn page(app: &mut Harness) -> Option<Page> {
-    app.cx.update(|cx| crate::shell::current_page(cx))
-}
-
 /// Whether a result with this name is listed.
 fn lists(app: &mut Harness, name: &str) -> bool {
     app.with_window(|window, _| {
@@ -105,7 +101,7 @@ fn a_page_is_found_by_name_and_opened(cx: &mut gpui_kit::TestAppContext) {
     wait_for_first(&mut app, "Puzzles");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Puzzles));
+    app.wait_for_page(Page::Puzzles);
 }
 
 #[gpui_kit::test]
@@ -116,7 +112,7 @@ fn acronyms_and_several_words_find_pages_and_commands(cx: &mut gpui_kit::TestApp
     wait_for_first(&mut app, "Over the board");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Local));
+    app.wait_for_page(Page::Local);
 
     app.press("secondary-k");
     app.type_text("stockfish black");
@@ -154,7 +150,7 @@ fn commands_are_run_from_the_command_mode(cx: &mut gpui_kit::TestAppContext) {
     wait_for_first(&mut app, "New analysis board");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Analysis));
+    app.wait_for_page(Page::Analysis);
 
     // The shortcut opens straight into the commands; Backspace goes back to searching pages.
     app.press("shift-secondary-p");
@@ -254,7 +250,7 @@ fn a_pasted_position_or_game_link_opens_from_quick_pick(cx: &mut gpui_kit::TestA
     assert!(lists(&mut app, "Edit this position"));
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Analysis));
+    app.wait_for_page(Page::Analysis);
     // Only this position's king reaches d2.
     app.click_label("Enter a chess move in SAN or UCI");
     app.type_text("Kd2");
@@ -280,7 +276,7 @@ fn a_pasted_position_or_game_link_opens_from_quick_pick(cx: &mut gpui_kit::TestA
     wait_for_first(&mut app, "Open SomeIm’s profile");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Players));
+    app.wait_for_page(Page::Players);
 
     // Numbered moves open as a game, at its last move.
     app.press("secondary-k");
@@ -314,7 +310,7 @@ fn a_pasted_broadcast_link_opens_its_round(cx: &mut gpui_kit::TestAppContext) {
     wait_for_first(&mut app, "Watch this broadcast");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Watch));
+    app.wait_for_page(Page::Watch);
     wait_for_round(&mut app, BROADCAST_ROUNDS[0]);
     assert_eq!(
         app.find(super::tab(
@@ -385,7 +381,7 @@ fn a_broadcast_board_is_analysed_from_quick_pick(cx: &mut gpui_kit::TestAppConte
     wait_for_first(&mut app, "Analyse");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Analysis));
+    app.wait_for_page(Page::Analysis);
     assert_eq!(app.find("tree-e2e4 e7e5 g1f3").selected(), Some(true));
 }
 
@@ -417,7 +413,7 @@ fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {
     wait_for_first(&mut app, "Open this tournament");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Tournaments));
+    app.wait_for_page(Page::Tournaments);
     app.find("tournament-join");
     // The event's own actions are in Quick Pick too, with the header's.
     app.press("secondary-k");
@@ -458,7 +454,7 @@ fn a_pasted_tv_link_watches_its_channel(cx: &mut gpui_kit::TestAppContext) {
     wait_for_first(&mut app, "Watch this TV channel");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Watch));
+    app.wait_for_page(Page::Watch);
     assert_eq!(
         app.find(super::tab("watch-tabs", crate::pages::watch::Tab::Tv))
             .selected(),
@@ -682,7 +678,7 @@ fn watch_tabs_open_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
         wait_until_closed(app);
     };
     run(&mut app, "Broadcasts");
-    assert_eq!(page(&mut app), Some(Page::Watch));
+    app.wait_for_page(Page::Watch);
     assert_eq!(
         app.find(super::tab(
             "watch-tabs",
@@ -735,6 +731,24 @@ fn a_tv_channel_is_chosen_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     assert!(!lists(&mut app, "Watch Blitz"));
 }
 
+/// The TV channel chosen last is the one watched, however fast the choices come. Each choice
+/// asked the core to start its feed at once, and the core runs one feed at a time: under load the
+/// earlier request could reach it last, so the page waited for a feed that had been replaced,
+/// and the earlier one, stopped as stale, left none (2026.11.11).
+#[gpui_kit::test]
+fn the_tv_channel_chosen_last_is_watched(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    for _ in 0..10 {
+        app.with_window(|window, cx| {
+            crate::pages::watch::open_channel("atomic".into(), window, cx);
+            crate::pages::watch::open_channel("rapid".into(), window, cx);
+        });
+        app.find("watch-stop");
+        // The Rapid game, two moves in.
+        app.find(("move", 1usize));
+    }
+}
+
 /// A watched standard game opens on the analysis board, from its button and from Quick Pick:
 /// leaving Watch tells the Watch page it is hidden, which must not happen while it runs the action.
 #[gpui_kit::test]
@@ -757,9 +771,7 @@ fn a_watched_game_is_analysed_from_its_button_and_quick_pick(cx: &mut gpui_kit::
     wait_until_closed(&mut app);
     // The first game is still on the analysis board, unsaved.
     app.click("ok");
-    app.wait_for("the analysis board", |_, cx| {
-        crate::shell::current_page(cx) == Some(Page::Analysis)
-    });
+    app.wait_for_page(Page::Analysis);
     app.find("tree-e2e4 c7c5");
 }
 
@@ -777,13 +789,11 @@ fn a_copied_game_is_opened_with_paste(cx: &mut gpui_kit::TestAppContext) {
 
     copy(&mut app, "hello");
     app.press("secondary-v");
-    assert_eq!(page(&mut app), Some(crate::pages::Page::Puzzles));
+    app.wait_for_page(crate::pages::Page::Puzzles);
 
     copy(&mut app, "1. e4 e5 2. Nf3");
     app.press("secondary-v");
-    app.wait_for("the moves on the analysis board", |_, cx| {
-        crate::shell::current_page(cx) == Some(crate::pages::Page::Analysis)
-    });
+    app.wait_for_page(crate::pages::Page::Analysis);
     app.find("tree-e2e4 e7e5 g1f3");
 
     // In Quick Pick's field the text is pasted as text.
@@ -898,7 +908,7 @@ fn guess_the_move_opens_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     wait_for_first(&mut app, "Guess the move");
     app.press("enter");
     wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Practice));
+    app.wait_for_page(Page::Practice);
     assert_eq!(
         app.find(super::tab("practice-tabs", Tab::Guess)).selected(),
         Some(true)

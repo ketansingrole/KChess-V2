@@ -329,9 +329,7 @@ fn a_finished_game_is_reviewed_from_quick_pick(cx: &mut gpui_kit::TestAppContext
     app.type_text(">Review game");
     super::palette::wait_for_first(&mut app, "Review game");
     app.press("enter");
-    app.wait_for("the analysis board", |_, cx| {
-        crate::shell::current_page(cx) == Some(crate::pages::Page::Analysis)
-    });
+    app.wait_for_page(crate::pages::Page::Analysis);
 }
 
 /// A variant game starts from a FEN read by that variant's rules (a Crazyhouse position with

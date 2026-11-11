@@ -396,6 +396,15 @@ impl Harness {
         self.type_text(text);
     }
 
+    /// Wait until `page` is shown. A page can open after Quick Pick has closed: the analysis
+    /// board opens only once it has read the session it was left with, an answer from the core's
+    /// thread, so a check right after the palette closed saw the page before (2026.11.11).
+    pub fn wait_for_page(&mut self, page: crate::pages::Page) {
+        self.wait_for(&format!("the {page:?} page"), |_, cx| {
+            crate::shell::current_page(cx) == Some(page)
+        });
+    }
+
     /// Wait until the element is shown, then return it.
     pub fn find(&mut self, id: impl Into<ElementId>) -> ElementSnapshot {
         let id = id.into();

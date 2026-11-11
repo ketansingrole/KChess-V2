@@ -523,11 +523,20 @@ impl WatchPage {
         });
         self.pending = Some(Pending::Round);
         cx.notify();
-        let call = cx.global::<AppCore>().request(calls::WatchBroadcast {
-            round_id: LichessId(round),
-        });
+        let (before, started) = self.next_feed();
         cx.spawn(async move |this, cx| {
+            if let Some(before) = before {
+                before.await;
+            }
+            let Ok(call) = this.update(cx, |_, cx| {
+                cx.global::<AppCore>().request(calls::WatchBroadcast {
+                    round_id: LichessId(round),
+                })
+            }) else {
+                return;
+            };
             let answer = call.await;
+            drop(started);
             let _ = this.update(cx, |this, cx| {
                 if this.epoch != epoch {
                     // The page moved on while the core started it: that feed ends now.

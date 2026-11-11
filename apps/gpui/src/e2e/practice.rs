@@ -18,10 +18,6 @@ fn tab(app: &mut Harness, tab: crate::pages::practice::Tab) {
     );
 }
 
-fn page(app: &mut Harness) -> Option<Page> {
-    app.cx.update(|cx| crate::shell::current_page(cx))
-}
-
 /// Wait until the element's accessible label is `label`.
 fn wait_for_label(app: &mut Harness, id: &'static str, label: &str) {
     use gpui_kit::test::TestWindowExt as _;
@@ -306,13 +302,13 @@ fn an_empty_repertoire_and_empty_mistakes_lead_elsewhere(cx: &mut gpui_kit::Test
     tab(&mut app, crate::pages::practice::Tab::Openings);
     assert!(app.enabled("browse-openings"));
     app.click("open-studies");
-    assert_eq!(page(&mut app), Some(Page::Studies));
+    app.wait_for_page(Page::Studies);
 
     app.open("Practice");
     tab(&mut app, crate::pages::practice::Tab::Mistakes);
     assert!(!app.shows("practice-due"));
     app.click("review-a-game");
-    assert_eq!(page(&mut app), Some(Page::History));
+    app.wait_for_page(Page::History);
 }
 
 /// A mistake from a Crazyhouse game is drilled by Crazyhouse's rules: the pockets are beside the

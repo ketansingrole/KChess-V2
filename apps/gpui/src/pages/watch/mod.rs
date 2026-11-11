@@ -175,6 +175,8 @@ pub struct WatchPage {
     early: Vec<CoreEvent>,
     /// Each request; answers to an older one are dropped.
     epoch: u64,
+    /// Settles once the core has answered the last feed asked of it (`next_feed`).
+    feed_started: Option<FeedStarted>,
     live: Live,
     broadcasts: Broadcasts,
     /// Followed players' presence by lowercase name.
@@ -260,6 +262,7 @@ impl WatchPage {
             pending: None,
             early: Vec::new(),
             epoch: 0,
+            feed_started: None,
             live: Live::new(cx),
             broadcasts: Broadcasts::new(window, cx),
             presence: std::collections::HashMap::new(),
@@ -495,11 +498,20 @@ impl WatchPage {
         self.target = Some(target.clone());
         self.pending = Some(Pending::Watch);
         cx.notify();
-        let call = cx.global::<AppCore>().request(calls::Watch {
-            target: target.contract(),
-        });
+        let (before, started) = self.next_feed();
         cx.spawn(async move |this, cx| {
+            if let Some(before) = before {
+                before.await;
+            }
+            let Ok(call) = this.update(cx, |_, cx| {
+                cx.global::<AppCore>().request(calls::Watch {
+                    target: target.contract(),
+                })
+            }) else {
+                return;
+            };
             let answer = call.await;
+            drop(started);
             let _ = this.update(cx, |this, cx| {
                 if this.epoch != epoch {
                     // The page moved on while the core started it: that watch ends now.
@@ -524,6 +536,20 @@ impl WatchPage {
             });
         })
         .detach();
+    }
+
+    /// Wait for the feed asked for before to have started, then ask for the next: the core
+    /// follows one feed at a time (a channel, a game or a broadcast round), and two requests sent
+    /// together could reach it in either order. Under load the older one then started last,
+    /// replacing the feed the page waited for, and was stopped as stale, leaving none.
+    /// `started` is to be dropped once the core has answered.
+    fn next_feed(&mut self) -> (Option<FeedStarted>, futures::channel::oneshot::Sender<()>) {
+        use futures::FutureExt as _;
+        let (started, answered) = futures::channel::oneshot::channel::<()>();
+        let before = self
+            .feed_started
+            .replace(answered.map(|_| ()).boxed().shared());
+        (before, started)
     }
 
     /// `stop`: no feed, no frame.
@@ -1067,6 +1093,9 @@ fn live_badge(palette: &Palette) -> Div {
 }
 
 /// `stopWatching` for `session` alone, if there is one.
+/// Settles once the core has answered a feed's request.
+type FeedStarted = futures::future::Shared<futures::future::BoxFuture<'static, ()>>;
+
 pub(super) fn stop_watching(session: Option<f64>, cx: &mut App) {
     let Some(session) = session else {
         return;

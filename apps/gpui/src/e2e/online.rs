@@ -13,10 +13,6 @@ fn open(cx: &mut gpui_kit::TestAppContext, label: &str, online: bool) -> Harness
     app
 }
 
-fn page(app: &mut Harness) -> Option<Page> {
-    app.cx.update(|cx| crate::shell::current_page(cx))
-}
-
 /// Wait until the element's accessible label is `label`.
 fn wait_for_label(app: &mut Harness, id: &'static str, label: &str) {
     use gpui_kit::test::TestWindowExt as _;
@@ -52,7 +48,7 @@ fn play_online_asks_to_connect_and_offers_the_computer(cx: &mut gpui_kit::TestAp
     let mut app = open(cx, "Play on Lichess", true);
     assert!(app.enabled("online-connect"));
     app.click("online-computer");
-    assert_eq!(page(&mut app), Some(Page::Computer));
+    app.wait_for_page(Page::Computer);
 }
 
 #[gpui_kit::test]
@@ -374,10 +370,10 @@ fn insights_without_games_lead_to_following_or_analysis(cx: &mut gpui_kit::TestA
         window.try_find_by_label("Speed").is_none()
     }));
     app.click("insights-analyse");
-    assert_eq!(page(&mut app), Some(Page::Analysis));
+    app.wait_for_page(Page::Analysis);
     app.open("Insights");
     app.click("insights-follow");
-    assert_eq!(page(&mut app), Some(Page::Friends));
+    app.wait_for_page(Page::Friends);
 }
 
 /// A saved title the leaderboard lacks says so and offers everyone back; then titles have their

@@ -36,10 +36,6 @@ fn reveal(app: &mut Harness, id: impl Into<gpui_kit::ElementId>) {
     app.find(id);
 }
 
-fn page(app: &mut Harness) -> Option<Page> {
-    app.cx.update(|cx| crate::shell::current_page(cx))
-}
-
 /// Wait until the status banner's title begins with `title`.
 fn wait_for_status(app: &mut Harness, title: &str) {
     use gpui_kit::test::TestWindowExt as _;
@@ -156,7 +152,7 @@ fn a_popular_opening_is_trained_in_the_repertoire_trainer(cx: &mut gpui_kit::Tes
     let mut app = openings(cx);
     reveal(&mut app, "train-Sicilian Defense");
     app.click("train-Sicilian Defense");
-    assert_eq!(page(&mut app), Some(Page::Practice));
+    app.wait_for_page(Page::Practice);
     assert_eq!(
         app.find(super::tab(
             "practice-tabs",
@@ -223,7 +219,7 @@ fn an_opening_can_be_analysed(cx: &mut gpui_kit::TestAppContext) {
     let mut app = openings(cx);
     open_kieseritzky(&mut app);
     app.click("analyse-line");
-    assert_eq!(page(&mut app), Some(Page::Analysis));
+    app.wait_for_page(Page::Analysis);
 }
 
 /// An open line's buttons are in Quick Pick: its puzzles open from there.
@@ -255,7 +251,7 @@ fn an_open_lines_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     super::palette::wait_for_first(&mut app, "Train with puzzles");
     app.press("enter");
     super::palette::wait_until_closed(&mut app);
-    assert_eq!(page(&mut app), Some(Page::Puzzles));
+    app.wait_for_page(Page::Puzzles);
 }
 
 /// The repertoire trainer's buttons are in Quick Pick: a drilled line is saved from there.
