@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex as AsyncMutex, watch};
@@ -696,9 +696,12 @@ async fn download_archive(
 }
 
 fn usage(host: &dyn Host, requests: u32, bytes: u64) {
-    host.emit(
-        "host:usage",
-        json!({ "account": "", "category": "other", "requests": requests, "bytes": bytes }),
+    crate::usage::report(
+        host,
+        "",
+        kchess_contracts::types::UsageKind::Other,
+        u64::from(requests),
+        bytes,
     );
 }
 

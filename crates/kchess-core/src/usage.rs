@@ -202,6 +202,16 @@ fn database_bytes(data_dir: &Path) -> u64 {
 }
 
 use crate::tasks::lock;
+use kchess_contracts::types::UsageKind;
+
+/// Counts metered network traffic: every service reports its requests and bytes here, and the
+/// [`UsageHost`] adds them to the batch.
+pub fn report(host: &dyn Host, account: &str, kind: UsageKind, requests: u64, bytes: u64) {
+    host.emit(
+        "host:usage",
+        json!({ "account": account, "category": kind, "requests": requests, "bytes": bytes }),
+    );
+}
 
 /// The host the core's services use: `host:usage` events go to the batch, everything else to the
 /// platform host unchanged.

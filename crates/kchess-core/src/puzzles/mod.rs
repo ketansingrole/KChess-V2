@@ -223,9 +223,12 @@ impl Inner {
     }
 
     fn usage(&self, requests: u32, bytes: u64) {
-        self.host.emit(
-            "host:usage",
-            json!({ "account": "", "category": "database", "requests": requests, "bytes": bytes }),
+        crate::usage::report(
+            &*self.host,
+            "",
+            kchess_contracts::types::UsageKind::Database,
+            u64::from(requests),
+            bytes,
         );
     }
 
