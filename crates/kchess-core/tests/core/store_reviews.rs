@@ -188,6 +188,39 @@ fn all_associations_are_retained_through_updates_and_each_account_copy_leaves_th
     assert_eq!(profile.insights("Alice")["accuracy"]["games"], json!(2));
 }
 
+/// A review written over a stored one replaces it unless the stored one ranks higher: a finished
+/// review beats one in progress, and then Lichess's own beats ours.
+#[test]
+fn a_stored_review_is_kept_only_over_a_lower_ranked_one() {
+    let profile = fresh();
+    // (complete, Lichess's), in rank order.
+    let ranked = [(false, false), (false, true), (true, false), (true, true)];
+    let of = |(complete, lichess): (bool, bool), depth: u32| {
+        let source = if lichess { "lichess" } else { "local" };
+        review(
+            None,
+            &[
+                ("complete", json!(complete)),
+                ("source", json!(source)),
+                ("depth", json!(depth)),
+            ],
+        )
+    };
+    for (stored_rank, stored) in ranked.iter().enumerate() {
+        for (written_rank, written) in ranked.iter().enumerate() {
+            profile.clear();
+            profile.write_review(&of(*stored, 11));
+            profile.write_review(&of(*written, 22));
+            let kept = if stored_rank > written_rank { 11 } else { 22 };
+            assert_eq!(
+                profile.read_review(&review_key())["depth"],
+                json!(kept),
+                "{stored:?} stored, {written:?} written"
+            );
+        }
+    }
+}
+
 /// The queue parses these rows as `GameToReview` (`engine::bridge`): a floating-point
 /// `createdAt` fails the whole pass ("expected i64") and automatic reviews stop.
 #[test]

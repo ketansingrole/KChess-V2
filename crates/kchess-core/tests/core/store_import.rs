@@ -170,7 +170,21 @@ fn an_earlier_main_database_is_imported_once_with_its_plaintext_tokens_encrypted
 
     // Once imported, the profile is never imported again: a later change to the earlier database
     // does not reach it.
+    assert_eq!(
+        store
+            .read(import::legacy_import_pending)
+            .expect("legacyImportPending"),
+        json!(false)
+    );
     store.close();
+    Connection::open(&legacy)
+        .and_then(|earlier| {
+            earlier.execute_batch(
+                "INSERT INTO lichess_accounts VALUES ('Dora', 'oauth', 6);
+                 INSERT INTO app_settings VALUES ('app.appearance_mode', 'dark');",
+            )
+        })
+        .expect("the earlier database changes");
     let store = store.reopen_with(Secrets::ON);
     assert_eq!(
         usernames(
@@ -426,4 +440,31 @@ fn a_backup_whose_games_or_accounts_are_not_a_list_is_refused_in_plain_words() {
             .logged("JSON migration failed: The old profile's accounts are not a list.")
     );
     assert!(backup.exists());
+}
+
+/// A backup from a build that stored a board preset: Chess.com's preset becomes the green board
+/// only when the backup names no board theme of its own.
+#[test]
+fn a_backups_chess_com_preset_becomes_the_green_board_only_without_a_theme() {
+    let cases = [
+        (json!({ "boardPreset": "chess.com" }), "green"),
+        (
+            json!({ "boardPreset": "chess.com", "boardTheme": null }),
+            "green",
+        ),
+        (
+            json!({ "boardPreset": "chess.com", "boardTheme": "blue" }),
+            "blue",
+        ),
+        (json!({ "boardPreset": "lichess" }), "brown"),
+        (json!({}), "brown"),
+    ];
+    for (stored, theme) in cases {
+        let settings = import::backup_settings(stored.as_object().expect("settings object"));
+        assert_eq!(
+            serde_json::to_value(settings).expect("settings")["boardTheme"],
+            json!(theme),
+            "{stored}"
+        );
+    }
 }

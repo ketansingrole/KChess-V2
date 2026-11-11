@@ -828,6 +828,89 @@ mod tests {
         check_based_on(&db, &save("1. c4 *"), "1. d4 *").expect("a rename changes no moves");
     }
 
+    /// Undoing a removal carries what it brings back: a restored study is never stale, and a
+    /// restored chapter is checked against the chapter the window showed, the study's first.
+    #[test]
+    fn a_restore_is_checked_against_what_the_window_showed() {
+        let db = study_db();
+        let created = study_command(
+            &db,
+            &json!({"op":"saveChapters", "id":"a", "name":"A", "chapters":[
+                {"name":"One", "pgn":"1. e4 *"}, {"name":"Two", "pgn":"1. d4 *"}]}),
+            1.0,
+            true,
+        )
+        .expect("create");
+        let two = created["studies"][0]["chapters"][1].clone();
+        study_command(
+            &db,
+            &json!({"op":"removeChapter", "id":"a", "chapterId":two["id"]}),
+            2.0,
+            true,
+        )
+        .expect("remove the chapter");
+        let restore_chapter = json!({"op":"restoreChapter", "id":"a", "chapter":two, "index":1});
+        assert_eq!(
+            check_based_on(&db, &restore_chapter, "1. e4 *").expect("based on the first chapter"),
+            Some("A".to_string())
+        );
+        assert_eq!(
+            check_based_on(&db, &restore_chapter, "1. d4 *")
+                .expect_err("not what the window showed")
+                .message,
+            super::super::studies::STALE_STUDY
+        );
+
+        let removed =
+            study_command(&db, &json!({"op":"remove", "id":"a"}), 3.0, true).expect("remove");
+        let restore = json!({"op":"restore", "study":removed["removed"]});
+        assert_eq!(
+            check_based_on(&db, &restore, "1. c4 *").expect("a restored study"),
+            None
+        );
+    }
+
+    /// A study needs one to 64 chapters, and the library holds 1,800,000 characters of studies.
+    #[test]
+    fn a_study_needs_one_to_64_chapters_and_room_in_the_library() {
+        let db = study_db();
+        let chapter = json!({"name":"C", "pgn":"1. e4 *"});
+        for count in [0, 65] {
+            let refused = study_command(
+                &db,
+                &json!({"op":"saveChapters", "name":"S", "chapters": vec![chapter.clone(); count]}),
+                1.0,
+                true,
+            )
+            .expect_err("refused");
+            assert_eq!(
+                refused.message, "Name the study and use up to 64 valid chapters.",
+                "{count} chapters"
+            );
+        }
+        study_command(
+            &db,
+            &json!({"op":"saveChapters", "name":"S", "chapters": vec![chapter; 64]}),
+            1.0,
+            true,
+        )
+        .expect("64 chapters");
+
+        let notes = "n".repeat(STUDY_LIBRARY_MAX_TEXT);
+        let full = study_command(
+            &db,
+            &json!({"op":"save", "name":"Long", "pgn": format!("1. e4 {{{notes}}} *")}),
+            2.0,
+            true,
+        )
+        .expect_err("too long for the library");
+        assert_eq!(
+            full.message,
+            "The study library is full. Export and remove a study before saving another."
+        );
+        assert_eq!(read_studies(&db).expect("studies").len(), 1);
+    }
+
     /// A content save from one window, based on the chapter it shows, after another window
     /// renamed the study or removed it: the rename stays, and the removed study is not recreated
     /// with a new chapter id that the open board can never save to.
@@ -947,6 +1030,18 @@ mod tests {
 
     /// A complete review of `BLUNDER`: level until Black's sixth move hands White mate in one.
     fn store_blunder_review(db: &Connection, source: &str, depth: u32) -> String {
+        store_review_of_blunder(db, source, depth, true, "g7g6")
+    }
+
+    /// `store_blunder_review`, `complete` or not, with the engine's line before the blunder
+    /// starting on `line` (its best move is g7g6).
+    fn store_review_of_blunder(
+        db: &Connection,
+        source: &str,
+        depth: u32,
+        complete: bool,
+        line: &str,
+    ) -> String {
         let key = json!(kchess_domain::records::review::review_key(
             START, &BLUNDER, None
         ));
@@ -954,7 +1049,7 @@ mod tests {
             .map(|_| json!({ "cp": 30, "depth": depth, "best": "a2a3" }))
             .collect();
         evals.push(
-            json!({ "cp": 30, "depth": depth, "best": "g7g6", "pv": ["g7g6", "h5f3", "g8f6"] }),
+            json!({ "cp": 30, "depth": depth, "best": "g7g6", "pv": [line, "h5f3", "g8f6"] }),
         );
         evals.push(json!({ "mate": 1, "depth": depth, "best": "h5f7", "pv": ["h5f7"] }));
         evals.push(json!({ "mate": 0, "depth": depth }));
@@ -963,7 +1058,7 @@ mod tests {
             db,
             serde_json::from_value(json!({
                 "key": key, "fen": START, "moves": BLUNDER, "source": source,
-                "complete": true, "depth": depth, "updatedAt": 7, "evals": evals,
+                "complete": complete, "depth": depth, "updatedAt": 7, "evals": evals,
             }))
             .expect("a stored review"),
         )
@@ -1063,6 +1158,49 @@ mod tests {
         assert_eq!(shallow["added"], json!(0));
         let missing = add_mistakes(&QUIET, &db, "no review", None, 1.0).expect("add");
         assert_eq!(missing, json!({ "added": 0, "items": [] }));
+    }
+
+    /// A local review exactly 10 plies deep is deep enough; an unfinished one makes no drill; and
+    /// an engine line that does not start on the best move gives way to the best move alone.
+    #[test]
+    fn drills_need_a_finished_review_ten_deep_and_the_line_of_its_best_move() {
+        // (complete, depth, line, solution); no solution: no drill.
+        let cases: [(bool, u32, &str, Option<Value>); 4] = [
+            (true, 10, "g7g6", Some(json!(["g7g6", "h5f3", "g8f6"]))),
+            (true, 9, "g7g6", None),
+            (false, 20, "g7g6", None),
+            (true, 20, "a7a6", Some(json!(["g7g6"]))),
+        ];
+        for (complete, depth, line, solution) in cases {
+            let db = drills_db();
+            let key = store_review_of_blunder(&db, "local", depth, complete, line);
+            let added = add_mistakes(&QUIET, &db, &key, Some("black"), 1.0).expect("add");
+            let case = format!("complete {complete}, depth {depth}, line {line}");
+            assert_eq!(
+                added["added"],
+                json!(usize::from(solution.is_some())),
+                "{case}"
+            );
+            assert_eq!(
+                added["items"][0].get("solution").cloned(),
+                solution,
+                "{case}"
+            );
+        }
+    }
+
+    /// Stored numbers: whole ones without a fraction while they fit exactly, others as they are.
+    #[test]
+    fn whole_writes_a_fraction_only_where_there_is_one() {
+        for (n, written) in [
+            (1.0, "1"),
+            (1.5, "1.5"),
+            (-2.0, "-2"),
+            (8.0e15, "8000000000000000"),
+            (9.0e15, "9000000000000000.0"),
+        ] {
+            assert_eq!(whole(n).to_string(), written, "{n}");
+        }
     }
 
     #[test]
@@ -1374,6 +1512,68 @@ mod tests {
         assert_eq!(joined(now), 1);
         assert_eq!(joined(now + 120_000.0), 0, "ended by then");
         assert_eq!(joined(now), 1, "the kept snapshot still has it");
+    }
+
+    /// A tournament that ends at this very moment has ended: every read leaves it out, and the
+    /// next one remembered then drops it from the store.
+    #[test]
+    fn a_tournament_ending_now_has_ended() {
+        let db = drills_db();
+        let config = crate::host::Config::new(std::path::PathBuf::new());
+        let cache = crate::store::StoreCache::default();
+        let ctx = crate::store::StoreContext {
+            db: &db,
+            host: &QUIET,
+            config: &config,
+            cache: &cache,
+        };
+        let end = 1_700_000_000_000.0;
+        let remember = |id: &str, until: f64, now: f64| {
+            let entry = json!({ "system": "arena", "id": id, "account": "Alice", "name": id, "until": until });
+            remember_tournament(&QUIET, &db, &serde_json::from_value(entry).unwrap(), now)
+                .expect("remember");
+        };
+        remember("ending", end, end - 1.0);
+        let count = |value: Value| value.as_array().expect("joined").len();
+        let reads: [(&str, &dyn Fn(f64) -> usize); 3] = [
+            ("joinedTournaments", &|now| {
+                count(joined_tournaments(&QUIET, &db, now).expect("joined"))
+            }),
+            ("library", &|now| {
+                count(snapshot_of(&QUIET, &db, now).expect("library")["joinedTournaments"].clone())
+            }),
+            ("cached library", &|now| {
+                count(cached_library(&ctx, now).expect("library")["joinedTournaments"].clone())
+            }),
+        ];
+        for (read, joined) in &reads {
+            assert_eq!(joined(end - 1.0), 1, "{read} before the end");
+            assert_eq!(joined(end), 0, "{read} at the end");
+        }
+        remember("next", end + 60_000.0, end);
+        assert_eq!(
+            count(joined_tournaments(&QUIET, &db, end - 1.0).expect("joined")),
+            1,
+            "only the next one is stored"
+        );
+    }
+
+    /// Removing a played game deletes its row; the others stay.
+    #[test]
+    fn a_removed_played_game_is_gone_from_the_library() {
+        let db = drills_db();
+        for id in ["one", "two"] {
+            write_game(
+                &db,
+                &kchess_domain::library::decode_archived_game(&played(id)).expect("a played game"),
+            )
+            .expect("save");
+        }
+        remove_archived_game(&db, "two").expect("remove");
+        assert_eq!(
+            game_ids(&snapshot_of(&QUIET, &db, 0.0).expect("library")),
+            ["one"]
+        );
     }
 
     /// The pages that resume a session read it, and the drills, alone: each answer is what the

@@ -78,6 +78,8 @@ pub struct Lane {
     execution: Arc<Semaphore>,
     work: TaskTracker,
     closed: AtomicBool,
+    /// A call slower than this is logged (`SLOW_CALL`).
+    slow_call: Duration,
 }
 
 impl Lane {
@@ -96,6 +98,7 @@ impl Lane {
             execution: Arc::new(Semaphore::new(1)),
             work: TaskTracker::new(),
             closed: AtomicBool::new(false),
+            slow_call: SLOW_CALL,
         }
     }
 
@@ -158,7 +161,7 @@ impl Lane {
             .await
             .map_err(|_| CoreError::new(lane.messages.stopped))?;
             let elapsed = started.elapsed();
-            if elapsed > SLOW_CALL {
+            if elapsed > lane.slow_call {
                 lane.host.log(
                     Level::Warn,
                     lane.scope,
@@ -342,10 +345,30 @@ mod tests {
         assert_eq!(opens.load(Ordering::SeqCst), 2);
     }
 
+    /// A call slower than the lane's limit is logged with where it was made; a quicker one is not.
+    #[tokio::test]
+    async fn a_slow_call_is_logged_with_its_caller() {
+        for (slow_call, logged) in [(Duration::ZERO, true), (SLOW_CALL, false)] {
+            let host = TestHost::new();
+            let mut lane = Lane::new("test", MESSAGES, host.clone(), |_| {
+                Connection::open_in_memory().sql()
+            });
+            lane.slow_call = slow_call;
+            Arc::new(lane).run(|_| Ok(())).await.expect("the call");
+            assert_eq!(
+                host.logged("Slow storage call: caller="),
+                logged,
+                "{:?}",
+                host.logs()
+            );
+        }
+    }
+
     #[tokio::test]
     async fn a_contended_lane_keeps_the_executor_free_and_close_drains_a_detached_worker() {
         let lane = memory_lane(Arc::new(AtomicUsize::new(0)));
         lane.run(|_| Ok(())).await.expect("first open");
+        assert!(lane.is_open());
         let (held, held_rx) = tokio::sync::oneshot::channel();
         let (release, release_rx) = std::sync::mpsc::channel::<()>();
         let blocked = Arc::clone(&lane);
