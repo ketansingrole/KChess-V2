@@ -15,7 +15,8 @@ pub fn board(window: &mut Window, cx: &mut App) -> Option<Entity<AnalysisPage>> 
 }
 
 /// Run `then` with the analysis board once it has read the session it opens with (made now if
-/// it has not been shown), so what it shows is what the profile kept.
+/// it has not been shown), so what it shows is what the profile kept. Keys the person has given
+/// elsewhere meanwhile stay there (`keeping_keys_since`).
 pub fn when_read(
     window: &mut Window,
     cx: &mut App,
@@ -24,12 +25,17 @@ pub fn when_read(
     let Some(analysis) = board(window, cx) else {
         return;
     };
+    let asked = window.focused(cx);
     analysis.update(cx, |page, cx| {
         SessionSaver::when_read(
             page,
             move |_, window, cx| {
                 let analysis = cx.entity();
-                window.defer(cx, move |window, cx| then(analysis, window, cx));
+                window.defer(cx, move |window, cx| {
+                    crate::shell::keeping_keys_since(asked, window, cx, |window, cx| {
+                        then(analysis, window, cx)
+                    })
+                });
             },
             window,
             cx,

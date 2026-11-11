@@ -314,6 +314,26 @@ pub fn open(page: Page, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Run `show`, which opens a page, for something asked when the keys were at `asked`, before an
+/// answer the person need not have waited for. When they have given the keys elsewhere since
+/// (Quick Pick opened again, a field clicked), the page opens behind and leaves the keys there:
+/// taking them closed Quick Pick under the person's search. A dialog `show` opens keeps them.
+pub fn keeping_keys_since(
+    asked: Option<FocusHandle>,
+    window: &mut Window,
+    cx: &mut App,
+    show: impl FnOnce(&mut Window, &mut App),
+) {
+    use gpui_kit::component::WindowExt as _;
+    let now = window.focused(cx);
+    show(window, cx);
+    if let Some(now) = now.filter(|now| asked.as_ref() != Some(now))
+        && !window.has_active_dialog(cx)
+    {
+        window.focus(&now, cx);
+    }
+}
+
 /// Open page `V` as the sidebar would, then `act` on it: how one page links into another.
 pub fn show<V: PageView>(
     window: &mut Window,

@@ -115,11 +115,7 @@ impl<V: Resumes> SessionSaver<V> {
                     }
                 };
                 this.resume(saved, window, cx);
-                let waiting = std::mem::take(&mut this.saver().waiting);
-                for work in waiting {
-                    work(this, window, cx);
-                }
-                cx.notify();
+                Self::run_waiting(this, window, cx);
             });
         })
         .detach();
@@ -146,6 +142,22 @@ impl<V: Resumes> SessionSaver<V> {
     #[cfg(test)]
     pub fn forget(&mut self) {
         self.state = Resume::Reading;
+    }
+
+    /// The read after `forget` answers now, with nothing to resume: the work waiting runs.
+    #[cfg(test)]
+    pub fn answer(this: &mut V, window: &mut Window, cx: &mut Context<V>) {
+        this.saver().state = Resume::Ready;
+        Self::run_waiting(this, window, cx);
+    }
+
+    /// The work that waited for the read, now it is done.
+    fn run_waiting(this: &mut V, window: &mut Window, cx: &mut Context<V>) {
+        let waiting = std::mem::take(&mut this.saver().waiting);
+        for work in waiting {
+            work(this, window, cx);
+        }
+        cx.notify();
     }
 
     /// Why the saved session could not be read, while that stands.
