@@ -6,7 +6,7 @@ use kchess_contracts::check::{FriendList, GameAccount, GameId, OptionalAccount, 
 use kchess_contracts::core_api::GamesApi;
 use kchess_contracts::types::{
     AppData, CachedProfile, ConnectedLichess, FollowingReport, GameLibraryOverview, GamePage,
-    GamePageQuery, InsightsQuery, RatingSeries,
+    GamePageQuery, InsightsQuery, InsightsReport, RatingSeries,
 };
 use serde_json::Value;
 
@@ -36,7 +36,7 @@ impl GamesApi for Core {
         self.database.read_async(games::game_library_overview).await
     }
 
-    async fn insights(&self, query: InsightsQuery) -> Result<Value> {
+    async fn insights(&self, query: InsightsQuery) -> Result<InsightsReport> {
         let now = now_ms() as f64;
         self.database
             .read_async(move |ctx| insights::insights(ctx.host, ctx.db, &query, now))

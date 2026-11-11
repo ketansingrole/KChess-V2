@@ -765,6 +765,7 @@ fn recorded_answers_read_back_as_their_contract_types() {
         SetViewPreference,
         Usage,
         ResetUsage,
+        Insights,
     );
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/wire");
     let mut checked = 0;

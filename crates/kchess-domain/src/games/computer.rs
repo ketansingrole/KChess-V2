@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use shakmaty::Color;
 
+use super::archive::Snapshot;
 use super::{Board, Clock, Clocking, Host, Outcome, Setup, Times};
 use crate::js;
 use crate::training::engine_levels;
@@ -159,20 +160,6 @@ pub struct Verdict {
     pub kind: Kind,
     pub title: &'static str,
     pub detail: String,
-}
-
-/// The game as the archive stores it.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Archived {
-    pub source: &'static str,
-    pub setup: Setup,
-    pub moves: Vec<String>,
-    pub white: String,
-    pub black: String,
-    pub result: &'static str,
-    pub reason: String,
-    pub time_control: String,
 }
 
 /// A game against the engine.
@@ -641,7 +628,7 @@ impl ComputerGame {
     }
 
     /// The game as the archive stores it.
-    pub fn archive_snapshot(&self) -> Result<Archived, String> {
+    pub fn archive_snapshot(&self) -> Result<Snapshot, String> {
         let engine = format!("Stockfish ({})", level_info(&self.state.level)?.label);
         let (white, black) = players(self.state.color, &engine);
         let (white, black) = (white.to_string(), black.to_string());
@@ -656,15 +643,16 @@ impl ComputerGame {
             ),
             None => "-".to_string(),
         };
-        Ok(Archived {
-            source: "computer",
+        Ok(Snapshot {
+            source: "computer".into(),
             setup: self.state.setup.clone(),
             moves: self.state.moves.clone(),
             white,
             black,
-            result: Outcome::tag(self.outcome()),
+            result: Outcome::tag(self.outcome()).into(),
             reason,
             time_control,
+            clock_summary: None,
         })
     }
 }

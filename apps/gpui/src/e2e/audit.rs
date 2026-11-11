@@ -521,7 +521,7 @@ fn seed(app: &mut Harness) {
             .enumerate()
             {
                 played.save(
-                    serde_json::json!({
+                    serde_json::from_value(serde_json::json!({
                         "id": format!("audit-{index}"),
                         "source": "computer",
                         "setup": { "variant": variant, "fen": start },
@@ -534,7 +534,8 @@ fn seed(app: &mut Harness) {
                         "timeControl": "300+3",
                         "startedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
                         "updatedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
-                    }),
+                    }))
+                    .expect("a played game"),
                     cx,
                 );
             }
@@ -618,7 +619,7 @@ fn seed_longest(app: &mut Harness) {
         played.update(cx, |played, cx| {
             for index in 0..3 {
                 played.save(
-                    serde_json::json!({
+                    serde_json::from_value(serde_json::json!({
                         "id": format!("longest-{index}"),
                         "source": "computer",
                         "setup": { "variant": "standard", "fen": start },
@@ -631,7 +632,8 @@ fn seed_longest(app: &mut Harness) {
                         "timeControl": "5400+30",
                         "startedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
                         "updatedAt": 1_790_000_000_000u64 + index as u64 * 90_000_000,
-                    }),
+                    }))
+                    .expect("a played game"),
                     cx,
                 );
             }

@@ -369,7 +369,12 @@ mod tests {
             "moves": ["e2e4"],
         });
         other
-            .write(|ctx| library::write_game(ctx.db, &game))
+            .write(|ctx| {
+                library::write_game(
+                    ctx.db,
+                    &kchess_domain::library::decode_archived_game(&game).expect("a played game"),
+                )
+            })
             .expect("save");
         other.close();
         assert_eq!(played_games(&database), 1);

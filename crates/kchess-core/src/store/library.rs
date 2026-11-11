@@ -3,7 +3,8 @@
 //! document in `kchess.db`. The decoders and semantic validation are `kchess_domain`'s.
 
 use kchess_contracts::types::{
-    Keyed, MistakeGame, MistakesAdded, SessionKind, StudyCommand, StudyCommandResult,
+    Drill, JoinedTournament, Keyed, MistakeGame, MistakesAdded, PlayedGame, SessionKind,
+    StudyCommand, StudyCommandResult, TournamentSystem,
 };
 use kchess_domain::color::Color;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -84,6 +85,14 @@ pub fn num(n: f64) -> Value {
     }
 }
 
+/// `num(n)` as a number: whole numbers without a fraction.
+fn whole(n: f64) -> serde_json::Number {
+    match num(n) {
+        Value::Number(n) => n,
+        _ => 0.into(),
+    }
+}
+
 /// Whether an optional JSON value is set and not false, 0, NaN, an empty string or null.
 pub fn truthy(value: Option<&Value>) -> bool {
     !js::falsy(value)
@@ -126,9 +135,9 @@ pub(crate) use super::documents::{assert_replaceable, write_document};
 pub use super::json_codec::{clean_name, js_json};
 pub use super::library_import::{cached_library, library};
 pub(crate) use super::library_import::{
-    read_joined, read_misses, read_mistakes, read_schedule_lines, read_session, until_after,
+    read_joined, read_misses, read_mistakes, read_schedule_lines, read_session,
 };
-pub(crate) use super::studies::{check_based_on, id_of, spread, study_command};
+pub(crate) use super::studies::{check_based_on, study_command};
 
 /* ── Played games: one row each, so a move rewrites only its own game ── */
 
@@ -138,9 +147,10 @@ fn archive_overhead() -> i64 {
 }
 
 /// Add or replace a game; it becomes the most recent.
-pub fn write_game(db: &Connection, game: &Value) -> Result<()> {
-    let id = game.get("id").and_then(Value::as_str).unwrap_or_default();
-    let body = js_json(game);
+pub fn write_game(db: &Connection, game: &PlayedGame) -> Result<()> {
+    let id = game.id.as_str();
+    let body =
+        js_json(&serde_json::to_value(game).map_err(|cause| CoreError::new(cause.to_string()))?);
     let (count, bytes): (i64, i64) = db
         .query_row(
             "SELECT COUNT(*) AS count, COALESCE(SUM(length(body)), 0) AS bytes
@@ -172,7 +182,7 @@ fn mistakes_readable(raw: &Value) -> bool {
         && raw.get("items").is_some_and(Value::is_array)
 }
 
-fn write_mistakes(db: &Connection, items: Vec<Value>) -> Result<()> {
+fn write_mistakes(db: &Connection, items: Vec<Drill>) -> Result<()> {
     assert_replaceable(db, MISTAKES, Some(1), mistakes_readable)?;
     write_document(
         db,
@@ -275,22 +285,19 @@ pub fn add_mistakes(
             continue;
         }
         let id = format!("{stored_key}:{index}");
-        if items.iter().any(|item| id_of(item) == Some(id.as_str())) {
+        if items.iter().any(|item| item.id == id) {
             continue;
         }
-        let mut drill = json!({
-            "id": id,
-            "fen": position,
-            "solution": solution,
-            "judgment": judgment,
-            "dueAt": num(now),
-            "streak": 0,
-            "attempts": 0,
+        items.push(Drill {
+            id,
+            fen: position,
+            solution,
+            judgment: judgment.to_string(),
+            due_at: whole(now),
+            streak: 0.into(),
+            attempts: 0.into(),
+            variant,
         });
-        if let Some(variant) = &variant {
-            drill["variant"] = json!(variant);
-        }
-        items.push(drill);
         added += 1;
     }
     let items = keep_last(items, MAX_MISTAKES);
@@ -322,7 +329,7 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame
     let mut keys: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for item in read_mistakes(db)? {
-        let Some((key, _)) = id_of(&item).and_then(|id| id.rsplit_once(':')) else {
+        let Some((key, _)) = item.id.rsplit_once(':') else {
             continue;
         };
         if seen.insert(key.to_string()) {
@@ -332,13 +339,9 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame
     if keys.is_empty() {
         return Ok(Vec::new());
     }
-    let mut played = Map::new();
+    let mut played = std::collections::HashMap::new();
     for game in super::library_import::read_games(host, db)? {
-        let fen = game
-            .pointer("/setup/fen")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if let Some(key) = line_review_key(fen, &string_list(game.get("moves"))) {
+        if let Some(key) = line_review_key(&game.setup.fen, &game.moves) {
             played.entry(key).or_insert(game);
         }
     }
@@ -399,14 +402,7 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame
                 at = created as f64;
             }
         } else if let Some(game) = played.get(&entry.key) {
-            let white = game
-                .get("white")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let black = game
-                .get("black")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let (white, black) = (game.white.as_str(), game.black.as_str());
             entry.white = Some(white.to_string());
             entry.black = Some(black.to_string());
             if (white == "You") != (black == "You") {
@@ -416,7 +412,7 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame
                     Color::Black
                 });
             }
-            at = js::to_number(game.get("startedAt"));
+            at = game.started_at;
         }
         entry.played_at = at;
         games.push(entry);
@@ -426,88 +422,54 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame
 }
 
 /// Schedules a drill again.
-pub fn answer_mistake(db: &Connection, id: &str, solved: bool, now: f64) -> Result<Vec<Value>> {
+pub fn answer_mistake(db: &Connection, id: &str, solved: bool, now: f64) -> Result<Vec<Drill>> {
     let mut items = read_mistakes(db)?;
-    let Some(index) = items.iter().position(|entry| id_of(entry) == Some(id)) else {
+    let Some(item) = items.iter_mut().find(|entry| entry.id == id) else {
         return Ok(items);
     };
-    let item = object(&items[index], "mistake")?.clone();
-    let attempts = item
-        .get("attempts")
-        .and_then(Value::as_f64)
-        .unwrap_or(f64::NAN)
-        + 1.0;
-    let streak = if solved {
-        item.get("streak")
-            .and_then(Value::as_f64)
-            .unwrap_or(f64::NAN)
-            + 1.0
-    } else {
-        0.0
-    };
+    let attempts = item.attempts() + 1.0;
+    let streak = if solved { item.streak() + 1.0 } else { 0.0 };
     let wait = if solved {
         2f64.powf(streak - 1.0).min(30.0) * 86_400_000.0
     } else {
         10.0 * 60_000.0
     };
-    items[index] = Value::Object(spread(
-        &item,
-        vec![
-            ("attempts", num(attempts)),
-            ("streak", num(streak)),
-            ("dueAt", num(now + wait)),
-        ],
-    ));
+    item.attempts = whole(attempts);
+    item.streak = whole(streak);
+    item.due_at = whole(now + wait);
     write_mistakes(db, items.clone())?;
     Ok(items)
 }
 
 /* ── Tournaments joined from KChess ── */
 
-fn write_joined(db: &Connection, entries: Vec<Value>) -> Result<()> {
+fn write_joined(db: &Connection, entries: Vec<JoinedTournament>) -> Result<()> {
     assert_replaceable(db, JOINED, None, Value::is_array)?;
-    write_document(
-        db,
-        JOINED,
-        &Value::Array(entries),
-        "Too many joined tournaments.",
-    )
-    .map(|_| ())
+    write_document(db, JOINED, &json!(entries), "Too many joined tournaments.").map(|_| ())
 }
 
-pub fn joined_tournaments(host: &dyn Host, db: &Connection, now: f64) -> Result<Vec<Value>> {
-    Ok(read_joined(host, db)?
-        .into_iter()
-        .filter(|entry| until_after(entry, now))
-        .collect())
-}
-
-/// A membership's account, compared without case.
-fn joined_account(entry: &Value) -> String {
-    entry
-        .get("account")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_lowercase()
+pub fn joined_tournaments(
+    host: &dyn Host,
+    db: &Connection,
+    now: f64,
+) -> Result<Vec<JoinedTournament>> {
+    let mut entries = read_joined(host, db)?;
+    entries.retain(|entry| entry.until > now);
+    Ok(entries)
 }
 
 /// Memberships belong to an account: the same event joined by another account is another entry.
 pub fn remember_tournament(
     host: &dyn Host,
     db: &Connection,
-    entry: &Value,
+    entry: &JoinedTournament,
     now: f64,
 ) -> Result<()> {
-    let account = joined_account(entry);
-    let mut entries: Vec<Value> = read_joined(host, db)?
-        .into_iter()
-        .filter(|e| {
-            until_after(e, now)
-                && !(e.get("system") == entry.get("system")
-                    && e.get("id") == entry.get("id")
-                    && joined_account(e) == account)
-        })
-        .collect();
+    let mut entries = read_joined(host, db)?;
+    entries.retain(|e| {
+        e.until > now
+            && !(e.system == entry.system && e.id == entry.id && e.joined_by(&entry.account))
+    });
     entries.push(entry.clone());
     write_joined(db, entries)
 }
@@ -516,39 +478,24 @@ pub fn remember_tournament(
 pub fn forget_tournament(
     host: &dyn Host,
     db: &Connection,
-    system: &str,
+    system: TournamentSystem,
     id: &str,
     account: Option<&str>,
 ) -> Result<()> {
-    let account = account.map(str::to_lowercase);
-    let kept: Vec<Value> = read_joined(host, db)?
-        .into_iter()
-        .filter(|e| {
-            !(e.get("system").and_then(Value::as_str) == Some(system)
-                && e.get("id").and_then(Value::as_str) == Some(id)
-                && account
-                    .as_ref()
-                    .is_none_or(|name| joined_account(e) == *name))
-        })
-        .collect();
+    let mut kept = read_joined(host, db)?;
+    kept.retain(|e| {
+        !(e.system == system && e.id == id && account.is_none_or(|name| e.joined_by(name)))
+    });
     write_joined(db, kept)
 }
 
 /// Signed-out accounts must not reopen event streams for their tournaments.
 pub fn forget_tournaments_of(host: &dyn Host, db: &Connection, accounts: &[String]) -> Result<()> {
-    let names: Vec<String> = accounts.iter().map(|name| name.to_lowercase()).collect();
     let entries = read_joined(host, db)?;
     let total = entries.len();
-    let kept: Vec<Value> = entries
+    let kept: Vec<JoinedTournament> = entries
         .into_iter()
-        .filter(|e| {
-            let account = e
-                .get("account")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_lowercase();
-            !names.contains(&account)
-        })
+        .filter(|e| !accounts.iter().any(|name| e.joined_by(name)))
         .collect();
     if kept.len() != total {
         let removed = total - kept.len();
@@ -744,7 +691,9 @@ mod tests {
         crate::store::migrations::migrate(&db).unwrap();
         let now = 1_700_000_000_000.0;
         let entry = |system: &str, id: &str, account: &str, name: &str, until: f64| json!({ "system": system, "id": id, "account": account, "name": name, "until": until });
-        let remember = |item: Value| remember_tournament(&QUIET, &db, &item, now).unwrap();
+        let remember = |item: Value| {
+            remember_tournament(&QUIET, &db, &serde_json::from_value(item).unwrap(), now).unwrap()
+        };
         remember(entry("arena", "ended", "Alice", "Old", now - 1.0));
         remember(entry("arena", "live", "Alice", "Live", now + 60_000.0));
         remember(entry("swiss", "other", "Bob", "Swiss", now + 60_000.0));
@@ -756,7 +705,7 @@ mod tests {
                 .map(|item| item["id"].as_str().unwrap().to_string())
                 .collect()
         };
-        let joined = || joined_tournaments(&QUIET, &db, now).unwrap();
+        let joined = || json!(joined_tournaments(&QUIET, &db, now).unwrap());
         assert_eq!(ids(joined()), ["live", "other"]);
         forget_tournaments_of(&QUIET, &db, &["alice".to_string()]).unwrap();
         assert_eq!(ids(joined()), ["other"]);
@@ -771,10 +720,10 @@ mod tests {
         let now = 1_700_000_000_000.0;
         let remember = |account: &str| {
             let entry = json!({ "system": "arena", "id": "live", "account": account, "name": "Live", "until": now + 60_000.0 });
-            remember_tournament(&QUIET, &db, &entry, now).unwrap();
+            remember_tournament(&QUIET, &db, &serde_json::from_value(entry).unwrap(), now).unwrap();
         };
         let forget = |account: Option<&str>| {
-            forget_tournament(&QUIET, &db, "arena", "live", account).unwrap();
+            forget_tournament(&QUIET, &db, TournamentSystem::Arena, "live", account).unwrap();
         };
         let accounts = || -> Vec<String> {
             joined_tournaments(&QUIET, &db, now)
@@ -1017,7 +966,7 @@ mod tests {
     #[test]
     fn spreads_keep_key_order_and_add_new_keys_last() {
         let base = json!({ "id": "s", "name": "old", "pgn": "p" });
-        let merged = spread(
+        let merged = crate::store::studies::spread(
             base.as_object().expect("object"),
             vec![
                 ("pgn", json!("q")),
@@ -1177,7 +1126,12 @@ mod tests {
             "black": "You", "result": "1-0", "reason": "Checkmate", "timeControl": "-", "finished": true, "setup": { "variant": "standard", "fen": START },
             "moves": BLUNDER,
         });
-        write_game(&db, &game).map(|()| Value::Null).expect("save");
+        write_game(
+            &db,
+            &kchess_domain::library::decode_archived_game(&game).expect("a played game"),
+        )
+        .map(|()| Value::Null)
+        .expect("save");
         let games = mistake_games(&QUIET, &db).expect("games");
         assert_eq!(
             (
@@ -1285,7 +1239,10 @@ mod tests {
                 JOINED,
                 r#"[{"system":"arena""#,
                 "forgetTournament",
-                |db, _| forget_tournament(&QUIET, db, "arena", "x", None).map(|()| Value::Null),
+                |db, _| {
+                    forget_tournament(&QUIET, db, TournamentSystem::Arena, "x", None)
+                        .map(|()| Value::Null)
+                },
             ),
             (
                 MISSES,
@@ -1394,7 +1351,11 @@ mod tests {
             cache: &cache,
         };
         let read = || cached_library(&ctx, 0.0).expect("library");
-        write_game(&db, &played("one")).expect("save");
+        write_game(
+            &db,
+            &kchess_domain::library::decode_archived_game(&played("one")).expect("a played game"),
+        )
+        .expect("save");
         assert_eq!(game_ids(&read()), ["one"]);
         let changes = db.total_changes();
         assert!(cache.library(changes).is_some(), "the read is kept");
@@ -1404,7 +1365,11 @@ mod tests {
         );
         assert_eq!(game_ids(&read()), ["one"]);
 
-        write_game(&db, &played("two")).expect("save");
+        write_game(
+            &db,
+            &kchess_domain::library::decode_archived_game(&played("two")).expect("a played game"),
+        )
+        .expect("save");
         assert_eq!(game_ids(&read()), ["two", "one"]);
         save_session(&db, "local", json!({ "x": 1 })).ok();
         db.execute("DELETE FROM archived_games WHERE id = 'two'", [])
@@ -1441,7 +1406,8 @@ mod tests {
         };
         let now = 1_700_000_000_000.0;
         let entry = json!({ "system": "arena", "id": "live", "account": "Alice", "name": "Live", "until": now + 60_000.0 });
-        remember_tournament(&QUIET, &db, &entry, now).expect("remember");
+        remember_tournament(&QUIET, &db, &serde_json::from_value(entry).unwrap(), now)
+            .expect("remember");
         let joined = |at: f64| {
             cached_library(&ctx, at).expect("library")["joinedTournaments"]
                 .as_array()
@@ -1461,7 +1427,11 @@ mod tests {
         let now = 1_700_000_000_000.0;
         let library = || snapshot_of(&QUIET, &db, now).expect("library");
         let session = |kind: &str| session(&QUIET, &db, kind).expect(kind);
-        let mistakes = || read_mistakes(&db).map(Value::Array).expect("mistakes");
+        let mistakes = || {
+            read_mistakes(&db)
+                .map(|items| json!(items))
+                .expect("mistakes")
+        };
         assert_eq!(session("analysis"), Value::Null, "none kept yet");
         assert_eq!(mistakes(), json!([]));
 

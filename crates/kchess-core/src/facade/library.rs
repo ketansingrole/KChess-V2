@@ -6,7 +6,8 @@ use kchess_contracts::check::{
 };
 use kchess_contracts::core_api::LibraryApi;
 use kchess_contracts::types::{
-    Library, MistakeGame, MistakesAdded, SessionKind, StudyCommand, StudyCommandResult,
+    Drill, JoinedTournament, Library, MistakeGame, MistakesAdded, SessionKind, StudyCommand,
+    StudyCommandResult,
 };
 use kchess_domain::misc::documents;
 use kchess_domain::misc::value::J;
@@ -72,7 +73,7 @@ impl LibraryApi for Core {
             .await
     }
 
-    async fn answer_mistake(&self, id: LibraryId, solved: bool) -> Result<Vec<Value>> {
+    async fn answer_mistake(&self, id: LibraryId, solved: bool) -> Result<Vec<Drill>> {
         let now = now_ms() as f64;
         self.database
             .write_async(move |ctx| library::answer_mistake(ctx.db, &id.0, solved, now))
@@ -94,7 +95,7 @@ impl LibraryApi for Core {
             .await
     }
 
-    async fn joined_tournaments(&self) -> Result<Vec<Value>> {
+    async fn joined_tournaments(&self) -> Result<Vec<JoinedTournament>> {
         let now = now_ms() as f64;
         self.database
             .read_async(move |ctx| library::joined_tournaments(ctx.host, ctx.db, now))
@@ -107,7 +108,7 @@ impl LibraryApi for Core {
             .await
     }
 
-    async fn mistakes(&self) -> Result<Vec<Value>> {
+    async fn mistakes(&self) -> Result<Vec<Drill>> {
         self.database
             .read_async(|ctx| library_import::read_mistakes(ctx.db))
             .await

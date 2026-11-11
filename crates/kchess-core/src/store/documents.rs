@@ -66,11 +66,11 @@ pub(crate) fn parse_text(text: &str) -> Option<Value> {
     serde_json::from_str(text).ok()
 }
 
-pub(crate) fn decode_mistakes_text(text: &str) -> Option<Vec<Value>> {
+pub(crate) fn decode_mistakes_text(text: &str) -> Option<Vec<kchess_domain::library::Drill>> {
     parse_text(text).and_then(|raw| kchess_domain::library::decode_mistakes(&raw))
 }
 
-pub(crate) fn decode_archived_game_text(text: &str) -> Option<Value> {
+pub(crate) fn decode_archived_game_text(text: &str) -> Option<kchess_domain::library::PlayedGame> {
     parse_text(text).and_then(|raw| kchess_domain::library::decode_archived_game(&raw))
 }
 

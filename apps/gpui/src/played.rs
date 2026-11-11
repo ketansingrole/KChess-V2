@@ -10,14 +10,14 @@ use kchess_contracts::Level;
 use kchess_contracts::calls;
 use kchess_contracts::check::{ArchivedGame, LibraryId, SessionObject};
 use kchess_contracts::types::SessionKind;
-use kchess_contracts::types::{Library, ProfileArea};
-use serde_json::{Value, json};
+use kchess_contracts::types::{Library, PlayedGame, ProfileArea};
+use serde_json::Value;
 
 use crate::core::{Answer, AppCore, Reads};
 use crate::quit::BoxedSave;
 
 enum Write {
-    Game(Value),
+    Game(PlayedGame),
     Remove(String),
     /// A page's place in history (`archive:<kind>`), kept with the games it names.
     Session(String, Value),
@@ -30,8 +30,8 @@ impl Write {
     /// What a later write replaces: a game (saved or removed), or a page's session.
     fn key(&self) -> String {
         match self {
-            Self::Game(game) => format!("game:{}", game["id"]),
-            Self::Remove(id) => format!("game:{}", json!(id)),
+            Self::Game(game) => format!("game:{}", game.id),
+            Self::Remove(id) => format!("game:{id}"),
             Self::Session(key, _) => format!("session:{key}"),
             Self::Flushed(..) => String::new(),
         }
@@ -40,7 +40,7 @@ impl Write {
 
 pub struct PlayedGames {
     /// Newest saved first, as the core lists them.
-    games: Vec<Value>,
+    games: Vec<PlayedGame>,
     /// Counts the changes to `games`, so a page can keep what it works out of them until the next.
     revision: u64,
     /// Why the last write failed, until one succeeds.
@@ -139,7 +139,7 @@ async fn send(core: &AppCore, write: &Write) -> Result<(), kchess_contracts::Cor
     match write {
         Write::Game(game) => core
             .request(calls::SaveArchivedGame {
-                game: ArchivedGame(game.clone()),
+                game: ArchivedGame::of(game),
             })
             .await
             .map(drop),
@@ -195,7 +195,7 @@ fn settle(
 }
 
 impl PlayedGames {
-    pub fn games(&self) -> &[Value] {
+    pub fn games(&self) -> &[PlayedGame] {
         &self.games
     }
 
@@ -209,9 +209,8 @@ impl PlayedGames {
     }
 
     /// Save a game: it shows at once, ahead of the rest.
-    pub fn save(&mut self, game: Value, cx: &mut Context<Self>) {
-        let id = game["id"].clone();
-        self.games.retain(|entry| entry["id"] != id);
+    pub fn save(&mut self, game: PlayedGame, cx: &mut Context<Self>) {
+        self.games.retain(|entry| entry.id != game.id);
         self.games.insert(0, game.clone());
         self.changed();
         self.reads.edited();
@@ -220,8 +219,8 @@ impl PlayedGames {
     }
 
     /// Remove a game: the game and where it was listed, for `restore`, if it was listed.
-    pub fn remove(&mut self, id: &str, cx: &mut Context<Self>) -> Option<(usize, Value)> {
-        let index = self.games.iter().position(|entry| entry["id"] == id)?;
+    pub fn remove(&mut self, id: &str, cx: &mut Context<Self>) -> Option<(usize, PlayedGame)> {
+        let index = self.games.iter().position(|entry| entry.id == id)?;
         let game = self.games.remove(index);
         self.changed();
         self.reads.edited();
@@ -231,9 +230,8 @@ impl PlayedGames {
     }
 
     /// Put a removed game back where it was listed (Undo).
-    pub fn restore(&mut self, index: usize, game: Value, cx: &mut Context<Self>) {
-        let id = game["id"].clone();
-        self.games.retain(|entry| entry["id"] != id);
+    pub fn restore(&mut self, index: usize, game: PlayedGame, cx: &mut Context<Self>) {
+        self.games.retain(|entry| entry.id != game.id);
         self.games.insert(index.min(self.games.len()), game.clone());
         self.changed();
         self.reads.edited();

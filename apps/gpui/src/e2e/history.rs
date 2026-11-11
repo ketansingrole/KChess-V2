@@ -272,7 +272,9 @@ fn a_game_saved_again_shows_its_new_result(cx: &mut gpui_kit::TestAppContext) {
         });
         app.cx.update(|cx| {
             let played = cx.global::<crate::played::PlayedHandle>().0.clone();
-            played.update(cx, |played, cx| played.save(game, cx));
+            played.update(cx, |played, cx| {
+                played.save(serde_json::from_value(game).expect("a played game"), cx)
+            });
         });
     };
     save(&mut app, "*", false);
@@ -512,7 +514,7 @@ fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppConte
     app.cx.update(|cx| {
         insights.update(cx, |page, cx| {
             page.show_time_use(
-                serde_json::json!({
+                serde_json::from_value(serde_json::json!({
                     "games": 12,
                     "trouble": { "win": 2, "draw": 0, "loss": 3, "total": 5 },
                     "spare": { "win": 5, "draw": 1, "loss": 1, "total": 7 },
@@ -526,7 +528,8 @@ fn insights_show_time_use_once_games_have_clocks(cx: &mut gpui_kit::TestAppConte
                         "short": { "moves": 40, "blunders": 3 },
                         "spare": { "moves": 200, "blunders": 2 },
                     },
-                }),
+                }))
+                .expect("a time use"),
                 cx,
             )
         })
@@ -730,7 +733,7 @@ fn home_names_a_variant_games_variant(cx: &mut gpui_kit::TestAppContext) {
         let played = cx.global::<crate::played::PlayedHandle>().0.clone();
         played.update(cx, |played, cx| {
             played.save(
-                serde_json::json!({
+                serde_json::from_value(serde_json::json!({
                     "id": "atomic-game",
                     "source": "computer",
                     "setup": {
@@ -746,7 +749,8 @@ fn home_names_a_variant_games_variant(cx: &mut gpui_kit::TestAppContext) {
                     "timeControl": "300+3",
                     "startedAt": 1_790_000_000_000u64,
                     "updatedAt": 1_790_000_000_000u64,
-                }),
+                }))
+                .expect("a played game"),
                 cx,
             );
         });
@@ -769,7 +773,7 @@ fn home_fits_every_result_badge_in_its_column(cx: &mut gpui_kit::TestAppContext)
             for (index, (result, finished)) in [("*", false), ("1-0", true)].into_iter().enumerate()
             {
                 played.save(
-                    serde_json::json!({
+                    serde_json::from_value(serde_json::json!({
                         "id": format!("game-{index}"),
                         "source": "computer",
                         "setup": {
@@ -785,7 +789,8 @@ fn home_fits_every_result_badge_in_its_column(cx: &mut gpui_kit::TestAppContext)
                         "timeControl": "-",
                         "startedAt": 1_790_000_000_000u64 + index as u64,
                         "updatedAt": 1_790_000_000_000u64 + index as u64,
-                    }),
+                    }))
+                    .expect("a played game"),
                     cx,
                 );
             }

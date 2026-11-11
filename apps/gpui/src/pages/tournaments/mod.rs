@@ -18,7 +18,6 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -107,7 +106,7 @@ pub struct TournamentsPage {
     /// The list's request: an answer to an earlier one (another account's) is dropped.
     loading: crate::loading::Loading,
     /// `JoinedTournament`s the core keeps.
-    joined: Vec<Value>,
+    joined: Vec<kchess_contracts::types::JoinedTournament>,
     open: Option<Open>,
     password: Entity<InputState>,
     busy: bool,
@@ -263,12 +262,10 @@ impl TournamentsPage {
             return false;
         };
         self.joined.iter().any(|entry| {
-            entry["system"] == json!(system)
-                && entry["id"] == json!(id)
-                && entry["account"]
-                    .as_str()
-                    .is_some_and(|name| name.eq_ignore_ascii_case(account))
-                && entry["until"].as_f64().is_some_and(|until| until > now)
+            entry.system.as_str() == system
+                && entry.id == id
+                && entry.joined_by(account)
+                && entry.until > now
         })
     }
 
@@ -298,7 +295,7 @@ impl TournamentsPage {
         let swiss = self
             .joined
             .iter()
-            .any(|entry| entry["id"] == json!(id) && entry["system"] == json!("swiss"))
+            .any(|entry| entry.id == id && entry.system.as_str() == "swiss")
             || self
                 .list
                 .as_ref()

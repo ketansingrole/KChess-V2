@@ -1,7 +1,7 @@
 //! The library snapshot (`library`), its readers, and the studies-table migration.
 //! Named `library_import` because `store::import` already owns the JSON-backup/legacy-database profile migration.
 
-use kchess_contracts::types::{Library, SessionKind};
+use kchess_contracts::types::{Drill, JoinedTournament, Library, PlayedGame, SessionKind};
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
@@ -119,7 +119,7 @@ fn decode_study_row(id: &str, body: &str) -> Result<Value> {
     Ok(study)
 }
 
-pub(crate) fn read_mistakes(db: &Connection) -> Result<Vec<Value>> {
+pub(crate) fn read_mistakes(db: &Connection) -> Result<Vec<Drill>> {
     Ok(read_document_text(db, MISTAKES)?
         .and_then(|body| decode_mistakes_text(&body))
         .unwrap_or_default())
@@ -136,12 +136,10 @@ pub(crate) fn read_schedule_lines(host: &dyn Host, db: &Connection) -> Result<Ma
     Ok(kchess_domain::training::repetition::decode_schedule(&raw))
 }
 
-pub(crate) fn read_joined(host: &dyn Host, db: &Connection) -> Result<Vec<Value>> {
+pub(crate) fn read_joined(host: &dyn Host, db: &Connection) -> Result<Vec<JoinedTournament>> {
     let raw = read_document(host, db, JOINED)?.unwrap_or(Value::Null);
-    match kchess_domain::misc::documents::decode_joined_tournaments(&J::from(&raw)).into_value() {
-        Value::Array(entries) => Ok(entries),
-        _ => Ok(Vec::new()),
-    }
+    let decoded = kchess_domain::misc::documents::decode_joined_tournaments(&J::from(&raw));
+    Ok(serde_json::from_value(decoded.into_value()).unwrap_or_default())
 }
 
 /// The decoded session, or null.
@@ -153,7 +151,7 @@ pub(crate) fn read_session(host: &dyn Host, db: &Connection, kind: &str) -> Resu
 }
 
 /// The played games, newest first; a game that no longer replays is skipped.
-pub(crate) fn read_games(host: &dyn Host, db: &Connection) -> Result<Vec<Value>> {
+pub(crate) fn read_games(host: &dyn Host, db: &Connection) -> Result<Vec<PlayedGame>> {
     let mut statement = db
         .prepare("SELECT id, body FROM archived_games ORDER BY seq DESC")
         .sql()?;
@@ -194,7 +192,7 @@ pub fn cached_library(ctx: &StoreContext, now: f64) -> Result<Library> {
     };
     snapshot
         .joined_tournaments
-        .retain(|entry| until_after(entry, now));
+        .retain(|entry| entry.until > now);
     Ok(snapshot)
 }
 
@@ -208,10 +206,8 @@ pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Library> {
             sessions.insert(kind.to_string(), value);
         }
     }
-    let joined: Vec<Value> = read_joined(host, db)?
-        .into_iter()
-        .filter(|entry| until_after(entry, now))
-        .collect();
+    let mut joined = read_joined(host, db)?;
+    joined.retain(|entry| entry.until > now);
     let (studies, study_error) = match read_studies(db) {
         Ok(studies) => (studies, None),
         Err(error) if error.message == DAMAGED_STUDIES => {
@@ -230,12 +226,4 @@ pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Library> {
         repertoire_schedule: Value::Object(read_schedule_lines(host, db)?),
         study_error,
     })
-}
-
-/// `entry.until > now`
-pub(crate) fn until_after(entry: &Value, now: f64) -> bool {
-    entry
-        .get("until")
-        .and_then(Value::as_f64)
-        .is_some_and(|until| until > now)
 }

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use shakmaty::Color;
 
+use super::archive::Snapshot;
 use super::{Board, Clock, Clocking, Outcome, Setup, Times};
 use crate::js;
 use crate::records::games::GameEnd;
@@ -74,20 +75,6 @@ impl State {
             paused: true,
         }
     }
-}
-
-/// The game as the archive stores it.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Archived {
-    pub source: &'static str,
-    pub setup: Setup,
-    pub moves: Vec<String>,
-    pub white: &'static str,
-    pub black: &'static str,
-    pub result: &'static str,
-    pub reason: String,
-    pub time_control: String,
 }
 
 /// Two people at one board.
@@ -348,7 +335,7 @@ impl LocalGame {
     }
 
     /// The game as the archive stores it.
-    pub fn archive_snapshot(&self) -> Archived {
+    pub fn archive_snapshot(&self) -> Snapshot {
         let result = self.result();
         let time_control = match self.state.clock {
             Some(clock) => format!(
@@ -360,15 +347,16 @@ impl LocalGame {
             ),
             None => "-".to_string(),
         };
-        Archived {
-            source: "board",
+        Snapshot {
+            source: "board".into(),
             setup: self.state.setup.clone(),
             moves: self.state.moves.clone(),
-            white: "White",
-            black: "Black",
-            result: Outcome::tag(self.outcome()),
+            white: "White".into(),
+            black: "Black".into(),
+            result: Outcome::tag(self.outcome()).into(),
             reason: result.map_or_else(|| "In progress".to_string(), |r| r.reason.clone()),
             time_control,
+            clock_summary: None,
         }
     }
 }

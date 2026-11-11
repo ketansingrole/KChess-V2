@@ -142,7 +142,7 @@ core_api! {
         GameLibraryOverview = "gameLibraryOverview" fn game_library_overview(
         ) -> crate::types::GameLibraryOverview;
         /// Patterns in an account's synced games, worked out on this computer.
-        Insights = "insights" fn insights(query: InsightsQuery) -> Value;
+        Insights = "insights" fn insights(query: InsightsQuery) -> InsightsReport;
         GameRatingHistory = "gameRatingHistory" fn game_rating_history(
             account: GameAccount
         ) -> Vec<RatingSeries>;
@@ -524,7 +524,7 @@ core_api! {
         ) -> MistakesAdded;
         /// Schedule a drill again; answers every drill.
         #[writes(Drills)]
-        AnswerMistake = "answerMistake" fn answer_mistake(id: LibraryId, solved: bool) -> Vec<Value>;
+        AnswerMistake = "answerMistake" fn answer_mistake(id: LibraryId, solved: bool) -> Vec<Drill>;
         /// The reviewed games with positions in practice, most recently played first.
         MistakeGames = "mistakeGames" fn mistake_games() -> Vec<MistakeGame>;
         /// Keep an unfinished game or analysis so it can be resumed.
@@ -534,12 +534,12 @@ core_api! {
             session: SessionObject
         ) -> ();
         /// Tournaments joined from KChess that have not ended.
-        JoinedTournaments = "joinedTournaments" fn joined_tournaments() -> Vec<Value>;
+        JoinedTournaments = "joinedTournaments" fn joined_tournaments() -> Vec<JoinedTournament>;
         /// The unfinished game or analysis of this kind kept to resume, or null; the library's
         /// `sessions` alone.
         Session = "session" fn session(kind: SessionKind) -> Option<Value>;
         /// The mistake drills; the library's `mistakes` alone.
-        Mistakes = "mistakes" fn mistakes() -> Vec<Value>;
+        Mistakes = "mistakes" fn mistakes() -> Vec<Drill>;
         /// Answers every repertoire's missed positions.
         #[writes(Repertoire)]
         RecordRepertoireMiss = "recordRepertoireMiss" fn record_repertoire_miss(

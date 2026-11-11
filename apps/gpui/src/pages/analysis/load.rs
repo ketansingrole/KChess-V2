@@ -104,7 +104,7 @@ pub fn new_board(window: &mut Window, cx: &mut App) {
 /// board's only after asking, when that would lose unsaved analysis.
 pub fn practise_game(
     game: kchess_contracts::types::MistakeGame,
-    items: Vec<serde_json::Value>,
+    items: Vec<kchess_contracts::types::Drill>,
     window: &mut Window,
     cx: &mut App,
 ) {

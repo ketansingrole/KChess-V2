@@ -168,8 +168,7 @@ impl LichessActivity {
                         return;
                     }
                     if let Ok(fallback) = &fallback {
-                        this.profile =
-                            local_profile(fallback, speeds.as_ref().unwrap_or(&Value::Null));
+                        this.profile = local_profile(fallback, speeds.as_ref().ok());
                     }
                     this.show_local(overview.ok(), recent.ok(), fallback.ok(), cx);
                 });
@@ -251,7 +250,10 @@ impl LichessActivity {
 
 /// A profile's `perfs` from the games synced here (a Chess.com player's): each speed's latest
 /// rating from `gameRatingHistory`, and its games from the `insights` report's `bySpeed`.
-fn local_profile(history: &[RatingSeries], report: &Value) -> Value {
+fn local_profile(
+    history: &[RatingSeries],
+    report: Option<&kchess_contracts::types::InsightsReport>,
+) -> Value {
     let mut perfs = serde_json::Map::new();
     for (key, _) in PERFS {
         let rating = history
@@ -259,12 +261,11 @@ fn local_profile(history: &[RatingSeries], report: &Value) -> Value {
             .find(|series| series.name == key)
             .and_then(|series| series.points.last())
             .map(|point| json!(point[3]));
-        let games = report["bySpeed"]
-            .as_array()
+        let games = report
             .into_iter()
-            .flatten()
-            .find(|speed| speed["speed"] == key)
-            .map(|speed| speed["record"]["total"].clone());
+            .flat_map(|report| &report.by_speed)
+            .find(|speed| speed.speed == key)
+            .map(|speed| json!(speed.record.total));
         if rating.is_some() || games.is_some() {
             perfs.insert(
                 key.to_string(),
@@ -598,12 +599,18 @@ mod tests {
             { "name": "blitz", "points": [[2020, 0, 11, 1300]] },
         ]))
         .unwrap();
-        let report = json!({ "bySpeed": [
-            { "speed": "rapid", "record": { "total": 2 } },
-            { "speed": "blitz", "record": { "total": 5 } },
-            { "speed": "bullet", "record": { "total": 1 } },
-        ] });
-        let profile = local_profile(&history, &report);
+        let speed = |speed: &str, total| kchess_contracts::types::SpeedRecord {
+            speed: speed.into(),
+            record: kchess_contracts::types::GameRecord {
+                total,
+                ..Default::default()
+            },
+        };
+        let report = kchess_contracts::types::InsightsReport {
+            by_speed: vec![speed("rapid", 2), speed("blitz", 5), speed("bullet", 1)],
+            ..Default::default()
+        };
+        let profile = local_profile(&history, Some(&report));
         assert_eq!(
             profile["perfs"],
             json!({

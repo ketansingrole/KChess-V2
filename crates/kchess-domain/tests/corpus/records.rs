@@ -60,6 +60,34 @@ fn texts_of(items: &[Value]) -> Vec<String> {
 }
 
 /// A string argument, '' for anything else.
+/// The recorded suites passed any value as a saved game and read its fields loosely: a field
+/// that is missing or not a string reads as empty, and `finished` as JavaScript truth.
+fn played(value: Option<&Value>) -> kchess_domain::library::PlayedGame {
+    let value = value.unwrap_or(&Value::Null);
+    let text = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    kchess_domain::library::PlayedGame {
+        id: text("id"),
+        source: text("source"),
+        started_at: 0.0,
+        updated_at: 0.0,
+        white: text("white"),
+        black: text("black"),
+        result: text("result"),
+        reason: text("reason"),
+        finished: !js::falsy(value.get("finished")),
+        setup: kchess_domain::variant::Setup::standard(),
+        moves: Vec::new(),
+        time_control: text("timeControl"),
+        clock_summary: None,
+    }
+}
+
 fn str_or_empty(args: &[Value], i: usize) -> &str {
     arg(args, i).and_then(Value::as_str).unwrap_or_default()
 }
@@ -131,12 +159,8 @@ pub fn call(method: &str, args: &[Value]) -> Option<Out> {
                 .and_then(color::from_name)
         )))),
         "isGameInProgress" => Ok(json!(games::is_game_in_progress(arg(args, 0)))),
-        "archivedPlayerSide" => Ok(json!(games::archived_player_side(
-            arg(args, 0).unwrap_or(&Value::Null)
-        ))),
-        "archivedOutcome" => Ok(json!(games::archived_outcome(
-            arg(args, 0).unwrap_or(&Value::Null)
-        ))),
+        "archivedPlayerSide" => Ok(json!(played(arg(args, 0)).player_side().map(color::name))),
+        "archivedOutcome" => Ok(json!(played(arg(args, 0)).outcome())),
         "totalSeconds" => Ok(json!(time_control::total_seconds(minutes(), increment()))),
         "perfFor" => Ok(json!(time_control::perf_for(minutes(), increment()))),
         "canBoardSeek" => Ok(json!(time_control::can_board_seek(minutes(), increment()))),

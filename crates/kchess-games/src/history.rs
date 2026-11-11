@@ -4,13 +4,14 @@
 
 use serde_json::{Value, json};
 
-use kchess_domain::games::archive::{Effect, Host, Identity, State};
+use kchess_domain::games::archive::{Effect, Host, Identity, Snapshot, State};
+use kchess_domain::library::PlayedGame;
 
 /// A write to the profile's library a Game history place asks for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Write {
     /// Save (or replace) a played game.
-    SaveGame(Value),
+    SaveGame(Box<PlayedGame>),
     /// Remove the played game with this id.
     RemoveGame(String),
     /// Keep the place's identity as the session `archive:<kind>`.
@@ -25,7 +26,7 @@ pub struct HistoryPlace {
 }
 
 /// What the archive is told of the game now.
-fn host<'a>(source: &'a Value, has_play: bool, games: &'a [Value]) -> Host<'a> {
+fn host<'a>(source: Option<&'a Snapshot>, has_play: bool, games: &'a [PlayedGame]) -> Host<'a> {
     Host {
         has_play,
         source,
@@ -70,9 +71,9 @@ impl HistoryPlace {
         kind: &'static str,
         identity: Value,
         resume: bool,
-        source: Value,
+        source: Option<Snapshot>,
         has_play: bool,
-        games: &[Value],
+        games: &[PlayedGame],
     ) -> (HistoryPlace, Result<Vec<Write>, String>) {
         let mut place = HistoryPlace {
             kind,
@@ -84,7 +85,7 @@ impl HistoryPlace {
             .transpose();
         let writes = match kept {
             Ok(kept) => {
-                let host = host(&source, has_play, games);
+                let host = host(source.as_ref(), has_play, games);
                 let mut archive = State::new(kept, &host);
                 let effects = archive.init(resume, &host);
                 place.archive = Some(archive);
@@ -99,23 +100,28 @@ impl HistoryPlace {
     pub fn save(
         &mut self,
         finished: bool,
-        source: Value,
+        source: Option<Snapshot>,
         has_play: bool,
-        games: &[Value],
+        games: &[PlayedGame],
     ) -> Vec<Write> {
         self.run(
             |archive, host| archive.save(finished, host),
-            &source,
+            source.as_ref(),
             has_play,
             games,
         )
     }
 
     /// A new game begins: the one before keeps its place and this one gets its own.
-    pub fn reset(&mut self, source: Value, has_play: bool, games: &[Value]) -> Vec<Write> {
+    pub fn reset(
+        &mut self,
+        source: Option<Snapshot>,
+        has_play: bool,
+        games: &[PlayedGame],
+    ) -> Vec<Write> {
         self.run(
             |archive, host| archive.reset(host),
-            &source,
+            source.as_ref(),
             has_play,
             games,
         )
@@ -124,9 +130,9 @@ impl HistoryPlace {
     fn run(
         &mut self,
         step: impl FnOnce(&mut State, &Host<'_>) -> Vec<Effect>,
-        source: &Value,
+        source: Option<&Snapshot>,
         has_play: bool,
-        games: &[Value],
+        games: &[PlayedGame],
     ) -> Vec<Write> {
         let Some(archive) = self.archive.as_mut() else {
             return Vec::new();
@@ -158,14 +164,14 @@ impl HistoryPlace {
 }
 
 /// Keep `games` (the played games a frontend holds) as the writes leave them.
-pub fn apply_to(games: &mut Vec<Value>, writes: &[Write]) {
+pub fn apply_to(games: &mut Vec<PlayedGame>, writes: &[Write]) {
     for write in writes {
         match write {
             Write::SaveGame(game) => {
-                games.retain(|kept| kept["id"] != game["id"]);
-                games.push(game.clone());
+                games.retain(|kept| kept.id != game.id);
+                games.push((**game).clone());
             }
-            Write::RemoveGame(id) => games.retain(|kept| kept["id"] != id.as_str()),
+            Write::RemoveGame(id) => games.retain(|kept| kept.id != *id),
             Write::SaveSession { .. } => {}
         }
     }
@@ -194,8 +200,18 @@ mod tests {
     #[test]
     fn a_resumed_game_taken_back_to_its_start_leaves_no_entry() {
         let identity = json!({ "id": "resumed-game", "startedAt": 1.0e12 });
-        let saved = vec![json!({ "id": "resumed-game", "moves": ["e2e4"], "result": "*" })];
-        let source = json!({ "moves": [], "result": "*" });
+        let saved = vec![played("resumed-game")];
+        let source = Some(Snapshot {
+            source: "computer".into(),
+            setup: kchess_domain::variant::Setup::standard(),
+            moves: Vec::new(),
+            white: "You".into(),
+            black: "Stockfish".into(),
+            result: "*".into(),
+            reason: "In progress".into(),
+            time_control: "-".into(),
+            clock_summary: None,
+        });
         let (mut place, writes) =
             HistoryPlace::new("computer", identity, true, source.clone(), false, &saved);
         assert_eq!(writes, Ok(Vec::new()));
@@ -213,7 +229,7 @@ mod tests {
             "board",
             Value::Null,
             true,
-            json!(game.archive_snapshot()),
+            Some(game.archive_snapshot()),
             false,
             &games,
         );
@@ -223,10 +239,10 @@ mod tests {
         };
         assert_eq!(kind, "archive:board");
         game.play("e2e4", 1.);
-        let source = json!(game.archive_snapshot());
+        let source = Some(game.archive_snapshot());
         let writes = place.save(false, source.clone(), true, &games);
         assert!(
-            matches!(writes.first(), Some(Write::SaveGame(game)) if game["id"] == identity["id"]),
+            matches!(writes.first(), Some(Write::SaveGame(game)) if game.id == identity["id"]),
             "{writes:?}"
         );
         apply_to(&mut games, &writes);
@@ -266,8 +282,27 @@ mod tests {
 
     #[test]
     fn removed_games_leave_the_list() {
-        let mut games = vec![json!({ "id": "a" }), json!({ "id": "b" })];
+        let mut games = vec![played("a"), played("b")];
         apply_to(&mut games, &[Write::RemoveGame("a".into())]);
-        assert_eq!(games, [json!({ "id": "b" })]);
+        assert_eq!(games, [played("b")]);
+    }
+
+    /// An unfinished game with one move, saved as `id`.
+    fn played(id: &str) -> PlayedGame {
+        PlayedGame {
+            id: id.into(),
+            source: "computer".into(),
+            started_at: 1.0e12,
+            updated_at: 1.0e12,
+            white: "You".into(),
+            black: "Stockfish".into(),
+            result: "*".into(),
+            reason: "In progress".into(),
+            finished: false,
+            setup: kchess_domain::variant::Setup::standard(),
+            moves: vec!["e2e4".into()],
+            time_control: "-".into(),
+            clock_summary: None,
+        }
     }
 }

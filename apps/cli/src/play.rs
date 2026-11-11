@@ -5,9 +5,10 @@
 
 use kchess_contracts::calls::{self, CoreCall};
 use kchess_contracts::check::{ArchivedGame, LibraryId, Moves, SessionObject};
-use kchess_contracts::types::{EngineLevel, SessionKind};
+use kchess_contracts::types::{EngineLevel, PlayedGame, SessionKind};
 use std::time::{Duration, Instant};
 
+use kchess_domain::games::archive::Snapshot;
 use kchess_domain::games::computer::{self, ComputerGame, SearchRequest};
 use kchess_domain::games::local::{self, LocalGame};
 use kchess_domain::games::{Host, Setup};
@@ -29,7 +30,7 @@ struct Session<'a> {
     core: &'a CoreClient,
     game: Game,
     history: HistoryPlace,
-    games: Vec<Value>,
+    games: Vec<PlayedGame>,
     started: Instant,
     failed: bool,
 }
@@ -157,7 +158,7 @@ impl Session<'_> {
             match write {
                 Write::SaveGame(game) => {
                     self.save(calls::SaveArchivedGame {
-                        game: ArchivedGame(game),
+                        game: ArchivedGame::of(&game),
                     })
                     .await
                 }
@@ -172,10 +173,10 @@ impl Session<'_> {
 
     /// The game as Game history keeps it and whether it has play; none, said, when it cannot be
     /// described.
-    fn archive_host(&self) -> Option<(Value, bool)> {
+    fn archive_host(&self) -> Option<(Snapshot, bool)> {
         let source = match &self.game {
-            Game::Computer(game) => game.archive_snapshot().map(|archived| json!(archived)),
-            Game::Local(game) => Ok(json!(game.archive_snapshot())),
+            Game::Computer(game) => game.archive_snapshot(),
+            Game::Local(game) => Ok(game.archive_snapshot()),
         };
         let has_play = !self.moves().is_empty() || self.result().is_some();
         match source {
@@ -198,7 +199,9 @@ impl Session<'_> {
             return;
         };
         let finished = self.over();
-        let writes = self.history.save(finished, source, has_play, &self.games);
+        let writes = self
+            .history
+            .save(finished, Some(source), has_play, &self.games);
         self.written(writes).await;
     }
 
@@ -270,7 +273,7 @@ impl Session<'_> {
         let Some((source, has_play)) = self.archive_host() else {
             return;
         };
-        let writes = self.history.reset(source, has_play, &self.games);
+        let writes = self.history.reset(Some(source), has_play, &self.games);
         self.written(writes).await;
     }
 
@@ -643,7 +646,7 @@ pub async fn interactive(
         .cloned()
         .unwrap_or(Value::Null);
     let games = library.games;
-    let (history, writes) = HistoryPlace::new(kind, identity, true, Value::Null, false, &games);
+    let (history, writes) = HistoryPlace::new(kind, identity, true, None, false, &games);
     let mut session = Session {
         core,
         game,

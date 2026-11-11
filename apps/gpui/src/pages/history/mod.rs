@@ -14,9 +14,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::Username;
-use kchess_contracts::types::{LichessGame, Reply};
-use kchess_domain::variant::{Setup, Variant};
-use serde_json::{Value, json};
+use kchess_contracts::types::{LichessGame, PlayedGame, Reply};
+use kchess_domain::variant::Variant;
+use serde_json::json;
 use shakmaty::Color;
 
 use crate::assets::icon;
@@ -80,40 +80,22 @@ pub(crate) fn opening_names_shown(cx: &App) -> bool {
 
 /// A played game's opening, with its ECO code ("C20 King's Pawn Game"); none for a variant or a
 /// line no opening names.
-pub(crate) fn opening_name(game: &Value) -> Option<String> {
-    let setup = crate::game::setup_of(&game["setup"])?;
-    if setup.variant != Variant::Standard {
+pub(crate) fn opening_name(game: &PlayedGame) -> Option<String> {
+    if game.setup.variant != Variant::Standard {
         return None;
     }
-    let moves: Vec<String> = serde_json::from_value(game["moves"].clone()).ok()?;
-    let opening = crate::game::opening_at(&setup, &moves, moves.len())?;
+    let opening = crate::game::opening_at(&game.setup, &game.moves, game.moves.len())?;
     Some(format!("{} {}", opening.eco, opening.name))
 }
 
-pub(crate) fn outcome(game: &Value) -> String {
-    kchess_domain::records::games::archived_outcome(game).to_string()
-}
-
-fn played_game(id: &str, cx: &App) -> Option<Value> {
+fn played_game(id: &str, cx: &App) -> Option<PlayedGame> {
     cx.global::<PlayedHandle>()
         .0
         .read(cx)
         .games()
         .iter()
-        .find(|game| text(game, "id") == id)
+        .find(|game| game.id == id)
         .cloned()
-}
-
-fn player_side(game: &Value) -> Option<Color> {
-    match kchess_domain::records::games::archived_player_side(game)? {
-        "white" => Some(Color::White),
-        "black" => Some(Color::Black),
-        _ => None,
-    }
-}
-
-fn text<'a>(game: &'a Value, key: &str) -> &'a str {
-    game[key].as_str().unwrap_or_default()
 }
 
 /// The label, look and winning side of an outcome.
@@ -171,56 +153,55 @@ fn time_label(control: &str) -> String {
 }
 
 /// Who the game was against: the engine for computer games, both names at the board.
-pub(crate) fn opponent(game: &Value) -> String {
-    match player_side(game) {
-        Some(Color::White) => text(game, "black").to_string(),
-        Some(Color::Black) => text(game, "white").to_string(),
-        None => format!("{} vs {}", text(game, "white"), text(game, "black")),
+pub(crate) fn opponent(game: &PlayedGame) -> String {
+    match game.player_side() {
+        Some(Color::White) => game.black.as_str().to_string(),
+        Some(Color::Black) => game.white.as_str().to_string(),
+        None => format!("{} vs {}", game.white.as_str(), game.black.as_str()),
     }
 }
 
 /// The line under the opponent: why the game ended, or the clock's summary.
-fn details(game: &Value) -> String {
-    if text(game, "source") == "clock" {
-        return game["clockSummary"]
-            .as_str()
-            .unwrap_or(text(game, "reason"))
-            .to_string();
+fn details(game: &PlayedGame) -> String {
+    if game.source == "clock" {
+        return game
+            .clock_summary
+            .clone()
+            .unwrap_or_else(|| game.reason.clone());
     }
-    if text(game, "result") == "*" && game["finished"] != json!(true) {
+    if game.result == "*" && !game.finished {
         String::new()
     } else {
-        text(game, "reason").to_string()
+        game.reason.as_str().to_string()
     }
 }
 
 /// The game as PGN, with the headers the app writes.
-fn pgn(game: &Value) -> Option<String> {
-    let clocks: Vec<&str> = text(game, "timeControl").split(" / ").collect();
+fn pgn(game: &PlayedGame) -> Option<String> {
+    let clocks: Vec<&str> = game.time_control.as_str().split(" / ").collect();
     let split = clocks.len() > 1 && clocks[0] != clocks[1];
     let mut headers = json!({
-        "Event": if text(game, "source") == "computer" {
+        "Event": if game.source.as_str() == "computer" {
             "KChess computer game"
         } else {
             "KChess over-the-board game"
         },
-        "White": text(game, "white"),
-        "Black": text(game, "black"),
-        "Result": text(game, "result"),
-        "Date": date_header(game["startedAt"].as_f64().unwrap_or_default()),
+        "White": game.white.as_str(),
+        "Black": game.black.as_str(),
+        "Result": game.result.as_str(),
+        "Date": date_header(game.started_at),
         "TimeControl": if split { "-" } else { clocks[0] },
-        "Termination": if text(game, "result") == "*" {
+        "Termination": if game.result.as_str() == "*" {
             "unterminated"
         } else {
-            text(game, "reason")
+            game.reason.as_str()
         },
     });
     if split {
         headers["WhiteTimeControl"] = json!(clocks[0]);
         headers["BlackTimeControl"] = json!(clocks[1]);
     }
-    let moves: Vec<String> = serde_json::from_value(game["moves"].clone()).ok()?;
-    crate::game::setup_pgn(&crate::game::setup_of(&game["setup"])?, &moves, &headers)
+    crate::game::setup_pgn(&game.setup, &game.moves, &headers)
 }
 
 /// PGN's `Date`: the UTC day the game started, "2026.10.22".
@@ -232,7 +213,7 @@ fn date_header(millis: f64) -> String {
 
 /// The game the last swipe back closed, to open again going forward while nothing changed since.
 enum Redo {
-    Played(Value),
+    Played(Box<PlayedGame>),
     Lichess(Box<LichessGame>),
 }
 
@@ -247,13 +228,8 @@ pub(crate) enum Action {
     ClearFilters,
 }
 
-/// Whether the analysis board plays the saved game.
-fn analysable(game: &Value) -> bool {
-    crate::game::setup_of(&game["setup"]).is_some()
-}
-
 /// Open the saved game on the analysis board.
-fn analyse(game: &Value, window: &mut Window, cx: &mut App) {
+fn analyse(game: &PlayedGame, window: &mut Window, cx: &mut App) {
     let Some(pgn) = pgn(game) else { return };
     crate::pages::analysis::replace(window, cx, move |analysis, _, cx| {
         analysis.open_pgn(&pgn, Opening::default(), cx)
@@ -266,7 +242,7 @@ pub struct HistoryPage {
     /// The page of the list shown, from 0.
     page: usize,
     /// The game being gone through, and its board.
-    open: Option<(Value, Entity<GameReplay>)>,
+    open: Option<(PlayedGame, Entity<GameReplay>)>,
     message: Option<SharedString>,
     redo: Option<Redo>,
     /// Part of an opponent's or an opening's name the computer and board games are searched
@@ -325,10 +301,7 @@ impl HistoryPage {
         subscriptions.push(cx.observe(&played, |this, _, cx| {
             // A deleted game closes; the pages left shrink with the list.
             if let Some((game, _)) = &this.open
-                && !this
-                    .all_games(cx)
-                    .iter()
-                    .any(|entry| entry["id"] == game["id"])
+                && !this.all_games(cx).iter().any(|entry| entry.id == game.id)
             {
                 this.open = None;
             }
@@ -358,21 +331,21 @@ impl HistoryPage {
 
     /// A game's opening, as `C40 King's Knight Opening`, in standard chess; worked out once.
     /// A played game's outcome (`outcome`), kept until the played games change.
-    fn outcome_of(&self, game: &Value, cx: &App) -> String {
+    fn outcome_of(&self, game: &PlayedGame, cx: &App) -> String {
         let revision = cx.global::<PlayedHandle>().0.read(cx).revision();
         let mut kept = self.outcomes.borrow_mut();
         if kept.0 != revision {
             *kept = (revision, std::collections::HashMap::new());
         }
         kept.1
-            .entry(text(game, "id").to_string())
-            .or_insert_with(|| outcome(game))
+            .entry(game.id.as_str().to_string())
+            .or_insert_with(|| game.outcome().to_string())
             .clone()
     }
 
-    fn opening(&self, game: &Value) -> Option<String> {
-        let moves = game["moves"].as_array().map_or(0, Vec::len);
-        let key = (text(game, "id").to_string(), moves);
+    fn opening(&self, game: &PlayedGame) -> Option<String> {
+        let moves = game.moves.len();
+        let key = (game.id.as_str().to_string(), moves);
         self.openings
             .borrow_mut()
             .entry(key)
@@ -381,14 +354,14 @@ impl HistoryPage {
     }
 
     /// Whether a game's opponent (or players) or opening has the searched text in it.
-    fn found(&self, game: &Value) -> bool {
+    fn found(&self, game: &PlayedGame) -> bool {
         if self.search.is_empty() {
             return true;
         }
         let wanted = self.search.to_lowercase();
         [
-            Some(text(game, "white").to_string()),
-            Some(text(game, "black").to_string()),
+            Some(game.white.clone()),
+            Some(game.black.clone()),
             self.opening(game),
         ]
         .into_iter()
@@ -397,7 +370,7 @@ impl HistoryPage {
     }
 
     /// The games of the source shown, newest first, that the search finds.
-    fn games<'a>(&self, cx: &'a App) -> Vec<&'a Value> {
+    fn games<'a>(&self, cx: &'a App) -> Vec<&'a PlayedGame> {
         self.all_games(cx)
             .into_iter()
             .filter(|game| self.found(game))
@@ -406,26 +379,21 @@ impl HistoryPage {
 
     /// Every game of the source shown, newest first: the played games themselves, not copies
     /// (copying 500 games of history was half of drawing the page).
-    fn all_games<'a>(&self, cx: &'a App) -> Vec<&'a Value> {
-        let mut games: Vec<&Value> = cx
+    fn all_games<'a>(&self, cx: &'a App) -> Vec<&'a PlayedGame> {
+        let mut games: Vec<&PlayedGame> = cx
             .global::<PlayedHandle>()
             .0
             .read(cx)
             .games()
             .iter()
-            .filter(|game| {
-                (text(game, "source") == "computer") == (self.source == Source::Computer)
-            })
+            .filter(|game| (game.source == "computer") == (self.source == Source::Computer))
             .collect();
-        games.sort_by(|a, b| {
-            let started = |game: &Value| game["startedAt"].as_f64().unwrap_or_default();
-            started(b).total_cmp(&started(a))
-        });
+        games.sort_by(|a, b| b.started_at.total_cmp(&a.started_at));
         games
     }
 
     /// The games the list shows under its filter, newest first.
-    fn listed<'a>(&self, cx: &'a App) -> Vec<&'a Value> {
+    fn listed<'a>(&self, cx: &'a App) -> Vec<&'a PlayedGame> {
         self.games(cx)
             .into_iter()
             .filter(|game| {
@@ -437,15 +405,15 @@ impl HistoryPage {
 
     /// The game `step` rows from the open one in the list (-1 the one above, newer; 1 below),
     /// skipping clock sessions, which have no moves to go through.
-    fn neighbour(&self, step: isize, cx: &App) -> Option<(usize, Value)> {
+    fn neighbour(&self, step: isize, cx: &App) -> Option<(usize, PlayedGame)> {
         let (open, _) = self.open.as_ref()?;
         let listed = self.listed(cx);
-        let at = listed.iter().position(|game| game["id"] == open["id"])?;
+        let at = listed.iter().position(|game| game.id == open.id)?;
         let mut index = at as isize;
         loop {
             index += step;
             let game = listed.get(usize::try_from(index).ok()?)?;
-            if text(game, "source") != "clock" {
+            if game.source != "clock" {
                 return Some((index as usize, (*game).clone()));
             }
         }
@@ -667,16 +635,14 @@ impl HistoryPage {
         cx.notify();
     }
 
-    fn open_game(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
-        let moves: Vec<String> = serde_json::from_value(game["moves"].clone()).unwrap_or_default();
+    fn open_game(&mut self, game: PlayedGame, window: &mut Window, cx: &mut Context<Self>) {
         let replay = cx.new(|cx| {
             GameReplay::new(
-                // A game in a variant KChess does not play replays no move.
-                crate::game::setup_of(&game["setup"]).unwrap_or_else(|| Setup::standard_at("")),
-                moves,
+                game.setup.clone(),
+                game.moves.clone(),
                 Color::White,
-                text(&game, "white").to_string(),
-                text(&game, "black").to_string(),
+                game.white.clone(),
+                game.black.clone(),
                 cx,
             )
         });
@@ -696,17 +662,17 @@ impl HistoryPage {
             .read(cx)
             .games()
             .iter()
-            .find(|game| game["id"] == id)
+            .find(|game| game.id == id)
             .cloned();
         let Some(game) = game else { return };
-        self.source = if text(&game, "source") == "computer" {
+        self.source = if game.source == "computer" {
             Source::Computer
         } else {
             Source::Board
         };
         self.filter = Filter::All;
         self.page = 0;
-        if text(&game, "source") != "clock" {
+        if game.source != "clock" {
             self.open_game(game, window, cx);
         }
         cx.notify();
@@ -714,12 +680,8 @@ impl HistoryPage {
 
     /// What the page's buttons can do now: the open game's, or the synced games'.
     pub(crate) fn actions(&self, cx: &App) -> Vec<Action> {
-        if let Some((game, _)) = &self.open {
-            let mut actions = vec![Action::AllGames, Action::Export];
-            if analysable(game) {
-                actions.push(Action::Analyse);
-            }
-            return actions;
+        if self.open.is_some() {
+            return vec![Action::AllGames, Action::Export, Action::Analyse];
         }
         if self.source != Source::Lichess {
             return Vec::new();
@@ -779,15 +741,15 @@ impl HistoryPage {
     }
 
     /// Save the game as PGN where the player picks, or copy a clock session's summary.
-    fn export(&mut self, game: &Value, cx: &mut Context<Self>) {
-        if text(game, "source") == "clock" {
+    fn export(&mut self, game: &PlayedGame, cx: &mut Context<Self>) {
+        if game.source == "clock" {
             let summary = format!(
                 "{} / {}\n{}\n{}\nTime control: {}",
-                text(game, "white"),
-                text(game, "black"),
-                text(game, "reason"),
-                game["clockSummary"].as_str().unwrap_or_default(),
-                text(game, "timeControl"),
+                game.white.as_str(),
+                game.black.as_str(),
+                game.reason.as_str(),
+                game.clock_summary.as_deref().unwrap_or_default(),
+                game.time_control.as_str(),
             );
             cx.write_to_clipboard(ClipboardItem::new_string(summary));
             self.message = Some("Clock summary copied".into());
@@ -799,7 +761,7 @@ impl HistoryPage {
             cx.notify();
             return;
         };
-        let name = format!("kchess-{}.pgn", text(game, "id"));
+        let name = format!("kchess-{}.pgn", game.id.as_str());
         let saved = crate::export::save_text(&name, pgn, cx);
         cx.spawn(async move |this, cx| {
             let message: Option<SharedString> = match saved.await {
@@ -823,7 +785,7 @@ impl HistoryPage {
         let pgns: Vec<String> = self
             .shown_games(cx)
             .into_iter()
-            .filter(|game| text(game, "source") != "clock")
+            .filter(|game| game.source.as_str() != "clock")
             .filter_map(pgn)
             .collect();
         if pgns.is_empty() {
@@ -863,7 +825,7 @@ impl HistoryPage {
     }
 
     /// The games the list shows across its pages: searched, then filtered by result.
-    fn shown_games<'a>(&self, cx: &'a App) -> Vec<&'a Value> {
+    fn shown_games<'a>(&self, cx: &'a App) -> Vec<&'a PlayedGame> {
         self.games(cx)
             .into_iter()
             .filter(|game| {
@@ -874,9 +836,9 @@ impl HistoryPage {
     }
 
     /// Delete a game at once; its notice's Undo puts it back where it was.
-    fn delete(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
+    fn delete(&mut self, game: PlayedGame, window: &mut Window, cx: &mut Context<Self>) {
         let played = cx.global::<PlayedHandle>().0.clone();
-        let id = text(&game, "id").to_string();
+        let id = game.id.clone();
         let Some((index, removed)) =
             played.update(cx, |played: &mut PlayedGames, cx| played.remove(&id, cx))
         else {
@@ -906,7 +868,7 @@ impl HistoryPage {
         }
         match &self.redo {
             Some(Redo::Played(game)) => {
-                self.open.is_none() && self.games(cx).iter().any(|entry| entry["id"] == game["id"])
+                self.open.is_none() && self.games(cx).iter().any(|entry| entry.id == game.id)
             }
             Some(Redo::Lichess(game)) => {
                 self.source == Source::Lichess
@@ -926,7 +888,7 @@ impl HistoryPage {
         if direction < 0 {
             if let Some((game, _)) = self.open.clone() {
                 self.close_game(window, cx);
-                self.redo = Some(Redo::Played(game));
+                self.redo = Some(Redo::Played(Box::new(game)));
             } else if let Some((game, _)) = self.lichess.open.clone() {
                 self.close_lichess(window, cx);
                 self.redo = Some(Redo::Lichess(Box::new(game)));
@@ -934,7 +896,7 @@ impl HistoryPage {
             return;
         }
         match self.redo.take() {
-            Some(Redo::Played(game)) => self.open_game(game, window, cx),
+            Some(Redo::Played(game)) => self.open_game(*game, window, cx),
             Some(Redo::Lichess(game)) => self.open_lichess(*game, window, cx),
             None => {}
         }
@@ -986,7 +948,7 @@ fn empty(glyph: Icon, title: &'static str, action: Button, palette: &Palette) ->
 impl HistoryPage {
     fn render_open(
         &self,
-        game: &Value,
+        game: &PlayedGame,
         replay: &Entity<GameReplay>,
         window: &Window,
         cx: &mut Context<Self>,
@@ -1035,8 +997,8 @@ impl HistoryPage {
                     .child(badge(&self.outcome_of(game, cx), None, palette))
                     .child(format!(
                         "{} vs {}",
-                        text(game, "white"),
-                        text(game, "black")
+                        game.white.as_str(),
+                        game.black.as_str()
                     ))
                     .child(
                         Button::new("export-open")
@@ -1052,7 +1014,6 @@ impl HistoryPage {
                             .primary()
                             .icon(icon("chart-line"))
                             .label("Open analysis")
-                            .disabled(!analysable(game))
                             .on_click(move |_, window, cx| analyse(&opened, window, cx))
                     })
                     .children(self.message.clone().map(|message| {
@@ -1137,7 +1098,7 @@ impl HistoryPage {
             true,
             palette,
         );
-        let shown: Vec<(&Value, &String)> = games
+        let shown: Vec<(&PlayedGame, &String)> = games
             .iter()
             .copied()
             .zip(&outcomes)
@@ -1196,11 +1157,11 @@ impl HistoryPage {
             .map(|(index, (game, outcome))| {
                 // Read in place: a row's actions find the game by its id when chosen, so a frame
                 // copies no game (four copies of each listed game's moves were made each frame).
-                let game: &Value = game;
-                let id = text(game, "id").to_string();
-                let clock = text(game, "source") == "clock";
-                let side = player_side(game);
-                let variant = game["setup"]["variant"].as_str().unwrap_or("standard");
+                let game: &PlayedGame = game;
+                let id = game.id.clone();
+                let clock = game.source == "clock";
+                let side = game.player_side();
+                let variant = game.setup.variant.key();
                 // Why it ended, and the opening it reached, as a Lichess game's line has; in a
                 // narrow list, which leaves the game's column out, its variant first.
                 let details = [
@@ -1214,7 +1175,7 @@ impl HistoryPage {
                 .filter(|part| !part.is_empty())
                 .collect::<Vec<_>>()
                 .join(" · ");
-                let mut kind = time_label(text(game, "timeControl"));
+                let mut kind = time_label(game.time_control.as_str());
                 if variant != "standard" {
                     kind.push_str(&format!(" · {}", crate::game::variant_label(variant)));
                 }
@@ -1241,7 +1202,7 @@ impl HistoryPage {
                     .child(if clock {
                         "Clock only".to_string()
                     } else {
-                        move_count(game["moves"].as_array().map_or(0, Vec::len))
+                        move_count(game.moves.len())
                     })
                     .child(
                         div()
@@ -1250,7 +1211,7 @@ impl HistoryPage {
                             .child(kind),
                     );
                 let (exported, deleted) = (id.clone(), id.clone());
-                let finished = game["finished"] == json!(true);
+                let finished = game.finished;
                 let page = cx.entity().downgrade();
                 let actions = Button::new(SharedString::from(format!("actions-{id}")))
                     .ghost()
@@ -1258,7 +1219,7 @@ impl HistoryPage {
                     .icon(icon("ellipsis"))
                     .accessibility_label(format!(
                         "Actions for the game from {}",
-                        crate::game::game_date(game["startedAt"].as_f64().unwrap_or_default())
+                        crate::game::game_date(game.started_at)
                     ))
                     // Aligned to the button's end, so it stays in the window.
                     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
@@ -1300,8 +1261,8 @@ impl HistoryPage {
                         .keyboard_focus(palette.primary)
                         .aria_label(format!(
                             "{} vs {}",
-                            text(game, "white"),
-                            text(game, "black")
+                            game.white.as_str(),
+                            game.black.as_str()
                         ))
                         .pl(px(12.))
                         .pr(px(8.))
@@ -1324,9 +1285,7 @@ impl HistoryPage {
                         game_cell.into_any_element(),
                         div()
                             .text_color(palette.text_muted)
-                            .child(crate::game::game_date(
-                                game["startedAt"].as_f64().unwrap_or_default(),
-                            ))
+                            .child(crate::game::game_date(game.started_at))
                             .into_any_element(),
                         actions.into_any_element(),
                     ],
@@ -1647,7 +1606,7 @@ pub fn open_game(id: &str, window: &mut Window, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{move_count, outcome, player_side, time_label};
+    use super::{PlayedGame, move_count, time_label};
     use serde_json::json;
 
     /// Each kind of saved game ends for its player, or by colour at the board.
@@ -1655,12 +1614,13 @@ mod tests {
     fn each_saved_game_ends_for_its_player_or_by_colour() {
         let moves: Vec<&str> = ["e2e4", "e7e5"].repeat(40);
         let game = |source: &str, white: &str, black: &str, result: &str, finished: bool| {
-            json!({
+            serde_json::from_value::<PlayedGame>(json!({
                 "id": "g", "source": source, "white": white, "black": black, "result": result,
                 "finished": finished, "reason": "-", "startedAt": 1, "updatedAt": 2,
                 "timeControl": "-", "moves": moves,
                 "setup": { "variant": "standard", "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
-            })
+            }))
+            .expect("a played game")
         };
         use shakmaty::Color::{Black, White};
         let games = [
@@ -1705,9 +1665,9 @@ mod tests {
         ];
         let mut seen = std::collections::BTreeSet::new();
         for (whole, expected, side) in &games {
-            assert_eq!(outcome(whole), *expected, "{whole}");
-            assert_eq!(player_side(whole), *side, "{whole}");
-            seen.insert(outcome(whole));
+            assert_eq!(whole.outcome(), *expected, "{whole:?}");
+            assert_eq!(whole.player_side(), *side, "{whole:?}");
+            seen.insert(whole.outcome());
         }
         // Every kind of outcome is among them.
         assert_eq!(

@@ -86,7 +86,12 @@ fn full_library(db: &Connection, cache: &StoreCache, games: usize, studies: usiz
             "setup": { "variant": "standard", "fen": shakmaty::fen::Fen::from_position(&Chess::default(), shakmaty::EnPassantMode::Legal).to_string() },
             "moves": random_game(&mut rng, 80),
         });
-        run(db, cache, |c| library::write_game(c.db, &game));
+        run(db, cache, |c| {
+            library::write_game(
+                c.db,
+                &kchess_domain::library::decode_archived_game(&game).expect("a played game"),
+            )
+        });
     }
     for n in 0..studies {
         let moves = random_game(&mut rng, 60);
