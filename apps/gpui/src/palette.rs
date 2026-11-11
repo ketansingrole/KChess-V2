@@ -8,12 +8,12 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::types::{Appearance, CoordinateMode, Settings};
+use kchess_contracts::types::{Appearance, CoordinateMode};
 
 use crate::assets::icon;
 use crate::online::Phase;
 use crate::pages::settings::{Quick, Section, Toggle};
-use crate::pages::{ActionRole, Page, PageCommand};
+use crate::pages::{ActionRole, Page, PageCommand, Run};
 use crate::quick_pick::{self, Mode};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
@@ -21,11 +21,22 @@ use crate::theme::{Palette, radii};
 const RECENT_KEY: &str = "kchess:palette-recent";
 const RECENT_KEPT: usize = 8;
 
-type Run = Rc<dyn Fn(&mut Window, &mut App)>;
+/// What sort of entry a command is, where a list takes some of them alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Command,
+    /// A page, as the sidebar lists it.
+    Page,
+    /// A category of Settings.
+    Section,
+    /// Stockfish at a level as Black or a random side: the unsearched list shows each level once.
+    OtherSide,
+}
 
-/// One entry the palette can run (`QuickCommand`).
+/// One entry the palette can run.
 #[derive(Clone)]
 struct Command {
+    kind: Kind,
     id: String,
     label: String,
     icon: Icon,
@@ -50,6 +61,7 @@ impl Command {
         run: impl Fn(&mut Window, &mut App) + 'static,
     ) -> Command {
         Command {
+            kind: Kind::Command,
             id: id.into(),
             label: label.into(),
             icon,
@@ -60,6 +72,11 @@ impl Command {
             run: Rc::new(run),
             prefix: None,
         }
+    }
+
+    fn kind(mut self, kind: Kind) -> Command {
+        self.kind = kind;
+        self
     }
 
     fn detail(mut self, detail: impl Into<String>) -> Command {
@@ -86,6 +103,7 @@ impl Command {
     fn of(command: PageCommand) -> Command {
         let PageCommand { info, detail, run } = command;
         Command {
+            kind: Kind::Command,
             id: info.id.to_string(),
             label: info.label.to_string(),
             icon: icon(info.icon),
@@ -114,8 +132,8 @@ fn group(label: Option<&'static str>, commands: Vec<Command>) -> Option<Group> {
     })
 }
 
-/// Each command once, in the first group that has it: a game page's Zen mode is also a setting,
-/// and searching listed it twice.
+/// Each command once, in the first group that has it: a page's own setting (Zen mode) is a
+/// setting too.
 fn once_each(groups: Vec<Group>) -> Vec<Group> {
     let mut seen = std::collections::HashSet::new();
     groups
@@ -161,6 +179,11 @@ fn go(page: Page) -> impl Fn(&mut Window, &mut App) + 'static {
     move |window, cx| crate::shell::open(page, window, cx)
 }
 
+/// A page's own entry, as `places` lists it (and recent entries keep it).
+fn page_id(page: Page) -> String {
+    format!("page:{page:?}")
+}
+
 fn on_off(on: bool) -> Option<String> {
     Some(if on { "On" } else { "Off" }.into())
 }
@@ -174,26 +197,23 @@ fn places(cx: &App) -> Vec<Command> {
     Page::all()
         .map(|page| {
             let info = page.info();
-            Command::new(
-                format!("page:{page:?}"),
-                info.label,
-                icon(info.icon),
-                go(page),
-            )
-            .keywords(info.keywords)
-            .kbds(
-                crate::pages::opened_by(page)
-                    .and_then(|action| crate::menu::keys(action.as_ref(), cx)),
-            )
-            .hint(current(page, cx))
+            Command::new(page_id(page), info.label, icon(info.icon), go(page))
+                .kind(Kind::Page)
+                .keywords(info.keywords)
+                .kbds(
+                    crate::pages::opened_by(page)
+                        .and_then(|action| crate::menu::keys(action.as_ref(), cx)),
+                )
+                .hint(current(page, cx))
         })
         .chain(crate::pages::places(cx).into_iter().map(Command::of))
         .collect()
 }
 
 /// A yes/no setting, as its Settings row names it.
-fn setting(toggle: &'static Toggle, quick: &'static Quick, settings: &Settings) -> Command {
+fn setting(toggle: &'static Toggle, quick: &'static Quick, cx: &App) -> Command {
     let (on, set) = (toggle.on, toggle.set);
+    let settings = &cx.global::<SettingsHandle>().0.read(cx).settings;
     Command::new(
         format!("setting:{}", quick.id),
         toggle.label(),
@@ -202,14 +222,16 @@ fn setting(toggle: &'static Toggle, quick: &'static Quick, settings: &Settings) 
     )
     .keywords(quick.keywords)
     .hint(on_off(on(settings)))
+    .kbds(quick.page_key.and_then(|keys| keys(cx)))
 }
 
-/// Zen mode, as a setting and on a game page.
-fn zen_command(cx: &App) -> Command {
-    let toggle = crate::pages::settings::toggle("zen-mode");
-    let quick = toggle.quick.as_ref().expect("Quick Pick offers zen mode");
-    let settings = &cx.global::<SettingsHandle>().0.read(cx).settings;
-    setting(toggle, quick, settings).kbds(crate::menu::keys(&crate::menu::ToggleZen, cx))
+/// The toggles Quick Pick offers; `page` the settings of the page in view alone.
+fn toggles(page: bool, cx: &App) -> impl Iterator<Item = Command> + '_ {
+    crate::pages::settings::TOGGLES
+        .iter()
+        .filter_map(|toggle| Some((toggle, toggle.quick.as_ref()?)))
+        .filter(move |(_, quick)| !page || quick.page_key.is_some())
+        .map(move |(toggle, quick)| setting(toggle, quick, cx))
 }
 
 /// Settings toggles and choices, and the Settings sections.
@@ -237,15 +259,7 @@ fn settings_commands(cx: &App) -> Vec<Command> {
         .hint((front.appearance == appearance).then_some("Current"))
     })
     .collect();
-    list.extend(
-        crate::pages::settings::TOGGLES
-            .iter()
-            .filter_map(|toggle| Some((toggle, toggle.quick.as_ref()?)))
-            .map(|(toggle, quick)| match toggle.id {
-                "zen-mode" => zen_command(cx),
-                _ => setting(toggle, quick, &settings),
-            }),
-    );
+    list.extend(toggles(false, cx));
     for (mode, label) in [
         (CoordinateMode::None, "Coordinates: Hidden"),
         (CoordinateMode::Inside, "Coordinates: Inside the board"),
@@ -270,6 +284,7 @@ fn settings_commands(cx: &App) -> Vec<Command> {
                 glyph,
                 move |window, cx| crate::shell::open_settings(section, window, cx),
             )
+            .kind(Kind::Section)
             .detail("Settings")
             .hint(
                 (section == Section::Updates)
@@ -285,8 +300,11 @@ fn settings_commands(cx: &App) -> Vec<Command> {
 /// ⌘C and ⌘N where they copy or start, F where it turns the board, and Z for zen mode on a page
 /// it applies to.
 fn page_commands(cx: &App) -> Vec<Command> {
-    let zen = crate::shell::zen_page(cx).then(|| zen_command(cx));
-    zen.into_iter()
+    let own_settings = crate::shell::zen_page(cx)
+        .then(|| toggles(true, cx).collect::<Vec<_>>())
+        .unwrap_or_default();
+    own_settings
+        .into_iter()
         .chain(crate::shell::page_commands(cx).into_iter().map(|command| {
             let keys = match command.info.role {
                 Some(ActionRole::Copy) => crate::menu::keys(&gpui_kit::component::input::Copy, cx),
@@ -330,7 +348,7 @@ pub(crate) fn command_ids(cx: &App) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Stockfish at each level and side, online games, a new analysis board (`playCommands`).
+/// Stockfish at each level and side, online games, a new analysis board.
 fn play_commands(cx: &App) -> Vec<Command> {
     let levels: Vec<String> = cx
         .global::<SettingsHandle>()
@@ -367,6 +385,11 @@ fn play_commands(cx: &App) -> Vec<Command> {
                     icon("cpu"),
                     move |window, cx| crate::pages::computer::play_level(&level, color, window, cx),
                 )
+                .kind(if color == "white" {
+                    Kind::Command
+                } else {
+                    Kind::OtherSide
+                })
                 .detail(format!("{strength} · {color_label}"))
                 .keywords("computer bot engine ai"),
             );
@@ -419,7 +442,7 @@ fn play_commands(cx: &App) -> Vec<Command> {
     list
 }
 
-/// Syncing or connecting Lichess, and the sidebar (`appCommands`).
+/// Syncing or connecting Lichess, and the sidebar.
 fn app_commands(cx: &App) -> Vec<Command> {
     let connected = !crate::accounts::handle(cx).read(cx).connected().is_empty();
     let sidebar = crate::shell::sidebar_open(cx);
@@ -491,7 +514,7 @@ fn app_commands(cx: &App) -> Vec<Command> {
     list
 }
 
-/// Followed players' profiles and challenges (`playerCommands`).
+/// Followed players' profiles and challenges.
 fn player_commands(cx: &App) -> Vec<Command> {
     let accounts = crate::accounts::handle(cx).read(cx);
     let connected = !accounts.connected().is_empty();
@@ -535,7 +558,7 @@ fn player_commands(cx: &App) -> Vec<Command> {
     list
 }
 
-/// Something worth returning to, above the recent entries (`resume`).
+/// Something worth returning to, above the recent entries.
 fn resume(cx: &App) -> Vec<Command> {
     let online = crate::online::handle(cx).read(cx);
     let mut list = Vec::new();
@@ -553,7 +576,7 @@ fn resume(cx: &App) -> Vec<Command> {
     list
 }
 
-/// The prefixes, as rows that switch the mode (`MODE_ROWS`).
+/// The prefixes, as rows that switch the mode.
 fn modes(include_go: bool, cx: &App) -> Vec<Command> {
     let rows: [(&'static str, &str, Icon, Option<String>); 5] = [
         (
@@ -585,7 +608,7 @@ fn modes(include_go: bool, cx: &App) -> Vec<Command> {
         .collect()
 }
 
-/// The palette's groups for what is typed (`groups`).
+/// The palette's groups for what is typed.
 fn groups(query: &str, cx: &App) -> Vec<Group> {
     let (mode, text) = quick_pick::parse(query);
     match mode {
@@ -596,7 +619,7 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
                 Some("Play"),
                 play_commands(cx)
                     .into_iter()
-                    .filter(|c| !c.id.starts_with("play:stockfish") || c.id.ends_with(":white"))
+                    .filter(|c| c.kind != Kind::OtherSide)
                     .collect(),
             ),
             group(Some("App"), app_commands(cx)),
@@ -618,7 +641,7 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
         Mode::Settings if text.is_empty() => {
             let all = settings_commands(cx);
             let (sections, toggles): (Vec<Command>, Vec<Command>) =
-                all.into_iter().partition(|c| c.id.starts_with("settings:"));
+                all.into_iter().partition(|c| c.kind == Kind::Section);
             [
                 group(Some("Quick settings"), toggles),
                 group(Some("Settings pages"), sections),
@@ -640,7 +663,7 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
                     out.extend(group(
                         None,
                         vec![Command::new(
-                            "page:Players",
+                            page_id(Page::Players),
                             "Type a Lichess username to look it up",
                             icon("user-search"),
                             go(Page::Players),
@@ -682,7 +705,7 @@ fn groups(query: &str, cx: &App) -> Vec<Group> {
                 .collect();
             let pages: Vec<Command> = places(cx)
                 .into_iter()
-                .filter(|c| c.id.starts_with("page:"))
+                .filter(|c| c.kind == Kind::Page)
                 .collect();
             let had_recent = !recent.is_empty();
             [

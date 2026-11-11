@@ -7,7 +7,7 @@ mod data;
 mod engine;
 mod offline;
 mod toggles;
-pub(crate) use toggles::{Quick, TOGGLES, Toggle, toggle};
+pub(crate) use toggles::{Quick, TOGGLES, Toggle};
 pub mod updates;
 mod voice;
 mod voice_history;
