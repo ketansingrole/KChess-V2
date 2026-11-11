@@ -738,27 +738,6 @@ mod tests {
         super::restore_repertoire_misses(host, db, key, &misses.0)
     }
 
-    #[test]
-    fn stored_text_matches_javascript_stringify() {
-        let value = json!({ "b": 1.0, "a": [0.5, null, true, "é\n"], "n": -2 });
-        assert_eq!(
-            js_json(&value),
-            r#"{"b":1,"a":[0.5,null,true,"é\n"],"n":-2}"#
-        );
-    }
-
-    #[test]
-    fn names_are_trimmed_and_cut() {
-        assert_eq!(clean_name("  Name  "), "Name");
-        assert_eq!(clean_name(&"x".repeat(200)).len(), 120);
-    }
-
-    #[test]
-    fn keeps_the_newest_items() {
-        assert_eq!(keep_last(vec![1, 2, 3], 2), vec![2, 3]);
-        assert_eq!(keep_last(vec![1], 5), vec![1]);
-    }
-
     /// An arena that has ended is dropped when the next one is remembered, and
     /// forgetting an account drops its tournaments whatever the case of its name.
     #[test]

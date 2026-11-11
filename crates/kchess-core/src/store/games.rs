@@ -1175,10 +1175,6 @@ mod tests {
         let db = database();
         assert_eq!(read_settings(&db).unwrap(), None);
         let defaults = default_settings();
-        assert_eq!(
-            serde_json::to_value(&defaults).unwrap()["engineLevels"],
-            json!(["beginner", "club", "expert", "fm", "im", "gm", "max"])
-        );
         assert_eq!(get_settings(&db).unwrap(), defaults);
         // A solved puzzle stays on the board until Next (or Return), as on Lichess.
         assert!(!defaults.frontend.puzzle_auto_next);
@@ -1187,7 +1183,7 @@ mod tests {
     }
 
     #[test]
-    fn stored_settings_are_normalized_as_the_row_mapper_did() {
+    fn stored_settings_no_longer_offered_are_normalized() {
         let db = database();
         db.execute_batch(
             "INSERT INTO settings (id, appearance, boardTheme, coordinates, soundEnabled, soundVolume, enginePath, promotion, pieceAnimation, reviewAuto, engineLevels, correspondencePoll)

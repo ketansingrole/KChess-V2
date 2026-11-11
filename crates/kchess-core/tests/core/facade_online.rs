@@ -62,23 +62,42 @@ async fn online_methods_check_their_arguments_and_reach_lichess() {
         let error = core.call(method, args).await.unwrap_err();
         assert_eq!(error.message, message, "{method}");
     }
-    for (method, args) in [
-        ("playerPerf", vec![json!("Alice"), json!("bullet-ish")]),
-        ("crosstable", vec![json!("Alice"), json!("not a name!")]),
-        ("leaderboard", vec![json!(3)]),
-        ("onlineAction", vec![json!("abcdefgh"), json!("explode")]),
+    for (method, args, message) in [
+        (
+            "playerPerf",
+            vec![json!("Alice"), json!("bullet-ish")],
+            "Invalid rating category.",
+        ),
+        (
+            "crosstable",
+            vec![json!("Alice"), json!("not a name!")],
+            "Enter a valid Lichess username.",
+        ),
+        ("leaderboard", vec![json!(3)], "Invalid rating category."),
+        (
+            "onlineAction",
+            vec![json!("abcdefgh"), json!("explode")],
+            "Invalid game action.",
+        ),
         (
             "sendChat",
             vec![json!("abcdefgh"), json!("lobby"), json!("hi")],
+            "Invalid chat room.",
         ),
-        ("declineChallenge", vec![json!("bad id!")]),
+        (
+            "declineChallenge",
+            vec![json!("bad id!"), json!("generic")],
+            "Invalid game id.",
+        ),
         (
             "setRelation",
             vec![json!("Alice"), json!("Bob"), json!("hug")],
+            "Invalid action.",
         ),
-        ("profiles", vec![json!("Alice")]),
+        ("profiles", vec![json!("Alice")], "Invalid users."),
     ] {
-        assert!(core.call(method, args).await.is_err(), "{method}");
+        let error = core.call(method, args).await.unwrap_err();
+        assert_eq!(error.message, message, "{method}");
     }
     assert_eq!(sent(), 0);
 

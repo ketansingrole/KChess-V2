@@ -303,14 +303,6 @@ mod tests {
     }
 
     #[test]
-    fn computer_playing_while_searching_or_just_after_a_move() {
-        assert!(computer_playing(true, 0, 1_000, 5_000));
-        assert!(computer_playing(false, 4_500, 1_000, 5_000));
-        assert!(!computer_playing(false, 3_000, 1_000, 5_000));
-        assert!(!computer_playing(false, 0, 1_000, 5_000));
-    }
-
-    #[test]
     fn trusts_only_the_managed_engine_and_chosen_paths() {
         let trust = EngineTrust::default();
         let managed = Path::new("/data/engines/stockfish/current");

@@ -52,3 +52,26 @@ fn write_js_json(value: &Value, out: &mut String) {
 pub fn clean_name(name: &str) -> String {
     js::slice_utf16(js::trim(name), 120).to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Stored documents keep the bytes earlier releases wrote: keys in order, whole numbers
+    /// without `.0`, no spaces.
+    #[test]
+    fn stored_text_keeps_the_bytes_earlier_releases_wrote() {
+        let value = json!({ "b": 1.0, "a": [0.5, null, true, "é\n"], "n": -2 });
+        assert_eq!(
+            js_json(&value),
+            r#"{"b":1,"a":[0.5,null,true,"é\n"],"n":-2}"#
+        );
+    }
+
+    #[test]
+    fn names_are_trimmed_and_cut() {
+        assert_eq!(clean_name("  Name  "), "Name");
+        assert_eq!(clean_name(&"x".repeat(200)).len(), 120);
+    }
+}

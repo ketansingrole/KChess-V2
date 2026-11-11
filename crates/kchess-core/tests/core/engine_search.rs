@@ -3,6 +3,7 @@
 
 use crate::support;
 
+use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -201,7 +202,7 @@ async fn windows_play_their_own_computer_games_side_by_side() {
     let (search, _) = search_with("search", false, &log);
     // A window's search, asked for in its scope: it has superseded the window's last search and
     // taken its turn by the time this returns.
-    let in_window = async |connection: u64, movetime: u64| {
+    let in_window = |connection: u64, movetime: u64| {
         let search = search.clone();
         let mut asked = Box::pin(kchess_core::connection::scope(connection, async move {
             search
@@ -213,13 +214,14 @@ async fn windows_play_their_own_computer_games_side_by_side() {
                 )
                 .await
         }));
+        let mut first_poll = std::task::Context::from_waker(futures_util::task::noop_waker_ref());
         assert!(
-            futures_util::poll!(&mut asked).is_pending(),
+            asked.as_mut().poll(&mut first_poll).is_pending(),
             "the search is asked for"
         );
         tokio::spawn(asked)
     };
-    let first = in_window(2, 400).await;
+    let first = in_window(2, 400);
     wait_until(
         Duration::from_secs(10),
         "the first window's search to reach the engine",
@@ -231,7 +233,7 @@ async fn windows_play_their_own_computer_games_side_by_side() {
         },
     )
     .await;
-    let second = in_window(3, 50).await;
+    let second = in_window(3, 50);
     // The second window takes its move back: only its own search stops.
     search.stop_connection(3);
     assert_eq!(
@@ -245,7 +247,6 @@ async fn windows_play_their_own_computer_games_side_by_side() {
     assert_eq!(stopped.message, SUPERSEDED);
     assert_eq!(
         in_window(3, 50)
-            .await
             .await
             .expect("joined")
             .expect("the second window's next move"),

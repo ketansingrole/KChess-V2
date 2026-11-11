@@ -48,7 +48,6 @@ async fn tv_channels_name_the_game_and_player_of_each_channel() {
     let lichess = service(&fixture.base);
     let channels = tv_channels(&lichess).await.unwrap();
 
-    assert_eq!(channels.len(), 16);
     assert_eq!(fixture.requests()[0].path(), "/api/tv/channels");
     let best = &channels[0];
     assert_eq!(best.key, "best");

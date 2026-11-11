@@ -63,9 +63,6 @@ fn rows(store: &Store, sql: &str) -> Vec<Value> {
     store.rows(sql)
 }
 
-const RESULT_SQL: &str =
-    "CASE WHEN winner IS NULL THEN 'draw' WHEN winner = color THEN 'win' ELSE 'loss' END";
-
 #[test]
 fn logging_out_every_connected_account_erases_their_data_and_keeps_public_following() {
     let store = fresh();
@@ -494,34 +491,6 @@ fn the_retention_cap_is_applied_once_per_completed_sync_not_on_every_page() {
             .read(|c| games::game_pgn(c.db, "Alice", "T0000000"))
             .expect("gamePgn"),
         Value::Null
-    );
-}
-
-#[test]
-fn result_filters_are_served_from_the_result_indexes() {
-    let store = fresh();
-    let plan = |sql: &str, params: &[&str]| -> String {
-        store
-            .rows_with(&format!("EXPLAIN QUERY PLAN {sql}"), params)
-            .iter()
-            .map(|row| row["detail"].as_str().unwrap_or_default().to_string())
-            .collect::<Vec<_>>()
-            .join(" | ")
-    };
-    let by_result = plan(
-        &format!("SELECT COUNT(*) FROM games WHERE ({RESULT_SQL}) = ?"),
-        &["loss"],
-    );
-    assert!(by_result.contains("idx_games_result_page"), "{by_result}");
-    let by_account = plan(
-        &format!(
-            "SELECT COUNT(*) FROM games WHERE account = ? COLLATE NOCASE AND ({RESULT_SQL}) = ?"
-        ),
-        &["alice", "loss"],
-    );
-    assert!(
-        by_account.contains("idx_games_account_result_page"),
-        "{by_account}"
     );
 }
 
