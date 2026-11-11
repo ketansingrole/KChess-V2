@@ -27,9 +27,6 @@ pub const LENGTHS: [(u32, &str); 5] = [
     (0, "Untimed"),
 ];
 
-/// How often a running clock is redrawn (`useCountdown` ticks every 100 ms).
-const TICK: Duration = Duration::from_millis(100);
-
 /// The clock of one run: a countdown from its length, or a stopwatch when untimed.
 #[derive(Default)]
 pub struct RunClock {
@@ -100,22 +97,6 @@ pub fn record_variant(base: &str, seconds: u32, default_seconds: u32) -> String 
     } else {
         format!("{base}-{seconds}s")
     }
-}
-
-/// Redraw a drill while its clock runs; `tick` says whether to keep going.
-pub fn ticker<V: 'static>(
-    cx: &mut Context<V>,
-    tick: fn(&mut V, &mut Context<V>) -> bool,
-) -> Task<()> {
-    cx.spawn(async move |this, cx| {
-        loop {
-            cx.background_executor().timer(TICK).await;
-            match this.update(cx, tick) {
-                Ok(true) => {}
-                _ => break,
-            }
-        }
-    })
 }
 
 /// A drill's saved runs (`RunSummary`), read when it opens.

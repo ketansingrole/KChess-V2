@@ -181,11 +181,11 @@ fn moves_can_be_shown_with_piece_symbols(cx: &mut gpui_kit::TestAppContext) {
 /// ⌘K finds a category by any row title it shows, so a new row is found as soon as it is added.
 #[gpui_kit::test]
 fn every_settings_row_is_found_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::settings::{section_keywords, sections};
+    use crate::pages::settings::{Section, section_keywords};
     use gpui_kit::test::TestQueryExt as _;
     let mut app = Harness::start(cx);
     let mut checked = 0;
-    for (section, label, _) in sections() {
+    for (section, label) in Section::ALL.map(|s| (s, s.label())) {
         app.open_settings(label);
         let titles: Vec<String> = app.with_window(|window, _| {
             window
@@ -262,11 +262,11 @@ fn a_setting_saved_elsewhere_is_shown(cx: &mut gpui_kit::TestAppContext) {
     let base = app.saved_settings();
     let mut edited = base.clone();
     edited["soundEnabled"] = json!(false);
-    let core = app
-        .cx
-        .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
-    core.call_now("saveDesktopSettings", vec![edited, base])
-        .expect("another window saves");
+    let settings = |value| serde_json::from_value(value).expect("settings");
+    app.request(kchess_contracts::calls::SaveDesktopSettings {
+        settings: settings(edited),
+        base: Some(settings(base)),
+    });
     app.wait_for("the saved setting", |window, _| {
         use gpui_kit::test::TestWindowExt as _;
         window

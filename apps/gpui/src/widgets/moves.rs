@@ -147,17 +147,28 @@ pub fn moves_list(
         }))
 }
 
-/// `.move-controls`: first, previous, next and last move, and a board flip: its label, the key
-/// that does the same on the page (named in the tooltip), and what a click does.
+/// The button after the move controls: Flip board, whose key (F) its tooltip names, or another
+/// turn of the board the page names (Switch sides).
+pub enum TurnButton {
+    Flip(ClickHandler),
+    Named(SharedString, ClickHandler),
+}
+
+/// `.move-controls`: first, previous, next and last move, and the board's turn.
 pub fn move_controls(
     ply: usize,
     count: usize,
     select: impl Fn(usize, &mut Window, &mut App) + Clone + 'static,
-    flip: (SharedString, Option<String>, ClickHandler),
+    turn: TurnButton,
+    cx: &App,
 ) -> impl IntoElement {
-    let flip_tooltip: SharedString = match &flip.1 {
-        Some(key) => format!("{} ({key})", flip.0).into(),
-        None => flip.0.clone(),
+    let (label, tooltip, click): (SharedString, SharedString, _) = match turn {
+        TurnButton::Flip(click) => (
+            "Flip board".into(),
+            crate::menu::flip_label(cx).into(),
+            click,
+        ),
+        TurnButton::Named(label, click) => (label.clone(), label, click),
     };
     let targets = [
         ("skip-back", "Go to start", 0, ply == 0),
@@ -205,9 +216,9 @@ pub fn move_controls(
                 .ghost()
                 .small()
                 .icon(icon("arrow-up-down"))
-                .tooltip(flip_tooltip)
-                .accessibility_label(flip.0)
-                .on_click(flip.2),
+                .tooltip(tooltip)
+                .accessibility_label(label)
+                .on_click(click),
         )
 }
 /// The typed-move box's width on every page; it is as tall as a player's line.

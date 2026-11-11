@@ -68,6 +68,17 @@ pub(crate) enum Action {
     Analyse,
 }
 
+/// The page's own preferences: the clock's layout, chess clock or board, turning the board for
+/// the side to move, and each clock face's turn.
+const LAYOUT_KEY: &str = "kchess:clock-layout";
+const MODE_KEY: &str = "kchess:local-mode";
+const AUTOFLIP_KEY: &str = "kchess:local-autoflip";
+const ROTATION_KEY: &str = "kchess:clock-rotation";
+
+fn clock_layout(cx: &App) -> ClockLayout {
+    crate::prefs::get(cx, LAYOUT_KEY, ClockLayout::Horizontal)
+}
+
 pub struct LocalPage {
     /// Either player's spoken moves.
     voice: crate::voice::moves::VoiceMoves,
@@ -214,8 +225,7 @@ impl LocalPage {
             number_input(clock.config.bottom_minutes, window, cx),
             number_input(clock.config.increment, window, cx),
         ];
-        let layout_choice: ClockLayout =
-            crate::prefs::get(cx, "kchess:clock-layout", ClockLayout::Horizontal);
+        let layout_choice: ClockLayout = clock_layout(cx);
         let clock_layout = cx.new(|cx| {
             SelectState::new(
                 vec!["Side by side".into(), "Stacked".into()],
@@ -263,7 +273,7 @@ impl LocalPage {
                     } else {
                         ClockLayout::Horizontal
                     };
-                    crate::prefs::set(cx, "kchess:clock-layout", layout);
+                    crate::prefs::set(cx, LAYOUT_KEY, layout);
                     cx.notify();
                 },
             ),
@@ -368,11 +378,11 @@ impl LocalPage {
     }
 
     fn mode(&self, cx: &App) -> Mode {
-        crate::prefs::get(cx, "kchess:local-mode", Mode::Board)
+        crate::prefs::get(cx, MODE_KEY, Mode::Board)
     }
 
     fn auto_flip(&self, cx: &App) -> bool {
-        crate::prefs::get(cx, "kchess:local-autoflip", false)
+        crate::prefs::get(cx, AUTOFLIP_KEY, false)
     }
 
     /// Who is to move at the latest position.
@@ -561,7 +571,7 @@ impl LocalPage {
             .update(cx, |board, cx| board.set_state(state, cx));
         let running = self.game.timed() && !over;
         if running && self.ticker.is_none() {
-            self.ticker = Some(surface::every(surface::TICK, cx, Self::tick));
+            self.ticker = Some(crate::timer::every(crate::timer::TICK, cx, Self::tick));
         } else if !running {
             self.ticker = None;
         }
@@ -578,7 +588,7 @@ impl LocalPage {
     /// Flipping by hand turns the board, and stops the automatic turning.
     fn flip(&mut self, cx: &mut Context<Self>) {
         let shown = self.orientation(cx);
-        crate::prefs::set(cx, "kchess:local-autoflip", false);
+        crate::prefs::set(cx, AUTOFLIP_KEY, false);
         self.fixed_orientation = !shown;
         self.after_change(cx);
     }
@@ -588,7 +598,7 @@ impl LocalPage {
         if !on && self.auto_flip(cx) && !self.game.over() {
             self.fixed_orientation = self.turn();
         }
-        crate::prefs::set(cx, "kchess:local-autoflip", on);
+        crate::prefs::set(cx, AUTOFLIP_KEY, on);
         self.after_change(cx);
     }
 
@@ -691,7 +701,7 @@ impl LocalPage {
 
     /// A game over the board from a position (the board editor's, the analysis board's), untimed.
     pub fn start_from(&mut self, setup: Value, window: &mut Window, cx: &mut Context<Self>) {
-        crate::prefs::set(cx, "kchess:local-mode", Mode::Board);
+        crate::prefs::set(cx, MODE_KEY, Mode::Board);
         self.replace_game(setup, Value::Null, window, cx);
     }
 
@@ -802,7 +812,7 @@ impl LocalPage {
 
     fn clock_changed(&mut self, cx: &mut Context<Self>) {
         if self.clock.running.is_some() && self.clock_ticker.is_none() {
-            self.clock_ticker = Some(surface::every(surface::TICK, cx, |this, cx| {
+            self.clock_ticker = Some(crate::timer::every(crate::timer::TICK, cx, |this, cx| {
                 let now = this.now();
                 if this.clock.expire(now) {
                     crate::sound::play(crate::sound::Sound::LowTime, cx);
@@ -916,25 +926,19 @@ impl LocalPage {
     /// How far a clock face is turned (`kchess:clock-rotation`), so a player across the table
     /// reads it the right way up.
     fn rotation(side: Side, cx: &App) -> u16 {
-        let turned: serde_json::Value = crate::prefs::get(
-            cx,
-            "kchess:clock-rotation",
-            json!({ "top": 0, "bottom": 0 }),
-        );
+        let turned: serde_json::Value =
+            crate::prefs::get(cx, ROTATION_KEY, json!({ "top": 0, "bottom": 0 }));
         let key = if side == Side::Top { "top" } else { "bottom" };
         (turned[key].as_f64().unwrap_or_default() as u16 / 90 * 90) % 360
     }
 
-    /// A quarter turn clockwise (`rotateClock`).
+    /// A quarter turn clockwise.
     fn rotate(side: Side, cx: &mut App) {
-        let mut turned: serde_json::Value = crate::prefs::get(
-            cx,
-            "kchess:clock-rotation",
-            json!({ "top": 0, "bottom": 0 }),
-        );
+        let mut turned: serde_json::Value =
+            crate::prefs::get(cx, ROTATION_KEY, json!({ "top": 0, "bottom": 0 }));
         let key = if side == Side::Top { "top" } else { "bottom" };
         turned[key] = json!((Self::rotation(side, cx) + 90) % 360);
-        crate::prefs::set(cx, "kchess:clock-rotation", turned);
+        crate::prefs::set(cx, ROTATION_KEY, turned);
     }
 
     fn render_clock(
@@ -944,8 +948,7 @@ impl LocalPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let now = self.now();
-        let vertical = crate::prefs::get(cx, "kchess:clock-layout", ClockLayout::Horizontal)
-            == ClockLayout::Vertical;
+        let vertical = clock_layout(cx) == ClockLayout::Vertical;
         // The clocks take the board's place, so switching modes moves nothing else: its side
         // across, and its column's height beside the panel (its side again when stacked).
         let board_size = self.board_size(window);
@@ -1233,7 +1236,7 @@ fn mode_tabs(mode: Mode, palette: &Palette, cx: &mut Context<LocalPage>) -> Div 
         usize::from(mode == Mode::Clock),
         move |index, _, cx| {
             let mode = if index == 1 { Mode::Clock } else { Mode::Board };
-            crate::prefs::set(cx, "kchess:local-mode", mode);
+            crate::prefs::set(cx, MODE_KEY, mode);
             let _ = page.update(cx, |page, cx| page.after_change(cx));
         },
         false,
@@ -1546,11 +1549,8 @@ impl LocalPage {
                 shown,
                 moves.len(),
                 select,
-                (
-                    "Flip board".into(),
-                    crate::menu::keys(&crate::menu::FlipBoard, cx),
-                    flip,
-                ),
+                widgets::TurnButton::Flip(flip),
+                cx,
             ))
             .child(
                 h_flex()
@@ -2098,13 +2098,7 @@ impl crate::pages::PageAction for Action {
             Action::Resign => ActionInfo::new("local:resign", "Resign", "flag", "give up"),
             Action::NewGame => ActionInfo::new("local:new-game", "New game", "plus", "restart")
                 .role(ActionRole::New),
-            Action::Flip => ActionInfo::new(
-                "local:flip",
-                "Flip board",
-                "refresh-cw",
-                "turn rotate orientation",
-            )
-            .role(ActionRole::Flip),
+            Action::Flip => ActionInfo::flip("local:flip"),
             Action::CopyPgn => {
                 ActionInfo::new("local:copy-pgn", "Copy PGN", "copy", "game moves clipboard")
                     .role(ActionRole::Copy)

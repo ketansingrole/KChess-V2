@@ -107,6 +107,9 @@ gpui-kit = { version = "=0.9.0", features = ["test-support"] }
 tempfile = "3"
 # Release keys that sign the updater tests' checksums (`src/updates/tests.rs`).
 ring = "0.17"
+# A profile document the core cannot read, written beside the running core (`src/e2e`); the
+# core's own version, already in Cargo.lock.
+rusqlite = { version = "0.41", features = ["bundled"] }
 
 # Real text shaping for the offscreen screenshots (`src/e2e/screens.rs`), without the Mac platform
 # that only the main thread may create; already in Cargo.lock under gpui-kit.

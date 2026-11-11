@@ -22,13 +22,7 @@ pub(crate) enum Action {
 impl PageAction for Action {
     fn info(&self) -> ActionInfo {
         match *self {
-            Action::Flip => ActionInfo::new(
-                "analysis:flip",
-                "Flip board",
-                "refresh-cw",
-                "turn rotate orientation",
-            )
-            .role(ActionRole::Flip),
+            Action::Flip => ActionInfo::flip("analysis:flip"),
             Action::CopyFen => ActionInfo::new(
                 "analysis:copy-fen",
                 "Copy FEN",

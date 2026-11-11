@@ -12,19 +12,19 @@ use gpui_kit::*;
 use std::time::Duration;
 
 use crate::assets::icon;
-use crate::pages::settings::{SECTION_GROUPS, Section, sections};
+use crate::pages::settings::{Section, SectionGroup};
 use crate::pages::{ActionRole, NavGroup, Page, PageCommand, PageView, Pages};
 use crate::part::Part;
 use crate::settings::{SettingsChanged, SettingsHandle};
 use crate::theme::Palette;
 
-/// The window's height above the page; matches `--topbar-height`.
+/// The window's height above the page.
 pub const TOPBAR_HEIGHT: Pixels = px(52.);
 
-/// Whether the sidebar is open, kept for both apps (`kchess:sidebar-open`).
+/// Whether the sidebar is open.
 const SIDEBAR_OPEN: &str = "kchess:sidebar-open";
 
-/// `USidebar`'s `--sidebar-width`, and `--sidebar-width-icon` collapsed to icons.
+/// The sidebar's width while open.
 pub(crate) const SIDEBAR_WIDTH: Pixels = px(256.);
 /// How long the sidebar's width eases when it opens or closes.
 const SIDEBAR_EASE: Duration = Duration::from_millis(200);
@@ -262,7 +262,7 @@ impl TopbarInputs {
     }
 }
 
-/// The sidebar toggle as its `Part` (`.sidebar-toggle-wrap`): its 28px button, `TOPBAR_HEIGHT`
+/// The sidebar toggle as its `Part`: its 28px button, `TOPBAR_HEIGHT`
 /// high, over the top bar's left end, and the product's name beside it while the sidebar is open.
 fn toggle_style(open: bool, window: &Window) -> StyleRefinement {
     let mut style = StyleRefinement {
@@ -446,8 +446,6 @@ pub fn find_on_page(window: &mut Window, cx: &mut App) -> bool {
     true
 }
 
-/// Make the pages made ahead (`Workspace::prewarm`) now.
-#[cfg(test)]
 /// Makes `page` without showing it.
 #[cfg(test)]
 pub fn prepare(page: Page, window: &mut Window, cx: &mut App) {
@@ -879,19 +877,10 @@ impl Workspace {
     /// Scroll Settings' categories to the group of the one it shows, which the palette may have
     /// chosen, or Settings remembered, out of a short window's sight.
     fn scroll_to_section(&self, section: Section) {
-        let row = sections()
+        let group = SectionGroup::ALL
             .iter()
-            .position(|(shown, _, _)| *shown == section);
-        let group = row.map_or(0, |row| {
-            SECTION_GROUPS
-                .iter()
-                .scan(0, |end, (_, size)| {
-                    *end += size;
-                    Some(*end)
-                })
-                .take_while(|end| *end <= row)
-                .count()
-        });
+            .position(|group| *group == section.group())
+            .unwrap_or(0);
         self.sections_scroll.scroll_to_item(group);
         self.sections_pending.set(Some(group));
     }
@@ -952,23 +941,20 @@ impl Workspace {
             .pages
             .get::<crate::pages::settings::SettingsPage>()
             .map_or(Section::Appearance, |page| page.read(cx).section());
-        let mut rows = sections().into_iter();
-        SECTION_GROUPS
+        SectionGroup::ALL
             .into_iter()
-            .map(|(heading, size)| {
+            .map(|group| {
                 NavBlock::Group(
-                    heading,
-                    Box::new(
-                        SidebarMenu::new()
-                            .gap_0()
-                            .children(rows.by_ref().take(size).map(|(section, label, glyph)| {
-                                nav_item(label, glyph).active(shown == section).on_click(
-                                    cx.listener(move |this, _, _, cx| {
-                                        this.choose_section(section, cx)
-                                    }),
-                                )
-                            })),
-                    ),
+                    group.heading(),
+                    Box::new(SidebarMenu::new().gap_0().children(group.sections().map(
+                        |section| {
+                            nav_item(section.label(), section.icon())
+                                .active(shown == section)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.choose_section(section, cx)
+                                }))
+                        },
+                    ))),
                 )
             })
             .collect()
@@ -1139,8 +1125,8 @@ impl Workspace {
         }
     }
 
-    /// `USidebar` with `collapsible="icon"`: the header row the toggle floats over, the pages,
-    /// and the footer, divided by lines (`divide-y`); 256px open, a 64px rail of icons collapsed,
+    /// The sidebar: the header row the toggle floats over, the pages, and the footer, divided
+    /// by lines; 256px open, a 64px rail of icons collapsed,
     /// its width easing between the two in 200ms.
     fn render_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let open = self.shown();
@@ -1279,7 +1265,7 @@ impl Workspace {
         self.sidebar.clone().cached(style).into_any_element()
     }
 
-    /// The sidebar toggle (`.sidebar-toggle-wrap`): one button at the same place in the window
+    /// The sidebar toggle: one button at the same place in the window
     /// whether the sidebar is open or a rail, beside the macOS traffic lights (which ignore the
     /// interface size, so its offset does too), else at the window's edge.
     fn render_sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1368,7 +1354,7 @@ impl Workspace {
             .child(self.render_topbar_right(cx))
     }
 
-    /// `.topbar-right`: connection, update and work state, at the end.
+    /// The top bar's right end: connection, update and work state.
     fn render_topbar_right(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .flex_1()
@@ -1412,7 +1398,7 @@ fn working(cx: &App) -> bool {
     crate::accounts::handle(cx).read(cx).working() || crate::online::handle(cx).read(cx).busy
 }
 
-/// The Lichess game the sidebar marks (`lichessGame`): your move (in a live game, or in a
+/// The Lichess game the sidebar marks: your move (in a live game, or in a
 /// correspondence one), or a game going on.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GameMark {

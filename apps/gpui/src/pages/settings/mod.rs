@@ -7,7 +7,7 @@ mod data;
 mod engine;
 mod offline;
 mod toggles;
-pub(crate) use toggles::{Quick, TOGGLES, Toggle, toggle};
+pub(crate) use toggles::{Quick, TOGGLES, Toggle};
 pub mod updates;
 mod voice;
 mod voice_history;
@@ -58,26 +58,111 @@ pub enum Section {
     Updates,
 }
 
-/// The categories the sidebar lists while Settings is open, in `SECTION_GROUPS`.
-pub fn sections() -> [(Section, &'static str, Icon); 15] {
-    [
-        (Section::Appearance, "Appearance", icon("palette")),
-        (Section::Themes, "Themes", icon("swatch-book")),
-        (Section::Sound, "Sound", icon("volume-2")),
-        (Section::Notifications, "Notifications", icon("bell")),
-        (Section::Gameplay, "Gameplay", icon("chess-knight")),
-        (Section::Gestures, "Gestures", icon("hand")),
-        (Section::Voice, "Voice input", icon("mic")),
-        (Section::Engine, "Chess engine", icon("cpu")),
-        (Section::Analysis, "Cloud evaluation", icon("cloud")),
-        (Section::Ai, "AI", icon("lightbulb")),
-        (Section::Accounts, "Accounts", icon("user-round")),
-        (Section::Online, "Online play", icon("globe-2")),
-        (Section::Offline, "Offline downloads", icon("download")),
-        (Section::Data, "Data & storage", icon("database")),
-        (Section::Updates, "Updates", icon("refresh-cw")),
-    ]
+/// The groups of categories the sidebar lists while Settings is open, in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SectionGroup {
+    Interface,
+    Play,
+    Analysis,
+    Lichess,
+    System,
 }
+
+impl SectionGroup {
+    pub const ALL: [SectionGroup; 5] = [
+        SectionGroup::Interface,
+        SectionGroup::Play,
+        SectionGroup::Analysis,
+        SectionGroup::Lichess,
+        SectionGroup::System,
+    ];
+
+    pub fn heading(self) -> &'static str {
+        match self {
+            SectionGroup::Interface => "Interface",
+            SectionGroup::Play => "Play",
+            SectionGroup::Analysis => "Analysis",
+            SectionGroup::Lichess => "Lichess",
+            SectionGroup::System => "System",
+        }
+    }
+
+    /// Its categories, in the sidebar's order.
+    pub fn sections(self) -> impl Iterator<Item = Section> {
+        Section::ALL
+            .into_iter()
+            .filter(move |section| section.group() == self)
+    }
+}
+
+impl Section {
+    /// Every category, in the sidebar's order.
+    pub const ALL: [Section; 15] = [
+        Section::Appearance,
+        Section::Themes,
+        Section::Sound,
+        Section::Notifications,
+        Section::Gameplay,
+        Section::Gestures,
+        Section::Voice,
+        Section::Engine,
+        Section::Analysis,
+        Section::Ai,
+        Section::Accounts,
+        Section::Online,
+        Section::Offline,
+        Section::Data,
+        Section::Updates,
+    ];
+
+    pub fn label(self) -> &'static str {
+        self.describe().0
+    }
+
+    pub fn icon(self) -> Icon {
+        icon(self.describe().1)
+    }
+
+    pub fn group(self) -> SectionGroup {
+        self.describe().2
+    }
+
+    /// Its name, icon and group, said once.
+    fn describe(self) -> (&'static str, &'static str, SectionGroup) {
+        use SectionGroup as G;
+        match self {
+            Section::Appearance => ("Appearance", "palette", G::Interface),
+            Section::Themes => ("Themes", "swatch-book", G::Interface),
+            Section::Sound => ("Sound", "volume-2", G::Interface),
+            Section::Notifications => ("Notifications", "bell", G::Interface),
+            Section::Gameplay => ("Gameplay", "chess-knight", G::Play),
+            Section::Gestures => ("Gestures", "hand", G::Play),
+            Section::Voice => ("Voice input", "mic", G::Play),
+            Section::Engine => ("Chess engine", "cpu", G::Analysis),
+            Section::Analysis => ("Cloud evaluation", "cloud", G::Analysis),
+            Section::Ai => ("AI", "lightbulb", G::Analysis),
+            Section::Accounts => ("Accounts", "user-round", G::Lichess),
+            Section::Online => ("Online play", "globe-2", G::Lichess),
+            Section::Offline => ("Offline downloads", "download", G::System),
+            Section::Data => ("Data & storage", "database", G::System),
+            Section::Updates => ("Updates", "refresh-cw", G::System),
+        }
+    }
+}
+
+/// The light and dark choice, as Settings and Quick Pick offer it: its name and icon.
+pub const APPEARANCES: [(Appearance, &str, &str); 3] = [
+    (Appearance::System, "System", "monitor"),
+    (Appearance::Light, "Light", "sun"),
+    (Appearance::Dark, "Dark", "moon"),
+];
+
+/// Where the board's coordinates go, as Settings and Quick Pick offer it.
+pub const COORDINATES: [(CoordinateMode, &str); 3] = [
+    (CoordinateMode::Inside, "Inside"),
+    (CoordinateMode::Outside, "Outside"),
+    (CoordinateMode::None, "Hidden"),
+];
 
 /// How the interface size changes anywhere: "⌘ + and ⌘ − adjust it anywhere."
 fn zoom_hint(cx: &App) -> String {
@@ -140,15 +225,6 @@ fn other_keywords(section: Section) -> &'static str {
         }
     }
 }
-
-/// The sidebar's groups of `sections`, in order: each heading and how many categories it holds.
-pub const SECTION_GROUPS: [(&str, usize); 5] = [
-    ("Interface", 4),
-    ("Play", 3),
-    ("Analysis", 3),
-    ("Lichess", 2),
-    ("System", 3),
-];
 
 /// `pollItems`: minutes between correspondence checks.
 const POLL: [(f64, &str); 6] = [
@@ -868,11 +944,7 @@ fn theme_list(custom: &[AppTheme]) -> Vec<AppTheme> {
 }
 
 fn appearance_items() -> [(Appearance, &'static str, Option<Icon>); 3] {
-    [
-        (Appearance::System, "System", Some(icon("monitor"))),
-        (Appearance::Light, "Light", Some(icon("sun"))),
-        (Appearance::Dark, "Dark", Some(icon("moon"))),
-    ]
+    APPEARANCES.map(|(appearance, label, glyph)| (appearance, label, Some(icon(glyph))))
 }
 
 impl SettingsPage {
@@ -946,11 +1018,7 @@ impl SettingsPage {
                 None,
                 choice(
                     "coordinates",
-                    &[
-                        (CoordinateMode::Inside, "Inside", None),
-                        (CoordinateMode::Outside, "Outside", None),
-                        (CoordinateMode::None, "Hidden", None),
-                    ],
+                    &COORDINATES.map(|(mode, label)| (mode, label, None)),
                     frontend.coordinates,
                     |s, value| s.frontend.coordinates = value,
                     palette,

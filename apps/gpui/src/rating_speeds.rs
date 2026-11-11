@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use crate::assets::icon;
 use crate::chart::{ChartDate, LineChart, Series};
 use crate::rating_history::{
-    DAY_MS, RATING_PAD, Retry, YEARS_SPAN_MS, entries, has_points, point_of,
+    DAY_MS, Retry, chart_dates, entries, has_points, point_of, rating_domain,
 };
 use crate::theme::{Palette, radii};
 use crate::widgets;
@@ -244,17 +244,12 @@ impl RatingSpeeds {
             rows.first().map_or(0., |row| row.0),
             rows.last().map_or(0., |row| row.0),
         );
-        let years = last - first > YEARS_SPAN_MS;
-        let format = |millis: f64, pattern: &str| {
-            chrono::DateTime::from_timestamp_millis(millis as i64)
-                .map(|date| date.format(pattern).to_string())
-                .unwrap_or_default()
-        };
+        let date = chart_dates(first, last);
         let dates = rows
             .iter()
-            .map(|(date, _)| ChartDate {
-                short: format(*date, if years { "%b %y" } else { "%b %-d" }).into(),
-                long: format(*date, "%b %-d, %Y").into(),
+            .map(|(millis, _)| {
+                let (short, long) = date(*millis);
+                ChartDate { short, long }
             })
             .collect();
         let dark = cx.global::<Palette>().dark;
@@ -269,14 +264,7 @@ impl RatingSpeeds {
             })
             .collect();
         let values = rows.iter().flat_map(|(_, values)| values.iter().flatten());
-        let (low, high) = values.fold((f64::MAX, f64::MIN), |(low, high), rating| {
-            (low.min(*rating), high.max(*rating))
-        });
-        let domain = if low > high {
-            (0., 1.)
-        } else {
-            (low - RATING_PAD, high + RATING_PAD)
-        };
+        let domain = rating_domain(values.copied());
         let summary = format!(
             "Rating history: {}",
             shown

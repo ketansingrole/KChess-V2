@@ -63,6 +63,7 @@ mod startup;
 mod studies;
 mod swipe;
 mod theme;
+mod timer;
 mod updates;
 mod voice;
 mod whats_new;

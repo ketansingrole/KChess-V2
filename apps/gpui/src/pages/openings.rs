@@ -24,6 +24,7 @@ use crate::board::{BoardEvent, BoardState, ChessBoard};
 use crate::chart::{ChartPoint, LineChart};
 use crate::core::AppCore;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
+use crate::game::surface::TakesKeys as _;
 use crate::game::{STANDARD_FEN, view};
 use crate::pages::Page;
 use crate::play_layout::{
@@ -1256,11 +1257,7 @@ impl Render for OpeningsPage {
                         cx.stop_propagation();
                     }
                 }))
-                .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                    if event.button == MouseButton::Left {
-                        window.focus(&this.focus, cx);
-                    }
-                }))
+                .takes_keys(&self.focus)
                 .child(self.render_detail(window, cx, &palette))
                 .into_any_element();
         }
@@ -1298,7 +1295,7 @@ impl Render for OpeningsPage {
 
 impl crate::pages::PageAction for Action {
     fn info(&self) -> crate::pages::ActionInfo {
-        use crate::pages::{ActionInfo, ActionRole};
+        use crate::pages::ActionInfo;
         match self {
             Action::Train => ActionInfo::new(
                 "openings:train",
@@ -1315,13 +1312,7 @@ impl crate::pages::PageAction for Action {
                 "puzzle",
                 "tactics",
             ),
-            Action::Flip => ActionInfo::new(
-                "openings:flip",
-                "Flip board",
-                "arrow-up-down",
-                "turn rotate",
-            )
-            .role(ActionRole::Flip),
+            Action::Flip => ActionInfo::flip("openings:flip"),
             Action::AllOpenings => {
                 ActionInfo::new("openings:all", "All openings", "arrow-left", "back browse")
             }

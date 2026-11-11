@@ -225,7 +225,8 @@ impl Render for GameReplay {
                 self.ply,
                 self.moves.len(),
                 select,
-                ("Flip board".into(), crate::menu::keys(&FlipBoard, cx), flip),
+                widgets::TurnButton::Flip(flip),
+                cx,
             ));
         surface::keys(div().size_full(), &self.focus, cx)
             .on_action(cx.listener(|this, _: &FlipBoard, _, cx| this.flip(cx)))

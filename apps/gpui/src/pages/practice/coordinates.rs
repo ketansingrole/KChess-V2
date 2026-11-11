@@ -277,7 +277,7 @@ impl Coordinates {
         self.upcoming = random_square(Some(&self.target), allowed.as_deref());
         self.stage = Stage::Running;
         self.clock.start(Self::length(cx));
-        self.timers = vec![run::ticker(cx, |this, cx| {
+        self.timers = vec![crate::timer::every(crate::timer::TICK, cx, |this, cx| {
             if this.stage != Stage::Running {
                 return false;
             }

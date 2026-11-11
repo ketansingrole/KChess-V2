@@ -315,20 +315,20 @@ impl Broadcasts {
             .update(cx, |board, cx| board.set_state(state, cx));
     }
 
-    /// ←/→ and ↑/↓ step through the open board's moves.
-    pub fn key(&mut self, key: &str, cx: &mut App) -> bool {
-        let Some(game) = self.current() else {
-            return false;
+    /// The open board's move shown and how many there are.
+    pub fn steps(&self) -> Option<(usize, usize)> {
+        let game = self.current()?;
+        Some((self.shown_ply(), moves_of(game).len()))
+    }
+
+    /// Show the open board's position after `ply` moves: the last follows the game.
+    pub fn go_to(&mut self, ply: usize, cx: &mut App) {
+        let Some((_, count)) = self.steps() else {
+            return;
         };
-        let count = moves_of(game).len();
-        if let Some(ply) = view::navigate(key, self.shown_ply(), count) {
-            self.return_to_game();
-            self.ply = (ply < count).then_some(ply);
-        } else {
-            return false;
-        }
+        self.return_to_game();
+        self.ply = (ply < count).then_some(ply);
         self.redraw(cx);
-        true
     }
 
     fn select_game(&mut self, id: String, cx: &mut App) {
@@ -1159,21 +1159,8 @@ impl WatchPage {
                             .child(crate::board::cached(&broadcasts.board)),
                     ),
             )
-            // The mouse wheel over the board steps through the moves.
-            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
-                let Some(key) = this
-                    .wheel
-                    .turn(event.delta.pixel_delta(window.line_height()))
-                else {
-                    return;
-                };
-                if this.broadcasts.key(key, cx) {
-                    this.engine_changed(cx);
-                    cx.notify();
-                }
-                cx.stop_propagation();
-            }))
             .child(div().pl(bar_room).child(line(orientation)));
+        let board_column = crate::game::surface::wheel(board_column, cx);
         let sans = view::sans(&setup, &moves);
         let page = cx.entity().downgrade();
         let select = move |ply: usize, _: &mut Window, cx: &mut App| {
@@ -1229,11 +1216,8 @@ impl WatchPage {
                 ply,
                 moves.len(),
                 select,
-                (
-                    "Flip board".into(),
-                    crate::menu::keys(&crate::menu::FlipBoard, cx),
-                    flip,
-                ),
+                widgets::TurnButton::Flip(flip),
+                cx,
             ))
             .child(
                 h_flex()

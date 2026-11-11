@@ -130,13 +130,9 @@ impl FriendsPage {
                 }),
             ];
         // Cheap (one small request for everyone), and stops with the page.
-        let poll = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(PRESENCE_EVERY).await;
-                if this.update(cx, |this, cx| this.refresh_status(cx)).is_err() {
-                    return;
-                }
-            }
+        let poll = crate::timer::every(PRESENCE_EVERY, cx, |this, cx| {
+            this.refresh_status(cx);
+            true
         });
         let mut page = FriendsPage {
             input,
@@ -211,7 +207,7 @@ impl FriendsPage {
         });
     }
 
-    /// `loadProfiles`: saved profiles at once, the rest in one request per thousand players; every
+    /// Saved profiles at once, the rest in one request per thousand players; every
     /// few minutes the rest is everyone, so a play time that grew shows as new games.
     fn load_profiles(&mut self, cx: &mut Context<Self>) {
         let names: Vec<String> = Self::friends(cx)
@@ -306,7 +302,7 @@ impl FriendsPage {
         }
     }
 
-    /// `addAccount`: follow the player typed and download their games.
+    /// Follow the player typed and download their games.
     fn follow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.input.read(cx).value().trim().to_string();
         if name.is_empty() {

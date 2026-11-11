@@ -22,6 +22,7 @@ use shakmaty::Color;
 use crate::assets::icon;
 use crate::core::AppCore;
 use crate::game::puzzle::{PuzzleSession, Selection, Step, local_day};
+use crate::game::surface::TakesKeys as _;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::puzzle_db::PuzzleDbHandle;
@@ -530,9 +531,18 @@ impl PuzzlesPage {
         let Some(call) = step.call else {
             return;
         };
-        let request = cx
-            .global::<AppCore>()
-            .call(call.method, vec![call.args.clone()]);
+        let (core, args) = (cx.global::<AppCore>(), call.args.clone());
+        let request = match call.method {
+            "localPuzzles" => {
+                futures::FutureExt::boxed_local(core.request(calls::LocalPuzzles { query: args }))
+            }
+            "puzzleNext" => {
+                futures::FutureExt::boxed_local(core.request(calls::PuzzleNext { request: args }))
+            }
+            _ => {
+                futures::FutureExt::boxed_local(core.request(calls::PuzzleSolve { request: args }))
+            }
+        };
         cx.spawn(async move |this, cx| {
             let reply = request.await.map_err(|cause| {
                 crate::log::write(
@@ -1903,12 +1913,7 @@ impl Render for PuzzlesPage {
             .size_full()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key))
-            // A click gives the keys back to the page, before a text field takes them.
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
+            .takes_keys(&self.focus)
             .child(
                 div()
                     .flex_none()
@@ -1985,11 +1990,11 @@ mod link_tests {
 
 impl crate::pages::PageAction for Action {
     fn info(&self) -> crate::pages::ActionInfo {
-        use crate::pages::{ActionInfo, ActionRole};
+        use crate::pages::ActionInfo;
         let (id, label, glyph, keywords) = match self {
             Action::Hint => ("hint", "Hint", "lightbulb", "clue help"),
             Action::Solution => ("solution", "Solution", "eye", "show answer give up"),
-            Action::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            Action::Flip => return ActionInfo::flip("puzzle:flip"),
             Action::Analyse => (
                 "analyse",
                 "Analysis board",
@@ -2005,12 +2010,7 @@ impl crate::pages::PageAction for Action {
                 RushAction::Back => ("rush-back", "Back to modes", "arrow-left", "menu"),
             },
         };
-        let info = ActionInfo::new(format!("puzzle:{id}"), label, glyph, keywords);
-        if *self == Action::Flip {
-            info.role(ActionRole::Flip)
-        } else {
-            info
-        }
+        ActionInfo::new(format!("puzzle:{id}"), label, glyph, keywords)
     }
 }
 

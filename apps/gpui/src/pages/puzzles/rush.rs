@@ -23,7 +23,6 @@ use crate::puzzle_board::{PuzzleBoard, PuzzleBoardEvent};
 use crate::theme::{Palette, radii, tint};
 use crate::widgets::{self, KeyboardFocus as _, Tone};
 
-const TICK: Duration = Duration::from_millis(100);
 /// The opponent replies faster in a run.
 const REPLY: Duration = Duration::from_millis(250);
 /// The pause before the next puzzle: short after a solve, longer to see a miss.
@@ -258,23 +257,17 @@ impl PuzzleRush {
 
     fn run_clock(&mut self, cx: &mut Context<Self>) {
         let generation = self.generation;
-        self.timers.push(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(TICK).await;
-                let going = this
-                    .update(cx, |this, cx| {
-                        if generation != this.generation || this.stage != Stage::Running {
-                            return false;
-                        }
-                        this.tick(cx);
-                        true
-                    })
-                    .unwrap_or(false);
-                if !going {
-                    return;
+        self.timers.push(crate::timer::every(
+            crate::timer::TICK,
+            cx,
+            move |this, cx| {
+                if generation != this.generation || this.stage != Stage::Running {
+                    return false;
                 }
-            }
-        }));
+                this.tick(cx);
+                true
+            },
+        ));
     }
 
     fn tick(&mut self, cx: &mut Context<Self>) {

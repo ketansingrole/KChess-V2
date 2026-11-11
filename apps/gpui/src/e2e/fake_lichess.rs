@@ -461,6 +461,12 @@ fn serve(socket: TcpStream) -> std::io::Result<()> {
             }),
         );
     }
+    // Lichess TV is public: a Rapid game two moves in and an Atomic one at its start, each
+    // channel's feed open until the app hangs up. Other channels and the channel list send
+    // nothing, as a test of TV out of reach needs.
+    if let Some(answer) = tv(&mut out, &request) {
+        return answer;
+    }
     // Broadcasts are public: a tournament of two rounds, which a round's link finds.
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", path) if path == format!("/api/broadcast/{BROADCAST_TOUR}") => {
@@ -800,6 +806,56 @@ fn not_found(out: &mut TcpStream) -> std::io::Result<()> {
         body.len()
     )?;
     answered(out)
+}
+
+/// The games Lichess TV features on its Rapid and Atomic channels.
+pub const TV_RAPID: &str = "kcTvRap1";
+pub const TV_ATOMIC: &str = "kcTvAto1";
+
+/// TV's feeds and the featured games' exports.
+fn tv(out: &mut TcpStream, request: &Request) -> Option<std::io::Result<()>> {
+    let start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    let games = [
+        (
+            "rapid",
+            TV_RAPID,
+            "standard",
+            "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+            "e4 c5",
+        ),
+        ("atomic", TV_ATOMIC, "atomic", start, ""),
+    ];
+    let players = json!([
+        { "color": "white", "user": { "name": "A" }, "rating": 2000, "seconds": 600 },
+        { "color": "black", "user": { "name": "B" }, "rating": 2000, "seconds": 600 },
+    ]);
+    let path = request.path.as_str();
+    if request.method == "GET"
+        && let Some(channel) = path
+            .strip_prefix("/api/tv/")
+            .and_then(|rest| rest.strip_suffix("/feed"))
+    {
+        let (_, id, _, fen, _) = games.iter().find(|game| game.0 == channel)?;
+        let featured = json!({
+            "t": "featured",
+            "d": { "id": id, "orientation": "white", "players": players, "fen": fen },
+        });
+        return Some(stream(out, vec![featured], || true, |_| None));
+    }
+    if (request.method.as_str(), path) == ("POST", "/api/games/export/_ids") {
+        let (_, id, variant, _, moves) = games.iter().find(|game| request.body.trim() == game.1)?;
+        let game = json!({
+            "id": id, "variant": variant, "speed": "rapid", "rated": true,
+            "status": "started", "moves": moves,
+            "clock": { "initial": 600, "increment": 0 },
+            "players": {
+                "white": { "user": { "name": "A" }, "rating": 2000 },
+                "black": { "user": { "name": "B" }, "rating": 2000 },
+            },
+        });
+        return Some(ndjson_lines(out, &[game]));
+    }
+    None
 }
 
 /// The game a Lichess link in the analysis board's import names, and its PGN.

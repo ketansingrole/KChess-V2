@@ -876,11 +876,10 @@ impl crate::pages::PageAction for game::LiveAction {
             LiveAction::Analyse => ("analyse", "Analyse", "microscope", "analysis review"),
             LiveAction::NewGame => ("new-game", "New game", "plus", "another seek"),
             LiveAction::CancelSeek => ("cancel-seek", "Cancel seek", "x", "stop waiting"),
-            LiveAction::Flip => ("flip", "Flip board", "arrow-up-down", "turn rotate"),
+            LiveAction::Flip => return ActionInfo::flip("online:flip"),
         };
         let info = ActionInfo::new(format!("online:{id}"), label, glyph, keywords);
         match self {
-            LiveAction::Flip => info.role(ActionRole::Flip),
             LiveAction::NewGame => info.role(ActionRole::New),
             _ => info,
         }

@@ -138,8 +138,12 @@ fn check_in(repo: &Path) -> Result {
 /// typed call (`kchess_contracts::calls`) names.
 const NAMED_CALLS: [&str; 2] = ["apps/gpui/src/core.rs", "apps/cli/src/core.rs"];
 
-/// Each shipped frontend call of a core method by its name as text (`.call("library", …)`),
-/// whatever its line breaks, as `path: method`.
+/// The files that may also send a method whose name is only known as the program runs: the
+/// command line's `call` command sends the method the person names.
+const NAMED_AT_RUN_TIME: [&str; 1] = ["apps/cli/src/main.rs"];
+
+/// Each shipped frontend call of a core method by its name (`.call("library", …)`, or a name in
+/// a variable, `.call(method, …)`), whatever its line breaks, as `path: what`.
 fn named_calls(files: &[(String, String)]) -> Vec<String> {
     let mut found = Vec::new();
     for (path, text) in files {
@@ -150,13 +154,21 @@ fn named_calls(files: &[(String, String)]) -> Vec<String> {
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();
-        for call in [".call(\"", ".call_now(\""] {
+        for call in [".call(", ".call_now("] {
             for (at, _) in packed.match_indices(call) {
                 let rest = &packed[at + call.len()..];
-                let method = rest.split('"').next().unwrap_or_default();
+                let named = match rest.strip_prefix('"') {
+                    Some(literal) => format!("`{}`", literal.split('"').next().unwrap_or_default()),
+                    None if NAMED_AT_RUN_TIME.contains(&path.as_str()) => continue,
+                    None => format!(
+                        "the method named in `{}`",
+                        rest.split([',', ')']).next().unwrap_or_default()
+                    ),
+                };
                 found.push(format!(
-                    "{path}: calls `{method}` by name; declare it in `calls!` \
-                     (crates/kchess-contracts/src/calls.rs) and send it with `request`"
+                    "{path}: calls {named} by name; declare it in `core_api!` \
+                     (crates/kchess-contracts/src/core_api.rs) and send its typed call with \
+                     `request`"
                 ));
             }
         }
@@ -204,6 +216,31 @@ fn a_call_by_name_is_found_across_lines() {
     assert_eq!(found.len(), 2, "{found:?}");
     assert!(found[0].starts_with("apps/gpui/src/page.rs: calls `library` by name"));
     assert!(found[1].starts_with("apps/gpui/src/page.rs: calls `usage` by name"));
+}
+
+/// A name in a variable escaped the check once (`call(if masters { "mastersGame" } else { … })`
+/// and `call(method, args)`): it is found too, except in the command line's `call` command.
+#[test]
+fn a_call_by_a_name_in_a_variable_is_found() {
+    let files = [
+        file(
+            "apps/gpui/src/page.rs",
+            "let call = core.call(\n    method,\n    args,\n);\nbridge.call_now(name, vec![]);\n",
+        ),
+        file(
+            "apps/cli/src/main.rs",
+            "print(&core.call(method, parameters).await?);\ncore.call(\"usage\", vec![]);\n",
+        ),
+    ];
+    let found = named_calls(&files);
+    assert_eq!(found.len(), 3, "{found:?}");
+    assert!(
+        found[0].starts_with("apps/gpui/src/page.rs: calls the method named in `method` by name")
+    );
+    assert!(
+        found[1].starts_with("apps/gpui/src/page.rs: calls the method named in `name` by name")
+    );
+    assert!(found[2].starts_with("apps/cli/src/main.rs: calls `usage` by name"));
 }
 
 #[test]

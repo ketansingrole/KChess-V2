@@ -178,14 +178,7 @@ impl StudyBar {
             ),
             cx.observe(&library, |_, _, cx| cx.notify()),
         ];
-        let clock = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(CLOCK).await;
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
-                    break;
-                }
-            }
-        });
+        let clock = crate::timer::redraw_every(CLOCK, cx);
         StudyBar {
             analysis,
             name,

@@ -2,7 +2,7 @@
 //! timeline, one tournament's details (join, standings, the top game, games in progress and
 //! totals), and creating an arena.
 
-use kchess_contracts::calls;
+use kchess_contracts::calls::{self, CoreCall};
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 
 use crate::assets::icon;
 use crate::core::AppCore;
+use crate::game::surface::TakesKeys as _;
 use crate::play_layout::{Measured, PAGE_BOTTOM, PAGE_TOP, side_padding};
 use crate::theme::Palette;
 use crate::widgets::{self, Pill};
@@ -41,7 +42,7 @@ fn refresh_due(status: &Value, since: Duration) -> bool {
     }
 }
 
-/// `control`: "3+2", "½+0".
+/// "3+2", "½+0".
 pub fn control(clock: &Value) -> String {
     crate::widgets::time_control(
         clock["limit"].as_f64().unwrap_or_default() / 60.,
@@ -133,20 +134,11 @@ impl TournamentsPage {
                 },
             ),
         ];
-        let refresh = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(REFRESH_EVERY).await;
-                let alive = this
-                    .update(cx, |this, cx| {
-                        if this.refresh_due() {
-                            this.load_event(cx);
-                        }
-                    })
-                    .is_ok();
-                if !alive {
-                    return;
-                }
+        let refresh = crate::timer::every(REFRESH_EVERY, cx, |this, cx| {
+            if this.refresh_due() {
+                this.load_event(cx);
             }
+            true
         });
         // Between refreshes the top game's side to move keeps losing time.
         let clock = cx.spawn(async move |this, cx| {
@@ -385,18 +377,15 @@ impl TournamentsPage {
             return;
         };
         let password = self.password.read(cx).value().trim().to_string();
-        let mut args = vec![
-            detail["system"].clone(),
-            detail["id"].clone(),
-            json!(account),
-        ];
-        // An unset code is left out: the validators reject null.
-        if !password.is_empty() {
-            args.push(json!(password));
-        }
+        let join = calls::JoinTournament {
+            system: detail["system"].clone(),
+            id: detail["id"].clone(),
+            account: json!(account),
+            // An unset code is left out: the validators reject null.
+            password: (!password.is_empty()).then(|| json!(password)),
+        };
         self.act(
-            "joinTournament",
-            args,
+            join,
             Some(if detail["system"] == json!("arena") {
                 format!(
                     "Joined {}. Games open here automatically when you are paired.",
@@ -421,12 +410,11 @@ impl TournamentsPage {
             return;
         };
         self.act(
-            "leaveTournament",
-            vec![
-                detail["system"].clone(),
-                detail["id"].clone(),
-                json!(account),
-            ],
+            calls::LeaveTournament {
+                system: detail["system"].clone(),
+                id: detail["id"].clone(),
+                account: json!(account),
+            },
             None,
             window,
             cx,
@@ -434,10 +422,9 @@ impl TournamentsPage {
     }
 
     /// Join or leave, then read the tournament again.
-    fn act(
+    fn act<C: CoreCall<Answer = Value> + Send + 'static>(
         &mut self,
-        method: &'static str,
-        args: Vec<Value>,
+        call: C,
         done: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -448,7 +435,7 @@ impl TournamentsPage {
         self.busy = true;
         self.needs_reconnect = false;
         cx.notify();
-        let call = cx.global::<AppCore>().call(method, args);
+        let call = cx.global::<AppCore>().request(call);
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -716,11 +703,7 @@ impl Render for TournamentsPage {
                     cx.stop_propagation();
                 }
             }))
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
+            .takes_keys(&self.focus)
             .size_full()
             .overflow_y_scroll()
             .child(

@@ -239,7 +239,7 @@ fn an_endgame_drill_is_flipped_from_quick_pick(cx: &mut gpui_kit::TestAppContext
     // Zen mode leads, as on every page it applies to.
     super::palette::wait_for_first(&mut app, "Zen mode");
     let listed: Vec<String> = app.with_window(|window, _| {
-        (0..6usize)
+        (0..7usize)
             .filter_map(|index| window.try_find(("palette-item", index)))
             .filter_map(|item| item.label().map(str::to_string))
             .collect()
@@ -395,11 +395,13 @@ fn a_mistake_is_practised_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
             .filter_map(|item| item.label().map(str::to_string))
             .collect()
     });
+    // Flip board too, whose F every board answers through the keymap.
     assert_eq!(
-        &listed[..4],
+        &listed[..5],
         [
             "Hint: piece to move",
             "Show solution",
+            "Flip board",
             "Next due position",
             "Review early"
         ]

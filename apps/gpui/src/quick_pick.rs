@@ -11,7 +11,7 @@ pub enum Mode {
     Help,
 }
 
-/// The mode a leading prefix picks, and the text to match (`parseQuickPick`).
+/// The mode a leading prefix picks, and the text to match.
 pub fn parse(raw: &str) -> (Mode, &str) {
     let mode = match raw.chars().next() {
         Some('>') => Mode::Commands,
@@ -46,7 +46,7 @@ fn find(haystack: &[char], needle: &[char], from: usize) -> Option<usize> {
 }
 
 /// One token in `text`: whole substrings beat acronym-style subsequences, word starts beat the
-/// middle (`matchToken`).
+/// middle.
 fn match_token(token: &[char], text: &str) -> Option<Match> {
     let original: Vec<char> = text.chars().collect();
     let lower: Vec<char> = text.chars().flat_map(char::to_lowercase).collect();
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn a_whole_name_beats_longer_labels_it_starts() {
         let exact = match_query("appearance", "Appearance", "Settings").unwrap();
-        let longer = match_query("appearance", "Appearance: Match system", "").unwrap();
+        let longer = match_query("appearance", "Appearance: System", "").unwrap();
         assert!(exact.score > longer.score);
     }
 

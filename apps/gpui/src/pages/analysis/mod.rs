@@ -13,12 +13,15 @@ mod review;
 mod study;
 mod tree_view;
 
+use crate::game::surface::TakesKeys as _;
 use crate::game::tree::TreePgn as _;
 use engine::{prefs_lines, stop_analysis};
 use kchess_contracts::calls;
 use tree_view::{TreeView, flow};
 
-pub use load::{analyse_puzzle, board, new_board, open_line, practise_game, replace};
+pub use load::{
+    analyse_puzzle, board, new_board, open_line, practise_game, replace, replace_read, when_read,
+};
 pub use review::{Opening, classification_look};
 
 use crate::voice::moves::{Access, Action, BoardBar, Reply, Turn, VoiceMoves, board_bar};
@@ -53,10 +56,13 @@ use crate::engine_view::EVAL_BAR;
 use crate::explorer::{ExplorerEvent, PositionExplorer};
 use crate::export::Exporter;
 use crate::game::played::PlayedGame;
+use crate::game::session::{Resumes, SAVE_DELAY, SessionSaver, Sessions};
+use crate::game::surface::Steps;
 use crate::game::tree::{
     TreeNode, analysis_context, child_path, comment_text, format_eval, move_glyph, move_number,
     moves_of, path_of, pv_san,
 };
+use crate::game::view::Way;
 use crate::game::{STANDARD_FEN, view};
 use crate::online::OnlineHandle;
 use crate::pages::study_bar::{STUDY_BAR, StudyBar};
@@ -81,14 +87,15 @@ type StudySave =
 
 /// Evaluations kept per position, so stepping back and forth shows them at once.
 const CACHE_SIZE: usize = 600;
-const SAVE_DELAY: Duration = Duration::from_millis(150);
+/// The profile's unfinished-session kind of the analysis board.
+const SESSION: &str = "analysis";
 /// Stepping quickly through a game should not send every position on the way to Lichess.
 const CLOUD_DELAY: Duration = Duration::from_millis(300);
 /// The evaluation bar's gap to the board; without the bar the board keeps its place.
 const EVAL_GAP: Pixels = px(8.);
 const ENGINE_ON: &str = "kchess:analysis-engine";
 const ENGINE_LINES: &str = "kchess:analysis-lines";
-const INFINITE: &str = "kchess:analysis-infinite";
+pub(crate) const INFINITE: &str = "kchess:analysis-infinite";
 const ARROWS: &str = "kchess:analysis-arrows";
 const TOOL: &str = "kchess:analysis-tool";
 
@@ -249,7 +256,7 @@ pub struct AnalysisPage {
     cloud_error: Option<String>,
     cloud_request: u64,
     cloud_task: Option<Task<()>>,
-    save: Option<Task<()>>,
+    saver: SessionSaver<AnalysisPage>,
     wheel: crate::game::view::Wheel,
     focus: FocusHandle,
     /// Spoken moves, and “back”, “next”, “best move”, “flip board”.
@@ -268,77 +275,64 @@ impl Focusable for AnalysisPage {
     }
 }
 
+/// The mouse wheel over the board steps along the line shown, as the arrows do; the moves are a
+/// tree, so the page steps by `step_by` alone.
+impl Steps for AnalysisPage {
+    fn steps(&self, _: &App) -> Option<(usize, usize)> {
+        None
+    }
+
+    fn step_to(&mut self, _: usize, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn wheel(&mut self) -> &mut crate::game::view::Wheel {
+        &mut self.wheel
+    }
+
+    fn step_by(&mut self, way: Way, _: &mut Window, cx: &mut Context<Self>) {
+        match way {
+            Way::On => self.forward(cx),
+            Way::Back => self.back(cx),
+        }
+    }
+}
+
+impl Resumes for AnalysisPage {
+    fn saver(&mut self) -> &mut SessionSaver<Self> {
+        &mut self.saver
+    }
+
+    fn snapshot(&mut self, _: &mut Context<Self>) -> Value {
+        json!({
+            "pgn": self.root.pgn_text(),
+            "path": self.path,
+            "orientation": if self.orientation == Color::White { "white" } else { "black" },
+            "study": self.study,
+            "chapter": self.chapter,
+        })
+    }
+
+    /// The board opens as it was left, unless another document took it while the session was
+    /// read: that one is kept, and saved in its place.
+    fn resume(&mut self, saved: Option<Sessions>, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(mut saved) = saved else {
+            return;
+        };
+        let session = saved.take(SESSION);
+        if self.navigation == 0 && !session.is_null() {
+            self.reopen(&session, cx);
+            self.redraw(cx);
+            self.analyse(cx);
+            self.ask_cloud(cx);
+        } else if self.navigation > 0 || !self.root.children.is_empty() {
+            self.schedule_save(cx);
+        }
+    }
+}
+
 impl AnalysisPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> AnalysisPage {
-        // Its session and the drills alone: the whole library replays every played game.
-        let bridge = &cx.global::<AppCore>().bridge;
-        let session = bridge
-            .request_now(calls::Session {
-                kind: json!("analysis"),
-            })
-            .unwrap_or(Value::Null);
-        let mistakes = bridge
-            .request_now(calls::Mistakes {})
-            .ok()
-            .and_then(|mistakes| mistakes.as_array().cloned())
-            .unwrap_or_default();
-        let root = session["pgn"]
-            .as_str()
-            .and_then(TreeNode::from_pgn)
-            .unwrap_or_else(|| TreeNode::new(None));
-        let path = root.existing_path(session["path"].as_str().unwrap_or_default());
-        let orientation = if session["orientation"] == "black" {
-            Color::Black
-        } else {
-            Color::White
-        };
-        // A recovered session that differs from its study stays an unsaved copy; it never
-        // overwrites the library.
         let library = cx.global::<StudyHandle>().0.clone();
-        let linked = library
-            .read(cx)
-            .study(session["study"].as_str().unwrap_or_default())
-            .cloned();
-        let chapter_of = |study: &Value, id: &str| {
-            study["chapters"]
-                .as_array()
-                .and_then(|chapters| chapters.iter().find(|chapter| chapter["id"] == json!(id)))
-                .cloned()
-        };
-        let linked_pgn = linked.as_ref().map(|study| {
-            chapter_of(study, session["chapter"].as_str().unwrap_or_default())
-                .and_then(|chapter| chapter["pgn"].as_str().map(str::to_string))
-                .unwrap_or_else(|| study["pgn"].as_str().unwrap_or_default().to_string())
-        });
-        let conflict = session["pgn"].is_string()
-            && linked_pgn
-                .as_deref()
-                .and_then(TreeNode::from_pgn)
-                .is_some_and(|tree| tree.pgn_text() != root.pgn_text());
-        let study = if conflict || linked.is_none() {
-            String::new()
-        } else {
-            session["study"].as_str().unwrap_or_default().to_string()
-        };
-        let chapter = session["chapter"]
-            .as_str()
-            .filter(|chapter| !chapter.is_empty())
-            .map(str::to_string)
-            .or_else(|| {
-                linked
-                    .as_ref()
-                    .and_then(|study| study["chapters"][0]["id"].as_str().map(str::to_string))
-            })
-            .unwrap_or_default();
-        let study_pgn = if study.is_empty() {
-            String::new()
-        } else {
-            linked_pgn.unwrap_or_default()
-        };
-        if !study.is_empty() {
-            library.read(cx).track(&study, &chapter);
-        }
-        let study_error = conflict.then(|| CONFLICT.to_string());
+        let (root, path, orientation) = (TreeNode::new(None), String::new(), Color::White);
         let page = cx.weak_entity();
         let study_bar = cx.new(|cx| StudyBar::new(page, window, cx));
         let board = cx.new(|_| {
@@ -467,16 +461,16 @@ impl AnalysisPage {
             typing_comment: None,
             threat: false,
             orientation,
-            study,
-            chapter,
-            study_pgn,
-            study_error,
+            study: String::new(),
+            chapter: String::new(),
+            study_pgn: String::new(),
+            study_error: None,
             study_save: None,
             study_writing: None,
             study_writes: 0,
             navigation: 0,
             study_bar,
-            review: review::ReviewState::new(mistakes),
+            review: review::ReviewState::new(Vec::new()),
             explainer: cx.new(|_| crate::ai::Explainer::new()),
             practice: None,
             paused_for_review: false,
@@ -516,7 +510,7 @@ impl AnalysisPage {
             cloud_error: None,
             cloud_request: 0,
             cloud_task: None,
-            save: None,
+            saver: SessionSaver::start(SESSION, &[], window, cx),
             wheel: Default::default(),
             focus: cx.focus_handle(),
             voice: VoiceMoves::new("analysis", cx),
@@ -525,21 +519,13 @@ impl AnalysisPage {
             _subscriptions: subscriptions,
         };
         page.redraw(cx);
+        page.read_mistakes(cx);
         let weak = cx.entity().downgrade();
+        // The session is the saver's to save; the open study's chapter is the page's.
         crate::quit::on_quit(cx, move |cx| {
             let page = weak.upgrade()?;
-            Some(page.update(cx, |page, cx| {
-                let study = page.persist_study(cx);
-                let session = page.save_now(cx);
-                Box::pin(async move {
-                    let study = match study {
-                        Some(study) => study.await.map(|_| ()),
-                        None => Ok(()),
-                    };
-                    // The board's moves are in the session even when the study refused them.
-                    session.await.and(study)
-                }) as BoxedSave
-            }))
+            let study = page.update(cx, |page, cx| page.persist_study(cx))?;
+            Some(Box::pin(async move { study.await.map(|_| ()) }) as BoxedSave)
         });
         page
     }
@@ -800,6 +786,8 @@ impl AnalysisPage {
     /// Another document takes the board: the open study keeps its last edits and is let go.
     fn take_board(&mut self, tree: TreeNode, cx: &mut Context<Self>) {
         self.navigation += 1;
+        // After a session that could not be read, the board's new document is saved.
+        self.saver.open();
         self.persist_study(cx);
         self.root = tree;
         self.path.clear();
@@ -934,39 +922,91 @@ impl AnalysisPage {
                 let _ = this.update(cx, |this, cx| this.persist_study(cx));
             }));
         }
-        self.save = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(SAVE_DELAY).await;
-            let save = this.update(cx, |this, cx| this.save_now(cx)).ok();
-            if let Some(save) = save {
-                let _ = save.await;
-            }
-        }));
+        SessionSaver::changed(self, cx);
     }
 
-    /// Save the session now (`persistSession('analysis', …)`).
-    fn save_now(&mut self, cx: &mut Context<Self>) -> BoxedSave {
-        self.save = None;
-        let session = json!({
-            "pgn": self.root.pgn_text(),
-            "path": self.path,
-            "orientation": if self.orientation == Color::White { "white" } else { "black" },
-            "study": self.study,
-            "chapter": self.chapter,
+    /// The board as the profile keeps it, to open as it was left.
+    fn reopen(&mut self, session: &Value, cx: &mut Context<Self>) {
+        let root = session["pgn"]
+            .as_str()
+            .and_then(TreeNode::from_pgn)
+            .unwrap_or_else(|| TreeNode::new(None));
+        self.path = root.existing_path(session["path"].as_str().unwrap_or_default());
+        self.root = root;
+        self.orientation = if session["orientation"] == "black" {
+            Color::Black
+        } else {
+            Color::White
+        };
+        // A recovered session that differs from its study stays an unsaved copy; it never
+        // overwrites the library.
+        let library = cx.global::<StudyHandle>().0.clone();
+        let saved_study = session["study"].as_str().unwrap_or_default();
+        let linked = library.read(cx).study(saved_study).cloned();
+        let chapter_of = |study: &Value, id: &str| {
+            study["chapters"]
+                .as_array()
+                .and_then(|chapters| chapters.iter().find(|chapter| chapter["id"] == json!(id)))
+                .cloned()
+        };
+        let linked_pgn = linked.as_ref().map(|study| {
+            chapter_of(study, session["chapter"].as_str().unwrap_or_default())
+                .and_then(|chapter| chapter["pgn"].as_str().map(str::to_string))
+                .unwrap_or_else(|| study["pgn"].as_str().unwrap_or_default().to_string())
         });
-        let save = cx.global::<AppCore>().request(calls::SaveSession {
-            kind: json!("analysis"),
-            session,
-        });
-        Box::pin(async move {
-            save.await.map(|_| ()).map_err(|cause| {
-                crate::log::write(
+        let conflict = session["pgn"].is_string()
+            && linked_pgn
+                .as_deref()
+                .and_then(TreeNode::from_pgn)
+                .is_some_and(|tree| tree.pgn_text() != self.root.pgn_text());
+        self.study = if conflict || linked.is_none() {
+            String::new()
+        } else {
+            saved_study.to_string()
+        };
+        self.chapter = session["chapter"]
+            .as_str()
+            .filter(|chapter| !chapter.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                linked
+                    .as_ref()
+                    .and_then(|study| study["chapters"][0]["id"].as_str().map(str::to_string))
+            })
+            .unwrap_or_default();
+        self.study_pgn = if self.study.is_empty() {
+            String::new()
+        } else {
+            linked_pgn.unwrap_or_default()
+        };
+        if !self.study.is_empty() {
+            library.read(cx).track(&self.study, &self.chapter);
+        }
+        self.study_error = conflict.then(|| CONFLICT.to_string());
+        self.edits = edits::Edits::new(&self.root, &self.path);
+        self.clear_evaluations();
+    }
+
+    /// The positions kept for practice, which the review counts its own among.
+    fn read_mistakes(&mut self, cx: &mut Context<Self>) {
+        let read = cx.global::<AppCore>().request(calls::Mistakes {});
+        cx.spawn(async move |this, cx| {
+            let read = read.await;
+            let _ = this.update(cx, |this, cx| match read {
+                // A review that saved mistakes meanwhile holds the newer list.
+                Ok(mistakes) if this.review.mistakes.is_empty() => {
+                    this.review.mistakes = mistakes.as_array().cloned().unwrap_or_default();
+                    cx.notify();
+                }
+                Ok(_) => {}
+                Err(cause) => crate::log::write(
                     Level::Warn,
                     "library",
-                    &format!("saving session failed: analysis {}", cause.message),
-                );
-                format!("The analysis board could not be saved: {}", cause.message)
-            })
+                    &format!("Reading the mistakes to practise failed: {}", cause.message),
+                ),
+            });
         })
+        .detach();
     }
 
     /// The board shows the position, its last move and the engine's arrows.
@@ -1177,19 +1217,6 @@ impl AnalysisPage {
         let on = !Self::engine_on(cx);
         crate::prefs::set(cx, ENGINE_ON, on);
         self.engine_changed(cx);
-    }
-
-    /// Lichess steps through moves with the mouse wheel over the board.
-    fn scroll(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
-        match self
-            .wheel
-            .turn(event.delta.pixel_delta(window.line_height()))
-        {
-            Some("right") => self.forward(cx),
-            Some(_) => self.back(cx),
-            None => return,
-        }
-        cx.stop_propagation();
     }
 
     /// The game an Export saves: the document with its variations and comments, its main line
@@ -1753,11 +1780,7 @@ impl AnalysisPage {
             // A short window scrolls the panel rather than let the move list cover the controls.
             .id("analysis-panel")
             .overflow_y_scroll()
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
+            .takes_keys(&self.focus)
             .h(self.layout.fixed(self.panel_height(board_size)))
             .flex_1()
             .min_w(PANEL_MIN)
@@ -1853,10 +1876,8 @@ impl Render for AnalysisPage {
                     })
                     .when(!show_bar, |row| row.pl(EVAL_BAR))
                     .child(
-                        div()
-                            .id("analysis-board")
+                        crate::game::surface::wheel(div().id("analysis-board"), cx)
                             .w(board_size)
-                            .on_scroll(cx.listener(Self::scroll))
                             // The board takes the keys back from the move box, as a click
                             // outside a text field does in the browser.
                             .on_mouse_down(
@@ -1878,7 +1899,18 @@ impl Render for AnalysisPage {
                             .text_size(px(12.))
                             .text_color(palette.text_muted)
                             .child(message)
-                    })),
+                    }))
+                    .children(self.saver.problems(cx).into_iter().enumerate().map(
+                        |(ix, error)| {
+                            div()
+                                .id(("analysis-problem", ix))
+                                .test_support()
+                                .aria_label(error.clone())
+                                .text_size(px(12.))
+                                .text_color(palette.error)
+                                .child(error)
+                        },
+                    )),
             );
         let panel = if self.layout.is_stacked() {
             self.render_panel(window, cx)

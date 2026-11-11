@@ -110,15 +110,6 @@ impl CoreBridge {
         }
     }
 
-    /// Run a core method; the future resolves on any executor.
-    pub fn call(
-        &self,
-        method: &str,
-        args: Vec<Value>,
-    ) -> impl Future<Output = Result<Value, CoreError>> + 'static + use<> {
-        self.spawn(self.handle.call(method, args))
-    }
-
     /// A typed core call (`kchess_contracts::calls`); the future resolves on any executor.
     pub fn request<C: CoreCall + Send + 'static>(
         &self,
@@ -128,13 +119,6 @@ impl CoreBridge {
         C::Answer: Send,
     {
         self.spawn(self.handle.request(call))
-    }
-
-    /// Run a core method and wait for it: only before the window opens, as the app needs its
-    /// library and preferences before it draws.
-    pub fn call_now(&self, method: &str, args: Vec<Value>) -> Result<Value, CoreError> {
-        let answer = self.call(method, args);
-        self.runtime.block_on(answer)
     }
 
     /// A typed core call waited for: only before the window opens, as the app needs its library
@@ -274,14 +258,6 @@ pub struct AppCore {
 impl Global for AppCore {}
 
 impl AppCore {
-    pub fn call(
-        &self,
-        method: &str,
-        args: Vec<Value>,
-    ) -> impl Future<Output = Result<Value, CoreError>> + 'static + use<> {
-        self.bridge.call(method, args)
-    }
-
     /// Run a typed core call (`kchess_contracts::calls`): its method with its arguments, and its
     /// answer read in its shape.
     pub fn request<C: CoreCall + Send + 'static>(

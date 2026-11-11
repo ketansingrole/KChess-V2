@@ -89,7 +89,7 @@ fn the_timeline() {
                 serde_json::json!(["thibault", "EricRosen", "DrNykterstein", "penguingim1"]);
             let added = cx.update(|cx| {
                 cx.global::<crate::core::AppCore>()
-                    .call("addFriends", vec![players])
+                    .request(kchess_contracts::calls::AddFriends { usernames: players })
             });
             cx.foreground_executor()
                 .block_test(added)
@@ -97,7 +97,7 @@ fn the_timeline() {
             // Synced, and then two of them finish a game: theirs are new.
             let synced = cx.update(|cx| {
                 cx.global::<crate::core::AppCore>()
-                    .call("syncGames", vec![])
+                    .request(kchess_contracts::calls::SyncGames { username: None })
             });
             cx.foreground_executor()
                 .block_test(synced)
@@ -184,7 +184,7 @@ fn settings_sections() {
         let profile = tempfile::tempdir().expect("a temporary profile");
         let (mut cx, window) = start(profile.path(), width, 880.);
         cx.update(|cx| crate::settings::change(cx, |s| s.frontend.appearance = Appearance::Dark));
-        for (section, label, _) in crate::pages::settings::sections() {
+        for (section, label) in crate::pages::settings::Section::ALL.map(|s| (s, s.label())) {
             cx.update_window(window, |_, window, cx| {
                 crate::shell::open_settings(section, window, cx)
             })
@@ -596,7 +596,10 @@ fn seed_played(cx: &mut HeadlessAppContext, unfinished: bool) {
     if unfinished {
         let saved = cx.update(|cx| {
             cx.global::<crate::core::AppCore>()
-                .call("saveSession", vec![serde_json::json!("computer"), snapshot])
+                .request(kchess_contracts::calls::SaveSession {
+                    kind: serde_json::json!("computer"),
+                    session: snapshot,
+                })
         });
         cx.foreground_executor()
             .block_test(saved)
@@ -1095,7 +1098,7 @@ fn tabs(out: &Path, appearance: Appearance) {
             shoot(&mut cx, format!("{name}--{}", slug(&tab)));
         }
     }
-    for (section, label, _) in crate::pages::settings::sections() {
+    for (section, label) in crate::pages::settings::Section::ALL.map(|s| (s, s.label())) {
         cx.update_window(window, |_, window, cx| {
             crate::shell::open_settings(section, window, cx)
         })

@@ -20,6 +20,7 @@ use shakmaty::{ByColor, ByRole, Color, Piece, RemainingChecks, Role};
 use crate::assets::icon;
 use crate::board::looks;
 use crate::board::{BoardEvent, BoardState, ChessBoard, EditTool, PieceGhost, SparePiece};
+use crate::game::surface::TakesKeys as _;
 use crate::game::{STANDARD_FEN, editor_setup, position_problem, standard_rules, variants};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::{SettingsChanged, SettingsHandle};
@@ -1144,12 +1145,7 @@ impl Render for EditorPage {
             // The FEN box takes these for its own text first.
             .on_action(cx.listener(|this, _: &Undo, _, cx| this.undo(cx)))
             .on_action(cx.listener(|this, _: &Redo, _, cx| this.redo(cx)))
-            // A click gives the keys back to the page, before a text field (the FEN) takes them.
-            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                if event.button == MouseButton::Left {
-                    window.focus(&this.focus, cx);
-                }
-            }))
+            .takes_keys(&self.focus)
             .child(
                 self.layout
                     .render("editor", board_column, panel, window, cx),
@@ -1165,10 +1161,7 @@ impl crate::pages::PageAction for Action {
                 ActionInfo::new("editor:start", "Starting position", "rotate-ccw", "reset")
             }
             Action::ClearBoard => ActionInfo::new("editor:clear", "Clear board", "eraser", "empty"),
-            Action::Flip => {
-                ActionInfo::new("editor:flip", "Flip board", "arrow-up-down", "turn rotate")
-                    .role(ActionRole::Flip)
-            }
+            Action::Flip => ActionInfo::flip("editor:flip"),
             Action::CopyFen => {
                 ActionInfo::new("editor:copy-fen", "Copy FEN", "copy", "position clipboard")
                     .role(ActionRole::Copy)

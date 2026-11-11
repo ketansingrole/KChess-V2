@@ -24,6 +24,9 @@ pub(crate) struct Quick {
     pub label: Option<&'static str>,
     pub icon: &'static str,
     pub keywords: &'static str,
+    /// A setting of the page in view (Zen mode), offered among its commands too where it applies,
+    /// with the key that runs it.
+    pub page_key: Option<fn(&gpui_kit::App) -> Option<String>>,
 }
 
 impl Toggle {
@@ -57,6 +60,7 @@ const fn quick(id: &'static str, icon: &'static str, keywords: &'static str) -> 
         label: None,
         icon,
         keywords,
+        page_key: None,
     })
 }
 
@@ -113,7 +117,13 @@ pub(crate) static TOGGLES: [Toggle; 29] = [
         section: Section::Gameplay,
         on: |s| s.frontend.zen_mode,
         set: |s, on| s.frontend.zen_mode = on,
-        quick: quick("zenMode", "minimize", "focus distraction"),
+        quick: Some(Quick {
+            id: "zenMode",
+            label: None,
+            icon: "minimize",
+            keywords: "focus distraction",
+            page_key: Some(|cx| crate::menu::keys(&crate::menu::ToggleZen, cx)),
+        }),
     },
     Toggle {
         id: "puzzle-next",
@@ -181,6 +191,7 @@ pub(crate) static TOGGLES: [Toggle; 29] = [
             label: Some("Sound"),
             icon: "volume-2",
             keywords: "mute audio",
+            page_key: None,
         }),
     },
     Toggle {
@@ -195,6 +206,7 @@ pub(crate) static TOGGLES: [Toggle; 29] = [
             label: Some("Notifications"),
             icon: "bell",
             keywords: "alerts",
+            page_key: None,
         }),
     },
     Toggle {

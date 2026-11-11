@@ -8,7 +8,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
 use serde_json::Value;
-use shakmaty::Color;
+use shakmaty::{Color, Position as _};
 
 use crate::assets::icon;
 use crate::board::ChessBoard;
@@ -80,51 +80,41 @@ struct Unfinished {
     state: Vec<String>,
 }
 
-/// `computerDescription`: the level, the move to play, your side and whose turn it is.
+/// The level, the move to play, your side and whose turn it is, as the game holds them.
 fn continue_line(session: &Value) -> Option<Unfinished> {
-    let moves = session["moves"].as_array().map_or(0, Vec::len);
-    if moves == 0 {
-        return None;
-    }
     let host = Host {
         now: 0.,
         allowed: true,
         ready: false,
     };
-    if ComputerGame::new(Some(session), &host).ok()?.over() {
+    let game = ComputerGame::new(Some(session), &host).ok()?;
+    let moves = game.moves();
+    if moves.is_empty() || game.over() {
         return None;
     }
-    let black = session["color"] == "black";
-    let side = if black { "Black" } else { "White" };
-    // Whose move it is and the move number, from the position reached: a game started from a
-    // position (Black to move, or at move 30) does not count from the usual start.
-    let played: Vec<String> = serde_json::from_value(session["moves"].clone()).unwrap_or_default();
-    let reached = kchess_domain::replay::replay_setup(
-        session["setup"]["variant"].as_str().unwrap_or("standard"),
-        session["setup"]["fen"]
-            .as_str()
-            .unwrap_or(crate::game::STANDARD_FEN),
-        &played,
-    )
-    .map(|replay| replay.fen)
-    .unwrap_or_default();
-    let fields: Vec<&str> = reached.split(' ').collect();
-    // White moves on even plies when the position cannot be replayed.
-    let black_to_move = fields
-        .get(1)
-        .map_or(!moves.is_multiple_of(2), |turn| *turn == "b");
-    let yours = black_to_move == black;
-    let number = fields
-        .get(5)
-        .and_then(|number| number.parse::<usize>().ok())
-        .unwrap_or(moves / 2 + 1);
-    let level = crate::game::engine_level_label(session["level"].as_str().unwrap_or_default());
-    let (name, strength) = match level.rsplit_once(" · ") {
-        Some((name, strength)) => (name, Some(strength.to_string())),
-        None => (level.as_str(), None),
+    let side = if game.color() == Color::Black {
+        "Black"
+    } else {
+        "White"
     };
+    // Whose move it is and the move number, from the position reached: a game started from a
+    // position (Black to move, or at move 30) does not count from the usual start. White moves
+    // on even plies when the position cannot be replayed.
+    let (to_move, number) = view::position_at(game.setup(), moves, moves.len()).map_or_else(
+        || {
+            let even = moves.len().is_multiple_of(2);
+            (Color::from_white(even), moves.len() / 2 + 1)
+        },
+        |reached| (reached.turn(), reached.fullmoves().get() as usize),
+    );
+    let level = crate::game::engine_level(game.level());
+    let name = level.map_or("", |level| level.label.as_str());
+    let strength = level.map(|level| match level.elo {
+        Some(elo) => format!("~{}", kchess_domain::js::number_to_string(elo)),
+        None => "Full strength".to_string(),
+    });
     // A variant is named first, as the game page names it.
-    let variant = session["setup"]["variant"]
+    let variant = game.setup()["variant"]
         .as_str()
         .filter(|variant| *variant != "standard")
         .map(crate::game::variant_label);
@@ -135,7 +125,7 @@ fn continue_line(session: &Value) -> Option<Unfinished> {
             .chain([
                 format!("Move {number}"),
                 format!("You play {side}"),
-                if yours {
+                if to_move == game.color() {
                     "Your move"
                 } else {
                     "Stockfish to move"
@@ -254,21 +244,31 @@ impl HomePage {
         self.activity.as_ref().map(|(_, view)| view.clone())
     }
 
-    /// Read the unfinished computer game and the accounts again (the page was shown).
+    /// Read the unfinished computer game (that session alone: the whole library replays every
+    /// played game) and the accounts again (the page was shown).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let core = cx.global::<AppCore>().clone();
-        let library = core.request(calls::Library {});
+        let session = cx.global::<AppCore>().request(calls::Session {
+            kind: serde_json::json!(crate::game::computer::SESSION),
+        });
         crate::accounts::handle(cx).update(cx, |accounts, cx| accounts.refresh(cx));
         if let Some((account, activity)) = &self.activity {
             let account = account.clone();
             activity.update(cx, |activity, cx| activity.load(&account, cx));
         }
         cx.spawn(async move |this, cx| {
-            let library = library.await;
+            let session = session.await;
             let _ = this.update(cx, |this, cx| {
-                if let Ok(library) = library {
-                    let session = &library["sessions"]["computer"];
-                    this.continue_game = continue_line(session).map(|line| (line, session.clone()));
+                match session {
+                    Ok(session) => {
+                        this.continue_game =
+                            continue_line(&session).map(|line| (line, session.clone()));
+                    }
+                    // The card stays as it was; a failed read is not the game being over.
+                    Err(cause) => crate::log::write(
+                        kchess_contracts::Level::Warn,
+                        "library",
+                        &format!("Reading the unfinished game failed: {}", cause.message),
+                    ),
                 }
                 cx.notify();
             });

@@ -18,9 +18,8 @@ use kchess_domain::training::clock::{ClockState, SetData, format_clock};
 use serde_json::{Value, json};
 
 use crate::core::{AppCore, ClientEvent, CoreEvent};
+use crate::game::surface::Faces;
 
-/// Clocks and the low-time alert are read this often during a game.
-const TICK: Duration = Duration::from_millis(250);
 /// Lichess's view of both players' connections, asked this often during a real-time game.
 pub const PRESENCE_EVERY: Duration = Duration::from_secs(5);
 /// Round trips kept for the connection panel.
@@ -37,7 +36,7 @@ pub enum Phase {
     Disconnected,
 }
 
-/// The find-a-game form (`onlineMinutes` and the rest).
+/// The find-a-game form.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Form {
     pub minutes: f64,
@@ -66,7 +65,7 @@ impl Default for Form {
     }
 }
 
-/// `performance.now()`: milliseconds on a clock that only goes forward.
+/// Milliseconds on a clock that only goes forward.
 pub fn now() -> f64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.
@@ -88,7 +87,6 @@ pub struct OnlineState {
     pub phase: Phase,
     /// The rules' state of the game.
     model: Model,
-    /// `ClockState`.
     clock: ClockState,
     /// The position looked at while reviewing; `None` follows the game.
     pub view_ply: Option<usize>,
@@ -118,7 +116,7 @@ pub struct OnlineState {
     turns: std::collections::HashMap<String, bool>,
     _ticker: Option<Task<()>>,
     /// What the game showed by the clock at the last tick (`tick`).
-    ticked: Option<([String; 2], [Option<i64>; 2])>,
+    ticked: Faces<([String; 2], [Option<i64>; 2])>,
     _presence: Option<Task<()>>,
     _ongoing_poll: Option<Task<()>>,
     /// Which `resumeOnline` answer is current: a later one (after a reconnect) replaces it.
@@ -306,15 +304,7 @@ impl OnlineState {
                 crate::notifications::desktop(kind, title, body, cx);
             }
             Effect::Moved { san } => {
-                let capture = san.as_deref().is_some_and(|san| san.contains('x'));
-                crate::sound::play(
-                    if capture {
-                        crate::sound::Sound::Capture
-                    } else {
-                        crate::sound::Sound::Move
-                    },
-                    cx,
-                );
+                crate::sound::move_sound(san.as_deref().unwrap_or_default(), cx)
             }
             Effect::ResetView => {
                 self.view_ply = None;
@@ -582,7 +572,7 @@ impl OnlineState {
         })
     }
 
-    /// `prepareForGame`: an accepted challenge's game is about to start.
+    /// An accepted challenge's game is about to start.
     fn prepare_for_game(&mut self, account: &str, id: &str) {
         self.model.online_account = account.to_string();
         self.model.online_id = id.to_string();
@@ -590,23 +580,13 @@ impl OnlineState {
     }
 
     fn start_ticking(&mut self, cx: &mut Context<Self>) {
-        self._ticker = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(TICK).await;
-                let alive = this.update(cx, |this, cx| this.tick(cx)).is_ok();
-                if !alive {
-                    return;
-                }
-            }
+        self._ticker = Some(crate::timer::every(crate::timer::TICK, cx, |this, cx| {
+            this.tick(cx);
+            true
         }));
-        self._presence = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(PRESENCE_EVERY).await;
-                let alive = this.update(cx, |this, cx| this.poll_presence(cx)).is_ok();
-                if !alive {
-                    return;
-                }
-            }
+        self._presence = Some(crate::timer::every(PRESENCE_EVERY, cx, |this, cx| {
+            this.poll_presence(cx);
+            true
         }));
     }
 
@@ -644,8 +624,7 @@ impl OnlineState {
                 seconds_until(self.model.claim_at),
             ],
         );
-        if self.ticked.as_ref() != Some(&shown) {
-            self.ticked = Some(shown);
+        if self.ticked.changed(shown) {
             cx.notify();
         }
     }
@@ -973,16 +952,9 @@ impl OnlineState {
             return;
         }
         let every = Duration::from_secs_f64(minutes.max(1.) * 60.);
-        self._ongoing_poll = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(every).await;
-                if this
-                    .update(cx, |this, cx| this.refresh_ongoing(cx))
-                    .is_err()
-                {
-                    return;
-                }
-            }
+        self._ongoing_poll = Some(crate::timer::every(every, cx, |this, cx| {
+            this.refresh_ongoing(cx);
+            true
         }));
     }
 }
@@ -996,7 +968,7 @@ pub fn handle(cx: &App) -> Entity<OnlineState> {
     cx.global::<OnlineHandle>().0.clone()
 }
 
-/// The account Lichess actions use (`activeOnlineAccount`): the one chosen for online play when it
+/// The account Lichess actions use: the one chosen for online play when it
 /// is connected, else the first connected one.
 pub fn active_account(accounts: &[Value], cx: &App) -> Option<String> {
     let preferred = crate::prefs::get::<String>(cx, crate::accounts::ONLINE_ACCOUNT, String::new());
@@ -1042,7 +1014,7 @@ pub fn init(cx: &mut App) {
             busy_challenge: String::new(),
             turns: std::collections::HashMap::new(),
             _ticker: None,
-            ticked: None,
+            ticked: Faces::default(),
             _presence: None,
             _ongoing_poll: None,
             resumes: 0,

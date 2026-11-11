@@ -1127,11 +1127,8 @@ impl OnlinePage {
                 ply,
                 moves.len(),
                 select,
-                (
-                    "Flip board".into(),
-                    crate::menu::keys(&crate::menu::FlipBoard, cx),
-                    flip,
-                ),
+                widgets::TurnButton::Flip(flip),
+                cx,
             ))
             .child(
                 div()

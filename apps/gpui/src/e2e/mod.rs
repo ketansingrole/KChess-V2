@@ -615,11 +615,23 @@ impl Harness {
 
     /// The settings as the core has them (the app saves a change after 400 ms).
     pub fn saved_settings(&mut self) -> serde_json::Value {
+        serde_json::to_value(self.request(kchess_contracts::calls::DesktopSettings {}))
+            .expect("the settings as JSON")
+    }
+
+    /// A typed core call, waited for: the core answers on its own threads.
+    pub fn request<C: kchess_contracts::calls::CoreCall + Send + 'static>(
+        &mut self,
+        call: C,
+    ) -> C::Answer
+    where
+        C::Answer: Send,
+    {
         let core = self
             .cx
             .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
-        core.call_now("desktopSettings", Vec::new())
-            .expect("the core reads the settings")
+        core.request_now(call)
+            .unwrap_or_else(|cause| panic!("{}: {}", C::METHOD, cause.message))
     }
 
     /// Wait until the core has saved `key` as `value`.
@@ -645,19 +657,21 @@ impl Harness {
         if !self.shows(SETTINGS_SHOWN) {
             self.click("settings");
         }
-        let index = crate::pages::settings::sections()
-            .iter()
-            .position(|(_, name, _)| *name == label)
+        use crate::pages::settings::{Section, SectionGroup};
+        let section = Section::ALL
+            .into_iter()
+            .find(|section| section.label() == label)
             .unwrap_or_else(|| panic!("no Settings category {label:?}"));
         // A block for each group of categories, numbered from 1.
-        let (mut block, mut row) = (1, index);
-        for (_, size) in crate::pages::settings::SECTION_GROUPS {
-            if row < size {
-                break;
-            }
-            row -= size;
-            block += 1;
-        }
+        let group = section.group();
+        let block = 1 + SectionGroup::ALL
+            .iter()
+            .position(|shown| *shown == group)
+            .expect("its group");
+        let row = group
+            .sections()
+            .position(|shown| shown == section)
+            .expect("its row");
         self.click(format!("s{block}-{row}"));
     }
 }

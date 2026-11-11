@@ -546,13 +546,16 @@ fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosavi
     });
     let written = std::rc::Rc::new(std::cell::Cell::new(false));
     app.cx.update(|cx| {
-        let save = cx.global::<crate::core::AppCore>().call(
-            "studyCommand",
-            vec![serde_json::json!({
-                "op": "save", "id": study, "chapterId": chapter,
-                "name": "Pawn openings", "pgn": "1. c4 *",
-            })],
-        );
+        let save =
+            cx.global::<crate::core::AppCore>()
+                .request(kchess_contracts::calls::StudyCommand {
+                    command: serde_json::json!({
+                        "op": "save", "id": study, "chapterId": chapter,
+                        "name": "Pawn openings", "pgn": "1. c4 *",
+                    }),
+                    incremental: None,
+                    based_on: None,
+                });
         let written = written.clone();
         cx.spawn(async move |_| {
             save.await.expect("the other window's save");

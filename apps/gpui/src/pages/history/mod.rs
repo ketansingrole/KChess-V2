@@ -138,13 +138,13 @@ pub(crate) fn badge(outcome: &str, width: Option<Pixels>, palette: &Palette) -> 
         .children(side.map(widgets::side_dot))
 }
 
-/// `moveCount`: full moves, a lone white move counting as one.
+/// Full moves, a lone white move counting as one.
 pub(crate) fn move_count(plies: usize) -> String {
     let moves = plies.div_ceil(2);
     format!("{moves} {}", if moves == 1 { "move" } else { "moves" })
 }
 
-/// `timeLabel`: "300+3" as "5+3", each side of a split clock; "-" as "Untimed".
+/// "300+3" as "5+3", each side of a split clock; "-" as "Untimed".
 fn time_label(control: &str) -> String {
     if control == "-" {
         return "Untimed".into();

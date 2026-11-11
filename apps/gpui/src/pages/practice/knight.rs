@@ -210,7 +210,7 @@ impl KnightPaths {
         self.next_round(cx);
         self.stage = Stage::Running;
         self.clock.start(Self::length(cx));
-        self.ticker = Some(run::ticker(cx, |this, cx| {
+        self.ticker = Some(crate::timer::every(crate::timer::TICK, cx, |this, cx| {
             if this.stage != Stage::Running {
                 return false;
             }
