@@ -21,8 +21,11 @@ use crate::host::{Config, Host, Level};
 use crate::store::sql::{Lane, LaneMessages, Sql as _, transaction};
 use crate::tasks::lock;
 use crate::usage::Meter;
+use kchess_contracts::types::{
+    LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleAttemptInput, PuzzleDbStatus, PuzzleProgress,
+    PuzzleProgressQuery,
+};
 use kchess_domain::puzzle::{Random, Sampler};
-use queries::{LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleDbStatus};
 
 /// How long the puzzle database download may go without a byte before it fails.
 const DOWNLOAD_SILENCE: std::time::Duration = std::time::Duration::from_secs(60);
@@ -252,15 +255,12 @@ impl PuzzleService {
     }
 
     /// Keep a training attempt; the progress it leaves, as of the attempt's own day.
-    pub async fn record_attempt(
-        &self,
-        attempt: attempts::AttemptInput,
-    ) -> Result<serde_json::Value> {
+    pub async fn record_attempt(&self, attempt: PuzzleAttemptInput) -> Result<PuzzleProgress> {
         let result = self
             .inner
             .with_db(move |db| {
                 attempts::record(db, &attempt, crate::time::now_ms())?;
-                let query = attempts::ProgressQuery {
+                let query = PuzzleProgressQuery {
                     today: attempt.day,
                     limit: attempts::RECENT,
                 };
@@ -270,7 +270,7 @@ impl PuzzleService {
         self.logged("recordAttempt", result)
     }
 
-    pub async fn progress(&self, query: attempts::ProgressQuery) -> Result<serde_json::Value> {
+    pub async fn progress(&self, query: PuzzleProgressQuery) -> Result<PuzzleProgress> {
         let result = self
             .inner
             .with_db(move |db| attempts::progress(db, &query))
@@ -705,8 +705,8 @@ mod tests {
             .query(LocalPuzzleQuery {
                 theme: Some("fork".into()),
                 min_rating: None,
-                max_rating: Some(1600.0),
-                count: 10.0,
+                max_rating: Some(1600),
+                count: 10,
             })
             .await
             .unwrap();
@@ -716,9 +716,9 @@ mod tests {
         assert_eq!(forks[0].solution, ["e7e5", "g1f3"]);
         let ladder = puzzles
             .ladder(LocalLadderQuery {
-                from: 1000.0,
-                to: 2000.0,
-                count: 3.0,
+                from: 1000,
+                to: 2000,
+                count: 3,
             })
             .await
             .unwrap();

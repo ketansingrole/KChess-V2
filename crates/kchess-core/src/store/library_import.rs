@@ -2,6 +2,7 @@
 //! Split from the library store; bodies are unchanged. Named `library_import` because
 //! `store::import` already owns the JSON-backup/legacy-database profile migration.
 
+use kchess_contracts::types::Library;
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
@@ -180,7 +181,7 @@ pub(crate) fn read_games(host: &dyn Host, db: &Connection) -> Result<Vec<Value>>
 /// `library(now)` as the store answers it: the snapshot read last, when no row has changed since,
 /// else read afresh. Every frontend reads the whole library to start, and pages read it again to
 /// resume their sessions; reading it decodes every study and replays every played game.
-pub fn cached_library(ctx: &StoreContext, now: f64) -> Result<Value> {
+pub fn cached_library(ctx: &StoreContext, now: f64) -> Result<Library> {
     let changes = ctx.db.total_changes();
     let mut snapshot = match ctx.cache.library(changes) {
         Some(snapshot) => snapshot,
@@ -192,14 +193,14 @@ pub fn cached_library(ctx: &StoreContext, now: f64) -> Result<Value> {
             snapshot
         }
     };
-    if let Some(Value::Array(joined)) = snapshot.get_mut("joinedTournaments") {
-        joined.retain(|entry| until_after(entry, now));
-    }
+    snapshot
+        .joined_tournaments
+        .retain(|entry| until_after(entry, now));
     Ok(snapshot)
 }
 
 /// `library(now)`: the whole snapshot.
-pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
+pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Library> {
     let mut sessions = Map::new();
     for &kind in SESSION_KINDS {
         let value = read_session(host, db, kind)?;
@@ -219,19 +220,16 @@ pub fn library(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
         }
         Err(error) => return Err(error),
     };
-    let mut snapshot = json!({
-        "studies": studies,
-        "games": read_games(host, db)?,
-        "mistakes": read_mistakes(db)?,
-        "sessions": Value::Object(sessions),
-        "joinedTournaments": joined,
-        "repertoireMisses": read_misses(host, db)?,
-        "repertoireSchedule": Value::Object(read_schedule_lines(host, db)?),
-    });
-    if let Some(error) = study_error {
-        snapshot["studyError"] = json!(error);
-    }
-    Ok(snapshot)
+    Ok(Library {
+        studies,
+        games: read_games(host, db)?,
+        mistakes: read_mistakes(db)?,
+        sessions,
+        joined_tournaments: joined,
+        repertoire_misses: read_misses(host, db)?,
+        repertoire_schedule: Value::Object(read_schedule_lines(host, db)?),
+        study_error,
+    })
 }
 
 /// `entry.until > now`

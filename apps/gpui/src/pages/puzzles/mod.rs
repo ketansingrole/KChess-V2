@@ -16,6 +16,7 @@ use gpui_kit::component::{Disableable as _, Icon, IndexPath, Sizable as _, h_fle
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_contracts::types::{PuzzleAttempt, PuzzleProgress, PuzzleProgressQuery};
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use serde_json::{Value, json};
 use shakmaty::Color;
@@ -260,7 +261,7 @@ pub struct PuzzlesPage {
     stats: Option<Entity<stats::PuzzleStats>>,
     rush: Option<Entity<rush::PuzzleRush>>,
     shown_tab: String,
-    progress: Value,
+    progress: PuzzleProgress,
     started: bool,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -406,9 +407,9 @@ impl PuzzlesPage {
             let page = weak.upgrade()?;
             page.update(cx, |page, cx| {
                 let record = page.session.invalidate(&local_day()).record?;
-                let save = cx
-                    .global::<AppCore>()
-                    .request(calls::RecordPuzzleAttempt { attempt: record });
+                let save = cx.global::<AppCore>().request(calls::RecordPuzzleAttempt {
+                    attempt: as_contract(&record).ok()?,
+                });
                 Some(
                     Box::pin(async move { save.await.map(|_| ()).map_err(|cause| cause.message) })
                         as crate::quit::BoxedSave,
@@ -431,7 +432,7 @@ impl PuzzlesPage {
             stats: None,
             rush: None,
             shown_tab: String::new(),
-            progress: Value::Null,
+            progress: PuzzleProgress::default(),
             started: false,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -446,7 +447,10 @@ impl PuzzlesPage {
         let puzzle_db = cx.global::<PuzzleDbHandle>().0.clone();
         puzzle_db.update(cx, |db, cx| db.refresh(cx));
         let progress = core.request(calls::PuzzleProgress {
-            query: json!({ "today": local_day(), "limit": 10 }),
+            query: PuzzleProgressQuery {
+                today: local_day(),
+                limit: 10,
+            },
         });
         let first = !self.started;
         self.started = true;
@@ -558,27 +562,53 @@ type Answer = std::pin::Pin<
     Box<dyn std::future::Future<Output = Result<Value, kchess_contracts::CoreError>>>,
 >;
 
+/// The session's value as the contract's type of it, read by the contract's own check as the
+/// core reads what is sent to it (a whole rating written `1500.0` is the integer 1500).
+fn as_contract<T: kchess_contracts::check::Validate>(
+    value: &impl serde::Serialize,
+) -> Result<T, kchess_contracts::CoreError> {
+    let value = serde_json::to_value(value)
+        .map_err(|cause| kchess_contracts::CoreError::new(cause.to_string()))?;
+    T::validate(kchess_domain::misc::value::J::from(&value))
+        .map_err(kchess_contracts::CoreError::new)
+}
+
+/// A call's answer, as the session reads it.
+fn answer<C: kchess_contracts::calls::CoreCall + Send + 'static>(
+    core: &AppCore,
+    call: Result<C, kchess_contracts::CoreError>,
+) -> Answer
+where
+    C::Answer: serde::Serialize + Send,
+{
+    let sent = call.map(|call| core.request(call));
+    Box::pin(async move { sent?.await.map(|answer| json!(answer)) })
+}
+
 /// A puzzle step's core call, sent, and its method's name.
 fn puzzle_request(core: &AppCore, request: &Request) -> (&'static str, Answer) {
     use kchess_contracts::calls::CoreCall;
     match request {
         Request::LocalPuzzles(query) => (
             calls::LocalPuzzles::METHOD,
-            Box::pin(core.request(calls::LocalPuzzles {
-                query: json!(query),
-            })),
+            answer(
+                core,
+                as_contract(query).map(|query| calls::LocalPuzzles { query }),
+            ),
         ),
         Request::PuzzleNext(draw) => (
             calls::PuzzleNext::METHOD,
-            Box::pin(core.request(calls::PuzzleNext {
-                request: json!(draw),
-            })),
+            answer(
+                core,
+                as_contract(draw).map(|request| calls::PuzzleNext { request }),
+            ),
         ),
         Request::PuzzleSolve(solve) => (
             calls::PuzzleSolve::METHOD,
-            Box::pin(core.request(calls::PuzzleSolve {
-                request: json!(solve),
-            })),
+            answer(
+                core,
+                as_contract(solve).map(|request| calls::PuzzleSolve { request }),
+            ),
         ),
     }
 }
@@ -586,10 +616,11 @@ fn puzzle_request(core: &AppCore, request: &Request) -> (&'static str, Answer) {
 impl PuzzlesPage {
     /// Keep an attempt in the local log; a failed write never interrupts training.
     fn record(&mut self, attempt: Value, cx: &mut Context<Self>) {
-        let save = cx
-            .global::<AppCore>()
-            .request(calls::RecordPuzzleAttempt { attempt });
-        cx.spawn(async move |this, cx| match save.await {
+        let save = as_contract(&attempt).map(|attempt| {
+            cx.global::<AppCore>()
+                .request(calls::RecordPuzzleAttempt { attempt })
+        });
+        cx.spawn(async move |this, cx| match async { save?.await }.await {
             Ok(progress) => {
                 let _ = this.update(cx, |this, cx| {
                     this.progress = progress;
@@ -1298,7 +1329,7 @@ impl PuzzlesPage {
         ];
         let tried = tally.moves_tried;
         let rating = self.session.state().rating;
-        let day_streak = self.progress["dayStreak"].as_f64().unwrap_or_default();
+        let day_streak = f64::from(self.progress.day_streak);
         let mut line = h_flex()
             .flex_wrap()
             .gap_x(px(12.))
@@ -1370,14 +1401,11 @@ impl PuzzlesPage {
                 ),
         );
         // The latest attempts, oldest first, so the newest sits at the end of the strip.
-        let recent: Vec<Value> = self.progress["recent"]
-            .as_array()
-            .map(|recent| recent.iter().rev().cloned().collect())
-            .unwrap_or_default();
+        let recent: Vec<PuzzleAttempt> = self.progress.recent.iter().rev().cloned().collect();
         let strip = (!recent.is_empty()).then(|| {
             h_flex().flex_wrap().gap(px(4.)).mt(px(8.)).children(
                 recent.into_iter().enumerate().map(|(index, attempt)| {
-                    let outcome = attempt["outcome"].as_str().unwrap_or("missed").to_string();
+                    let outcome = attempt.outcome.as_str().to_string();
                     let (glyph, fg, bg) = match outcome.as_str() {
                         "solved" => (icon("check"), palette.success, tint(palette.success, 10.)),
                         "hinted" => (icon("lightbulb"), palette.success, palette.bg),
@@ -1398,20 +1426,22 @@ impl PuzzlesPage {
                             "revealed" => "Revealed",
                             _ => "Missed",
                         },
-                        attempt["found"].as_f64().unwrap_or_default(),
-                        attempt["total"].as_f64().unwrap_or_default(),
-                        match attempt["wrong"].as_f64().unwrap_or_default() {
-                            0. => String::new(),
+                        attempt.found,
+                        attempt.total,
+                        match attempt.wrong {
+                            0 => String::new(),
                             wrong => format!(" · {wrong} wrong"),
                         },
-                        attempt["puzzle"]["rating"].as_f64().unwrap_or_default()
+                        attempt.puzzle.rating
                     );
                     let (puzzle, wrong) = (
-                        attempt["puzzle"].clone(),
-                        attempt["wrongMoves"]
-                            .as_array()
-                            .cloned()
-                            .unwrap_or_default(),
+                        json!(attempt.puzzle),
+                        attempt
+                            .wrong_moves
+                            .iter()
+                            .flatten()
+                            .map(|wrong| json!(wrong))
+                            .collect::<Vec<Value>>(),
                     );
                     let page = cx.entity().downgrade();
                     // `attemptActions.menu`: try it again, or study it on the board.
@@ -1958,8 +1988,21 @@ impl Render for PuzzlesPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{coach_allowed, theme_groups, theme_name, themes};
+    use super::{as_contract, coach_allowed, theme_groups, theme_name, themes};
     use crate::widgets::{self, format_bytes};
+    use kchess_contracts::types::LocalLadderQuery;
+
+    /// The session writes its numbers as floats (`1500.0`); read as JSON into the contract's
+    /// integer fields they were refused, so a ladder never reached the core. The contract's own
+    /// check reads them as the core reads what is sent to it.
+    #[test]
+    fn the_sessions_whole_floats_reach_the_core_as_integers() {
+        let ladder: LocalLadderQuery =
+            as_contract(&serde_json::json!({ "from": 600.0, "to": 1800.0, "count": 30.0 }))
+                .expect("a ladder");
+        assert_eq!((ladder.from, ladder.to, ladder.count), (600, 1800, 30));
+        assert!(as_contract::<LocalLadderQuery>(&serde_json::json!({ "from": "x" })).is_err());
+    }
 
     /// The theme list is the app's own file, read where it is shown.
     #[test]

@@ -10,8 +10,9 @@ use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_contracts::types::{RunKind, RunSummary};
 use kchess_domain::training::lessons::{self, Goal, Reason, Status};
-use serde_json::{Value, json};
+use serde_json::json;
 use shakmaty::Color;
 
 use super::endgame_drills::{color_of, move_squares, san_from};
@@ -131,7 +132,7 @@ pub(crate) enum LessonAction {
 
 pub struct EndgameLesson {
     course: Course,
-    summary: Value,
+    summary: Option<RunSummary>,
     chapter: usize,
     step: usize,
     moves: Vec<String>,
@@ -159,7 +160,7 @@ impl HasEngine for EndgameLesson {
 impl EndgameLesson {
     pub fn new(
         course: Course,
-        summary: Value,
+        summary: Option<RunSummary>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> EndgameLesson {
@@ -201,7 +202,7 @@ impl EndgameLesson {
         let chapter = course
             .chapters
             .iter()
-            .position(|chapter| !finished(&summary, &chapter.id))
+            .position(|chapter| !finished(summary.as_ref(), &chapter.id))
             .unwrap_or(0);
         let mut lesson = EndgameLesson {
             course,
@@ -514,19 +515,19 @@ impl EndgameLesson {
         }
         self.saved = Some(id.clone());
         let saved = cx.global::<AppCore>().request(calls::SaveRun {
-            run: json!({
-                "kind": "lesson",
-                "variant": id,
-                "score": 1,
-                "detail": { "course": self.course.id, "steps": self.chapter().steps.len() },
-            }),
+            run: run::input(
+                RunKind::Lesson,
+                id,
+                1.,
+                json!({ "course": self.course.id, "steps": self.chapter().steps.len() }),
+            ),
         });
         cx.spawn(async move |this, cx| {
             let saved = saved.await;
             let _ = this.update(cx, |this, cx| match saved {
                 Ok(saved) => {
-                    this.summary = saved["summary"].clone();
-                    cx.emit(TrainerEvent::Saved(this.summary.clone()));
+                    cx.emit(TrainerEvent::Saved(saved.summary.clone()));
+                    this.summary = Some(saved.summary);
                     cx.notify();
                 }
                 Err(cause) => {
@@ -598,7 +599,7 @@ impl EndgameLesson {
             .map(|chapter| TrainingItem {
                 id: chapter.id.clone(),
                 title: chapter.title.clone(),
-                done: finished(&self.summary, &chapter.id),
+                done: finished(self.summary.as_ref(), &chapter.id),
                 aside: None,
             })
             .collect();

@@ -5,8 +5,8 @@ use kchess_contracts::check::{
 };
 use kchess_contracts::core_api::{Assist, StudiesApi};
 use kchess_contracts::types::{
-    CloudEval, LichessStudy, LichessStudyChapter, LookupOptions, OpeningDescription,
-    PopularityMonth, PositionLookup, PositionLookupKind, Reply, StudyExport, StudySyncRequest,
+    ChapterInput, CloudEval, LichessStudy, LookupOptions, OpeningDescription, PopularityMonth,
+    PositionLookup, PositionLookupKind, Reply, StudyExport, StudySyncRequest,
 };
 
 use crate::core::Core;
@@ -32,22 +32,18 @@ impl StudiesApi for Core {
         &self,
         account: Username,
         id: LichessId,
-    ) -> Result<Reply<Vec<LichessStudyChapter>>> {
+    ) -> Result<Reply<Vec<ChapterInput>>> {
         studies::lichess_study_chapters(self.services.lichess(), &account.0, &id.0).await
     }
 
-    async fn lichess_study_chapter(
-        &self,
-        id: LichessId,
-        chapter: StudyId,
-    ) -> Result<LichessStudyChapter> {
+    async fn lichess_study_chapter(&self, id: LichessId, chapter: StudyId) -> Result<ChapterInput> {
         studies::public_study_chapter(self.services.lichess(), &id.0, &chapter.0).await
     }
 
     async fn sync_lichess_study(
         &self,
         request: StudySyncRequest,
-    ) -> Result<Reply<Vec<LichessStudyChapter>>> {
+    ) -> Result<Reply<Vec<ChapterInput>>> {
         studies::sync_lichess_study(self.services.lichess(), &request).await
     }
 

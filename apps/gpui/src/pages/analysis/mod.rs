@@ -82,8 +82,11 @@ const STALE_COPY: &str = "This study was changed in another KChess window. Your 
 const CONFLICT: &str = "Recovered session differs from the saved study. It is kept as an unsaved copy; save it under a new name or reopen the saved study.";
 
 /// A study write's answer, which the quit and the page's own handling both wait on.
-type StudySave =
-    futures::future::Shared<std::pin::Pin<Box<dyn Future<Output = Result<Value, String>>>>>;
+type StudySave = futures::future::Shared<
+    std::pin::Pin<
+        Box<dyn Future<Output = Result<kchess_contracts::types::StudyCommandResult, String>>>,
+    >,
+>;
 
 /// Evaluations kept per position, so stepping back and forth shows them at once.
 const CACHE_SIZE: usize = 600;
@@ -995,7 +998,7 @@ impl AnalysisPage {
             let _ = this.update(cx, |this, cx| match read {
                 // A review that saved mistakes meanwhile holds the newer list.
                 Ok(mistakes) if this.review.mistakes.is_empty() => {
-                    this.review.mistakes = mistakes.as_array().cloned().unwrap_or_default();
+                    this.review.mistakes = mistakes;
                     cx.notify();
                 }
                 Ok(_) => {}

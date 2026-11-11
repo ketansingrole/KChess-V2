@@ -10,9 +10,10 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use kchess_contracts::types::{LocalLadderQuery, RunKind, RunRecord, RunSaved, RunSummary};
 use kchess_domain::training::data::data;
 use kchess_domain::training::rush::{RushConfig, RushState, combo_progress, format_run_clock};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::stats::PuzzleStats;
 use crate::assets::icon;
@@ -78,8 +79,8 @@ pub struct PuzzleRush {
     index: usize,
     state: RushState,
     /// `runSummary` by mode.
-    summaries: Map<String, Value>,
-    saved: Option<Value>,
+    summaries: BTreeMap<String, RunSummary>,
+    saved: Option<RunSaved>,
     bonus: Option<f64>,
     started: Option<Instant>,
     last_tick: Option<Instant>,
@@ -130,7 +131,7 @@ impl PuzzleRush {
             ladder: Vec::new(),
             index: 0,
             state,
-            summaries: Map::new(),
+            summaries: BTreeMap::new(),
             saved: None,
             bonus: None,
             started: None,
@@ -162,10 +163,10 @@ impl PuzzleRush {
 
     fn load_summaries(&mut self, cx: &mut Context<Self>) {
         let core = cx.global::<AppCore>().clone();
-        for mode in ["storm", "streak", "rush"] {
-            let summary = core.request(calls::RunSummary { kind: json!(mode) });
+        for kind in [RunKind::Storm, RunKind::Streak, RunKind::Rush] {
+            let summary = core.request(calls::RunSummary { kind });
             crate::loading::fetch(cx, "puzzles", summary, move |this, summary, _| {
-                this.summaries.insert(mode.to_string(), summary);
+                this.summaries.insert(kind.as_str().to_string(), summary);
             });
         }
     }
@@ -173,7 +174,7 @@ impl PuzzleRush {
     /// The best score of a kind of run, kept here.
     fn best_of(&self, key: &str) -> Option<f64> {
         let config = self.configs.get(key)?;
-        self.summaries.get(&config.mode)?["best"][&config.variant]["score"].as_f64()
+        crate::pages::practice::run::best(self.summaries.get(&config.mode), &config.variant)
     }
 
     fn stop_timers(&mut self) {
@@ -194,7 +195,11 @@ impl PuzzleRush {
         self.stage = Stage::Loading;
         cx.notify();
         let ladder = cx.global::<AppCore>().request(calls::LocalLadder {
-            query: json!(config.ladder),
+            query: LocalLadderQuery {
+                from: config.ladder.from as u32,
+                to: config.ladder.to as u32,
+                count: config.ladder.count as u32,
+            },
         });
         cx.spawn(async move |this, cx| {
             let ladder = ladder.await;
@@ -203,7 +208,9 @@ impl PuzzleRush {
                     return;
                 }
                 let ladder = match ladder {
-                    Ok(Value::Array(ladder)) if ladder.len() >= 10 => ladder,
+                    Ok(ladder) if ladder.len() >= 10 => {
+                        ladder.into_iter().map(|puzzle| json!(puzzle)).collect()
+                    }
                     Ok(_) => {
                         this.error =
                             Some("The puzzle database is too small; download it again".into());
@@ -394,20 +401,28 @@ impl PuzzleRush {
             cx.notify();
             return;
         };
+        let Some(kind) = RunKind::ALL
+            .iter()
+            .copied()
+            .find(|kind| kind.as_str() == config.mode)
+        else {
+            cx.notify();
+            return;
+        };
         let state = &self.state;
-        let run = json!({
-            "kind": config.mode,
-            "variant": config.variant,
-            "score": state.score,
-            "detail": {
+        let run = crate::pages::practice::run::input(
+            kind,
+            config.variant.clone(),
+            state.score,
+            json!({
                 "moves": state.moves,
                 "mistakes": state.mistakes,
                 "accuracy": state.accuracy(),
                 "maxCombo": state.max_combo,
                 "highest": state.highest,
                 "seconds": self.elapsed.as_secs_f64().round(),
-            },
-        });
+            }),
+        );
         let mode = config.mode.clone();
         let save = cx.global::<AppCore>().request(calls::SaveRun { run });
         cx.spawn(async move |this, cx| {
@@ -425,13 +440,13 @@ impl PuzzleRush {
         &mut self,
         generation: u64,
         mode: String,
-        saved: Result<Value, String>,
+        saved: Result<RunSaved, String>,
         cx: &mut Context<Self>,
     ) {
         let current = generation == self.generation;
         match saved {
             Ok(saved) => {
-                self.summaries.insert(mode, saved["summary"].clone());
+                self.summaries.insert(mode, saved.summary.clone());
                 if current {
                     self.saved = Some(saved);
                 }
@@ -512,11 +527,10 @@ impl PuzzleRush {
                     }))
             }));
         let mode = config.map_or("storm", |config| config.mode.as_str());
-        let recent: Vec<Value> = self
+        let recent: Vec<RunRecord> = self
             .summaries
             .get(mode)
-            .and_then(|summary| summary["recent"].as_array())
-            .map(|recent| recent.iter().take(6).cloned().collect())
+            .map(|summary| summary.recent.iter().take(6).cloned().collect())
             .unwrap_or_default();
         let title = config
             .map(|config| config.title.clone())
@@ -542,12 +556,12 @@ impl PuzzleRush {
                 )
                 .children(recent.iter().map(|run| {
                     use chrono::TimeZone as _;
-                    let when = run["playedAt"]
-                        .as_f64()
-                        .and_then(|at| chrono::Local.timestamp_millis_opt(at as i64).single())
+                    let when = chrono::Local
+                        .timestamp_millis_opt(run.played_at)
+                        .single()
                         .map(|at| at.format("%b %-d, %Y %-I:%M %p").to_string())
                         .unwrap_or_default();
-                    let variant = run["variant"].as_str().unwrap_or_default();
+                    let variant = run.variant.as_str();
                     h_flex()
                         .py(px(4.))
                         .text_size(px(13.))
@@ -562,13 +576,11 @@ impl PuzzleRush {
                             },
                             90.,
                         ))
+                        .child(cell(run.score.to_string(), 60.))
                         .child(cell(
-                            run["score"].as_f64().unwrap_or_default().to_string(),
-                            60.,
-                        ))
-                        .child(cell(
-                            run["detail"]["accuracy"]
-                                .as_f64()
+                            run.detail
+                                .get("accuracy")
+                                .and_then(Value::as_f64)
                                 .map_or_else(|| "—".into(), |accuracy| format!("{accuracy}%")),
                             80.,
                         ))
@@ -785,10 +797,7 @@ impl PuzzleRush {
                         ),
                 );
         } else {
-            let best = self
-                .saved
-                .as_ref()
-                .is_some_and(|saved| saved["isBest"] == json!(true));
+            let best = self.saved.as_ref().is_some_and(|saved| saved.is_best);
             let over = match state.over.as_deref() {
                 Some("time") => "Time’s up".to_string(),
                 Some("strikes") if config.and_then(|config| config.strikes) == Some(1.) => {

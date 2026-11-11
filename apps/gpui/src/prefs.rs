@@ -10,6 +10,7 @@ use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui_kit::{App, Global};
 use kchess_contracts::Level;
+use kchess_contracts::check::ViewPreferenceKey;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
@@ -178,8 +179,7 @@ pub fn init(cx: &mut App) {
         .bridge
         .request_now(calls::ViewPreferences {})
     {
-        Ok(Value::Object(values)) => values,
-        Ok(_) => Map::new(),
+        Ok(values) => values,
         Err(cause) => {
             crate::log::write(
                 Level::Warn,
@@ -200,8 +200,8 @@ pub fn init(cx: &mut App) {
             Arc::clone(&sending),
             move |key, value| {
                 let save = core.request(calls::SetViewPreference {
-                    key: json!(key),
-                    value,
+                    key: ViewPreferenceKey(key.clone()),
+                    value: (!value.is_null()).then_some(value),
                 });
                 async move {
                     save.await.map(|_| ()).map_err(|cause| {
@@ -238,8 +238,7 @@ fn reload(cx: &mut App) {
     let saved = cx.global::<AppCore>().request(calls::ViewPreferences {});
     cx.spawn(async move |cx| {
         let saved = match saved.await {
-            Ok(Value::Object(saved)) => saved,
-            Ok(_) => return,
+            Ok(saved) => saved,
             Err(cause) => {
                 return crate::log::write(
                     Level::Warn,

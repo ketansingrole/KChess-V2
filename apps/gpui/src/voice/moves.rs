@@ -7,11 +7,12 @@
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::*;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::control::Control;
 use super::{Entry, Heard, VoiceEvent};
 use crate::assets::icon;
+use kchess_contracts::types::VoiceUpdate;
 use kchess_domain::voice::SpokenMove;
 
 /// What a page made of a phrase it took as a command.
@@ -192,10 +193,10 @@ impl VoiceMoves {
         if !matches!(outcome, "played" | "confirmed" | "picked") {
             self.last_miss = Some(attempt.clone());
         }
-        let mut update = json!({ "outcome": outcome });
-        if let Some(expected) = expected {
-            update["expected"] = json!(expected);
-        }
+        let update = VoiceUpdate {
+            outcome: super::wire(outcome),
+            expected: expected.map(str::to_string),
+        };
         super::amend(attempt, update, cx);
     }
 
@@ -209,7 +210,11 @@ impl VoiceMoves {
             return;
         };
         for entry in entries {
-            super::amend(entry, json!({ "expected": san }), cx);
+            let update = VoiceUpdate {
+                outcome: None,
+                expected: Some(san.to_string()),
+            };
+            super::amend(entry, update, cx);
         }
     }
 

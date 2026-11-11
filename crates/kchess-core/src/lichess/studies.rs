@@ -10,7 +10,7 @@ use serde_json::Value;
 use super::accounts::{Lichess, Reply, path_segment};
 use super::client::TextLimit;
 use crate::error::{CoreError, Result as CoreResult};
-use kchess_contracts::types::{LichessStudy, LichessStudyChapter, StudySyncRequest, UsageKind};
+use kchess_contracts::types::{ChapterInput, LichessStudy, StudySyncRequest, UsageKind};
 use kchess_domain::{js, position};
 
 /// The most of a study export that is read, in UTF-16 units.
@@ -152,7 +152,7 @@ pub async fn lichess_study_chapters(
     lichess: &Lichess,
     account: &str,
     id: &str,
-) -> CoreResult<Reply<Vec<LichessStudyChapter>>> {
+) -> CoreResult<Reply<Vec<ChapterInput>>> {
     lichess
         .as_account(account, UsageKind::Study, |auth| async move {
             let path = format!("/api/study/{}.pgn", path_segment(id));
@@ -177,7 +177,7 @@ pub async fn lichess_study_chapters(
                     let name = tag_value(&pgn, "ChapterName")
                         .or_else(|| tag_value(&pgn, "Event"))
                         .unwrap_or_else(|| format!("Chapter {}", index + 1));
-                    LichessStudyChapter {
+                    ChapterInput {
                         name: js::slice_utf16(&name, 120).to_string(),
                         pgn,
                     }
@@ -193,7 +193,7 @@ pub async fn public_study_chapter(
     lichess: &Lichess,
     id: &str,
     chapter: &str,
-) -> CoreResult<LichessStudyChapter> {
+) -> CoreResult<ChapterInput> {
     let path = if chapter.is_empty() {
         format!("/api/study/{}.pgn", path_segment(id))
     } else {
@@ -223,7 +223,7 @@ pub async fn public_study_chapter(
     let name = tag_value(&pgn, "ChapterName")
         .or_else(|| tag_value(&pgn, "Event"))
         .unwrap_or_else(|| "Chapter 1".into());
-    Ok(LichessStudyChapter {
+    Ok(ChapterInput {
         name: js::slice_utf16(&name, 120).to_string(),
         pgn,
     })
@@ -305,7 +305,7 @@ fn imported_all(imported: &Value, games: usize) -> CoreResult<()> {
 pub async fn sync_lichess_study(
     lichess: &Lichess,
     request: &StudySyncRequest,
-) -> CoreResult<Reply<Vec<LichessStudyChapter>>> {
+) -> CoreResult<Reply<Vec<ChapterInput>>> {
     let before = valid_chapters(&request.baseline)?;
     let after = valid_chapters(&request.pgn)?;
     let wanted = after.len();

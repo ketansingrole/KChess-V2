@@ -46,15 +46,6 @@ impl GameOrigin {
     }
 }
 
-/// A side as a stored document names it.
-pub fn color_of(value: &Value) -> Option<Color> {
-    match value.as_str()? {
-        "white" => Some(Color::White),
-        "black" => Some(Color::Black),
-        _ => None,
-    }
-}
-
 /// A game a page shows: its start and moves, its players and result, how its board faces and
 /// the move shown.
 #[derive(Clone)]

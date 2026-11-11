@@ -4,7 +4,7 @@
 
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
-use serde_json::Value;
+use kchess_contracts::types::Library;
 
 use crate::core::AppCore;
 use kchess_contracts::{CoreError, calls};
@@ -15,7 +15,7 @@ pub struct Started;
 impl Global for Started {}
 
 /// The library the models start from, when the core can read what they need, or why not.
-pub fn check(cx: &App) -> Result<Value, String> {
+pub fn check(cx: &App) -> Result<Library, String> {
     let bridge = &cx.global::<AppCore>().bridge;
     readable(
         || bridge.request_now(calls::DesktopSettings {}).map(drop),
@@ -26,10 +26,10 @@ pub fn check(cx: &App) -> Result<Value, String> {
 
 /// The settings must be readable, and the library is read once for every model that starts
 /// from it: each read decodes every study and replays every played game.
-fn readable(
+fn readable<T>(
     settings: impl FnOnce() -> Result<(), CoreError>,
-    library: impl FnOnce() -> Result<Value, CoreError>,
-) -> Result<Value, CoreError> {
+    library: impl FnOnce() -> Result<T, CoreError>,
+) -> Result<T, CoreError> {
     settings()?;
     library()
 }
@@ -139,7 +139,7 @@ mod tests {
             failed.map_err(|e| e.message),
             Err("The settings file is locked".into())
         );
-        assert!(readable(|| Ok(()), || Err(CoreError::new("x"))).is_err());
+        assert!(readable(|| Ok(()), || Err::<(), _>(CoreError::new("x"))).is_err());
     }
 
     /// The library is read once to start, not once for each model that starts from it, and not

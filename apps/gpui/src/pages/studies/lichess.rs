@@ -4,7 +4,7 @@
 
 use kchess_contracts::calls;
 use kchess_contracts::check::{ChapterName, LichessId, PgnText, StudyId, Username};
-use kchess_contracts::types::{LichessStudy, Reply};
+use kchess_contracts::types::{LichessStudy, RemoteStudy, Reply, StudyCommand};
 use std::collections::HashMap;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -238,12 +238,14 @@ impl StudiesPage {
                     let _ = cx.update(|window, cx| fail(note, window, cx));
                     return;
                 }
-                let command = json!({
-                    "op": "offline",
-                    "account": account,
-                    "remote": { "id": id, "name": item.name },
-                    "chapters": chapters,
-                });
+                let command = StudyCommand::Offline {
+                    account,
+                    remote: RemoteStudy {
+                        id,
+                        name: item.name,
+                    },
+                    chapters,
+                };
                 let answer = cx.update(|_, cx| library.read(cx).command(command));
                 let Ok(answer) = answer else { return };
                 let result = answer.await;
@@ -253,10 +255,10 @@ impl StudiesPage {
                             library.apply(&result);
                             cx.notify();
                         });
-                        match result["id"].as_str() {
+                        match result.id {
                             Some(saved) => then(
-                                saved.to_string(),
-                                result["conflict"] == json!(true),
+                                saved,
+                                result.conflict == Some(true),
                                 window,
                                 cx,
                             ),

@@ -7,7 +7,10 @@
 
 use std::collections::VecDeque;
 
-use kchess_contracts::types::UsageKind;
+use kchess_contracts::types::{
+    Puzzle, PuzzleActivityEntry, PuzzleDraw, PuzzleGlicko, PuzzleRequest, PuzzleSolveRequest,
+    PuzzleSolveResult, UsageKind,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -37,7 +40,7 @@ struct SolveRound {
     id: Loose<String>,
     /// Passed on as Lichess sent it, null included.
     #[serde(default, deserialize_with = "present")]
-    rating_diff: Option<Value>,
+    rating_diff: Option<Option<Loose<i64>>>,
 }
 
 /// Lichess's answer to solved puzzles.
@@ -53,66 +56,17 @@ struct ActivityEntry {
     #[serde(default, deserialize_with = "present")]
     puzzle: Option<Value>,
     #[serde(default)]
-    date: Option<Value>,
+    date: Loose<i64>,
     #[serde(default)]
     win: Loose<bool>,
 }
 
-/// The request for a puzzle (`PuzzleRequest`). An empty account trains anonymously.
-#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PuzzleRequest {
-    pub account: String,
-    pub angle: String,
-    pub difficulty: String,
-    pub color: Option<String>,
-}
-
-/// A puzzle drawn for the user (`PuzzleDraw`): the puzzle and, for an account, its rating. The
-/// puzzle is null when Lichess has none left for the theme and difficulty.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PuzzleDraw {
-    #[serde(skip_serializing_if = "Value::is_null")]
-    pub puzzle: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub glicko: Option<Value>,
-}
-
-/// A puzzle result to report (`PuzzleSolveRequest`).
-#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PuzzleSolveRequest {
-    pub account: String,
-    pub angle: String,
-    pub id: String,
-    pub win: bool,
-    pub rated: bool,
-}
-
-/// The rating change Lichess applied to a rated result (`PuzzleSolveResult`).
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PuzzleSolveResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rating_diff: Option<Value>,
-}
-
-/// One result of the activity feed (`PuzzleActivityEntry`).
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PuzzleActivityEntry {
-    pub date: Value,
-    pub win: bool,
-    pub puzzle: Value,
-}
-
 /// `puzzleFromApi(raw)`: a Lichess puzzle as KChess reads it.
-pub fn puzzle_from_api(raw: &Value) -> Option<Value> {
-    training::puzzle::from_api(raw)
+pub fn puzzle_from_api(raw: &Value) -> Option<Puzzle> {
+    serde_json::from_value(training::puzzle::from_api(raw)?).ok()
 }
 
-fn readable_puzzle(raw: &Value) -> CoreResult<Value> {
+fn readable_puzzle(raw: &Value) -> CoreResult<Puzzle> {
     puzzle_from_api(raw)
         .ok_or_else(|| CoreError::new("Lichess sent a puzzle KChess could not read."))
 }
@@ -155,9 +109,9 @@ pub async fn puzzle_next(
 ) -> CoreResult<Reply<PuzzleDraw>> {
     let mut query: Vec<(&str, String)> = Vec::new();
     query.push(("angle", request.angle.clone()));
-    query.push(("difficulty", request.difficulty.clone()));
-    if let Some(color) = &request.color {
-        query.push(("color", color.clone()));
+    query.push(("difficulty", request.difficulty.as_str().to_string()));
+    if let Some(color) = request.color {
+        query.push(("color", kchess_domain::color::name(color).to_string()));
     }
     if request.account.is_empty() {
         let raw: CoreResult<Value> = lichess
@@ -167,8 +121,8 @@ pub async fn puzzle_next(
             .read_json()
             .await;
         let puzzle = match raw {
-            Err(error) if error.kind == Some(ErrorKind::NotFound) => Value::Null,
-            raw => readable_puzzle(&raw?)?,
+            Err(error) if error.kind == Some(ErrorKind::NotFound) => None,
+            raw => Some(readable_puzzle(&raw?)?),
         };
         return Ok(Reply::Done(PuzzleDraw {
             puzzle,
@@ -195,8 +149,8 @@ pub async fn puzzle_next(
                 .filter(|items| !items.is_empty())
             else {
                 return Ok(PuzzleDraw {
-                    puzzle: Value::Null,
-                    glicko: batch.get("glicko").cloned(),
+                    puzzle: None,
+                    glicko: glicko(&batch),
                 });
             };
             let ids: Vec<String> = items
@@ -215,11 +169,16 @@ pub async fn puzzle_next(
                 pick_unseen(recent, &ids)
             };
             Ok(PuzzleDraw {
-                puzzle: readable_puzzle(items.get(chosen).unwrap_or(&Value::Null))?,
-                glicko: batch.get("glicko").cloned(),
+                puzzle: Some(readable_puzzle(items.get(chosen).unwrap_or(&Value::Null))?),
+                glicko: glicko(&batch),
             })
         })
         .await
+}
+
+/// The account's puzzle rating in a batch, when Lichess sent one KChess can read.
+fn glicko(batch: &Value) -> Option<PuzzleGlicko> {
+    read(batch.get("glicko")?)
 }
 
 /// `puzzleSolve(request)`: tells Lichess how a puzzle went. A rated result moves the account's
@@ -249,7 +208,9 @@ pub async fn puzzle_solve(
                 .find(|round| round.id.0.as_deref() == Some(request.id.as_str()));
             Ok(PuzzleSolveResult {
                 rating_diff: if request.rated {
-                    round.and_then(|round| round.rating_diff)
+                    round
+                        .and_then(|round| round.rating_diff)
+                        .map(|diff| diff.and_then(|diff| diff.0))
                 } else {
                     None
                 },
@@ -259,7 +220,7 @@ pub async fn puzzle_solve(
 }
 
 /// `puzzleDaily()`: today's puzzle, with no login needed.
-pub async fn puzzle_daily(lichess: &Lichess) -> CoreResult<Value> {
+pub async fn puzzle_daily(lichess: &Lichess) -> CoreResult<Puzzle> {
     let raw: Value = lichess
         .client()
         .get("/api/puzzle/daily", &lichess.anonymous(UsageKind::Puzzles))
@@ -269,7 +230,7 @@ pub async fn puzzle_daily(lichess: &Lichess) -> CoreResult<Value> {
 }
 
 /// `puzzleById(id)`: one puzzle, as a lichess.org/training link names it; no login needed.
-pub async fn puzzle_by_id(lichess: &Lichess, id: &str) -> CoreResult<Value> {
+pub async fn puzzle_by_id(lichess: &Lichess, id: &str) -> CoreResult<Puzzle> {
     let path = format!("/api/puzzle/{}", path_segment(id));
     let raw: Value = lichess
         .client()
@@ -323,7 +284,7 @@ pub async fn puzzle_activity(
                 let read = puzzle_from_api(&json!({ "game": {}, "puzzle": puzzle }));
                 if let Some(read) = read {
                     entries.push(PuzzleActivityEntry {
-                        date: activity.date.unwrap_or(Value::Null),
+                        date: activity.date.0,
                         win: activity.win.0.unwrap_or(false),
                         puzzle: read,
                     });

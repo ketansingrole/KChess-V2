@@ -3,18 +3,17 @@
 use std::sync::Arc;
 
 use kchess_contracts::core_api::SystemApi;
-use kchess_contracts::types::CustomThemeReport;
-use serde_json::Value;
+use kchess_contracts::types::{CustomThemeReport, UsageReport};
 
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 
 impl SystemApi for Core {
-    async fn usage(&self) -> Result<Value> {
+    async fn usage(&self) -> Result<UsageReport> {
         self.usage.report().await
     }
 
-    async fn reset_usage(&self) -> Result<Value> {
+    async fn reset_usage(&self) -> Result<()> {
         self.usage.reset().await
     }
 

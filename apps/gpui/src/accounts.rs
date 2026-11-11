@@ -9,8 +9,10 @@ use gpui_kit::{App, AppContext as _, Context, Entity, Global, SharedString, Wind
 use kchess_contracts::Level;
 use kchess_contracts::calls;
 use kchess_contracts::check::{ChesscomUsername, FriendList, Username};
-use kchess_contracts::types::{Account, AppData, ChesscomAccount, RelationAction, Reply};
-use serde_json::{Value, json};
+use kchess_contracts::types::{
+    Account, AppData, ChesscomAccount, RelationAction, Reply, UsageReport,
+};
+use serde_json::json;
 
 use crate::core::{Answer, AppCore, Reads};
 
@@ -24,7 +26,7 @@ pub struct Accounts {
     /// `loadData`'s answer: the accounts and their sync state; `None` until it is read.
     pub data: Option<AppData>,
     /// `usage`: bytes downloaded per account, and what each keeps (`UsageReport`).
-    pub usage: Value,
+    pub usage: UsageReport,
     /// `chesscomAccounts`: the Chess.com players synced, with when each last synced.
     pub chesscom: Vec<ChesscomAccount>,
     /// An account action runs: connecting, following, importing, signing out or removing.
@@ -44,7 +46,7 @@ impl Global for AccountsHandle {}
 pub fn init(cx: &mut App) {
     let accounts = cx.new(|_| Accounts {
         data: None,
-        usage: Value::Null,
+        usage: UsageReport::default(),
         chesscom: Vec::new(),
         busy: false,
         syncs: 0,
@@ -122,18 +124,23 @@ impl Accounts {
 
     /// `usageOf(username).total.bytesIn`.
     pub fn downloaded(&self, username: &str) -> f64 {
-        self.usage["accounts"][username.to_lowercase()]["total"]["bytesIn"]
-            .as_f64()
-            .unwrap_or_default()
+        self.usage
+            .accounts
+            .get(&username.to_lowercase())
+            .map_or(0.0, |account| account.total.bytes_in as f64)
     }
 
     /// `storageOf(username)`: games kept, and their bytes with the account's cache.
     pub fn stored(&self, username: &str) -> (f64, f64) {
-        let storage = &self.usage["storage"][username.to_lowercase()];
+        let storage = self
+            .usage
+            .storage
+            .get(&username.to_lowercase())
+            .copied()
+            .unwrap_or_default();
         (
-            storage["games"].as_f64().unwrap_or_default(),
-            storage["bytes"].as_f64().unwrap_or_default()
-                + storage["cacheBytes"].as_f64().unwrap_or_default(),
+            storage.games as f64,
+            (storage.bytes + storage.cache_bytes) as f64,
         )
     }
 
@@ -564,15 +571,11 @@ impl Accounts {
     }
 
     fn total_downloaded(&self) -> f64 {
-        self.usage["accounts"]
-            .as_object()
-            .map(|accounts| {
-                accounts
-                    .values()
-                    .filter_map(|account| account["total"]["bytesIn"].as_f64())
-                    .sum()
-            })
-            .unwrap_or_default()
+        self.usage
+            .accounts
+            .iter()
+            .map(|(_, account)| account.total.bytes_in as f64)
+            .sum()
     }
 
     /// `logout`: sign the online account out (every account when `all`).
@@ -670,7 +673,6 @@ mod tests {
     use super::Accounts;
     use crate::core::{Answer, Reads};
     use kchess_contracts::types::{Account, AppData};
-    use serde_json::json;
 
     /// A refresh started before a sign-in (or sync, or removal) here answers with the accounts
     /// as they were: it reads again rather than replacing the newer ones.
@@ -681,7 +683,7 @@ mod tests {
             .core;
         let mut accounts = Accounts {
             data: None,
-            usage: json!({}),
+            usage: Default::default(),
             chesscom: Vec::new(),
             busy: false,
             syncs: 0,

@@ -6,7 +6,7 @@
 //! (`speeds[0]: unknown variant …`). Type errors come first, in the order the input lists its
 //! properties; the checks after them run in field order.
 
-use serde::de::{self, DeserializeOwned, MapAccess, Visitor};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -88,13 +88,6 @@ fn max_items<T>(items: &[T], max: usize, msg: Msg, path: &str) -> Checked<()> {
     })
 }
 
-fn min_items<T>(items: &[T], min: usize, msg: Msg, path: &str) -> Checked<()> {
-    ensure(items.len() >= min, msg, path, || match min {
-        1 => "at least 1 item".into(),
-        _ => format!("at least {min} items"),
-    })
-}
-
 fn within<N: PartialOrd + std::fmt::Display>(
     n: N,
     min: N,
@@ -104,10 +97,6 @@ fn within<N: PartialOrd + std::fmt::Display>(
 ) -> Checked<()> {
     let ok = n >= min && n <= max;
     ensure(ok, msg, path, || format!("a number from {min} to {max}"))
-}
-
-fn finite(n: f64, msg: Msg, path: &str) -> Checked<()> {
-    ensure(n.is_finite(), msg, path, || "a finite number".into())
 }
 
 fn one_of(text: &str, options: &[&str], msg: Msg, path: &str) -> Checked<()> {
@@ -128,8 +117,6 @@ fn each<T>(items: &[T], check: impl Fn(&T) -> Checked<()>) -> Checked<()> {
 /* ── Shared fields ── */
 
 const USERNAME: &str = "Enter a valid Lichess username.";
-const VOICE: &str = "Invalid voice entry.";
-const ATTEMPT: &str = "Invalid puzzle attempt.";
 
 /// A Lichess username, trimmed.
 fn username(text: &str, path: &str) -> Checked<String> {
@@ -152,16 +139,6 @@ fn move_list(moves: &[String]) -> Checked<()> {
     max_items(moves, MAX_MOVES, Some("Invalid move list."), "")
 }
 
-fn angle(text: &str) -> Checked<()> {
-    matches(
-        text,
-        patterns::puzzle_angle,
-        Some("Invalid puzzle theme."),
-        "",
-        "",
-    )
-}
-
 fn lichess_id(text: &str, msg: &'static str) -> Checked<()> {
     matches(text, patterns::lichess_id, Some(msg), "", "")
 }
@@ -179,10 +156,6 @@ fn engine_position(text: &str) -> Checked<()> {
         return Err("Each side can have at most 16 pieces.".into());
     }
     Ok(())
-}
-
-fn local_day(text: &str, msg: &'static str) -> Checked<()> {
-    matches(text, patterns::local_day, Some(msg), "", "")
 }
 
 /// Messages of a move list, where the list itself has `list` and each move has its own.
@@ -234,12 +207,6 @@ macro_rules! checks {
                 Ok(Value::String(assert_analysis_request(J::Obj(fields))?.fen))
             }
 
-            /// A played game to save: an object (`assertArchivedGameShape`).
-            pub fn archived_game_shape(value: J) -> Checked<Value> {
-                crate::misc::documents::assert_archived_game_shape(vec![value])
-                    .map(J::into_value)
-            }
-
             /// Anything: the method reads it itself.
             pub fn any(value: J) -> Checked<Value> {
                 Ok(value.into_value())
@@ -253,100 +220,20 @@ checks! {
     game_id => assert_game_id,
     perf_type => assert_perf_type,
     lichess_id => assert_lichess_id,
-    puzzle_id => assert_puzzle_id,
     optional_account => assert_optional_account,
     theme => assert_theme,
-    puzzle_request => assert_puzzle_request,
-    puzzle_solve => assert_puzzle_solve,
-    days => assert_days,
-    activity_max => assert_activity_max,
-    local_query => assert_local_query,
-    ladder_query => assert_ladder_query,
-    run_kind => assert_run_kind,
-    run_input => assert_run_input,
-    puzzle_attempt => assert_puzzle_attempt,
-    puzzle_progress_query => assert_puzzle_progress_query,
     review_key => assert_review_key,
-    voice_attempt => assert_voice_attempt,
-    voice_update => assert_voice_update,
-    voice_id => assert_voice_id,
-    voice_limit => assert_voice_limit,
     boolean => assert_boolean,
     pgn_text => assert_pgn_text,
-    session_object => assert_session_object,
-    study_command_shape => assert_study_command_shape,
     library_id => assert_library_id,
-    repertoire_key => assert_repertoire_key,
-    repertoire_line => assert_repertoire_line,
-    view_preference_key => assert_view_preference_key,
-    session_kind => assert_session_kind,
-    side => assert_side,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     fn obj(fields: Vec<(&str, J)>) -> J {
         J::Obj(fields.into_iter().map(|(k, v)| (k.into(), v)).collect())
-    }
-
-    fn restore_chapter(pgn: &str) -> J {
-        let chapter = obj(vec![
-            ("id", J::Str("c1".into())),
-            ("name", J::Str("Rook endings".into())),
-            ("pgn", J::Str(pgn.into())),
-        ]);
-        obj(vec![
-            ("op", J::Str("restoreChapter".into())),
-            ("id", J::Str("s1".into())),
-            ("chapter", chapter),
-            ("index", J::Num(1.0)),
-            ("extra", J::Str("dropped".into())),
-        ])
-    }
-
-    /// Undo's `restoreChapter` takes the chapter whole and its place (the core reads its PGN).
-    #[test]
-    fn a_chapter_to_restore_is_checked() {
-        assert_eq!(
-            checks::study_command_shape(restore_chapter("1. e4 *")),
-            Ok(json!({
-                "op": "restoreChapter",
-                "id": "s1",
-                "chapter": { "id": "c1", "name": "Rook endings", "pgn": "1. e4 *" },
-                "index": 1,
-            }))
-        );
-        let without_chapter = obj(vec![
-            ("op", J::Str("restoreChapter".into())),
-            ("id", J::Str("s1".into())),
-            ("index", J::Num(0.0)),
-        ]);
-        assert!(checks::study_command_shape(without_chapter).is_err());
-    }
-
-    /// `moveChapter` takes a chapter and its new place.
-    #[test]
-    fn a_chapter_to_move_is_checked() {
-        let moved = obj(vec![
-            ("op", J::Str("moveChapter".into())),
-            ("id", J::Str("s1".into())),
-            ("chapterId", J::Str("c1".into())),
-            ("index", J::Num(2.0)),
-            ("extra", J::Str("dropped".into())),
-        ]);
-        assert_eq!(
-            checks::study_command_shape(moved),
-            Ok(json!({ "op": "moveChapter", "id": "s1", "chapterId": "c1", "index": 2 }))
-        );
-        let without_place = obj(vec![
-            ("op", J::Str("moveChapter".into())),
-            ("id", J::Str("s1".into())),
-            ("chapterId", J::Str("c1".into())),
-        ]);
-        assert!(checks::study_command_shape(without_place).is_err());
     }
 
     #[test]
@@ -362,24 +249,5 @@ mod tests {
             ("dark", palette),
         ]);
         assert_eq!(checks::theme(theme), Err(HEX.into()));
-    }
-
-    #[test]
-    fn run_details_keep_their_order_and_integers() {
-        let run_input = obj(vec![
-            ("kind", J::Str("storm".into())),
-            ("variant", J::Str(String::new())),
-            ("score", J::Num(12.0)),
-            (
-                "detail",
-                obj(vec![("z", J::Num(1.0)), ("a", J::Str("x".into()))]),
-            ),
-        ]);
-        let normalized = checks::run_input(run_input).unwrap();
-        assert_eq!(normalized["score"], json!(12));
-        assert_eq!(
-            serde_json::to_string(&normalized["detail"]).unwrap(),
-            r#"{"z":1,"a":"x"}"#
-        );
     }
 }

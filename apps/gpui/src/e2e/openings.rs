@@ -211,7 +211,7 @@ fn loop_until_saved(app: &mut Harness) -> String {
     app.wait_for("the study to be saved", |_, _| {
         shown = core
             .request_now(kchess_contracts::calls::Library {})
-            .map(|library| library.to_string())
+            .map(|library| serde_json::json!(library).to_string())
             .unwrap_or_default();
         shown.contains("King's Gambit")
     });
@@ -305,7 +305,7 @@ fn forgotten_mistakes_come_back_with_undo(cx: &mut gpui_kit::TestAppContext) {
         .update(|cx| cx.global::<crate::core::AppCore>().bridge.clone());
     let misses = move || {
         core.request_now(kchess_contracts::calls::Library {})
-            .map(|library| library["repertoireMisses"].to_string())
+            .map(|library| library.repertoire_misses.to_string())
             .unwrap_or_default()
     };
     app.wait_for("the miss to be kept", |_, _| misses().contains("rnbqkbnr"));
@@ -376,8 +376,7 @@ fn missed_lines_are_due_for_review_and_right_ones_wait(cx: &mut gpui_kit::TestAp
     let card = move || {
         core.request_now(kchess_contracts::calls::Library {})
             .map(|library| {
-                library["repertoireSchedule"]["opening:King's Gambit:white"]["e2e4 e7e5 f2f4"]
-                    .clone()
+                library.repertoire_schedule["opening:King's Gambit:white"]["e2e4 e7e5 f2f4"].clone()
             })
             .unwrap_or_default()
     };

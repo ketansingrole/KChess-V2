@@ -9,7 +9,7 @@ use super::sql::{Sql as _, transaction};
 use crate::error::{CoreError, Result};
 use crate::host::{Host, Level};
 use crate::time::now_ms;
-use kchess_contracts::types::{ByGame, ReviewSummary};
+use kchess_contracts::types::{Keyed, ReviewSummary};
 use kchess_domain::js::truthy;
 
 /// `parse` for a stored review or summary: a failure is logged.
@@ -242,8 +242,8 @@ pub fn review_summaries(
     host: &dyn Host,
     db: &Connection,
     ids: &[String],
-) -> Result<ByGame<ReviewSummary>> {
-    let mut result = ByGame::default();
+) -> Result<Keyed<ReviewSummary>> {
+    let mut result = Keyed::default();
     if ids.is_empty() {
         return Ok(result);
     }

@@ -21,15 +21,19 @@ use kchess_domain::{js, replay};
 mod accounts;
 mod ai;
 mod engine;
+mod library;
 mod lookups;
 mod online;
+mod puzzles;
 mod reviews;
 mod studies;
 
 pub use accounts::*;
 pub use ai::*;
+pub use library::*;
 pub use lookups::*;
 pub use online::*;
+pub use puzzles::*;
 pub use reviews::*;
 pub use studies::*;
 
@@ -262,10 +266,15 @@ pub struct Username(pub String);
 impl Validate for Username {
     fn validate(value: J) -> Result<Self, Refusal> {
         let text: String = decode(value, |_| Some(USERNAME))?;
-        let trimmed = js::trim(&text);
-        matches(trimmed, patterns::username, Some(USERNAME), "", "")?;
-        Ok(Username(trimmed.to_owned()))
+        username(&text).map(Username)
     }
+}
+
+/// A Lichess username, trimmed.
+pub fn username(text: &str) -> Result<String, Refusal> {
+    let trimmed = js::trim(text);
+    matches(trimmed, patterns::username, Some(USERNAME), "", "")?;
+    Ok(trimmed.to_owned())
 }
 
 /// A connected account, or empty for none; a name is trimmed.
@@ -346,6 +355,20 @@ impl Validate for PgnText {
         max_chars(&text, 500_000, None, "")?;
         ensure(!text.trim().is_empty(), None, "", || "some text".into())?;
         Ok(PgnText(text))
+    }
+}
+
+/// A stored review's key (`reviewKey`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct ReviewKey(pub String);
+
+impl Validate for ReviewKey {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const INVALID: &str = "Invalid review.";
+        let key: String = decode(value, |_| Some(INVALID))?;
+        matches(&key, patterns::review_key, Some(INVALID), "", "")?;
+        Ok(ReviewKey(key))
     }
 }
 

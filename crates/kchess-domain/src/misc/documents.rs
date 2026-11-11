@@ -485,15 +485,6 @@ pub fn assert_session(args: Vec<J>) -> Result<J, String> {
     decoded.ok_or_else(|| "This session cannot be saved.".to_string())
 }
 
-/// An object; the core service checks its fields.
-pub fn assert_archived_game_shape(args: Vec<J>) -> Result<J, String> {
-    let value = arg(&args, 0);
-    if !value.truthy() || !value.is_object() {
-        return Err("This game cannot be saved.".into());
-    }
-    Ok(value.clone())
-}
-
 /// A document check by the name the core's contracts give it.
 #[cfg(test)]
 mod tests {

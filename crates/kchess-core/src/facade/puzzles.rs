@@ -1,148 +1,132 @@
 //! Puzzles, the puzzle database, training runs and the voice input log.
 
+use kchess_contracts::check::{ActivityMax, Days, PuzzleId, Username, VoiceId, VoiceLimit};
 use kchess_contracts::core_api::PuzzlesApi;
-use serde_json::{Value, json};
+use kchess_contracts::types::{
+    LocalLadderQuery, LocalPuzzleQuery, Puzzle, PuzzleActivityEntry, PuzzleAttemptInput,
+    PuzzleDbStatus, PuzzleDraw, PuzzleProgress, PuzzleProgressQuery, PuzzleRequest,
+    PuzzleSolveRequest, PuzzleSolveResult, Reply, RunInput, RunKind, RunSaved, RunSummary,
+    VoiceAttempt, VoiceAttemptInput, VoiceUpdate,
+};
+use serde_json::Value;
 
 use super::PUZZLE_DB_URL;
-use super::args::{count, parse, reply_json, text, to_json};
 use crate::core::Core;
-use crate::error::{CoreError, Result};
+use crate::error::Result;
 use crate::lichess::puzzles as lichess;
 use crate::store::{runs, voice_log};
 
 impl PuzzlesApi for Core {
-    async fn puzzle_next(&self, request: Value) -> Result<Value> {
-        let request = parse(request, "request")?;
-        reply_json(lichess::puzzle_next(self.services.lichess(), &request).await)
+    async fn puzzle_next(&self, request: PuzzleRequest) -> Result<Reply<PuzzleDraw>> {
+        lichess::puzzle_next(self.services.lichess(), &request).await
     }
 
-    async fn puzzle_solve(&self, request: Value) -> Result<Value> {
-        let request = parse(request, "request")?;
-        reply_json(lichess::puzzle_solve(self.services.lichess(), &request).await)
+    async fn puzzle_solve(&self, request: PuzzleSolveRequest) -> Result<Reply<PuzzleSolveResult>> {
+        lichess::puzzle_solve(self.services.lichess(), &request).await
     }
 
-    async fn puzzle_daily(&self) -> Result<Value> {
+    async fn puzzle_daily(&self) -> Result<Puzzle> {
         lichess::puzzle_daily(self.services.lichess()).await
     }
 
-    async fn puzzle_by_id(&self, id: Value) -> Result<Value> {
-        lichess::puzzle_by_id(self.services.lichess(), &text(&id)).await
+    async fn puzzle_by_id(&self, id: PuzzleId) -> Result<Puzzle> {
+        lichess::puzzle_by_id(self.services.lichess(), &id.0).await
     }
 
-    async fn puzzle_dashboard(&self, account: Value, days: Value) -> Result<Value> {
-        let (account, days) = (text(&account), count(&days, 2)?);
-        reply_json(lichess::puzzle_dashboard(self.services.lichess(), &account, days).await)
+    async fn puzzle_dashboard(&self, account: Username, days: Days) -> Result<Reply<Value>> {
+        lichess::puzzle_dashboard(self.services.lichess(), &account.0, days.0).await
     }
 
-    async fn puzzle_activity(&self, account: Value, max: Value) -> Result<Value> {
-        let (account, max) = (text(&account), count(&max, 2)?);
-        reply_json(lichess::puzzle_activity(self.services.lichess(), &account, max).await)
+    async fn puzzle_activity(
+        &self,
+        account: Username,
+        max: ActivityMax,
+    ) -> Result<Reply<Vec<PuzzleActivityEntry>>> {
+        lichess::puzzle_activity(self.services.lichess(), &account.0, max.0).await
     }
 
-    async fn storm_dashboard(&self, username: Value, days: Value) -> Result<Value> {
-        let (name, days) = (text(&username), count(&days, 2)?);
-        lichess::storm_dashboard(self.services.lichess(), &name, days).await
+    async fn storm_dashboard(&self, username: Username, days: Days) -> Result<Value> {
+        lichess::storm_dashboard(self.services.lichess(), &username.0, days.0).await
     }
 
-    async fn puzzle_db_status(&self) -> Result<Value> {
-        to_json(self.puzzles.status().await)
+    async fn puzzle_db_status(&self) -> Result<PuzzleDbStatus> {
+        self.puzzles.status().await
     }
 
-    async fn puzzle_db_install(&self) -> Result<Value> {
-        to_json(self.puzzles.install(PUZZLE_DB_URL.into()).await)
+    async fn puzzle_db_install(&self) -> Result<PuzzleDbStatus> {
+        self.puzzles.install(PUZZLE_DB_URL.into()).await
     }
 
-    async fn puzzle_db_cancel(&self) -> Result<Value> {
+    async fn puzzle_db_cancel(&self) -> Result<()> {
         self.puzzles.cancel();
-        Ok(Value::Null)
+        Ok(())
     }
 
-    async fn puzzle_db_delete(&self) -> Result<Value> {
-        to_json(self.puzzles.delete().await)
+    async fn puzzle_db_delete(&self) -> Result<PuzzleDbStatus> {
+        self.puzzles.delete().await
     }
 
-    async fn local_puzzles(&self, query: Value) -> Result<Value> {
-        let query = parse(query, "query")?;
-        to_json(self.puzzles.query(query).await)
+    async fn local_puzzles(&self, query: LocalPuzzleQuery) -> Result<Vec<Puzzle>> {
+        self.puzzles.query(query).await
     }
 
-    async fn local_ladder(&self, query: Value) -> Result<Value> {
-        let query = parse(query, "query")?;
-        to_json(self.puzzles.ladder(query).await)
+    async fn local_ladder(&self, query: LocalLadderQuery) -> Result<Vec<Puzzle>> {
+        self.puzzles.ladder(query).await
     }
 
-    async fn record_puzzle_attempt(&self, attempt: Value) -> Result<Value> {
-        let attempt = parse(attempt, "attempt")?;
-        to_json(self.puzzles.record_attempt(attempt).await)
+    async fn record_puzzle_attempt(&self, attempt: PuzzleAttemptInput) -> Result<PuzzleProgress> {
+        self.puzzles.record_attempt(attempt).await
     }
 
-    async fn puzzle_progress(&self, query: Value) -> Result<Value> {
-        let query = parse(query, "query")?;
-        to_json(self.puzzles.progress(query).await)
+    async fn puzzle_progress(&self, query: PuzzleProgressQuery) -> Result<PuzzleProgress> {
+        self.puzzles.progress(query).await
     }
 
-    async fn save_run(&self, run: Value) -> Result<Value> {
+    async fn save_run(&self, run: RunInput) -> Result<RunSaved> {
         self.database
             .write_async(move |ctx| runs::save_run(ctx.host, ctx.db, &run))
             .await
     }
 
-    async fn run_summary(&self, kind: Value) -> Result<Value> {
-        let kind = text(&kind);
+    async fn run_summary(&self, kind: RunKind) -> Result<RunSummary> {
         self.database
-            .read_async(move |ctx| runs::run_summary(ctx.host, ctx.db, &kind))
+            .read_async(move |ctx| runs::run_summary(ctx.host, ctx.db, kind))
             .await
     }
 
-    async fn clear_runs(&self, kind: Option<Value>) -> Result<Value> {
-        let kind = kind.as_ref().and_then(Value::as_str).map(str::to_string);
+    async fn clear_runs(&self, kind: Option<RunKind>) -> Result<()> {
         self.database
-            .write_async(move |ctx| runs::clear_runs(ctx.db, kind.as_deref()))
-            .await?;
-        Ok(Value::Null)
+            .write_async(move |ctx| runs::clear_runs(ctx.db, kind))
+            .await
     }
 
-    async fn save_voice_attempt(&self, attempt: Value) -> Result<Value> {
-        let id = self
-            .database
+    async fn save_voice_attempt(&self, attempt: VoiceAttemptInput) -> Result<i64> {
+        self.database
             .write_async(move |ctx| voice_log::save_voice_attempt(ctx.db, &attempt))
-            .await?;
-        Ok(json!(id))
-    }
-
-    async fn update_voice_attempt(&self, id: Value, update: Value) -> Result<Value> {
-        let id = id
-            .as_i64()
-            .ok_or_else(|| CoreError::new("id must be a number"))?;
-        self.database
-            .write_async(move |ctx| voice_log::update_voice_attempt(ctx.db, id, &update))
-            .await?;
-        Ok(Value::Null)
-    }
-
-    async fn voice_history(&self, limit: Value) -> Result<Value> {
-        let limit = limit
-            .as_i64()
-            .ok_or_else(|| CoreError::new("limit must be a number"))?;
-        self.database
-            .read_async(move |ctx| {
-                voice_log::voice_history(ctx.host, ctx.db, limit).map(Value::Array)
-            })
             .await
     }
 
-    async fn clear_voice_history(&self) -> Result<Value> {
+    async fn update_voice_attempt(&self, id: VoiceId, update: VoiceUpdate) -> Result<()> {
+        self.database
+            .write_async(move |ctx| voice_log::update_voice_attempt(ctx.db, id.0, &update))
+            .await
+    }
+
+    async fn voice_history(&self, limit: VoiceLimit) -> Result<Vec<VoiceAttempt>> {
+        self.database
+            .read_async(move |ctx| voice_log::voice_history(ctx.host, ctx.db, limit.0))
+            .await
+    }
+
+    async fn clear_voice_history(&self) -> Result<()> {
         self.database
             .write_async(|ctx| voice_log::clear_voice_history(ctx.db))
-            .await?;
-        Ok(Value::Null)
+            .await
     }
 
-    async fn voice_history_document(&self) -> Result<Value> {
+    async fn voice_history_document(&self) -> Result<String> {
         self.database
-            .read_async(|ctx| {
-                voice_log::voice_history_document(ctx.host, ctx.db).map(Value::String)
-            })
+            .read_async(|ctx| voice_log::voice_history_document(ctx.host, ctx.db))
             .await
     }
 }

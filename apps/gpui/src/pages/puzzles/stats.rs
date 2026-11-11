@@ -9,7 +9,8 @@ use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
-use kchess_contracts::check::Username;
+use kchess_contracts::check::{Days, Username};
+use kchess_contracts::types::Reply;
 use serde_json::{Value, json};
 
 use super::{Theme, theme_name};
@@ -229,7 +230,6 @@ impl PuzzleStats {
         cx.notify();
         let days = crate::prefs::get::<u32>(cx, DAYS, 30);
         let core = cx.global::<AppCore>().clone();
-        let name = json!(who);
         let calls = (
             core.request(calls::Profile {
                 username: Username(who.clone()),
@@ -238,12 +238,12 @@ impl PuzzleStats {
                 username: Username(who.clone()),
             }),
             core.request(calls::PuzzleDashboard {
-                account: name.clone(),
-                days: json!(days),
+                account: Username(who.clone()),
+                days: Days(days),
             }),
             core.request(calls::StormDashboard {
-                username: name,
-                days: json!(30),
+                username: Username(who.clone()),
+                days: Days(30),
             }),
         );
         cx.spawn(async move |this, cx| {
@@ -257,11 +257,11 @@ impl PuzzleStats {
                 this.history = history.unwrap_or(Value::Null);
                 this.storm = storm.unwrap_or(Value::Null);
                 match dashboard {
-                    Ok(board) if kchess_domain::trainer::puzzle_session::is_reconnect(&board) => {
+                    Ok(Reply::NeedsReconnect) => {
                         this.dashboard = Value::Null;
                         this.reconnect = true;
                     }
-                    Ok(board) => this.dashboard = board,
+                    Ok(Reply::Done(board)) => this.dashboard = board,
                     Err(cause) => {
                         this.dashboard = Value::Null;
                         this.loading.failed("puzzles", &cause);

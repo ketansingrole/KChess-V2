@@ -11,8 +11,8 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde::Deserialize;
-use serde_json::json;
+use kchess_contracts::check::VoiceLimit;
+use kchess_contracts::types::VoiceAttempt;
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -26,15 +26,14 @@ const LIMIT: usize = 2000;
 const SHOWN: usize = 40;
 const MORE: usize = 80;
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Word {
     pub word: String,
     pub conf: f64,
 }
 
 /// One logged phrase (`VoiceAttempt`).
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase", default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Entry {
     pub id: f64,
     pub at: f64,
@@ -45,6 +44,30 @@ pub struct Entry {
     pub parsed: Option<String>,
     pub expected: Option<String>,
     pub retry_of: Option<f64>,
+}
+
+impl From<VoiceAttempt> for Entry {
+    fn from(attempt: VoiceAttempt) -> Entry {
+        let input = attempt.input;
+        Entry {
+            id: attempt.id as f64,
+            at: attempt.at as f64,
+            heard: input.heard,
+            confidence: input.confidence,
+            words: input
+                .words
+                .into_iter()
+                .map(|word| Word {
+                    word: word.word,
+                    conf: word.conf,
+                })
+                .collect(),
+            outcome: input.outcome.as_str().to_string(),
+            parsed: input.parsed,
+            expected: input.expected,
+            retry_of: input.retry_of.map(|id| id as f64),
+        }
+    }
 }
 
 fn outcome_label(outcome: &str) -> &'static str {
@@ -216,14 +239,14 @@ impl VoiceHistory {
         self.loading = true;
         self.error = None;
         let read = cx.global::<AppCore>().request(calls::VoiceHistory {
-            limit: json!(LIMIT),
+            limit: VoiceLimit(LIMIT as u32),
         });
         cx.spawn(async move |this, cx| {
             let read = read.await;
             let _ = this.update(cx, |this, cx| {
                 this.loading = false;
                 match read {
-                    Ok(list) => this.entries = serde_json::from_value(list).unwrap_or_default(),
+                    Ok(list) => this.entries = list.into_iter().map(Entry::from).collect(),
                     Err(cause) => {
                         crate::log::write(
                             kchess_contracts::Level::Warn,
@@ -252,7 +275,6 @@ impl VoiceHistory {
                         "kchess-voice-history-{}.json",
                         chrono::Local::now().format("%Y-%m-%d")
                     );
-                    let text = text.as_str().unwrap_or_default().to_string();
                     match cx.update(|_, cx| crate::export::save_text(&name, text, cx)) {
                         Ok(saving) => saving.await,
                         Err(_) => None,

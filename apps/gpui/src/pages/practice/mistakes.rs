@@ -10,8 +10,9 @@ use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_contracts::check::LibraryId;
+use kchess_contracts::types::MistakeGame;
 use serde_json::{Value, json};
-use shakmaty::Color;
 
 use crate::assets::icon;
 use crate::core::AppCore;
@@ -55,12 +56,12 @@ fn puzzle(item: &Value) -> Value {
 }
 
 /// A game's title: your opponent when your side is known, else the players.
-fn title(game: &Value) -> String {
+fn title(game: &MistakeGame) -> String {
     let (white, black) = (
-        game["white"].as_str().unwrap_or_default(),
-        game["black"].as_str().unwrap_or_default(),
+        game.white.as_deref().unwrap_or_default(),
+        game.black.as_deref().unwrap_or_default(),
     );
-    match game["player"].as_str() {
+    match game.player.map(|player| player.fold_wb("white", "black")) {
         Some(player) => {
             let opponent = if player == "white" { black } else { white };
             if opponent.is_empty() {
@@ -108,7 +109,7 @@ pub struct Mistakes {
     loading: bool,
     /// Each load of the overview; an answer to an earlier one is dropped.
     load: u64,
-    games: Vec<Value>,
+    games: Vec<MistakeGame>,
     error: Option<String>,
     has_accounts: bool,
     /// The drill on the board, or none on the home view.
@@ -191,13 +192,13 @@ impl Mistakes {
                 match library {
                     // A failure to load is the last load's: one that worked clears it.
                     Ok(library) => {
-                        this.items = library["mistakes"].as_array().cloned().unwrap_or_default();
+                        this.items = library.mistakes;
                         this.error = None;
                     }
                     Err(cause) => this.error = Some(cause.message),
                 }
                 match games {
-                    Ok(games) => this.games = games.as_array().cloned().unwrap_or_default(),
+                    Ok(games) => this.games = games,
                     Err(cause) => crate::log::write(
                         Level::Warn,
                         "mistake-trainer",
@@ -297,15 +298,15 @@ impl Mistakes {
     /// Schedule the drill again: sooner when it went wrong.
     fn answered(&mut self, id: &str, clean: bool, cx: &mut Context<Self>) {
         let answer = cx.global::<AppCore>().request(calls::AnswerMistake {
-            id: json!(id),
-            solved: json!(clean),
+            id: LibraryId(id.to_string()),
+            solved: clean,
         });
         cx.spawn(async move |this, cx| {
             let answer = answer.await;
             let _ = this.update(cx, |this, cx| {
                 match answer {
                     Ok(items) => {
-                        this.items = items.as_array().cloned().unwrap_or_default();
+                        this.items = items;
                         this.error = None;
                     }
                     Err(cause) => {
@@ -442,7 +443,7 @@ impl Mistakes {
             .take(shown)
             .enumerate()
             .map(|(index, game)| {
-                let key = game["key"].as_str().unwrap_or_default();
+                let key = game.key.as_str();
                 let items: Vec<&Value> = self
                     .items
                     .iter()
@@ -452,7 +453,7 @@ impl Mistakes {
                 let positions = items.len();
                 let sub = format!(
                     "{} · {positions} {}{}",
-                    crate::game::game_date(game["playedAt"].as_f64().unwrap_or_default()),
+                    crate::game::game_date(game.played_at),
                     if positions == 1 {
                         "position"
                     } else {
@@ -464,11 +465,7 @@ impl Mistakes {
                         String::new()
                     }
                 );
-                let side = match game["player"].as_str() {
-                    Some("white") => Some(Color::White),
-                    Some("black") => Some(Color::Black),
-                    _ => None,
-                };
+                let side = game.player;
                 h_flex()
                     .gap(px(8.))
                     .py(px(8.))
@@ -523,9 +520,7 @@ impl Mistakes {
                             .accessibility_label(format!(
                                 "Practice {}, {}",
                                 title(game),
-                                crate::game::game_date(
-                                    game["playedAt"].as_f64().unwrap_or_default()
-                                )
+                                crate::game::game_date(game.played_at)
                             ))
                             .on_click(move |_, window, cx| {
                                 crate::pages::analysis::practise_game(
@@ -701,8 +696,8 @@ impl Render for Mistakes {
 
 #[cfg(test)]
 mod tests {
-    use super::{judgment_counts, title};
-    use serde_json::json;
+    use super::{MistakeGame, judgment_counts, title};
+    use serde_json::{Value, json};
 
     /// A failed load's error stayed on the overview after a later load worked.
     #[gpui_kit::test]
@@ -724,11 +719,18 @@ mod tests {
 
     #[test]
     fn a_game_is_named_by_your_opponent() {
-        let game = json!({ "white": "You", "black": "Stockfish", "player": "white" });
-        assert_eq!(title(&game), "vs Stockfish");
-        assert_eq!(title(&json!({ "player": "black" })), "You as black");
-        assert_eq!(title(&json!({ "white": "A", "black": "B" })), "A – B");
-        assert_eq!(title(&json!({})), "Analysis board game");
+        let game = |value: Value| -> MistakeGame {
+            let mut game = json!({ "key": "k", "fen": "", "moves": [], "playedAt": 0 });
+            game.as_object_mut()
+                .expect("an object")
+                .extend(value.as_object().cloned().unwrap_or_default());
+            serde_json::from_value(game).expect("a game")
+        };
+        let played = game(json!({ "white": "You", "black": "Stockfish", "player": "white" }));
+        assert_eq!(title(&played), "vs Stockfish");
+        assert_eq!(title(&game(json!({ "player": "black" }))), "You as black");
+        assert_eq!(title(&game(json!({ "white": "A", "black": "B" }))), "A – B");
+        assert_eq!(title(&game(json!({}))), "Analysis board game");
     }
 
     #[test]

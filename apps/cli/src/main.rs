@@ -309,7 +309,7 @@ async fn with_core(
             core.request(calls::SaveSettings { settings }).await?;
         }
         match command {
-            Command::Library => print(&core.request(calls::Library {}).await?),
+            Command::Library => print(json!(core.request(calls::Library {}).await?)),
             Command::Status => {
                 let data = core.request(calls::LoadData {}).await?;
                 let engine = core.request(calls::EngineStatus { variant: None }).await?;

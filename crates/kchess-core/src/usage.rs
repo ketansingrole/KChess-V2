@@ -9,12 +9,14 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use serde_json::{Map, Value, json};
+#[cfg(test)]
+use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 
 use crate::error::Result;
 use crate::host::{Host, Level};
 use crate::store::{self, Database, usage::UsageRow};
+use kchess_contracts::types::UsageReport;
 
 /// How long counters wait in memory before they are written.
 pub const FLUSH_EVERY: Duration = Duration::from_secs(5);
@@ -148,28 +150,22 @@ impl UsageBatch {
 
     /// `usageReport`: the pending counters are written first, then the stored report with the
     /// size of the databases on disk.
-    pub async fn report(&self) -> Result<Value> {
+    pub async fn report(&self) -> Result<UsageReport> {
         self.flush().await;
-        let report = self.database.read_async(store::usage::usage_report).await?;
-        let mut object: Map<String, Value> = match report {
-            Value::Object(object) => object,
-            _ => Map::new(),
-        };
+        let mut report = self.database.read_async(store::usage::usage_report).await?;
         let dir = self.data_dir.clone();
-        let db_bytes = tokio::task::spawn_blocking(move || database_bytes(&dir))
+        report.db_bytes = tokio::task::spawn_blocking(move || database_bytes(&dir))
             .await
             .map_err(|cause| crate::error::CoreError::wrap("Database size check failed", cause))?;
-        object.insert("dbBytes".into(), json!(db_bytes));
-        Ok(Value::Object(object))
+        Ok(report)
     }
 
     /// `resetUsage`: the pending counters and the stored ones are cleared.
-    pub async fn reset(&self) -> Result<Value> {
+    pub async fn reset(&self) -> Result<()> {
         lock(&self.pending).cells.clear();
         self.database
             .write_async(|ctx| store::usage::reset_usage(ctx.db))
-            .await?;
-        Ok(Value::Null)
+            .await
     }
 
     /// `closeUsage`: stops the timer and drops what is pending.
@@ -271,7 +267,7 @@ mod tests {
         batch.record("alice", "profile", 2, 50);
         batch.record("Alice", "games", 1, 10);
         batch.record("Bob", "games", 3, 7);
-        let report = batch.report().await.expect("report");
+        let report = json!(batch.report().await.expect("report"));
         let alice = &report["accounts"]["alice"];
         assert_eq!(alice["total"], json!({ "requests": 4, "bytesIn": 160 }));
         assert_eq!(
@@ -297,7 +293,7 @@ mod tests {
         batch.record("Alice", "games", 1, 10);
         batch.record("Bob", "games", 1, 20);
         batch.forget(&["ALICE".to_string()]);
-        let report = batch.report().await.expect("report");
+        let report = json!(batch.report().await.expect("report"));
         assert!(report["accounts"].get("alice").is_none());
         assert_eq!(report["accounts"]["bob"]["total"]["bytesIn"], json!(20));
     }
@@ -311,7 +307,7 @@ mod tests {
         batch.flush().await;
         batch.record("Alice", "games", 1, 10);
         batch.reset().await.expect("reset");
-        let report = batch.report().await.expect("report");
+        let report = json!(batch.report().await.expect("report"));
         assert!(
             report["accounts"]
                 .as_object()

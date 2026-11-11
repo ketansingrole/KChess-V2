@@ -9,11 +9,10 @@
 
 use serde_json::Value;
 
-use kchess_domain::misc::checks as c;
 use kchess_domain::misc::value::J;
 
 pub use crate::api::{Assist, Method, Param, as_checked};
-use crate::api::{Optional, Raw, answer, core_api, count_error, run_check, take};
+use crate::api::{answer, core_api, count_error, take};
 use crate::check::*;
 use crate::error::CoreError;
 use crate::types::*;
@@ -41,16 +40,16 @@ core_api! {
         LichessStudyChapters = "lichessStudyChapters" fn lichess_study_chapters(
             account: Username,
             id: LichessId
-        ) -> Reply<Vec<crate::types::LichessStudyChapter>>;
+        ) -> Reply<Vec<crate::types::ChapterInput>>;
         /// One chapter of a public study, its first when chapter is empty.
         LichessStudyChapter = "lichessStudyChapter" fn lichess_study_chapter(
             id: LichessId,
             chapter: StudyId
-        ) -> crate::types::LichessStudyChapter;
+        ) -> crate::types::ChapterInput;
         /// Upload a linked study's edits to Lichess; answers its chapters as Lichess holds them.
         SyncLichessStudy = "syncLichessStudy" fn sync_lichess_study(
             request: StudySyncRequest
-        ) -> Reply<Vec<crate::types::LichessStudyChapter>>;
+        ) -> Reply<Vec<crate::types::ChapterInput>>;
         /// Add a PGN as a chapter of a Lichess study (a new private one when `studyId` is empty).
         ExportToLichessStudy = "exportToLichessStudy" fn export_to_lichess_study(
             account: Username,
@@ -248,7 +247,7 @@ core_api! {
         ReviewCancel = "reviewCancel" fn review_cancel(key: ReviewKey) -> ();
         ReviewStatus = "reviewStatus" fn review_status() -> crate::types::ReviewStatus;
         /// Review summaries of up to one history page of games, by game id.
-        ReviewSummaries = "reviewSummaries" fn review_summaries(ids: GameIds) -> ByGame<ReviewSummary>;
+        ReviewSummaries = "reviewSummaries" fn review_summaries(ids: GameIds) -> Keyed<ReviewSummary>;
         /// Trusts the Stockfish executable at `path`, chosen with the file picker.
         TrustEnginePath = "trustEnginePath" fn trust_engine_path(path: String) -> ();
     }
@@ -406,72 +405,76 @@ core_api! {
     /// Puzzles, the puzzle database, training runs and the voice input log.
     trait PuzzlesApi {
         /// Lichess puzzle training. Rated results change the account's Lichess puzzle rating.
-        PuzzleNext = "puzzleNext" fn puzzle_next(request: Value = c::puzzle_request) -> Value;
+        PuzzleNext = "puzzleNext" fn puzzle_next(
+            request: crate::types::PuzzleRequest
+        ) -> Reply<PuzzleDraw>;
         /// Report a puzzle result to Lichess (needs `puzzle:write`).
         #[writes(Puzzles)]
-        PuzzleSolve = "puzzleSolve" fn puzzle_solve(request: Value = c::puzzle_solve) -> Value;
+        PuzzleSolve = "puzzleSolve" fn puzzle_solve(
+            request: PuzzleSolveRequest
+        ) -> Reply<PuzzleSolveResult>;
         /// The daily puzzle; public, nothing is recorded.
-        PuzzleDaily = "puzzleDaily" fn puzzle_daily() -> Value;
+        PuzzleDaily = "puzzleDaily" fn puzzle_daily() -> Puzzle;
         /// One puzzle by its Lichess id; public, nothing is recorded.
-        PuzzleById = "puzzleById" fn puzzle_by_id(id: Value = c::puzzle_id) -> Value;
-        /// Read-only: the account's puzzle dashboard.
+        PuzzleById = "puzzleById" fn puzzle_by_id(id: PuzzleId) -> Puzzle;
+        /// Read-only: the account's puzzle dashboard, as Lichess reports it.
         PuzzleDashboard = "puzzleDashboard" fn puzzle_dashboard(
-            account: Value = c::username,
-            days: Value = c::days
-        ) -> Value;
+            account: Username,
+            days: Days
+        ) -> Reply<Value>;
         /// Read-only: the account's most recent puzzle attempts.
         PuzzleActivity = "puzzleActivity" fn puzzle_activity(
-            account: Value = c::username,
-            max: Value = c::activity_max
-        ) -> Value;
-        /// Read-only: anyone's public Storm dashboard.
+            account: Username,
+            max: ActivityMax
+        ) -> Reply<Vec<PuzzleActivityEntry>>;
+        /// Read-only: anyone's public Storm dashboard, as Lichess reports it.
         StormDashboard = "stormDashboard" fn storm_dashboard(
-            username: Value = c::username,
-            days: Value = c::days
+            username: Username,
+            days: Days
         ) -> Value;
         /// Local puzzle database (downloaded from database.lichess.org).
-        PuzzleDbStatus = "puzzleDbStatus" fn puzzle_db_status() -> Value;
+        PuzzleDbStatus = "puzzleDbStatus" fn puzzle_db_status() -> crate::types::PuzzleDbStatus;
         #[writes(Puzzles)]
-        PuzzleDbInstall = "puzzleDbInstall" fn puzzle_db_install() -> Value;
-        PuzzleDbCancel = "puzzleDbCancel" fn puzzle_db_cancel() -> Value;
+        PuzzleDbInstall = "puzzleDbInstall" fn puzzle_db_install() -> crate::types::PuzzleDbStatus;
+        PuzzleDbCancel = "puzzleDbCancel" fn puzzle_db_cancel() -> ();
         #[writes(Puzzles)]
-        PuzzleDbDelete = "puzzleDbDelete" fn puzzle_db_delete() -> Value;
-        LocalPuzzles = "localPuzzles" fn local_puzzles(query: Value = c::local_query) -> Value;
+        PuzzleDbDelete = "puzzleDbDelete" fn puzzle_db_delete() -> crate::types::PuzzleDbStatus;
+        LocalPuzzles = "localPuzzles" fn local_puzzles(query: LocalPuzzleQuery) -> Vec<Puzzle>;
         /// Puzzles of rising difficulty, for Storm, Streak and Rush.
-        LocalLadder = "localLadder" fn local_ladder(query: Value = c::ladder_query) -> Value;
+        LocalLadder = "localLadder" fn local_ladder(query: LocalLadderQuery) -> Vec<Puzzle>;
         /// Local training log (Practice, Downloaded and Rated attempts), kept in the puzzle
         /// database. It never leaves this computer.
         #[writes(Puzzles)]
         RecordPuzzleAttempt = "recordPuzzleAttempt" fn record_puzzle_attempt(
-            attempt: Value = c::puzzle_attempt
-        ) -> Value;
+            attempt: PuzzleAttemptInput
+        ) -> crate::types::PuzzleProgress;
         PuzzleProgress = "puzzleProgress" fn puzzle_progress(
-            query: Value = c::puzzle_progress_query
-        ) -> Value;
+            query: PuzzleProgressQuery
+        ) -> crate::types::PuzzleProgress;
         /// Local scores (Storm, Streak, Rush and the practice drills). They never leave this
         /// computer.
         #[writes(Puzzles)]
-        SaveRun = "saveRun" fn save_run(run: Value = c::run_input) -> Value;
-        RunSummary = "runSummary" fn run_summary(kind: Value = c::run_kind) -> Value;
+        SaveRun = "saveRun" fn save_run(run: RunInput) -> RunSaved;
+        RunSummary = "runSummary" fn run_summary(kind: RunKind) -> crate::types::RunSummary;
         #[writes(Puzzles)]
-        ClearRuns = "clearRuns" fn clear_runs(; kind: Option<Value> = Optional(c::run_kind)) -> Value;
+        ClearRuns = "clearRuns" fn clear_runs(; kind: Option<RunKind>) -> ();
         /// Local log of voice input (Settings › Voice). It never leaves this computer unless
-        /// exported.
+        /// exported. Answers the new entry's id.
         #[writes(VoiceHistory)]
         SaveVoiceAttempt = "saveVoiceAttempt" fn save_voice_attempt(
-            attempt: Value = c::voice_attempt
-        ) -> Value;
+            attempt: VoiceAttemptInput
+        ) -> i64;
         #[writes(VoiceHistory)]
         UpdateVoiceAttempt = "updateVoiceAttempt" fn update_voice_attempt(
-            id: Value = c::voice_id,
-            update: Value = c::voice_update
-        ) -> Value;
+            id: VoiceId,
+            update: VoiceUpdate
+        ) -> ();
         /// Newest first.
-        VoiceHistory = "voiceHistory" fn voice_history(limit: Value = c::voice_limit) -> Value;
+        VoiceHistory = "voiceHistory" fn voice_history(limit: VoiceLimit) -> Vec<VoiceAttempt>;
         #[writes(VoiceHistory)]
-        ClearVoiceHistory = "clearVoiceHistory" fn clear_voice_history() -> Value;
+        ClearVoiceHistory = "clearVoiceHistory" fn clear_voice_history() -> ();
         /// The voice input log as a document to export.
-        VoiceHistoryDocument = "voiceHistoryDocument" fn voice_history_document() -> Value;
+        VoiceHistoryDocument = "voiceHistoryDocument" fn voice_history_document() -> String;
     }
 
     /// Offline speech recognition and its model.
@@ -498,86 +501,86 @@ core_api! {
     trait LibraryApi {
         /// The local library as saved: studies, played games, drills, sessions and training
         /// notes.
-        Library = "library" fn library() -> Value;
+        Library = "library" fn library() -> crate::types::Library;
+        /// One change to the studies. `incremental` answers only the studies it changed;
+        /// `based_on` is the chapter's PGN as the window last read it, so a save over a change
+        /// made elsewhere is refused.
         #[writes(Studies)]
         StudyCommand = "studyCommand" fn study_command(
-            command: Value = c::study_command_shape;
-            incremental: Option<Value> = Optional(Raw(c::boolean)),
-            based_on: Option<Value> = Optional(Raw(c::pgn_text))
-        ) -> Value;
+            command: crate::types::StudyCommand;
+            incremental: Option<bool>,
+            based_on: Option<PgnText>
+        ) -> StudyCommandResult;
         /// Add or replace a played game; it becomes the most recent.
         #[writes(PlayedGames)]
-        SaveArchivedGame = "saveArchivedGame" fn save_archived_game(
-            game: Value = c::archived_game_shape
-        ) -> Value;
+        SaveArchivedGame = "saveArchivedGame" fn save_archived_game(game: ArchivedGame) -> ();
         #[writes(PlayedGames)]
         RemoveArchivedGame = "removeArchivedGame" fn remove_archived_game(id: LibraryId) -> ();
         /// Drills from a stored review's mistakes (one side's, when given); `added` counts new
         /// ones.
         #[writes(Drills)]
         AddMistakes = "addMistakes" fn add_mistakes(
-            review_key: Value = c::review_key;
-            color: Option<Value> = Optional(c::side)
-        ) -> Value;
+            review_key: ReviewKey;
+            color: Option<Side>
+        ) -> MistakesAdded;
+        /// Schedule a drill again; answers every drill.
         #[writes(Drills)]
-        AnswerMistake = "answerMistake" fn answer_mistake(
-            id: Value = c::library_id,
-            solved: Value = c::boolean
-        ) -> Value;
+        AnswerMistake = "answerMistake" fn answer_mistake(id: LibraryId, solved: bool) -> Vec<Value>;
         /// The reviewed games with positions in practice, most recently played first.
-        MistakeGames = "mistakeGames" fn mistake_games() -> Value;
+        MistakeGames = "mistakeGames" fn mistake_games() -> Vec<MistakeGame>;
         /// Keep an unfinished game or analysis so it can be resumed.
         #[writes(Sessions)]
         SaveSession = "saveSession" fn save_session(
-            kind: Value = c::session_kind,
-            session: Value = Raw(c::session_object)
-        ) -> Value;
+            kind: SessionKind,
+            session: SessionObject
+        ) -> ();
         /// Tournaments joined from KChess that have not ended.
-        JoinedTournaments = "joinedTournaments" fn joined_tournaments() -> Value;
+        JoinedTournaments = "joinedTournaments" fn joined_tournaments() -> Vec<Value>;
         /// The unfinished game or analysis of this kind kept to resume, or null; the library's
         /// `sessions` alone.
-        Session = "session" fn session(kind: Value = c::session_kind) -> Value;
+        Session = "session" fn session(kind: SessionKind) -> Option<Value>;
         /// The mistake drills; the library's `mistakes` alone.
-        Mistakes = "mistakes" fn mistakes() -> Value;
+        Mistakes = "mistakes" fn mistakes() -> Vec<Value>;
+        /// Answers every repertoire's missed positions.
         #[writes(Repertoire)]
         RecordRepertoireMiss = "recordRepertoireMiss" fn record_repertoire_miss(
-            key: Value = c::repertoire_key,
-            fen: Value = c::position
+            key: RepertoireKey,
+            fen: Position
         ) -> Value;
         #[writes(Repertoire)]
         ClearRepertoireMisses = "clearRepertoireMisses" fn clear_repertoire_misses(
-            key: Value = c::repertoire_key
+            key: RepertoireKey
         ) -> Value;
         /// Put back a cleared repertoire's misses (Undo), added to any recorded since.
         #[writes(Repertoire)]
         RestoreRepertoireMisses = "restoreRepertoireMisses" fn restore_repertoire_misses(
-            key: Value = c::repertoire_key,
-            misses: Value = Raw(c::session_object)
+            key: RepertoireKey,
+            misses: MissCounts
         ) -> Value;
         /// Answer a repertoire line right or wrong; its spaced-repetition schedule moves on.
         /// Returns every repertoire's schedule.
         #[writes(Repertoire)]
         ReviewRepertoireLine = "reviewRepertoireLine" fn review_repertoire_line(
-            key: Value = c::repertoire_key,
-            line: Value = c::repertoire_line,
-            correct: Value = c::boolean
+            key: RepertoireKey,
+            line: RepertoireLine,
+            correct: bool
         ) -> Value;
         /// How each page was last left (tabs, filters, toggles), by `kchess:` preference name.
-        ViewPreferences = "viewPreferences" fn view_preferences() -> Value;
+        ViewPreferences = "viewPreferences" fn view_preferences() -> serde_json::Map<String, Value>;
         /// Remember a view preference for every KChess app on this profile; null forgets it.
         #[writes(ViewPreferences)]
         SetViewPreference = "setViewPreference" fn set_view_preference(
-            key: Value = c::view_preference_key,
-            value: Value = c::any
-        ) -> Value;
+            key: ViewPreferenceKey;
+            value: Option<Value>
+        ) -> ();
     }
 
     /// Network usage and the user's themes.
     trait SystemApi {
         /// Data downloaded from Lichess per account, and what is stored locally.
-        Usage = "usage" fn usage() -> Value;
+        Usage = "usage" fn usage() -> UsageReport;
         #[writes(Usage)]
-        ResetUsage = "resetUsage" fn reset_usage() -> Value;
+        ResetUsage = "resetUsage" fn reset_usage() -> ();
         /// The user's own app themes from the profile's themes folder, with a line per file that
         /// could not be used.
         CustomThemes = "customThemes" fn custom_themes() -> CustomThemeReport;

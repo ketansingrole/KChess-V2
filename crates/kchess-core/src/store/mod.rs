@@ -21,8 +21,8 @@ pub mod usage;
 pub mod view_preferences;
 pub mod voice_log;
 
+use kchess_contracts::types::Library;
 use rusqlite::Connection;
-use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::Path;
@@ -46,7 +46,7 @@ pub struct StoreCache {
     counts: Mutex<HashMap<String, i64>>,
     overview: Mutex<Option<GameLibraryOverview>>,
     storage: Mutex<Option<Vec<(String, i64, i64)>>>,
-    library: Mutex<Option<(u64, Value)>>,
+    library: Mutex<Option<(u64, Library)>>,
 }
 
 impl StoreCache {
@@ -80,13 +80,13 @@ impl StoreCache {
     }
 
     /// The library snapshot read when the connection had changed `changes` rows, if it is kept.
-    pub fn library(&self, changes: u64) -> Option<Value> {
+    pub fn library(&self, changes: u64) -> Option<Library> {
         let library = lock(&self.library);
         let (read_at, snapshot) = library.as_ref()?;
         (*read_at == changes).then(|| snapshot.clone())
     }
 
-    pub fn remember_library(&self, changes: u64, snapshot: &Value) {
+    pub fn remember_library(&self, changes: u64, snapshot: &Library) {
         *lock(&self.library) = Some((changes, snapshot.clone()));
     }
 
@@ -355,9 +355,8 @@ mod tests {
     fn played_games(database: &Database) -> usize {
         database
             .read(|ctx| library::cached_library(ctx, 0.0))
-            .expect("library")["games"]
-            .as_array()
-            .expect("games")
+            .expect("library")
+            .games
             .len()
     }
 

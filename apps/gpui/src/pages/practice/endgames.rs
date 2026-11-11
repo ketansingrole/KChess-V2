@@ -8,7 +8,7 @@ use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use serde_json::{Value, json};
+use kchess_contracts::types::{RunKind, RunSummary};
 
 use super::endgame_drills::EndgameDrills;
 use super::endgame_lesson::EndgameLesson;
@@ -42,8 +42,8 @@ pub fn courses() -> &'static [Course] {
 }
 
 /// A drill or chapter finished at least once.
-pub fn finished(summary: &Value, id: &str) -> bool {
-    summary["best"][id]["score"].as_f64().unwrap_or(0.) > 0.
+pub fn finished(summary: Option<&RunSummary>, id: &str) -> bool {
+    super::run::best(summary, id).unwrap_or(0.) > 0.
 }
 
 /// What a course or the drills tell the hub.
@@ -51,7 +51,7 @@ pub enum TrainerEvent {
     /// Back to the courses.
     Back,
     /// A chapter was finished: the lessons' summary as the core now keeps it.
-    Saved(Value),
+    Saved(RunSummary),
 }
 
 /// Each course's card icon.
@@ -76,8 +76,8 @@ fn course_icon(id: &str) -> Icon {
 }
 
 pub struct Endgames {
-    lessons: Value,
-    drill_summary: Value,
+    lessons: Option<RunSummary>,
+    drill_summary: Option<RunSummary>,
     drills: Option<Entity<EndgameDrills>>,
     lesson: Option<Entity<EndgameLesson>>,
     area: Measured,
@@ -87,8 +87,8 @@ pub struct Endgames {
 impl Endgames {
     pub fn new(cx: &mut Context<Self>) -> Endgames {
         let mut hub = Endgames {
-            lessons: Value::Null,
-            drill_summary: Value::Null,
+            lessons: None,
+            drill_summary: None,
             drills: None,
             lesson: None,
             area: Measured::default(),
@@ -103,17 +103,17 @@ impl Endgames {
         let core = cx.global::<AppCore>().clone();
         let (lessons, drills) = (
             core.request(calls::RunSummary {
-                kind: json!("lesson"),
+                kind: RunKind::Lesson,
             }),
             core.request(calls::RunSummary {
-                kind: json!("endgame"),
+                kind: RunKind::Endgame,
             }),
         );
         cx.spawn(async move |this, cx| match (lessons.await, drills.await) {
             (Ok(lessons), Ok(drills)) => {
                 let _ = this.update(cx, |this, cx| {
-                    this.lessons = lessons;
-                    this.drill_summary = drills;
+                    this.lessons = Some(lessons);
+                    this.drill_summary = Some(drills);
                     cx.notify();
                 });
             }
@@ -160,7 +160,7 @@ impl Endgames {
         match event {
             TrainerEvent::Back => self.back(cx),
             TrainerEvent::Saved(summary) => {
-                self.lessons = summary.clone();
+                self.lessons = Some(summary.clone());
                 cx.notify();
             }
         }
@@ -288,7 +288,7 @@ impl Endgames {
                         let done = course
                             .chapters
                             .iter()
-                            .filter(|chapter| finished(&self.lessons, &chapter.id))
+                            .filter(|chapter| finished(self.lessons.as_ref(), &chapter.id))
                             .count();
                         Self::card(
                             &course.id,
@@ -307,7 +307,7 @@ impl Endgames {
             .collect();
         let done = drills()
             .iter()
-            .filter(|drill| finished(&self.drill_summary, &drill.id))
+            .filter(|drill| finished(self.drill_summary.as_ref(), &drill.id))
             .count();
         sections.push(
             group(

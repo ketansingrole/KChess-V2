@@ -8,7 +8,7 @@ use kchess_contracts::Variant;
 use kchess_contracts::check::{Fen, GameIds, Moves, ReviewKey};
 use kchess_contracts::core_api::{Assist, EngineApi};
 use kchess_contracts::types::{
-    AnalysisRequest, BestMoveOptions, ByGame, EngineInstalled, EngineLevel, EngineStatus,
+    AnalysisRequest, BestMoveOptions, EngineInstalled, EngineLevel, EngineStatus, Keyed,
     ReviewRequest, ReviewStatus, ReviewSummary, StoredReview,
 };
 use serde_json::json;
@@ -130,7 +130,7 @@ impl EngineApi for Core {
         Ok(self.reviews.review_status())
     }
 
-    async fn review_summaries(&self, GameIds(ids): GameIds) -> Result<ByGame<ReviewSummary>> {
+    async fn review_summaries(&self, GameIds(ids): GameIds) -> Result<Keyed<ReviewSummary>> {
         self.database
             .read_async(move |ctx| crate::store::reviews::review_summaries(ctx.host, ctx.db, &ids))
             .await

@@ -6,6 +6,10 @@
 //! `json_codec`, `documents`, `studies` and `library_import` modules; this module keeps the
 //! helpers the other storage modules share and the games/mistakes/tournaments writers.
 
+use kchess_contracts::types::{
+    Keyed, MistakeGame, MistakesAdded, SessionKind, StudyCommand, StudyCommandResult,
+};
+use kchess_domain::color::Color;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
 
@@ -34,31 +38,25 @@ const GAMES_FULL: &str =
 
 /// The unfinished session of a page, or null: a page resuming its session reads that alone, as
 /// the library replays every played game.
-pub fn session(host: &dyn Host, db: &Connection, kind: &str) -> Result<Value> {
-    let session = read_session(host, db, kind)?;
-    Ok(if truthy(Some(&session)) {
-        session
-    } else {
-        Value::Null
-    })
+pub fn session(host: &dyn Host, db: &Connection, kind: SessionKind) -> Result<Option<Value>> {
+    let session = read_session(host, db, kind.as_str())?;
+    Ok(truthy(Some(&session)).then_some(session))
 }
 
 /// Runs a study command. `based_on` is the content the editor started from: a save over a study
 /// changed since is refused rather than lost. `incremental` names a save of one chapter's moves.
 pub fn run_study_command(
     db: &Connection,
-    mut command: Value,
+    mut command: StudyCommand,
     now: f64,
     incremental: bool,
     based_on: Option<&str>,
-) -> Result<Value> {
+) -> Result<StudyCommandResult> {
     if let Some(based_on) = based_on {
-        let name = check_based_on(db, &command, based_on)?;
+        let stored = check_based_on(db, &command, based_on)?;
         // A content save changes the chapter's moves only, never the study's name.
-        if let (Some(name), Some(fields)) = (name, command.as_object_mut())
-            && fields.get("op").and_then(Value::as_str) == Some("save")
-        {
-            fields.insert("name".into(), Value::String(name));
+        if let (Some(stored), StudyCommand::Save { name, .. }) = (stored, &mut command) {
+            *name = stored;
         }
     }
     study_command(db, &command, now, incremental)
@@ -71,7 +69,8 @@ pub fn remove_archived_game(db: &Connection, id: &str) -> Result<()> {
 }
 
 /// Saves a page's unfinished session (`value`, already validated for `kind`).
-pub fn save_session(db: &Connection, kind: &str, value: Value) -> Result<Value> {
+pub fn save_session(db: &Connection, kind: SessionKind, value: Value) -> Result<()> {
+    let kind = kind.as_str();
     let encoded = encode_session(kind, &value);
     write_document(
         db,
@@ -79,6 +78,7 @@ pub fn save_session(db: &Connection, kind: &str, value: Value) -> Result<Value> 
         &encoded,
         "This session is too large to save automatically. Export a PGN copy.",
     )
+    .map(|_| ())
 }
 
 /* ── Shared helpers (also used by the other storage modules) ── */
@@ -203,14 +203,15 @@ pub fn add_mistakes(
     host: &dyn Host,
     db: &Connection,
     review_key: &str,
-    color: Option<&str>,
+    color: Option<Color>,
     now: f64,
-) -> Result<Value> {
+) -> Result<MistakesAdded> {
     let mut items = read_mistakes(db)?;
     let review = match super::reviews::read_review(host, db, review_key)? {
         Some(review) if truthy(review.get("complete")) => review,
-        _ => return Ok(json!({ "added": 0, "items": items })),
+        _ => return Ok(MistakesAdded { added: 0, items }),
     };
+    let color = color.map(kchess_domain::color::name);
     // A variant game's drills are played by its rules (Fairy-Stockfish reviewed it).
     let variant = review
         .get("variant")
@@ -311,7 +312,7 @@ pub fn add_mistakes(
     if added > 0 {
         write_mistakes(db, items.clone())?;
     }
-    Ok(json!({ "added": added, "items": items }))
+    Ok(MistakesAdded { added, items })
 }
 
 /// The review key of a line: that of its legal moves from its normalized start, as a review of
@@ -332,7 +333,7 @@ fn line_review_key(fen: &str, moves: &[String]) -> Option<String> {
 /// `mistakeGames()`: each review with positions in practice, most recently played first, with
 /// its game when that is known: a synced Lichess game through its review link, or a game played
 /// here whose line it reviews (your side there is the one named "You").
-pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Value> {
+pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Vec<MistakeGame>> {
     let mut keys: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for item in read_mistakes(db)? {
@@ -344,7 +345,7 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Value> {
         }
     }
     if keys.is_empty() {
-        return Ok(json!([]));
+        return Ok(Vec::new());
     }
     let mut played = Map::new();
     for game in super::library_import::read_games(host, db)? {
@@ -368,16 +369,24 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Value> {
         let Some(review) = super::reviews::read_review(host, db, &key)? else {
             continue;
         };
-        let mut entry = Map::new();
-        entry.insert("key".into(), json!(key));
-        entry.insert(
-            "fen".into(),
-            review.get("fen").cloned().unwrap_or(json!("")),
-        );
-        entry.insert("moves".into(), json!(string_list(review.get("moves"))));
+        let mut entry = MistakeGame {
+            fen: review
+                .get("fen")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            moves: string_list(review.get("moves")),
+            key,
+            white: None,
+            black: None,
+            player: None,
+            game_id: None,
+            account: None,
+            played_at: 0.0,
+        };
         let mut at = js::to_number(review.get("updatedAt"));
         let synced = lichess
-            .query_row(params![key], |row| {
+            .query_row(params![entry.key], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -389,21 +398,22 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Value> {
             .optional()
             .sql()?;
         if let Some((id, account, color, opponent, created)) = synced {
-            let (white, black) = if color == "white" {
+            let player = kchess_domain::color::from_name(&color).unwrap_or(Color::Black);
+            let (white, black) = if player == Color::White {
                 (&account, &opponent)
             } else {
                 (&opponent, &account)
             };
-            entry.insert("white".into(), json!(white));
-            entry.insert("black".into(), json!(black));
-            entry.insert("player".into(), json!(color));
-            entry.insert("gameId".into(), json!(id));
-            entry.insert("account".into(), json!(account));
+            entry.white = Some(white.clone());
+            entry.black = Some(black.clone());
+            entry.player = Some(player);
+            entry.game_id = Some(id);
+            entry.account = Some(account);
             #[allow(clippy::cast_precision_loss)]
             {
                 at = created as f64;
             }
-        } else if let Some(game) = played.get(&key) {
+        } else if let Some(game) = played.get(&entry.key) {
             let white = game
                 .get("white")
                 .and_then(Value::as_str)
@@ -412,30 +422,29 @@ pub fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Value> {
                 .get("black")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            entry.insert("white".into(), json!(white));
-            entry.insert("black".into(), json!(black));
+            entry.white = Some(white.to_string());
+            entry.black = Some(black.to_string());
             if (white == "You") != (black == "You") {
-                entry.insert(
-                    "player".into(),
-                    json!(if white == "You" { "white" } else { "black" }),
-                );
+                entry.player = Some(if white == "You" {
+                    Color::White
+                } else {
+                    Color::Black
+                });
             }
             at = js::to_number(game.get("startedAt"));
         }
-        entry.insert("playedAt".into(), num(at));
-        games.push((at, Value::Object(entry)));
+        entry.played_at = at;
+        games.push(entry);
     }
-    games.sort_by(|a, b| b.0.total_cmp(&a.0));
-    Ok(Value::Array(
-        games.into_iter().map(|(_, game)| game).collect(),
-    ))
+    games.sort_by(|a, b| b.played_at.total_cmp(&a.played_at));
+    Ok(games)
 }
 
 /// Schedules a drill again.
-pub fn answer_mistake(db: &Connection, id: &str, solved: bool, now: f64) -> Result<Value> {
+pub fn answer_mistake(db: &Connection, id: &str, solved: bool, now: f64) -> Result<Vec<Value>> {
     let mut items = read_mistakes(db)?;
     let Some(index) = items.iter().position(|entry| id_of(entry) == Some(id)) else {
-        return Ok(Value::Array(items));
+        return Ok(items);
     };
     let item = object(&items[index], "mistake")?.clone();
     let attempts = item
@@ -465,7 +474,7 @@ pub fn answer_mistake(db: &Connection, id: &str, solved: bool, now: f64) -> Resu
         ],
     ));
     write_mistakes(db, items.clone())?;
-    Ok(Value::Array(items))
+    Ok(items)
 }
 
 /* ── Tournaments joined from KChess ── */
@@ -481,13 +490,11 @@ fn write_joined(db: &Connection, entries: Vec<Value>) -> Result<()> {
     .map(|_| ())
 }
 
-pub fn joined_tournaments(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
-    Ok(Value::Array(
-        read_joined(host, db)?
-            .into_iter()
-            .filter(|entry| until_after(entry, now))
-            .collect(),
-    ))
+pub fn joined_tournaments(host: &dyn Host, db: &Connection, now: f64) -> Result<Vec<Value>> {
+    Ok(read_joined(host, db)?
+        .into_iter()
+        .filter(|entry| until_after(entry, now))
+        .collect())
 }
 
 /// A membership's account, compared without case.
@@ -609,24 +616,17 @@ pub fn restore_repertoire_misses(
     host: &dyn Host,
     db: &Connection,
     key: &str,
-    restored: &Value,
+    restored: &Keyed<f64>,
 ) -> Result<Value> {
-    let restored = restored
-        .as_object()
-        .ok_or_else(|| CoreError::new("misses must be an object"))?;
     let mut misses = object(&read_misses(host, db)?, "repertoire misses")?.clone();
     let table = misses
         .entry(key.to_string())
         .or_insert_with(|| json!({}))
         .as_object_mut()
         .ok_or_else(|| CoreError::new("repertoire table must be an object"))?;
-    for (fen, count) in restored {
-        let count = count
-            .as_f64()
-            .filter(|count| count.is_finite() && *count > 0.0)
-            .ok_or_else(|| CoreError::new("a miss count must be a positive number"))?;
+    for (fen, count) in restored.iter() {
         let now = table.get(fen).and_then(Value::as_f64).unwrap_or(0.0);
-        table.insert(fen.clone(), num(now + count));
+        table.insert(fen.to_string(), num(now + count));
     }
     let misses = Value::Object(misses);
     write_misses(db, &misses)?;
@@ -660,7 +660,95 @@ mod tests {
     use super::*;
     use crate::store::documents::{DAMAGED_STUDIES, read_document_text};
     use crate::store::library_import::read_studies;
+    use crate::store::{StoreContext, library_import};
     use kchess_contracts::CoreEvent;
+    use kchess_contracts::check::{MissCounts, Validate as _};
+
+    // The store's calls with what the window sends and reads: JSON in, JSON out.
+
+    fn json_of<T: serde::Serialize>(value: T) -> Value {
+        serde_json::to_value(value).expect("json")
+    }
+
+    fn typed(command: &Value) -> StudyCommand {
+        serde_json::from_value(command.clone()).expect("study command")
+    }
+
+    fn study_command(
+        db: &Connection,
+        command: &Value,
+        now: f64,
+        incremental: bool,
+    ) -> Result<Value> {
+        super::study_command(db, &typed(command), now, incremental).map(json_of)
+    }
+
+    fn check_based_on(db: &Connection, command: &Value, based_on: &str) -> Result<Option<String>> {
+        super::check_based_on(db, &typed(command), based_on)
+    }
+
+    fn run_study_command(
+        db: &Connection,
+        command: Value,
+        now: f64,
+        incremental: bool,
+        based_on: Option<&str>,
+    ) -> Result<Value> {
+        super::run_study_command(db, typed(&command), now, incremental, based_on).map(json_of)
+    }
+
+    fn cached_library(ctx: &StoreContext, now: f64) -> Result<Value> {
+        library_import::cached_library(ctx, now).map(json_of)
+    }
+
+    fn snapshot_of(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
+        library_import::library(host, db, now).map(json_of)
+    }
+
+    fn add_mistakes(
+        host: &dyn Host,
+        db: &Connection,
+        review_key: &str,
+        color: Option<&str>,
+        now: f64,
+    ) -> Result<Value> {
+        let color = color.map(|name| kchess_domain::color::from_name(name).expect("a side"));
+        super::add_mistakes(host, db, review_key, color, now).map(json_of)
+    }
+
+    fn mistake_games(host: &dyn Host, db: &Connection) -> Result<Value> {
+        super::mistake_games(host, db).map(json_of)
+    }
+
+    fn answer_mistake(db: &Connection, id: &str, solved: bool, now: f64) -> Result<Value> {
+        super::answer_mistake(db, id, solved, now).map(json_of)
+    }
+
+    fn joined_tournaments(host: &dyn Host, db: &Connection, now: f64) -> Result<Value> {
+        super::joined_tournaments(host, db, now).map(json_of)
+    }
+
+    fn kind(name: &str) -> SessionKind {
+        serde_json::from_value(json!(name)).expect("a session kind")
+    }
+
+    fn session(host: &dyn Host, db: &Connection, name: &str) -> Result<Value> {
+        super::session(host, db, kind(name)).map(json_of)
+    }
+
+    fn save_session(db: &Connection, name: &str, value: Value) -> Result<()> {
+        super::save_session(db, kind(name), value)
+    }
+
+    fn restore_repertoire_misses(
+        host: &dyn Host,
+        db: &Connection,
+        key: &str,
+        misses: &Value,
+    ) -> Result<Value> {
+        let misses = MissCounts::validate(J::from(misses)).map_err(CoreError::new)?;
+        super::restore_repertoire_misses(host, db, key, &misses.0)
+    }
 
     #[test]
     fn stored_text_matches_javascript_stringify() {
@@ -777,8 +865,7 @@ mod tests {
                 &json!({"pgn":"1. d4 *","path":"","orientation":"white","study":"","chapter":""}),
             );
             write_document(&db, "session:analysis", &session, "").expect("save session");
-            let snapshot =
-                super::library(&Quiet, &db, 1.0).expect("other documents remain readable");
+            let snapshot = snapshot_of(&Quiet, &db, 1.0).expect("other documents remain readable");
             assert_eq!(snapshot["studyError"], json!(DAMAGED_STUDIES));
             assert_eq!(snapshot["sessions"]["analysis"]["pgn"], json!("1. d4 *"));
             assert!(
@@ -835,7 +922,7 @@ mod tests {
         // A study removed since the chapter was read is not created again under its old id.
         let removed = check_based_on(
             &db,
-            &json!({"op":"save", "id":"removed", "name":"N"}),
+            &json!({"op":"save", "id":"removed", "name":"N", "pgn":"1. e4 *"}),
             "1. e4 *",
         )
         .expect_err("removed");
@@ -1251,7 +1338,7 @@ mod tests {
             let kept = read_document_text(&db, key).expect("read").expect("kept");
             assert_eq!(kept, body, "{method} replaced {key}");
             // Reading still works, so the rest of the library opens.
-            super::library(&Quiet, &db, now).expect("library");
+            snapshot_of(&Quiet, &db, now).expect("library");
         }
     }
 
@@ -1265,7 +1352,7 @@ mod tests {
         )
         .expect("seed");
         let now = 1_800_000_000_000.0;
-        let library = super::library(&Quiet, &db, now).expect("library");
+        let library = snapshot_of(&Quiet, &db, now).expect("library");
         assert_eq!(library["repertoireSchedule"], json!({}));
         assert_eq!(
             library["repertoireMisses"],
@@ -1278,7 +1365,7 @@ mod tests {
             params![SCHEDULE, r#"{"study:white":{"e2e4":{"due":0}}}"#],
         )
         .expect("seed");
-        let library = super::library(&Quiet, &db, now).expect("library");
+        let library = snapshot_of(&Quiet, &db, now).expect("library");
         assert_eq!(library["repertoireSchedule"], json!({}));
 
         // Answering a line schedules it; the misses stay as they were.
@@ -1293,7 +1380,7 @@ mod tests {
         );
         let schedule = review("d2d4", false, now).expect("review");
         assert_eq!(schedule["study:white"]["d2d4"]["due"], json!(now));
-        let library = super::library(&Quiet, &db, now).expect("library");
+        let library = snapshot_of(&Quiet, &db, now).expect("library");
         assert_eq!(library["repertoireSchedule"], schedule);
         assert_eq!(
             library["repertoireMisses"],
@@ -1306,7 +1393,7 @@ mod tests {
 
         // A line that is not moves, or a missing key, is refused and changes nothing.
         assert!(review("not moves", true, now).is_err());
-        let after = super::library(&Quiet, &db, now).expect("library");
+        let after = snapshot_of(&Quiet, &db, now).expect("library");
         assert_eq!(after["repertoireSchedule"], schedule);
     }
 
@@ -1366,10 +1453,10 @@ mod tests {
         .expect("damage");
         assert!(game_ids(&read()).is_empty());
 
-        cache.remember_library(db.total_changes(), &json!({ "games": [] }));
+        cache.remember_library(db.total_changes(), &Default::default());
         cache.forget_library();
         assert!(cache.library(db.total_changes()).is_none());
-        cache.remember_library(db.total_changes(), &json!({ "games": [] }));
+        cache.remember_library(db.total_changes(), &Default::default());
         cache.clear();
         assert!(cache.library(db.total_changes()).is_none());
     }
@@ -1407,7 +1494,7 @@ mod tests {
     fn a_session_and_the_drills_read_alone_are_the_librarys() {
         let db = drills_db();
         let now = 1_700_000_000_000.0;
-        let library = || super::library(&Quiet, &db, now).expect("library");
+        let library = || snapshot_of(&Quiet, &db, now).expect("library");
         let session = |kind: &str| session(&Quiet, &db, kind).expect(kind);
         let mistakes = || read_mistakes(&db).map(Value::Array).expect("mistakes");
         assert_eq!(session("analysis"), Value::Null, "none kept yet");

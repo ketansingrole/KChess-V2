@@ -19,6 +19,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
+use kchess_contracts::types::{ChapterInput, StudyCommand, StudyCommandResult};
 use kchess_domain::records::studies::StudySummary;
 use serde_json::{Value, json};
 use shakmaty::Color;
@@ -437,10 +438,10 @@ impl StudiesPage {
 
     /// Send a command and show its answer; a failure is a notification.
     fn run(
-        command: Value,
+        command: StudyCommand,
         window: &mut Window,
         cx: &mut App,
-        then: impl FnOnce(Value, &mut Window, &mut App) + 'static,
+        then: impl FnOnce(StudyCommandResult, &mut Window, &mut App) + 'static,
     ) {
         let library = Self::library(cx);
         let answer = library.read(cx).command(command);
@@ -462,7 +463,7 @@ impl StudiesPage {
     }
 
     fn rename(study: &Value, window: &mut Window, cx: &mut App) {
-        let id = study["id"].clone();
+        let id = crate::studies::study_id(study);
         let library = Self::library(cx);
         NameDialog::open(
             "Rename study",
@@ -471,9 +472,10 @@ impl StudiesPage {
             window,
             cx,
             move |name, dialog, window, cx| {
-                let answer = library
-                    .read(cx)
-                    .command(json!({ "op": "rename", "id": id, "name": name }));
+                let answer = library.read(cx).command(StudyCommand::Rename {
+                    id: id.clone(),
+                    name,
+                });
                 let library = library.clone();
                 window
                     .spawn(cx, async move |cx| {
@@ -495,16 +497,15 @@ impl StudiesPage {
     }
 
     /// Delete a study (or its offline copy); Undo brings it back.
-    fn remove(id: Value, window: &mut Window, cx: &mut App) {
+    fn remove(id: String, window: &mut Window, cx: &mut App) {
         Self::run(
-            json!({ "op": "remove", "id": id }),
+            StudyCommand::Remove { id },
             window,
             cx,
             |result, window, cx| {
-                let removed = result["removed"].clone();
-                if removed.is_null() {
+                let Some(removed) = result.removed.filter(|removed| !removed.is_null()) else {
                     return;
-                }
+                };
                 let name = removed["name"].as_str().unwrap_or_default().to_string();
                 window.push_notification(
                     widgets::action_notification(
@@ -513,7 +514,9 @@ impl StudiesPage {
                         "Undo",
                         move |window, cx| {
                             Self::run(
-                                json!({ "op": "restore", "study": removed.clone() }),
+                                StudyCommand::Restore {
+                                    study: removed.clone(),
+                                },
                                 window,
                                 cx,
                                 |_, _, _| {},
@@ -676,13 +679,12 @@ impl StudiesPage {
                     .join("\n\n");
                 let marked = this
                     .update(cx, |_, cx| {
-                        library.read(cx).command(json!({
-                            "op": "markCloud",
-                            "id": id,
-                            "account": account,
-                            "remoteId": remote,
-                            "baseline": baseline,
-                        }))
+                        library.read(cx).command(StudyCommand::MarkCloud {
+                            id: id.clone(),
+                            account: account.clone(),
+                            remote_id: remote.clone(),
+                            baseline: baseline.clone(),
+                        })
                     })
                     .map_err(|_| "The page closed".to_string())?;
                 let result = marked.await?;
@@ -802,7 +804,9 @@ impl StudiesPage {
                     .item(PopupMenuItem::new("Duplicate").icon(icon("copy")).on_click(
                         move |_, window, cx| {
                             Self::run(
-                                json!({ "op": "duplicate", "id": duplicate }),
+                                StudyCommand::Duplicate {
+                                    id: duplicate.clone(),
+                                },
                                 window,
                                 cx,
                                 |_, _, _| {},
@@ -841,7 +845,7 @@ impl StudiesPage {
                         "Delete"
                     })
                     .icon(icon("trash-2"))
-                    .on_click(move |_, window, cx| Self::remove(json!(remove.clone()), window, cx)),
+                    .on_click(move |_, window, cx| Self::remove(remove.clone(), window, cx)),
                 )
             })
     }
@@ -1309,14 +1313,17 @@ impl ImportStudy {
         } else {
             given
         };
-        let answer = library.read(cx).command(json!({
-            "op": "saveChapters",
-            "name": name,
-            "chapters": chapters
+        let answer = library.read(cx).command(StudyCommand::SaveChapters {
+            name,
+            chapters: chapters
                 .iter()
-                .map(|(name, pgn)| json!({ "name": name, "pgn": pgn }))
-                .collect::<Vec<_>>(),
-        }));
+                .map(|(name, pgn)| ChapterInput {
+                    name: name.clone(),
+                    pgn: pgn.clone(),
+                })
+                .collect(),
+            id: None,
+        });
         cx.spawn_in(window, async move |this, cx| {
             let result = answer.await;
             let _ = this.update_in(cx, |this, window, cx| match result {
@@ -1326,7 +1333,7 @@ impl ImportStudy {
                         cx.notify();
                     });
                     window.close_dialog(cx);
-                    let id = result["id"].as_str().unwrap_or_default().to_string();
+                    let id = result.id.unwrap_or_default();
                     window.push_notification(
                         widgets::action_notification(
                             Notification::success("Study imported"),

@@ -8,6 +8,10 @@ use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
+use kchess_contracts::check::{ActivityMax, Username};
+use kchess_contracts::types::{
+    PuzzleActivityEntry, PuzzleAttempt, PuzzleProgress, PuzzleProgressQuery, Reply,
+};
 use serde_json::{Value, json};
 
 use super::{Theme, theme_name};
@@ -108,62 +112,59 @@ fn mode_look(mode: &str) -> (&'static str, Icon, &'static str) {
 }
 
 /// `puzzleHistoryRows`: local attempts and Lichess activity, newest first, each attempt once.
-fn rows_of(local: &[Value], lichess: &[Value]) -> Vec<Row> {
+fn rows_of(local: &[PuzzleAttempt], lichess: &[PuzzleActivityEntry]) -> Vec<Row> {
     let mut rows: Vec<Row> = local
         .iter()
         .map(|attempt| {
-            let count = |key: &str| attempt[key].as_u64().unwrap_or_default();
-            let wrong = count("wrong");
+            let wrong = attempt.wrong;
             let moves = format!(
                 "{}/{} moves{}",
-                count("found"),
-                count("total"),
+                attempt.found,
+                attempt.total,
                 if wrong > 0 {
                     format!(" · {wrong} wrong")
                 } else {
                     String::new()
                 }
             );
-            let mode = mode_of(attempt["mode"].as_str().unwrap_or_default());
-            let outcome = attempt["outcome"].as_str().unwrap_or_default();
+            let mode = mode_of(attempt.mode.as_str());
+            let outcome = attempt.outcome.as_str();
             Row {
-                at: attempt["at"].as_f64().unwrap_or_default(),
+                at: attempt.at as f64,
                 badge: badge_of(outcome),
                 solved: matches!(outcome, "solved" | "hinted"),
                 moves: Some(moves),
-                puzzle: attempt["puzzle"].clone(),
-                wrong: attempt["wrongMoves"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default(),
-                mode: if attempt["retry"] == json!(true) {
-                    "retry"
-                } else {
-                    mode
-                },
+                puzzle: json!(attempt.puzzle),
+                wrong: attempt
+                    .wrong_moves
+                    .iter()
+                    .flatten()
+                    .map(|wrong| json!(wrong))
+                    .collect(),
+                mode: if attempt.retry { "retry" } else { mode },
                 played_in: mode,
             }
         })
         .collect();
     for entry in lichess {
-        let date = entry["date"].as_f64().unwrap_or_default();
+        let date = entry.date.unwrap_or_default() as f64;
         let kept = local.iter().any(|attempt| {
-            attempt["puzzle"]["id"] == entry["puzzle"]["id"]
-                && (attempt["at"].as_f64().unwrap_or_default() - date).abs() < SAME_ATTEMPT_MS
+            attempt.puzzle.id == entry.puzzle.id
+                && (attempt.at as f64 - date).abs() < SAME_ATTEMPT_MS
         });
         if kept {
             continue;
         }
         rows.push(Row {
             at: date,
-            badge: if entry["win"] == json!(true) {
+            badge: if entry.win {
                 badge_of("solved")
             } else {
                 badge_of("missed")
             },
-            solved: entry["win"] == json!(true),
+            solved: entry.win,
             moves: None,
-            puzzle: entry["puzzle"].clone(),
+            puzzle: json!(entry.puzzle),
             wrong: Vec::new(),
             mode: "lichess",
             played_in: "lichess",
@@ -194,9 +195,9 @@ fn played_text(at: f64, now: chrono::DateTime<chrono::Local>) -> String {
 
 pub struct PuzzleHistory {
     /// `puzzleProgress`: today's and all-time totals and the attempts kept here.
-    progress: Value,
+    progress: PuzzleProgress,
     /// `puzzleActivity`: what Lichess recorded for the account.
-    activity: Vec<Value>,
+    activity: Vec<PuzzleActivityEntry>,
     account: String,
     loading: bool,
     error: Option<String>,
@@ -237,7 +238,7 @@ impl PuzzleHistory {
                 }),
             ];
         PuzzleHistory {
-            progress: Value::Null,
+            progress: PuzzleProgress::default(),
             activity: Vec::new(),
             account: String::new(),
             loading: false,
@@ -256,7 +257,7 @@ impl PuzzleHistory {
     pub fn shown(&mut self, account: String, cx: &mut Context<Self>) {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         let progress = cx.global::<AppCore>().request(calls::PuzzleProgress {
-            query: json!({ "today": today, "limit": 200 }),
+            query: PuzzleProgressQuery { today, limit: 200 },
         });
         crate::loading::fetch(cx, "puzzles", progress, |this, progress, _| {
             this.progress = progress;
@@ -290,8 +291,8 @@ impl PuzzleHistory {
         self.reconnect = false;
         cx.notify();
         let activity = cx.global::<AppCore>().request(calls::PuzzleActivity {
-            account: json!(who),
-            max: json!(100),
+            account: Username(who.clone()),
+            max: ActivityMax(100),
         });
         cx.spawn(async move |this, cx| {
             let result = activity.await;
@@ -301,11 +302,9 @@ impl PuzzleHistory {
                 }
                 this.loading = false;
                 match result {
-                    Ok(result) if kchess_domain::trainer::puzzle_session::is_reconnect(&result) => {
-                        this.reconnect = true;
-                    }
-                    Ok(result) => {
-                        this.activity = result.as_array().cloned().unwrap_or_default();
+                    Ok(Reply::NeedsReconnect) => this.reconnect = true,
+                    Ok(Reply::Done(activity)) => {
+                        this.activity = activity;
                         this.loaded = who;
                     }
                     Err(cause) => this.error = Some(cause.message),
@@ -317,16 +316,13 @@ impl PuzzleHistory {
     }
 
     fn summary(&self, palette: &Palette) -> Option<Div> {
-        let all = &self.progress["all"];
-        let attempts = all["attempts"].as_f64().filter(|attempts| *attempts > 0.)?;
-        let today = &self.progress["today"];
-        let number = |value: &Value, key: &str| value[key].as_f64().unwrap_or_default();
-        let found = number(all, "movesFound");
-        let tried = number(all, "movesTried");
+        let (all, today) = (&self.progress.all, &self.progress.today);
+        let attempts = Some(all.attempts as f64).filter(|attempts| *attempts > 0.)?;
+        let found = all.moves_found as f64;
+        let tried = all.moves_tried as f64;
         let accuracy = (tried > 0.).then(|| (found / tried * 100.).round());
-        let solved_share =
-            ((number(all, "solved") + number(all, "hinted")) / attempts * 100.).round();
-        let partial = number(all, "partial");
+        let solved_share = ((all.solved + all.hinted) as f64 / attempts * 100.).round();
+        let partial = all.partial as f64;
         let card = |label: &str, value: String, sub: String| {
             widgets::card(palette)
                 .flex_1()
@@ -358,12 +354,12 @@ impl PuzzleHistory {
                 .gap(px(12.))
                 .child(card(
                     "Today",
-                    widgets::format_count(number(today, "attempts")),
+                    widgets::format_count(today.attempts as f64),
                     format!(
                         "{} solved · {}/{} moves",
-                        number(today, "solved") + number(today, "hinted"),
-                        number(today, "movesFound"),
-                        number(today, "movesTried")
+                        today.solved + today.hinted,
+                        today.moves_found,
+                        today.moves_tried
                     ),
                 ))
                 .child(card(
@@ -389,8 +385,8 @@ impl PuzzleHistory {
                 ))
                 .child(card(
                     "Days in a row",
-                    format!("{}", number(&self.progress, "dayStreak")),
-                    format!("Best {}", number(&self.progress, "bestDayStreak")),
+                    format!("{}", self.progress.day_streak),
+                    format!("Best {}", self.progress.best_day_streak),
                 )),
         )
     }
@@ -400,11 +396,7 @@ impl Render for PuzzleHistory {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = *cx.global::<Palette>();
         let filter = crate::prefs::get::<String>(cx, FILTER, "all".into());
-        let local = self.progress["recent"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        let all_rows = rows_of(&local, &self.activity);
+        let all_rows = rows_of(&self.progress.recent, &self.activity);
         let any = !all_rows.is_empty();
         let unsolved_only = crate::prefs::get(cx, UNSOLVED, false);
         let rows: Vec<Row> = all_rows
@@ -717,13 +709,25 @@ mod tests {
 
     #[test]
     fn lichess_records_of_attempts_kept_here_are_left_out() {
-        let local = vec![json!({
-            "id": 1, "at": 1_000_000.0, "outcome": "partial", "mode": "rated", "retry": false,
-            "found": 1, "total": 3, "wrong": 2, "puzzle": { "id": "abc" }
-        })];
+        let puzzle =
+            |id: &str| json!({ "id": id, "fen": "", "solution": [], "rating": 1500, "themes": [] });
+        let local = vec![
+            serde_json::from_value(json!({
+                "id": 1, "at": 1_000_000, "day": "1970-01-01", "outcome": "partial",
+                "mode": "rated", "retry": false, "hinted": false, "found": 1, "total": 3,
+                "wrong": 2, "puzzle": puzzle("abc")
+            }))
+            .expect("an attempt"),
+        ];
         let lichess = vec![
-            json!({ "date": 1_000_000.0 + 60_000.0, "win": false, "puzzle": { "id": "abc" } }),
-            json!({ "date": 2_000_000.0, "win": true, "puzzle": { "id": "def" } }),
+            serde_json::from_value(
+                json!({ "date": 1_060_000, "win": false, "puzzle": puzzle("abc") }),
+            )
+            .expect("an entry"),
+            serde_json::from_value(
+                json!({ "date": 2_000_000, "win": true, "puzzle": puzzle("def") }),
+            )
+            .expect("an entry"),
         ];
         let rows = rows_of(&local, &lichess);
         assert_eq!(rows.len(), 2);

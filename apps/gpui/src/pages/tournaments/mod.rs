@@ -234,7 +234,7 @@ impl TournamentsPage {
     fn reload_joined(&mut self, cx: &mut Context<Self>) {
         let call = cx.global::<AppCore>().request(calls::JoinedTournaments {});
         crate::loading::fetch(cx, "tournaments", call, |this, joined, _| {
-            this.joined = joined.as_array().cloned().unwrap_or_default();
+            this.joined = joined;
         });
     }
 

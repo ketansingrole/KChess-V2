@@ -29,13 +29,6 @@ fn one_of_numbers(n: f64, options: &[f64], msg: Msg, path: &str) -> Result<(), R
     })
 }
 
-/// A Lichess username, trimmed.
-fn username(text: &str) -> Result<String, Refusal> {
-    let trimmed = js::trim(text);
-    matches(trimmed, patterns::username, Some(USERNAME), "", "")?;
-    Ok(trimmed.to_owned())
-}
-
 macro_rules! text_newtype {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*

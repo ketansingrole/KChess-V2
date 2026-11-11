@@ -10,8 +10,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui_kit::*;
+use kchess_contracts::types::SessionKind;
 use kchess_contracts::{CoreError, Level, calls};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::core::AppCore;
 use crate::played::PlayedHandle;
@@ -53,13 +54,13 @@ pub enum Resume {
 
 /// What the reads' answers mean for the page: the sessions to resume, or why there are none to
 /// trust. A failed read is never taken for an empty profile.
-pub fn resumed(reads: Vec<(String, Result<Value, CoreError>)>) -> Result<Sessions, String> {
+pub fn resumed(reads: Vec<(String, Result<Option<Value>, CoreError>)>) -> Result<Sessions, String> {
     let mut sessions = HashMap::new();
     for (kind, read) in reads {
         let session = read.map_err(|cause| {
             format!("Your unfinished game could not be read: {}", cause.message)
         })?;
-        sessions.insert(kind, session);
+        sessions.insert(kind, session.unwrap_or(Value::Null));
     }
     Ok(Sessions(sessions))
 }
@@ -88,8 +89,15 @@ impl<V: Resumes> SessionSaver<V> {
         let reads: Vec<_> = std::iter::once(kind.to_string())
             .chain(also.iter().cloned())
             .map(|kind| {
-                let read = core.request(calls::Session { kind: json!(kind) });
-                async move { (kind, read.await) }
+                let read = SessionKind::named(&kind)
+                    .map(|named| core.request(calls::Session { kind: named }));
+                async move {
+                    let read = match read {
+                        Some(read) => read.await,
+                        None => Err(CoreError::new(format!("No session is kept as {kind}."))),
+                    };
+                    (kind, read)
+                }
             })
             .collect();
         cx.spawn_in(window, async move |this, cx| {
@@ -222,15 +230,15 @@ mod tests {
     #[test]
     fn a_failed_read_is_not_a_fresh_start() {
         let mut read = resumed(vec![
-            ("local".into(), Ok(json!({ "moves": ["e2e4"] }))),
-            ("archive:board".into(), Ok(Value::Null)),
+            ("local".into(), Ok(Some(json!({ "moves": ["e2e4"] })))),
+            ("archive:board".into(), Ok(None)),
         ])
         .expect("both read");
         assert_eq!(read.take("local"), json!({ "moves": ["e2e4"] }));
         assert_eq!(read.take("archive:board"), Value::Null);
         assert_eq!(read.take("archive:clock"), Value::Null);
         let failed = resumed(vec![
-            ("local".into(), Ok(Value::Null)),
+            ("local".into(), Ok(None)),
             (
                 "archive:board".into(),
                 Err(CoreError::new("the profile is locked")),

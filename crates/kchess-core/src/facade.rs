@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use kchess_contracts::core_api::CoreApi;
 use kchess_contracts::types::{AppData, ProfileArea, Settings};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::sync::Arc;
 
 use crate::core::Core;
@@ -362,20 +362,4 @@ impl Core {
         self.database.close_async().await;
         self.claim.release();
     }
-}
-
-/// `assertStudyCommand`: a restored study is decoded by the rules; other commands pass through.
-pub(crate) fn study_command(shape: &Value) -> Result<Value> {
-    if shape["op"].as_str() != Some("restore") {
-        return Ok(shape.clone());
-    }
-    let study = kchess_domain::library::decode_study(&shape["study"])
-        .ok_or_else(|| CoreError::new("That study cannot be restored."))?;
-    Ok(json!({ "op": "restore", "study": study }))
-}
-
-/// `assertArchivedGame`: the archived game as the rules decode it.
-pub(crate) fn archived_game(shape: &Value) -> Result<Value> {
-    kchess_domain::library::decode_archived_game(shape)
-        .ok_or_else(|| CoreError::new("This game cannot be saved."))
 }

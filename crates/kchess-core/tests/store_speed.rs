@@ -111,7 +111,12 @@ fn full_library(db: &Connection, cache: &StoreCache, games: usize, studies: usiz
             pos.play_unchecked(m);
         }
         pgn.push('*');
-        let command = json!({ "op": "save", "name": format!("Study {n}"), "pgn": pgn });
+        let command = kchess_contracts::types::StudyCommand::Save {
+            name: format!("Study {n}"),
+            pgn,
+            id: None,
+            chapter_id: None,
+        };
         run(db, cache, |c| {
             library::run_study_command(c.db, command, n as f64, false, None)
         });
@@ -131,8 +136,8 @@ fn library_read_over_a_full_profile() {
         let cache = StoreCache::default();
         full_library(&db, &cache, games, studies);
         let library = run(&db, &cache, |c| library::cached_library(c, 0.0));
-        assert_eq!(library["games"].as_array().map(Vec::len), Some(games));
-        let bytes = library.to_string().len();
+        assert_eq!(library.games.len(), games);
+        let bytes = serde_json::to_string(&library).expect("json").len();
         // A fresh cache each time: what a first read (or one after a write) costs.
         let first = median(15, || {
             run(&db, &StoreCache::default(), |c| {
@@ -142,7 +147,7 @@ fn library_read_over_a_full_profile() {
         // What every later read costs, written as JSON as the service sends it.
         let again = median(15, || {
             let value = run(&db, &cache, |c| library::cached_library(c, 0.0));
-            std::hint::black_box(value.to_string());
+            std::hint::black_box(serde_json::to_string(&value).expect("json"));
         });
         println!(
             "library, {label} ({} KiB): first read {}, read again (and as JSON) {}",

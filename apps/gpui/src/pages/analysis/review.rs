@@ -3,8 +3,8 @@
 //! review of its main line, or of the game before moves were added to it.
 
 use kchess_contracts::calls;
-use kchess_contracts::check::{Fen, Moves, ReviewKey};
-use kchess_contracts::types::{ReviewCurrent, ReviewRequest, StoredReview};
+use kchess_contracts::check::{Fen, Moves, ReviewKey, Side};
+use kchess_contracts::types::{MistakeGame, ReviewCurrent, ReviewRequest, StoredReview};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
@@ -408,14 +408,14 @@ impl AnalysisPage {
         }
         self.review.saved_mistakes = key.clone();
         let added = cx.global::<AppCore>().request(calls::AddMistakes {
-            review_key: json!(key),
-            color: Some(json!(player)),
+            review_key: ReviewKey(key),
+            color: kchess_domain::color::from_name(&player).map(Side),
         });
         cx.spawn(async move |this, cx| {
             let added = added.await;
             let _ = this.update(cx, |this, cx| match added {
                 Ok(result) => {
-                    this.review.mistakes = result["items"].as_array().cloned().unwrap_or_default();
+                    this.review.mistakes = result.items;
                     cx.notify();
                 }
                 Err(cause) => {
@@ -502,17 +502,15 @@ impl AnalysisPage {
             for color in sides {
                 match core
                     .request(calls::AddMistakes {
-                        review_key: json!(key),
-                        color: Some(json!(color)),
+                        review_key: ReviewKey(key.clone()),
+                        color: kchess_domain::color::from_name(color).map(Side),
                     })
                     .await
                 {
                     Ok(result) => {
-                        let added = result["added"].as_f64().unwrap_or(0.);
-                        let items = result["items"].as_array().cloned().unwrap_or_default();
                         let _ = this.update(cx, |this, _| {
-                            this.review.mistakes = items;
-                            if added == 0. {
+                            this.review.mistakes = result.items;
+                            if result.added == 0 {
                                 this.review.tried.insert(format!("{key}:{color}"));
                             }
                         });
@@ -731,26 +729,23 @@ impl AnalysisPage {
     /// it is, variations and all.
     pub fn practise_game(
         &mut self,
-        game: &Value,
+        game: &MistakeGame,
         items: Vec<Value>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let key = game["key"].as_str().unwrap_or_default().to_string();
+        let key = game.key.clone();
         if self.mainline_key() != key {
             let mut headers = serde_json::Map::new();
-            for (field, header) in [("white", "White"), ("black", "Black")] {
-                if let Some(name) = game[field].as_str() {
+            for (name, header) in [(&game.white, "White"), (&game.black, "Black")] {
+                if let Some(name) = name {
                     headers.insert(header.into(), json!(name));
                 }
             }
-            let moves: Option<Vec<String>> = serde_json::from_value(game["moves"].clone()).ok();
-            let pgn = moves.and_then(|moves| {
-                crate::game::setup_pgn(
-                    &json!({ "variant": "standard", "fen": game["fen"] }),
-                    &moves,
-                    &Value::Object(headers),
-                )
-            });
+            let pgn = crate::game::setup_pgn(
+                &json!({ "variant": "standard", "fen": game.fen }),
+                &game.moves,
+                &Value::Object(headers),
+            );
             let Some(pgn) = pgn else {
                 return false;
             };
@@ -758,10 +753,11 @@ impl AnalysisPage {
                 return false;
             }
             self.review.origin = Some(GameOrigin {
-                player: crate::game::played::color_of(&game["player"]),
-                game_id: game["gameId"].as_str().map(str::to_string),
-                account: game["account"].as_str().map(str::to_string),
-                ..GameOrigin::named(&game["white"], &game["black"])
+                white: game.white.clone(),
+                black: game.black.clone(),
+                player: game.player,
+                game_id: game.game_id.clone(),
+                account: game.account.clone(),
             });
         }
         self.review.mistakes = items;

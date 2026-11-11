@@ -12,7 +12,7 @@ mod guess_find;
 mod knight;
 pub(crate) mod mistakes;
 pub(crate) mod repertoire;
-mod run;
+pub(crate) mod run;
 mod square_color;
 
 use gpui_kit::component::v_flex;

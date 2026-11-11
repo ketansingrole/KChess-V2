@@ -8,7 +8,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use kchess_contracts::types::CoordinateMode;
+use kchess_contracts::types::{CoordinateMode, RunKind, RunRecord, RunSummary};
 use serde_json::{Value, json};
 use shakmaty::{Color, Square};
 
@@ -141,8 +141,8 @@ pub struct Coordinates {
     flash: Option<(String, bool)>,
     run_limited: bool,
     clock: RunClock,
-    summary: Value,
-    saved: Value,
+    summary: Option<RunSummary>,
+    is_best: bool,
     board: Entity<ChessBoard>,
     layout: PlayLayout,
     timers: Vec<Task<()>>,
@@ -204,8 +204,8 @@ impl Coordinates {
             flash: None,
             run_limited: false,
             clock: RunClock::default(),
-            summary: Value::Null,
-            saved: Value::Null,
+            summary: None,
+            is_best: false,
             board,
             layout: PlayLayout::default(),
             timers: Vec::new(),
@@ -217,8 +217,8 @@ impl Coordinates {
             question: 0,
             _subscriptions: subscriptions,
         };
-        run::load_summary("coordinates", cx, |this, summary, cx| {
-            this.summary = summary;
+        run::load_summary(RunKind::Coordinates, cx, |this, summary, cx| {
+            this.summary = Some(summary);
             cx.notify();
         });
         drill.redraw(cx);
@@ -279,7 +279,7 @@ impl Coordinates {
         self.score = 0;
         self.mistakes = 0;
         self.pending_file = None;
-        self.saved = Value::Null;
+        self.is_best = false;
         self.run_limited = crate::prefs::get(cx, LIMITED, false);
         let allowed = Self::allowed(cx);
         self.target = random_square(None, allowed.as_deref());
@@ -424,19 +424,19 @@ impl Coordinates {
         if self.clock.untimed || self.run_limited {
             return;
         }
-        let run = json!({
-            "kind": "coordinates",
-            "variant": self.record_variant(cx),
-            "score": self.score,
-            "detail": {
+        let run = run::input(
+            RunKind::Coordinates,
+            self.record_variant(cx),
+            f64::from(self.score),
+            json!({
                 "mistakes": self.mistakes,
                 "accuracy": self.accuracy(),
                 "side": if self.orientation == Color::White { "white" } else { "black" },
-            },
-        });
+            }),
+        );
         run::save_run(run, cx, |this, saved, cx| {
-            this.summary = saved["summary"].clone();
-            this.saved = saved;
+            this.is_best = saved.is_best;
+            this.summary = Some(saved.summary);
             cx.notify();
         });
     }
@@ -514,19 +514,19 @@ impl Coordinates {
     /// Each side's recent timed runs of this mode and length, oldest first, and their average.
     fn side_scores(&self, cx: &App) -> Vec<(&'static str, Vec<f64>, f64)> {
         let variant = self.record_variant(cx);
-        let runs: Vec<&Value> = self.summary["recent"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|entry| entry["variant"] == variant.as_str())
+        let runs: Vec<&RunRecord> = self
+            .summary
+            .iter()
+            .flat_map(|summary| &summary.recent)
+            .filter(|entry| entry.variant == variant)
             .collect();
         ["white", "black"]
             .into_iter()
             .filter_map(|color| {
                 let mut scores: Vec<f64> = runs
                     .iter()
-                    .filter(|entry| entry["detail"]["side"] == color)
-                    .filter_map(|entry| entry["score"].as_f64())
+                    .filter(|entry| entry.detail.get("side").and_then(Value::as_str) == Some(color))
+                    .map(|entry| entry.score)
                     .collect();
                 scores.reverse();
                 if scores.is_empty() {
@@ -840,9 +840,9 @@ impl Render for Coordinates {
             });
         if !running {
             let variant = self.record_variant(cx);
-            let best = run::best(&self.summary, &variant);
+            let best = run::best(self.summary.as_ref(), &variant);
             if self.stage == Stage::Over {
-                let is_best = !self.clock.untimed && self.saved["isBest"] == json!(true);
+                let is_best = !self.clock.untimed && self.is_best;
                 let detail = if self.run_limited {
                     "Not saved: some files & ranks only".to_string()
                 } else if self.clock.untimed {

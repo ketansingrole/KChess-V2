@@ -11,9 +11,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::{GameAccount, GameId, GameIds};
-use kchess_contracts::types::{
-    ByGame, GamePageQuery, GameResultFilter, LichessGame, ReviewSummary,
-};
+use kchess_contracts::types::{GamePageQuery, GameResultFilter, Keyed, LichessGame, ReviewSummary};
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -55,7 +53,7 @@ pub struct LichessTab {
     pub total: usize,
     pub loading: bool,
     pub error: Option<String>,
-    pub summaries: ByGame<ReviewSummary>,
+    pub summaries: Keyed<ReviewSummary>,
     epoch: u64,
     pub account_select: Entity<SelectState<Vec<Choice>>>,
     pub rated_select: Entity<SelectState<Vec<Choice>>>,
@@ -183,7 +181,7 @@ pub fn new_tab(
             total: 0,
             loading: false,
             error: None,
-            summaries: ByGame::default(),
+            summaries: Keyed::default(),
             epoch: 0,
             account_select,
             rated_select,

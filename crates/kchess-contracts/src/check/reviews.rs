@@ -9,21 +9,7 @@ use kchess_domain::{js, replay};
 use super::*;
 use crate::types::ReviewRequest;
 
-const REVIEW: &str = "Invalid review.";
 const HISTORY: &str = "Invalid game position or move history.";
-
-/// A review's key (`reviewKey`).
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
-#[serde(transparent)]
-pub struct ReviewKey(pub String);
-
-impl Validate for ReviewKey {
-    fn validate(value: J) -> Result<Self, Refusal> {
-        let key: String = decode(value, |_| Some(REVIEW))?;
-        matches(&key, patterns::review_key, Some(REVIEW), "", "")?;
-        Ok(ReviewKey(key))
-    }
-}
 
 /// Up to one history page of Lichess game ids.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
@@ -122,7 +108,10 @@ mod tests {
 
     #[test]
     fn a_review_key_and_game_ids_are_checked() {
-        assert_eq!(check::<ReviewKey>(J::Str("x".into())), Err(REVIEW.into()));
+        assert_eq!(
+            check::<ReviewKey>(J::Str("x".into())),
+            Err("Invalid review.".into())
+        );
         assert_eq!(
             check::<GameIds>(J::Arr(vec![J::Str("not an id!".into())])),
             Err("Invalid game id.".into())
