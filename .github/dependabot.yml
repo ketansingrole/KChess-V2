@@ -10,16 +10,70 @@ updates:
     # is usually yanked before it reaches a pull request. Security updates are not delayed.
     cooldown:
       default-days: 7
-    # `cargo hakari generate` writes the workspace hack from the versions the real crates resolve.
-    # Dependabot once raised its zbus 5 to 6, which nothing used: a second zbus in the lockfile and
-    # an outdated hack that failed `cargo xtask check`.
-    exclude-paths:
-      - crates/kchess-hack/Cargo.toml
     # gpui-kit is pinned to the gpui-pre patched in vendor/ (apps/gpui/Cargo.toml); it moves by hand.
     ignore:
       - dependency-name: gpui-kit
       - dependency-name: gpui-pre*
       - dependency-name: gpui-fast*
+      # The packages only the workspace hack names: `cargo hakari generate` writes their
+      # requirements from what the real crates resolve, so Dependabot brings only their patches.
+      # `cargo xtask check` keeps this list (tooling/xtask/src/hack.rs).
+      - { dependency-name: aho-corasick, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: arrayvec, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: bitflags, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: bytemuck, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: crc32fast, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: crossbeam-utils, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: crypto-common, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: digest, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: either, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: errno, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: fastrand, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: foldhash, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: futures-channel, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: futures-core, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: futures-io, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: futures-sink, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: hashbrown, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: icu_locale_core, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: icu_provider, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: indexmap, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: libc, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: linux-raw-sys, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: litemap, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: log, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: mio, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: num-complex, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: num-rational, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: num-traits, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: once_cell, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: percent-encoding, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: potential_utf, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: proc-macro2, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: quote, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: regex-automata, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: serde_core, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: simd-adler32, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: slab, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: smallvec, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: stable_deref_trait, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: subtle, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: syn, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: tinystr, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: toml_datetime, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: tracing, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: writeable, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: yoke, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: zbus, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: zbus_macros, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: zerofrom, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: zeroize, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: zerotrie, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: zerovec, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: zlib-rs, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: zvariant, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: zvariant_derive, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: zvariant_utils, update-types: [version-update:semver-major, version-update:semver-minor] }
     groups:
       crates:
         patterns: ['*']
