@@ -1,19 +1,20 @@
 //! Lichess's own analysis of a game, as a review (reading it, asking Lichess for it, and the
 //! review writes of the game sync).
 //!
-//! Reviews are JSON values shaped as `StoredReview`. Writing them
-//! goes through `LichessStore::save_reviews` and `mark_checked`, so the review store stays behind
+//! Writing reviews goes through `LichessStore::save_reviews` and `mark_checked`, so the review store stays behind
 //! the storage trait the wiring provides.
 
 use serde::Deserialize;
-use serde_json::{Map, Number, Value, json};
+use serde_json::{Map, Number, Value};
 
 use super::accounts::Lichess;
 use super::client::Lane;
 use super::decode::{Loose, read};
 use crate::time::now_ms;
 use kchess_contracts::error::{CoreError, Result as CoreResult};
-use kchess_contracts::types::UsageKind;
+use kchess_contracts::types::{
+    Judgment, ReviewAccuracy, ReviewEval, ReviewSource, StoredReview, UsageKind,
+};
 use kchess_domain::{js, records, replay, review as domain_review};
 
 /// The standard start, which Lichess scores as +0.15 when it works out accuracy.
@@ -85,7 +86,7 @@ struct RawGame {
 /// Lichess's computer analysis of a game, as a review (scores from
 /// White's side, its labels and accuracy). None when the game is unfinished, has no analysis,
 /// or is a variant reviews cannot replay.
-pub fn review_from_lichess(raw: &Value) -> Option<Value> {
+pub fn review_from_lichess(raw: &Value) -> Option<StoredReview> {
     let game: RawGame = read(raw)?;
     if records::games::is_game_in_progress(game.status.as_ref()) {
         return None;
@@ -105,24 +106,26 @@ pub fn review_from_lichess(raw: &Value) -> Option<Value> {
         return None;
     }
     let positions = replay::replay_positions(&fen, &moves);
-    let mut evals: Vec<Option<Map<String, Value>>> = vec![None; moves.len() + 1];
+    let mut evals: Vec<Option<ReviewEval>> = vec![None; moves.len() + 1];
     if fen == INITIAL_FEN {
-        evals[0] = Some(Map::from_iter([("cp".to_string(), json!(15))]));
+        evals[0] = Some(ReviewEval {
+            cp: Some(15.0),
+            ..ReviewEval::default()
+        });
     }
-    let mut judgments: Vec<Value> = vec![Value::Null; moves.len()];
+    let mut judgments: Vec<Option<Judgment>> = vec![None; moves.len()];
     for (i, entry) in analysis.into_iter().take(moves.len()).enumerate() {
         // Entry i scores the position after move i+1; its `best` is what should have been played.
-        // Only numbers are scores: a review is stored as Lichess sent it.
+        // Only numbers are scores.
         let entry = entry.0.unwrap_or_default();
-        let score = match (entry.mate.0, entry.eval.0) {
-            (Some(mate), _) => Some(("mate", Value::Number(mate))),
-            (None, Some(eval)) => Some(("cp", Value::Number(eval))),
-            (None, None) => None,
+        let (mate, cp) = match (entry.mate.0, entry.eval.0) {
+            (Some(mate), _) => (mate.as_f64(), None),
+            (None, eval) => (None, eval.as_ref().and_then(Number::as_f64)),
         };
-        if let Some((key, value)) = score {
-            evals[i + 1]
-                .get_or_insert_with(Map::new)
-                .insert(key.to_string(), value);
+        if mate.is_some() || cp.is_some() {
+            let slot = evals[i + 1].get_or_insert_with(ReviewEval::default);
+            slot.mate = mate;
+            slot.cp = cp;
         }
         if let Some(best) = entry.best.0.as_deref().filter(|best| !best.is_empty()) {
             let variation = entry.variation.0.as_deref().filter(|text| !text.is_empty());
@@ -138,49 +141,39 @@ pub fn review_from_lichess(raw: &Value) -> Option<Value> {
             } else {
                 pv
             };
-            let slot = evals[i].get_or_insert_with(Map::new);
-            slot.insert("best".to_string(), json!(best));
-            slot.insert("pv".to_string(), json!(pv));
+            let slot = evals[i].get_or_insert_with(ReviewEval::default);
+            slot.best = Some(best.to_string());
+            slot.pv = Some(pv);
         }
-        if let Some(name) = entry
+        judgments[i] = entry
             .judgment
             .0
             .and_then(|judgment| judgment.name.0)
-            .map(|name| name.to_lowercase())
-            && matches!(name.as_str(), "inaccuracy" | "mistake" | "blunder")
-        {
-            judgments[i] = json!(name);
-        }
+            .and_then(|name| Judgment::from_key(&name.to_lowercase()));
     }
-    let mut accuracy = Map::new();
     let players = game.players.0.unwrap_or_default();
-    for (color, player) in [("white", players.white), ("black", players.black)] {
-        let figure = player
+    let [white, black] = [players.white, players.black].map(|player| {
+        player
             .0
             .and_then(|player| player.analysis.0)
-            .and_then(|analysis| analysis.accuracy.0);
-        if let Some(figure) = figure {
-            accuracy.insert(color.to_string(), Value::Number(figure));
-        }
-    }
-    let key = records::review::review_key(&fen, &moves, None);
-    let evals: Vec<Value> = evals
-        .into_iter()
-        .map(|slot| slot.map_or(Value::Null, Value::Object))
-        .collect();
-    Some(json!({
-        "key": key,
-        "fen": fen,
-        "moves": moves,
-        "source": "lichess",
-        "evals": evals,
-        "judgments": judgments,
-        "accuracy": accuracy,
-        "depth": 0,
-        "complete": true,
-        "updatedAt": now_ms(),
-        "gameId": game.id.0?,
-    }))
+            .and_then(|analysis| analysis.accuracy.0)
+    });
+    Some(StoredReview {
+        key: records::review::review_key(&fen, &moves, None),
+        fen,
+        moves,
+        source: ReviewSource::Lichess,
+        engine: None,
+        evals,
+        depth: 0,
+        complete: true,
+        updated_at: now_ms(),
+        game_id: Some(game.id.0?),
+        judgments: Some(judgments),
+        accuracy: Some(ReviewAccuracy { white, black }),
+        variant: None,
+        rest: Map::new(),
+    })
 }
 
 /// Asks Lichess for its analysis of games already synced (up
@@ -190,7 +183,7 @@ pub async fn fetch_lichess_reviews(
     lichess: &Lichess,
     account: &str,
     ids: &[String],
-) -> CoreResult<Vec<Value>> {
+) -> CoreResult<Vec<StoredReview>> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }

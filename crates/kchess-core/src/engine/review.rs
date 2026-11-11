@@ -97,10 +97,6 @@ pub(crate) fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
     serde_json::from_value(value).map_err(|cause| CoreError::new(cause.to_string()))
 }
 
-fn to_value(value: impl Serialize) -> Result<Value> {
-    serde_json::to_value(value).map_err(|cause| CoreError::new(cause.to_string()))
-}
-
 impl ReviewStore {
     pub fn new(database: Arc<Database>) -> ReviewStore {
         ReviewStore(database)
@@ -109,11 +105,9 @@ impl ReviewStore {
     /// The review stored under `key`.
     pub async fn read_review(&self, key: &str) -> Result<Option<StoredReview>> {
         let key = key.to_string();
-        let value = self
-            .0
+        self.0
             .read_async(move |ctx| reviews::read_review(ctx.host, ctx.db, &key))
-            .await?;
-        value.map(parse).transpose()
+            .await
     }
 
     /// Saves `review` unless a better one is stored (a Lichess review beats a local one, a
@@ -125,19 +119,16 @@ impl ReviewStore {
         review: StoredReview,
         current: &(dyn Fn() -> bool + Sync),
     ) -> Result<Option<ReviewUpdate>> {
-        let review = to_value(review)?;
-        let value = self
-            .0
+        self.0
             .write_admitted(|| {
                 let wanted = current();
                 Ok(move |ctx: &StoreContext| {
                     wanted
-                        .then(|| reviews::write_review(ctx.host, ctx.db, &review))
+                        .then(|| reviews::write_review(ctx.host, ctx.db, review))
                         .transpose()
                 })
             })
-            .await?;
-        value.map(parse).transpose()
+            .await
     }
 
     /// Whether the account is still on this device.

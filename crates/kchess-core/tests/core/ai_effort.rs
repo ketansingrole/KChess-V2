@@ -22,6 +22,7 @@ fn stream(text: &str) -> Reply {
 
 fn request(played: &str) -> Value {
     let review = json!({
+        "key": "k", "source": "local", "depth": 18, "complete": true, "updatedAt": 0,
         "fen": FORK,
         "moves": [played],
         "evals": [
@@ -29,6 +30,7 @@ fn request(played: &str) -> Value {
             { "cp": 0, "pv": ["e8d7"] },
         ],
     });
+    let review = serde_json::from_value(review).expect("a stored review");
     kchess_domain::coach::review_moment(&review, 0).unwrap()["request"].clone()
 }
 

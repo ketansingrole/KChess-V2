@@ -17,7 +17,7 @@ use kchess_contracts::check::{Username, check};
 use kchess_contracts::error::{CoreError, Result};
 use kchess_contracts::types::{
     Account, AppData, GameLibraryOverview, GamePage, GamePageQuery, GameRecord, LichessGame,
-    RatingSeries, Settings,
+    RatingSeries, Settings, StoredReview,
 };
 use kchess_domain::calendar::civil_from_days;
 use kchess_domain::color::Color;
@@ -947,7 +947,7 @@ fn upsert_games(
     username: &str,
     games: &[Value],
     synced_at: Option<i64>,
-    reviews: &[Value],
+    reviews: &[StoredReview],
 ) -> Result<()> {
     transaction(db, || {
         let exists = db
@@ -976,7 +976,7 @@ fn upsert_games(
             }
         }
         for review in reviews {
-            super::reviews::write_review(host, db, review)?;
+            super::reviews::write_review(host, db, review.clone())?;
         }
         // Trim once per completed sync rather than after every page.
         if let Some(synced_at) = synced_at {
@@ -997,7 +997,7 @@ pub fn save_games_page(
     db: &Connection,
     username: &str,
     games: &[Value],
-    reviews: &[Value],
+    reviews: &[StoredReview],
 ) -> Result<()> {
     upsert_games(host, db, username, games, None, reviews)
 }

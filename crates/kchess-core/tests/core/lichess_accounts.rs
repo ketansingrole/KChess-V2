@@ -12,7 +12,7 @@ use fixtures::{
     MemoryStore, MemoryTokens, Recording, Reply, capabilities_for, game_json, http_client, ndjson,
     serve,
 };
-use kchess_contracts::types::{LichessGame, PerfType, RelationAction};
+use kchess_contracts::types::{LichessGame, PerfType, RelationAction, StoredReview};
 use kchess_core::lichess::accounts::{
     AccountRow, CachedValue, Lichess, LichessStore, Reply as Outcome,
 };
@@ -646,7 +646,7 @@ impl LichessStore for PageOnly {
         &'a self,
         account: &'a str,
         games: &'a [LichessGame],
-        reviews: &'a [Value],
+        reviews: &'a [StoredReview],
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<()>> {
         Box::pin(async move {
@@ -689,9 +689,10 @@ impl LichessStore for PageOnly {
     fn save_reviews<'a>(
         &'a self,
         _account: &'a str,
-        _reviews: &'a [Value],
+        _reviews: &'a [StoredReview],
         _current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Vec<Value>>> {
+    ) -> futures_util::future::BoxFuture<'a, kchess_contracts::error::Result<Vec<StoredReview>>>
+    {
         Box::pin(async move {
             Err(kchess_contracts::error::CoreError::new(
                 "Reviews are saved with their page.",
@@ -774,7 +775,7 @@ async fn a_synced_page_saves_its_reviews_with_its_games() {
     assert_eq!(store.games.lock().unwrap().len(), 1);
     let reviews = store.reviews.lock().unwrap().clone();
     assert_eq!(reviews.len(), 1, "the page's review is saved with the page");
-    assert_eq!(reviews[0]["gameId"], "abcdefgh");
+    assert_eq!(reviews[0].game_id.as_deref(), Some("abcdefgh"));
 }
 
 #[tokio::test]

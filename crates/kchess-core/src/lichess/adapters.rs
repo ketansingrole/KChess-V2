@@ -12,7 +12,7 @@ use super::lookups::{ExplorerLogin, LookupCache};
 use crate::capabilities::Capabilities;
 use crate::store::{Database, games, lookups, reviews};
 use kchess_contracts::error::{CoreError, Result as CoreResult};
-use kchess_contracts::types::LichessGame;
+use kchess_contracts::types::{LichessGame, StoredReview};
 
 /// `LichessStore` over `kchess.db`.
 pub struct DbLichessStore {
@@ -79,7 +79,7 @@ impl LichessStore for DbLichessStore {
         &'a self,
         account: &'a str,
         games: &'a [LichessGame],
-        reviews: &'a [Value],
+        reviews: &'a [StoredReview],
         current: &'a (dyn Fn() -> bool + Sync),
     ) -> futures_util::future::BoxFuture<'a, CoreResult<()>> {
         Box::pin(async move {
@@ -206,26 +206,24 @@ impl LichessStore for DbLichessStore {
     fn save_reviews<'a>(
         &'a self,
         account: &'a str,
-        reviews: &'a [Value],
+        reviews: &'a [StoredReview],
         current: &'a (dyn Fn() -> bool + Sync),
-    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<Value>>> {
+    ) -> futures_util::future::BoxFuture<'a, CoreResult<Vec<StoredReview>>> {
         Box::pin(async move {
             let _ = account;
             if !current() {
                 return Err(CoreError::new("Sync was cancelled."));
             }
             // One transaction: a cancelled or failed batch keeps the previous reviews.
-            let reviews = Value::Array(reviews.to_vec());
-            let stored = self
-                .database
+            let reviews = reviews.to_vec();
+            self.database
                 .write_admitted(|| {
                     unless_cancelled(current)?;
                     Ok(move |ctx: &crate::store::StoreContext| {
                         reviews::write_reviews(ctx.host, ctx.db, &reviews)
                     })
                 })
-                .await?;
-            Ok(stored.as_array().cloned().unwrap_or_default())
+                .await
         })
     }
 
@@ -417,7 +415,7 @@ mod tests {
         let store = DbLichessStore::new(Arc::clone(&database));
         let cancelled = || false;
         let refused = store
-            .save_games_page("Alice", &[], &[json!({ "key": "k" })], &cancelled)
+            .save_games_page("Alice", &[], &[], &cancelled)
             .await
             .expect_err("cancelled");
         assert_eq!(refused.message, "Sync was cancelled.");

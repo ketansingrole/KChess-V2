@@ -4,6 +4,7 @@ use serde_json::{Map, Value, json};
 use shakmaty::variant::VariantPosition;
 
 use kchess_domain::position::{self, DestMode};
+use kchess_domain::records::review::StoredReview;
 use kchess_domain::variant::Variant;
 use kchess_domain::{coach, pgn, records, replay, review, rules, tree};
 
@@ -42,6 +43,20 @@ fn setup_position(args: &[Value]) -> Result<VariantPosition, String> {
 
 fn to_value<T: serde::Serialize>(value: T) -> Out {
     serde_json::to_value(value).map_err(|e| format!("serialization: {e}"))
+}
+
+/// The review the TypeScript suites passed, the fields they left out read as a review's
+/// defaults; None for one no review could be.
+fn stored_review(args: &[Value]) -> Result<Option<StoredReview>, String> {
+    let mut fields = arg(args, 0).ok_or_else(|| "review".to_string())?.clone();
+    if let Some(map) = fields.as_object_mut() {
+        let defaults =
+            json!({ "key": "", "source": "local", "depth": 0, "complete": false, "updatedAt": 0 });
+        for (key, value) in defaults.as_object().into_iter().flatten() {
+            map.entry(key).or_insert_with(|| value.clone());
+        }
+    }
+    Ok(serde_json::from_value(fields).ok())
 }
 
 fn header_pairs(headers: Option<&Map<String, Value>>) -> Result<Vec<(&str, &str)>, String> {
@@ -86,23 +101,23 @@ fn answer(method: &str, args: &[Value]) -> Result<Option<Value>, String> {
             ))?
         }
         "reviewClassifications" => {
-            review::review_classifications(arg(args, 0).ok_or_else(|| "review".to_string())?)
-                .unwrap_or(Value::Null)
+            to_value(stored_review(args)?.and_then(|r| review::classifications(&r)))?
         }
-        "reviewPhases" => review::review_phases(arg(args, 0).ok_or_else(|| "review".to_string())?)
+        "reviewPhases" => to_value(stored_review(args)?.and_then(|r| review::phases(&r)))?,
+        "reviewMoment" => stored_review(args)?
+            .and_then(|r| {
+                coach::review_moment(
+                    &r,
+                    arg(args, 1).and_then(Value::as_u64).unwrap_or(0) as usize,
+                )
+            })
             .unwrap_or(Value::Null),
-        "reviewMoment" => coach::review_moment(
-            arg(args, 0).unwrap_or(&Value::Null),
-            arg(args, 1).and_then(Value::as_u64).unwrap_or(0) as usize,
-        )
-        .unwrap_or(Value::Null),
         "puzzleClue" => json!(coach::puzzle_clue(
             text(args, 0, "fen")?,
             &texts(args, 1, "moves")?
         )),
         "analyseReview" => {
-            review::analyse_review(arg(args, 0).ok_or_else(|| "review".to_string())?)
-                .unwrap_or(Value::Null)
+            to_value(stored_review(args)?.and_then(|r| review::analyse(&r).ok()))?
         }
         "studyDocumentPgn" => {
             let chapters = arg(args, 0)

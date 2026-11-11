@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use kchess_contracts::CoreError;
+use kchess_contracts::types::StoredReview;
 use kchess_core::engine::review::GameToReview;
 use kchess_core::store::{StoreContext, insights, reviews};
 use kchess_core::{Config, Core};
@@ -54,16 +55,23 @@ impl Profile {
     }
 
     fn write_reviews(&self, reviews: &Value) -> Result<Value, CoreError> {
-        self.core
+        let reviews: Vec<StoredReview> =
+            serde_json::from_value(reviews.clone()).expect("stored reviews");
+        let stored = self
+            .core
             .database_for_tests()
-            .write(|c| reviews::write_reviews(c.host, c.db, reviews))
+            .write(|c| reviews::write_reviews(c.host, c.db, &reviews))?;
+        Ok(serde_json::to_value(stored).expect("json"))
     }
 
     fn write_review(&self, review: &Value) -> Value {
-        self.core
+        let review: StoredReview = serde_json::from_value(review.clone()).expect("a stored review");
+        let update = self
+            .core
             .database_for_tests()
             .write(|c| reviews::write_review(c.host, c.db, review))
-            .expect("writeReview")
+            .expect("writeReview");
+        serde_json::to_value(update).expect("json")
     }
 
     fn read_review(&self, key: &str) -> Value {
@@ -319,7 +327,13 @@ fn a_review_batch_writes_atomically_and_a_failed_batch_keeps_the_previous_review
         second["key"] = json!("batch-second-key");
         second
     };
-    let bad = json!({ "fen": INITIAL_FEN });
+    let bad = review(
+        None,
+        &[
+            ("key", json!("batch-bad-key")),
+            ("fen", json!("8/8/8/8/8/8/8/8 w - - 0 1")),
+        ],
+    );
     let outcome = profile.write_reviews(&json!([second, bad]));
     assert!(outcome.is_err(), "a malformed batch member fails the batch");
     assert!(
