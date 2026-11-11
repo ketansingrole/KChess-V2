@@ -411,9 +411,14 @@ mod tests {
 
     /// A review from its fen, moves and evals.
     fn stored(mut fields: Value) -> StoredReview {
-        let defaults = json!({ "key": "k", "source": "local", "depth": 18, "complete": true, "updatedAt": 0 });
+        let defaults =
+            json!({ "key": "k", "source": "local", "depth": 18, "complete": true, "updatedAt": 0 });
         for (key, value) in defaults.as_object().unwrap() {
-            fields.as_object_mut().unwrap().entry(key).or_insert(value.clone());
+            fields
+                .as_object_mut()
+                .unwrap()
+                .entry(key)
+                .or_insert(value.clone());
         }
         serde_json::from_value(fields).unwrap()
     }

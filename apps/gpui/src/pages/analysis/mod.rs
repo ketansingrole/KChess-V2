@@ -609,10 +609,16 @@ impl AnalysisPage {
 
     /// The review shown, once it covers the whole main line and is finished, with its summary.
     #[cfg(test)]
-    pub(crate) fn finished_review(&self, cx: &App) -> Option<(Value, Value)> {
-        let review = self.review(cx).filter(|review| {
-            review["complete"] == json!(true) && review["key"] == json!(self.mainline_key())
-        })?;
+    pub(crate) fn finished_review(
+        &self,
+        cx: &App,
+    ) -> Option<(
+        kchess_contracts::types::StoredReview,
+        kchess_domain::review::GameAnalysis,
+    )> {
+        let review = self
+            .review(cx)
+            .filter(|review| review.complete && review.key == self.mainline_key())?;
         let (analysis, _) = self.game_analysis(cx)?;
         Some((review, analysis))
     }
@@ -1086,11 +1092,13 @@ impl AnalysisPage {
         let mate = state.badge.take();
         state.badge = marks
             .get(&self.path)
-            .and_then(|mark| mark.classification.as_deref())
+            .and_then(|mark| mark.classification)
             .zip(last_move)
             .map(|(classification, (_, to))| {
-                let (_, glyph, color) =
-                    review::classification_look(classification, cx.global::<Palette>().dark);
+                let (_, glyph, color) = review::classification_look(
+                    classification.as_str(),
+                    cx.global::<Palette>().dark,
+                );
                 Badge {
                     square: to,
                     glyph,

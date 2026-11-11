@@ -224,9 +224,9 @@ fn judge(before: Score, after: Score, mover_white: bool) -> Option<Judgment> {
         (0.2, Judgment::Mistake),
         (0.1, Judgment::Inaccuracy),
     ]
-        .into_iter()
-        .find(|(threshold, _)| drop >= *threshold)
-        .map(|(_, label)| label)
+    .into_iter()
+    .find(|(threshold, _)| drop >= *threshold)
+    .map(|(_, label)| label)
 }
 
 fn move_accuracy(win_before: f64, win_after: f64) -> f64 {
@@ -633,10 +633,12 @@ pub fn phases(review: &StoredReview) -> Option<ReviewPhases> {
     })?;
     let mut phases = ReviewPhases::default();
     if let Some(weights) = analysis.weights.as_deref() {
-        let [opening, middlegame, endgame] = [0..middle, middle..end, end..count].map(|range| {
-            weighted_accuracy(&analysis.colors, &analysis.accuracies, weights, range)
-        });
-        for (index, side) in [&mut phases.white, &mut phases.black].into_iter().enumerate() {
+        let [opening, middlegame, endgame] = [0..middle, middle..end, end..count]
+            .map(|range| weighted_accuracy(&analysis.colors, &analysis.accuracies, weights, range));
+        for (index, side) in [&mut phases.white, &mut phases.black]
+            .into_iter()
+            .enumerate()
+        {
             side.opening = opening[index].map(js::round);
             side.middlegame = middlegame[index].map(js::round);
             side.endgame = endgame[index].map(js::round);
@@ -676,32 +678,35 @@ pub fn classifications(review: &StoredReview) -> Option<Vec<Option<Classificatio
         let m = rules::parse_uci(text).and_then(|u| rules::legal_move(&pos, u))?;
         let label = match verdict.judgment {
             Some(judgment) => Some(judgment.into()),
-            None => review.eval(i).zip(review.eval(i + 1)).and_then(|(before, after)| {
-                let white = pos.turn() == Color::White;
-                let loss = 50.0
-                    * pov(
-                        white,
-                        win_chances(before.score, white) - win_chances(after.score, !white),
-                    );
-                if loss <= 2.0 && before.best == Some(text) {
-                    // Material does not measure a sacrifice in the variants (drops, explosions).
-                    Some(
-                        if review.variant.is_some_and(Variant::standard_rules)
-                            && sound_sacrifice(&pos, m, before, after)
-                        {
-                            Classification::Brilliant
-                        } else {
-                            Classification::Best
-                        },
-                    )
-                } else if loss <= 2.0 {
-                    Some(Classification::Excellent)
-                } else if loss < 5.0 {
-                    Some(Classification::Good)
-                } else {
-                    None
-                }
-            }),
+            None => review
+                .eval(i)
+                .zip(review.eval(i + 1))
+                .and_then(|(before, after)| {
+                    let white = pos.turn() == Color::White;
+                    let loss = 50.0
+                        * pov(
+                            white,
+                            win_chances(before.score, white) - win_chances(after.score, !white),
+                        );
+                    if loss <= 2.0 && before.best == Some(text) {
+                        // Material does not measure a sacrifice in the variants (drops, explosions).
+                        Some(
+                            if review.variant.is_some_and(Variant::standard_rules)
+                                && sound_sacrifice(&pos, m, before, after)
+                            {
+                                Classification::Brilliant
+                            } else {
+                                Classification::Best
+                            },
+                        )
+                    } else if loss <= 2.0 {
+                        Some(Classification::Excellent)
+                    } else if loss < 5.0 {
+                        Some(Classification::Good)
+                    } else {
+                        None
+                    }
+                }),
         };
         labels.push(label);
         pos.play_unchecked(m);
@@ -866,9 +871,14 @@ mod tests {
 
     /// A review from its JSON fields; a field left out is the default.
     fn stored(mut fields: Value) -> StoredReview {
-        let defaults = json!({ "key": "k", "source": "local", "depth": 18, "complete": true, "updatedAt": 0 });
+        let defaults =
+            json!({ "key": "k", "source": "local", "depth": 18, "complete": true, "updatedAt": 0 });
         for (key, value) in defaults.as_object().unwrap() {
-            fields.as_object_mut().unwrap().entry(key).or_insert(value.clone());
+            fields
+                .as_object_mut()
+                .unwrap()
+                .entry(key)
+                .or_insert(value.clone());
         }
         serde_json::from_value(fields).unwrap()
     }
@@ -1099,13 +1109,19 @@ mod tests {
     fn judges_walking_into_mate_by_how_good_the_position_still_was() {
         assert_eq!(judge(cp(50.0), mate(-3.0), true), Some(Judgment::Blunder));
         assert_eq!(judge(cp(-800.0), mate(-3.0), true), Some(Judgment::Mistake));
-        assert_eq!(judge(cp(-1200.0), mate(-3.0), true), Some(Judgment::Inaccuracy));
+        assert_eq!(
+            judge(cp(-1200.0), mate(-3.0), true),
+            Some(Judgment::Inaccuracy)
+        );
         assert_eq!(judge(cp(-50.0), mate(3.0), false), Some(Judgment::Blunder));
     }
 
     #[test]
     fn judges_missing_a_forced_mate_by_what_is_left() {
-        assert_eq!(judge(mate(2.0), cp(1500.0), true), Some(Judgment::Inaccuracy));
+        assert_eq!(
+            judge(mate(2.0), cp(1500.0), true),
+            Some(Judgment::Inaccuracy)
+        );
         assert_eq!(judge(mate(2.0), cp(800.0), true), Some(Judgment::Mistake));
         assert_eq!(judge(mate(2.0), cp(300.0), true), Some(Judgment::Blunder));
         assert_eq!(judge(mate(2.0), mate(-4.0), true), Some(Judgment::Blunder));

@@ -88,7 +88,11 @@ fn to_text(value: &impl serde::Serialize) -> Result<String> {
 }
 
 /// Save `review` unless a better one is stored; returns what is stored.
-pub fn write_review(host: &dyn Host, db: &Connection, review: StoredReview) -> Result<ReviewUpdate> {
+pub fn write_review(
+    host: &dyn Host,
+    db: &Connection,
+    review: StoredReview,
+) -> Result<ReviewUpdate> {
     let key = review.key.clone();
     let input_game = review.game_id.clone().filter(|game| !game.is_empty());
     let link = |db: &Connection| -> Result<()> {
@@ -102,7 +106,10 @@ pub fn write_review(host: &dyn Host, db: &Connection, review: StoredReview) -> R
         Ok(())
     };
     let existing = read_stored(host, db, &key)?;
-    if let Some(existing) = existing.as_ref().filter(|e| rank(&e.review) > rank(&review)) {
+    if let Some(existing) = existing
+        .as_ref()
+        .filter(|e| rank(&e.review) > rank(&review))
+    {
         link(db)?;
         let mut kept = existing.review.clone();
         kept.game_id = review.game_id.or(kept.game_id);
@@ -187,7 +194,8 @@ pub fn review_summaries(
         .sql()?;
     for row in rows {
         let (game, summary) = row.sql()?;
-        let Some(summary) = parse_logged::<Value>(host, &summary).filter(|s| truthy(Some(s))) else {
+        let Some(summary) = parse_logged::<Value>(host, &summary).filter(|s| truthy(Some(s)))
+        else {
             continue;
         };
         match serde_json::from_value(summary) {

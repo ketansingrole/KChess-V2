@@ -4,8 +4,7 @@
 
 use kchess_contracts::types::{
     Drill, JoinedTournament, Keyed, MistakeGame, MistakesAdded, PlayedGame, ReviewSource,
-    SessionKind,
-    StudyCommand, StudyCommandResult, TournamentSystem,
+    SessionKind, StudyCommand, StudyCommandResult, TournamentSystem,
 };
 use kchess_domain::color::Color;
 use rusqlite::{Connection, OptionalExtension, params};

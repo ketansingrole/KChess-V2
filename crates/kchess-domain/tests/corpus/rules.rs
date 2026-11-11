@@ -116,9 +116,7 @@ fn answer(method: &str, args: &[Value]) -> Result<Option<Value>, String> {
             text(args, 0, "fen")?,
             &texts(args, 1, "moves")?
         )),
-        "analyseReview" => {
-            to_value(stored_review(args)?.and_then(|r| review::analyse(&r).ok()))?
-        }
+        "analyseReview" => to_value(stored_review(args)?.and_then(|r| review::analyse(&r).ok()))?,
         "studyDocumentPgn" => {
             let chapters = arg(args, 0)
                 .and_then(Value::as_array)

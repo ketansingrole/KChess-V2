@@ -224,10 +224,10 @@ impl TreeView<'_> {
                 chip.children(
                     self.marks
                         .get(path)
-                        .and_then(|mark| mark.classification.as_deref())
+                        .and_then(|mark| mark.classification)
                         .map(|classification| {
                             let (label, glyph, color) =
-                                review::classification_look(classification, palette.dark);
+                                review::classification_look(classification.as_str(), palette.dark);
                             div()
                                 .id(SharedString::from(format!("label-{path}")))
                                 .ml(px(1.))
