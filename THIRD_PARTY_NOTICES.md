@@ -43,6 +43,7 @@ crate they depend on directly is named here.
 | [`objc2`](https://github.com/madsmtm/objc2) (`objc2-foundation`, `objc2-av-foundation`, `block2`)                                                                 | MIT                                    | Reading and asking for microphone access on macOS                                                                             |
 | [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) (`@fluentui/svg-icons` 1.1.345), Copyright (c) 2020 Microsoft Corporation | MIT | Interface icons (SVG files in `apps/gpui/assets/icons`, written by `cargo xtask icons`) |
 | [`regex`](https://github.com/rust-lang/regex) | MIT OR Apache-2.0 | Matching typed and spoken input in the app |
+| [`url`](https://github.com/servo/rust-url) | MIT OR Apache-2.0 | Checking that a link opens in the browser only when it is a web page |
 | [`objc2-app-kit`](https://github.com/madsmtm/objc2) | MIT | The Dock icon on macOS |
 | [`nix`](https://github.com/nix-rust/nix) | MIT | The benchmark's CPU time and peak memory on macOS |
 | [`libloading`](https://github.com/nagisa/rust_libloading) | ISC | Loading libvosk into the speech recognition helper |
