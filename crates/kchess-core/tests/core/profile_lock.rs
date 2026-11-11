@@ -6,7 +6,7 @@ use kchess_contracts::CoreEvent;
 use std::fs::File;
 use std::sync::Arc;
 
-use kchess_core::facade::ProfileClaim;
+use kchess_core::profile_lock::ProfileClaim;
 use kchess_core::{Config, Core, Host, Level};
 
 /// The lock file the claim holds (`PROFILE_LOCK`, `crates/kchess-core/src/facade.rs`).

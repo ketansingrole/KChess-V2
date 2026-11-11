@@ -43,6 +43,7 @@ pub mod lichess;
 pub mod loopback;
 mod panics;
 mod process;
+pub mod profile_lock;
 pub mod puzzles;
 pub mod redact;
 pub mod secrets;

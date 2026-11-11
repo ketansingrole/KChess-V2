@@ -1,14 +1,11 @@
 //! The core's API as `CoreApi` declares it (`kchess_contracts::core_api`), one file per area,
-//! and what the methods share: the profile claim, the closed state, migration, the settings that
+//! and what the methods share: the closed state, migration, the settings that
 //! stop engines, account sessions and the close sequence. The generated dispatch checks the
 //! arguments, refuses assistance during a live game and reports the profile areas a call changed.
 
 use kchess_contracts::CoreEvent;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use kchess_contracts::core_api::CoreApi;
 use kchess_contracts::types::{CoreSettings, ProfileArea};
@@ -41,83 +38,6 @@ pub const CLOSED: &str = "The KChess core is closed.";
 
 /// The puzzle database `puzzleDbInstall` downloads (`PUZZLE_DB_URL`).
 pub(crate) const PUZZLE_DB_URL: &str = "https://database.lichess.org/lichess_db_puzzle.csv.zst";
-
-/// The profiles in use by a live core, by canonical data directory; each holds the claim's token,
-/// so a stale release never frees a profile a later core has claimed.
-static PROFILES: LazyLock<Mutex<HashMap<PathBuf, u64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static CLAIMS: AtomicU64 = AtomicU64::new(1);
-
-/// The lock file a live core holds in its profile directory: one live core per
-/// profile, even across processes (a second app launch, the CLI on the same data dir).
-const PROFILE_LOCK: &str = "profile.lock";
-
-/// One core's claim on its profile directory: one live core per profile (`createKChessCore`).
-pub struct ProfileClaim {
-    path: PathBuf,
-    token: u64,
-    /// The lock file, held open: `release` (or drop) frees the OS advisory lock.
-    lock: Mutex<Option<std::fs::File>>,
-}
-
-impl ProfileClaim {
-    /// Claims the profile at `data_dir` (its real path), or fails when a core already runs there.
-    pub fn claim(data_dir: &Path) -> Result<ProfileClaim> {
-        let path = std::fs::canonicalize(data_dir)
-            .map_err(|cause| CoreError::wrap("profile path", cause))?;
-        let token = CLAIMS.fetch_add(1, Ordering::SeqCst);
-        let mut profiles = PROFILES
-            .lock()
-            .map_err(|_| CoreError::new("The profiles are unavailable."))?;
-        if profiles.contains_key(&path) {
-            return Err(CoreError::new(
-                "A KChess core is already running for this profile.",
-            ));
-        }
-        // The in-process map cannot see a second process, so the claim also holds an OS
-        // advisory lock on a lock file in the data dir for the core's lifetime (`flock` on
-        // Unix, `LockFileEx` on Windows: both conflict across open file descriptions, which
-        // is exactly how a second process opens the same file).
-        let lock = std::fs::File::create(path.join(PROFILE_LOCK))
-            .map_err(|cause| CoreError::wrap("profile lock", cause))?;
-        if let Err(cause) = lock.try_lock() {
-            return Err(match cause {
-                std::fs::TryLockError::WouldBlock => {
-                    CoreError::new("A KChess core is already running for this profile.")
-                }
-                std::fs::TryLockError::Error(locked) => CoreError::wrap("profile lock", locked),
-            });
-        }
-        profiles.insert(path.clone(), token);
-        Ok(ProfileClaim {
-            path,
-            token,
-            lock: Mutex::new(Some(lock)),
-        })
-    }
-
-    /// Frees the profile, once the core has closed it.
-    pub fn release(&self) {
-        if let Ok(mut profiles) = PROFILES.lock()
-            && profiles.get(&self.path) == Some(&self.token)
-        {
-            profiles.remove(&self.path);
-        }
-        // Free the OS lock now, not at drop: a closed core must be reopenable
-        // while its (shut down) object still exists.
-        if let Ok(mut held) = self.lock.lock()
-            && let Some(file) = held.take()
-        {
-            let _ = file.unlock();
-        }
-    }
-}
-
-impl Drop for ProfileClaim {
-    fn drop(&mut self) {
-        self.release();
-    }
-}
 
 /// The host of a core: its events stop reaching the frontend once the core is closed. Capability
 /// requests still pass, so a call that is closing can be answered; logs always pass.

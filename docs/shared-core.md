@@ -9,7 +9,7 @@ it) and there is no MCP client. Open findings are in the
 
 Before this, every KChess app embedded its own core on a Tokio runtime inside the app
 (`apps/gpui/src/core.rs`).
-The core is the profile's only writer, and `ProfileClaim` (`crates/kchess-core/src/facade.rs`)
+The core is the profile's only writer, and `ProfileClaim` (`crates/kchess-core/src/profile_lock.rs`)
 enforces that with an advisory `profile.lock`: a second app on the same profile fails with
 "A KChess core is already running for this profile."
 
