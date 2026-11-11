@@ -396,7 +396,7 @@ impl Voice {
     }
 
     fn open_microphone(&mut self, cx: &mut Context<Self>) {
-        let (capture, mut chunks) = match capture::start() {
+        let (capture, mut chunks) = match capture::start(cx) {
             Ok(opened) => opened,
             Err(cause) => {
                 let kind = match cause {

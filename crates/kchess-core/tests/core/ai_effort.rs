@@ -1,8 +1,6 @@
 //! A plan that refuses the chosen effort, after the explanation's access renewed the tokens: the
 //! refusal is recorded without bringing back the refresh token the renewal used up, and only for
 //! the effort it refused.
-#[path = "support/lichess_http.rs"]
-mod fixtures;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -10,8 +8,8 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use fixtures::{Recording, Reply, default_answers, http_client, serve};
-use kchess_core::{Config, Core};
+use crate::fixtures::{Recording, Reply, default_answers, http_client, serve};
+use kchess_core::{Config, Core, TestSwitches};
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
@@ -117,8 +115,6 @@ async fn a_refused_effort_keeps_the_renewed_tokens() {
         .await
     };
     *origin.lock().unwrap() = fixture.base.clone();
-    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
-    kchess_core::env::set("KCHESS_TEST_OPENAI_BASE", &fixture.base);
     let dir = tempfile::tempdir().unwrap();
     let host = Arc::new(Recording::default());
     *host.answers.lock().unwrap() = default_answers();
@@ -143,8 +139,14 @@ async fn a_refused_effort_keeps_the_renewed_tokens() {
             });
         }));
     }
-    let mut config = Config::new(dir.path().to_path_buf());
-    config.system_credentials = true;
+    let config = Config {
+        system_credentials: true,
+        test: Some(TestSwitches {
+            openai_origin: Some(fixture.base.clone()),
+            ..TestSwitches::default()
+        }),
+        ..Config::new(dir.path().to_path_buf())
+    };
     let core =
         Arc::new(Core::open(config, Arc::clone(&host) as Arc<dyn kchess_core::Host>).unwrap());
     *host.capabilities.lock().unwrap() = Some(core.capabilities());

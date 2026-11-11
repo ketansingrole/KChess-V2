@@ -16,7 +16,7 @@ pub mod server;
 pub mod transport;
 
 pub use client::{
-    Client, ClientEvent, ConnectError, Hello, ServiceConfig, Start, connect_or_start,
+    Client, ClientEvent, ConnectError, Hello, Start, connect_or_start,
     connect_or_start_within,
 };
 pub use protocol::Capability;

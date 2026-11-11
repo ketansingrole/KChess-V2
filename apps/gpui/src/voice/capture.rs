@@ -1,5 +1,5 @@
 //! Audio for voice input: the default
-//! microphone, mono, in chunks of about 100 ms. Under the store's test switch a WAV file named by
+//! microphone, mono, in chunks of about 100 ms. Under the test switches a WAV file named by
 //! `KCHESS_TEST_VOICE_AUDIO` is played in its place, in real time, so the app can be driven
 //! without opening a microphone.
 
@@ -48,20 +48,22 @@ impl CaptureError {
     }
 }
 
-/// The test file to play instead of the microphone, while the test switch is on.
-fn test_audio() -> Option<PathBuf> {
-    kchess_core::store::debug::enabled()
-        .then(|| kchess_core::env::var_os("KCHESS_TEST_VOICE_AUDIO"))
-        .flatten()
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
+/// The test file to play instead of the microphone (`TestSwitches::voice_audio`).
+fn test_audio(cx: &gpui_kit::App) -> Option<PathBuf> {
+    cx.try_global::<crate::core::AppCore>()?
+        .test
+        .as_ref()?
+        .voice_audio
+        .clone()
 }
 
 /// Start capturing: chunks arrive on the returned receiver until the capture is dropped.
-pub fn start() -> Result<(Capture, mpsc::UnboundedReceiver<Chunk>), CaptureError> {
+pub fn start(
+    cx: &gpui_kit::App,
+) -> Result<(Capture, mpsc::UnboundedReceiver<Chunk>), CaptureError> {
     let (sender, receiver) = mpsc::unbounded();
     let stop = Arc::new(AtomicBool::new(false));
-    if let Some(path) = test_audio() {
+    if let Some(path) = test_audio(cx) {
         let (samples, rate) = read_wav(&path).map_err(CaptureError::Busy)?;
         let flag = Arc::clone(&stop);
         std::thread::spawn(move || play_file(samples, rate, sender, flag));

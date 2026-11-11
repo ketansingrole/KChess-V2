@@ -1,16 +1,14 @@
 //! A ChatGPT plan from sign-in to an explanation, over a local fixture of OpenAI: the browser's
 //! trip back, sealed tokens, the model and effort sent, a reply outside the facts thrown away,
 //! the saved answer, a spent allowance, a live game, and disconnecting.
-#[path = "support/lichess_http.rs"]
-mod fixtures;
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use fixtures::{Recording, Reply, default_answers, http_client, serve};
-use kchess_core::{Config, Core};
+use crate::fixtures::{Recording, Reply, default_answers, http_client, serve};
+use kchess_core::{Config, Core, TestSwitches};
 use serde_json::{Value, json};
 
 const FORK: &str = "r3k3/pp3ppp/8/1N6/8/8/PPP2PPP/4K3 w - - 0 1";
@@ -104,8 +102,6 @@ async fn a_plan_connects_explains_and_disconnects() {
         .await
     };
     *origin.lock().unwrap() = fixture.base.clone();
-    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
-    kchess_core::env::set("KCHESS_TEST_OPENAI_BASE", &fixture.base);
     let dir = tempfile::tempdir().unwrap();
     // When set, the browser's trip back waits for this.
     let hold = Arc::new(Mutex::new(None::<tokio::sync::oneshot::Receiver<()>>));
@@ -143,8 +139,14 @@ async fn a_plan_connects_explains_and_disconnects() {
             });
         }));
     }
-    let mut config = Config::new(dir.path().to_path_buf());
-    config.system_credentials = true;
+    let config = Config {
+        system_credentials: true,
+        test: Some(TestSwitches {
+            openai_origin: Some(fixture.base.clone()),
+            ..TestSwitches::default()
+        }),
+        ..Config::new(dir.path().to_path_buf())
+    };
     let core = Core::open(config, Arc::clone(&host) as Arc<dyn kchess_core::Host>).unwrap();
     *host.capabilities.lock().unwrap() = Some(core.capabilities());
 

@@ -37,7 +37,6 @@ use crate::lichess::services::{LiveGame, Services};
 use crate::puzzles::PuzzleService;
 use crate::secrets::Credentials;
 use crate::store::Database;
-use crate::store::debug;
 use crate::usage::UsageBatch;
 use crate::voice::recognizer::VoiceRecognizer;
 
@@ -130,37 +129,6 @@ async fn caught_as(
         .unwrap_or_else(|_| Err(CoreError::new(format!("KChess could not finish {method}."))))
 }
 
-/// A test-only Lichess origin (`KCHESS_TEST_LICHESS_BASE`), honoured only when the test switch
-/// is on (`KCHESS_STORE_DEBUG=1`), so the end-to-end suite serves Lichess from a local fixture.
-fn test_lichess_origin() -> Option<String> {
-    if !debug::enabled() {
-        return None;
-    }
-    crate::env::var("KCHESS_TEST_LICHESS_BASE")
-        .map(|origin| origin.trim_end_matches('/').to_string())
-        .filter(|origin| !origin.is_empty())
-}
-
-/// A test-only Chess.com origin (`KCHESS_TEST_CHESSCOM_BASE`), honoured like `test_lichess_origin`.
-fn test_chesscom_origin() -> Option<String> {
-    if !debug::enabled() {
-        return None;
-    }
-    crate::env::var("KCHESS_TEST_CHESSCOM_BASE")
-        .map(|origin| origin.trim_end_matches('/').to_string())
-        .filter(|origin| !origin.is_empty())
-}
-
-/// A test-only OpenAI origin (`KCHESS_TEST_OPENAI_BASE`), honoured like `test_lichess_origin`.
-fn test_openai_origin() -> Option<String> {
-    if !debug::enabled() {
-        return None;
-    }
-    crate::env::var("KCHESS_TEST_OPENAI_BASE")
-        .map(|origin| origin.trim_end_matches('/').to_string())
-        .filter(|origin| !origin.is_empty())
-}
-
 fn engine_locations(config: &Config) -> EngineLocations {
     EngineLocations {
         managed_dir: default_dir(&config.data_dir, config.managed_engine_dir.as_deref()),
@@ -174,6 +142,8 @@ impl Core {
     /// Opens the core over `config`'s profile. Fails when a live core already owns that profile.
     pub fn open(config: Config, host: Arc<dyn Host>) -> Result<Core> {
         let claim = ProfileClaim::claim(&config.data_dir)?;
+        let test = config.test_switches().cloned().unwrap_or_default();
+        let testing = config.test_switches().is_some();
         let connections = Arc::new(Connections::new());
         let closed = Arc::new(AtomicBool::new(false));
         let host: Arc<dyn Host> = Arc::new(GatedHost::new(host, Arc::clone(&closed)));
@@ -181,7 +151,7 @@ impl Core {
         let database = Arc::new(Database::new(config.clone(), Arc::clone(&host)));
         let credentials = config
             .system_credentials
-            .then(|| Arc::new(Credentials::for_profile(&config.data_dir)));
+            .then(|| Arc::new(Credentials::for_profile(&config.data_dir, testing)));
         let capabilities = Arc::new(
             Capabilities::with_credentials(Arc::clone(&host), credentials)
                 .with_connections(Arc::clone(&connections)),
@@ -214,7 +184,7 @@ impl Core {
             Arc::clone(&capabilities),
             Arc::clone(&usage),
             CancellationToken::new(),
-            test_lichess_origin(),
+            test.lichess_origin,
             LiveGame {
                 stops: game_stops,
                 busy: Arc::clone(&busy),
@@ -225,7 +195,7 @@ impl Core {
             config.voice_helper_path.clone(),
             crate::voice::model_dir(&config.data_dir),
         ));
-        let (voice_archive, voice_model) = crate::voice::active_model();
+        let (voice_archive, voice_model) = crate::voice::active_model(test.voice_model.as_ref());
         let voice_model = crate::voice::VoiceModelCache::new(
             Arc::clone(&host),
             usage.clone(),
@@ -236,7 +206,7 @@ impl Core {
         let chesscom = crate::chesscom::Chesscom::new(
             Arc::clone(&database),
             Arc::clone(&host),
-            test_chesscom_origin(),
+            test.chesscom_origin,
             CancellationToken::new(),
         );
         let data_dir = config.data_dir.clone();
@@ -259,7 +229,7 @@ impl Core {
             search,
             analysis,
             reviews,
-            ai: crate::ai::Ai::new(test_openai_origin(), CancellationToken::new())?,
+            ai: crate::ai::Ai::new(test.openai_origin, CancellationToken::new())?,
             chesscom,
             services,
             usage,

@@ -57,10 +57,10 @@ pub struct Credentials {
 }
 
 impl Credentials {
-    /// The credentials of the profile at `data_dir`: the OS credential store, or a key file in
-    /// the profile under the test switch.
-    pub fn for_profile(data_dir: &Path) -> Credentials {
-        if crate::store::debug::enabled() {
+    /// The credentials of the profile at `data_dir`: the OS credential store, or (`in_file`, an
+    /// automated run) a key file in the profile.
+    pub fn for_profile(data_dir: &Path, in_file: bool) -> Credentials {
+        if in_file {
             return Credentials::new(Box::new(FileKeys(data_dir.join(TEST_KEY_FILE))));
         }
         Credentials::new(Box::new(SystemKeys {
@@ -257,7 +257,7 @@ impl KeyStore for SystemKeys {
     }
 }
 
-/// The key in a profile file, for automated runs only (`KCHESS_STORE_DEBUG=1`).
+/// The key in a profile file, for automated runs only (`Config::test`).
 struct FileKeys(PathBuf);
 
 impl KeyStore for FileKeys {

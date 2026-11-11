@@ -2,11 +2,9 @@
 //! (every response closes its connection once the client hangs up; bodies can stream in chunks
 //! or wait on a gate), a host
 //! that records logs and events, and the in-memory store and token source the account code uses.
-#![allow(dead_code)]
 
 use kchess_contracts::{CoreEvent, HostAsk, HostReply, HostRequest};
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -342,7 +340,6 @@ pub struct Recording {
     pub opened: Mutex<Vec<String>>,
     /// Called instead of answering when a sign-in page is opened (to play the browser).
     pub browser: Mutex<Option<BrowserFn>>,
-    pub answer_asynchronously: AtomicBool,
 }
 
 impl Recording {
@@ -725,7 +722,6 @@ pub fn lichess_service(
 }
 
 /// `lichess_service` whose streams count as stalled after `idle` of silence.
-#[allow(dead_code)]
 pub fn lichess_service_with_idle(
     base: &str,
     host: &Arc<Recording>,

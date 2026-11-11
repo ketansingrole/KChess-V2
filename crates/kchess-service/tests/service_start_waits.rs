@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use kchess_service::protocol::{self, Frame, RefuseReason, read_frame, write_frame};
 use kchess_service::{
-    Capability, ConnectError, Hello, ServiceConfig, Start, connect_or_start,
+    Capability, ConnectError, Hello, Start, connect_or_start,
     connect_or_start_within, discovery,
 };
 
@@ -34,7 +34,7 @@ fn start() -> Start {
     });
     Start {
         binary: binary.clone(),
-        config: ServiceConfig::default(),
+        config: kchess_core::Config::default(),
     }
 }
 

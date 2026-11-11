@@ -1,11 +1,9 @@
 //! The facade's online methods: arguments are checked before anything is sent, account-bound
 //! calls without a login ask to reconnect instead of reaching Lichess, and the player lookups
 //! reach Lichess as the facade normalised them.
-#[path = "support/lichess_http.rs"]
-mod fixtures;
 
-use fixtures::{Recording, Reply, serve};
-use kchess_core::{Config, Core};
+use crate::fixtures::{Recording, Reply, serve};
+use kchess_core::{Config, Core, TestSwitches};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -16,14 +14,15 @@ async fn online_methods_check_their_arguments_and_reach_lichess() {
         _ => Reply::Json(200, "{}".into()),
     })
     .await;
-    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
-    kchess_core::env::set("KCHESS_TEST_LICHESS_BASE", &fixture.base);
     let dir = tempfile::tempdir().unwrap();
-    let core = Core::open(
-        Config::new(dir.path().to_path_buf()),
-        Arc::new(Recording::default()),
-    )
-    .unwrap();
+    let config = Config {
+        test: Some(TestSwitches {
+            lichess_origin: Some(fixture.base.clone()),
+            ..TestSwitches::default()
+        }),
+        ..Config::new(dir.path().to_path_buf())
+    };
+    let core = Core::open(config, Arc::new(Recording::default())).unwrap();
     let sent = || fixture.requests().len();
 
     // Invalid arguments are refused before anything reaches Lichess.

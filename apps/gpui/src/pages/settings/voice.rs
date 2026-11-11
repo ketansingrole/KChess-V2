@@ -30,7 +30,7 @@ impl SettingsPage {
             return self.stop_mic_test(cx);
         }
         self.mic_error = None;
-        match capture::start() {
+        match capture::start(cx) {
             Ok((capture, mut chunks)) => {
                 let pump = cx.spawn(async move |this, cx| {
                     while let Some(chunk) = chunks.next().await {

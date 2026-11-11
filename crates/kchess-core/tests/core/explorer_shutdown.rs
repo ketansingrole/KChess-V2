@@ -1,38 +1,26 @@
 //! Core close cancels explorer HTTP instead of waiting out its response deadline.
-#[path = "support/lichess_http.rs"]
-mod fixtures;
-
-use fixtures::{Recording, Reply, serve};
-use kchess_core::{Config, Core};
+use crate::fixtures::{Recording, Reply, serve};
+use kchess_core::{Config, Core, TestSwitches};
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
 
-/// Drops the test-only Lichess origin (and debug switch) with the guard, so the other tests in
-/// this binary never inherit one test's fixture origin: the overrides are process-wide.
-struct LichessOriginGuard;
-
-impl LichessOriginGuard {
-    fn set(base: &str) -> Self {
-        kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
-        kchess_core::env::set("KCHESS_TEST_LICHESS_BASE", base);
-        LichessOriginGuard
-    }
-}
-
-impl Drop for LichessOriginGuard {
-    fn drop(&mut self) {
-        kchess_core::env::reset("KCHESS_STORE_DEBUG");
-        kchess_core::env::reset("KCHESS_TEST_LICHESS_BASE");
+/// A profile at `dir` whose Lichess is `base`.
+fn config(dir: &std::path::Path, base: &str) -> Config {
+    Config {
+        test: Some(TestSwitches {
+            lichess_origin: Some(base.to_string()),
+            ..TestSwitches::default()
+        }),
+        ..Config::new(dir.to_path_buf())
     }
 }
 
 #[tokio::test]
 async fn close_cancels_a_stalled_explorer_and_releases_the_profile() {
     let fixture = serve(|_| Reply::Hang).await;
-    let _origin = LichessOriginGuard::set(&fixture.base);
     let dir = tempfile::tempdir().unwrap();
     let host = Arc::new(Recording::default());
-    let core = Core::open(Config::new(dir.path().to_path_buf()), host.clone()).unwrap();
+    let core = Core::open(config(dir.path(), &fixture.base), host.clone()).unwrap();
     core.call("resumeOnline", vec![]).await.unwrap();
     let lookup = core.call(
         "positionLookup",
@@ -56,6 +44,6 @@ async fn close_cancels_a_stalled_explorer_and_releases_the_profile() {
     closed.expect("close finishes");
     let result = result.expect("close cancels the HTTP request, not its deadline");
     assert!(result.unwrap_err().aborted);
-    let next = Core::open(Config::new(dir.path().to_path_buf()), host).unwrap();
+    let next = Core::open(config(dir.path(), &fixture.base), host).unwrap();
     next.close().await;
 }

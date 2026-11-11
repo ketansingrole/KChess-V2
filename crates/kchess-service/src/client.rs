@@ -10,7 +10,6 @@ use std::time::Duration;
 
 use kchess_contracts::CoreEvent;
 use kchess_core::{Config, CoreError, ErrorKind};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
@@ -306,41 +305,13 @@ impl Client {
     }
 }
 
-/// The core's configuration, as the starting client passes it to the service.
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct ServiceConfig {
-    pub legacy_database_path: Option<PathBuf>,
-    pub bundled_engine_path: Option<PathBuf>,
-    #[serde(default)]
-    pub variant_engine_path: Option<PathBuf>,
-    pub managed_engine_dir: Option<PathBuf>,
-    pub voice_helper_path: Option<PathBuf>,
-    #[serde(default)]
-    pub system_credentials: bool,
-}
-
-impl ServiceConfig {
-    /// The core's `Config` for `profile`.
-    pub fn into_config(self, profile: PathBuf) -> Config {
-        Config {
-            legacy_database_path: self.legacy_database_path,
-            bundled_engine_path: self.bundled_engine_path,
-            variant_engine_path: self.variant_engine_path,
-            managed_engine_dir: self.managed_engine_dir,
-            voice_helper_path: self.voice_helper_path,
-            system_credentials: self.system_credentials,
-            ..Config::new(profile)
-        }
-    }
-}
-
 /// How to start the core when none runs.
 #[derive(Clone, Debug)]
 pub struct Start {
     /// The service binary shipped with this app.
     pub binary: PathBuf,
-    pub config: ServiceConfig,
+    /// The core's configuration; the profile is the one connected to.
+    pub config: Config,
 }
 
 /// Connects to the profile's core, starting it when none runs (`docs/shared-core.md`, "Start"):
@@ -448,28 +419,6 @@ fn launch(profile: &Path, start: &Start) -> Result<(), ConnectError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Every path the starting app passes reaches the core.
-    #[test]
-    fn the_service_config_reaches_the_core() {
-        let path = |name: &str| Some(PathBuf::from(name));
-        let config = ServiceConfig {
-            legacy_database_path: path("legacy.db"),
-            bundled_engine_path: path("stockfish"),
-            variant_engine_path: path("fairy-stockfish"),
-            managed_engine_dir: path("engines"),
-            voice_helper_path: path("kchess-voice"),
-            system_credentials: true,
-        }
-        .into_config(PathBuf::from("profile"));
-        assert_eq!(config.data_dir, PathBuf::from("profile"));
-        assert_eq!(config.legacy_database_path, path("legacy.db"));
-        assert_eq!(config.bundled_engine_path, path("stockfish"));
-        assert_eq!(config.variant_engine_path, path("fairy-stockfish"));
-        assert_eq!(config.managed_engine_dir, path("engines"));
-        assert_eq!(config.voice_helper_path, path("kchess-voice"));
-        assert!(config.system_credentials);
-    }
 
     #[test]
     fn the_sandbox_starts_the_service_from_the_bundle() {

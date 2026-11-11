@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use kchess_service::{
-    Capability, Hello, ServiceConfig, Start, connect_or_start, discovery, protocol,
+    Capability, Hello, Start, connect_or_start, discovery, protocol,
 };
 
 fn window(kind: &str) -> Hello {
@@ -28,7 +28,7 @@ async fn the_first_app_starts_the_service_and_the_second_reuses_it() {
     std::fs::create_dir_all(&earlier).expect("earlier release");
     let start = Start {
         binary: env!("CARGO_BIN_EXE_kchess-service").into(),
-        config: ServiceConfig::default(),
+        config: kchess_core::Config::default(),
     };
     let (gpui, _gpui_events) = connect_or_start(profile.path(), &window("gpui"), &start)
         .await

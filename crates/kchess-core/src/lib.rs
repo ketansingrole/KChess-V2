@@ -1,5 +1,4 @@
-//! The KChess headless core's services (see `RUST_MIGRATION.md`). Hosts drive it through
-//! `Core`.
+//! The KChess headless core's services. Hosts drive it through `Core`.
 
 pub use kchess_contracts::USER_AGENT;
 
@@ -10,9 +9,8 @@ pub fn app_store() -> bool {
     cfg!(target_os = "macos") && std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some()
 }
 
-/// Whether this build honours the development overrides: the test switch (`KCHESS_STORE_DEBUG`)
-/// and what it unlocks (test Lichess, Chess.com, OpenAI and voice origins), and the frontends'
-/// `KCHESS_ENGINE_PATH`, `KCHESS_VARIANT_ENGINE_PATH`, `KCHESS_VOICE_HELPER`,
+/// Whether this build honours the development overrides: the test switches (`Config::test`), and
+/// the frontends' `KCHESS_ENGINE_PATH`, `KCHESS_VARIANT_ENGINE_PATH`, `KCHESS_VOICE_HELPER`,
 /// `KCHESS_SERVICE_BINARY` and `KCHESS_UPDATE_FEED`. A packaged build (`cargo xtask package`
 /// builds with the `packaged` feature) never does, so software that can set the user's
 /// environment cannot make a signed KChess start its programs or send its logins elsewhere.
@@ -56,4 +54,4 @@ pub mod voice;
 
 pub use crate::core::Core;
 pub use error::{CoreError, ErrorKind, Result};
-pub use host::{Config, Host, Level};
+pub use host::{Config, Host, Level, TestSwitches, TestVoiceModel};

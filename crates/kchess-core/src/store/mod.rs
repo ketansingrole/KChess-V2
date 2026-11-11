@@ -4,7 +4,6 @@
 
 pub mod ai;
 pub mod chesscom;
-pub mod debug;
 pub mod documents;
 pub mod games;
 pub mod import;

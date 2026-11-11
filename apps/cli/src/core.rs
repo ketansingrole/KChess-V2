@@ -137,6 +137,7 @@ fn config_from(options: &Options, var: &dyn Fn(&str) -> Option<std::ffi::OsStrin
             && options.data_dir == data_dir_from(var))
         .then(|| home.join(".kchess/kchess.db")),
         system_credentials: options.credentials,
+        test: kchess_core::TestSwitches::from_env(),
         ..Config::new(options.data_dir.clone())
     }
 }
@@ -157,14 +158,7 @@ impl CoreClient {
             Some(binary) if !options.embedded => {
                 let start = kchess_service::Start {
                     binary,
-                    config: kchess_service::ServiceConfig {
-                        legacy_database_path: config.legacy_database_path,
-                        bundled_engine_path: config.bundled_engine_path,
-                        variant_engine_path: config.variant_engine_path,
-                        managed_engine_dir: config.managed_engine_dir,
-                        voice_helper_path: config.voice_helper_path,
-                        system_credentials: config.system_credentials,
-                    },
+                    config,
                 };
                 let hello = kchess_service::Hello {
                     kind: "cli".into(),

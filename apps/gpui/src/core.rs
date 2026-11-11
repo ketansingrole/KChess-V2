@@ -152,14 +152,7 @@ impl CoreBridge {
         let profile = config.data_dir.clone();
         let start = kchess_service::Start {
             binary,
-            config: kchess_service::ServiceConfig {
-                legacy_database_path: config.legacy_database_path,
-                bundled_engine_path: config.bundled_engine_path,
-                variant_engine_path: config.variant_engine_path,
-                managed_engine_dir: config.managed_engine_dir,
-                voice_helper_path: config.voice_helper_path,
-                system_credentials: config.system_credentials,
-            },
+            config,
         };
         let (client, mut received) = runtime
             .block_on(kchess_service::connect_or_start(&profile, &hello(), &start))
@@ -632,6 +625,8 @@ pub fn alerts_here(cx: &App) -> bool {
 pub struct AppCore {
     pub bridge: Arc<CoreBridge>,
     pub events: Entity<CoreEvents>,
+    /// The test switches the app was started with (`Config::test`).
+    pub test: Option<Arc<kchess_core::TestSwitches>>,
 }
 
 impl Global for AppCore {}
@@ -665,8 +660,10 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
         variant_engine_path: crate::profile::variant_engine(),
         voice_helper_path: crate::profile::voice_helper(),
         system_credentials: true,
+        test: kchess_core::TestSwitches::from_env(),
         ..Config::new(data_dir.clone())
     };
+    let test = config.test.clone();
     let (bridge, mut receiver) = if use_service() {
         CoreBridge::connect(config)?
     } else {
@@ -675,6 +672,7 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
     let core = AppCore {
         bridge: Arc::new(bridge),
         events: cx.new(|_| CoreEvents),
+        test: test.map(Arc::new),
     };
     cx.set_global(core.clone());
     cx.spawn(async move |cx| {
@@ -694,13 +692,6 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
     Ok(())
 }
 
-/// The core serves Lichess from a local stand-in (`KCHESS_TEST_LICHESS_BASE` under the test
-/// switch).
-fn test_lichess() -> bool {
-    kchess_core::store::debug::enabled()
-        && kchess_core::env::var("KCHESS_TEST_LICHESS_BASE").is_some_and(|base| !base.is_empty())
-}
-
 /// Answer a `host:request` (`crates/kchess-core/src/capabilities.rs`). Tokens are sealed by the
 /// core (`system_credentials`), so this app is never asked to seal or open one.
 fn answer_host(request: &Value, cx: &mut App) {
@@ -712,7 +703,13 @@ fn answer_host(request: &Value, cx: &mut App) {
         "openExternal" => match payload.as_str() {
             // With a local stand-in for Lichess (the test switch), the page a sign-in opens is
             // written to the profile for the test to follow, instead of the person's browser.
-            Some(url) if test_lichess() => {
+            Some(url)
+                if cx
+                    .global::<AppCore>()
+                    .test
+                    .as_ref()
+                    .is_some_and(|test| test.lichess_origin.is_some()) =>
+            {
                 let line = format!("{url}\n");
                 let written = crate::profile::data_dir().and_then(|dir| {
                     std::fs::OpenOptions::new()

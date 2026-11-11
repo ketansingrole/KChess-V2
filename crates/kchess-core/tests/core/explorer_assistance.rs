@@ -1,10 +1,7 @@
 //! A game starting mid-lookup still blocks: the explorer answer must not reach a live game.
-#[path = "support/lichess_http.rs"]
-mod fixtures;
-#[path = "support/signed_in.rs"]
-mod signed_in;
 
-use fixtures::{Reply, serve};
+use crate::fixtures::{Reply, serve};
+use crate::signed_in;
 use kchess_contracts::core_api::CoreApi;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};

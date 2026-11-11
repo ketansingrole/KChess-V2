@@ -1,14 +1,11 @@
 //! A core over a scratch profile and a local Lichess, with `Alice` signed in: the host's secret
-//! store opens her stored login as written (`secrets.decrypt`). Include with
-//! `#[path = "support/signed_in.rs"] mod signed_in;` from a test binary of one test, since it sets
-//! the process environment.
-#![allow(dead_code)]
+//! store opens her stored login as written (`secrets.decrypt`).
 
 use kchess_contracts::{CoreEvent, HostAsk, HostReply, HostRequest};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use kchess_core::store::games;
-use kchess_core::{Config, Core, Host, Level};
+use kchess_core::{Config, Core, Host, Level, TestSwitches};
 use serde_json::{Value, json};
 
 /// The login `Alice` has, as Lichess sees it in `Authorization`.
@@ -56,31 +53,21 @@ impl Host for SignedIn {
 
 pub struct Profile {
     pub core: Arc<Core>,
-    pub host: Arc<SignedIn>,
     _dir: tempfile::TempDir,
 }
 
 /// Opens the core against the Lichess at `base` with `Alice` connected.
 pub async fn open(base: &str) -> Profile {
-    // The core reads its Lichess from the process's switches when it opens; tests sharing a binary
-    // under `cargo test` set them in turn, so each sets and opens before the next sets.
-    static OPENING: Mutex<()> = Mutex::new(());
     let dir = tempfile::tempdir().unwrap();
     let host = Arc::new(SignedIn::default());
-    let core = {
-        let _opening = OPENING
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
-        kchess_core::env::set("KCHESS_TEST_LICHESS_BASE", base);
-        Arc::new(
-            Core::open(
-                Config::new(dir.path().to_path_buf()),
-                Arc::clone(&host) as Arc<dyn Host>,
-            )
-            .unwrap(),
-        )
+    let config = Config {
+        test: Some(TestSwitches {
+            lichess_origin: Some(base.to_string()),
+            ..TestSwitches::default()
+        }),
+        ..Config::new(dir.path().to_path_buf())
     };
+    let core = Arc::new(Core::open(config, Arc::clone(&host) as Arc<dyn Host>).unwrap());
     host.core.set(Arc::downgrade(&core)).unwrap();
     core.database_for_tests()
         .write(|c| {
@@ -90,7 +77,6 @@ pub async fn open(base: &str) -> Profile {
         .unwrap();
     Profile {
         core,
-        host,
         _dir: dir,
     }
 }

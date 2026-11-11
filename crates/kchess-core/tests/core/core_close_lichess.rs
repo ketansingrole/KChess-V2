@@ -1,18 +1,16 @@
 //! Closing the core while a Lichess request waits on an origin that never answers: the request
 //! ends, `close` returns, and later calls fail with `The KChess core is closed.`.
-//!
-//! It sets the test Lichess origin for the whole process (`kchess_core::env`), so it is the only
-//! test in this binary: no other test can inherit the origin.
+
 
 use kchess_contracts::CoreEvent;
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
 
-use kchess_core::{Config, Core, Host, Level};
+use kchess_core::{Config, Core, Host, Level, TestSwitches};
 use serde_json::json;
 
-/// What a closed core answers (`createKChessCore`'s closed check).
+/// What a closed core answers.
 const CLOSED: &str = "The KChess core is closed.";
 /// How long closing may take before the test calls it stuck.
 const LIMIT: Duration = Duration::from_secs(20);
@@ -33,12 +31,20 @@ async fn closing_ends_a_lichess_request_in_flight() {
         "http://127.0.0.1:{}",
         silent.local_addr().expect("address").port()
     );
-    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
-    kchess_core::env::set("KCHESS_TEST_LICHESS_BASE", &origin);
     let dir = tempfile::tempdir().expect("profile");
     let host: Arc<dyn Host> = Arc::new(Quiet);
     let core = Arc::new(
-        Core::open(Config::new(dir.path().to_path_buf()), host).expect("the profile opens"),
+        Core::open(
+            Config {
+                test: Some(TestSwitches {
+                    lichess_origin: Some(origin),
+                    ..TestSwitches::default()
+                }),
+                ..Config::new(dir.path().to_path_buf())
+            },
+            host,
+        )
+        .expect("the profile opens"),
     );
 
     let request = {

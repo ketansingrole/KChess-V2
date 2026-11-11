@@ -1,14 +1,12 @@
 //! The core's speech model methods (`voiceModelStatus`, `voiceModelInstall`): a client asks the
 //! core whether the model is installed and has the core download it, hearing its progress as
-//! `voicemodel:progress`. The model comes from a local zip through the test override, which needs
-//! the test switch for the whole process (`kchess_core::env`), so these tests have a binary of
-//! their own.
+//! `voicemodel:progress`. The model comes from a local zip through the test switches.
 
 use kchess_contracts::CoreEvent;
 use std::io::{Cursor, Write};
 use std::sync::{Arc, Mutex};
 
-use kchess_core::{Config, Core, Host, Level};
+use kchess_core::{Config, Core, Host, Level, TestSwitches, TestVoiceModel};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -60,12 +58,19 @@ fn model_zip() -> Vec<u8> {
     writer.finish().expect("finish").into_inner()
 }
 
-/// The test switch and a model archive at `archive` with the digest `sha256`.
-fn use_model(archive: &std::path::Path, sha256: &str) {
-    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
-    kchess_core::env::set("KCHESS_TEST_VOICE_ARCHIVE", archive);
-    kchess_core::env::set("KCHESS_TEST_VOICE_NAME", NAME);
-    kchess_core::env::set("KCHESS_TEST_VOICE_SHA256", sha256);
+/// A profile at `dir` whose model archive is `archive`, with the digest `sha256`.
+fn with_model(dir: &std::path::Path, archive: &std::path::Path, sha256: &str) -> Config {
+    Config {
+        test: Some(TestSwitches {
+            voice_model: Some(TestVoiceModel {
+                archive: archive.to_path_buf(),
+                name: NAME.into(),
+                sha256: sha256.into(),
+            }),
+            ..TestSwitches::default()
+        }),
+        ..Config::new(dir.to_path_buf())
+    }
 }
 
 #[tokio::test]
@@ -78,11 +83,10 @@ async fn the_core_downloads_the_model_and_reports_its_progress() {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
-    use_model(&archive, &digest);
-
     let profile = tempfile::tempdir().expect("profile");
     let events = Arc::new(Events::default());
-    let core = Core::open(Config::new(profile.path().into()), events.clone()).expect("core");
+    let core = Core::open(with_model(profile.path(), &archive, &digest), events.clone())
+        .expect("core");
 
     let before = core.call("voiceModelStatus", vec![]).await.expect("status");
     assert_eq!(
@@ -118,9 +122,9 @@ async fn the_core_downloads_the_model_and_reports_its_progress() {
 
     // A model that cannot be had is the install's error, and nothing is published.
     let other = tempfile::tempdir().expect("profile");
-    use_model(&fixtures.path().join("missing.zip"), &digest);
+    let missing = fixtures.path().join("missing.zip");
     let core_elsewhere = Core::open(
-        Config::new(other.path().into()),
+        with_model(other.path(), &missing, &digest),
         Arc::new(Events::default()),
     )
     .expect("core");

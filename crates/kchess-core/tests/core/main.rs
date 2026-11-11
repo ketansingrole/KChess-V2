@@ -1,8 +1,7 @@
 //! The core's integration tests as one test binary: each file here was its own binary, and linking
 //! some forty of them made every change to the core wait for the linker (2026-11-06: 45 s to
-//! rebuild them after an edit). Tests that set process-wide switches (`kchess_core::env::set`)
-//! stay binaries of their own beside this directory, since the tests here share one process under
-//! `cargo test`.
+//! rebuild them after an edit). Tests that need the whole process (a panic hook, a counting
+//! allocator) stay binaries of their own beside this directory.
 
 #[path = "../support/lichess_http.rs"]
 mod fixtures;
@@ -11,7 +10,10 @@ mod signed_in;
 #[path = "../support/mod.rs"]
 mod support;
 
+mod ai_connection;
+mod ai_effort;
 mod chesscom_sync;
+mod core_close_lichess;
 mod core_startup;
 mod engine_admission;
 mod engine_analysis;
@@ -24,9 +26,12 @@ mod engine_services_stockfish;
 mod engine_status_variant;
 mod engine_stockfish;
 mod engine_variant_fairy;
+mod explorer_assistance;
+mod explorer_shutdown;
 mod facade_challenges;
 mod facade_dispatch;
 mod facade_lichess;
+mod facade_online;
 mod facade_sync_play_time;
 mod facade_tournaments;
 mod lichess_accounts;
@@ -52,5 +57,6 @@ mod store_reviews;
 mod support_waits;
 mod uci_lifecycle;
 mod voice_model;
+mod voice_model_facade;
 mod voice_ownership;
 mod voice_recognizer;
