@@ -43,19 +43,6 @@ pub fn drawn<T>(draw: Result<T, String>) -> Option<T> {
         .ok()
 }
 
-/// The setup a stored document or a Lichess payload names (`{ variant, fen }`): standard chess
-/// when it names no variant; none for a variant KChess does not play.
-pub fn setup_of(value: &Value) -> Option<Setup> {
-    let variant = match value["variant"].as_str() {
-        None => Variant::Standard,
-        Some(key) => Variant::from_key(key)?,
-    };
-    Some(Setup {
-        variant,
-        fen: value["fen"].as_str().unwrap_or_default().to_string(),
-    })
-}
-
 /// A setup's UCI moves as PGN, as far as they are legal, after `headers` (a JSON object of
 /// strings). `None` when the setup is not a legal one or a header is not one.
 pub fn setup_pgn(setup: &Setup, moves: &[String], headers: &Value) -> Option<String> {
@@ -330,29 +317,6 @@ mod variant_tests {
     fn a_variant_is_named_by_its_key() {
         assert_eq!(super::variant_label("kingOfTheHill"), "King of the Hill");
         assert_eq!(super::variant_label("fromPosition"), "fromPosition");
-    }
-
-    /// A stored setup reads as it was written; one without a variant is standard chess, and one
-    /// in a variant KChess does not play is none.
-    #[test]
-    fn a_stored_setup_reads_back() {
-        let setup = Setup::of(Variant::Crazyhouse);
-        assert_eq!(
-            super::setup_of(&serde_json::json!(setup)).as_ref(),
-            Some(&setup)
-        );
-        assert_eq!(
-            serde_json::json!(setup),
-            serde_json::json!({ "variant": "crazyhouse", "fen": setup.fen })
-        );
-        assert_eq!(
-            super::setup_of(&serde_json::json!({ "fen": super::STANDARD_FEN })),
-            Some(Setup::standard())
-        );
-        assert_eq!(
-            super::setup_of(&serde_json::json!({ "variant": "bughouse", "fen": "" })),
-            None
-        );
     }
 
     /// Both new-game dialogs name a standard position's problem and refuse what another
