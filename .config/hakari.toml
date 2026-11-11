@@ -17,7 +17,8 @@ platforms = [
 
 # Only the dependencies of the headless packages (the core, the service, the CLI, the speech
 # helper and their libraries) go in, so they build nothing of the app's or xtask's own.
-# xtask's test `the_hack_holds_only_headless_dependencies` names any other to add here.
+# `cargo xtask check` names any other to add here, and keeps .github/dependabot.yml off the
+# requirements of the packages only the hack names.
 [final-excludes]
 third-party = [
     { name = "arraydeque" },
