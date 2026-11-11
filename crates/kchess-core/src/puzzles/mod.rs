@@ -187,16 +187,6 @@ impl Inner {
         lock(&self.running).clone()
     }
 
-    fn usage(&self, requests: u32, bytes: u64) {
-        crate::usage::report(
-            &*self.host,
-            "",
-            kchess_contracts::types::UsageKind::Database,
-            u64::from(requests),
-            bytes,
-        );
-    }
-
     fn failed(&self, method: &str, error: &CoreError) {
         self.host.log(
             Level::Warn,
@@ -357,7 +347,6 @@ impl PuzzleService {
                 if aborted { Ok(()) } else { Err(error) }
             }
         };
-        self.inner.usage(0, progress.received);
         drop(installing);
         let result = match outcome {
             Ok(()) => {
@@ -376,29 +365,28 @@ impl PuzzleService {
         download: &Arc<Download>,
         progress: &mut Progress,
     ) -> Result<()> {
-        let cancelled = || CoreError::aborted("Cancelled");
-        let cancel = download.cancel.clone();
+        let cancelled = || CoreError::aborted(crate::download::ABORTED);
         // A server that stops sending ends the download instead of holding the puzzle database's
-        // "downloading" state until the user cancels. The file is already Zstandard: it is fetched
-        // as published (no gzip on top), so its length is the progress total and a dropped
-        // connection can resume from the byte it reached.
-        let client = crate::lichess::client::http_client_builder()
-            .read_timeout(DOWNLOAD_SILENCE)
-            .no_gzip()
-            .build()
-            .map_err(|e| CoreError::new(fetch_failed(&e)))?;
-        let response = tokio::select! {
-            response = crate::download::send_retrying(|| client.get(url), None) => response.map_err(|e| CoreError::new(fetch_failed(&e))),
-            _ = cancel.cancelled() => Err(cancelled()),
-        }?;
-        self.inner.usage(1, 0);
-        if !response.status().is_success() {
-            return Err(CoreError::new(format!(
-                "Lichess answered {} for the puzzle database.",
-                response.status().as_u16()
-            )));
-        }
-        progress.total = response.content_length().filter(|&n| n > 0);
+        // "downloading" state until the user cancels.
+        let client = crate::download::client(Some(DOWNLOAD_SILENCE))?;
+        let limits = crate::download::Limits {
+            max_bytes: MAX_DOWNLOAD,
+            deadline: None,
+        };
+        let usage = crate::download::Usage {
+            host: &*self.inner.host,
+            kind: kchess_contracts::types::UsageKind::Database,
+        };
+        let mut body = crate::download::open(
+            &client,
+            || client.get(url),
+            limits,
+            &download.cancel,
+            usage,
+            &WORDING,
+        )
+        .await?;
+        progress.total = body.total();
         // Decompression and sampling run on a blocking thread, fed chunk by chunk.
         let (send, receive) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
         let counted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -432,37 +420,19 @@ impl PuzzleService {
                     .collect();
                 Ok((rows, sampler.count()))
             });
-        // A dropped connection picks up at the byte it reached instead of starting over.
-        let mut body = crate::download::Resumable::new(&client, response, None);
-        let cancel = download.cancel.clone();
         let fed: Result<()> = async {
-            loop {
-                let chunk = tokio::select! {
-                    chunk = body.chunk() => chunk,
-                    _ = cancel.cancelled() => return Err(cancelled()),
-                };
-                let chunk = chunk.map_err(|e| CoreError::new(fetch_failed(&e)))?;
-                let Some(chunk) = chunk else { return Ok(()) };
-                if cancel.is_cancelled() {
-                    return Err(cancelled());
-                }
-                progress.received += chunk.len() as u64;
-                if progress.received > MAX_DOWNLOAD {
-                    return Err(CoreError::new(
-                        "The puzzle database download is unexpectedly large.",
-                    ));
-                }
+            while let Some(chunk) = body.next().await? {
+                progress.received = body.received();
                 progress.report(Phase::Downloading, counted.load(Ordering::Relaxed), false);
                 if send.send(chunk.to_vec()).await.is_err() {
                     // The sampler stopped; its error is reported below.
                     return Ok(());
                 }
             }
+            Ok(())
         }
         .await;
-        if body.resumed() > 0 {
-            self.inner.usage(body.resumed() as u32, 0);
-        }
+        drop(body);
         drop(send);
         let sampled = sampling
             .await
@@ -482,14 +452,18 @@ impl PuzzleService {
     }
 }
 
-/// `fetch` failures as Node words them are not reproducible; keep reqwest's text short.
-fn fetch_failed(error: &reqwest::Error) -> String {
-    if error.is_timeout() {
-        "The puzzle download timed out.".to_string()
-    } else {
-        format!("fetch failed: {error}")
-    }
-}
+/// How the database download words its failures.
+const WORDING: crate::download::Wording = crate::download::Wording {
+    network: |error| {
+        if error.is_timeout() {
+            "The puzzle download timed out.".to_string()
+        } else {
+            format!("fetch failed: {error}")
+        }
+    },
+    status: |status| format!("Lichess answered {status} for the puzzle database."),
+    too_large: "The puzzle database download is unexpectedly large.",
+};
 
 struct Progress {
     host: Arc<dyn Host>,
@@ -667,9 +641,11 @@ mod tests {
         let done = host.of("puzzledb:progress").pop().unwrap();
         // Each byte arrived once: the resumed request asked only for the rest.
         assert_eq!(done["received"], json!(length));
+        // The request and the one that resumed it, with every byte counted once.
         let usage = host.of("host:usage");
-        assert_eq!(usage[0]["requests"], json!(1));
-        assert_eq!(usage[1]["requests"], json!(1));
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0]["requests"], json!(2));
+        assert_eq!(usage[0]["bytes"], json!(length));
     }
 
     fn service(dir: &Path) -> (PuzzleService, Arc<Events>) {
@@ -706,10 +682,11 @@ mod tests {
         let done = host.of("puzzledb:progress").pop().unwrap();
         assert_eq!(done["kept"], json!(3));
         assert!(done["total"].as_u64().is_some_and(|total| total > 0));
-        // One request, then the bytes it brought.
+        // One request and the bytes it brought.
         let usage = host.of("host:usage");
+        assert_eq!(usage.len(), 1);
         assert_eq!(usage[0]["requests"], json!(1));
-        assert_eq!(usage[1]["bytes"], done["received"]);
+        assert_eq!(usage[0]["bytes"], done["received"]);
 
         let forks = puzzles
             .query(LocalPuzzleQuery {

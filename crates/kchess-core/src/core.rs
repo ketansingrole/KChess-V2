@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as AsyncMutex;
-use tokio::sync::{OnceCell, watch};
+use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -79,8 +79,8 @@ pub struct Core {
     pub(crate) voice_model: crate::voice::VoiceModelCache,
     /// Network accounting counters, batched before they reach the database.
     pub(crate) usage: Arc<UsageBatch>,
-    /// Managed engine installs and deletes in progress, by request id; `true` cancels one.
-    installs: Mutex<HashMap<u64, watch::Sender<bool>>>,
+    /// Managed engine installs and deletes in progress, by request id.
+    installs: Mutex<HashMap<u64, CancellationToken>>,
     /// Whether a live online game (or its recovery) blocks the engines, as of the last state.
     busy: Arc<AtomicBool>,
     /// Set when `close` starts: later facade calls fail and events stop.
@@ -211,19 +211,10 @@ impl Core {
             Capabilities::with_credentials(Arc::clone(&host), credentials)
                 .with_connections(Arc::clone(&connections)),
         );
-        let battery = Battery::new(Arc::clone(&host));
-        let scheduler = {
-            let battery = Arc::clone(&battery);
-            Arc::new(Scheduler::new(move || battery.value()))
-        };
+        let battery = Battery::new(Arc::clone(&host), Arc::clone(&capabilities));
+        let scheduler = Arc::new(Scheduler::new(Arc::clone(&battery)));
         let hub = Arc::new(EngineHub::new(Arc::clone(&host)));
-        let mut ctx =
-            EngineContext::new(Arc::clone(&host), hub, scheduler, engine_locations(&config));
-        {
-            let battery = Arc::clone(&battery);
-            let capabilities = Arc::clone(&capabilities);
-            ctx.before_lease = Arc::new(move || battery.refresh(&capabilities));
-        }
+        let ctx = EngineContext::new(Arc::clone(&host), hub, scheduler, engine_locations(&config));
         let search = Search::new(ctx.clone());
         let analysis = Analysis::new(ctx.clone());
         let reviews = Reviews::new(ctx.clone(), Arc::new(ReviewRecords(Arc::clone(&database))));
@@ -639,9 +630,8 @@ impl Core {
 
     fn start(&self) {
         if !self.battery_started.swap(true, Ordering::SeqCst) {
-            self.battery.refresh(&self.capabilities);
-            self.battery
-                .start_refreshing(Arc::clone(&self.capabilities));
+            self.battery.refresh();
+            self.battery.start_refreshing();
             self.reviews.setup_reviews(Arc::new(self.review_bridge()));
         }
     }
@@ -679,16 +669,11 @@ impl Core {
         mutation: Mutation,
         overridden: &LocationOverride,
     ) -> Result<Value> {
-        let (cancel_tx, cancel_rx) = watch::channel(false);
-        self.installs
-            .lock()
-            .map_err(|_| CoreError::new("The engine is unavailable."))?
-            .insert(id, cancel_tx);
+        let cancel = CancellationToken::new();
+        crate::tasks::lock(&self.installs).insert(id, cancel.clone());
         // Forgotten however the request ends, a cancelled call included.
         let _forget = crate::tasks::on_drop(|| {
-            if let Ok(mut installs) = self.installs.lock() {
-                installs.remove(&id);
-            }
+            crate::tasks::lock(&self.installs).remove(&id);
         });
         let mut location = ManagedLocation::new(self.managed_dir(overridden));
         if let Some(url) = &overridden.release_url {
@@ -700,7 +685,7 @@ impl Core {
             analysis: self.analysis.clone(),
             reviews: self.reviews.clone(),
         }));
-        location.cancel = Some(cancel_rx);
+        location.cancel = cancel;
         match mutation {
             Mutation::Install => install_managed_engine(self.host.as_ref(), &location)
                 .await
@@ -718,10 +703,8 @@ impl Core {
 
     /// Cancels the managed engine installs in progress.
     pub(crate) fn cancel_installs(&self) {
-        if let Ok(installs) = self.installs.lock() {
-            for sender in installs.values() {
-                sender.send_replace(true);
-            }
+        for cancel in crate::tasks::lock(&self.installs).values() {
+            cancel.cancel();
         }
     }
 }

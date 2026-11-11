@@ -3,9 +3,8 @@
 //! exactly one final update: `completed` when the search finished, `interrupted` when it was
 //! superseded or stopped (never completed), or `failed` with the error.
 //!
-//! The TypeScript module state lives in `Analysis`'s `State`, one per core instance. Analysis
-//! runs on its own task: `start_analysis` returns its id at once, and `stop_analysis` (or a newer
-//! request) ends it.
+//! Analysis runs on its own task: `start_analysis` returns its id at once, and `stop_analysis`
+//! (or a newer request) ends it.
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -15,25 +14,24 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::oneshot;
-use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::status::{
-    EngineStatus, engine_identity, engine_status, fairy_variant, variant_engine_status,
-};
-use super::uci::{UciController, error_summary, lock, signal_aborted, truncate_for_log};
-use super::{EngineContext, after, clear_timer, domain, parse_info, replace_timer, validate};
+use super::scheduler::Priority;
+use super::slot::EngineSlot;
+use super::status::fairy_variant;
+use super::uci::{error_summary, lock, signal_aborted, truncate_for_log};
+use super::{EngineContext, domain, parse_info, validate};
 use crate::error::{CoreError, Result};
 use crate::host::Level;
 
-/// The event analysis updates are delivered as (`engine:analysis`).
+/// The event analysis updates are delivered as.
 pub const ANALYSIS_EVENT: &str = "engine:analysis";
 /// Depth a bounded analysis searches to.
 pub const DEPTH_LIMIT: u32 = 26;
 /// Time a bounded analysis may take.
 pub const TIME_LIMIT_MS: u64 = 60_000;
 /// How long an idle analysis engine is kept.
-const IDLE_MS: u64 = 120_000;
+const IDLE: Duration = Duration::from_secs(120);
 /// Updates are sent at most this often while lines change.
 const EMIT_EVERY: Duration = Duration::from_millis(120);
 
@@ -113,27 +111,20 @@ fn whole(value: f64) -> i64 {
     value as i64
 }
 
-#[derive(Clone)]
-struct Engine {
-    key: String,
-    uci: Arc<UciController>,
-}
-
 /// The analysis service's state.
 #[derive(Default)]
 struct State {
-    engine: Option<Engine>,
     /// The request in progress, with its id.
     current: Option<(u64, CancellationToken)>,
     next_id: u64,
-    /// Finishes when the analysis queued last has finished (the promise chain `serial`).
+    /// Finishes when the analysis queued last has finished.
     serial: Option<oneshot::Receiver<()>>,
-    idle: Option<AbortHandle>,
 }
 
 struct Shared {
     ctx: EngineContext,
     state: Mutex<State>,
+    engine: Arc<EngineSlot>,
 }
 
 /// One client's analysis: its engine and the request in progress. Cloning shares them.
@@ -350,30 +341,8 @@ impl Drop for Finish {
         let mut state = lock(&self.shared.state);
         if state.current.as_ref().is_some_and(|(id, _)| *id == self.id) {
             state.current = None;
-            // The countdown only closes the engine: with none open (a client that left had its
-            // engine killed) it would just keep this analysis's state alive for two minutes.
-            if state.engine.is_none() {
-                return;
-            }
-            let weak = Arc::downgrade(&self.shared);
-            let idle = after(IDLE_MS, move || {
-                if let Some(shared) = weak.upgrade() {
-                    stop_locked(&mut lock(&shared.state), true);
-                }
-            });
-            replace_timer(&mut state.idle, idle);
+            self.shared.engine.release();
         }
-    }
-}
-
-/// `stopAnalysis`' body, under the state lock.
-fn stop_locked(state: &mut State, kill: bool) {
-    if let Some((_, token)) = &state.current {
-        token.cancel();
-    }
-    clear_timer(&mut state.idle);
-    if kill && let Some(engine) = state.engine.take() {
-        engine.uci.close();
     }
 }
 
@@ -381,6 +350,7 @@ impl AnalysisEngine {
     pub fn new(ctx: EngineContext) -> AnalysisEngine {
         AnalysisEngine {
             shared: Arc::new(Shared {
+                engine: EngineSlot::new(ctx.clone(), IDLE),
                 ctx,
                 state: Mutex::new(State::default()),
             }),
@@ -424,7 +394,7 @@ impl AnalysisEngine {
             }
             let token = CancellationToken::new();
             state.current = Some((id, token.clone()));
-            clear_timer(&mut state.idle);
+            self.shared.engine.keep();
             let (done, queued) = oneshot::channel();
             let prev = state.serial.replace(queued);
             (id, token, prev, done)
@@ -529,15 +499,20 @@ impl AnalysisEngine {
         id
     }
 
-    /// `analysisRunning`: an analysis is in progress.
     pub fn analysis_running(&self) -> bool {
         lock(&self.shared.state).current.is_some()
     }
 
-    /// `stopAnalysis(kill)`: ends the analysis in progress (its final update is `interrupted`);
-    /// with `kill`, also closes the engine.
+    /// Ends the analysis in progress (its final update is `interrupted`); with `kill`, also
+    /// closes the engine.
     pub fn stop_analysis(&self, kill: bool) {
-        stop_locked(&mut lock(&self.shared.state), kill);
+        let state = lock(&self.shared.state);
+        if let Some((_, token)) = &state.current {
+            token.cancel();
+        }
+        if kill {
+            self.shared.engine.close();
+        }
     }
 
     /// Finishes once every analysis queued so far has ended: its final update sent and it no
@@ -571,52 +546,17 @@ async fn analyse(
     }
     // Variants other than Chess960 go to the bundled Fairy-Stockfish, whatever engine is chosen.
     let fairy = request.variant.as_deref().and_then(fairy_variant);
-    let status: EngineStatus = match fairy {
-        Some(_) => variant_engine_status(&*shared.ctx.host, &shared.ctx.locations).await,
-        None => engine_status(&*shared.ctx.host, &shared.ctx.locations, configured).await,
-    };
+    let located = shared.engine.locate(configured, fairy.is_some()).await;
     if token.is_cancelled() {
         return Err(signal_aborted());
     }
-    if !status.ready {
-        return Err(CoreError::new(if fairy.is_some() {
-            "Fairy-Stockfish, which analyses this variant, is missing."
-        } else {
-            "Stockfish could not be found. Choose an engine in Settings."
-        }));
-    }
-    let key = engine_identity(&status).await?;
-    lock(&session.progress).engine = key.clone();
-    if token.is_cancelled() {
-        return Err(signal_aborted());
-    }
-    let target = {
-        let mut state = lock(&shared.state);
-        let current = state
-            .engine
-            .as_ref()
-            .is_some_and(|engine| engine.key == key && engine.uci.failed().is_none());
-        if !current {
-            if let Some(stale) = state.engine.take() {
-                stale.uci.close();
-            }
-            let uci = Arc::new(shared.ctx.spawn(&status)?);
-            state.engine = Some(Engine {
-                key: key.clone(),
-                uci,
-            });
-        }
-        state
-            .engine
-            .as_ref()
-            .map(|engine| Arc::clone(&engine.uci))
-            .ok_or_else(|| CoreError::new("The engine is unavailable."))?
-    };
+    let located = located?;
+    lock(&session.progress).engine = located.key.clone();
+    let target = shared.engine.open(&located)?.uci;
     let white_to_move = request.fen.split(' ').nth(1).unwrap_or("w") == "w";
-    let stop_token = token.clone();
     shared
         .ctx
-        .lease(2, move || stop_token.cancel(), token, async {
+        .lease(Priority::Analysis, token, async {
             target.ready().await?;
             if token.is_cancelled() {
                 return Err(signal_aborted());

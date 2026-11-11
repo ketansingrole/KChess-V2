@@ -1,9 +1,8 @@
-//! Chess engines: UCI processes, the scheduler, search, the managed engine, analysis and review
-//! (see RUST_MIGRATION.md).
+//! Chess engines: UCI processes, the scheduler, search, the managed engine, analysis and review.
 //!
-//! `search`, `analysis` and `review` each own their engine processes and their state (the
-//! TypeScript module-level `serviceState`, one per core instance). They share an `EngineContext`:
-//! the host, the process registry, the engine budget and where engines are found.
+//! `search`, `analysis` and `review` each own an engine slot and their state, one per core
+//! instance. They share an `EngineContext`: the host, the process registry, the engine budget and
+//! where engines are found.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,7 +14,7 @@ use tokio::task::AbortHandle;
 
 use crate::error::{CoreError, Result};
 use crate::host::Host;
-use scheduler::Scheduler;
+use scheduler::{Priority, Scheduler};
 use status::{EngineLocations, EngineStatus, engine_command};
 use uci::{EngineHub, UciController};
 
@@ -26,16 +25,13 @@ pub mod managed;
 pub mod review;
 pub mod scheduler;
 pub mod search;
+pub(crate) mod slot;
 pub mod status;
 pub mod uci;
 
-/// How a status becomes the process that runs it (`spawnEngine`). The default runs the engine
+/// How a status becomes the process that runs it. The default runs the engine
 /// `status` names; tests substitute a scripted engine.
 pub type CommandFactory = Arc<dyn Fn(&EngineStatus) -> Command + Send + Sync>;
-
-/// Runs before every engine lease. The core uses it to refresh the battery reading without
-/// making the lease wait for the host.
-pub type BeforeLease = Arc<dyn Fn() + Send + Sync>;
 
 /// What the engine services share with the core: the host, the process registry, the engine
 /// budget, and where engines are found.
@@ -46,7 +42,6 @@ pub struct EngineContext {
     pub scheduler: Arc<Scheduler>,
     pub locations: Arc<EngineLocations>,
     pub command: CommandFactory,
-    pub before_lease: BeforeLease,
 }
 
 impl EngineContext {
@@ -64,24 +59,21 @@ impl EngineContext {
             scheduler,
             locations,
             command: Arc::new(move |status| engine_command(&for_factory, status)),
-            before_lease: Arc::new(|| {}),
         }
     }
 
-    /// `withEngineLease`: waits for the budget at `priority`, then runs `work` under it. The
-    /// budget is released on every exit path.
+    /// Waits for the engine budget at `priority`, then runs `work` under it. The budget is
+    /// released on every exit path; a higher priority cancels `token`, which stops the search.
     pub(crate) async fn lease<T>(
         &self,
-        priority: i32,
-        stop: impl Fn() + Send + Sync + 'static,
+        priority: Priority,
         token: &tokio_util::sync::CancellationToken,
         work: impl std::future::Future<Output = Result<T>>,
     ) -> Result<T> {
-        (self.before_lease)();
-        self.scheduler.with_lease(priority, stop, token, work).await
+        self.scheduler.with_lease(priority, token, work).await
     }
 
-    /// `spawnEngine`: refuses while an executable is being replaced, then starts the process.
+    /// Refuses while an executable is being replaced, then starts the process.
     pub(crate) fn spawn(&self, status: &EngineStatus) -> Result<UciController> {
         self.hub.assert_available()?;
         UciController::start(&self.hub, (self.command)(status), uci::DEFAULT_DEADLINE)
