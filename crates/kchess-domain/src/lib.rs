@@ -12,6 +12,7 @@ pub mod library;
 pub mod links;
 pub mod misc;
 pub mod online_game;
+pub mod perf;
 pub mod pgn;
 pub mod position;
 pub mod puzzle;

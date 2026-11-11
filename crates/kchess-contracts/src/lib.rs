@@ -15,6 +15,7 @@ pub use core_api::calls;
 pub use error::{CoreError, ErrorKind, Level};
 pub use events::CoreEvent;
 pub use host::{Capability, HostAsk, HostReply, HostRequest};
+pub use kchess_domain::perf::{Perf, Speed};
 pub use kchess_domain::variant::{Setup, Variant};
 
 /// How KChess names itself to the services it calls (Lichess refuses a request that names no
