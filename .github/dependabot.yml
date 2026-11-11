@@ -30,6 +30,7 @@ updates:
       - { dependency-name: errno, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: fastrand, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: foldhash, update-types: [version-update:semver-major, version-update:semver-minor] }
+      - { dependency-name: form_urlencoded, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: futures-channel, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: futures-core, update-types: [version-update:semver-major, version-update:semver-minor] }
       - { dependency-name: futures-io, update-types: [version-update:semver-major, version-update:semver-minor] }
