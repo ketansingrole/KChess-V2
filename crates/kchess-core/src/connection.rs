@@ -97,6 +97,11 @@ impl Connections {
         lock(&self.clients).remove(&id);
     }
 
+    /// The embedding frontend says who it is and what it can answer.
+    pub fn set_app(&self, info: ClientInfo) {
+        self.insert(APP, info);
+    }
+
     /// The service has its own clients: the embedding app's connection goes.
     pub fn without_app(&self) {
         lock(&self.clients).remove(&APP);

@@ -11,9 +11,11 @@ pub fn app_store() -> bool {
 
 /// Whether this build honours the development overrides: the test switches (`Config::test`), and
 /// the frontends' `KCHESS_ENGINE_PATH`, `KCHESS_VARIANT_ENGINE_PATH`, `KCHESS_VOICE_HELPER`,
-/// `KCHESS_SERVICE_BINARY` and `KCHESS_UPDATE_FEED`. A packaged build (`cargo xtask package`
-/// builds with the `packaged` feature) never does, so software that can set the user's
-/// environment cannot make a signed KChess start its programs or send its logins elsewhere.
+/// `KCHESS_SERVICE_BINARY`, `KCHESS_CORE_MODE`, `KCHESS_RUNTIME_DIR` and `KCHESS_UPDATE_FEED`,
+/// and the programs `cargo xtask` built in this repository's `target` folder. A packaged build
+/// (`cargo xtask package` builds with the `packaged` feature) never does, so software that can
+/// set the user's environment cannot make a signed KChess start its programs or send its logins
+/// elsewhere.
 pub const fn dev_overrides() -> bool {
     !cfg!(feature = "packaged")
 }

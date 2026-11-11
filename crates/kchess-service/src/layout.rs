@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use kchess_core::{Config, TestSwitches};
 use kchess_delta::installed;
 
+use crate::handle::Mode;
+
 /// The product name, which names the profile folder.
 pub const APP_NAME: &str = "KChess";
 
@@ -24,7 +26,7 @@ pub struct Layout {
     var: Var,
     /// The folder of the running executable.
     programs: Option<PathBuf>,
-    /// This repository's build folder.
+    /// This repository's build folder, where a development run finds what `cargo xtask` built.
     target: PathBuf,
     /// Whether the development overrides are honoured (`kchess_core::dev_overrides`).
     dev: bool,
@@ -100,8 +102,12 @@ impl Layout {
         path.exists().then_some(path)
     }
 
-    /// `name` in this repository's build folder, when it was built.
+    /// `name` in this repository's build folder, when it was built and this is a development
+    /// run: a packaged build never starts a program from the build machine's folders.
     fn built(&self, path: impl AsRef<Path>) -> Option<PathBuf> {
+        if !self.dev {
+            return None;
+        }
         let path = self.target.join(path);
         path.exists().then_some(path)
     }
@@ -154,6 +160,20 @@ impl Layout {
     pub fn service_binary(&self) -> Option<PathBuf> {
         self.dev_path("KCHESS_SERVICE_BINARY")
             .or_else(|| self.beside(installed::program(installed::SERVICE)))
+    }
+
+    /// Where a frontend's core runs: in its own process when `embedded` asks for it or no
+    /// service ships beside it, else the profile's shared service. A development run may choose
+    /// with `KCHESS_CORE_MODE` (`embedded` or `service`).
+    pub fn mode(&self, embedded: bool) -> Result<Mode, String> {
+        let service = self.service_binary().map(|binary| Mode::Service { binary });
+        let chosen = self.dev_path("KCHESS_CORE_MODE");
+        match chosen.as_ref().and_then(|mode| mode.to_str()) {
+            _ if embedded => Ok(Mode::Embedded),
+            Some("embedded") => Ok(Mode::Embedded),
+            Some("service") => service.ok_or_else(|| "The KChess core service is missing".into()),
+            _ => Ok(service.unwrap_or(Mode::Embedded)),
+        }
     }
 }
 
@@ -286,6 +306,46 @@ mod tests {
         assert_eq!(overridden.service_binary(), Some(service));
     }
 
+    fn mode_name(mode: Result<Mode, String>) -> String {
+        match mode {
+            Ok(Mode::Embedded) => "embedded".into(),
+            Ok(Mode::Service { binary }) => binary.display().to_string(),
+            Err(message) => message,
+        }
+    }
+
+    /// `KCHESS_CORE_MODE` chooses in a development run, and a frontend's own request to embed
+    /// wins; else the service beside the app, when there is one.
+    #[test]
+    fn the_core_runs_in_the_service_beside_the_app_unless_told_otherwise() {
+        let programs = tempfile::tempdir().expect("programs");
+        let none = layout(
+            &[("HOME", HOME), ("KCHESS_CORE_MODE", "service")],
+            programs.path(),
+        );
+        assert_eq!(
+            mode_name(none.mode(false)),
+            "The KChess core service is missing"
+        );
+        assert_eq!(mode_name(none.mode(true)), "embedded");
+        let service = programs.path().join(installed::program(installed::SERVICE));
+        std::fs::write(&service, b"").expect("service");
+        let shared = layout(&[("HOME", HOME)], programs.path());
+        assert_eq!(mode_name(shared.mode(false)), service.display().to_string());
+        assert_eq!(mode_name(shared.mode(true)), "embedded");
+        let mut embedded = layout(
+            &[("HOME", HOME), ("KCHESS_CORE_MODE", "embedded")],
+            programs.path(),
+        );
+        assert_eq!(mode_name(embedded.mode(false)), "embedded");
+        // 2026-11-11: a packaged app honoured `KCHESS_CORE_MODE`, a development switch.
+        embedded.dev = false;
+        assert_eq!(
+            mode_name(embedded.mode(false)),
+            service.display().to_string()
+        );
+    }
+
     /// Without a program beside the app, development builds use what `cargo xtask` built.
     #[test]
     fn a_development_build_finds_what_xtask_built() {
@@ -306,5 +366,29 @@ mod tests {
             Some(built)
         );
         assert_eq!(layout.service_binary(), None);
+    }
+
+    /// 2026-11-11: a packaged build without Fairy-Stockfish or the voice helper beside it looked
+    /// for them in the build machine's `target` folder, at a fixed path on the user's disk.
+    #[test]
+    fn a_packaged_build_never_looks_in_the_build_folder() {
+        let programs = tempfile::tempdir().expect("programs");
+        let mut layout = layout(&[("HOME", HOME)], programs.path());
+        layout.dev = false;
+        let fairy = programs
+            .path()
+            .join("target/fairy-stockfish/bin")
+            .join(installed::program(installed::FAIRY_STOCKFISH));
+        let helper = programs
+            .path()
+            .join("target/voice-runtime")
+            .join(installed::program(installed::VOICE_HELPER));
+        for built in [&fairy, &helper] {
+            std::fs::create_dir_all(built.parent().expect("folder")).expect("folder");
+            std::fs::write(built, b"").expect("built");
+        }
+        let config = layout.config(Path::new("/p"), true);
+        assert_eq!(config.variant_engine_path, None);
+        assert_eq!(config.voice_helper_path, None);
     }
 }

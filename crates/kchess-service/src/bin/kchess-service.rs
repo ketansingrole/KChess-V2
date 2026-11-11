@@ -64,14 +64,7 @@ fn main() -> std::process::ExitCode {
         eprintln!("kchess-service: --profile is required");
         return std::process::ExitCode::from(2);
     };
-    // The CLI's stack (`apps/cli`): an embedded sign-in overflowed a smaller one in a debug
-    // build, and an overflow here aborts the core for every window and command at once.
-    let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_name("kchess-core")
-        .thread_stack_size(8 * 1024 * 1024)
-        .build()
-    {
+    let runtime = match kchess_service::core_runtime() {
         Ok(runtime) => runtime,
         Err(error) => {
             eprintln!("kchess-service: no runtime: {error}");

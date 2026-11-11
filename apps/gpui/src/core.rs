@@ -28,19 +28,6 @@ pub struct CoreBridge {
     handle: CoreHandle,
 }
 
-/// How the app reaches its core: `KCHESS_CORE_MODE=service` or `embedded`; otherwise the shared
-/// service when its binary ships beside the app.
-fn mode(layout: &Layout) -> Result<Mode, String> {
-    let service = layout
-        .service_binary()
-        .map(|binary| Mode::Service { binary });
-    match kchess_core::env::var("KCHESS_CORE_MODE").as_deref() {
-        Some("embedded") => Ok(Mode::Embedded),
-        Some("service") => service.ok_or_else(|| "The KChess core service is missing".into()),
-        _ => Ok(service.unwrap_or(Mode::Embedded)),
-    }
-}
-
 /// What the person reads when another KChess release has this profile open
 /// (`docs/shared-core.md`, "Version check").
 fn refusal(error: &ConnectError) -> String {
@@ -81,11 +68,8 @@ impl CoreBridge {
         ),
         String,
     > {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .thread_name("kchess-core")
-            .build()
-            .map_err(|e| format!("The core could not start: {e}"))?;
+        let runtime =
+            kchess_service::core_runtime().map_err(|e| format!("The core could not start: {e}"))?;
         let options = kchess_service::Options {
             config,
             hello: Hello {
@@ -317,7 +301,7 @@ pub fn start(data_dir: PathBuf, cx: &mut App) -> Result<(), String> {
     // Tokens are sealed by the core, so this app is never asked to seal or open one.
     let config = layout.config(&data_dir, true);
     let test = config.test.clone().map(Arc::new);
-    let (bridge, mut receiver) = CoreBridge::open(config, mode(&layout)?)?;
+    let (bridge, mut receiver) = CoreBridge::open(config, layout.mode(false)?)?;
     let core = AppCore {
         bridge: Arc::new(bridge),
         events: cx.new(|_| CoreEvents),

@@ -16,7 +16,11 @@ async fn a_failed_puzzle_operation_is_logged_once() {
         .call("localPuzzles", vec![json!({ "count": 5 })])
         .await
         .expect_err("no puzzle database yet");
-    assert!(refused.message.starts_with("Download the puzzle database first"));
+    assert!(
+        refused
+            .message
+            .starts_with("Download the puzzle database first")
+    );
     let warned: Vec<String> = host
         .lines
         .lock()

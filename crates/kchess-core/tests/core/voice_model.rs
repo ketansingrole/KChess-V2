@@ -536,12 +536,11 @@ async fn cleans_up_failed_and_interrupted_responses_and_allows_another_attempt()
     // A lost connection is the one failure the connection advice is for.
     let interrupted = cache.ensure(None).await.expect_err("interrupted");
     assert!(
-        interrupted
+        interrupted.message.starts_with(
+            "Couldn’t prepare voice input. Voice model download failed (network error)"
+        ) && interrupted
             .message
-            .starts_with("Couldn’t prepare voice input. Voice model download failed (network error)")
-            && interrupted
-                .message
-                .ends_with(" Connect to the internet and try again."),
+            .ends_with(" Connect to the internet and try again."),
         "{}",
         interrupted.message
     );

@@ -778,20 +778,13 @@ fn explore_request(words: &[String]) -> Result<(&'static str, String, Option<Str
     Ok((kind, fen, None))
 }
 
-/// The stack of every thread the CLI runs the core on: what macOS and Linux give a main thread.
-/// Windows gives its main thread 1 MB, which an embedded sign-in overflows in a debug build.
-const STACK: usize = 8 * 1024 * 1024;
-
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let cli = std::thread::Builder::new()
         .name("kchess-cli".into())
-        .stack_size(STACK)
+        .stack_size(kchess_service::CORE_STACK)
         .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .thread_stack_size(STACK)
-                .build()
+            let runtime = kchess_service::core_runtime()
                 .map_err(|cause| format!("Could not start: {cause}"))?;
             runtime.block_on(run(&argv))
         });

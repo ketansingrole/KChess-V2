@@ -270,6 +270,13 @@ impl Core {
         id
     }
 
+    /// The frontend that embeds this core, with the host requests it can answer: the others are
+    /// refused rather than sent to it (an embedded command line has no window to focus).
+    pub fn embedded_by(&self, info: ClientInfo) {
+        self.connections.set_app(info);
+        self.report_alert_owner();
+    }
+
     /// The shared service serves its own clients: the embedding app's connection goes.
     pub fn serve_connections(&self) {
         self.connections.without_app();

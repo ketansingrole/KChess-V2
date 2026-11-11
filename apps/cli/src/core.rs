@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use kchess_contracts::calls::CoreCall;
 use kchess_contracts::{Capability, CoreError, ErrorKind, HostReply, HostRequest, Level};
-use kchess_service::{CoreHandle, Hello, Layout, Mode};
+use kchess_service::{CoreHandle, Hello, Layout};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -53,10 +53,7 @@ impl CoreClient {
         std::fs::create_dir_all(&options.data_dir)
             .map_err(|cause| format!("The profile folder is unavailable: {cause}"))?;
         let layout = Layout::current();
-        let mode = match layout.service_binary() {
-            Some(binary) if !options.embedded => Mode::Service { binary },
-            _ => Mode::Embedded,
-        };
+        let mode = layout.mode(options.embedded)?;
         let browser = options.browser;
         let (handle, events) = CoreHandle::open(kchess_service::Options {
             config: layout.config(&options.data_dir, options.credentials),

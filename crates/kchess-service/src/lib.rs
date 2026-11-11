@@ -22,6 +22,6 @@ pub mod transport;
 pub use client::{
     Client, ClientEvent, ConnectError, Hello, Start, connect_or_start, connect_or_start_within,
 };
-pub use handle::{Answer, CoreHandle, Log, Mode, Options};
+pub use handle::{Answer, CORE_STACK, CoreHandle, Log, Mode, Options, core_runtime};
 pub use layout::Layout;
 pub use protocol::Capability;
