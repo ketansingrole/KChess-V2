@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use kchess_contracts::types::OnlinePhase;
+use kchess_domain::variant::Variant;
 use serde_json::Value;
 
 use super::state::{Lane, OnlineOptions};
@@ -53,15 +54,15 @@ pub(crate) struct Listen {
 /// `gameBody(options)`: the form fields of a seek or challenge.
 pub(crate) fn game_body(options: &OnlineOptions) -> Vec<(&'static str, String)> {
     let has_fen = options.fen.as_deref().is_some_and(|fen| !fen.is_empty());
-    let variant = if has_fen && options.variant.as_deref() != Some("chess960") {
+    let variant = if has_fen && options.variant != Some(Variant::Chess960) {
         Some("fromPosition")
     } else {
-        options.variant.as_deref()
+        options.variant.map(Variant::key)
     };
     let variant = variant.filter(|variant| !variant.is_empty() && *variant != "standard");
     let mut body = vec![
         ("rated", options.rated.to_string()),
-        ("color", options.color.clone()),
+        ("color", options.color.as_str().to_string()),
     ];
     if let Some(variant) = variant {
         body.push(("variant", variant.to_string()));

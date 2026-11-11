@@ -29,16 +29,18 @@ pub use state::{
 mod tests {
     use super::requests::game_body;
     use super::state::OnlineOptions;
+    use kchess_contracts::types::ChallengeColor;
+    use kchess_domain::variant::Variant;
 
     #[test]
     fn game_body_follows_the_board_api_rules() {
         let mut options = OnlineOptions {
-            minutes: 10.0,
-            increment: 0.0,
+            minutes: 10,
+            increment: 0,
             days: None,
-            variant: Some("chess960".into()),
+            variant: Some(Variant::Chess960),
             fen: None,
-            color: "random".into(),
+            color: ChallengeColor::Random,
             rated: false,
             target: None,
             account: None,
@@ -51,7 +53,7 @@ mod tests {
                 ("variant", "chess960".to_string()),
             ]
         );
-        options.variant = Some("standard".into());
+        options.variant = Some(Variant::Standard);
         options.fen = Some("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1".into());
         let body = game_body(&options);
         assert!(body.contains(&("variant", "fromPosition".to_string())));

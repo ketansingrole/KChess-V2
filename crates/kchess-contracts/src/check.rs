@@ -19,8 +19,10 @@ use kchess_domain::variant::Variant;
 use kchess_domain::{js, replay};
 
 mod lookups;
+mod online;
 
 pub use lookups::*;
+pub use online::*;
 
 /// Why an argument was refused, as the caller is told.
 pub type Refusal = String;

@@ -1,23 +1,14 @@
 //! Lichess TV and broadcasts.
 
+use kchess_contracts::check::{BroadcastQuery, LichessId, WatchSession};
 use kchess_contracts::core_api::SpectateApi;
-use serde_json::{Value, json};
+use kchess_contracts::types::{
+    BroadcastRoundPlace, BroadcastSummary, BroadcastTourDetail, TvChannel, WatchTarget,
+};
 
-use super::args::{text, to_json};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
-use crate::lichess::watch::{self, WatchTarget};
-
-/// `{ channel }` or `{ gameId }`: what the spectator watches.
-fn watch_target(value: &Value) -> Result<WatchTarget> {
-    if let Some(channel) = value.get("channel").and_then(Value::as_str) {
-        return Ok(WatchTarget::Channel(channel.to_string()));
-    }
-    if let Some(game) = value.get("gameId").and_then(Value::as_str) {
-        return Ok(WatchTarget::Game(game.to_string()));
-    }
-    Err(CoreError::new("Invalid watch target."))
-}
+use crate::lichess::watch;
 
 impl Core {
     fn refuse_watch_while_playing(&self) -> Result<()> {
@@ -29,38 +20,36 @@ impl Core {
 }
 
 impl SpectateApi for Core {
-    async fn tv_channels(&self) -> Result<Value> {
-        to_json(watch::tv_channels(self.services.lichess()).await)
+    async fn tv_channels(&self) -> Result<Vec<TvChannel>> {
+        watch::tv_channels(self.services.lichess()).await
     }
 
-    async fn watch(&self, target: Value) -> Result<Value> {
+    async fn watch(&self, target: WatchTarget) -> Result<u64> {
         self.refuse_watch_while_playing()?;
-        let target = watch_target(&target)?;
-        Ok(json!(self.services.spectator().mine().watch(target)))
+        Ok(self.services.spectator().mine().watch(target))
     }
 
-    async fn watch_broadcast(&self, round_id: Value) -> Result<Value> {
+    async fn watch_broadcast(&self, round_id: LichessId) -> Result<u64> {
         self.refuse_watch_while_playing()?;
-        let round = text(&round_id);
-        Ok(json!(self.services.spectator().mine().watch_round(&round)))
+        Ok(self.services.spectator().mine().watch_round(&round_id.0))
     }
 
-    async fn stop_watching(&self, session: Option<Value>) -> Result<Value> {
-        let session = session.as_ref().and_then(Value::as_u64);
+    async fn stop_watching(&self, session: Option<WatchSession>) -> Result<()> {
+        let session = session.map(|session| session.0);
         self.services.spectator().stop_mine(session);
-        Ok(Value::Null)
+        Ok(())
     }
 
-    async fn broadcasts(&self, query: Option<Value>) -> Result<Value> {
-        let query = query.as_ref().and_then(Value::as_str);
-        to_json(watch::broadcasts(self.services.lichess(), query).await)
+    async fn broadcasts(&self, query: Option<BroadcastQuery>) -> Result<Vec<BroadcastSummary>> {
+        let query = query.as_ref().map(|query| query.0.as_str());
+        watch::broadcasts(self.services.lichess(), query).await
     }
 
-    async fn broadcast_tour(&self, id: Value) -> Result<Value> {
-        to_json(watch::broadcast_tour(self.services.lichess(), &text(&id)).await)
+    async fn broadcast_tour(&self, id: LichessId) -> Result<BroadcastTourDetail> {
+        watch::broadcast_tour(self.services.lichess(), &id.0).await
     }
 
-    async fn broadcast_round(&self, id: Value) -> Result<Value> {
-        watch::broadcast_round(self.services.lichess(), &text(&id)).await
+    async fn broadcast_round(&self, id: LichessId) -> Result<BroadcastRoundPlace> {
+        watch::broadcast_round(self.services.lichess(), &id.0).await
     }
 }

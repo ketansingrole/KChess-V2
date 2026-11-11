@@ -1,15 +1,16 @@
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use kchess_contracts::types::OnlinePhase;
-use serde::{Deserialize, Serialize};
-use serde_json::Number;
+pub use kchess_contracts::types::{
+    ChatLine, OngoingGame, OnlineAction, OnlineOptions, PresenceReport, Resumed, StartResult,
+    UserPresence,
+};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::super::accounts::Lichess;
-use super::super::challenges::{ChallengeInbox, PlayerRef};
+use super::super::challenges::ChallengeInbox;
 use crate::host::Host;
 
 /// `MAX_RECONNECTS`: how many times a dropped game or event stream is re-opened without progress.
@@ -41,121 +42,6 @@ impl Lane {
             Lane::Seek => "seek",
         }
     }
-}
-
-/// `OnlineOptions`: what to play and how; the Board API body of a seek or challenge is built
-/// from it (`gameBody`).
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct OnlineOptions {
-    /// Ignored for correspondence games (`days`).
-    pub minutes: f64,
-    pub increment: f64,
-    /// Correspondence: days per move instead of a clock.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub days: Option<f64>,
-    /// Lichess variant key; standard when omitted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
-    /// A direct challenge from this position.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fen: Option<String>,
-    /// `random`, `white` or `black`.
-    pub color: String,
-    pub rated: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub account: Option<String>,
-}
-
-/// What `start` answers: a challenge's id and URL, a seek in progress, or a correspondence game.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StartResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub seeking: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub correspondence: Option<bool>,
-}
-
-/// A game `resume` reattached to.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct Resumed {
-    pub id: String,
-    pub account: String,
-}
-
-/// A game one of the connected accounts is playing (`OngoingGame`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OngoingGame {
-    pub game_id: String,
-    pub account: String,
-    pub opponent: PlayerRef,
-    pub color: String,
-    pub fen: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_move: Option<String>,
-    pub is_my_turn: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub seconds_left: Option<Number>,
-    pub variant: String,
-    pub speed: String,
-    pub rated: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tournament_id: Option<String>,
-    /// Whether the Board API can play it (`compat.board`): Lichess refuses it some games
-    /// started elsewhere, which can only be watched here.
-    pub playable: bool,
-}
-
-/// A private chat line of the live game (`ChatLine`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ChatLine {
-    pub user: String,
-    pub text: String,
-    pub room: String,
-}
-
-/// One user's status (`UserPresence`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UserPresence {
-    pub online: bool,
-    pub playing: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signal: Option<Number>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub playing_id: Option<String>,
-}
-
-/// `PresenceReport`: statuses by lower-cased username, and the request's round trip.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PresenceReport {
-    pub users: BTreeMap<String, UserPresence>,
-    pub latency_ms: u64,
-}
-
-/// `OnlineAction`: what can be done to the live game.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum OnlineAction {
-    Resign,
-    Abort,
-    Takeback,
-    DeclineTakeback,
-    OfferDraw,
-    AcceptDraw,
-    DeclineDraw,
-    ClaimVictory,
-    ClaimDraw,
-    Berserk,
 }
 
 /// `OnlineHooks` of the service: the session reports these to the host through `emit`.

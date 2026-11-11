@@ -33,29 +33,21 @@ impl OnlineSession {
         }
         let target = options.target.as_deref().unwrap_or("").trim().to_string();
         let correspondence = options.days.is_some();
-        let perf = perf_for(options.minutes, options.increment);
-        let label = format!(
-            "{}+{}",
-            js_number(options.minutes),
-            js_number(options.increment)
-        );
+        let (minutes, increment) = (f64::from(options.minutes), f64::from(options.increment));
+        let perf = perf_for(minutes, increment);
+        let label = format!("{}+{}", js_number(minutes), js_number(increment));
         // Validate before any stream opens, so a rejected request leaves nothing running.
         let has_fen = options.fen.as_deref().is_some_and(|fen| !fen.is_empty());
         let rejection = if has_fen && (target.is_empty() || options.rated) {
             Some(
                 "A game from a set-up position must be a casual challenge to a player.".to_string(),
             )
-        } else if !correspondence
-            && !target.is_empty()
-            && !can_direct_challenge(options.minutes, options.increment)
+        } else if !correspondence && !target.is_empty() && !can_direct_challenge(minutes, increment)
         {
             Some(format!(
                 "Lichess blocks {perf} ({label}) even for direct challenges. The Board API allows Blitz and slower — pick at least 3 minutes of estimated play (time + 40 × increment)."
             ))
-        } else if !correspondence
-            && target.is_empty()
-            && !can_board_seek(options.minutes, options.increment)
-        {
+        } else if !correspondence && target.is_empty() && !can_board_seek(minutes, increment) {
             Some(format!(
                 "Lichess blocks {perf} ({label}) for public seeks. The Board API allows Rapid and slower for matchmaking — add a username to challenge directly (Blitz allowed) or pick a longer control."
             ))
@@ -162,8 +154,8 @@ impl OnlineSession {
         self.start_event_stream(auth.clone(), handle.clone());
         if !target.is_empty() {
             let mut form: Vec<(&'static str, String)> = vec![
-                ("clock.limit", js_number(options.minutes * 60.0)),
-                ("clock.increment", js_number(options.increment)),
+                ("clock.limit", (options.minutes * 60).to_string()),
+                ("clock.increment", options.increment.to_string()),
             ];
             form.extend(game_body(options));
             let path = format!("/api/challenge/{}", path_segment(target));
@@ -210,8 +202,8 @@ impl OnlineSession {
             seek
         };
         let mut form: Vec<(&'static str, String)> = vec![
-            ("time", js_number(options.minutes)),
-            ("increment", js_number(options.increment)),
+            ("time", options.minutes.to_string()),
+            ("increment", options.increment.to_string()),
         ];
         form.extend(game_body(options));
         let request = StreamRequest {
@@ -247,7 +239,7 @@ impl OnlineSession {
         target: &str,
     ) -> CoreResult<StartResult> {
         let mut form: Vec<(&'static str, String)> =
-            vec![("days", js_number(options.days.unwrap_or_default()))];
+            vec![("days", options.days.unwrap_or_default().to_string())];
         form.extend(game_body(options));
         let path = if target.is_empty() {
             "/api/board/seek".to_string()

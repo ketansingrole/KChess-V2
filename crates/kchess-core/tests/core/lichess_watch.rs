@@ -11,7 +11,7 @@ use fixtures::{
     MemoryStore, MemoryTokens, Recording, Reply, Seen, lichess_service, lichess_service_with_idle,
     serve,
 };
-use kchess_contracts::types::WatchPhase;
+use kchess_contracts::types::{BroadcastSection, WatchPhase};
 use kchess_core::lichess::accounts::Lichess;
 use kchess_core::lichess::watch::{
     BroadcastUpdate, LineUpTiming, Spectator, WatchFrame, WatchSink, WatchState, WatchTarget,
@@ -443,7 +443,7 @@ async fn broadcast_search_lists_recent_official_broadcasts() {
     crate::support::wire::assert_wire("broadcasts.search", &found);
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].tour_name, "Historical Open");
-    assert_eq!(found[0].section, "past");
+    assert_eq!(found[0].section, BroadcastSection::Past);
     let search = &fixture.requests()[0];
     assert_eq!(search.path(), "/api/broadcast/search");
     assert_eq!(search.query("q").as_deref(), Some("Historical"));
@@ -489,19 +489,25 @@ fn broadcast_summaries_classify_scheduled_rounds_and_keep_trusted_images() {
             "round": { "id": "round789", "name": "Final", "finished": true }
         }),
     ];
-    let found = broadcast_summaries(&entries, "past");
+    let found = broadcast_summaries(&entries, BroadcastSection::Past);
     crate::support::wire::assert_wire("broadcasts.summaries", &found);
-    assert_eq!(found[0].section, "upcoming");
+    assert_eq!(found[0].section, BroadcastSection::Upcoming);
     assert_eq!(found[0].starts_at, Some(1800000000000));
     assert_eq!(
         found[0].image.as_deref(),
         Some("https://image.lichess1.org/example.webp")
     );
-    assert_eq!(found[1].section, "active");
+    assert_eq!(found[1].section, BroadcastSection::Active);
     assert!(found[1].ongoing);
     assert!(found[1].image.is_none());
-    assert_eq!(found[2].section, "past");
-    assert!(broadcast_summaries(&[json!({ "tour": { "id": 123 } })], "active").is_empty());
+    assert_eq!(found[2].section, BroadcastSection::Past);
+    assert!(
+        broadcast_summaries(
+            &[json!({ "tour": { "id": 123 } })],
+            BroadcastSection::Active
+        )
+        .is_empty()
+    );
 }
 
 const PGN: &str = "[Event \"Test Open\"]
