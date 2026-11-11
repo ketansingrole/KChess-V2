@@ -321,11 +321,7 @@ fn the_game_is_exported_as_an_animated_gif(cx: &mut gpui_kit::TestAppContext) {
     app.click_label("Animated GIF of the game");
 
     // The save dialog opens once the frames are drawn; the GIF goes where it is pointed.
-    let started = std::time::Instant::now();
-    while !app.cx.did_prompt_for_new_path() {
-        assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
-        app.tick();
-    }
+    app.wait_for_save_dialog();
     let folder = tempfile::tempdir().expect("a folder to save in");
     let path = folder.path().join("game.gif");
     let chosen = path.clone();
@@ -343,11 +339,7 @@ fn the_game_is_exported_as_an_animated_gif(cx: &mut gpui_kit::TestAppContext) {
 
 /// Wait for the save dialog and answer it with `name` in `folder`; the path chosen.
 fn save_as(app: &mut Harness, folder: &std::path::Path, name: &str) -> std::path::PathBuf {
-    let started = std::time::Instant::now();
-    while !app.cx.did_prompt_for_new_path() {
-        assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
-        app.tick();
-    }
+    app.wait_for_save_dialog();
     let path = folder.join(name);
     let chosen = path.clone();
     app.cx.simulate_new_path_selection(move |_| Some(chosen));
@@ -362,25 +354,14 @@ fn a_cancelled_export_leaves_the_next_one_alone(cx: &mut gpui_kit::TestAppContex
     type_moves(&mut app, &SCHOLARS_MATE);
     app.click("local-export");
     app.click_label("Animated GIF of the game");
-    let started = std::time::Instant::now();
-    while !app.cx.did_prompt_for_new_path() {
-        assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
-        app.tick();
-    }
+    app.wait_for_save_dialog();
     app.click_label("Cancel export");
     app.click("local-export");
     app.click_label("PNG of this position");
 
     let folder = tempfile::tempdir().expect("a folder to save in");
     save_as(&mut app, folder.path(), "game.gif");
-    let started = std::time::Instant::now();
-    while !app.cx.did_prompt_for_new_path() {
-        assert!(
-            started.elapsed() < super::TIMEOUT,
-            "no save dialog for the PNG"
-        );
-        app.tick();
-    }
+    app.wait_for_save_dialog();
     // The cancelled export finishing left the running one shown as running.
     assert!(
         app.with_window(|window, _| {

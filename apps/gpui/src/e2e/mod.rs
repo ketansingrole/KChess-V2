@@ -380,6 +380,24 @@ impl Harness {
         }
     }
 
+    /// Wait until the app has asked where to save a file (the system's save dialog).
+    pub fn wait_for_save_dialog(&mut self) {
+        self.wait_for_prompt("save dialog", |cx| cx.did_prompt_for_new_path());
+    }
+
+    /// Wait until the app has asked which files to open (the system's open dialog).
+    pub fn wait_for_open_dialog(&mut self) {
+        self.wait_for_prompt("open dialog", |cx| cx.did_prompt_for_paths());
+    }
+
+    fn wait_for_prompt(&mut self, what: &str, asked: impl Fn(&mut TestAppContext) -> bool) {
+        let started = Instant::now();
+        while !asked(&mut self.cx) {
+            assert!(started.elapsed() < TIMEOUT, "no {what} opened");
+            self.tick();
+        }
+    }
+
     /// Type `text` into the dialog's field labelled `label`, in place of what it holds, once the
     /// dialog has stopped moving.
     pub fn fill_in_dialog(&mut self, label: &str, text: &str) {

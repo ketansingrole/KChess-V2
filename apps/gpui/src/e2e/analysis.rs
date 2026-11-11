@@ -21,21 +21,12 @@ fn editor(cx: &mut gpui_kit::TestAppContext) -> Harness {
     app
 }
 
-/// Let animations run their course: a dialog that is closing is gone after this.
-pub(super) fn settle(app: &mut Harness) {
-    let mut frames = 0;
-    app.wait_for("the window to settle", |_, _| {
-        frames += 1;
-        frames > 80
-    });
-}
-
 /// Import a FEN or PGN through the analysis board's dialog, and let it close if it will.
 pub(super) fn import(app: &mut Harness, text: &str) {
     app.click("analysis-import");
     app.fill_in_dialog("FEN, PGN or Lichess link", text);
     app.click("import-run");
-    settle(app);
+    app.settle();
 }
 
 fn selected(app: &mut Harness, path: &str) -> Option<bool> {
@@ -246,7 +237,7 @@ fn an_import_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
         "rnbqkbnr/pppppppp/8/8/3q4/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     );
     app.click("import-run");
-    settle(&mut app);
+    app.settle();
     assert!(app.shows("import-run"));
     assert!(!app.shows("tree-e2e4"));
 
@@ -751,11 +742,7 @@ fn the_position_can_be_played_over_the_board(cx: &mut gpui_kit::TestAppContext) 
 fn export(app: &mut Harness, label: &str, file: &str) -> Vec<u8> {
     app.click("analysis-export");
     app.click_label(label);
-    let started = std::time::Instant::now();
-    while !app.cx.did_prompt_for_new_path() {
-        assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
-        app.tick();
-    }
+    app.wait_for_save_dialog();
     let folder = tempfile::tempdir().expect("a folder to save in");
     let path = folder.path().join(file);
     let chosen = path.clone();
@@ -832,10 +819,10 @@ fn a_cancelled_link_import_leaves_the_board_alone(cx: &mut gpui_kit::TestAppCont
         HELD_GAME_ASKED.load(Ordering::SeqCst)
     });
     app.click("import-cancel");
-    settle(&mut app);
+    app.settle();
     HELD_GAME_RELEASED.store(true, Ordering::SeqCst);
-    settle(&mut app);
-    settle(&mut app);
+    app.settle();
+    app.settle();
     app.find("tree-d2d4 d7d5");
     assert!(!app.shows("tree-e2e4"), "the late game replaced the board");
 }
@@ -1008,14 +995,14 @@ fn the_editors_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
         app.type_text(&format!(">{label}"));
         super::palette::wait_for_first(app, label);
         app.press("enter");
-        settle(app);
+        app.settle();
     };
     run(&mut app, "Clear board");
     wait_for_fen(&mut app, "8/8/8/8/8/8/8/8 w - - 0 1");
     // No kings: nothing can be played or analysed from here.
     app.press("secondary-k");
     app.type_text(">Analyse this position");
-    settle(&mut app);
+    app.settle();
     let listed: Vec<String> = app.with_window(|window, _| {
         (0..10usize)
             .filter_map(|index| window.try_find(("palette-item", index)))
@@ -1027,7 +1014,7 @@ fn the_editors_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
         "{listed:?}"
     );
     app.press("escape");
-    settle(&mut app);
+    app.settle();
     run(&mut app, "Starting position");
     wait_for_fen(&mut app, START_FEN);
 }
@@ -1035,7 +1022,7 @@ fn the_editors_actions_are_in_quick_pick(cx: &mut gpui_kit::TestAppContext) {
 /// Drop `name` holding `text` on the window, and let it open.
 fn drop_file(app: &mut Harness, name: &str, text: &str) -> tempfile::TempDir {
     let folder = app.drop_file(name, text.as_bytes());
-    settle(app);
+    app.settle();
     folder
 }
 
@@ -1055,7 +1042,7 @@ fn a_dropped_pgn_file_opens_on_the_analysis_board(cx: &mut gpui_kit::TestAppCont
     // The board now holds unsaved moves: another file asks before replacing them.
     let _file = drop_file(&mut app, "other.PGN", "1. d4 d5 *");
     app.click("ok");
-    settle(&mut app);
+    app.settle();
     app.find("tree-d2d4 d7d5");
     assert!(!app.shows("tree-e2e4"));
     assert!(!app.shows("import-run"));
@@ -1072,7 +1059,7 @@ fn a_dropped_file_that_is_no_game_is_refused(cx: &mut gpui_kit::TestAppContext) 
     let _file = drop_file(&mut app, "notes.txt", "not a game");
     app.find("import-error");
     app.click("import-cancel");
-    settle(&mut app);
+    app.settle();
     let _file = drop_file(&mut app, "board.png", "png");
     assert!(!app.shows("import-run"));
     // A PGN over the import's 2 MB is refused before it is read, from any page.
@@ -1095,14 +1082,10 @@ fn the_import_opens_a_pgn_file(cx: &mut gpui_kit::TestAppContext) {
     std::fs::write(&path, "1. c4 e5 *").expect("the file");
     app.click("analysis-import");
     app.click("import-file");
-    let started = std::time::Instant::now();
-    while !app.cx.did_prompt_for_paths() {
-        assert!(started.elapsed() < super::TIMEOUT, "no open dialog");
-        app.tick();
-    }
+    app.wait_for_open_dialog();
     app.cx
         .simulate_path_prompt_response(move |_| Some(vec![path]));
-    settle(&mut app);
+    app.settle();
     app.find("tree-c2c4 e7e5");
     assert!(!app.shows("import-run"));
 }
@@ -1130,12 +1113,12 @@ fn a_dragged_file_shows_where_it_will_open(cx: &mut gpui_kit::TestAppContext) {
             cx,
         );
     });
-    settle(&mut app);
+    app.settle();
     assert!(app.shows("drop-zone"));
     app.with_window(|window, cx| {
         window.dispatch_event(gpui_kit::FileDropEvent::Exited.to_platform_input(), cx)
     });
-    settle(&mut app);
+    app.settle();
     assert!(!app.shows("drop-zone"));
 }
 
@@ -1175,7 +1158,7 @@ fn x_shows_the_threat(cx: &mut gpui_kit::TestAppContext) {
     });
     // Space plays the best move of the position shown, never the threat's.
     app.press("space");
-    settle(&mut app);
+    app.settle();
     assert!(!app.shows("tree-e2e4 e7e5"));
     assert_eq!(
         app.cx.update(|cx| analysis.read(cx).shown_fen()),

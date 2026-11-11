@@ -6,19 +6,10 @@ use super::Harness;
 use crate::pages::studies::StudiesPage;
 use gpui_kit::{InputEvent as _, px};
 
-/// Let animations run their course: a dialog that is closing is gone after this.
-fn settle(app: &mut Harness) {
-    let mut frames = 0;
-    app.wait_for("the window to settle", |_, _| {
-        frames += 1;
-        frames > 80
-    });
-}
-
 /// Choose the chapter at `row` (from 0) in the open study's chapter select, by keyboard.
 fn choose_chapter(app: &mut Harness, row: usize) {
     app.click_label("Study chapter");
-    settle(app);
+    app.settle();
     for _ in 0..row {
         app.press("down");
     }
@@ -163,10 +154,10 @@ fn a_pgn_that_cannot_be_read_is_refused(cx: &mut gpui_kit::TestAppContext) {
     app.click("empty-import");
     app.fill_in_dialog("PGN", "1. e4 e5 2. Ke5 *");
     app.click("import-run");
-    settle(&mut app);
+    app.settle();
     assert!(app.shows("import-run"), "the dialog stays for a correction");
     app.click("import-cancel");
-    settle(&mut app);
+    app.settle();
     assert!(app.shows("empty-new-study"), "no study was made");
 }
 
@@ -186,7 +177,7 @@ fn an_annotated_study_is_kept_when_the_app_restarts(cx: &mut gpui_kit::TestAppCo
     app.click_label("Game details…");
     app.fill_in_dialog("White", "Alice");
     app.press("escape");
-    settle(&mut app);
+    app.settle();
 
     let mut app = app.restart();
     app.open("Studies");
@@ -481,7 +472,7 @@ fn opening_a_study_asks_before_replacing_an_unsaved_analysis(cx: &mut gpui_kit::
     app.click_label("Actions for Untitled study");
     app.click_label("Open");
     app.click("cancel");
-    settle(&mut app);
+    app.settle();
     assert!(app.shows("new-study"), "still on the Studies page");
 
     app.click_label("Actions for Untitled study");
@@ -593,7 +584,7 @@ fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosavi
         let bar = page.read(cx).study_bar();
         bar.update(cx, |bar, cx| bar.select_chapter(next, cx));
     });
-    settle(&mut app);
+    app.settle();
     app.find("tree-g1f3");
     assert!(
         !app.shows("tree-d2d4"),
@@ -683,7 +674,7 @@ fn quick_pick_makes_and_imports_studies(cx: &mut gpui_kit::TestAppContext) {
     app.press("enter");
     app.find("import-run");
     app.click("import-cancel");
-    settle(&mut app);
+    app.settle();
 
     app.press("secondary-k");
     app.type_text(">New study");
@@ -813,11 +804,7 @@ fn a_study_is_saved_as_a_pgn_file(cx: &mut gpui_kit::TestAppContext) {
     wait_for_listed(&mut app, &["Pawn openings"]);
     app.click_label("Actions for Pawn openings");
     app.click_label("Save PGN…");
-    let started = std::time::Instant::now();
-    while !app.cx.did_prompt_for_new_path() {
-        assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
-        app.tick();
-    }
+    app.wait_for_save_dialog();
     let folder = tempfile::tempdir().expect("a folder to save in");
     let path = folder.path().join("Pawn openings.pgn");
     let chosen = path.clone();

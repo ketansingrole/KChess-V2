@@ -263,7 +263,7 @@ fn switching_accounts_moves_the_event_stream(cx: &mut gpui_kit::TestAppContext) 
 
     app.open("Play on Lichess");
     app.click_label("Account");
-    super::analysis::settle(&mut app);
+    app.settle();
     app.press("down");
     app.press("enter");
     app.wait_for("the first account's stream again", |_, _| {
@@ -568,7 +568,7 @@ fn new_opponent_seeks_the_same_game_against_anyone(cx: &mut gpui_kit::TestAppCon
     // The seek is still on: the finished game was not announced again as the seek's game when
     // the seek reopened the event stream (it was, and taking it up cancelled the seek, sometimes
     // before it was even sent).
-    super::analysis::settle(&mut app);
+    app.settle();
     assert_eq!(
         app.cx.update(|cx| crate::online::handle(cx).read(cx).phase),
         crate::online::Phase::Seeking,

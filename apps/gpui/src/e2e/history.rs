@@ -1,5 +1,7 @@
 //! Game history: finished games listed, opened and kept.
 
+use gpui_kit::test::TestWindowExt as _;
+
 use super::Harness;
 use crate::pages::Page;
 
@@ -280,17 +282,13 @@ fn a_game_saved_again_shows_its_new_result(cx: &mut gpui_kit::TestAppContext) {
     app.click(("history-filter", 1usize));
     assert_eq!(app.find(("history-filter", 1usize)).selected(), Some(false));
     save(&mut app, "1-0", true);
-    let started = std::time::Instant::now();
-    loop {
-        app.click(("history-filter", 1usize));
-        if app.find(("history-filter", 1usize)).selected() == Some(true) {
-            break;
-        }
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(30),
-            "White's win is counted"
-        );
-    }
+    app.wait_for("White's win to be counted", |window, _| {
+        window
+            .try_find(("history-filter", 1usize))
+            .is_some_and(|filter| filter.disabled() != Some(true))
+    });
+    app.click(("history-filter", 1usize));
+    assert_eq!(app.find(("history-filter", 1usize)).selected(), Some(true));
     app.find(("history-row", 0usize));
 }
 
@@ -695,11 +693,7 @@ fn the_games_listed_are_exported_as_one_pgn(cx: &mut gpui_kit::TestAppContext) {
 
     let folder = tempfile::tempdir().expect("a folder to save in");
     let save = |app: &mut Harness, name: &str| {
-        let started = std::time::Instant::now();
-        while !app.cx.did_prompt_for_new_path() {
-            assert!(started.elapsed() < super::TIMEOUT, "no save dialog opened");
-            app.tick();
-        }
+        app.wait_for_save_dialog();
         let path = folder.path().join(name);
         let chosen = path.clone();
         app.cx.simulate_new_path_selection(move |_| Some(chosen));
