@@ -296,7 +296,7 @@ pub fn free_space(path: &Path) -> Option<u64> {
             "-Command",
             &format!(
                 "[System.IO.DriveInfo]::new('{}').AvailableFreeSpace",
-                path.display().to_string().replace('\'', "''")
+                drive_letter(&path.display().to_string())?
             ),
         ]);
         command
@@ -312,6 +312,15 @@ pub fn free_space(path: &Path) -> Option<u64> {
     } else {
         df_available(&text)
     }
+}
+
+/// The drive letter of a Windows path, plain (`D:\a`) or verbatim (`\\?\D:\a`, as
+/// `canonicalize` gives it): all Windows PowerShell's `DriveInfo` takes, which refuses any longer
+/// path. `None` for a path on no drive letter, such as a network share.
+fn drive_letter(path: &str) -> Option<char> {
+    let mut chars = path.strip_prefix(r"\\?\").unwrap_or(path).chars();
+    let letter = chars.next().filter(char::is_ascii_alphabetic)?;
+    (chars.next() == Some(':')).then_some(letter)
 }
 
 /// The bytes available in `df -Pk` output: its second line's fourth column, in kilobytes.
@@ -462,6 +471,18 @@ mod tests {
         assert_eq!(df_available(text), Some(398_000_000 * 1024));
         assert_eq!(df_available("Filesystem\n"), None);
         assert_eq!(df_available("header\n/dev/x 1 2 lots 3% /\n"), None);
+    }
+
+    #[test]
+    fn windows_free_space_is_asked_of_the_path_s_drive() {
+        assert_eq!(drive_letter(r"D:\a\KChess-V2"), Some('D'));
+        assert_eq!(drive_letter(r"\\?\C:\Users\k\kchess"), Some('C'));
+        assert_eq!(drive_letter("c:"), Some('c'));
+        assert_eq!(drive_letter(r"\\server\share\kchess"), None);
+        assert_eq!(drive_letter(r"\\?\UNC\server\share"), None);
+        assert_eq!(drive_letter("1:"), None);
+        assert_eq!(drive_letter("D"), None);
+        assert_eq!(drive_letter(""), None);
     }
 
     #[test]
