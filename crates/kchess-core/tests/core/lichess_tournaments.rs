@@ -80,6 +80,7 @@ async fn lists_running_upcoming_and_finished_arenas_with_what_the_timeline_group
     let host = Arc::new(Recording::default());
     let lichess = lichess(&fixture.base, &host, Arc::new(MemoryTokens::default()));
     let list = tournaments(&lichess, "").await.unwrap();
+    crate::support::wire::assert_wire("tournaments.arenas", &list);
     let listed: Vec<(&str, &str)> = list
         .arenas
         .iter()
@@ -134,6 +135,7 @@ async fn creates_an_arena_as_the_chosen_account_and_returns_it() {
     )
     .await
     .unwrap();
+    crate::support::wire::assert_wire("createTournament.done", &created);
     let Outcome::Done(summary) = created else {
         panic!("the arena was created");
     };
@@ -212,6 +214,7 @@ async fn reads_the_created_arena_lichess_sends_on_its_own() {
     )
     .await
     .unwrap();
+    crate::support::wire::assert_wire("createTournament.full", &created);
     let Outcome::Done(summary) = created else {
         panic!("the arena was created");
     };
@@ -250,6 +253,7 @@ async fn asks_to_reconnect_when_the_login_lacks_the_tournament_permission() {
     )
     .await
     .unwrap();
+    crate::support::wire::assert_wire("createTournament.reconnect", &outcome);
     assert!(matches!(outcome, Outcome::NeedsReconnect));
 }
 
@@ -275,6 +279,7 @@ async fn looks_up_the_accounts_teams_signed_in_and_explains_a_refusal_briefly() 
         MemoryTokens::with(&[("Alice", "Alice-token")]),
     );
     let list = tournaments(&lichess, "Alice").await.unwrap();
+    crate::support::wire::assert_wire("tournaments.team-refused", &list);
     let teams = fixture.to("/api/team/of/Alice");
     assert!(!teams.is_empty());
     assert_eq!(teams[0].header("Authorization"), Some("Bearer Alice-token"));
@@ -307,6 +312,7 @@ async fn a_team_refusal_that_is_not_about_the_login_does_not_ask_to_reconnect() 
         MemoryTokens::with(&[("Alice", "Alice-token")]),
     );
     let list = tournaments(&lichess, "Alice").await.unwrap();
+    crate::support::wire::assert_wire("tournaments.team-failed", &list);
     assert_eq!(
         list.problems,
         vec!["Couldn’t load the teams of @Alice.".to_string()]
@@ -343,6 +349,7 @@ async fn reads_an_arenas_top_game_games_in_progress_podium_and_totals() {
             "averageRating": 1132
         }
     }));
+    crate::support::wire::assert_wire("tournament.arena-extras", &extras);
     let featured = extras.featured.expect("featured game");
     assert_eq!(featured.fen, "8/5rpp/4R3/6KP/3k4/5qP1/8/8 w - - 0 1");
     assert_eq!(featured.orientation, "black");
@@ -417,6 +424,7 @@ async fn lists_the_upcoming_swiss_events_of_each_team_and_names_a_team_that_fail
         MemoryTokens::with(&[("Alice", "Alice-token")]),
     );
     let list = tournaments(&lichess, "Alice").await.unwrap();
+    crate::support::wire::assert_wire("tournaments.swiss", &list);
     assert_eq!(list.arenas.len(), 1);
     // Finished and unreadable events are left out.
     let ids: Vec<&str> = list.swiss.iter().map(|event| event.id.as_str()).collect();
@@ -482,6 +490,7 @@ async fn reads_an_arena_with_its_leaderboard_page_and_the_accounts_place() {
     let detail = tournament(&lichess, "arena", "Abcd1234", "Alice", 2)
         .await
         .unwrap();
+    crate::support::wire::assert_wire("tournament.arena", &detail);
     let seen = &fixture.to("/api/tournament/Abcd1234")[0];
     assert_eq!(seen.query("page").as_deref(), Some("2"));
     assert_eq!(seen.header("Authorization"), Some("Bearer Alice-token"));
@@ -536,6 +545,7 @@ async fn reads_a_swiss_event_with_its_results_and_next_round() {
     let detail = tournament(&lichess, "swiss", "Swiss123", "", 1)
         .await
         .unwrap();
+    crate::support::wire::assert_wire("tournament.swiss", &detail);
     let value = serde_json::to_value(&detail).unwrap();
     assert_eq!(value["system"], json!("swiss"));
     assert_eq!(value["round"], json!(2));

@@ -1,0 +1,1 @@
+[{"id":"BobChal1","account":"Bob","direction":"in","opponent":{"name":"Carol","rating":1800},"variant":"standard","variantName":"Standard","rated":true,"speed":"bullet","timeControl":{"type":"clock","limit":60,"increment":0},"color":"random","playable":false,"problem":"Lichess does not let third-party apps play bullet games.","receivedAt":0}]

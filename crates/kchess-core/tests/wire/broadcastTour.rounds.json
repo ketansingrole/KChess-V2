@@ -1,0 +1,1 @@
+{"id":"tourAAAA","name":"Live Open","description":"Nine rounds","rounds":[{"id":"roundAAA","name":"Round 3","ongoing":true,"finished":false,"startsAt":1800000000000},{"id":"roundZZZ","name":"Round 4","ongoing":false,"finished":false}],"defaultRoundId":"roundAAA"}

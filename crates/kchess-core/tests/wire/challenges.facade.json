@@ -1,0 +1,1 @@
+[{"id":"Chal1234","account":"Alice","direction":"in","opponent":{"name":"Bob","rating":1700},"variant":"standard","variantName":"Standard","rated":false,"speed":"rapid","timeControl":{"type":"clock","limit":600,"increment":0},"color":"random","playable":true,"receivedAt":0}]

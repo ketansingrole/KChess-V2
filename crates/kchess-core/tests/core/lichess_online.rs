@@ -444,6 +444,7 @@ async fn a_refused_public_seek_explains_the_board_api_limits() {
     let online = session(&fixture.base, &host, &store, &tokens);
     let started = online.start(&seek_options(None)).await.unwrap();
     assert_eq!(started.seeking, Some(true));
+    crate::support::wire::assert_wire("startOnline.seeking", &started);
     until("the refusal is explained", || {
         emitted(&host, "online:error").iter().any(|message| {
             message
@@ -937,8 +938,10 @@ async fn playing(
     let store = MemoryStore::with_accounts(&[("Alice", true)]);
     let tokens = Arc::new(ScriptedTokens::default());
     let online = session(&fixture.base, &host, &store, &tokens);
+    let resumed = online.resume().await.unwrap();
+    crate::support::wire::assert_wire("resumeOnline.live", &resumed);
     assert_eq!(
-        online.resume().await.unwrap(),
+        resumed,
         Some(Resumed {
             id: "AbCd1234".into(),
             account: "Alice".into()
@@ -1044,6 +1047,7 @@ async fn sends_and_reads_the_player_chat_of_the_live_game() {
     assert_eq!(field(post, "room").as_deref(), Some("player"));
     assert_eq!(field(post, "text").as_deref(), Some("Good luck"));
     let lines = online.chat("AbCd1234").await.unwrap();
+    crate::support::wire::assert_wire("onlineChat.lines", &lines);
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0].user, "Bob");
     assert_eq!(lines[0].text, "You too");
@@ -1241,6 +1245,7 @@ async fn creates_correspondence_challenges_without_waiting_on_a_stream() {
     options.days = Some(3.0);
     options.variant = Some("chess960".into());
     let result = online.start(&options).await.unwrap();
+    crate::support::wire::assert_wire("startOnline.correspondence", &result);
     assert_eq!(result.id.as_deref(), Some("Corr5678"));
     assert_eq!(result.correspondence, Some(true));
     let posted = fixture.to("/api/challenge/Bob");
@@ -1561,6 +1566,11 @@ async fn lists_the_challenges_of_accounts_without_an_open_event_stream() {
     );
     assert_eq!(calls[0].header("Authorization"), Some("Bearer Bob-token"));
     let inbox = online.challenges().list();
+    // The time it arrived is the clock's: an integer, recorded as 0.
+    let mut shown = serde_json::to_value(&inbox).unwrap();
+    assert!(shown[0]["receivedAt"].is_i64());
+    shown[0]["receivedAt"] = json!(0);
+    crate::support::wire::assert_wire("challenges.listed", &shown);
     assert_eq!(inbox.len(), 1);
     assert_eq!(inbox[0].account, "Bob");
     assert_eq!(inbox[0].opponent.name, "Carol");

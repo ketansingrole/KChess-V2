@@ -122,6 +122,7 @@ async fn a_joined_tournament_is_kept_until_it_is_left_withdrawn_or_finished() {
         .call("tournaments", vec![json!("Alice")])
         .await
         .unwrap();
+    crate::support::wire::assert_wire("tournaments.facade", &list);
     assert_eq!(list["problems"], json!([]));
     assert_eq!(
         fixture.to("/api/team/of/Alice")[0].header("Authorization"),
@@ -156,6 +157,7 @@ async fn a_joined_tournament_is_kept_until_it_is_left_withdrawn_or_finished() {
         )
         .await
         .unwrap();
+    crate::support::wire::assert_wire("tournament.facade", &page);
     assert_eq!(page["standingPage"], json!(1), "no page reads the first");
     assert_eq!(joined().await.len(), 1);
     state.lock().unwrap().0 = false;
@@ -181,6 +183,7 @@ async fn a_joined_tournament_is_kept_until_it_is_left_withdrawn_or_finished() {
         )
         .await
         .unwrap();
+    crate::support::wire::assert_wire("tournament.finished", &finished);
     assert_eq!(finished["status"], json!("finished"));
     assert_eq!(joined().await, Vec::<Value>::new());
 
@@ -203,6 +206,7 @@ async fn a_joined_tournament_is_kept_until_it_is_left_withdrawn_or_finished() {
         )
         .await
         .unwrap();
+    crate::support::wire::assert_wire("createTournament.facade", &created);
     assert_eq!(created["id"], json!("Club1234"));
     let posted = fixture
         .requests()

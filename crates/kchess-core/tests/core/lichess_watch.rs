@@ -440,6 +440,7 @@ async fn broadcast_search_lists_recent_official_broadcasts() {
     let found = kchess_core::lichess::watch::broadcasts(&lichess, Some(" Historical "))
         .await
         .unwrap();
+    crate::support::wire::assert_wire("broadcasts.search", &found);
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].tour_name, "Historical Open");
     assert_eq!(found[0].section, "past");
@@ -489,6 +490,7 @@ fn broadcast_summaries_classify_scheduled_rounds_and_keep_trusted_images() {
         }),
     ];
     let found = broadcast_summaries(&entries, "past");
+    crate::support::wire::assert_wire("broadcasts.summaries", &found);
     assert_eq!(found[0].section, "upcoming");
     assert_eq!(found[0].starts_at, Some(1800000000000));
     assert_eq!(
