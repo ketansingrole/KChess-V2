@@ -145,9 +145,8 @@ impl AnalysisPage {
             return self.import_study(study, chapter, window, cx);
         }
         self.importing = None;
-        if let Some(fen) = crate::game::editor_setup(&text)
-            .and_then(|setup| crate::game::rules("setupFen", &[setup]).ok())
-            .and_then(|fen| fen.as_str().map(str::to_string))
+        if let Some(fen) =
+            crate::game::editor_setup(&text).and_then(|setup| crate::game::setup_fen(&setup))
         {
             if let Some(problem) = crate::game::position_problem(&fen) {
                 self.import_error = Some(problem.into());

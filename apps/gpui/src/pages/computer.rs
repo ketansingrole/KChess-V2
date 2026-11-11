@@ -1097,7 +1097,7 @@ impl ComputerPage {
         self.voice.sync(
             &context,
             Some(self.sans()),
-            crate::voice::grammar("GAME_GRAMMAR"),
+            crate::voice::grammar(crate::voice::Grammar::Game),
             listening,
             cx,
         );
@@ -1153,8 +1153,8 @@ impl ComputerPage {
                 };
                 if let Some(question) = asked {
                     let answer = crate::voice::moves::spoken_move(text, &setup);
-                    return Some(match answer["kind"].as_str() {
-                        Some("confirm") => {
+                    return Some(match answer {
+                        kchess_domain::voice::SpokenMove::Confirm => {
                             run = Some(Box::new(move |this, window, cx| {
                                 this.asked = None;
                                 window.close_dialog(cx);
@@ -1162,7 +1162,7 @@ impl ComputerPage {
                             }));
                             reply("confirm", "Done")
                         }
-                        Some("cancel") => {
+                        kchess_domain::voice::SpokenMove::Cancel => {
                             run = Some(Box::new(|this, window, cx| {
                                 this.asked = None;
                                 window.close_dialog(cx);
@@ -1177,8 +1177,8 @@ impl ComputerPage {
                         },
                     });
                 }
-                let command = crate::game::rules("spokenCommand", &[json!(text)]).ok()?;
-                let (said, question, feedback) = match command.as_str()? {
+                let command = kchess_domain::voice::game_command(text)?;
+                let (said, question, feedback) = match command {
                     "takeback" => {
                         run = Some(Box::new(|this, _, cx| {
                             if this.can_takeback() {
@@ -1558,7 +1558,7 @@ impl Render for ComputerPage {
                 hint: "Say “E four”, “Knight F three”, or “take back”",
                 active: self.voice_taking(),
                 listening: self.voice_listening(),
-                grammar: crate::voice::grammar("GAME_GRAMMAR"),
+                grammar: crate::voice::grammar(crate::voice::Grammar::Game),
             },
             cx,
         );

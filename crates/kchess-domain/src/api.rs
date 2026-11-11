@@ -323,14 +323,12 @@ fn dispatch(method: &str, args: &[Value]) -> Result<Value> {
         _ => {
             // Each group of moved rules dispatches its own methods.
             let moved = [
-                crate::voice::call,
                 crate::training::call,
                 crate::records::call,
                 crate::misc::call,
                 crate::games::call,
                 crate::online_game::call,
                 crate::trainer::call,
-                crate::theme::call,
             ];
             return match moved.iter().find_map(|call| call(method, args)) {
                 Some(result) => Ok(result.map_err(DomainError::Message)?),

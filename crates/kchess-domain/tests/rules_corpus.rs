@@ -14,7 +14,14 @@
 mod corpus;
 
 /// Methods whose rules are gone: nothing but the corpus called them.
-const RETIRED: &[&str] = &[];
+const RETIRED: &[&str] = &[
+    "EMPTY_BOARD",
+    "EMPTY_FEN",
+    "FILES",
+    "RANKS",
+    "START_SETUP",
+    "materialBalance",
+];
 
 use std::io::{Read, Write};
 use std::path::Path;

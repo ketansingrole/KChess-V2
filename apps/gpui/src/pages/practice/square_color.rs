@@ -12,7 +12,6 @@ use serde_json::{Value, json};
 use super::coordinates::random_square;
 use super::run::{self, RunClock};
 use crate::assets::icon;
-use crate::game::rules;
 use crate::play_layout::{PAGE_BOTTOM, PANEL_MAX, side_padding};
 use crate::theme::{Palette, radii, tint};
 use crate::voice::control::{BarSpec, Control, DrillLog};
@@ -31,13 +30,7 @@ enum Stage {
     Over,
 }
 
-/// `squareColor`: a1 is dark, h1 is light.
-fn square_color(square: &str) -> &'static str {
-    match rules("squareColor", &[json!(square)]) {
-        Ok(color) if color == "light" => "light",
-        _ => "dark",
-    }
-}
+use kchess_domain::voice::square_color;
 
 pub struct SquareColors {
     stage: Stage,
