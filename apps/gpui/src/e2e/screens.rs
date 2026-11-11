@@ -85,8 +85,11 @@ fn the_timeline() {
             cx.update(|cx| {
                 crate::settings::change(cx, move |s| s.frontend.appearance = appearance)
             });
-            let players =
-                serde_json::json!(["thibault", "EricRosen", "DrNykterstein", "penguingim1"]);
+            let players = kchess_contracts::check::FriendList(
+                ["thibault", "EricRosen", "DrNykterstein", "penguingim1"]
+                    .map(String::from)
+                    .to_vec(),
+            );
             let added = cx.update(|cx| {
                 cx.global::<crate::core::AppCore>()
                     .request(kchess_contracts::calls::AddFriends { usernames: players })

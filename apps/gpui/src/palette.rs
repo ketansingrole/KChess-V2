@@ -508,9 +508,7 @@ fn player_commands(cx: &App) -> Vec<Command> {
     let connected = !accounts.connected().is_empty();
     let mut list = Vec::new();
     for friend in accounts.tracked() {
-        let Some(name) = friend["username"].as_str().map(str::to_string) else {
-            continue;
-        };
+        let name = friend.username;
         let profile = name.clone();
         list.push(
             Command::new(

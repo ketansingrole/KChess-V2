@@ -205,9 +205,7 @@ impl Mistakes {
                     ),
                 }
                 if let Ok(data) = data {
-                    this.has_accounts = data["accounts"]
-                        .as_array()
-                        .is_some_and(|accounts| !accounts.is_empty());
+                    this.has_accounts = !data.accounts.is_empty();
                 }
                 cx.notify();
             });

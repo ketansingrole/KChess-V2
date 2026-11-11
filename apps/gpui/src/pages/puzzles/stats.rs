@@ -9,6 +9,7 @@ use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
+use kchess_contracts::check::Username;
 use serde_json::{Value, json};
 
 use super::{Theme, theme_name};
@@ -231,10 +232,10 @@ impl PuzzleStats {
         let name = json!(who);
         let calls = (
             core.request(calls::Profile {
-                username: name.clone(),
+                username: Username(who.clone()),
             }),
             core.request(calls::RatingHistory {
-                username: name.clone(),
+                username: Username(who.clone()),
             }),
             core.request(calls::PuzzleDashboard {
                 account: name.clone(),

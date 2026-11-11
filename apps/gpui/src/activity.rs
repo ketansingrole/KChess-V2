@@ -4,7 +4,7 @@
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::Value;
+use kchess_contracts::types::{ActivityDay, ActivityItem, TimelineEntry};
 
 use crate::assets::icon;
 use crate::pages::players::player_link;
@@ -14,7 +14,7 @@ use crate::widgets;
 /// One line (`ActivityItem`) and, on a timeline, the player it is about.
 pub struct ActivityRow {
     pub player: Option<String>,
-    pub item: Value,
+    pub item: ActivityItem,
 }
 
 /// One day and its lines.
@@ -45,15 +45,14 @@ fn today() -> chrono::NaiveDate {
 }
 
 /// `activityGroups`: a player's activity (`ActivityDay`s), one heading per day.
-pub fn activity_groups(days: &[Value]) -> Vec<ActivityGroup> {
+pub fn activity_groups(days: &[ActivityDay]) -> Vec<ActivityGroup> {
     let today = today();
     days.iter()
         .map(|day| ActivityGroup {
-            label: day_label(day["start"].as_f64().unwrap_or_default(), today),
-            rows: day["items"]
-                .as_array()
-                .into_iter()
-                .flatten()
+            label: day_label(day.start, today),
+            rows: day
+                .items
+                .iter()
                 .map(|item| ActivityRow {
                     player: None,
                     item: item.clone(),
@@ -64,17 +63,17 @@ pub fn activity_groups(days: &[Value]) -> Vec<ActivityGroup> {
 }
 
 /// `timelineGroups`: timeline entries (newest first) under the day they happened.
-pub fn timeline_groups(entries: &[Value]) -> Vec<ActivityGroup> {
+pub fn timeline_groups(entries: &[TimelineEntry]) -> Vec<ActivityGroup> {
     timeline_groups_on(entries, today())
 }
 
-fn timeline_groups_on(entries: &[Value], today: chrono::NaiveDate) -> Vec<ActivityGroup> {
+fn timeline_groups_on(entries: &[TimelineEntry], today: chrono::NaiveDate) -> Vec<ActivityGroup> {
     let mut groups: Vec<ActivityGroup> = Vec::new();
     for entry in entries {
-        let label = day_label(entry["date"].as_f64().unwrap_or_default(), today);
+        let label = day_label(entry.date, today);
         let row = ActivityRow {
-            player: entry["player"].as_str().map(str::to_string),
-            item: entry["item"].clone(),
+            player: Some(entry.player.clone()),
+            item: entry.item.clone(),
         };
         match groups.last_mut() {
             Some(last) if last.label == label => last.rows.push(row),
@@ -105,13 +104,14 @@ fn glyph(kind: &str) -> &'static str {
 }
 
 /// What happened, a name in it a profile link.
-fn line(id: (&'static str, usize), item: &Value, palette: &Palette) -> Div {
-    let text = item["text"].as_str().unwrap_or_default().to_string();
-    let named = item["username"]
-        .as_str()
+fn line(id: (&'static str, usize), item: &ActivityItem, palette: &Palette) -> Div {
+    let text = item.text.clone();
+    let named = item
+        .username
+        .as_deref()
         .and_then(|name| text.find(name).map(|at| (name.to_string(), at)));
     let row = h_flex().flex_1().min_w_0().gap(px(8.)).items_start().child(
-        icon(glyph(item["kind"].as_str().unwrap_or_default()))
+        icon(glyph(&item.kind))
             .size(px(14.))
             .mt(px(2.))
             .flex_none()
@@ -136,17 +136,17 @@ fn line(id: (&'static str, usize), item: &Value, palette: &Palette) -> Div {
 }
 
 /// The rating a line ended at and how far it moved, in columns as on the leaderboard.
-fn rating(item: &Value, palette: &Palette) -> Div {
-    let change = &item["rating"];
+fn rating(item: &ActivityItem, palette: &Palette) -> Div {
     let cells = h_flex()
         .w(px(104.))
         .flex_none()
         .justify_end()
         .gap(px(8.))
         .font_features(widgets::tabular());
-    let (Some(before), Some(after)) = (change["before"].as_f64(), change["after"].as_f64()) else {
+    let Some(change) = item.rating else {
         return cells;
     };
+    let (before, after) = (change.before, change.after);
     let moved = after - before;
     cells.child(format!("{after}")).child(
         div()
@@ -276,16 +276,18 @@ pub fn activity_list(
 #[cfg(test)]
 mod tests {
     use super::{day_label, timeline_groups_on};
+    use kchess_contracts::types::TimelineEntry;
     use serde_json::json;
 
     #[test]
     fn timeline_entries_of_one_day_share_a_heading() {
         let day = 1_761_600_000_000.0;
-        let entries = [
-            json!({ "date": day + 60_000.0, "player": "Ann", "item": { "kind": "follow", "text": "a" } }),
-            json!({ "date": day, "player": "Bob", "item": { "kind": "games", "text": "b" } }),
-            json!({ "date": day - 3.0 * 86_400_000.0, "item": { "kind": "games", "text": "c" } }),
-        ];
+        let entries: Vec<TimelineEntry> = serde_json::from_value(json!([
+            { "date": day + 60_000.0, "player": "Ann", "item": { "kind": "follow", "text": "a" } },
+            { "date": day, "player": "Bob", "item": { "kind": "games", "text": "b" } },
+            { "date": day - 3.0 * 86_400_000.0, "player": "Cal", "item": { "kind": "games", "text": "c" } },
+        ]))
+        .unwrap();
         let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 3).unwrap();
         let groups = timeline_groups_on(&entries, today);
         assert_eq!(groups.len(), 2);

@@ -370,11 +370,10 @@ impl Render for HomePage {
             let accounts = accounts.read(cx);
             // Without a Lichess account, the first Chess.com player's games are the activity.
             let account = accounts.active(cx).or_else(|| {
-                accounts.chesscom().first().and_then(|player| {
-                    player["username"]
-                        .as_str()
-                        .map(kchess_domain::chesscom::account_of)
-                })
+                accounts
+                    .chesscom()
+                    .first()
+                    .map(|player| kchess_domain::chesscom::account_of(&player.username))
             });
             (account, accounts.busy)
         };

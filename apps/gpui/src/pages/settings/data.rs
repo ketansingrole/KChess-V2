@@ -7,6 +7,7 @@ use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
+use kchess_contracts::types::Account;
 use serde_json::{Value, json};
 
 use super::{Section, SettingsPage};
@@ -29,17 +30,15 @@ pub struct DataRow {
 
 /// One row per account with anything to report, most data first; removed accounts stay listed
 /// so past downloads are not hidden, and requests tied to no account have their own row.
-pub fn data_rows(accounts: &[Value], usage: &Value) -> Vec<DataRow> {
+pub fn data_rows(accounts: &[Account], usage: &Value) -> Vec<DataRow> {
     let known = |name: &str| {
-        accounts.iter().find(|account| {
-            account["username"]
-                .as_str()
-                .is_some_and(|username| username.to_lowercase() == name)
-        })
+        accounts
+            .iter()
+            .find(|account| account.username.to_lowercase() == name)
     };
     let mut names: Vec<String> = accounts
         .iter()
-        .filter_map(|account| account["username"].as_str().map(str::to_lowercase))
+        .map(|account| account.username.to_lowercase())
         .collect();
     for key in ["accounts", "storage"] {
         for name in usage[key]
@@ -65,12 +64,12 @@ pub fn data_rows(accounts: &[Value], usage: &Value) -> Vec<DataRow> {
                 format!(
                     "@{}",
                     account
-                        .and_then(|account| account["username"].as_str())
+                        .map(|account| account.username.as_str())
                         .unwrap_or(&name)
                 )
             };
             let badge = match account {
-                Some(account) if account["connected"] == json!(true) => Some("Connected"),
+                Some(account) if account.connected => Some("Connected"),
                 Some(_) => Some("Friend"),
                 None if !name.is_empty() => Some("Removed"),
                 None => None,
@@ -241,7 +240,7 @@ impl SettingsPage {
             let accounts = crate::accounts::handle(cx);
             let accounts = accounts.read(cx);
             (
-                data_rows(&accounts.all(), &accounts.usage),
+                data_rows(accounts.all(), &accounts.usage),
                 accounts.usage.clone(),
             )
         };
@@ -445,14 +444,18 @@ impl SettingsPage {
 #[cfg(test)]
 mod tests {
     use super::data_rows;
+    use kchess_contracts::types::Account;
     use serde_json::json;
 
     #[test]
     fn every_account_with_data_gets_a_row_most_first() {
-        let accounts = vec![
-            json!({ "username": "Me", "connected": true }),
-            json!({ "username": "Friend" }),
-        ];
+        let account = |username: &str, connected| Account {
+            username: username.into(),
+            connected,
+            last_synced_at: None,
+            synced_play_time: None,
+        };
+        let accounts = vec![account("Me", true), account("Friend", false)];
         let usage = json!({
             "accounts": {
                 "me": { "total": { "bytesIn": 100, "requests": 3 } },

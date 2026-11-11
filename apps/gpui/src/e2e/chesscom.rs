@@ -37,7 +37,7 @@ fn a_chesscom_player_is_synced_listed_counted_and_removed(cx: &mut gpui_kit::Tes
         crate::shell::view::<crate::pages::insights::InsightsPage>(cx).is_some_and(|page| {
             let page = page.read(cx);
             page.loaded()
-                && page.query(cx)["account"] == "e2e_carol@chess.com"
+                && page.query(cx).account == "e2e_carol@chess.com"
                 && page.report_total() == Some(2.)
         })
     });

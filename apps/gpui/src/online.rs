@@ -5,6 +5,7 @@
 //! until the core has said whether one was left running (`assistanceAllowed`).
 
 use kchess_contracts::calls;
+use kchess_contracts::check::OptionalAccount;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -758,7 +759,7 @@ impl OnlineState {
             let account = participant.unwrap_or(if wanted { active } else { String::new() });
             if let Err(cause) = core
                 .request(calls::StayConnected {
-                    account: json!(account),
+                    account: OptionalAccount(account.clone()),
                 })
                 .await
             {
@@ -970,13 +971,13 @@ pub fn handle(cx: &App) -> Entity<OnlineState> {
 
 /// The account Lichess actions use: the one chosen for online play when it
 /// is connected, else the first connected one.
-pub fn active_account(accounts: &[Value], cx: &App) -> Option<String> {
+pub fn active_account(accounts: &[kchess_contracts::types::Account], cx: &App) -> Option<String> {
     let preferred = crate::prefs::get::<String>(cx, crate::accounts::ONLINE_ACCOUNT, String::new());
     let listed: Vec<ListedAccount> = accounts
         .iter()
         .map(|account| ListedAccount {
-            username: account["username"].as_str(),
-            connected: account["connected"].as_bool().unwrap_or(false),
+            username: Some(account.username.as_str()),
+            connected: account.connected,
         })
         .collect();
     let index = connected_account_index(&listed, Some(&preferred))?;
@@ -1091,7 +1092,9 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
     let resume = async move {
         if quiet_first {
             let _ = core
-                .request(calls::StayConnected { account: json!("") })
+                .request(calls::StayConnected {
+                    account: OptionalAccount(String::new()),
+                })
                 .await;
         }
         core.request(calls::ResumeOnline {}).await

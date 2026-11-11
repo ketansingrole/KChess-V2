@@ -12,6 +12,8 @@ use gpui_kit::component::{Disableable as _, Icon, Sizable as _, WindowExt as _, 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::calls;
+use kchess_contracts::check::Username;
+use kchess_contracts::types::{LichessGame, Reply};
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -229,7 +231,7 @@ fn date_header(millis: f64) -> String {
 /// The game the last swipe back closed, to open again going forward while nothing changed since.
 enum Redo {
     Played(Value),
-    Lichess(Value),
+    Lichess(Box<LichessGame>),
 }
 
 /// The page's actions, as its buttons offer them.
@@ -277,7 +279,7 @@ pub struct HistoryPage {
     /// The Lichess tab: synced games, their filters and the game open.
     lichess: lichess::LichessTab,
     /// The Bookmarks tab: the games, once read, or why they are not.
-    bookmarks: Option<Vec<Value>>,
+    bookmarks: Option<Vec<LichessGame>>,
     bookmarks_error: Option<SharedString>,
     bookmarks_reconnect: bool,
     bookmarks_epoch: u64,
@@ -477,7 +479,7 @@ impl HistoryPage {
     /// The Lichess game open, and the ids its list's page shows.
     #[cfg(test)]
     pub(crate) fn lichess_open(&self) -> (Option<String>, Vec<String>) {
-        let id = |game: &Value| game["id"].as_str().unwrap_or_default().to_string();
+        let id = |game: &LichessGame| game.id.clone();
         (
             self.lichess.open.as_ref().map(|(game, _)| id(game)),
             self.lichess.games.iter().map(id).collect(),
@@ -492,7 +494,7 @@ impl HistoryPage {
             let openings = tab
                 .games
                 .iter()
-                .map(|game| game["opening"].as_str().unwrap_or_default().to_string())
+                .map(|game| game.opening.clone().unwrap_or_default())
                 .collect();
             (tab.total, openings)
         })
@@ -522,7 +524,12 @@ impl HistoryPage {
     }
 
     /// Open a synced Lichess game on the Lichess tab (Home's recent games).
-    pub fn show_lichess_game(&mut self, game: Value, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn show_lichess_game(
+        &mut self,
+        game: LichessGame,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.choose_source(Source::Lichess, cx);
         self.open_lichess(game, window, cx);
     }
@@ -556,7 +563,7 @@ impl HistoryPage {
         let games = cx
             .global::<crate::core::AppCore>()
             .request(calls::BookmarkedGames {
-                account: json!(account),
+                account: Username(account.clone()),
             });
         cx.spawn(async move |this, cx| {
             let answer = games.await;
@@ -565,8 +572,8 @@ impl HistoryPage {
                     return;
                 }
                 match answer {
-                    Ok(Value::Array(games)) => this.bookmarks = Some(games),
-                    Ok(_) => this.bookmarks_reconnect = true,
+                    Ok(Reply::Done(games)) => this.bookmarks = Some(games),
+                    Ok(Reply::NeedsReconnect) => this.bookmarks_reconnect = true,
                     Err(cause) => this.bookmarks_error = Some(cause.message.into()),
                 }
                 cx.notify();
@@ -717,7 +724,7 @@ impl HistoryPage {
         }
         if let Some((game, _)) = &self.lichess.open {
             let mut actions = vec![Action::AllGames];
-            if crate::game::pgn_analysable(game["pgn"].as_str().unwrap_or_default()) {
+            if crate::game::pgn_analysable(game.pgn.as_deref().unwrap_or_default()) {
                 actions.push(Action::Review);
             }
             return actions;
@@ -727,7 +734,7 @@ impl HistoryPage {
         if !accounts.all().is_empty() && !accounts.busy {
             actions.push(Action::Sync);
         }
-        if accounts.data["gameCount"].as_f64().unwrap_or_default() > 0. && self.lichess_filtered() {
+        if accounts.game_count() > 0 && self.lichess_filtered() {
             actions.push(Action::ClearFilters);
         }
         actions
@@ -902,11 +909,7 @@ impl HistoryPage {
             Some(Redo::Lichess(game)) => {
                 self.source == Source::Lichess
                     && self.lichess.open.is_none()
-                    && self
-                        .lichess
-                        .games
-                        .iter()
-                        .any(|entry| entry["id"] == game["id"])
+                    && self.lichess.games.iter().any(|entry| entry.id == game.id)
             }
             None => false,
         }
@@ -924,13 +927,13 @@ impl HistoryPage {
                 self.redo = Some(Redo::Played(game));
             } else if let Some((game, _)) = self.lichess.open.clone() {
                 self.close_lichess(window, cx);
-                self.redo = Some(Redo::Lichess(game));
+                self.redo = Some(Redo::Lichess(Box::new(game)));
             }
             return;
         }
         match self.redo.take() {
             Some(Redo::Played(game)) => self.open_game(game, window, cx),
-            Some(Redo::Lichess(game)) => self.open_lichess(game, window, cx),
+            Some(Redo::Lichess(game)) => self.open_lichess(*game, window, cx),
             None => {}
         }
     }
@@ -1625,7 +1628,7 @@ pub fn open_lichess(window: &mut Window, cx: &mut App) {
 }
 
 /// Open a synced Lichess game in Game history.
-pub fn open_lichess_game(game: Value, window: &mut Window, cx: &mut App) {
+pub fn open_lichess_game(game: LichessGame, window: &mut Window, cx: &mut App) {
     crate::shell::show::<HistoryPage>(window, cx, move |history, window, cx| {
         history.show_lichess_game(game, window, cx)
     });

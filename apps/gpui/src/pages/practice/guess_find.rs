@@ -6,6 +6,8 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::*;
 use kchess_contracts::calls;
+use kchess_contracts::check::Username;
+use kchess_contracts::types::{LichessGame, PlayerSuggestion};
 use serde_json::{Value, json};
 use shakmaty::Color;
 
@@ -25,11 +27,11 @@ pub enum Found {
 pub struct GameFinder {
     input: Entity<InputState>,
     /// Players whose names start with what is typed.
-    matches: Vec<Value>,
+    matches: Vec<PlayerSuggestion>,
     search_epoch: usize,
     /// The player whose games are shown, and their games once Lichess sends them.
     player: Option<String>,
-    games: Option<Vec<Value>>,
+    games: Option<Vec<LichessGame>>,
     epoch: usize,
     /// The row of the game being fetched.
     opening: Option<usize>,
@@ -92,14 +94,16 @@ impl GameFinder {
                 return;
             }
             let found = core
-                .request(calls::SearchPlayers { term: json!(term) })
+                .request(calls::SearchPlayers {
+                    term: Username(term),
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if this.search_epoch != epoch {
                     return;
                 }
                 if let Ok(found) = found {
-                    this.matches = found.as_array().cloned().unwrap_or_default();
+                    this.matches = found;
                     this.matches.truncate(players::SUGGESTED);
                 }
                 cx.notify();
@@ -130,7 +134,7 @@ impl GameFinder {
         self.error = None;
         cx.notify();
         let games = cx.global::<AppCore>().request(calls::RecentGames {
-            username: json!(name),
+            username: Username(name.clone()),
             rated: None,
         });
         cx.spawn(async move |this, cx| {
@@ -141,12 +145,9 @@ impl GameFinder {
                 }
                 match answer {
                     Ok(games) => {
-                        let games = games.as_array().cloned().unwrap_or_default();
                         // Named as Lichess spells it, among the players looked up lately.
-                        if let Some(account) =
-                            games.first().and_then(|game| game["account"].as_str())
-                        {
-                            this.player = Some(account.to_string());
+                        if let Some(game) = games.first() {
+                            this.player = Some(game.account.clone());
                         }
                         if let Some(player) = this.player.clone() {
                             players::remember(&player, cx);
@@ -176,12 +177,8 @@ impl GameFinder {
         let Some(game) = self.games.as_ref().and_then(|games| games.get(index)) else {
             return;
         };
-        let side = if game["color"] == json!("black") {
-            Color::Black
-        } else {
-            Color::White
-        };
-        let id = game["id"].as_str().unwrap_or_default().to_string();
+        let side = game.color;
+        let id = game.id.clone();
         let epoch = self.epoch;
         self.opening = Some(index);
         self.error = None;
@@ -255,9 +252,9 @@ impl GameFinder {
                 .iter()
                 .map(|found| {
                     (
-                        found["username"].as_str().unwrap_or_default().to_string(),
-                        found["title"].as_str().map(str::to_string),
-                        found["online"] == json!(true),
+                        found.username.clone(),
+                        found.title.clone(),
+                        found.online == Some(true),
                     )
                 })
                 .collect();
