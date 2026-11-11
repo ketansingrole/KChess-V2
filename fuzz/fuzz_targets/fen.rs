@@ -9,7 +9,7 @@ use libfuzzer_sys::fuzz_target;
 fuzz_target!(|fen: &str| {
     let _ = rules::parse_fen(fen);
     for variant in Variant::ALL {
-        let _ = rules::setup_start(variant.key(), fen);
+        let _ = rules::setup_start(variant, fen);
     }
     let _ = tree_root(fen);
     let _ = TreeNode::new(Some(fen));
