@@ -1298,3 +1298,75 @@ fn a_second_click_on_a_piece_puts_it_down(cx: &mut gpui_kit::TestAppContext) {
     app.click_square("e2", true);
     assert_eq!(app.find(e2).selected(), Some(true));
 }
+
+/// How the profile holds the analysis board's session: `"blob"` for the unreadable one this test
+/// writes, `"text"` once the app saves one.
+fn stored_session(app: &Harness) -> rusqlite::Connection {
+    let profile = app.profile.as_ref().expect("the profile").path();
+    let db = rusqlite::Connection::open(profile.join("kchess.db")).expect("the profile's database");
+    db.busy_timeout(super::TIMEOUT).expect("a busy timeout");
+    db
+}
+
+fn session_type(db: &rusqlite::Connection) -> String {
+    db.query_row(
+        "SELECT typeof(body) FROM documents WHERE key = 'session:analysis'",
+        [],
+        |row| row.get(0),
+    )
+    .expect("the session is stored")
+}
+
+/// A session the profile holds but the core cannot read is not an empty board: the page says
+/// so, and its moves are not saved over that session, which the analysis board once did after
+/// taking the failed read for no session at all. A new board is the player's own and is saved.
+#[gpui_kit::test]
+fn a_session_that_cannot_be_read_is_not_saved_over(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let db = stored_session(&app);
+    // Bytes where the core keeps text: its read of the session fails.
+    db.execute(
+        "INSERT INTO documents (key, body, updatedAt) VALUES ('session:analysis', X'7B7D', 0)
+         ON CONFLICT(key) DO UPDATE SET body = excluded.body",
+        [],
+    )
+    .expect("the unreadable session is written");
+    app.open("Analysis board");
+    app.wait_for("the failed read to show", |window, _| {
+        window
+            .try_find(("analysis-problem", 0usize))
+            .and_then(|problem| problem.label().map(str::to_string))
+            .is_some_and(|label| label.starts_with("Your unfinished game could not be read"))
+    });
+    app.click_square("e2", true);
+    app.click_square("e4", true);
+    assert_eq!(selected(&mut app, "e2e4"), Some(true));
+    // Past the delay a save waits for more changes, then past every write sent.
+    for _ in 0..(crate::game::session::SAVE_DELAY.as_millis() / 5 * 2) {
+        app.tick();
+    }
+    let flushed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let done = flushed.clone();
+    app.cx.update(|cx| {
+        let writes = cx
+            .global::<crate::played::PlayedHandle>()
+            .0
+            .read(cx)
+            .flushed();
+        cx.spawn(async move |_| {
+            let _ = writes.await;
+            done.set(true);
+        })
+        .detach();
+    });
+    app.wait_for("the writes to be done", |_, _| flushed.get());
+    assert_eq!(session_type(&db), "blob", "the session was saved over");
+
+    app.press("secondary-n");
+    app.click_label("Replace");
+    app.wait_gone("tree-e2e4");
+    app.wait_for("the new board to be saved", |_, _| {
+        session_type(&db) == "text"
+    });
+    assert!(!app.shows(("analysis-problem", 0usize)));
+}

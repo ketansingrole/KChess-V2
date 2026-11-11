@@ -388,20 +388,23 @@ impl StudiesPage {
 
     /// Show a study on the analysis board; never silently throw away an unsaved board.
     fn open(id: String, window: &mut Window, cx: &mut App) {
-        let shown = crate::pages::analysis::board(window, cx)
-            .is_some_and(|analysis| analysis.read(cx).study_id() == id);
-        if shown {
-            crate::shell::open(Page::Analysis, window, cx);
-            return;
-        }
-        crate::pages::analysis::replace(window, cx, move |analysis, window, cx| {
-            match analysis.open_study(&id, None, cx) {
-                Ok(()) => true,
-                Err(cause) => {
-                    window.push_notification(Notification::error(cause), cx);
-                    false
-                }
+        crate::pages::analysis::when_read(window, cx, move |analysis, window, cx| {
+            if analysis.read(cx).study_id() == id {
+                crate::shell::open(Page::Analysis, window, cx);
+                return;
             }
+            crate::pages::analysis::replace_read(
+                analysis,
+                window,
+                cx,
+                move |analysis, window, cx| match analysis.open_study(&id, None, cx) {
+                    Ok(()) => true,
+                    Err(cause) => {
+                        window.push_notification(Notification::error(cause), cx);
+                        false
+                    }
+                },
+            );
         });
     }
 

@@ -5,12 +5,36 @@ use gpui_kit::component::dialog::AlertDialog;
 use gpui_kit::*;
 
 use super::AnalysisPage;
+use crate::game::session::SessionSaver;
 use crate::pages::Page;
 
 /// The analysis board, made now if it has not been shown (so analysis kept from an earlier run
 /// counts).
 pub fn board(window: &mut Window, cx: &mut App) -> Option<Entity<AnalysisPage>> {
     crate::shell::made::<AnalysisPage>(window, cx)
+}
+
+/// Run `then` with the analysis board once it has read the session it opens with (made now if
+/// it has not been shown), so what it shows is what the profile kept.
+pub fn when_read(
+    window: &mut Window,
+    cx: &mut App,
+    then: impl FnOnce(Entity<AnalysisPage>, &mut Window, &mut App) + 'static,
+) {
+    let Some(analysis) = board(window, cx) else {
+        return;
+    };
+    analysis.update(cx, |page, cx| {
+        SessionSaver::when_read(
+            page,
+            move |_, window, cx| {
+                let analysis = cx.entity();
+                window.defer(cx, move |window, cx| then(analysis, window, cx));
+            },
+            window,
+            cx,
+        );
+    });
 }
 
 /// Put something else on the analysis board and show it, asking first while the board holds
@@ -20,9 +44,17 @@ pub fn replace(
     cx: &mut App,
     load: impl Fn(&mut AnalysisPage, &mut Window, &mut Context<AnalysisPage>) -> bool + 'static,
 ) {
-    let Some(analysis) = board(window, cx) else {
-        return;
-    };
+    when_read(window, cx, move |analysis, window, cx| {
+        replace_read(analysis, window, cx, load)
+    });
+}
+
+pub fn replace_read(
+    analysis: Entity<AnalysisPage>,
+    window: &mut Window,
+    cx: &mut App,
+    load: impl Fn(&mut AnalysisPage, &mut Window, &mut Context<AnalysisPage>) -> bool + 'static,
+) {
     let load = std::rc::Rc::new(load);
     let run = {
         let analysis = analysis.clone();
@@ -70,18 +102,15 @@ pub fn practise_game(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let shown = board(window, cx).is_some_and(|analysis| {
-        analysis.read(cx).mainline_key() == game["key"].as_str().unwrap_or_default()
-    });
-    if shown {
-        if let Some(analysis) = board(window, cx) {
+    when_read(window, cx, move |analysis, window, cx| {
+        if analysis.read(cx).mainline_key() == game["key"].as_str().unwrap_or_default() {
             analysis.update(cx, |analysis, cx| analysis.practise_game(&game, items, cx));
+            crate::shell::open(Page::Analysis, window, cx);
+            return;
         }
-        crate::shell::open(Page::Analysis, window, cx);
-        return;
-    }
-    replace(window, cx, move |analysis, _, cx| {
-        analysis.practise_game(&game, items.clone(), cx)
+        replace_read(analysis, window, cx, move |analysis, _, cx| {
+            analysis.practise_game(&game, items.clone(), cx)
+        });
     });
 }
 
