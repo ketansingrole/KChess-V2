@@ -19,9 +19,8 @@ fn computer(cx: &mut gpui_kit::TestAppContext) -> Harness {
 /// as last drawn, which can still show the game before.
 fn wait_playable(app: &mut Harness) {
     app.wait_for("the game to take moves", |_, cx| {
-        crate::shell::view::<crate::pages::computer::ComputerPage>(cx,
-        )
-        .is_some_and(|page| page.read(cx).takes_moves())
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
+            .is_some_and(|page| page.read(cx).takes_moves())
     });
 }
 
@@ -292,9 +291,8 @@ fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::Test
     app.press("enter");
     app.wait_for_moves(&["O-O-O"]);
     let variant = app.cx.update(|cx| {
-        crate::shell::view::<crate::pages::computer::ComputerPage>(cx,
-        )
-        .map(|page| page.read(cx).setup_variant())
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
+            .map(|page| page.read(cx).setup_variant())
     });
     assert_eq!(variant.as_deref(), Some("chess960"));
 }
@@ -306,9 +304,8 @@ fn a_chess960_position_is_played_from_the_analysis_board(cx: &mut gpui_kit::Test
 fn no_move_is_taken_before_the_saved_game_is_restored(cx: &mut gpui_kit::TestAppContext) {
     let mut app = computer(cx);
     app.cx.update(|cx| {
-        let page = crate::shell::view::<crate::pages::computer::ComputerPage>(cx,
-        )
-        .expect("the page");
+        let page =
+            crate::shell::view::<crate::pages::computer::ComputerPage>(cx).expect("the page");
         page.update(cx, |page, cx| page.forget_loaded(cx));
     });
     app.click_square("e2", true);
@@ -369,9 +366,7 @@ fn game_options_start_a_variant_from_a_position(cx: &mut gpui_kit::TestAppContex
     app.click("start-game");
     app.wait_gone("start-game");
     let setup = app.cx.update(|cx| {
-        crate::shell::view::<crate::pages::computer::ComputerPage>(cx,
-        )
-        .map(|page| {
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx).map(|page| {
             let page = page.read(cx);
             (page.setup_variant(), page.setup_fen())
         })
@@ -417,9 +412,8 @@ fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     app.wait_gone("start-game");
     let variant = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view::<crate::pages::computer::ComputerPage>(cx,
-            )
-            .map(|page| page.read(cx).setup_variant())
+            crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
+                .map(|page| page.read(cx).setup_variant())
         })
     };
     // The first variant listed after standard chess and Chess960.
@@ -431,9 +425,8 @@ fn game_options_start_a_variant_game(cx: &mut gpui_kit::TestAppContext) {
     // A Crazyhouse start (its FEN has pockets, which standard rules refuse) is searched in
     // Crazyhouse: the computer, White, moves.
     app.with_window(|window, cx| {
-        let page = crate::shell::view::<crate::pages::computer::ComputerPage>(cx,
-        )
-        .expect("the page");
+        let page =
+            crate::shell::view::<crate::pages::computer::ComputerPage>(cx).expect("the page");
         page.update(cx, |page, cx| {
             page.start_from(
                 serde_json::json!({

@@ -56,10 +56,7 @@ fn a_crazyhouse_game_is_reviewed_in_its_variant(cx: &mut gpui_kit::TestAppContex
     app.wait_gone("import-run");
     app.click("Review");
     app.click("review-start");
-    let page = |cx: &gpui_kit::App| {
-        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx,
-        )
-    };
+    let page = |cx: &gpui_kit::App| crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx);
     app.wait_for("the review to finish", |window, cx| {
         window.try_find("review-stop").is_none()
             && window.try_find("review-start").is_none()

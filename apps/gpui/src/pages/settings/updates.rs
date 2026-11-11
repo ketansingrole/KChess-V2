@@ -26,9 +26,8 @@ pub fn restart_cost(cx: &App) -> Option<&'static str> {
             "Your Lichess game is still on, and its clock keeps running while KChess restarts",
         );
     }
-    let run = crate::shell::view::<crate::pages::puzzles::PuzzlesPage>(cx,
-    )
-    .is_some_and(|puzzles| puzzles.read(cx).run_going(cx));
+    let run = crate::shell::view::<crate::pages::puzzles::PuzzlesPage>(cx)
+        .is_some_and(|puzzles| puzzles.read(cx).run_going(cx));
     run.then_some("Your puzzle run ends")
 }
 
@@ -456,37 +455,12 @@ impl SettingsPage {
             }))
             .child(about);
         let can_check = updates.can_check();
-        let frontend = &settings.frontend;
         v_flex().gap(px(16.)).child(status).when(can_check, |page| {
             page.child(
                 Rows::new(self.narrow())
-                    .switch(
-                        "update-auto-check",
-                        "Automatically check for updates",
-                        Some("On startup and every six hours"),
-                        frontend.update_auto_check,
-                        true,
-                        |s, on| s.frontend.update_auto_check = on,
-                        palette,
-                    )
-                    .switch(
-                        "update-auto-download",
-                        "Download updates in the background",
-                        Some("Turning this off does not cancel an ongoing download"),
-                        frontend.update_auto_download,
-                        true,
-                        |s, on| s.frontend.update_auto_download = on,
-                        palette,
-                    )
-                    .switch(
-                        "update-install-on-quit",
-                        "Install updates when I quit",
-                        Some("KChess will not quit or restart automatically"),
-                        frontend.update_install_on_quit,
-                        true,
-                        |s, on| s.frontend.update_install_on_quit = on,
-                        palette,
-                    )
+                    .switch("update-auto-check", settings, true, palette)
+                    .switch("update-auto-download", settings, true, palette)
+                    .switch("update-install-on-quit", settings, true, palette)
                     .card(palette),
             )
         })

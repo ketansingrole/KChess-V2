@@ -298,7 +298,14 @@ fn a_pasted_broadcast_link_opens_its_round(cx: &mut gpui_kit::TestAppContext) {
     wait_until_closed(&mut app);
     assert_eq!(page(&mut app), Some(Page::Watch));
     wait_for_round(&mut app, BROADCAST_ROUNDS[0]);
-    assert_eq!(app.find(("watch-tabs", 2usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab(
+            "watch-tabs",
+            crate::pages::watch::Tab::Broadcasts
+        ))
+        .selected(),
+        Some(true)
+    );
 
     // The tournament's own link opens it at its live round.
     app.press("secondary-k");
@@ -424,14 +431,21 @@ fn a_pasted_tournament_link_opens_the_event(cx: &mut gpui_kit::TestAppContext) {
 fn a_pasted_tv_link_watches_its_channel(cx: &mut gpui_kit::TestAppContext) {
     let mut app = Harness::start(cx);
     app.with_window(|window, cx| crate::shell::open(Page::Watch, window, cx));
-    app.click(("watch-tabs", 2usize));
+    app.click(super::tab(
+        "watch-tabs",
+        crate::pages::watch::Tab::Broadcasts,
+    ));
     app.press("secondary-k");
     app.type_text("https://lichess.org/tv/racingKings");
     wait_for_first(&mut app, "Watch this TV channel");
     app.press("enter");
     wait_until_closed(&mut app);
     assert_eq!(page(&mut app), Some(Page::Watch));
-    assert_eq!(app.find(("watch-tabs", 0usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab("watch-tabs", crate::pages::watch::Tab::Tv))
+            .selected(),
+        Some(true)
+    );
     app.wait_for("the channel to be kept", |_, cx| {
         crate::prefs::get::<String>(cx, crate::pages::watch::CHANNEL_KEY, String::new())
             == "racingKings"
@@ -647,9 +661,10 @@ fn every_command_has_its_own_id_on_every_page(cx: &mut gpui_kit::TestAppContext)
         check(&mut app, label);
     }
     app.open("Practice");
-    for tab in 0..6usize {
-        app.click(("practice-tabs", tab));
-        check(&mut app, &format!("Practice tab {tab}"));
+    use crate::pages::PageTab as _;
+    for &tab in crate::pages::practice::Tab::ALL {
+        app.click(super::tab("practice-tabs", tab));
+        check(&mut app, &format!("Practice tab {}", tab.info().label));
     }
 }
 
@@ -666,9 +681,20 @@ fn watch_tabs_open_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
     };
     run(&mut app, "Broadcasts");
     assert_eq!(page(&mut app), Some(Page::Watch));
-    assert_eq!(app.find(("watch-tabs", 2usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab(
+            "watch-tabs",
+            crate::pages::watch::Tab::Broadcasts
+        ))
+        .selected(),
+        Some(true)
+    );
     run(&mut app, "Lichess TV");
-    assert_eq!(app.find(("watch-tabs", 0usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab("watch-tabs", crate::pages::watch::Tab::Tv))
+            .selected(),
+        Some(true)
+    );
 }
 
 /// Watch's TV channels are in Quick Pick, but for the one already on.
@@ -868,4 +894,40 @@ fn find_searches_the_page_or_opens_quick_pick(cx: &mut gpui_kit::TestAppContext)
     app.press("secondary-f");
     app.type_text("puzzles");
     wait_for_first(&mut app, "Puzzles");
+}
+
+/// Practice's Guess the move is in Quick Pick with its other trainers, and opens on its tab.
+#[gpui_kit::test]
+fn guess_the_move_opens_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
+    use crate::pages::practice::Tab;
+    let mut app = Harness::start(cx);
+    app.press("secondary-k");
+    app.type_text("Guess the move");
+    wait_for_first(&mut app, "Guess the move");
+    app.press("enter");
+    wait_until_closed(&mut app);
+    assert_eq!(page(&mut app), Some(Page::Practice));
+    assert_eq!(
+        app.find(super::tab("practice-tabs", Tab::Guess)).selected(),
+        Some(true)
+    );
+}
+
+/// A setting in Quick Pick is named as its Settings row is: it read "Show legal moves" and "Show
+/// opening name" beside the rows' "Show possible moves" and "Show opening names".
+#[gpui_kit::test]
+fn quick_pick_names_settings_as_their_rows_do(cx: &mut gpui_kit::TestAppContext) {
+    let mut app = Harness::start(cx);
+    let commands = app.cx.update(|cx| crate::palette::command_ids(cx));
+    let label = |id: &str| {
+        commands
+            .iter()
+            .find(|(command, _)| command == id)
+            .map(|(_, label)| label.as_str())
+    };
+    assert_eq!(label("setting:showLegalMoves"), Some("Show possible moves"));
+    assert_eq!(label("setting:showOpeningName"), Some("Show opening names"));
+    app.press("secondary-k");
+    app.type_text("#legal moves");
+    wait_for_first(&mut app, "Show possible moves");
 }

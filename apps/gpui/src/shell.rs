@@ -79,10 +79,8 @@ fn nav_item(label: impl Into<SharedString>, glyph: Icon) -> SidebarMenuItem {
 /// The sidebar's pages in their groups, in order.
 pub(crate) fn nav_groups() -> Vec<(NavGroup, Vec<Page>)> {
     let mut groups: Vec<(NavGroup, Vec<Page>)> = Vec::new();
-    for page in Page::all() {
-        let Some(group) = page.info().group else {
-            continue;
-        };
+    for page in Page::in_sidebar() {
+        let group = page.info().group.expect("a sidebar page has a group");
         match groups.last_mut() {
             Some((last, pages)) if *last == group => pages.push(page),
             _ => groups.push((group, vec![page])),
@@ -90,6 +88,7 @@ pub(crate) fn nav_groups() -> Vec<(NavGroup, Vec<Page>)> {
     }
     groups
 }
+
 /// What the sidebar lists: menus, each under its group's heading (on the rail, a short rule
 /// instead), and while Settings is open its categories in headed groups.
 #[derive(Clone)]
@@ -286,7 +285,6 @@ fn topbar_style() -> StyleRefinement {
     style
 }
 
-
 /// The window's workspace, so a page can open another.
 struct Navigator(WeakEntity<Workspace>);
 
@@ -431,7 +429,8 @@ pub fn new_on_page(window: &mut Window, cx: &mut App) {
 /// (History's, Studies', Openings', Watch's broadcasts', Players' username). It is `false`
 /// on a page without one, for Quick Pick to search instead.
 pub fn find_on_page(window: &mut Window, cx: &mut App) -> bool {
-    let Some((page, fields)) = workspace(cx).and_then(|w| w.read(cx).pages.search_fields(cx)) else {
+    let Some((page, fields)) = workspace(cx).and_then(|w| w.read(cx).pages.search_fields(cx))
+    else {
         return false;
     };
     // Only a field the page draws now: History's other tab, or Watch away from Broadcasts,
@@ -453,10 +452,14 @@ pub fn find_on_page(window: &mut Window, cx: &mut App) -> bool {
 #[cfg(test)]
 pub fn prepare(page: Page, window: &mut Window, cx: &mut App) {
     if let Some(workspace) = workspace(cx) {
-        workspace.update(cx, |workspace, cx| workspace.pages.prepare(page, window, cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.pages.prepare(page, window, cx)
+        });
     }
 }
 
+/// Make the pages made ahead (`Workspace::prewarm`) now.
+#[cfg(test)]
 pub fn prewarm(window: &mut Window, cx: &mut App) {
     if let Some(workspace) = workspace(cx) {
         workspace.update(cx, |workspace, cx| workspace.prewarm(window, cx));
@@ -913,27 +916,30 @@ impl Workspace {
                     .and_then(|row| Some((row, game_mark(cx)?)));
                 NavBlock::Menu(
                     group.heading(),
-                    Box::new(SidebarMenu::new().gap_0().children(pages.into_iter().map(
-                        |page| {
-                            let info = page.info();
-                            let label = info.label;
-                            let marked = (page == Page::Online).then(|| game_mark(cx)).flatten();
-                            let shown = if open { info.short } else { label };
-                            nav_item(shown, icon(info.icon))
-                                .accessibility_label(label)
-                                .active(current == page)
-                                .when_some(marked, |item, mark| {
-                                    item.accessibility_label(match mark {
-                                        GameMark::Turn => format!("{label}, your move"),
-                                        GameMark::Live => format!("{label}, game in progress"),
+                    Box::new(
+                        SidebarMenu::new()
+                            .gap_0()
+                            .children(pages.into_iter().map(|page| {
+                                let info = page.info();
+                                let label = info.label;
+                                let marked =
+                                    (page == Page::Online).then(|| game_mark(cx)).flatten();
+                                let shown = if open { info.short } else { label };
+                                nav_item(shown, icon(info.icon))
+                                    .accessibility_label(label)
+                                    .active(current == page)
+                                    .when_some(marked, |item, mark| {
+                                        item.accessibility_label(match mark {
+                                            GameMark::Turn => format!("{label}, your move"),
+                                            GameMark::Live => format!("{label}, game in progress"),
+                                        })
+                                        .suffix(move |_, cx| game_dot(mark, cx))
                                     })
-                                    .suffix(move |_, cx| game_dot(mark, cx))
-                                })
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.choose(page, window, cx)
-                                }))
-                        },
-                    ))),
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.choose(page, window, cx)
+                                    }))
+                            })),
+                    ),
                     mark,
                 )
             })
@@ -1239,7 +1245,12 @@ impl Workspace {
         if open {
             h_flex()
                 .gap(px(4.))
-                .child(div().flex_1().min_w_0().child(crate::accounts::menu_button(true, cx)))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(crate::accounts::menu_button(true, cx)),
+                )
                 .child(settings)
                 .into_any_element()
         } else {
@@ -1590,15 +1601,18 @@ impl Render for Workspace {
                                 crate::links::open_dropped(paths, window, cx)
                             })
                             // Z on a page zen mode applies to, while no text field has the keys.
-                            .on_action(cx.listener(|this, _: &crate::menu::ToggleZen, window, cx| {
-                                if this.pages.zen_key(cx) && this.pages.page_focused(window, cx) {
-                                    crate::settings::change(cx, |settings| {
-                                        settings.frontend.zen_mode = !settings.frontend.zen_mode
-                                    });
-                                } else {
-                                    cx.propagate();
-                                }
-                            }))
+                            .on_action(cx.listener(
+                                |this, _: &crate::menu::ToggleZen, window, cx| {
+                                    if this.pages.zen_key(cx) && this.pages.page_focused(window, cx)
+                                    {
+                                        crate::settings::change(cx, |settings| {
+                                            settings.frontend.zen_mode = !settings.frontend.zen_mode
+                                        });
+                                    } else {
+                                        cx.propagate();
+                                    }
+                                },
+                            ))
                             // A mouse's back and forward buttons go as a swipe does.
                             .on_mouse_down(
                                 MouseButton::Navigate(NavigationDirection::Back),

@@ -539,9 +539,8 @@ fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosavi
     app.find("tree-e2e4 e7e5");
     // Another window writes the chapter (this connection's own write is not shown here).
     let (study, chapter) = app.cx.update(|cx| {
-        let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx,
-        )
-        .expect("the analysis board");
+        let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .expect("the analysis board");
         let page = page.read(cx);
         (page.study_id().to_string(), page.chapter_id().to_string())
     });
@@ -564,9 +563,8 @@ fn refused_save_then_another_chapter(cx: &mut gpui_kit::TestAppContext, autosavi
     app.wait_for("the other window's save", |_, _| written.get());
     // The edit and the chapter switch come before the edit's own delayed save.
     app.with_window(|_, cx| {
-        let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx,
-        )
-        .expect("the analysis board");
+        let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .expect("the analysis board");
         let next = cx
             .global::<crate::studies::StudyHandle>()
             .0
@@ -614,8 +612,7 @@ fn a_position_opened_while_a_study_closes_stays_on_the_board(cx: &mut gpui_kit::
     app.click("open-imported");
     app.find("tree-e2e4");
     let opened = app.with_window(|_, cx| {
-        let page = crate::shell::view::<AnalysisPage>(cx)
-            .expect("the analysis board");
+        let page = crate::shell::view::<AnalysisPage>(cx).expect("the analysis board");
         page.update(cx, |page, cx| {
             page.close_study(cx).detach();
             page.load(Some("8/8/8/4k3/8/8/4K3/8 w - - 0 1"), cx);

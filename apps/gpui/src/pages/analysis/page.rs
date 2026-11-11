@@ -29,9 +29,12 @@ impl PageAction for Action {
                 "turn rotate orientation",
             )
             .role(ActionRole::Flip),
-            Action::CopyFen => {
-                ActionInfo::new("analysis:copy-fen", "Copy FEN", "copy", "position clipboard")
-            }
+            Action::CopyFen => ActionInfo::new(
+                "analysis:copy-fen",
+                "Copy FEN",
+                "copy",
+                "position clipboard",
+            ),
             Action::CopyPgn => ActionInfo::new(
                 "analysis:copy-pgn",
                 "Copy PGN",
@@ -73,9 +76,7 @@ fn study_info(action: StudyAction, cloud: bool) -> ActionInfo {
         StudyAction::Remove => ("remove", "Delete study", "trash-2", "remove"),
         StudyAction::AddChapter => ("add-chapter", "Add chapter", "plus", "new"),
         StudyAction::RenameChapter => ("rename-chapter", "Rename chapter", "pencil", "name"),
-        StudyAction::DuplicateChapter => {
-            ("duplicate-chapter", "Duplicate chapter", "copy", "copy")
-        }
+        StudyAction::DuplicateChapter => ("duplicate-chapter", "Duplicate chapter", "copy", "copy"),
         StudyAction::MoveChapterUp => (
             "move-chapter-up",
             "Move chapter up",

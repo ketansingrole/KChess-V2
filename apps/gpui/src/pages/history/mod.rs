@@ -1621,18 +1621,33 @@ impl crate::pages::PageAction for Action {
     fn info(&self) -> crate::pages::ActionInfo {
         use crate::pages::ActionInfo;
         match self {
-            Action::AllGames => ActionInfo::new("history:all", "All games", "arrow-left", "back list"),
-            Action::Export => ActionInfo::new("history:export", "Export PGN", "download", "save file"),
-            Action::Analyse => {
-                ActionInfo::new("history:analyse", "Open analysis", "chart-line", "analysis board")
+            Action::AllGames => {
+                ActionInfo::new("history:all", "All games", "arrow-left", "back list")
             }
-            Action::Review => {
-                ActionInfo::new("history:review", "Review", "chart-line", "analysis accuracy")
+            Action::Export => {
+                ActionInfo::new("history:export", "Export PGN", "download", "save file")
             }
-            Action::Sync => {
-                ActionInfo::new("history:sync", "Sync games", "refresh-cw", "lichess download")
+            Action::Analyse => ActionInfo::new(
+                "history:analyse",
+                "Open analysis",
+                "chart-line",
+                "analysis board",
+            ),
+            Action::Review => ActionInfo::new(
+                "history:review",
+                "Review",
+                "chart-line",
+                "analysis accuracy",
+            ),
+            Action::Sync => ActionInfo::new(
+                "history:sync",
+                "Sync games",
+                "refresh-cw",
+                "lichess download",
+            ),
+            Action::ClearFilters => {
+                ActionInfo::new("history:clear", "Clear filters", "x", "reset all")
             }
-            Action::ClearFilters => ActionInfo::new("history:clear", "Clear filters", "x", "reset all"),
         }
     }
 }

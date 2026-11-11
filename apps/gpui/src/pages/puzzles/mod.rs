@@ -33,8 +33,8 @@ mod rush;
 pub(crate) use rush::RushAction;
 mod stats;
 
-use crate::widgets::Pressable as _;
 use crate::pages::{PageTab, TabInfo};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, Pill, Tone};
 
 /// Puzzles' tabs, in order.
@@ -92,6 +92,7 @@ impl PageTab for Tab {
         }
     }
 }
+
 const MODE: &str = "kchess:puzzle-mode";
 const ANGLE: &str = "kchess:puzzle-angle";
 const DIFFICULTY: &str = "kchess:puzzle-difficulty";
@@ -1035,7 +1036,12 @@ pub(crate) fn status_panel(
                         .label("Analyse")
                         .tooltip("Analysis board")
                         .on_click(move |_, window, cx| {
-                            crate::pages::analysis::analyse_puzzle(studied.clone(), wrong.clone(), window, cx)
+                            crate::pages::analysis::analyse_puzzle(
+                                studied.clone(),
+                                wrong.clone(),
+                                window,
+                                cx,
+                            )
                         })
                         .into_any_element()
                         .into(),
@@ -2072,6 +2078,16 @@ impl crate::pages::PageView for PuzzlesPage {
 }
 
 /// Open a Lichess puzzle by its id on Puzzles → Daily.
+/// A Lichess account was signed out: forget the account puzzles were trained on and, with no
+/// account left, the Lichess mode and tab too.
+pub fn signed_out(accounts_left: bool, cx: &mut App) {
+    crate::prefs::forget(cx, ACCOUNT);
+    if !accounts_left {
+        crate::prefs::forget(cx, MODE);
+        crate::prefs::forget(cx, Tab::KEY);
+    }
+}
+
 pub fn open_puzzle(id: String, window: &mut Window, cx: &mut App) {
     crate::shell::show::<PuzzlesPage>(window, cx, move |puzzles, window, cx| {
         puzzles.open_puzzle(id, window, cx)

@@ -755,3 +755,17 @@ fn a_correspondence_move_is_played_from_its_notification(cx: &mut gpui_kit::Test
         ["POST /api/board/game/E2eCorr1/move/e2e4"]
     );
 }
+
+/// Zen mode reaches a Lichess game: Z and the Zen button hide the sidebar there, as on a game
+/// against the computer. Both lit up and left the sidebar in place.
+#[gpui_kit::test]
+fn zen_mode_hides_the_sidebar_in_a_lichess_game(cx: &mut gpui_kit::TestAppContext) {
+    let (mut app, _lichess) = in_a_game(cx);
+    app.find("sidebar");
+    app.press("z");
+    app.wait_gone("sidebar");
+    app.click("zen");
+    app.find("sidebar");
+    app.click("zen");
+    app.wait_gone("sidebar");
+}

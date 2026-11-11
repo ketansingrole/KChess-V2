@@ -636,11 +636,7 @@ impl Accounts {
                     this.refresh(cx);
                     return;
                 }
-                crate::prefs::forget(cx, "kchess:puzzle-account");
-                if first.is_empty() {
-                    crate::prefs::forget(cx, "kchess:puzzle-mode");
-                    crate::prefs::forget(cx, "kchess:puzzle-tab");
-                }
+                crate::pages::puzzles::signed_out(!first.is_empty(), cx);
                 crate::log::write(
                     Level::Info,
                     "accounts",

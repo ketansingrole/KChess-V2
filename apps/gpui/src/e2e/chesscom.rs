@@ -34,13 +34,12 @@ fn a_chesscom_player_is_synced_listed_counted_and_removed(cx: &mut gpui_kit::Tes
     // Insights count them for that account.
     app.open("Insights");
     app.wait_for("the Chess.com report", |_, cx| {
-        crate::shell::view::<crate::pages::insights::InsightsPage>(cx)
-            .is_some_and(|page| {
-                let page = page.read(cx);
-                page.loaded()
-                    && page.query(cx)["account"] == "e2e_carol@chess.com"
-                    && page.report_total() == Some(2.)
-            })
+        crate::shell::view::<crate::pages::insights::InsightsPage>(cx).is_some_and(|page| {
+            let page = page.read(cx);
+            page.loaded()
+                && page.query(cx)["account"] == "e2e_carol@chess.com"
+                && page.report_total() == Some(2.)
+        })
     });
 
     // Removing the player removes their games.
@@ -72,8 +71,7 @@ fn home_shows_a_chesscom_players_activity(cx: &mut gpui_kit::TestAppContext) {
             .is_some_and(|label| label == "Rapid rating 1500")
     });
     let summary = app.cx.update(|cx| {
-        let home = crate::shell::view::<crate::pages::home::HomePage>(cx)
-            .expect("Home");
+        let home = crate::shell::view::<crate::pages::home::HomePage>(cx).expect("Home");
         let card = home.read(cx).activity().expect("the activity card");
         let (heading, handle, games) = card.read(cx).summary();
         (heading, handle, games)

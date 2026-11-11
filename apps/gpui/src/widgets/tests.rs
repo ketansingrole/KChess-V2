@@ -43,10 +43,12 @@ fn large_ticking_times_hold_still() {
     // The title bar's "Updating N%" is anchored on the right, so a proportional figure
     // moved the button's left edge with every percent.
     // A Windows checkout may end its lines in CRLF.
-    let shell = std::fs::read_to_string(src.join("../shell.rs"))
-        .expect("the shell's source")
+    let updates = std::fs::read_to_string(src.join("settings/updates.rs"))
+        .expect("the updates source")
         .replace("\r\n", "\n");
-    let button = &shell[shell.find("fn update_button").expect("the update button")..];
+    let button = &updates[updates
+        .find("fn title_bar_button")
+        .expect("the update button")..];
     assert!(
         button[..button.find("\n}\n").expect("its end")]
             .contains(".font_features(crate::widgets::tabular())"),

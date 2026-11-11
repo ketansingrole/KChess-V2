@@ -1252,7 +1252,11 @@ impl PlayersPage {
                                         .icon(icon("swords"))
                                         .label("Challenge")
                                         .on_click(move |_, window, cx| {
-                                            crate::pages::online::challenge(&challenge_name, window, cx)
+                                            crate::pages::online::challenge(
+                                                &challenge_name,
+                                                window,
+                                                cx,
+                                            )
                                         }),
                                 )
                                 .child(
@@ -2187,10 +2191,15 @@ impl crate::pages::PageAction for Action {
     fn info(&self) -> crate::pages::ActionInfo {
         use crate::pages::ActionInfo;
         match self {
-            Action::Follow => ActionInfo::new("players:follow", "Follow player", "user-plus", "friend add"),
-            Action::Challenge => {
-                ActionInfo::new("players:challenge", "Challenge", "swords", "play game invite")
+            Action::Follow => {
+                ActionInfo::new("players:follow", "Follow player", "user-plus", "friend add")
             }
+            Action::Challenge => ActionInfo::new(
+                "players:challenge",
+                "Challenge",
+                "swords",
+                "play game invite",
+            ),
             Action::Message => {
                 ActionInfo::new("players:message", "Message", "message-circle", "send write")
             }

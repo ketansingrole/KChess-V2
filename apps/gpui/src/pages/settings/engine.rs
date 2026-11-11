@@ -495,15 +495,7 @@ impl SettingsPage {
                 ),
                 palette,
             )
-            .switch(
-                "review-battery",
-                "Also on battery power",
-                Some("Uses more power; reviews otherwise wait for a charger"),
-                settings.core.review_on_battery,
-                auto != ReviewAuto::Off,
-                |s, on| s.core.review_on_battery = on,
-                palette,
-            );
+            .switch("review-battery", settings, auto != ReviewAuto::Off, palette);
         // `#settings-review`: one card, its title and status above the rows.
         v_flex().gap(px(16.)).child(rows.card(palette)).child(
             review_rows.card_under(

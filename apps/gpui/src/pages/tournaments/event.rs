@@ -540,7 +540,9 @@ impl TournamentsPage {
                         .w_full()
                         .h(px(298.))
                         .cursor_pointer()
-                        .on_click(move |_, window, cx| crate::pages::watch::watch_game(&id, window, cx))
+                        .on_click(move |_, window, cx| {
+                            crate::pages::watch::watch_game(&id, window, cx)
+                        })
                         .child(board),
                 )
                 .child(side(orientation, 1)),

@@ -55,16 +55,19 @@ fn a_late_reply_for_another_tournament_is_not_shown(cx: &mut gpui_kit::TestAppCo
     app.online();
     let shown = |app: &mut Harness| {
         app.with_window(|_, cx| {
-            crate::shell::view::<crate::pages::tournaments::TournamentsPage>(cx,
-            )
-            .and_then(|page| page.read(cx).shown_name())
+            crate::shell::view::<crate::pages::tournaments::TournamentsPage>(cx)
+                .and_then(|page| page.read(cx).shown_name())
         })
     };
-    app.with_window(|window, cx| crate::pages::tournaments::open_tournament(HELD_ARENA, window, cx));
+    app.with_window(|window, cx| {
+        crate::pages::tournaments::open_tournament(HELD_ARENA, window, cx)
+    });
     app.wait_for("the first arena to be asked for", |_, _| {
         HELD_ARENA_ASKED.load(Ordering::SeqCst)
     });
-    app.with_window(|window, cx| crate::pages::tournaments::open_tournament(HELD_ARENA_B, window, cx));
+    app.with_window(|window, cx| {
+        crate::pages::tournaments::open_tournament(HELD_ARENA_B, window, cx)
+    });
     // The first arena's details come while the second is open.
     HELD_ARENA_RELEASED.store(true, Ordering::SeqCst);
     app.wait_for("the second arena to be asked for", |_, _| {
@@ -83,10 +86,9 @@ fn a_late_reply_for_another_tournament_is_not_shown(cx: &mut gpui_kit::TestAppCo
         "the first arena shown as the second"
     );
     app.wait_for("the second arena's details", |_, cx| {
-        crate::shell::view::<crate::pages::tournaments::TournamentsPage>(cx,
-        )
-        .and_then(|page| page.read(cx).shown_name())
-        .as_deref()
+        crate::shell::view::<crate::pages::tournaments::TournamentsPage>(cx)
+            .and_then(|page| page.read(cx).shown_name())
+            .as_deref()
             == Some("Second Arena")
     });
 }

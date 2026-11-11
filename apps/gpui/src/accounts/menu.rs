@@ -1,8 +1,8 @@
 //! The sidebar's account menu, in its footer beside Settings.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::h_flex;
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -123,11 +123,11 @@ pub fn menu_button(expanded: bool, cx: &App) -> AnyElement {
                     let profile = active.clone();
                     // The Settings button sits beside this one; the menu goes to its accounts.
                     menu = menu
-                        .item(
-                            PopupMenuItem::new("Profile")
-                                .icon(icon("user"))
-                                .on_click(move |_, window, cx| crate::pages::players::open_player(&profile, window, cx)),
-                        )
+                        .item(PopupMenuItem::new("Profile").icon(icon("user")).on_click(
+                            move |_, window, cx| {
+                                crate::pages::players::open_player(&profile, window, cx)
+                            },
+                        ))
                         .item(
                             PopupMenuItem::new("Manage accounts")
                                 .icon(icon("users"))

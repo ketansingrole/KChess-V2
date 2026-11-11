@@ -647,7 +647,11 @@ mod tests {
     #[test]
     fn each_page_is_registered_at_its_place() {
         for (index, registered) in REGISTRY.iter().enumerate() {
-            assert_eq!(registered.info.page as usize, index, "{:?}", registered.info.page);
+            assert_eq!(
+                registered.info.page as usize, index,
+                "{:?}",
+                registered.info.page
+            );
         }
     }
 

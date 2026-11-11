@@ -536,7 +536,9 @@ impl OnlinePage {
                         .aria_label(link.clone())
                         .cursor_pointer()
                         .pressable_link()
-                        .on_click(move |_, window, cx| crate::pages::players::open_player(&link, window, cx))
+                        .on_click(move |_, window, cx| {
+                            crate::pages::players::open_player(&link, window, cx)
+                        })
                         .child(name)
                         .into_any_element()
                 } else {

@@ -812,9 +812,7 @@ impl StudiesPage {
                             .icon(icon("cloud-upload"))
                             .disabled(busy)
                             .on_click(move |_, window, cx| {
-                                if let Some(page) =
-                                    crate::shell::view::<StudiesPage>(cx)
-                                {
+                                if let Some(page) = crate::shell::view::<StudiesPage>(cx) {
                                     let id = upload.clone();
                                     page.update(cx, |page, cx| page.upload(id, true, window, cx));
                                 }
@@ -1513,9 +1511,12 @@ impl crate::pages::PageAction for Action {
         match self {
             Action::New => ActionInfo::new("studies:new", "New study", "plus", "create chapter")
                 .role(ActionRole::New),
-            Action::Import => {
-                ActionInfo::new("studies:import", "Import PGN", "import", "paste games study")
-            }
+            Action::Import => ActionInfo::new(
+                "studies:import",
+                "Import PGN",
+                "import",
+                "paste games study",
+            ),
         }
     }
 }

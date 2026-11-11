@@ -514,9 +514,11 @@ impl Render for LichessActivity {
                                     Source::Lichess => {
                                         crate::pages::history::open_lichess(window, cx)
                                     }
-                                    Source::Chesscom(_) => {
-                                        crate::pages::history::open_account(&all_account, window, cx)
-                                    }
+                                    Source::Chesscom(_) => crate::pages::history::open_account(
+                                        &all_account,
+                                        window,
+                                        cx,
+                                    ),
                                 }),
                         )
                     }),

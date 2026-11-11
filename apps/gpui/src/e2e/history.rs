@@ -403,8 +403,7 @@ fn insights_choose_a_variant_only_when_one_was_played(cx: &mut gpui_kit::TestApp
     );
 
     fn page_loaded(cx: &gpui_kit::App) -> bool {
-        crate::shell::view::<InsightsPage>(cx)
-            .is_some_and(|page| page.read(cx).loaded())
+        crate::shell::view::<InsightsPage>(cx).is_some_and(|page| page.read(cx).loaded())
     }
 }
 
@@ -427,8 +426,7 @@ fn insights_read_again_when_a_sync_ends(cx: &mut gpui_kit::TestAppContext) {
             .expect("the Insights page")
     };
     app.wait_for("the report before the games", |_, cx| {
-        crate::shell::view::<InsightsPage>(cx)
-            .is_some_and(|page| page.read(cx).loaded())
+        crate::shell::view::<InsightsPage>(cx).is_some_and(|page| page.read(cx).loaded())
     });
     let insights = page(&mut app);
     assert!(
@@ -627,8 +625,8 @@ fn a_lichess_game_steps_to_the_next_and_previous(cx: &mut gpui_kit::TestAppConte
     };
 
     app.with_window(|window, cx| {
-        let page = crate::shell::view::<crate::pages::history::HistoryPage>(cx)
-            .expect("the history page");
+        let page =
+            crate::shell::view::<crate::pages::history::HistoryPage>(cx).expect("the history page");
         page.update(cx, |page, cx| page.open_first_lichess(window, cx));
     });
     wait_open(&mut app, 0);

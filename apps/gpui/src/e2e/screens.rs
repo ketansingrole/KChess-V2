@@ -221,8 +221,7 @@ fn crazyhouse() {
         .expect("the window");
         settle(&mut cx, window);
         cx.update_window(window, |_, window, cx| {
-            let local = crate::shell::view::<crate::pages::local::LocalPage>(cx)
-                .expect("the page");
+            let local = crate::shell::view::<crate::pages::local::LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
                 let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
@@ -279,8 +278,7 @@ fn figurines() {
         .expect("the window");
         settle(&mut cx, window);
         cx.update_window(window, |_, window, cx| {
-            let local = crate::shell::view::<crate::pages::local::LocalPage>(cx)
-                .expect("the page");
+            let local = crate::shell::view::<crate::pages::local::LocalPage>(cx).expect("the page");
             local.update(cx, |local, cx| {
                 for uci in [
                     "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5c6", "d7c6", "e1g1", "f7f6",
@@ -331,8 +329,7 @@ fn computer_variant() {
         settle(&mut cx, window);
         cx.update_window(window, |_, window, cx| {
             let page =
-                crate::shell::view::<crate::pages::computer::ComputerPage>(cx)
-                    .expect("the page");
+                crate::shell::view::<crate::pages::computer::ComputerPage>(cx).expect("the page");
             page.update(cx, |page, cx| {
                 let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1";
                 let setup = serde_json::json!({ "variant": "crazyhouse", "fen": fen });
@@ -541,8 +538,8 @@ fn lichess_history_search() {
                 connect_showcase(&mut cx, window, profile.path(), "Rattiestword5");
                 cx.update_window(window, |_, window, cx| {
                     crate::shell::open(Page::History, window, cx);
-                    if let Some(page) = crate::shell::view::<crate::pages::history::HistoryPage>(cx,
-                    ) {
+                    if let Some(page) = crate::shell::view::<crate::pages::history::HistoryPage>(cx)
+                    {
                         page.update(cx, |page, cx| page.search_lichess(search, window, cx));
                     }
                 })
@@ -1015,7 +1012,10 @@ fn content(out: &Path, appearance: Appearance) {
         open(&mut cx, page);
         shoot(&mut cx, name, 5);
     }
-    click(&mut cx, ("watch-tabs", 2usize).into());
+    click(
+        &mut cx,
+        super::tab("watch-tabs", crate::pages::watch::Tab::Broadcasts).into(),
+    );
     shoot(&mut cx, "watch-broadcasts", 5);
     open(&mut cx, Page::Players);
     shoot(&mut cx, "players-leaderboard", 4);

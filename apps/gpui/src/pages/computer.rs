@@ -1806,13 +1806,19 @@ impl crate::pages::PageAction for Action {
                 ActionInfo::new("computer:new-game", "New game", "rotate-ccw", "restart")
                     .role(ActionRole::New)
             }
-            Action::SwitchSides => {
-                ActionInfo::new("computer:switch-sides", "Switch sides", "repeat", "colour color")
-            }
-            Action::CopyPgn => {
-                ActionInfo::new("computer:copy-pgn", "Copy PGN", "copy", "game moves clipboard")
-                    .role(ActionRole::Copy)
-            }
+            Action::SwitchSides => ActionInfo::new(
+                "computer:switch-sides",
+                "Switch sides",
+                "repeat",
+                "colour color",
+            ),
+            Action::CopyPgn => ActionInfo::new(
+                "computer:copy-pgn",
+                "Copy PGN",
+                "copy",
+                "game moves clipboard",
+            )
+            .role(ActionRole::Copy),
             Action::Review => ActionInfo::new(
                 "computer:review",
                 "Review game",

@@ -13,8 +13,8 @@ use serde_json::json;
 
 use crate::assets::icon;
 use crate::online::Phase;
+use crate::pages::settings::{Quick, Section, Toggle};
 use crate::pages::{ActionRole, Page, PageCommand};
-use crate::pages::settings::Section;
 use crate::quick_pick::{self, Mode};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii};
@@ -35,7 +35,7 @@ struct Command {
     /// Right-aligned state: "On", "Current", "In progress".
     hint: Option<String>,
     /// Words that find it but are not shown.
-    keywords: &'static str,
+    keywords: SharedString,
     /// The keys that run it too, as its chips show them.
     kbds: Option<String>,
     run: Run,
@@ -56,7 +56,7 @@ impl Command {
             icon,
             detail: None,
             hint: None,
-            keywords: "",
+            keywords: SharedString::default(),
             kbds: None,
             run: Rc::new(run),
             prefix: None,
@@ -73,8 +73,8 @@ impl Command {
         self
     }
 
-    fn keywords(mut self, keywords: &'static str) -> Command {
-        self.keywords = keywords;
+    fn keywords(mut self, keywords: impl Into<SharedString>) -> Command {
+        self.keywords = keywords.into();
         self
     }
 
@@ -92,7 +92,7 @@ impl Command {
             icon: icon(info.icon),
             detail: detail.map(|detail| detail.to_string()),
             hint: None,
-            keywords: info.keywords,
+            keywords: info.keywords.into(),
             kbds: None,
             run,
             prefix: None,
@@ -175,51 +175,42 @@ fn places(cx: &App) -> Vec<Command> {
     Page::all()
         .map(|page| {
             let info = page.info();
-            Command::new(format!("page:{page:?}"), info.label, icon(info.icon), go(page))
-                .keywords(info.keywords)
-                .kbds(
-                    crate::pages::opened_by(page)
-                        .and_then(|action| crate::menu::keys(action.as_ref(), cx)),
-                )
-                .hint(current(page, cx))
+            Command::new(
+                format!("page:{page:?}"),
+                info.label,
+                icon(info.icon),
+                go(page),
+            )
+            .keywords(info.keywords)
+            .kbds(
+                crate::pages::opened_by(page)
+                    .and_then(|action| crate::menu::keys(action.as_ref(), cx)),
+            )
+            .hint(current(page, cx))
         })
         .chain(crate::pages::places(cx).into_iter().map(Command::of))
         .collect()
 }
 
-fn setting(
-    id: &'static str,
-    label: &'static str,
-    glyph: Icon,
-    keywords: &'static str,
-    on: bool,
-    change: fn(&mut Settings),
-) -> Command {
-    Command::new(format!("setting:{id}"), label, glyph, move |_, cx| {
-        crate::settings::change(cx, change)
-    })
-    .keywords(keywords)
-    .hint(on_off(on))
+/// A yes/no setting, as its Settings row names it.
+fn setting(toggle: &'static Toggle, quick: &'static Quick, settings: &Settings) -> Command {
+    let (on, set) = (toggle.on, toggle.set);
+    Command::new(
+        format!("setting:{}", quick.id),
+        toggle.label(),
+        icon(quick.icon),
+        move |_, cx| crate::settings::change(cx, move |settings| set(settings, !on(settings))),
+    )
+    .keywords(quick.keywords)
+    .hint(on_off(on(settings)))
 }
 
 /// Zen mode, as a setting and on a game page.
 fn zen_command(cx: &App) -> Command {
-    let on = cx
-        .global::<SettingsHandle>()
-        .0
-        .read(cx)
-        .settings
-        .frontend
-        .zen_mode;
-    setting(
-        "zenMode",
-        "Zen mode",
-        icon("minimize"),
-        "focus distraction",
-        on,
-        |s| s.frontend.zen_mode = !s.frontend.zen_mode,
-    )
-    .kbds(crate::menu::keys(&crate::menu::ToggleZen, cx))
+    let toggle = crate::pages::settings::toggle("zen-mode");
+    let quick = toggle.quick.as_ref().expect("Quick Pick offers zen mode");
+    let settings = &cx.global::<SettingsHandle>().0.read(cx).settings;
+    setting(toggle, quick, settings).kbds(crate::menu::keys(&crate::menu::ToggleZen, cx))
 }
 
 /// Settings toggles and choices, and the Settings sections.
@@ -247,73 +238,15 @@ fn settings_commands(cx: &App) -> Vec<Command> {
         .hint((front.appearance == appearance).then_some("Current"))
     })
     .collect();
-    list.extend([
-        setting(
-            "soundEnabled",
-            "Sound",
-            icon("volume-2"),
-            "mute audio",
-            front.sound_enabled,
-            |s| s.frontend.sound_enabled = !s.frontend.sound_enabled,
-        ),
-        zen_command(cx),
-        setting(
-            "blindfold",
-            "Blindfold",
-            icon("eye-off"),
-            "hide pieces",
-            front.blindfold,
-            |s| s.frontend.blindfold = !s.frontend.blindfold,
-        ),
-        setting(
-            "showLegalMoves",
-            "Show legal moves",
-            icon("locate"),
-            "dots hints",
-            front.show_legal_moves,
-            |s| s.frontend.show_legal_moves = !s.frontend.show_legal_moves,
-        ),
-        setting(
-            "premove",
-            "Premoves",
-            icon("fast-forward"),
-            "queue move",
-            front.premove,
-            |s| s.frontend.premove = !s.frontend.premove,
-        ),
-        setting(
-            "showOpeningName",
-            "Show opening name",
-            icon("book-marked"),
-            "eco",
-            front.show_opening_name,
-            |s| s.frontend.show_opening_name = !s.frontend.show_opening_name,
-        ),
-        setting(
-            "cloudEval",
-            "Lichess cloud evaluation",
-            icon("cloud"),
-            "analysis engine",
-            settings.core.cloud_eval,
-            |s| s.core.cloud_eval = !s.core.cloud_eval,
-        ),
-        setting(
-            "notificationsEnabled",
-            "Notifications",
-            icon("bell"),
-            "alerts",
-            front.notifications_enabled,
-            |s| s.frontend.notifications_enabled = !s.frontend.notifications_enabled,
-        ),
-        setting(
-            "swipeNavigation",
-            "Two-finger swipe",
-            icon("hand"),
-            "gesture trackpad back forward",
-            front.swipe_navigation,
-            |s| s.frontend.swipe_navigation = !s.frontend.swipe_navigation,
-        ),
-    ]);
+    list.extend(
+        crate::pages::settings::TOGGLES
+            .iter()
+            .filter_map(|toggle| Some((toggle, toggle.quick.as_ref()?)))
+            .map(|(toggle, quick)| match toggle.id {
+                "zen-mode" => zen_command(cx),
+                _ => setting(toggle, quick, &settings),
+            }),
+    );
     for (mode, label) in [
         (CoordinateMode::None, "Coordinates: Hidden"),
         (CoordinateMode::Inside, "Coordinates: Inside the board"),
@@ -600,7 +533,9 @@ fn player_commands(cx: &App) -> Vec<Command> {
                         ),
                         format!("Challenge @{name}"),
                         icon("swords"),
-                        move |window, cx| crate::pages::online::challenge_rated(&target, rated, window, cx),
+                        move |window, cx| {
+                            crate::pages::online::challenge_rated(&target, rated, window, cx)
+                        },
                     )
                     .detail(if rated { "Rated" } else { "Casual" })
                     .keywords("play game invite"),

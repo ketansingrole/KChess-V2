@@ -12,10 +12,16 @@ use crate::pages::{ActionInfo, PageCommand};
 
 /// Something pasted that KChess can open.
 pub enum Link {
-    StudyChapter { study: String, chapter: String },
+    StudyChapter {
+        study: String,
+        chapter: String,
+    },
     Broadcast(BroadcastLink),
     Tv(String),
-    Tournament { system: &'static str, id: String },
+    Tournament {
+        system: &'static str,
+        id: String,
+    },
     Profile(String),
     Puzzle(String),
     Game(GameLink),
@@ -112,7 +118,12 @@ impl Link {
                 },
             )],
             Link::Tv(channel) => vec![command(
-                ActionInfo::new(format!("pasted:tv:{channel}"), "Watch this TV channel", "tv", ""),
+                ActionInfo::new(
+                    format!("pasted:tv:{channel}"),
+                    "Watch this TV channel",
+                    "tv",
+                    "",
+                ),
                 None,
                 move |window, cx| crate::pages::watch::open_channel(channel.clone(), window, cx),
             )],
@@ -137,7 +148,12 @@ impl Link {
                 move |window, cx| crate::pages::players::open_player(&name, window, cx),
             )],
             Link::Puzzle(id) => vec![command(
-                ActionInfo::new(format!("pasted:puzzle:{id}"), "Solve this puzzle", "puzzle", ""),
+                ActionInfo::new(
+                    format!("pasted:puzzle:{id}"),
+                    "Solve this puzzle",
+                    "puzzle",
+                    "",
+                ),
                 Some(id.clone()),
                 move |window, cx| crate::pages::puzzles::open_puzzle(id.clone(), window, cx),
             )],
@@ -327,10 +343,7 @@ mod tests {
             Some(Link::Position(_)) => "position",
             None => "nothing",
         };
-        assert_eq!(
-            kind("https://lichess.org/study/abcdEFGH/ijklMNOP"),
-            "study"
-        );
+        assert_eq!(kind("https://lichess.org/study/abcdEFGH/ijklMNOP"), "study");
         assert_eq!(kind("https://lichess.org/@/someone"), "profile");
         assert_eq!(kind("https://lichess.org/tv/blitz"), "tv");
         assert_eq!(kind("https://lichess.org/abcdEFGH"), "game");

@@ -74,15 +74,21 @@ pub fn setting_info(
     hint: Option<SharedString>,
     palette: &Palette,
 ) -> Div {
+    let title = title.into();
     v_flex()
         .gap(px(4.))
         .min_w_0()
         .child(
             div()
+                .id(ElementId::NamedChild(
+                    std::sync::Arc::new("setting-title".into()),
+                    title.clone(),
+                ))
+                .test_support()
                 .text_size(px(14.))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(palette.highlighted)
-                .child(title.into()),
+                .child(title),
         )
         .children(hint.map(|hint| {
             div()

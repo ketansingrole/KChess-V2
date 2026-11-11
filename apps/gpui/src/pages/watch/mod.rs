@@ -15,13 +15,13 @@ use shakmaty::Color;
 use crate::assets::icon;
 use crate::core::{AppCore, CoreEvent};
 use crate::online::OnlineHandle;
-use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
-use crate::theme::{Palette, radii};
-use crate::widgets::Pressable as _;
 use crate::pages::{
     ActionInfo, ActionRole, NavGroup, Page, PageAction, PageCommand, PageInfo, PageTab, PageView,
     TabInfo,
 };
+use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
+use crate::theme::{Palette, radii};
+use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Look};
 
 mod broadcast_engine;

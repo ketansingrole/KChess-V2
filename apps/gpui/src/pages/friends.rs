@@ -528,7 +528,9 @@ impl FriendsPage {
                                             .on_click({
                                                 let name = name.clone();
                                                 move |_, window, cx| {
-                                                    crate::pages::players::open_player(&name, window, cx)
+                                                    crate::pages::players::open_player(
+                                                        &name, window, cx,
+                                                    )
                                                 }
                                             })
                                             .child(format!("@{name}")),
@@ -1289,14 +1291,18 @@ impl crate::pages::PageAction for Action {
     fn info(&self) -> crate::pages::ActionInfo {
         use crate::pages::ActionInfo;
         match self {
-            Action::Follow => ActionInfo::new("following:follow", "Follow player", "plus", "friend add"),
+            Action::Follow => {
+                ActionInfo::new("following:follow", "Follow player", "plus", "friend add")
+            }
             Action::Import => ActionInfo::new(
                 "following:import",
                 "Import from Lichess",
                 "download",
                 "followed players",
             ),
-            Action::Sync => ActionInfo::new("following:sync", "Sync all", "refresh-cw", "games download"),
+            Action::Sync => {
+                ActionInfo::new("following:sync", "Sync all", "refresh-cw", "games download")
+            }
         }
     }
 }

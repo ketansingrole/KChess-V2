@@ -406,9 +406,7 @@ fn the_account_menu_opens_the_profile_and_the_accounts_settings(cx: &mut gpui_ki
     app.click_label("Manage accounts");
     app.wait_for("Settings to open at its accounts", |_, cx| {
         crate::shell::current_page(cx) == Some(crate::pages::Page::Settings)
-            && crate::shell::view::<crate::pages::settings::SettingsPage>(cx,
-            )
-            .is_some_and(|page| {
+            && crate::shell::view::<crate::pages::settings::SettingsPage>(cx).is_some_and(|page| {
                 page.read(cx).section() == crate::pages::settings::Section::Accounts
             })
     });
@@ -420,10 +418,9 @@ fn the_account_menu_opens_the_profile_and_the_accounts_settings(cx: &mut gpui_ki
     app.click_label("Profile");
     app.wait_for("the account's own profile", |_, cx| {
         crate::shell::current_page(cx) == Some(crate::pages::Page::Players)
-            && crate::shell::view::<crate::pages::players::PlayersPage>(cx,
-            )
-            .and_then(|page| page.read(cx).username())
-            .is_some_and(|name| name.eq_ignore_ascii_case("Showcase"))
+            && crate::shell::view::<crate::pages::players::PlayersPage>(cx)
+                .and_then(|page| page.read(cx).username())
+                .is_some_and(|name| name.eq_ignore_ascii_case("Showcase"))
     });
 }
 

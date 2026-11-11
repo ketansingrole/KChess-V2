@@ -1364,14 +1364,22 @@ impl crate::pages::PageAction for Action {
                 "graduation-cap",
                 "repertoire drill",
             ),
-            Action::Analyse => ActionInfo::new("openings:analyse", "Analyse", "microscope", "analysis"),
-            Action::Puzzles => {
-                ActionInfo::new("openings:puzzles", "Train with puzzles", "puzzle", "tactics")
+            Action::Analyse => {
+                ActionInfo::new("openings:analyse", "Analyse", "microscope", "analysis")
             }
-            Action::Flip => {
-                ActionInfo::new("openings:flip", "Flip board", "arrow-up-down", "turn rotate")
-                    .role(ActionRole::Flip)
-            }
+            Action::Puzzles => ActionInfo::new(
+                "openings:puzzles",
+                "Train with puzzles",
+                "puzzle",
+                "tactics",
+            ),
+            Action::Flip => ActionInfo::new(
+                "openings:flip",
+                "Flip board",
+                "arrow-up-down",
+                "turn rotate",
+            )
+            .role(ActionRole::Flip),
             Action::AllOpenings => {
                 ActionInfo::new("openings:all", "All openings", "arrow-left", "back browse")
             }

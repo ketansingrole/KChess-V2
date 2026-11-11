@@ -181,24 +181,28 @@ fn moves_can_be_shown_with_piece_symbols(cx: &mut gpui_kit::TestAppContext) {
 /// ⌘K finds a category by any row title it shows, so a new row is found as soon as it is added.
 #[gpui_kit::test]
 fn every_settings_row_is_found_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
-    use crate::pages::settings::{DRAWN_TITLES, SettingsPage, section_keywords, sections};
+    use crate::pages::settings::{section_keywords, sections};
+    use gpui_kit::test::TestQueryExt as _;
     let mut app = Harness::start(cx);
     let mut checked = 0;
     for (section, label, _) in sections() {
         app.open_settings(label);
-        app.with_window(|_, _| ());
-        // Only this category's titles: redraw it on its own.
-        DRAWN_TITLES.with(|titles| titles.borrow_mut().clear());
-        app.with_window(|_, cx| {
-            if let Some(page) =
-                crate::shell::view::<SettingsPage>(cx)
-            {
-                page.update(cx, |_, cx| cx.notify());
-            }
+        let titles: Vec<String> = app.with_window(|window, _| {
+            window
+                .elements()
+                .iter()
+                .filter_map(|element| match element.path().last()? {
+                    gpui_kit::ElementId::NamedChild(parent, title)
+                        if **parent == gpui_kit::ElementId::Name("setting-title".into()) =>
+                    {
+                        Some(title.to_string())
+                    }
+                    _ => None,
+                })
+                .collect()
         });
-        app.with_window(|_, _| ());
         let keywords = section_keywords(section).to_lowercase();
-        for title in DRAWN_TITLES.with(|titles| titles.borrow().clone()) {
+        for title in titles {
             assert!(
                 keywords.contains(&title.to_lowercase()),
                 "{label}: {title:?} is missing from section_keywords"

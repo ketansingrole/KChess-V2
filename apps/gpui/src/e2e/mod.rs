@@ -79,6 +79,11 @@ pub struct Harness {
     owns_app: bool,
 }
 
+/// A page's tab by name, as its pills are found: `tab("practice-tabs", Tab::Guess)`.
+pub fn tab<T: crate::pages::PageTab>(tabs: &'static str, tab: T) -> (&'static str, usize) {
+    (tabs, tab.index())
+}
+
 impl Harness {
     /// Start the app as `main` does, over a fresh profile.
     pub fn start(cx: &mut TestAppContext) -> Harness {

@@ -157,7 +157,14 @@ fn a_popular_opening_is_trained_in_the_repertoire_trainer(cx: &mut gpui_kit::Tes
     reveal(&mut app, "train-Sicilian Defense");
     app.click("train-Sicilian Defense");
     assert_eq!(page(&mut app), Some(Page::Practice));
-    assert_eq!(app.find(("practice-tabs", 4usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab(
+            "practice-tabs",
+            crate::pages::practice::Tab::Openings
+        ))
+        .selected(),
+        Some(true)
+    );
     app.find("restart-line");
 }
 
@@ -167,7 +174,14 @@ fn a_line_can_be_drilled_and_saved_as_a_study(cx: &mut gpui_kit::TestAppContext)
     open_kieseritzky(&mut app);
     app.click(("opening-move", 2usize));
     app.click("train-line");
-    assert_eq!(app.find(("practice-tabs", 4usize)).selected(), Some(true));
+    assert_eq!(
+        app.find(super::tab(
+            "practice-tabs",
+            crate::pages::practice::Tab::Openings
+        ))
+        .selected(),
+        Some(true)
+    );
 
     // White plays the line's moves; Black answers from it.
     app.click_square("e2", true);

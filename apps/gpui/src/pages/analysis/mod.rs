@@ -1606,7 +1606,12 @@ impl AnalysisPage {
                             PopupMenuItem::new("Edit this position")
                                 .icon(icon("pencil-ruler"))
                                 .on_click(leave(|setup, orientation, window, cx| {
-                                    crate::pages::editor::edit_position(setup, orientation, window, cx)
+                                    crate::pages::editor::edit_position(
+                                        setup,
+                                        orientation,
+                                        window,
+                                        cx,
+                                    )
                                 })),
                         )
                         .item(

@@ -323,15 +323,13 @@ fn edits_are_undone_and_redone(cx: &mut gpui_kit::TestAppContext) {
     app.find("tree-e2e4 e7e5 f1c4");
     assert_eq!(selected(&mut app, "e2e4 e7e5 f1c4"), Some(true));
     assert!(app.with_window(|_, cx| {
-        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx,
-        )
-        .is_some_and(|page| page.read(cx).pgn().contains("2. Bc4 ( 2. Nf3 )"))
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .is_some_and(|page| page.read(cx).pgn().contains("2. Bc4 ( 2. Nf3 )"))
     }));
     undo(&mut app);
     assert!(app.with_window(|_, cx| {
-        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx,
-        )
-        .is_some_and(|page| page.read(cx).pgn().contains("2. Nf3 ( 2. Bc4 )"))
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .is_some_and(|page| page.read(cx).pgn().contains("2. Nf3 ( 2. Bc4 )"))
     }));
     redo(&mut app);
     redo(&mut app);
@@ -534,9 +532,8 @@ fn f_flips_the_editors_board(cx: &mut gpui_kit::TestAppContext) {
     let mut app = editor(cx);
     let orientation = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view::<crate::pages::editor::EditorPage>(cx,
-            )
-            .map(|page| page.read(cx).orientation())
+            crate::shell::view::<crate::pages::editor::EditorPage>(cx)
+                .map(|page| page.read(cx).orientation())
         })
     };
     let before = orientation(&mut app).expect("the page");
@@ -565,9 +562,7 @@ fn the_editor_sets_up_a_variant_position(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(app.status(), "Ready to analyse");
     app.click("analyse-position");
     app.wait_for("the Horde game on the analysis board", |_, cx| {
-        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx,
-        )
-        .is_some_and(|page| {
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx).is_some_and(|page| {
             let page = page.read(cx);
             page.header("Variant") == "Horde"
                 && page.shown_fen().starts_with("rnbqkbnr/pppppppp/8/1PP2PP1")
@@ -864,9 +859,8 @@ fn a_cancelled_link_import_leaves_the_board_alone(cx: &mut gpui_kit::TestAppCont
 /// The FEN of the position the analysis board shows.
 fn shown_fen(app: &mut Harness) -> String {
     app.with_window(|_, cx| {
-        let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx,
-        )
-        .expect("the analysis board");
+        let page = crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .expect("the analysis board");
         page.read(cx).shown_fen()
     })
 }
@@ -875,9 +869,8 @@ fn shown_fen(app: &mut Harness) -> String {
 /// sent without its variant) shows an error instead.
 fn wait_for_search(app: &mut Harness) {
     app.wait_for("the engine to search", |_, cx| {
-        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx,
-        )
-        .is_some_and(|page| page.read(cx).engine_text(cx).starts_with("Depth "))
+        crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+            .is_some_and(|page| page.read(cx).engine_text(cx).starts_with("Depth "))
     });
 }
 
@@ -943,9 +936,7 @@ fn a_crazyhouse_drop_is_played_from_the_pocket(cx: &mut gpui_kit::TestAppContext
     });
     app.click_label("Play Stockfish from here");
     app.wait_for("a Crazyhouse game from the drop", |_, cx| {
-        crate::shell::view::<crate::pages::computer::ComputerPage>(cx,
-        )
-        .is_some_and(|page| {
+        crate::shell::view::<crate::pages::computer::ComputerPage>(cx).is_some_and(|page| {
             let page = page.read(cx);
             page.setup_variant() == "crazyhouse"
                 && page
@@ -1172,9 +1163,8 @@ fn x_shows_the_threat(cx: &mut gpui_kit::TestAppContext) {
     let mut app = analysis(cx);
     let page = |app: &mut Harness| {
         app.cx.update(|cx| {
-            crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx,
-            )
-            .expect("the analysis board")
+            crate::shell::view::<crate::pages::analysis::AnalysisPage>(cx)
+                .expect("the analysis board")
         })
     };
     app.click_square("e2", true);

@@ -683,7 +683,9 @@ impl Render for HomePage {
                             .text_size(px(13.))
                             .cursor_pointer()
                             .pressable(&palette)
-                            .on_click(move |_, window, cx| crate::pages::history::open_game(&id, window, cx))
+                            .on_click(move |_, window, cx| {
+                                crate::pages::history::open_game(&id, window, cx)
+                            })
                             .child(
                                 div()
                                     .id(("home-game-outcome", index))

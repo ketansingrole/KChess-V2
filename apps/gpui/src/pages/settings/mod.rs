@@ -6,12 +6,13 @@ mod ai;
 mod data;
 mod engine;
 mod offline;
+mod toggles;
+pub(crate) use toggles::{Quick, TOGGLES, Toggle, toggle};
 pub mod updates;
 mod voice;
 mod voice_history;
 
 use std::path::Path;
-use std::rc::Rc;
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -78,9 +79,31 @@ pub fn sections() -> [(Section, &'static str, Icon); 15] {
     ]
 }
 
+/// How the interface size changes anywhere: "⌘ + and ⌘ − adjust it anywhere."
+fn zoom_hint(cx: &App) -> String {
+    let (Some(bigger), Some(smaller)) = (
+        crate::menu::keys(&crate::menu::ZoomIn, cx),
+        crate::menu::keys(&crate::menu::ZoomOut, cx),
+    ) else {
+        return String::new();
+    };
+    format!(
+        "{bigger} and {smaller} adjust it anywhere{}",
+        if cfg!(target_os = "macos") { "." } else { "" }
+    )
+}
+
 /// What finds a category in ⌘K besides its name: every row title it shows (checked by a test, so
 /// a new row is found too), what the custom rows hold, and other names for it.
-pub fn section_keywords(section: Section) -> &'static str {
+pub fn section_keywords(section: Section) -> String {
+    toggles::titles(section)
+        .chain([other_keywords(section)])
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A category's search words besides its toggles' titles.
+fn other_keywords(section: Section) -> &'static str {
     match section {
         Section::Appearance => {
             "Theme Interface size zoom Board coordinates Piece animation Piece notation figurine \
@@ -89,38 +112,30 @@ pub fn section_keywords(section: Section) -> &'static str {
         Section::Themes => {
             "Appearance Light mode theme Dark mode theme Your own themes app theme colors custom"
         }
-        Section::Sound => "Game sounds Volume mute audio",
-        Section::Notifications => {
-            "Desktop notifications While I'm using KChess While KChess is in the background \
-             Opponent moves Low on time Game start and result Computer moves Challenges \
-             System sound Try it alerts"
-        }
+        Section::Sound => "Volume mute audio",
+        Section::Notifications => "Try it alerts",
         Section::Gameplay => {
-            "Show possible moves legal dots Premoves Confirm correspondence moves Pawn promotion \
-             auto-queen Computer levels Show opening names Blindfold Zen mode \
-             Next puzzle after solving auto next"
+            "legal dots Pawn promotion \
+             auto-queen Computer levels auto next"
         }
-        Section::Gestures => "Two-finger swipe Swipe feedback trackpad back forward",
-        Section::Voice => {
-            "Confirm spoken moves Hold to speak Keep voice history Microphone access speech"
-        }
+        Section::Gestures => "trackpad back forward",
+        Section::Voice => "Microphone access speech",
         Section::Engine => {
-            "Status Review my games automatically Also on battery power Game review Stockfish \
+            "Status Review my games automatically Game review Stockfish \
              executable download update"
         }
-        Section::Analysis => "Lichess cloud evaluation analysis",
+        Section::Analysis => "analysis",
         Section::Ai => "ChatGPT model effort usage coach explain",
         Section::Accounts => {
             "my accounts lichess sign in log in connect disconnect sync tracked Use for online play"
         }
-        Section::Online => "Receive challenges Game chat Check correspondence games",
+        Section::Online => "Check correspondence games",
         Section::Offline => "Downloaded puzzles voice model Saved games and studies engine",
         Section::Data => {
             "Diagnostics Export diagnostics Clear local scores Reset counters Database file storage"
         }
         Section::Updates => {
-            "version about upgrade Check for updates Automatically check for updates \
-             Download updates in the background Install updates when I quit What's new release notes \
+            "version about upgrade Check for updates What's new release notes \
              Website Source code GitHub Report a problem issues bug"
         }
     }
@@ -134,15 +149,6 @@ pub const SECTION_GROUPS: [(&str, usize); 5] = [
     ("Lichess", 2),
     ("System", 3),
 ];
-
-/// A yes/no row: its id, title, hint, state and how it changes the settings.
-type SwitchRow = (
-    &'static str,
-    &'static str,
-    Option<&'static str>,
-    bool,
-    fn(&mut Settings, bool),
-);
 
 /// `pollItems`: minutes between correspondence checks.
 const POLL: [(f64, &str); 6] = [
@@ -494,18 +500,8 @@ impl SettingsPage {
     }
 }
 
-#[cfg(test)]
-thread_local! {
-    /// Every row title drawn, so a test can check that ⌘K finds each one.
-    pub(crate) static DRAWN_TITLES: std::cell::RefCell<Vec<String>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
 /// A row's title and its optional hint (`.setting-info`).
 fn info(title: impl Into<SharedString>, hint: Option<SharedString>, palette: &Palette) -> Div {
-    let title = title.into();
-    #[cfg(test)]
-    DRAWN_TITLES.with(|titles| titles.borrow_mut().push(title.to_string()));
     widgets::setting_info(title, hint, palette)
 }
 
@@ -549,43 +545,36 @@ impl Rows {
         self
     }
 
-    /// A yes/no row: the switch sits at the start of the control column.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one argument per part of the row"
-    )]
+    /// A yes/no row (`toggles`): the switch sits at the start of the control column.
     fn switch(
-        self,
+        mut self,
         id: &'static str,
-        title: &'static str,
-        hint: Option<&'static str>,
-        on: bool,
+        settings: &Settings,
         enabled: bool,
-        change: impl Fn(&mut Settings, bool) + 'static,
         palette: &Palette,
     ) -> Rows {
-        let change = Rc::new(change);
+        let toggle = toggles::toggle(id);
+        let set = toggle.set;
         let control = h_flex().child(
             Switch::new(id)
                 .large()
-                .checked(on)
+                .checked((toggle.on)(settings))
                 .disabled(!enabled)
-                .accessibility_label(title)
+                .accessibility_label(toggle.title)
                 .on_click(move |checked, _, cx| {
-                    let (checked, change) = (*checked, Rc::clone(&change));
-                    crate::settings::change(cx, move |settings| change(settings, checked));
+                    let checked = *checked;
+                    crate::settings::change(cx, move |settings| set(settings, checked));
                 }),
         );
         // A switch is small enough to stay beside its title in the narrowest window.
-        let mut rows = self;
-        rows.rows.push(
+        self.rows.push(
             widgets::setting_row(
-                info(title, hint.map(SharedString::from), palette).min_w_0(),
+                info(toggle.title, toggle.hint.map(SharedString::from), palette).min_w_0(),
                 control,
             )
             .into_any_element(),
         );
-        rows
+        self
     }
 
     /// `.setting-row.stacked`: a control that needs the full width goes under its title.
@@ -867,7 +856,7 @@ fn appearance_items() -> [(Appearance, &'static str, Option<Icon>); 3] {
 }
 
 impl SettingsPage {
-    fn appearance(&self, settings: &Settings, window: &Window, palette: &Palette) -> Div {
+    fn appearance(&self, settings: &Settings, window: &Window, palette: &Palette, cx: &App) -> Div {
         let frontend = &settings.frontend;
         let width = self.inner_width(window);
         let (count, item) = columns(width, OPTION_MIN, OPTION_GAP);
@@ -926,14 +915,7 @@ impl SettingsPage {
             )
             .row(
                 "Interface size",
-                Some(
-                    if cfg!(target_os = "macos") {
-                        "⌘ + and ⌘ − adjust it anywhere."
-                    } else {
-                        "Ctrl + and Ctrl − adjust it anywhere"
-                    }
-                    .into(),
-                ),
+                Some(zoom_hint(cx).into()),
                 widgets::setting_field(
                     Select::new(&self.zoom).accessibility_label("Interface size"),
                 ),
@@ -1154,33 +1136,9 @@ impl SettingsPage {
                 }),
         );
         let mut rows = Rows::new(self.narrow())
-            .switch(
-                "legal-moves",
-                "Show possible moves",
-                None,
-                frontend.show_legal_moves,
-                true,
-                |s, on| s.frontend.show_legal_moves = on,
-                palette,
-            )
-            .switch(
-                "premove",
-                "Premoves",
-                Some("Plays your queued move automatically when legal"),
-                frontend.premove,
-                true,
-                |s, on| s.frontend.premove = on,
-                palette,
-            )
-            .switch(
-                "confirm-move",
-                "Confirm correspondence moves",
-                None,
-                frontend.confirm_correspondence,
-                true,
-                |s, on| s.frontend.confirm_correspondence = on,
-                palette,
-            )
+            .switch("legal-moves", settings, true, palette)
+            .switch("premove", settings, true, palette)
+            .switch("confirm-move", settings, true, palette)
             .row(
                 "Pawn promotion",
                 None,
@@ -1203,38 +1161,8 @@ impl SettingsPage {
                 v_flex().gap(px(8.)).child(checkboxes).child(reset),
                 palette,
             );
-        let switches: [SwitchRow; 4] = [
-            (
-                "opening-names",
-                "Show opening names",
-                None,
-                frontend.show_opening_name,
-                |s, on| s.frontend.show_opening_name = on,
-            ),
-            (
-                "blindfold",
-                "Blindfold",
-                Some("Hide pieces while playing"),
-                frontend.blindfold,
-                |s, on| s.frontend.blindfold = on,
-            ),
-            (
-                "zen-mode",
-                "Zen mode",
-                Some("Board and game controls only · Z to toggle"),
-                frontend.zen_mode,
-                |s, on| s.frontend.zen_mode = on,
-            ),
-            (
-                "puzzle-next",
-                "Next puzzle after solving",
-                None,
-                frontend.puzzle_auto_next,
-                |s, on| s.frontend.puzzle_auto_next = on,
-            ),
-        ];
-        for (id, title, hint, on, set) in switches {
-            rows = rows.switch(id, title, hint, on, true, set, palette);
+        for id in ["opening-names", "blindfold", "zen-mode", "puzzle-next"] {
+            rows = rows.switch(id, settings, true, palette);
         }
         rows.card(palette)
     }
@@ -1242,48 +1170,20 @@ impl SettingsPage {
     fn gestures(&self, settings: &Settings, palette: &Palette) -> Div {
         let frontend = &settings.frontend;
         Rows::new(self.narrow())
-            .switch(
-                "swipe-navigation",
-                "Two-finger swipe",
-                Some("Go back and forward with a horizontal swipe"),
-                frontend.swipe_navigation,
-                true,
-                |s, on| s.frontend.swipe_navigation = on,
-                palette,
-            )
+            .switch("swipe-navigation", settings, true, palette)
             .switch(
                 "swipe-indicator",
-                "Swipe feedback",
-                Some("Show an edge hint that follows the swipe"),
-                frontend.swipe_indicator,
+                settings,
                 frontend.swipe_navigation,
-                |s, on| s.frontend.swipe_indicator = on,
                 palette,
             )
             .card(palette)
     }
 
     fn online(&self, settings: &Settings, palette: &Palette) -> Div {
-        let core = &settings.core;
         Rows::new(self.narrow())
-            .switch(
-                "receive-challenges",
-                "Receive challenges",
-                None,
-                core.receive_challenges,
-                true,
-                |s, on| s.core.receive_challenges = on,
-                palette,
-            )
-            .switch(
-                "online-chat",
-                "Game chat",
-                None,
-                core.online_chat,
-                true,
-                |s, on| s.core.online_chat = on,
-                palette,
-            )
+            .switch("receive-challenges", settings, true, palette)
+            .switch("online-chat", settings, true, palette)
             .row(
                 "Check correspondence games",
                 Some("Only while KChess is open".into()),
@@ -1297,30 +1197,14 @@ impl SettingsPage {
 
     fn analysis(&self, settings: &Settings, palette: &Palette) -> Div {
         Rows::new(self.narrow())
-            .switch(
-                "cloud-eval",
-                "Lichess cloud evaluation",
-                Some("Sends analyzed positions to Lichess. Paused during your online games."),
-                settings.core.cloud_eval,
-                true,
-                |s, on| s.core.cloud_eval = on,
-                palette,
-            )
+            .switch("cloud-eval", settings, true, palette)
             .card(palette)
     }
 
     fn sound(&self, settings: &Settings, palette: &Palette) -> Div {
         let frontend = &settings.frontend;
         Rows::new(self.narrow())
-            .switch(
-                "sound",
-                "Game sounds",
-                None,
-                frontend.sound_enabled,
-                true,
-                |s, on| s.frontend.sound_enabled = on,
-                palette,
-            )
+            .switch("sound", settings, true, palette)
             .row(
                 "Volume",
                 Some(format!("{}%", (frontend.sound_volume * 100.).round()).into()),
@@ -1376,75 +1260,18 @@ impl SettingsPage {
     fn notifications(&self, settings: &Settings, palette: &Palette, cx: &mut Context<Self>) -> Div {
         let frontend = &settings.frontend;
         let enabled = frontend.notifications_enabled;
-        let mut rows = Rows::new(self.narrow()).switch(
-            "notifications",
-            "Desktop notifications",
-            None,
-            enabled,
-            true,
-            |s, on| s.frontend.notifications_enabled = on,
-            palette,
-        );
-        let switches: [SwitchRow; 8] = [
-            (
-                "notify-active",
-                "While I'm using KChess",
-                None,
-                frontend.notify_active,
-                |s, on| s.frontend.notify_active = on,
-            ),
-            (
-                "notify-background",
-                "While KChess is in the background",
-                None,
-                frontend.notify_background,
-                |s, on| s.frontend.notify_background = on,
-            ),
-            (
-                "notify-opponent",
-                "Opponent moves",
-                None,
-                frontend.notify_opponent_move,
-                |s, on| s.frontend.notify_opponent_move = on,
-            ),
-            (
-                "notify-low-time",
-                "Low on time",
-                None,
-                frontend.notify_low_time,
-                |s, on| s.frontend.notify_low_time = on,
-            ),
-            (
-                "notify-games",
-                "Game start and result",
-                None,
-                frontend.notify_game_events,
-                |s, on| s.frontend.notify_game_events = on,
-            ),
-            (
-                "notify-computer",
-                "Computer moves",
-                None,
-                frontend.notify_computer_move,
-                |s, on| s.frontend.notify_computer_move = on,
-            ),
-            (
-                "notify-challenges",
-                "Challenges",
-                None,
-                frontend.notify_challenges,
-                |s, on| s.frontend.notify_challenges = on,
-            ),
-            (
-                "notify-sound",
-                "System sound",
-                Some("For system notifications"),
-                frontend.notify_sound,
-                |s, on| s.frontend.notify_sound = on,
-            ),
-        ];
-        for (id, title, hint, on, set) in switches {
-            rows = rows.switch(id, title, hint, on, enabled, set, palette);
+        let mut rows = Rows::new(self.narrow()).switch("notifications", settings, true, palette);
+        for id in [
+            "notify-active",
+            "notify-background",
+            "notify-opponent",
+            "notify-low-time",
+            "notify-games",
+            "notify-computer",
+            "notify-challenges",
+            "notify-sound",
+        ] {
+            rows = rows.switch(id, settings, enabled, palette);
         }
         rows.row(
             "Try it",
@@ -1501,7 +1328,7 @@ impl Render for SettingsPage {
         let state = handle.read(cx);
         let settings = state.settings.clone();
         let body = match self.section {
-            Section::Appearance => self.appearance(&settings, window, &palette),
+            Section::Appearance => self.appearance(&settings, window, &palette, cx),
             Section::Themes => self.themes(
                 &settings,
                 &state.custom_themes,
