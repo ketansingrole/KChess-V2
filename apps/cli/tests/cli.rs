@@ -1062,11 +1062,24 @@ fn a_resumed_clock_runs_out() {
     let mut stdin = child.stdin.take().expect("stdin");
     stdin.write_all(b"pause\n").expect("resume");
     stdin.flush().expect("flush");
-    // Each state as it is shown, until the one where Black's 0.3 s have run out.
+    // Each state as it is shown, until the one where Black's 0.3 s have run out. A clock that
+    // never runs out shows nothing more: the wait for it ends long after 0.3 s.
     let stdout = std::io::BufReader::new(child.stdout.take().expect("stdout"));
+    let (shown, states_shown) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in stdout.lines() {
+            if shown.send(line.expect("a line")).is_err() {
+                return;
+            }
+        }
+    });
     let mut states = Vec::new();
-    for line in stdout.lines() {
-        let state: Value = serde_json::from_str(&line.expect("a line")).expect("a state");
+    loop {
+        let Ok(line) = states_shown.recv_timeout(std::time::Duration::from_secs(30)) else {
+            let _ = child.kill();
+            panic!("the clock did not run out: {states:?}");
+        };
+        let state: Value = serde_json::from_str(&line).expect("a state");
         let over = !state["result"].is_null();
         states.push(state);
         if over {
