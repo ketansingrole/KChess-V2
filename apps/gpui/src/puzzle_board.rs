@@ -8,8 +8,10 @@ use std::time::Duration;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
+use kchess_contracts::types::PuzzleWrongMove;
+use kchess_domain::trainer::puzzle_session::Detail;
 use kchess_domain::variant::Setup;
-use serde_json::{Value, json};
+use serde_json::Value;
 use shakmaty::Color;
 
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
@@ -36,7 +38,7 @@ pub enum PuzzleBoardEvent {
         uci: String,
     },
     /// The first verdict on the puzzle: solved cleanly or not, and how far it got. Sent once.
-    Outcome { win: bool, detail: Value },
+    Outcome { win: bool, detail: Detail },
     /// The puzzle is over: solved, or its solution played out.
     Done,
 }
@@ -63,9 +65,8 @@ pub struct PuzzleBoard {
     /// The player's last wrong move here (UCI), until the next try.
     last_wrong: Option<String>,
     /// The first wrong try at each of the player's moves, as the attempt log keeps them
-    /// (`{index, uci}`, `index` along the solution), so the finished puzzle opens on the
-    /// analysis board with them.
-    tried: Vec<Value>,
+    /// (`index` along the solution), so the finished puzzle opens on the analysis board with them.
+    tried: Vec<PuzzleWrongMove>,
     /// Explanations of this board's puzzle.
     explainer: Entity<crate::ai::Explainer>,
     /// A hint was shown at some point: `hinted` itself clears after each move.
@@ -250,8 +251,8 @@ impl PuzzleBoard {
         self.last_wrong.as_deref()
     }
 
-    /// The first wrong try at each of the player's moves (`{index, uci}`).
-    pub fn wrong_moves(&self) -> &[Value] {
+    /// The first wrong try at each of the player's moves.
+    pub fn wrong_moves(&self) -> &[PuzzleWrongMove] {
         &self.tried
     }
 
@@ -381,11 +382,11 @@ impl PuzzleBoard {
             return;
         }
         self.outcome = Some(win);
-        let detail = json!({
-            "revealed": self.revealed,
-            "hinted": self.hint_used,
-            "total": self.on_board.as_ref().map_or(0, OnBoard::player_moves),
-        });
+        let detail = Detail {
+            revealed: self.revealed,
+            hinted: self.hint_used,
+            total: self.on_board.as_ref().map_or(0, OnBoard::player_moves) as u32,
+        };
         cx.emit(PuzzleBoardEvent::Outcome { win, detail });
     }
 
@@ -401,9 +402,12 @@ impl PuzzleBoard {
         let (correct, reply) = board.player_move(uci);
         self.last_wrong = (!correct).then(|| uci.to_string());
         // The player moves first, so their move `index` is the solution's `2 × index`.
-        let ply = 2 * index;
-        if !correct && !self.tried.iter().any(|tried| tried["index"] == ply) {
-            self.tried.push(json!({ "index": ply, "uci": uci }));
+        let ply = 2 * index as u32;
+        if !correct && !self.tried.iter().any(|tried| tried.index == ply) {
+            self.tried.push(PuzzleWrongMove {
+                index: ply,
+                uci: uci.to_string(),
+            });
         }
         if !correct {
             self.mistakes += 1;

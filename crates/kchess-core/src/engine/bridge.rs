@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use super::analysis::Analysis;
@@ -232,11 +232,11 @@ impl ReviewHost for ReviewBridge {
     }
 
     fn update(&self, update: ReviewUpdate) {
-        self.emit(CoreEvent::ReviewUpdate(json!(update)));
+        self.emit(CoreEvent::ReviewUpdate(Box::new(update)));
     }
 
     fn status(&self, status: ReviewStatus) {
-        self.emit(CoreEvent::ReviewStatus(json!(status)));
+        self.emit(CoreEvent::ReviewStatus(status));
     }
 }
 

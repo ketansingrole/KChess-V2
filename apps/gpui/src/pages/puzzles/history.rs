@@ -11,7 +11,7 @@ use gpui_kit::*;
 use kchess_contracts::calls;
 use kchess_contracts::check::{ActivityMax, Username};
 use kchess_contracts::types::{
-    PuzzleActivityEntry, PuzzleAttempt, PuzzleProgress, PuzzleProgressQuery, Reply,
+    PuzzleActivityEntry, PuzzleAttempt, PuzzleProgress, PuzzleProgressQuery, PuzzleWrongMove, Reply,
 };
 use serde_json::{Value, json};
 
@@ -46,7 +46,7 @@ const SAME_ATTEMPT_MS: f64 = 15. * 60_000.;
 /// What the page does for a row.
 pub enum HistoryEvent {
     Retry(Value),
-    Analyse(Value, Vec<Value>),
+    Analyse(Value, Vec<PuzzleWrongMove>),
     Train,
     Reconnect,
 }
@@ -62,7 +62,7 @@ struct Row {
     solved: bool,
     moves: Option<String>,
     puzzle: Value,
-    wrong: Vec<Value>,
+    wrong: Vec<PuzzleWrongMove>,
     /// The mode shown, and the one the filter matches.
     mode: &'static str,
     played_in: &'static str,
@@ -135,12 +135,7 @@ fn rows_of(local: &[PuzzleAttempt], lichess: &[PuzzleActivityEntry]) -> Vec<Row>
                 solved: matches!(outcome, "solved" | "hinted"),
                 moves: Some(moves),
                 puzzle: json!(attempt.puzzle),
-                wrong: attempt
-                    .wrong_moves
-                    .iter()
-                    .flatten()
-                    .map(|wrong| json!(wrong))
-                    .collect(),
+                wrong: attempt.wrong_moves.clone().unwrap_or_default(),
                 mode: if attempt.retry { "retry" } else { mode },
                 played_in: mode,
             }

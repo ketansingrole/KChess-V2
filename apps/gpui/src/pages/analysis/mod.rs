@@ -18,6 +18,7 @@ use crate::game::tree::TreePgn as _;
 use crate::shortcuts::{PageKey, page_key};
 use engine::{prefs_lines, stop_analysis};
 use kchess_contracts::calls;
+use kchess_contracts::types::AnalysisUpdate;
 use tree_view::{TreeView, flow};
 
 /// What the analysis board's own keys do.
@@ -297,16 +298,16 @@ pub struct AnalysisPage {
     attached: bool,
     engine_ready: bool,
     engine_identity: Option<String>,
-    evaluations: HashMap<String, Value>,
+    evaluations: HashMap<String, AnalysisUpdate>,
     /// The cache's keys, oldest first.
     order: VecDeque<String>,
-    live: Option<Value>,
+    live: Option<AnalysisUpdate>,
     engine_error: Option<String>,
     engine_busy: bool,
     /// The position the running search is for, and the request's ids.
     wanted: String,
     client_id: u64,
-    latest_id: f64,
+    latest_id: u64,
     cloud: Option<kchess_contracts::types::CloudEval>,
     cloud_busy: bool,
     cloud_error: Option<String>,
@@ -561,7 +562,7 @@ impl AnalysisPage {
             engine_busy: false,
             wanted: String::new(),
             client_id: 0,
-            latest_id: 0.,
+            latest_id: 0,
             cloud: None,
             cloud_busy: false,
             cloud_error: None,
@@ -1122,7 +1123,7 @@ impl AnalysisPage {
                 // The threat is the opponent's best move, in red.
                 .take(if threat { 1 } else { usize::MAX })
                 .filter_map(|(rank, line)| {
-                    let uci = line["pv"][0].as_str()?;
+                    let uci = line.pv.first()?;
                     let (from, to) = (now_square(uci, 0..2)?, now_square(uci, 2..4)?);
                     Some(if threat {
                         Arrow::brush("red", from, to)
@@ -1232,7 +1233,7 @@ impl AnalysisPage {
             && self.threat_position().is_none())
         .then(|| self.lines(cx).first().cloned())
         .flatten()
-        .and_then(|line| line["pv"][0].as_str().map(str::to_string));
+        .and_then(|line| line.pv.first().cloned());
         let mut command: Option<String> = None;
         let turn = Turn {
             taking: true,

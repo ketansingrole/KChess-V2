@@ -7,7 +7,10 @@ use kchess_contracts::calls::{self, CoreCall};
 use kchess_contracts::check::{
     Bounded, OptionalAccount, TournamentId, TournamentPassword, Username,
 };
-use kchess_contracts::types::{Reply, TournamentSummary, TournamentSystem};
+use kchess_contracts::types::{
+    Reply, TournamentClock, TournamentDetail, TournamentList, TournamentStatus, TournamentSummary,
+    TournamentSystem,
+};
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -38,13 +41,22 @@ const CLOCK_TICK: Duration = Duration::from_millis(250);
 /// Whether an event of `status`, last read `since` ago, is due a refresh. `since` counts from
 /// the answer, which comes a little after the tick that asked: the slack keeps a running event on
 /// every tick rather than every other one.
-fn refresh_due(status: &Value, since: Duration) -> bool {
+fn refresh_due(status: TournamentStatus, since: Duration) -> bool {
     const SLACK: Duration = Duration::from_secs(2);
-    match status.as_str() {
-        Some("started") => since + SLACK >= REFRESH_EVERY,
-        Some("created") => since + SLACK >= WAITING_REFRESH_EVERY,
-        _ => false,
+    match status {
+        TournamentStatus::Started => since + SLACK >= REFRESH_EVERY,
+        TournamentStatus::Created => since + SLACK >= WAITING_REFRESH_EVERY,
+        TournamentStatus::Finished => false,
     }
+}
+
+/// Playable here, and open to the account (or nothing says it is not).
+fn open_to_join(detail: &TournamentDetail) -> bool {
+    detail.summary.playable
+        && detail
+            .verdicts
+            .as_ref()
+            .is_none_or(|verdicts| verdicts.accepted)
 }
 
 /// The pairing system Lichess names `name` ("arena", "swiss").
@@ -57,10 +69,10 @@ fn system_named(name: &str) -> TournamentSystem {
 }
 
 /// "3+2", "½+0".
-pub fn control(clock: &Value) -> String {
+pub fn control(clock: &TournamentClock) -> String {
     crate::widgets::time_control(
-        clock["limit"].as_f64().unwrap_or_default() / 60.,
-        clock["increment"].as_f64().unwrap_or_default(),
+        clock.limit.as_f64().unwrap_or_default() / 60.,
+        clock.increment.as_f64().unwrap_or_default(),
     )
 }
 
@@ -68,7 +80,7 @@ pub fn control(clock: &Value) -> String {
 struct Open {
     system: String,
     id: String,
-    detail: Option<Value>,
+    detail: Option<TournamentDetail>,
     /// When `detail` arrived: the top game's clocks are as they were then.
     received: Instant,
     error: Option<SharedString>,
@@ -91,7 +103,7 @@ pub(crate) enum Action {
 pub struct TournamentsPage {
     /// Only what KChess can play, or everything.
     playable_only: bool,
-    list: Option<Value>,
+    list: Option<TournamentList>,
     /// The list's request: an answer to an earlier one (another account's) is dropped.
     loading: crate::loading::Loading,
     /// `JoinedTournament`s the core keeps.
@@ -123,7 +135,7 @@ impl TournamentsPage {
     #[cfg(test)]
     pub(crate) fn shown_name(&self) -> Option<String> {
         let detail = self.open.as_ref()?.detail.as_ref()?;
-        detail["name"].as_str().map(str::to_string)
+        Some(detail.summary.name.clone())
     }
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> TournamentsPage {
@@ -162,8 +174,13 @@ impl TournamentsPage {
                     .update(cx, |this, cx| {
                         let running = this.open.as_ref().is_some_and(|open| {
                             open.detail.as_ref().is_some_and(|detail| {
-                                detail["status"] != json!("finished")
-                                    && event::featured_running(&detail["featured"]).is_some()
+                                detail.summary.status != TournamentStatus::Finished
+                                    && detail
+                                        .extras
+                                        .featured
+                                        .as_ref()
+                                        .and_then(event::featured_running)
+                                        .is_some()
                             })
                         });
                         if running {
@@ -223,7 +240,7 @@ impl TournamentsPage {
                     return;
                 }
                 match answer {
-                    Ok(list) => this.list = serde_json::to_value(list).ok(),
+                    Ok(list) => this.list = Some(list),
                     Err(cause) => this.loading.failed("tournaments", &cause),
                 }
                 cx.notify();
@@ -282,11 +299,10 @@ impl TournamentsPage {
             .joined
             .iter()
             .any(|entry| entry["id"] == json!(id) && entry["system"] == json!("swiss"))
-            || self.list.as_ref().is_some_and(|list| {
-                list["swiss"]
-                    .as_array()
-                    .is_some_and(|swiss| swiss.iter().any(|entry| entry["id"] == json!(id)))
-            });
+            || self
+                .list
+                .as_ref()
+                .is_some_and(|list| list.swiss.iter().any(|entry| entry.id == id));
         self.show_event(if swiss { "swiss" } else { "arena" }, id, cx);
     }
 
@@ -301,9 +317,9 @@ impl TournamentsPage {
     fn refresh_due(&self) -> bool {
         self.visible
             && self.open.as_ref().is_some_and(|open| {
-                open.detail
-                    .as_ref()
-                    .is_some_and(|detail| refresh_due(&detail["status"], open.received.elapsed()))
+                open.detail.as_ref().is_some_and(|detail| {
+                    refresh_due(detail.summary.status, open.received.elapsed())
+                })
             })
     }
 
@@ -345,7 +361,7 @@ impl TournamentsPage {
                 };
                 match answer {
                     Ok(detail) => {
-                        open.detail = serde_json::to_value(detail).ok();
+                        open.detail = Some(detail);
                         open.received = Instant::now();
                         open.error = None;
                     }
@@ -373,10 +389,9 @@ impl TournamentsPage {
             return false;
         };
         !self.busy
-            && detail["status"] != json!("finished")
+            && detail.summary.status != TournamentStatus::Finished
             && !self.joined_now(detail, cx)
-            && detail["playable"] == json!(true)
-            && detail["verdicts"]["accepted"] != json!(false)
+            && open_to_join(detail)
     }
 
     /// `join`: with the entry code, if any; a login without the permission asks to reconnect.
@@ -389,23 +404,24 @@ impl TournamentsPage {
             return;
         };
         let password = self.password.read(cx).value().trim().to_string();
+        let summary = &detail.summary;
         let join = calls::JoinTournament {
-            system: system_named(detail["system"].as_str().unwrap_or_default()),
-            id: TournamentId(detail["id"].as_str().unwrap_or_default().to_string()),
+            system: summary.system,
+            id: TournamentId(summary.id.clone()),
             account: Username(account),
             password: (!password.is_empty()).then_some(TournamentPassword(password)),
         };
         self.act(
             join,
-            Some(if detail["system"] == json!("arena") {
+            Some(if summary.system == TournamentSystem::Arena {
                 format!(
                     "Joined {}. Games open here automatically when you are paired.",
-                    detail["name"].as_str().unwrap_or_default()
+                    summary.name
                 )
             } else {
                 format!(
                     "Joined {}. Each round's game opens here automatically.",
-                    detail["name"].as_str().unwrap_or_default()
+                    summary.name
                 )
             }),
             window,
@@ -422,8 +438,8 @@ impl TournamentsPage {
         };
         self.act(
             calls::LeaveTournament {
-                system: system_named(detail["system"].as_str().unwrap_or_default()),
-                id: TournamentId(detail["id"].as_str().unwrap_or_default().to_string()),
+                system: detail.summary.system,
+                id: TournamentId(detail.summary.id.clone()),
                 account: Username(account),
             },
             None,
@@ -508,23 +524,25 @@ impl TournamentsPage {
     }
 
     /// The open event's own actions: join it, or go to your game and leave it.
-    fn event_actions(&self, detail: Option<&Value>, cx: &App) -> Vec<Action> {
+    fn event_actions(&self, detail: Option<&TournamentDetail>, cx: &App) -> Vec<Action> {
         let Some(detail) = detail else {
             return Vec::new();
         };
-        if detail["status"] == json!("finished") || self.busy {
+        if detail.summary.status == TournamentStatus::Finished || self.busy {
             return Vec::new();
         }
         if !self.joined_now(detail, cx) {
-            let open =
-                detail["playable"] == json!(true) && detail["verdicts"]["accepted"] != json!(false);
-            return if open { vec![Action::Join] } else { Vec::new() };
+            return if open_to_join(detail) {
+                vec![Action::Join]
+            } else {
+                Vec::new()
+            };
         }
         let mut actions = Vec::new();
-        if detail["me"]["gameId"].is_string() {
+        if detail.me.as_ref().is_some_and(|me| me.game_id.is_some()) {
             actions.push(Action::Game);
         }
-        actions.push(if detail["system"] == json!("arena") {
+        actions.push(if detail.summary.system == TournamentSystem::Arena {
             Action::Pause
         } else {
             Action::Withdraw
@@ -547,7 +565,7 @@ impl TournamentsPage {
                     .open
                     .as_ref()
                     .and_then(|open| open.detail.as_ref())
-                    .and_then(|detail| detail["me"]["gameId"].as_str().map(str::to_string));
+                    .and_then(|detail| detail.me.as_ref()?.game_id.clone());
                 if let Some(id) = game {
                     crate::pages::online::open_game(&id, window, cx);
                 }
@@ -797,18 +815,23 @@ pub fn open_event(system: &'static str, id: &str, window: &mut Window, cx: &mut 
 mod tests {
     #[test]
     fn only_a_running_event_refreshes_every_tick_and_a_waiting_one_each_minute() {
-        use super::{REFRESH_EVERY, WAITING_REFRESH_EVERY, refresh_due};
-        use serde_json::json;
+        use super::{REFRESH_EVERY, TournamentStatus, WAITING_REFRESH_EVERY, refresh_due};
         use std::time::Duration;
         let tick = REFRESH_EVERY - Duration::from_millis(300);
-        assert!(refresh_due(&json!("started"), tick));
-        assert!(!refresh_due(&json!("started"), Duration::from_secs(1)));
+        assert!(refresh_due(TournamentStatus::Started, tick));
+        assert!(!refresh_due(
+            TournamentStatus::Started,
+            Duration::from_secs(1)
+        ));
         // An upcoming event used to be refreshed every tick, for hours before its start.
-        assert!(!refresh_due(&json!("created"), tick));
+        assert!(!refresh_due(TournamentStatus::Created, tick));
         assert!(refresh_due(
-            &json!("created"),
+            TournamentStatus::Created,
             WAITING_REFRESH_EVERY - Duration::from_millis(300)
         ));
-        assert!(!refresh_due(&json!("finished"), Duration::from_secs(3600)));
+        assert!(!refresh_due(
+            TournamentStatus::Finished,
+            Duration::from_secs(3600)
+        ));
     }
 }

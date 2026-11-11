@@ -241,7 +241,7 @@ struct Session<'a> {
 }
 
 /// What the board knew at the verdict.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Detail {
     #[serde(default)]

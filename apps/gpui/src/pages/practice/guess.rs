@@ -5,6 +5,7 @@
 //! (`kchess_domain::training::guess`); the other side's moves are played for you.
 
 use kchess_contracts::calls;
+use kchess_contracts::types::{AnalysisUpdate, EngineLine};
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -124,11 +125,11 @@ enum Probe {
 }
 
 /// A line's score from the guessing side's point of view; lines are from White's.
-fn eval_of(line: &Value, side: Color) -> Option<Eval> {
-    let eval = if let Some(mate) = line["mate"].as_f64() {
+fn eval_of(line: &EngineLine, side: Color) -> Option<Eval> {
+    let eval = if let Some(mate) = line.mate {
         Eval::Mate(mate as i32)
     } else {
-        Eval::Cp(line["cp"].as_f64()? as i32)
+        Eval::Cp(line.cp? as i32)
     };
     Some(eval.for_side(side == Color::White))
 }
@@ -160,7 +161,7 @@ pub struct GuessMoves {
     pending: Option<String>,
     probe: Option<Probe>,
     /// The engine's best lines for the position at a ply.
-    best: Option<(usize, Vec<Value>)>,
+    best: Option<(usize, Vec<EngineLine>)>,
     /// The engine's evaluation after the move played at a ply (none when it found none).
     played_eval: Option<(usize, Option<Eval>)>,
     engine: PositionEngine,
@@ -452,8 +453,8 @@ impl GuessMoves {
         let listed = self.best.as_ref().and_then(|(ply, lines)| {
             (*ply == self.ply).then(|| {
                 lines.iter().find(|line| {
-                    line["pv"][0]
-                        .as_str()
+                    line.pv
+                        .first()
                         .is_some_and(|first| guess::same_move(first, uci))
                 })
             })?
@@ -571,10 +572,10 @@ impl GuessMoves {
             .best
             .as_ref()
             .and_then(|(_, lines)| lines.first())
-            .and_then(|line| line["pv"][0].as_str())
+            .and_then(|line| line.pv.first())
             .and_then(|best| {
                 let mut line = game.moves[..self.ply].to_vec();
-                line.push(best.to_string());
+                line.push(best.clone());
                 // Named only when it is a legal move there.
                 let mut sans = view::sans(&game.setup, &line);
                 (sans.len() == line.len()).then(|| sans.pop()).flatten()
@@ -619,12 +620,11 @@ impl GuessMoves {
         }));
     }
 
-    fn engine_update(&mut self, update: &Value, cx: &mut Context<Self>) {
+    fn engine_update(&mut self, update: &AnalysisUpdate, cx: &mut Context<Self>) {
         if self.probe.is_none() || !self.engine.receive(update) {
             return;
         }
-        let reached = update["depth"].as_f64().unwrap_or_default() >= PROBE_DEPTH
-            || update["done"] == json!(true);
+        let reached = update.depth >= PROBE_DEPTH || update.done;
         if reached || self.engine.error.is_some() {
             self.probe_done(cx);
         }
@@ -635,7 +635,7 @@ impl GuessMoves {
         let Some(probe) = self.probe.take() else {
             return;
         };
-        let lines = self.engine.lines();
+        let lines = self.engine.lines().to_vec();
         self.stop_engine(cx);
         match probe {
             Probe::Best(ply) => {
@@ -1126,9 +1126,8 @@ pub(super) fn loaded(pgn: &str) -> Result<(Vec<String>, Setup), &'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Game, eval_of};
+    use super::{EngineLine, Game, eval_of};
     use kchess_domain::training::guess::Eval;
-    use serde_json::json;
     use shakmaty::Color;
 
     #[test]
@@ -1149,10 +1148,17 @@ mod tests {
 
     #[test]
     fn lines_are_read_for_the_guessing_side() {
-        let line = json!({ "cp": 31, "pv": ["e2e4"] });
-        assert_eq!(eval_of(&line, Color::White), Some(Eval::Cp(31)));
-        assert_eq!(eval_of(&line, Color::Black), Some(Eval::Cp(-31)));
-        let mate = json!({ "mate": -2, "pv": ["e2e4"] });
+        let line = |cp, mate| EngineLine {
+            rank: 1,
+            depth: 10.,
+            cp,
+            mate,
+            pv: vec!["e2e4".into()],
+        };
+        let ahead = line(Some(31.), None);
+        assert_eq!(eval_of(&ahead, Color::White), Some(Eval::Cp(31)));
+        assert_eq!(eval_of(&ahead, Color::Black), Some(Eval::Cp(-31)));
+        let mate = line(None, Some(-2.));
         assert_eq!(eval_of(&mate, Color::Black), Some(Eval::Mate(2)));
     }
 }

@@ -11,7 +11,6 @@ use kchess_contracts::types::{
     AnalysisRequest, BestMoveOptions, EngineInstalled, EngineLevel, EngineStatus, Keyed,
     ReviewRequest, ReviewStatus, ReviewSummary, StoredReview,
 };
-use serde_json::json;
 
 use crate::core::{Core, LocationOverride, Mutation};
 use crate::engine::status::{engine_identity, engine_status, variant_engine_status};
@@ -91,9 +90,7 @@ impl EngineApi for Core {
             .start_analysis_with_settings(
                 request,
                 configured,
-                Arc::new(move |update| {
-                    host.emit_to(connection, CoreEvent::Analysis(json!(update)))
-                }),
+                Arc::new(move |update| host.emit_to(connection, CoreEvent::Analysis(update))),
             )
             .await
     }

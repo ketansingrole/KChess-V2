@@ -3,8 +3,7 @@
 //! the UCI moves from the root joined with spaces. The rules decide what a path means, whether a
 //! move is new, where a node goes and how it is written; this walks the tree and applies them.
 
-use serde_json::Value;
-
+use kchess_contracts::types::EngineLine;
 use kchess_domain::trainer::analysis_tree::{self, Score};
 
 pub use kchess_domain::tree::TreeNode;
@@ -43,14 +42,21 @@ pub fn child_path(parent: &str, uci: &str) -> String {
 /// The position with the moves that led to it, for repetition.
 pub use kchess_domain::records::context::analysis_context;
 
+fn score(line: &EngineLine) -> Score {
+    Score {
+        cp: line.cp,
+        mate: line.mate,
+    }
+}
+
 /// "+0.34", "−1.20", "#3", as Lichess prints them; a dash for nothing.
-pub fn format_eval(line: Option<&Value>) -> String {
-    analysis_tree::format_eval(line.and_then(Score::of_line))
+pub fn format_eval(line: Option<&EngineLine>) -> String {
+    analysis_tree::format_eval(line.map(score))
 }
 
 /// White's winning chances in −1…1, for the evaluation bar.
-pub fn winning_chances(line: Option<&Value>) -> f32 {
-    analysis_tree::winning_chances(line.and_then(Score::of_line)) as f32
+pub fn winning_chances(line: Option<&EngineLine>) -> f32 {
+    analysis_tree::winning_chances(line.map(score)) as f32
 }
 
 pub use kchess_domain::tree::pv_san;

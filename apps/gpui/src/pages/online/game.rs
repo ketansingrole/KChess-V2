@@ -23,6 +23,7 @@ use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Side, Tone};
 use kchess_contracts::types::DeclineReason;
 use kchess_domain::online_game::model::Model;
+use kchess_domain::online_game::server::ConnectionReport;
 
 /// The player may touch pieces: the game is on, at its last move.
 pub fn can_play(online: &OnlineState) -> bool {
@@ -1223,9 +1224,9 @@ fn connection_failure(online: &OnlineState) -> Failure {
         .model()
         .online_connection
         .as_ref()
-        .and_then(|connection| connection["phase"].as_str())
+        .and_then(|connection| ConnectionReport::read(connection).phase)
         .unwrap_or_default();
-    match (phase, online.failure.as_deref()) {
+    match (phase.as_str(), online.failure.as_deref()) {
         ("checking", _) => Failure::Checking,
         ("auth-required", _) | (_, Some("login")) => Failure::Login,
         (_, Some("refused" | "notFound")) => Failure::Refused,

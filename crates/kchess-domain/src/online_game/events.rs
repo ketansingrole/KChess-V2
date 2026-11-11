@@ -3,9 +3,9 @@
 
 use serde_json::{Value, json};
 
-use super::model::{
-    ClockConfig, Effect, FinishedGame, Run, Setup, at, is_running, nullish, number_or_zero,
-    string_or, turn_of,
+use super::model::{ChatEntry, ClockConfig, Effect, FinishedGame, Run, Setup, turn_of};
+use super::server::{
+    ChatLine, ConnectionReport, GameFull, GameRef, GameState, OpponentGone, Player, ServerEvent,
 };
 use crate::js;
 use crate::misc::constants::NotificationKind;
@@ -19,9 +19,8 @@ const CHAT_KEPT: usize = 300;
 const UNREACHABLE: [&str; 4] = ["checking", "reconnecting", "disconnected", "auth-required"];
 
 /// The moves of a game state, split on whitespace.
-fn moves_of(v: Option<&Value>) -> Vec<String> {
-    let text = string_or(v, "");
-    js::trim(&text)
+fn moves_of(text: Option<&str>) -> Vec<String> {
+    js::trim(text.unwrap_or_default())
         .split(js::is_space)
         .filter(|m| !m.is_empty())
         .map(str::to_owned)
@@ -31,20 +30,23 @@ fn moves_of(v: Option<&Value>) -> Vec<String> {
 impl Run<'_> {
     /// One server event. Events for other games, and types that carry no
     /// game state, are ignored.
-    pub fn read_event(&mut self, event: &Value) {
-        match js::string(event.get("type")) {
-            Some("gameStart") => self.game_start(event),
-            Some("gameFinish") => self.game_finish(event),
-            Some("opponentGone") => self.opponent_gone(event),
-            Some("chatLine") => self.chat_line(event),
-            Some(kind @ ("gameFull" | "gameState")) => self.game_state(event, kind == "gameFull"),
-            _ => {}
+    pub fn read_event(&mut self, event: &ServerEvent) {
+        let default = GameRef::default();
+        match event {
+            ServerEvent::GameStart { game } => self.game_start(game.as_ref().unwrap_or(&default)),
+            ServerEvent::GameFinish { game } => self.game_finish(game.as_ref().unwrap_or(&default)),
+            ServerEvent::OpponentGone(gone) => self.opponent_gone(gone),
+            ServerEvent::ChatLine(line) => self.chat_line(line),
+            ServerEvent::GameFull(full) => self.game_full(full),
+            ServerEvent::GameState(state) => self.game_state(state),
+            ServerEvent::Other => {}
         }
     }
 
-    /// A connection report, which the epoch makes authoritative.
+    /// A connection report, which the epoch makes authoritative. The report is kept as it came.
     pub fn read_connection(&mut self, connection: &Value) {
-        let session = js::to_number(connection.get("session"));
+        let report = ConnectionReport::read(connection);
+        let session = report.session.unwrap_or(f64::NAN);
         if session < self.m.state_epoch {
             return;
         }
@@ -53,29 +55,31 @@ impl Run<'_> {
             self.effect(Effect::ConnectionChanged);
         }
         self.m.online_connection = Some(connection.clone());
-        if js::truthy(connection.get("account")) {
-            self.m.online_account = js::to_string(connection.get("account"));
+        if let Some(account) = report.account.filter(|account| !account.is_empty()) {
+            self.m.online_account = account;
         }
-        if js::truthy(connection.get("gameId")) {
-            self.m.online_id = js::to_string(connection.get("gameId"));
+        if let Some(id) = report.game_id.filter(|id| !id.is_empty()) {
+            self.m.online_id = id;
         }
-        let lane = js::string(connection.get("lane"));
+        let lane = report.lane.as_deref();
         if lane == Some("events") && !self.m.online_id.is_empty() {
             return;
         }
-        if lane == Some("game") && js::string(connection.get("phase")) == Some("idle") {
+        if lane == Some("game") && report.phase.as_deref() == Some("idle") {
             self.m.online_phase = "idle".into();
             self.m.online_id.clear();
             self.m.online_status = "No game in progress.".into();
             self.clock_pause();
         }
-        let phase = js::string(connection.get("phase"));
-        if phase.is_some_and(|phase| UNREACHABLE.contains(&phase)) {
+        if report
+            .phase
+            .as_deref()
+            .is_some_and(|phase| UNREACHABLE.contains(&phase))
+        {
             self.m.online_phase = "disconnected".into();
-            self.m.online_status = string_or(
-                connection.get("message"),
-                "Connection interrupted. Reconnect to recover your game.",
-            );
+            self.m.online_status = report.message.unwrap_or_else(|| {
+                "Connection interrupted. Reconnect to recover your game.".into()
+            });
             self.clock_pause();
         }
     }
@@ -178,12 +182,9 @@ impl Run<'_> {
         }
     }
 
-    fn game_start(&mut self, event: &Value) {
-        let game = event.get("game");
-        let game_id = js::string(at(game, "gameId"));
-        if js::string(at(game, "speed")) == Some("correspondence")
-            && game_id != Some(self.m.online_id.as_str())
-        {
+    fn game_start(&mut self, game: &GameRef) {
+        let game_id = game.game_id.as_deref();
+        if game.correspondence() && game_id != Some(self.m.online_id.as_str()) {
             return;
         }
         let id = game_id.unwrap_or("").to_string();
@@ -192,14 +193,14 @@ impl Run<'_> {
         }
         self.m.shown_game = id.clone();
         self.m.online_id = id;
-        self.m.online_color = string_or(at(game, "color"), "white");
-        let opponent = nullish(at(game, "opponent"));
-        self.m.online_opponent = string_or(at(opponent, "username"), "Opponent");
-        self.m.online_game_rated = at(game, "rated").and_then(Value::as_bool).unwrap_or(false);
-        self.m.opponent_id = string_or(at(opponent, "id"), "");
+        self.m.online_color = game.color.clone().unwrap_or_else(|| "white".into());
+        let opponent = game.opponent.clone().unwrap_or_default();
+        self.m.online_opponent = opponent.username.unwrap_or_else(|| "Opponent".into());
+        self.m.online_game_rated = game.rated.unwrap_or(false);
+        self.m.opponent_id = opponent.id.unwrap_or_default();
         self.m.online_phase = "playing".into();
         self.m.online_status = "Game in progress".into();
-        if js::string(at(game, "speed")) != Some("correspondence") {
+        if !game.correspondence() {
             let body = format!(
                 "You are playing {} as {}.",
                 self.m.online_opponent, self.m.online_color
@@ -208,29 +209,36 @@ impl Run<'_> {
         }
     }
 
-    fn game_finish(&mut self, event: &Value) {
-        let game = event.get("game");
-        if js::string(at(game, "gameId")) != Some(self.m.online_id.as_str()) {
+    fn game_finish(&mut self, game: &GameRef) {
+        if game.game_id.as_deref() != Some(self.m.online_id.as_str()) {
             return;
         }
-        let winner = js::string(at(game, "winner"));
-        let reason = string_or(at(at(game, "status"), "name"), "finished");
-        self.finish(winner, &reason, true);
+        let reason = game
+            .status
+            .as_ref()
+            .and_then(|status| status.name.clone())
+            .unwrap_or_else(|| "finished".into());
+        self.finish(game.winner.as_deref(), &reason, true);
     }
 
-    fn opponent_gone(&mut self, event: &Value) {
-        if event.get("id").is_some()
-            && js::string(event.get("id")) != Some(self.m.online_id.as_str())
-        {
+    /// Whether an event naming game `id` is about another game than this one.
+    fn other_game(&self, id: Option<&str>) -> bool {
+        id.is_some_and(|id| id != self.m.online_id)
+    }
+
+    fn opponent_gone(&mut self, event: &OpponentGone) {
+        if self.other_game(event.id.as_deref()) {
             return;
         }
         if self.m.online_phase != "playing" {
             return;
         }
-        let gone = js::truthy(event.get("gone"));
+        let gone = event.gone.unwrap_or(false);
         self.m.opponent_gone = gone;
-        let claim = (gone && event.get("claimWinInSeconds").is_some())
-            .then(|| self.ctx.now + js::to_number(event.get("claimWinInSeconds")) * 1000.0);
+        let claim = event
+            .claim_win_in_seconds
+            .filter(|_| gone)
+            .map(|seconds| self.ctx.now + seconds * 1000.0);
         self.m.claim_at = claim;
         self.m.online_status = if gone {
             "Opponent disconnected…".into()
@@ -239,47 +247,50 @@ impl Run<'_> {
         };
     }
 
-    fn chat_line(&mut self, event: &Value) {
-        if event.get("id").is_some()
-            && js::string(event.get("id")) != Some(self.m.online_id.as_str())
-        {
+    fn chat_line(&mut self, event: &ChatLine) {
+        if self.other_game(event.id.as_deref()) {
             return;
         }
         if !self.ctx.chat_enabled {
             return;
         }
-        let room = if js::string(event.get("room")) == Some("spectator") {
+        let room = if event.room.as_deref() == Some("spectator") {
             "spectator"
         } else {
             "player"
         };
-        self.m.chat.push(json!({
-            "user": event.get("username").cloned().unwrap_or(Value::Null),
-            "text": event.get("text").cloned().unwrap_or(Value::Null),
-            "room": room,
-        }));
+        self.m.chat.push(ChatEntry {
+            user: event.username.clone(),
+            text: event.text.clone(),
+            room: room.into(),
+        });
         let excess = self.m.chat.len().saturating_sub(CHAT_KEPT);
         self.m.chat.drain(..excess);
     }
 
-    /// A `gameFull` or `gameState` event: the board, the clocks, the offers and the outcome.
-    fn game_state(&mut self, event: &Value, full: bool) {
-        if event.get("id").is_some()
-            && !self.m.online_id.is_empty()
-            && js::string(event.get("id")) != Some(self.m.online_id.as_str())
-        {
+    /// A `gameFull`: the game, then its state.
+    fn game_full(&mut self, full: &GameFull) {
+        if !self.m.online_id.is_empty() && self.other_game(full.id.as_deref()) {
             return;
         }
-        let state = if full {
-            event.get("state")
-        } else {
-            Some(event)
-        };
         let previous = self.m.online_moves.len();
-        if full {
-            self.read_full(event);
+        self.read_full(full);
+        let state = full.state.clone().unwrap_or_default();
+        self.read_state(&state, previous, true);
+    }
+
+    /// A `gameState`.
+    fn game_state(&mut self, state: &GameState) {
+        if !self.m.online_id.is_empty() && self.other_game(state.id.as_deref()) {
+            return;
         }
-        self.m.online_moves = moves_of(at(state, "moves"));
+        let previous = self.m.online_moves.len();
+        self.read_state(state, previous, false);
+    }
+
+    /// The board, the clocks, the offers and the outcome of a game's state.
+    fn read_state(&mut self, state: &GameState, previous: usize, full: bool) {
+        self.m.online_moves = moves_of(state.moves.as_deref());
         if previous > 0 && self.m.online_moves.len() > previous {
             let replayed = self.m.replayed();
             let san = replayed.played.last().cloned();
@@ -293,14 +304,9 @@ impl Run<'_> {
                 self.m.takeback_offer = "none".into();
             }
         }
-        let (theirs, mine) = if self.m.online_color == "white" {
-            ("b", "w")
-        } else {
-            ("w", "b")
-        };
-        let flag = |key: String| js::truthy(at(state, &key));
-        let their_draw = flag(format!("{theirs}draw"));
-        let my_draw = flag(format!("{mine}draw"));
+        let white = self.m.online_color == "white";
+        let their_draw = state.draw(!white);
+        let my_draw = state.draw(white);
         if their_draw && self.m.draw_offer != "theirs" && !full {
             let body = format!("{} offers a draw.", self.m.online_opponent);
             self.notify(NotificationKind::GameEvents, "Draw offered", body);
@@ -313,18 +319,17 @@ impl Run<'_> {
             "none"
         }
         .into();
-        self.m.takeback_offer = if flag(format!("{theirs}takeback")) {
+        self.m.takeback_offer = if state.takeback(!white) {
             "theirs"
-        } else if flag(format!("{mine}takeback")) {
+        } else if state.takeback(white) {
             "mine"
         } else {
             "none"
         }
         .into();
-        let expiration = at(state, "expiration");
-        self.m.first_move_by = js::truthy(expiration).then(|| {
-            let wait = js::to_number(at(expiration, "millisToMove"))
-                - js::to_number(at(expiration, "idleMillis"));
+        self.m.first_move_by = state.expiration.as_ref().map(|expiration| {
+            let wait = expiration.millis_to_move.unwrap_or(f64::NAN)
+                - expiration.idle_millis.unwrap_or(f64::NAN);
             // Math.max(0, wait): NaN stays NaN.
             let clamped = if wait.is_nan() || wait > 0.0 {
                 wait
@@ -333,19 +338,15 @@ impl Run<'_> {
             };
             self.ctx.now + clamped
         });
-        let running = is_running(at(state, "status"));
-        let white = number_or_zero(at(state, "wtime"));
-        let black = number_or_zero(at(state, "btime"));
+        let running = state.running();
+        let white_left = state.wtime.unwrap_or(0.0);
+        let black_left = state.btime.unwrap_or(0.0);
         // Berserking halves the clock; the next state shows it.
         if !self.m.online_tournament.is_empty()
             && let Some(config) = self.m.online_clock_config.clone()
         {
             let half = config.initial * 500.0;
-            let mine_left = if self.m.online_color == "white" {
-                white
-            } else {
-                black
-            };
+            let mine_left = if white { white_left } else { black_left };
             if self.m.own_moves() == 0 && mine_left <= half + 1000.0 && mine_left > 0.0 {
                 self.m.berserked = true;
             }
@@ -355,8 +356,8 @@ impl Run<'_> {
         let ticking = (running && self.m.online_moves.len() >= 2).then(|| self.m.turn());
         let initial = self.m.online_initial;
         self.effect(Effect::ClockSet {
-            white,
-            black,
+            white: white_left,
+            black: black_left,
             ticking,
             initial_seconds: (initial != 0.0 && !initial.is_nan()).then_some(initial),
         });
@@ -366,36 +367,34 @@ impl Run<'_> {
                 self.m.online_status = "Game in progress".into();
             }
         } else {
-            let winner = js::string(at(state, "winner"));
-            let reason = js::to_string(at(state, "status"));
-            self.finish(winner, &reason, true);
+            let reason = state.status.as_deref().unwrap_or("undefined");
+            self.finish(state.winner.as_deref(), reason, true);
         }
     }
 
     /// The fields only a full game carries, and the board they set up.
-    fn read_full(&mut self, event: &Value) {
-        let id = js::string(event.get("id")).unwrap_or("").to_string();
+    fn read_full(&mut self, event: &GameFull) {
+        let id = event.id.clone().unwrap_or_default();
         if self.m.shown_game != id {
             self.reset_game();
             self.m.shown_game = id.clone();
             self.effect(Effect::LoadChat { id: id.clone() });
         }
         self.m.online_id = id;
-        let clock = nullish(event.get("clock"));
-        self.m.online_clock_config = match clock {
-            Some(clock) if clock.get("initial").is_some() => Some(ClockConfig {
-                initial: js::to_number(clock.get("initial")) / 1000.0,
-                increment: number_or_zero(clock.get("increment")) / 1000.0,
-            }),
-            _ => None,
-        };
-        self.m.online_initial = number_or_zero(at(clock, "initial")) / 1000.0;
-        self.m.online_game_rated = event.get("rated").and_then(Value::as_bool).unwrap_or(false);
-        self.m.online_speed = string_or(event.get("speed"), "");
-        self.m.online_days_per_turn =
-            nullish(event.get("daysPerTurn")).map(|v| js::to_number(Some(v)));
-        self.m.online_tournament = string_or(event.get("tournamentId"), "");
-        let key = js::string(at(event.get("variant"), "key"));
+        let clock = event.clock.clone().unwrap_or_default();
+        self.m.online_clock_config = clock.initial.map(|initial| ClockConfig {
+            initial: initial / 1000.0,
+            increment: clock.increment.unwrap_or(0.0) / 1000.0,
+        });
+        self.m.online_initial = clock.initial.unwrap_or(0.0) / 1000.0;
+        self.m.online_game_rated = event.rated.unwrap_or(false);
+        self.m.online_speed = event.speed.clone().unwrap_or_default();
+        self.m.online_days_per_turn = event.days_per_turn;
+        self.m.online_tournament = event.tournament_id.clone().unwrap_or_default();
+        let key = event
+            .variant
+            .as_ref()
+            .and_then(|variant| variant.key.as_deref());
         let variant = Variant::from_lichess(key);
         self.m.online_unsupported = if variant.is_some() {
             String::new()
@@ -403,7 +402,7 @@ impl Run<'_> {
             key.unwrap_or("unknown").to_string()
         };
         let variant = variant.unwrap_or_default();
-        let fen = match js::string(event.get("initialFen")) {
+        let fen = match event.initial_fen.as_deref() {
             None | Some("") | Some("startpos") => variant.default_fen(),
             Some(fen) => fen.to_string(),
         };
@@ -416,38 +415,30 @@ impl Run<'_> {
             self.m.online_account.clone()
         }
         .to_lowercase();
-        let is_ours = |player: Option<&Value>| {
-            js::string(at(player, "id")).is_some_and(|id| id.to_lowercase() == ours)
+        let (white, black) = (
+            event.white.clone().unwrap_or_default(),
+            event.black.clone().unwrap_or_default(),
+        );
+        let is_ours = |player: &Player| {
+            player
+                .id
+                .as_ref()
+                .is_some_and(|id| id.to_lowercase() == ours)
         };
-        if is_ours(event.get("white")) {
+        if is_ours(&white) {
             self.m.online_color = "white".into();
-        } else if is_ours(event.get("black")) {
+        } else if is_ours(&black) {
             self.m.online_color = "black".into();
         }
-        let opponent = if self.m.online_color == "white" {
-            event.get("black")
+        let (own, opponent) = if self.m.online_color == "white" {
+            (white, black)
         } else {
-            event.get("white")
+            (black, white)
         };
-        let own = if self.m.online_color == "white" {
-            event.get("white")
-        } else {
-            event.get("black")
-        };
-        self.m.online_rating = at(own, "rating").and_then(Value::as_f64);
-        self.m.online_opponent = match nullish(at(opponent, "name")) {
-            Some(name) => js::to_string(Some(name)),
-            None => {
-                let ai = at(opponent, "aiLevel");
-                if js::truthy(ai) {
-                    format!("Stockfish level {}", js::to_string(ai))
-                } else {
-                    "Opponent".into()
-                }
-            }
-        };
-        self.m.online_opponent_rating = at(opponent, "rating").and_then(Value::as_f64);
-        self.m.opponent_id = string_or(at(opponent, "id"), "");
+        self.m.online_rating = own.rating;
+        self.m.online_opponent = opponent.shown_name();
+        self.m.online_opponent_rating = opponent.rating;
+        self.m.opponent_id = opponent.id.unwrap_or_default();
     }
 }
 

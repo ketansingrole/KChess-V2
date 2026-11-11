@@ -5,7 +5,7 @@ use gpui_kit::component::Disableable as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use kchess_contracts::types::{TournamentStatus, TournamentSummary};
 
 use super::{TournamentsPage, control};
 use crate::assets::icon;
@@ -43,16 +43,16 @@ const CATEGORIES: [(Category, &str, u32); 4] = [
     (Category::Variant, "Variants", 0x7f5232),
 ];
 
-pub fn category_of(arena: &Value) -> Category {
-    if arena["maxRating"].as_f64().is_some() {
+pub fn category_of(arena: &TournamentSummary) -> Category {
+    if max_rating(arena).is_some() {
         return Category::Capped;
     }
-    if let Some(perf) = arena["perf"].as_str()
+    if let Some(perf) = arena.perf.as_deref()
         && !SPEEDS.contains(&perf)
     {
         return Category::Variant;
     }
-    match arena["freq"].as_str() {
+    match arena.freq.as_deref() {
         Some(
             "eastern" | "daily" | "weekly" | "weekend" | "monthly" | "yearly" | "shield"
             | "marathon" | "unique",
@@ -62,7 +62,7 @@ pub fn category_of(arena: &Value) -> Category {
 }
 
 /// Speeds first (as Lichess orders them), then rating-limited events, then variants.
-fn group_of(arena: &Value) -> u8 {
+fn group_of(arena: &TournamentSummary) -> u8 {
     match category_of(arena) {
         Category::Capped => 1,
         Category::Variant => 2,
@@ -70,21 +70,33 @@ fn group_of(arena: &Value) -> u8 {
     }
 }
 
-fn perf_order(arena: &Value) -> usize {
-    arena["perf"]
-        .as_str()
+fn perf_order(arena: &TournamentSummary) -> usize {
+    arena
+        .perf
+        .as_deref()
         .and_then(|perf| SPEEDS.iter().position(|speed| *speed == perf))
         .unwrap_or(10)
 }
 
-fn start_of(arena: &Value) -> f64 {
-    arena["startsAt"].as_f64().unwrap_or_default()
+fn max_rating(arena: &TournamentSummary) -> Option<f64> {
+    arena
+        .max_rating
+        .as_ref()
+        .and_then(serde_json::Number::as_f64)
 }
 
-fn end_of(arena: &Value) -> f64 {
-    arena["finishesAt"]
-        .as_f64()
-        .unwrap_or_else(|| start_of(arena) + arena["minutes"].as_f64().unwrap_or(60.) * MINUTE)
+fn start_of(arena: &TournamentSummary) -> f64 {
+    arena.starts_at as f64
+}
+
+fn end_of(arena: &TournamentSummary) -> f64 {
+    arena.finishes_at.map_or_else(
+        || {
+            let minutes = arena.minutes.as_ref().and_then(serde_json::Number::as_f64);
+            start_of(arena) + minutes.unwrap_or(60.) * MINUTE
+        },
+        |end| end as f64,
+    )
 }
 
 /// Second-level differences do not shift bars or split lanes, as on Lichess.
@@ -92,18 +104,18 @@ fn minute_of(time: f64) -> f64 {
     (time / MINUTE).floor() * MINUTE
 }
 
-fn series_of(arena: &Value) -> String {
+fn series_of(arena: &TournamentSummary) -> String {
     format!(
         "{}:{}:{}",
-        arena["perf"].as_str().unwrap_or_default(),
-        arena["maxRating"].as_f64().unwrap_or_default(),
-        arena["freq"].as_str().unwrap_or_default()
+        arena.perf.as_deref().unwrap_or_default(),
+        max_rating(arena).unwrap_or_default(),
+        arena.freq.as_deref().unwrap_or_default()
     )
 }
 
 /// The times the schedule spans: an hour before now to the last arena (3 to 8 hours ahead),
 /// on ten-minute marks.
-pub fn range(arenas: &[Value], now: f64) -> (f64, f64) {
+pub fn range(arenas: &[TournamentSummary], now: f64) -> (f64, f64) {
     let ten = 10. * MINUTE;
     let start = ((now - BEFORE_NOW) / ten).floor() * ten;
     let latest = arenas.iter().map(end_of).fold(now + MIN_AHEAD, f64::max);
@@ -113,8 +125,8 @@ pub fn range(arenas: &[Value], now: f64) -> (f64, f64) {
 
 /// Packs arenas into rows the way Lichess does: by group, in start order, each on the row that
 /// last held the same series when it fits, otherwise on the first row with room.
-pub fn rows(arenas: &[Value], (start, end): (f64, f64)) -> Vec<Vec<Value>> {
-    let mut visible: Vec<&Value> = arenas
+pub fn rows(arenas: &[TournamentSummary], (start, end): (f64, f64)) -> Vec<Vec<TournamentSummary>> {
+    let mut visible: Vec<&TournamentSummary> = arenas
         .iter()
         .filter(|arena| end_of(arena) > start && start_of(arena) < end)
         .collect();
@@ -128,17 +140,16 @@ pub fn rows(arenas: &[Value], (start, end): (f64, f64)) -> Vec<Vec<Value>> {
             )
             .then(perf_order(a).cmp(&perf_order(b)))
             .then(
-                a["maxRating"]
-                    .as_f64()
+                max_rating(a)
                     .unwrap_or_default()
-                    .total_cmp(&b["maxRating"].as_f64().unwrap_or_default()),
+                    .total_cmp(&max_rating(b).unwrap_or_default()),
             )
     });
     struct Lane {
         group: u8,
         end: f64,
         series: String,
-        items: Vec<Value>,
+        items: Vec<TournamentSummary>,
     }
     let mut lanes: Vec<Lane> = Vec::new();
     for arena in visible {
@@ -185,23 +196,23 @@ pub fn legend(palette: &Palette) -> impl IntoElement {
         }))
 }
 
-fn perf_icon(arena: &Value) -> gpui_kit::component::Icon {
-    if arena["freq"] == json!("shield") {
+fn perf_icon(arena: &TournamentSummary) -> gpui_kit::component::Icon {
+    if arena.freq.as_deref() == Some("shield") {
         return icon("shield");
     }
-    match arena["perf"].as_str() {
+    match arena.perf.as_deref() {
         Some(perf) => crate::pages::watch::channel_icon(perf),
         None => icon("trophy"),
     }
 }
 
 /// "Hourly Blitz Arena, 3+0 rated, 120 players, running".
-fn describe(arena: &Value) -> String {
+fn describe(arena: &TournamentSummary) -> String {
     use chrono::TimeZone as _;
-    let state = match arena["status"].as_str() {
-        Some("finished") => "finished".to_string(),
-        Some("started") => "running".to_string(),
-        _ => format!(
+    let state = match arena.status {
+        TournamentStatus::Finished => "finished".to_string(),
+        TournamentStatus::Started => "running".to_string(),
+        TournamentStatus::Created => format!(
             "starts {}",
             chrono::Local
                 .timestamp_millis_opt(start_of(arena) as i64)
@@ -212,15 +223,11 @@ fn describe(arena: &Value) -> String {
     };
     format!(
         "{}, {} {}, {} players, {state}{}",
-        arena["name"].as_str().unwrap_or_default(),
-        control(&arena["clock"]),
-        if arena["rated"] == json!(true) {
-            "rated"
-        } else {
-            "casual"
-        },
-        arena["nbPlayers"].as_f64().unwrap_or_default(),
-        if arena["playable"] == json!(true) {
+        arena.name,
+        control(&arena.clock),
+        if arena.rated { "rated" } else { "casual" },
+        arena.nb_players.as_f64().unwrap_or_default(),
+        if arena.playable {
             ""
         } else {
             ", watch only in KChess"
@@ -269,11 +276,10 @@ impl TournamentsPage {
                 })
                 .into_any_element();
         };
-        let arenas: Vec<Value> = list["arenas"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|arena| !self.playable_only || arena["playable"] == json!(true))
+        let arenas: Vec<TournamentSummary> = list
+            .arenas
+            .iter()
+            .filter(|arena| !self.playable_only || arena.playable)
             .cloned()
             .collect();
         if arenas.is_empty() {
@@ -327,22 +333,18 @@ impl TournamentsPage {
                         index += 1;
                         let left = x(start_of(arena)).max(0.);
                         let right = x(end_of(arena).min(end));
-                        let id = arena["id"].as_str().unwrap_or_default().to_string();
+                        let id = arena.id.clone();
                         let color = CATEGORIES
                             .iter()
                             .find(|(category, _, _)| *category == category_of(arena))
                             .map_or(0x3a8a30, |(_, _, color)| *color);
                         let joined = self.is_joined("arena", &id, account.as_deref());
-                        let finished = arena["status"] == json!("finished");
-                        let players = arena["nbPlayers"].as_f64().unwrap_or_default();
+                        let finished = arena.status == TournamentStatus::Finished;
+                        let players = arena.nb_players.as_f64().unwrap_or_default();
                         let sub = format!(
                             "{} {}",
-                            control(&arena["clock"]),
-                            if arena["rated"] == json!(true) {
-                                "Rated"
-                            } else {
-                                "Casual"
-                            }
+                            control(&arena.clock),
+                            if arena.rated { "Rated" } else { "Casual" }
                         );
                         let pinned = (scrolled - left).max(0.).min((right - left - 40.).max(0.));
                         h_flex()
@@ -391,12 +393,7 @@ impl TournamentsPage {
                                             .text_size(px(14.))
                                             .font_weight(FontWeight::MEDIUM)
                                             .truncate()
-                                            .child(
-                                                arena["name"]
-                                                    .as_str()
-                                                    .unwrap_or_default()
-                                                    .to_string(),
-                                            ),
+                                            .child(arena.name.clone()),
                                     )
                                     .child(
                                         h_flex()
@@ -496,41 +493,63 @@ impl TournamentsPage {
 #[cfg(test)]
 mod tests {
     use super::{Category, category_of, range, rows};
-    use serde_json::json;
+    use kchess_contracts::types::TournamentSummary;
+    use serde_json::{Value, json};
+
+    /// An arena with `fields` over a plain hourly one.
+    fn arena(fields: Value) -> TournamentSummary {
+        let mut arena = json!({
+            "id": "a", "system": "arena", "name": "Hourly", "status": "created",
+            "variant": "standard", "variantName": "Standard", "rated": true,
+            "clock": { "limit": 180, "increment": 0 }, "nbPlayers": 0, "startsAt": 0,
+            "playable": true,
+        });
+        for (key, value) in fields.as_object().expect("fields") {
+            arena[key] = value.clone();
+        }
+        serde_json::from_value(arena).expect("an arena")
+    }
 
     const HOUR: f64 = 3_600_000.;
 
     #[test]
     fn arenas_are_coloured_by_kind() {
         assert_eq!(
-            category_of(&json!({ "perf": "blitz", "freq": "hourly" })),
+            category_of(&arena(json!({ "perf": "blitz", "freq": "hourly" }))),
             Category::Standard
         );
         assert_eq!(
-            category_of(&json!({ "perf": "blitz", "freq": "weekly" })),
+            category_of(&arena(json!({ "perf": "blitz", "freq": "weekly" }))),
             Category::Special
         );
         assert_eq!(
-            category_of(&json!({ "perf": "blitz", "maxRating": 1700 })),
+            category_of(&arena(json!({ "perf": "blitz", "maxRating": 1700 }))),
             Category::Capped
         );
-        assert_eq!(category_of(&json!({ "perf": "atomic" })), Category::Variant);
+        assert_eq!(
+            category_of(&arena(json!({ "perf": "atomic" }))),
+            Category::Variant
+        );
     }
 
     #[test]
     fn a_series_keeps_its_row_and_overlaps_get_another() {
         let now = 100. * HOUR;
-        let arena = |id: &str, perf: &str, start: f64| json!({ "id": id, "perf": perf, "startsAt": now + start * HOUR, "minutes": 60 });
+        let at = |id: &str, perf: &str, start: f64| {
+            arena(
+                json!({ "id": id, "perf": perf, "startsAt": (now + start * HOUR) as i64, "minutes": 60 }),
+            )
+        };
         let arenas = [
-            arena("b1", "blitz", 0.),
-            arena("u1", "bullet", 0.),
-            arena("b2", "blitz", 1.),
-            arena("v1", "atomic", 0.),
+            at("b1", "blitz", 0.),
+            at("u1", "bullet", 0.),
+            at("b2", "blitz", 1.),
+            at("v1", "atomic", 0.),
         ];
         let lanes = rows(&arenas, range(&arenas, now));
         let ids: Vec<Vec<&str>> = lanes
             .iter()
-            .map(|lane| lane.iter().map(|a| a["id"].as_str().unwrap()).collect())
+            .map(|lane| lane.iter().map(|a| a.id.as_str()).collect())
             .collect();
         // Bullet comes before blitz at the same start; the next blitz follows on blitz's row;
         // variants get rows of their own after the speeds.

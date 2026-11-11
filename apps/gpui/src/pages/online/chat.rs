@@ -6,7 +6,7 @@ use gpui_kit::component::input::Input;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::json;
+use kchess_domain::online_game::model::ChatEntry;
 
 use super::OnlinePage;
 use crate::assets::icon;
@@ -46,11 +46,11 @@ impl OnlinePage {
         let open: bool = crate::prefs::get(cx, OPEN_KEY, false);
         let spectators: bool = crate::prefs::get(cx, SPECTATORS_KEY, false);
         let me = online.account().to_lowercase();
-        let lines: Vec<serde_json::Value> = online
+        let lines: Vec<ChatEntry> = online
             .model()
             .chat
             .iter()
-            .filter(|line| spectators || line["room"] == json!("player"))
+            .filter(|line| spectators || line.players())
             .cloned()
             .collect();
         if lines.len() < self.chat_read {
@@ -62,8 +62,8 @@ impl OnlinePage {
         let unread = lines[self.chat_read.min(lines.len())..]
             .iter()
             .filter(|line| {
-                line["user"]
-                    .as_str()
+                line.user
+                    .as_deref()
                     .is_none_or(|user| user.to_lowercase() != me)
             })
             .count();
@@ -113,69 +113,70 @@ impl OnlinePage {
                 }
                 .size(px(16.)),
             );
-        let body =
-            open.then(|| {
-                v_flex()
-                    .gap(px(8.))
-                    .px(px(12.))
-                    .pb(px(12.))
-                    .child(
-                        v_flex()
-                            .id("chat-log")
-                            .h(px(200.))
-                            .overflow_y_scroll()
-                            .gap(px(4.))
-                            .text_size(px(13.))
-                            .when(lines.is_empty(), |log| {
-                                log.child(widgets::hint("No messages", palette))
-                            })
-                            .children(lines.iter().map(|line| {
-                                let spectator = line["room"] != json!("player");
-                                h_flex()
-                                    .gap(px(8.))
-                                    .when(spectator, |row| row.text_color(palette.text_muted))
-                                    .child(div().font_weight(FontWeight::MEDIUM).child(
-                                        line["user"].as_str().unwrap_or_default().to_string(),
-                                    ))
-                                    .child(line["text"].as_str().unwrap_or_default().to_string())
-                            })),
-                    )
-                    .when(presets, |body| {
-                        body.child(h_flex().flex_wrap().gap(px(4.)).children(
-                            PRESETS.iter().enumerate().map(|(index, preset)| {
-                                Button::new(("chat-preset", index))
-                                    .xsmall()
-                                    .ghost()
-                                    .label(*preset)
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.send_chat(Some(preset), window, cx)
-                                    }))
-                            }),
-                        ))
-                    })
-                    .child(
-                        h_flex()
-                            .gap(px(8.))
-                            .child(
-                                div().flex_1().child(
-                                    Input::new(&self.chat_input)
-                                        .small()
-                                        .aria_label("Chat message"),
-                                ),
-                            )
-                            .child(
-                                Button::new("chat-send")
+        let body = open.then(|| {
+            v_flex()
+                .gap(px(8.))
+                .px(px(12.))
+                .pb(px(12.))
+                .child(
+                    v_flex()
+                        .id("chat-log")
+                        .h(px(200.))
+                        .overflow_y_scroll()
+                        .gap(px(4.))
+                        .text_size(px(13.))
+                        .when(lines.is_empty(), |log| {
+                            log.child(widgets::hint("No messages", palette))
+                        })
+                        .children(lines.iter().map(|line| {
+                            let spectator = !line.players();
+                            h_flex()
+                                .gap(px(8.))
+                                .when(spectator, |row| row.text_color(palette.text_muted))
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(line.user.clone().unwrap_or_default()),
+                                )
+                                .child(line.text.clone().unwrap_or_default())
+                        })),
+                )
+                .when(presets, |body| {
+                    body.child(h_flex().flex_wrap().gap(px(4.)).children(
+                        PRESETS.iter().enumerate().map(|(index, preset)| {
+                            Button::new(("chat-preset", index))
+                                .xsmall()
+                                .ghost()
+                                .label(*preset)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.send_chat(Some(preset), window, cx)
+                                }))
+                        }),
+                    ))
+                })
+                .child(
+                    h_flex()
+                        .gap(px(8.))
+                        .child(
+                            div().flex_1().child(
+                                Input::new(&self.chat_input)
                                     .small()
-                                    .primary()
-                                    .icon(icon("send"))
-                                    .accessibility_label("Send")
-                                    .disabled(!typed)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.send_chat(None, window, cx)
-                                    })),
+                                    .aria_label("Chat message"),
                             ),
-                    )
-            });
+                        )
+                        .child(
+                            Button::new("chat-send")
+                                .small()
+                                .primary()
+                                .icon(icon("send"))
+                                .accessibility_label("Send")
+                                .disabled(!typed)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.send_chat(None, window, cx)
+                                })),
+                        ),
+                )
+        });
         Some(
             v_flex()
                 .id("chat-dock")

@@ -20,6 +20,7 @@ use kchess_contracts::types::{
 };
 use kchess_contracts::{CoreError, Level};
 use kchess_domain::online_game::model::{Call, Ctx, Effect, Model, Op, Outcome, Reply, View};
+use kchess_domain::online_game::server::{ConnectionReport, ServerEvent};
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use kchess_domain::training::clock::{ClockState, SetData, format_clock};
 use kchess_domain::variant::{Setup, Variant};
@@ -878,21 +879,25 @@ impl OnlineState {
     fn receive(&mut self, event: &CoreEvent, cx: &mut Context<Self>) {
         match event {
             CoreEvent::OnlineEvent(payload) => {
-                // Not for a game the Board API cannot play, such as one started on another device.
-                let starts = payload["type"] == json!("gameStart")
-                    && payload["game"]["speed"] != json!("correspondence")
-                    && payload["game"]["compat"]["board"] != json!(false);
-                self.transition(|model, ctx| model.event(payload, ctx), None, cx);
+                let event = ServerEvent::read(payload);
+                let started = match &event {
+                    ServerEvent::GameStart { game } => Some(game.clone().unwrap_or_default()),
+                    _ => None,
+                };
+                self.transition(|model, ctx| model.event(&event, ctx), None, cx);
+                let Some(game) = started else {
+                    return;
+                };
                 // The event stream announces a game whose board stream already failed for good
                 // (on launch the two race): the failure stands, as the core opens no new stream.
-                if payload["type"] == json!("gameStart")
-                    && let Some(failed) = self.failed_state.clone()
-                    && failed["gameId"] == payload["game"]["gameId"]
+                if let Some(failed) = self.failed_state.clone()
+                    && ConnectionReport::read(&failed).game_id == game.game_id
                 {
                     self.transition(|model, ctx| model.connection(&failed, ctx), None, cx);
                 }
-                // A pairing or an accepted challenge takes you to the board, as Lichess does.
-                if starts {
+                // A pairing or an accepted challenge takes you to the board, as Lichess does; not
+                // for a game the Board API cannot play, such as one started on another device.
+                if !game.correspondence() && game.board_compatible() {
                     cx.defer(|cx| {
                         if let Some(window) =
                             cx.active_window().or_else(|| cx.windows().first().copied())
@@ -905,8 +910,9 @@ impl OnlineState {
                 }
             }
             CoreEvent::OnlineState(payload) => {
-                let kind = payload["kind"].as_str().map(str::to_string);
-                if payload["lane"] == json!("game") {
+                let report = ConnectionReport::read(payload);
+                let kind = report.kind;
+                if report.lane.as_deref() == Some("game") {
                     // Only a failure that ended the stream carries a kind.
                     self.failed_state = kind.is_some().then(|| payload.clone());
                     self.failure = kind;
@@ -1127,7 +1133,7 @@ fn resume_quietly(state: Entity<OnlineState>, quiet_first: bool, cx: &mut App) {
                 Err(cause) => {
                     log(&format!("resuming online game failed: {}", cause.message));
                     if let Some(connection) = state.model.online_connection.as_mut()
-                        && connection["phase"] == json!("checking")
+                        && ConnectionReport::read(connection).phase.as_deref() == Some("checking")
                     {
                         connection["phase"] = json!("disconnected");
                     }
