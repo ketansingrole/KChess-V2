@@ -1,7 +1,5 @@
-//! Library documents: the session decoders and the session
-//! checks a frontend's library calls pass through; the other document checks are in
-//! `validate/`. Each decoder accepts and rejects what the TypeScript decoder does, and returns
-//! the same normalized value.
+//! Library documents: the session decoders and the session checks a frontend's library calls
+//! pass through; the other document checks are in `validate/`.
 
 use std::cell::RefCell;
 
@@ -11,7 +9,8 @@ use crate::js;
 use crate::replay;
 use crate::tree::{self, TreeNode};
 
-pub type Handler = fn(Vec<J>) -> Result<J, String>;
+/// A document check: the arguments, normalized, or the message it rejected them with.
+pub type Check = fn(Vec<J>) -> Result<J, String>;
 
 fn arg(args: &[J], i: usize) -> &J {
     args.get(i).unwrap_or(&J::Undef)
@@ -350,8 +349,8 @@ fn session_version(kind: &str) -> Option<Option<f64>> {
     })
 }
 
-/// `decodeStoredSession(kind, raw)`; an unknown kind fails as the TypeScript table lookup did.
-fn decode_stored(kind: &str, raw: &J) -> Result<Option<J>, String> {
+/// A stored session of `kind`, decoded; none when it is not one. An unknown kind is an error.
+pub fn decode_stored(kind: &str, raw: &J) -> Result<Option<J>, String> {
     Ok(match kind {
         "analysis" => decode_analysis(raw),
         "local" => decode_local(raw),
@@ -361,8 +360,8 @@ fn decode_stored(kind: &str, raw: &J) -> Result<Option<J>, String> {
     })
 }
 
-/// `encodeSession(kind, session)`: `{ version, ...session }` for kinds with a version.
-fn encode_session(kind: &str, session: &J) -> J {
+/// A session as stored: `{ version, ...session }` for kinds with a version.
+pub fn encode_session(kind: &str, session: &J) -> J {
     let Some(Some(version)) = session_version(kind) else {
         return session.clone();
     };
@@ -383,8 +382,8 @@ fn encode_session(kind: &str, session: &J) -> J {
 
 /* ── Joined tournaments and repertoire misses ── */
 
-/// `decodeJoinedTournaments`
-fn decode_joined_tournaments(raw: &J) -> J {
+/// The tournaments joined, as stored: at most 100, each one complete.
+pub fn decode_joined_tournaments(raw: &J) -> J {
     let J::Arr(entries) = raw else {
         return J::Arr(Vec::new());
     };
@@ -446,8 +445,8 @@ fn js_key_order(fields: Vec<(String, J)>) -> Vec<(String, J)> {
     numbered.into_iter().chain(named).collect()
 }
 
-/// `decodeRepertoireMisses`: `studyId:color` → FEN → missed count.
-fn decode_repertoire_misses(raw: &J) -> J {
+/// The repertoire misses, as stored: `studyId:color` → FEN → missed count.
+pub fn decode_repertoire_misses(raw: &J) -> J {
     let J::Obj(_) = raw else {
         return J::Obj(Vec::new());
     };
@@ -472,8 +471,8 @@ fn decode_repertoire_misses(raw: &J) -> J {
 
 /* ── Session checks ── */
 
-/// `assertSession(kind, value)`: the value, decoded as its kind's document.
-fn assert_session(args: Vec<J>) -> Result<J, String> {
+/// `[kind, value]`: the value, decoded as its kind's document.
+pub fn assert_session(args: Vec<J>) -> Result<J, String> {
     let kind = arg(&args, 0).str().unwrap_or_default().to_string();
     let value = arg(&args, 1);
     let decoded = if value.truthy() && value.is_object() {
@@ -485,8 +484,8 @@ fn assert_session(args: Vec<J>) -> Result<J, String> {
     decoded.ok_or_else(|| "This session cannot be saved.".to_string())
 }
 
-/// `assertArchivedGameShape`: an object; the core service checks its fields.
-fn assert_archived_game_shape(args: Vec<J>) -> Result<J, String> {
+/// An object; the core service checks its fields.
+pub fn assert_archived_game_shape(args: Vec<J>) -> Result<J, String> {
     let value = arg(&args, 0);
     if !value.truthy() || !value.is_object() {
         return Err("This game cannot be saved.".into());
@@ -494,36 +493,13 @@ fn assert_archived_game_shape(args: Vec<J>) -> Result<J, String> {
     Ok(value.clone())
 }
 
-fn handler_of(method: &str) -> Option<Handler> {
-    Some(match method {
-        "decodeAnalysisSession" => |a| Ok(decode_analysis(arg(&a, 0)).unwrap_or(J::Null)),
-        "decodeLocalSession" => |a| Ok(decode_local(arg(&a, 0)).unwrap_or(J::Null)),
-        "decodeComputerSession" => |a| Ok(decode_computer(arg(&a, 0)).unwrap_or(J::Null)),
-        "decodeArchiveIdentity" => |a| Ok(decode_archive_identity(arg(&a, 0)).unwrap_or(J::Null)),
-        "decodeStoredSession" => |a| {
-            let kind = arg(&a, 0).str().unwrap_or_default().to_string();
-            Ok(decode_stored(&kind, arg(&a, 1))?.unwrap_or(J::Null))
-        },
-        "encodeSession" => |a| {
-            let kind = arg(&a, 0).str().unwrap_or_default().to_string();
-            Ok(encode_session(&kind, arg(&a, 1)))
-        },
-        "isSessionKind" => |a| {
-            Ok(J::Bool(
-                arg(&a, 0).str().is_some_and(|k| SESSION_KINDS.contains(&k)),
-            ))
-        },
+/// A document check by the name the core's contracts give it.
+pub(crate) fn check(name: &str) -> Option<Check> {
+    Some(match name {
         "assertSession" => assert_session,
-        "decodeJoinedTournaments" => |a| Ok(decode_joined_tournaments(arg(&a, 0))),
-        "decodeRepertoireMisses" => |a| Ok(decode_repertoire_misses(arg(&a, 0))),
         "assertArchivedGameShape" => assert_archived_game_shape,
         _ => return None,
     })
-}
-
-/// The document validators and decoders by their TypeScript names.
-pub fn handler(method: &str) -> Option<Handler> {
-    handler_of(method)
 }
 
 #[cfg(test)]

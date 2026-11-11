@@ -6,10 +6,10 @@
 //! `null` stands for `undefined` where the facade passes JSON arguments, since JSON cannot carry
 //! `undefined`.
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
+use super::Run;
 use super::value::J;
-use super::{Run, call};
 
 /// One argument's validator.
 #[derive(Clone, Copy)]
@@ -551,31 +551,25 @@ pub fn validate_arguments(method: &str, args: &[Value]) -> Option<Result<(), Str
     Some(check(method, &values))
 }
 
-/// The normalized value validator `name` gives for `args` (`assertX(...)` in the TypeScript).
+/// The normalized value validator `name` gives for `args`, a JSON `null` being `undefined`.
 pub fn normalize(name: &str, args: &[Value]) -> Result<Value, String> {
-    run(name, args)
-}
-
-/// Runs validator `name` on `args`; a JSON `null` is `undefined`, as an absent argument is.
-fn run(name: &str, args: &[Value]) -> Result<Value, String> {
-    let sidecar = Value::Array(
-        args.iter()
-            .enumerate()
-            .filter(|(_, value)| value.is_null())
-            .map(|(index, _)| json!({ "at": [index], "k": 0 }))
-            .collect(),
-    );
-    let mut lossless = vec![sidecar];
-    lossless.extend(args.iter().cloned());
-    match call(name, &lossless) {
-        Some(result) => result,
-        None => Err(format!("Unknown validator {name}.")),
-    }
+    let values = args
+        .iter()
+        .map(|value| {
+            if value.is_null() {
+                J::Undef
+            } else {
+                J::from(value)
+            }
+        })
+        .collect();
+    super::validate(name, values)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn every_contract_names_a_validator() {

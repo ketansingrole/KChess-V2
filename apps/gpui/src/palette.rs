@@ -1724,8 +1724,7 @@ fn pasted(text: &str) -> Vec<Command> {
         .then(|| crate::game::editor_setup(text))
         .flatten();
     let Some(fen) = fen
-        .and_then(|setup| crate::game::rules("setupFen", &[setup]).ok())
-        .and_then(|fen| fen.as_str().map(str::to_string))
+        .and_then(|setup| crate::game::setup_fen(&setup))
         .filter(|fen| crate::game::position_problem(fen).is_none())
     else {
         return Vec::new();

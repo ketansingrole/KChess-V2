@@ -28,6 +28,7 @@ use crate::voice::control::{BarSpec, Control};
 use crate::voice::{Attempt, VoiceEvent};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, KeyboardFocus as _, Pill, Tone};
+use kchess_domain::voice::{self, EditorAction};
 
 const EMPTY_BOARD: &str = "8/8/8/8/8/8/8/8";
 /// The spare rows above and below the board, and the voice bar, take this much of its height.
@@ -60,10 +61,7 @@ fn start_setup() -> Value {
 
 /// `setupFen`: the position as a FEN, with only the castling rights the pieces allow.
 fn setup_fen(setup: &Value) -> String {
-    rules("setupFen", std::slice::from_ref(setup))
-        .ok()
-        .and_then(|fen| fen.as_str().map(str::to_string))
-        .unwrap_or_default()
+    crate::game::setup_fen(setup).unwrap_or_default()
 }
 
 /// The FEN of `fen` (the editor's standard one) in `variant`: Crazyhouse adds the pockets and
@@ -381,6 +379,19 @@ impl EditorPage {
     /// A piece placed, moved or removed. A castling right whose king or rook now stands
     /// elsewhere than the standard start is unticked: Chess960 castling is ticked on purpose, or
     /// comes with a pasted FEN.
+    /// `square` holding `piece` (its colour and role), or emptied.
+    fn put_piece(&mut self, square: &str, piece: Option<(&str, &str)>, cx: &mut Context<Self>) {
+        let board = self.setup["board"].as_str().unwrap_or_default();
+        match voice::with_piece(board, square, piece) {
+            Ok(board) => self.set_board(json!(board), cx),
+            Err(cause) => crate::log::write(
+                kchess_contracts::Level::Warn,
+                "editor",
+                &format!("could not put a piece on {square}: {cause}"),
+            ),
+        }
+    }
+
     fn set_board(&mut self, board: Value, cx: &mut Context<Self>) {
         let before = self.setup["board"].as_str().unwrap_or_default().to_string();
         let after = board.as_str().unwrap_or_default();
@@ -473,12 +484,10 @@ impl EditorPage {
         let fen = self.fen();
         self.fen_input
             .update(cx, |input, cx| input.set_value(fen, window, cx));
-        let board = self.setup["board"].clone();
-        let turn = self.setup["turn"].clone();
-        self.ep_squares = rules("enPassantSquares", &[board, turn])
-            .ok()
-            .and_then(|squares| serde_json::from_value(squares).ok())
-            .unwrap_or_default();
+        self.ep_squares = voice::en_passant_squares(
+            self.setup["board"].as_str().unwrap_or_default(),
+            self.setup["turn"].as_str().unwrap_or_default(),
+        );
         let items: Vec<SharedString> = std::iter::once(SharedString::from("None"))
             .chain(self.ep_squares.iter().map(|square| square.clone().into()))
             .collect();
@@ -613,14 +622,13 @@ impl EditorPage {
             }
             VoiceEvent::Heard { heard, .. } => heard,
         };
-        let action = rules("spokenEdit", &[json!(heard.text), json!(self.last_color)])
-            .unwrap_or(Value::Null);
+        let action = voice::spoken_edit(&heard.text, self.last_color);
         let fen = self.problem().is_none().then(|| self.fen());
-        let parsed = action.is_object().then(|| action.to_string());
+        let parsed = action.as_ref().map(|action| json!(action).to_string());
         let attempt = Attempt {
             source: "editor",
             heard,
-            outcome: if action.is_object() {
+            outcome: if action.is_some() {
                 "command"
             } else if heard.unclear {
                 "unclear"
@@ -632,37 +640,30 @@ impl EditorPage {
             fen: fen.as_deref(),
         };
         crate::voice::log(&attempt, None, cx);
-        let text = |key: &str| action[key].as_str().unwrap_or_default().to_string();
         let side = |color: &str| if color == "white" { "White" } else { "Black" };
-        let feedback = match action["kind"].as_str() {
-            Some("place") => {
-                let (square, color, role) = (text("square"), text("color"), text("role"));
+        let feedback = match action {
+            Some(EditorAction::Place {
+                square,
+                color,
+                role,
+            }) => {
                 self.last_color = if color == "white" { "white" } else { "black" };
-                let piece = json!({ "color": color, "role": role });
-                let board = self.setup["board"].clone();
-                if let Ok(board) = rules("withPiece", &[board, json!(square), piece]) {
-                    self.set_board(board, cx);
-                }
+                self.put_piece(&square, Some((color.as_str(), role)), cx);
                 format!("{} {role} on {}", side(&color), square.to_uppercase())
             }
-            Some("remove") => {
-                let square = text("square");
-                let board = self.setup["board"].clone();
-                if let Ok(board) = rules("withPiece", &[board, json!(square), Value::Null]) {
-                    self.set_board(board, cx);
-                }
+            Some(EditorAction::Remove { square }) => {
+                self.put_piece(&square, None, cx);
                 format!("Cleared {}", square.to_uppercase())
             }
-            Some("clear") => {
+            Some(EditorAction::Clear) => {
                 self.clear_board(cx);
                 "Board cleared".into()
             }
-            Some("start") => {
+            Some(EditorAction::Start) => {
                 self.start_position(cx);
                 "Starting position".into()
             }
-            Some("turn") => {
-                let color = text("color");
+            Some(EditorAction::Turn { color }) => {
                 self.set_turn(
                     if color == "white" {
                         Color::White
@@ -673,11 +674,11 @@ impl EditorPage {
                 );
                 format!("{} to move", side(&color))
             }
-            Some("flip") => {
+            Some(EditorAction::Flip) => {
                 self.flip(cx);
                 "Board flipped".into()
             }
-            Some("analyze") => match self.problem() {
+            Some(EditorAction::Analyze) => match self.problem() {
                 Some(problem) => format!("Can’t analyse yet: {problem}"),
                 None => {
                     self.analyse(window, cx);
@@ -852,8 +853,7 @@ impl Render for EditorPage {
         .to_string();
         let problem = self.problem();
         let turn = self.turn();
-        let available: Value =
-            rules("castlingAvailable", &[self.setup["board"].clone()]).unwrap_or(Value::Null);
+        let available = voice::castling_available(self.setup["board"].as_str().unwrap_or_default());
         let board_size = self
             .layout
             .board_size_in(px(0.), SPARE_ROWS + VOICE_BAR, window);
@@ -877,7 +877,7 @@ impl Render for EditorPage {
                     id: "editor-voice",
                     hint: "Say “white knight F three”, “remove E four” or “clear board”",
                     active: true,
-                    grammar: crate::voice::grammar("EDITOR_GRAMMAR"),
+                    grammar: crate::voice::grammar(crate::voice::Grammar::Editor),
                 },
                 cx,
             )));
@@ -889,7 +889,7 @@ impl Render for EditorPage {
                 .child(text)
         };
         let castling = CASTLING.map(|(key, text)| {
-            let allowed = available[key] == json!(true);
+            let allowed = available.has(key);
             Checkbox::new(SharedString::from(format!("castling-{key}")))
                 .label(text)
                 .min_h(px(24.))

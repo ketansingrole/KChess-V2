@@ -18,6 +18,7 @@ use crate::host::{Host, Level};
 use kchess_domain::js;
 use kchess_domain::library::{MAX_ARCHIVED_GAMES, MAX_MISTAKES};
 use kchess_domain::misc::MAX_DOCUMENT;
+use kchess_domain::misc::value::J;
 use kchess_domain::training::repetition;
 
 pub(crate) const STUDY_LIBRARY_MAX_TEXT: usize = 1_800_000;
@@ -89,7 +90,7 @@ pub fn call(ctx: &StoreContext, method: &str, args: &[Value]) -> Option<Result<V
         "store.library.mistakeGames" => mistake_games(host, db),
         "store.library.saveSession" => str_arg(args, 0, "kind").and_then(|kind| {
             let value = args.get(1).cloned().unwrap_or(Value::Null);
-            let encoded = misc("encodeSession", vec![json!(kind), value])?;
+            let encoded = encode_session(kind, &value);
             write_document(
                 db,
                 &format!("session:{kind}"),
@@ -234,13 +235,9 @@ pub fn object<'a>(value: &'a Value, name: &str) -> Result<&'a Map<String, Value>
 
 /// A `kchess_domain` document decoder or encoder by name. Values are JSON, so the lossless
 /// sidecar is empty.
-pub fn misc(method: &str, args: Vec<Value>) -> Result<Value> {
-    let mut full = vec![json!([])];
-    full.extend(args);
-    match kchess_domain::misc::call(method, &full) {
-        Some(result) => result.map_err(CoreError::new),
-        None => Err(CoreError::new(format!("Unknown core method {method}."))),
-    }
+/// A session of `kind` as stored, with its kind's version.
+pub(crate) fn encode_session(kind: &str, session: &Value) -> Value {
+    kchess_domain::misc::documents::encode_session(kind, &J::from(session)).into_value()
 }
 
 /* ── Split modules: the codec, documents, studies and the legacy import live beside this
@@ -961,7 +958,10 @@ mod tests {
             db.execute("INSERT INTO documents VALUES ('studies', ?1, 1)", [body])
                 .expect("seed");
             assert!(read_studies(&db).is_err());
-            let session = misc("encodeSession", vec![json!("analysis"), json!({"pgn":"1. d4 *","path":"","orientation":"white","study":"","chapter":""})]).expect("session");
+            let session = encode_session(
+                "analysis",
+                &json!({"pgn":"1. d4 *","path":"","orientation":"white","study":"","chapter":""}),
+            );
             write_document(&db, "session:analysis", &session, "").expect("save session");
             let snapshot = library(&Quiet, &db, 1.0).expect("other documents remain readable");
             assert_eq!(snapshot["studyError"], json!(DAMAGED_STUDIES));

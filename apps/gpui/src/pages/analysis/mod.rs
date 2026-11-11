@@ -1099,7 +1099,7 @@ impl AnalysisPage {
         self.voice.sync(
             &context,
             Some(line),
-            crate::voice::grammar("ANALYSIS_GRAMMAR"),
+            crate::voice::grammar(crate::voice::Grammar::Analysis),
             true,
             cx,
         );
@@ -1136,8 +1136,7 @@ impl AnalysisPage {
             &setup,
             turn,
             |text| {
-                let said = crate::game::rules("spokenAnalysisCommand", &[json!(text)]).ok()?;
-                let said = said.as_str()?.to_string();
+                let said = kchess_domain::voice::analysis_command(text)?.to_string();
                 let feedback = if said == "best" && best.is_none() {
                     "The engine has no move yet".to_string()
                 } else {
@@ -1816,7 +1815,7 @@ impl Render for AnalysisPage {
                 hint: "Say a move like “Knight F three”, or “back”, “next”, “best move”",
                 active: true,
                 listening: true,
-                grammar: crate::voice::grammar("ANALYSIS_GRAMMAR"),
+                grammar: crate::voice::grammar(crate::voice::Grammar::Analysis),
             },
             cx,
         );

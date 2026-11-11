@@ -571,9 +571,8 @@ impl PositionLookups {
         if let Some(variant) = &options.variant {
             request["variant"] = json!(variant);
         }
-        let analysis = misc::call("assertAnalysisRequest", &[no_lossless(), request])
-            .ok_or_else(|| CoreError::new("Unknown validator."))?
-            .map_err(CoreError::new)?;
+        let analysis =
+            misc::validate_values("assertAnalysisRequest", &[request]).map_err(CoreError::new)?;
         let fen = analysis
             .get("fen")
             .and_then(Value::as_str)
@@ -880,18 +879,11 @@ fn slow_down(wait_ms: i64) -> CoreError {
 
 /// The lossless sidecar of a validator call whose arguments are plain JSON (no `undefined`, NaN or
 /// binary values to record).
-fn no_lossless() -> Value {
-    json!([])
-}
-
 /// `assertLookupOptions(raw)`: the filters as the request sent them, validated.
 fn assert_options(raw: Option<&Value>) -> CoreResult<LookupOptions> {
     // An absent value is passed as no argument at all, which the validator reads as undefined.
-    let mut args = vec![no_lossless()];
-    args.extend(raw.cloned());
-    let value = misc::call("assertLookupOptions", &args)
-        .ok_or_else(|| CoreError::new("Unknown validator."))?
-        .map_err(CoreError::new)?;
+    let args: Vec<Value> = raw.cloned().into_iter().collect();
+    let value = misc::validate_values("assertLookupOptions", &args).map_err(CoreError::new)?;
     let strings = |key: &str| -> Option<Vec<String>> {
         value.get(key).and_then(Value::as_array).map(|items| {
             items

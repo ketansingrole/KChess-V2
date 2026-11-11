@@ -41,6 +41,9 @@ pub fn assert_best_move_options(options: &Value) -> Result<Value> {
 /// Whether `method` exists in the domain dispatch: any error other than
 /// "unknown rules method" counts as known (argument errors are expected here).
 pub fn is_known_method(method: &str) -> bool {
+    if kchess_domain::misc::is_validator(method) {
+        return true;
+    }
     match kchess_domain::api::call(method, "[]") {
         Ok(_) => true,
         Err(message) => !message.contains("unknown rules method"),

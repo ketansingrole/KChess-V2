@@ -74,6 +74,22 @@ pub fn chess960(n: i64) -> String {
 
 /// A FEN typed or pasted, as the board editor reads it (`setupFromFen`): the placement and side
 /// from the rules, castling rights as written, and a plausible en passant square.
+/// The FEN of a board editor setup (`editor_setup`'s shape): castling and en passant only where
+/// the pieces allow them. None, logged, for anything else.
+pub fn setup_fen(setup: &Value) -> Option<String> {
+    match serde_json::from_value::<kchess_domain::voice::EditorSetup>(setup.clone()) {
+        Ok(setup) => Some(kchess_domain::voice::setup_fen(&setup)),
+        Err(cause) => {
+            crate::log::write(
+                kchess_contracts::Level::Warn,
+                "editor",
+                &format!("not an editor setup: {cause}"),
+            );
+            None
+        }
+    }
+}
+
 pub fn editor_setup(text: &str) -> Option<Value> {
     let trimmed = text.trim();
     let parsed = kchess_domain::position::fen_setup(trimmed)?;
@@ -314,12 +330,12 @@ mod setup_tests {
                 serde_json::json!({ "K": true, "Q": true, "k": true, "q": true }),
                 "{pasted}"
             );
-            let fen = super::rules("setupFen", &[setup]).expect("its FEN");
+            let fen = super::setup_fen(&setup).expect("its FEN");
             assert_eq!(
                 fen,
                 "bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w KQkq - 0 1"
             );
-            assert_eq!(setup_from_fen(fen.as_str().unwrap())["variant"], "chess960");
+            assert_eq!(setup_from_fen(&fen)["variant"], "chess960");
         }
         // Only the rights written: the long side's rook (F) on its own.
         let setup = super::editor_setup("bbqnnrkr/pppppppp/8/8/8/8/PPPPPPPP/BBQNNRKR w F - 0 1");

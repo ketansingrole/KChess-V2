@@ -15,7 +15,7 @@ use shakmaty::{Color, Square};
 use super::run::{self, RunClock};
 use crate::assets::icon;
 use crate::board::{BoardEvent, BoardState, ChessBoard, Circle};
-use crate::game::{STANDARD_FEN, random_unit, rules};
+use crate::game::{STANDARD_FEN, random_unit};
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::settings::SettingsHandle;
 use crate::theme::Palette;
@@ -53,18 +53,14 @@ enum Stage {
     Over,
 }
 
-/// `randomSquare`: a square that is not `previous`, from `allowed` when given; the rules pick from
-/// the draws in order, and want one more draw each time the first ones give `previous`.
+/// A square that is not `previous`, from `allowed` when given; the rules pick from the draws in
+/// order, and want one more draw each time the first ones give `previous`.
 pub fn random_square(previous: Option<&str>, allowed: Option<&[String]>) -> String {
     let mut draws: Vec<f64> = Vec::new();
     loop {
         draws.push(random_unit());
-        if let Ok(square) = rules(
-            "randomSquare",
-            &[json!(previous), json!(draws), json!(allowed)],
-        ) && let Some(square) = square.as_str()
-        {
-            return square.to_string();
+        if let Some(square) = kchess_domain::voice::random_square(previous, &draws, allowed) {
+            return square;
         }
         if draws.len() > 64 {
             return "e4".into();
@@ -345,9 +341,8 @@ impl Coordinates {
             VoiceEvent::Missed { heard, .. } => (heard, true),
         };
         let square = (!missed)
-            .then(|| rules("spokenSquare", &[json!(heard.text)]).ok())
-            .flatten()
-            .and_then(|square| square.as_str().map(str::to_string));
+            .then(|| kchess_domain::voice::spoken_square(&heard.text))
+            .flatten();
         let outcome = match &square {
             _ if missed => "unclear",
             None => "invalid",
@@ -445,7 +440,7 @@ impl Coordinates {
     fn redraw(&mut self, cx: &mut Context<Self>) {
         let running = self.stage == Stage::Running;
         self.voice.sync(
-            crate::voice::grammar("COORDINATE_GRAMMAR"),
+            crate::voice::grammar(crate::voice::Grammar::Coordinate),
             running && self.mode == Mode::Voice,
             cx,
         );
@@ -835,7 +830,7 @@ impl Render for Coordinates {
                         id: "coordinates-voice",
                         hint: "Say “E four” or “Echo four”",
                         active: running,
-                        grammar: crate::voice::grammar("COORDINATE_GRAMMAR"),
+                        grammar: crate::voice::grammar(crate::voice::Grammar::Coordinate),
                     },
                     cx,
                 ))

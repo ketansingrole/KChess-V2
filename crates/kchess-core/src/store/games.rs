@@ -464,9 +464,10 @@ fn domain(method: &str, args: Vec<Value>) -> Result<Value> {
     crate::engine::domain(method, args)
 }
 
-/// `rulesLossless(name, value)` with no special values to carry.
+/// A `kchess_domain` `assert*` validator of one JSON value.
 fn validate(method: &str, value: &Value) -> Result<Value> {
-    domain(method, vec![json!([]), value.clone()])
+    kchess_domain::misc::validate_values(method, std::slice::from_ref(value))
+        .map_err(CoreError::new)
 }
 
 /// Runs `work` inside `BEGIN IMMEDIATE`, committing on success and rolling back on any failure.
@@ -806,9 +807,8 @@ fn game_from_row(row: &Row<'_>) -> rusqlite::Result<LichessGame> {
 /// `gamePage`: a bounded page of list rows, with the total for the same filters.
 fn game_page(ctx: &StoreContext, input: Value) -> Result<Value> {
     let db = ctx.db;
-    let query: GamePageQuery =
-        serde_json::from_value(domain("assertGamePageQuery", vec![json!([]), input])?)
-            .map_err(|cause| CoreError::new(cause.to_string()))?;
+    let query: GamePageQuery = serde_json::from_value(validate("assertGamePageQuery", &input)?)
+        .map_err(|cause| CoreError::new(cause.to_string()))?;
     let mut clauses: Vec<String> = Vec::new();
     let mut params: Vec<SqlValue> = Vec::new();
     if let Some(account) = query

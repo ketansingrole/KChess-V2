@@ -1,7 +1,7 @@
-//! Validation and library documents, reached
-//! through `api::call`. The first argument is a sidecar listing where `undefined`, NaN, the infinities and binary data
-//! sat, since JSON cannot carry them. Those are rebuilt here before validation, so each check sees
-//! exactly the values the caller passed.
+//! Validation and library documents. Validators are found by the name the core's contracts give
+//! them (`assertX`), and see JavaScript-like values (`J`): JSON arguments, or JSON with a sidecar
+//! listing where `undefined`, NaN, the infinities and binary data sat (`inputs`), since JSON
+//! cannot carry them.
 
 pub mod constants;
 pub mod contracts;
@@ -17,37 +17,44 @@ pub use contracts::{ASSISTANCE_METHODS, TV_CHANNEL_KEYS, arities, normalize, val
 use serde_json::Value;
 use value::J;
 
-/// This module's methods for `api::call`; None when the method is not one of them.
-pub fn call(method: &str, args: &[Value]) -> Option<Result<Value, String>> {
-    let run = Run::find(method)?;
-    let Some((sidecar, user)) = args.split_first() else {
-        return Some(Err(format!(
-            "{method} was called without its lossless arguments"
-        )));
-    };
-    Some(inputs(user, sidecar).and_then(|values| run.call(values)))
+/// The normalized value validator `name` gives for `args`, or the message it rejected them with.
+pub fn validate(name: &str, args: Vec<J>) -> Result<Value, String> {
+    match Run::find(name) {
+        Some(run) => run.call(args),
+        None => Err(format!("Unknown validator {name}.")),
+    }
 }
 
-/// A value validator or a document decoder.
+/// Whether `name` is a validator or a document check.
+pub fn is_validator(name: &str) -> bool {
+    Run::find(name).is_some()
+}
+
+/// `validate` of JSON arguments, a JSON `null` being `null`.
+pub fn validate_values(name: &str, args: &[Value]) -> Result<Value, String> {
+    validate(name, args.iter().map(J::from).collect())
+}
+
+/// A value validator or a document check.
 #[derive(Clone, Copy)]
-enum Run {
+pub(crate) enum Run {
     Validate(validate::Validator),
-    Decode(documents::Handler),
+    Check(documents::Check),
 }
 
 impl Run {
-    /// The validator or decoder by its TypeScript name.
-    fn find(name: &str) -> Option<Run> {
+    /// The validator or document check by the name the contracts give it.
+    pub(crate) fn find(name: &str) -> Option<Run> {
         validate::validator(name)
             .map(Run::Validate)
-            .or_else(|| documents::handler(name).map(Run::Decode))
+            .or_else(|| documents::check(name).map(Run::Check))
     }
 
     /// Its normalized value for `args`, or the message it rejected them with.
-    fn call(self, args: Vec<J>) -> Result<Value, String> {
+    pub(crate) fn call(self, args: Vec<J>) -> Result<Value, String> {
         match self {
             Run::Validate(validate) => validate(args),
-            Run::Decode(decode) => decode(args).map(J::into_value),
+            Run::Check(check) => check(args).map(J::into_value),
         }
     }
 }
@@ -142,7 +149,13 @@ fn segments(at: &[Value]) -> Result<(usize, Vec<Seg>), String> {
     Ok((arg, path))
 }
 
-fn from_json(v: &Value) -> J {
+impl From<&Value> for J {
+    fn from(value: &Value) -> J {
+        from_json(value)
+    }
+}
+
+pub(crate) fn from_json(v: &Value) -> J {
     match v {
         Value::Null => J::Null,
         Value::Bool(b) => J::Bool(*b),

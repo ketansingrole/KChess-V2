@@ -212,24 +212,6 @@ pub fn default_colors(dark: bool) -> Map<String, Value> {
         .collect()
 }
 
-/// This module's methods for `api::call`; None when the method is not one of them.
-pub fn call(method: &str, args: &[Value]) -> Option<Result<Value, String>> {
-    Some(match method {
-        "presetThemes" => Ok(presets().clone()),
-        "defaultThemeColors" => Ok(Value::Object(default_colors(
-            args.first().and_then(Value::as_bool).unwrap_or(false),
-        ))),
-        "themeColors" => {
-            let palette = args.first().unwrap_or(&Value::Null);
-            let dark = args.get(1).and_then(Value::as_bool).unwrap_or(false);
-            colors(palette, dark).map(Value::Object).ok_or_else(|| {
-                "themeColors needs a palette with bg, text and primary colors".to_string()
-            })
-        }
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,6 +329,5 @@ mod tests {
             )
             .is_none()
         );
-        assert!(call("themeColors", &[json!({})]).unwrap().is_err());
     }
 }

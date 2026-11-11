@@ -415,7 +415,7 @@ impl LocalPage {
         self.voice.sync(
             &context,
             Some(line),
-            crate::voice::grammar("MOVE_GRAMMAR"),
+            crate::voice::grammar(crate::voice::Grammar::Move),
             taking,
             cx,
         );
@@ -1387,7 +1387,7 @@ impl Render for LocalPage {
                 hint: "Either player can say “E four” or “Knight F three”",
                 active: self.voice_taking(),
                 listening: self.voice_taking(),
-                grammar: crate::voice::grammar("MOVE_GRAMMAR"),
+                grammar: crate::voice::grammar(crate::voice::Grammar::Move),
             },
             cx,
         );
