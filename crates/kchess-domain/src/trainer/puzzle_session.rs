@@ -7,7 +7,7 @@
 //! (`YYYY-MM-DD`), for an attempt that ends in the step.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::puzzle_progress::{Outcome, Verdict, classify, moves};
 use crate::js;
@@ -164,18 +164,57 @@ pub struct Resume {
     selection: Selection,
 }
 
-/// A host call a step asks for: its method, argument, and the token its reply goes back with.
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// A core call a step asks for, and the token its reply goes back with.
+#[derive(Clone, Debug)]
 pub struct Call {
-    pub method: &'static str,
-    pub args: Value,
+    pub request: Request,
     pub resume: Resume,
 }
 
-/// What one step asks of the host.
-#[derive(Clone, Debug, Default, Serialize)]
+/// The core call a step asks for, with its argument.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Request {
+    /// Downloaded puzzles near a rating (`localPuzzles`).
+    LocalPuzzles(LocalQuery),
+    /// The next Lichess puzzle (`puzzleNext`).
+    PuzzleNext(Draw),
+    /// A solved puzzle's result for Lichess (`puzzleSolve`).
+    PuzzleSolve(Solve),
+}
+
+/// The downloaded puzzles asked for.
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LocalQuery {
+    pub theme: String,
+    pub min_rating: f64,
+    pub max_rating: f64,
+    pub count: u32,
+}
+
+/// The Lichess puzzle asked for; no colour for either.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Draw {
+    pub account: String,
+    pub angle: String,
+    pub difficulty: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+/// A puzzle's result as Lichess takes it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Solve {
+    pub account: String,
+    pub angle: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<Value>,
+    pub win: bool,
+    pub rated: bool,
+}
+
+/// What one step asks of the host.
+#[derive(Clone, Debug, Default)]
 pub struct Step {
     pub call: Option<Call>,
     /// An attempt for the host to keep in the local log (`recordPuzzleAttempt`).
@@ -255,15 +294,13 @@ fn syncs_to_lichess(state: &State, selection: &Selection) -> bool {
 }
 
 /// The arguments of `puzzleNext`: the colour is left out when it is random.
-fn draw_args(account: &str, selection: &Selection) -> Value {
-    let mut args = Map::new();
-    args.insert("account".into(), json!(account));
-    args.insert("angle".into(), json!(selection.angle));
-    args.insert("difficulty".into(), json!(selection.difficulty));
-    if selection.color != "random" {
-        args.insert("color".into(), json!(selection.color));
-    }
-    Value::Object(args)
+fn draw_args(account: &str, selection: &Selection) -> Request {
+    Request::PuzzleNext(Draw {
+        account: account.to_string(),
+        angle: selection.angle.clone(),
+        difficulty: selection.difficulty.clone(),
+        color: (selection.color != "random").then(|| selection.color.clone()),
+    })
 }
 
 fn resume(stage: &str, generation: u64, selection: &Selection) -> Resume {
@@ -348,12 +385,11 @@ impl Session<'_> {
         if selection.mode == "offline" {
             let centre = self.state.rating.unwrap_or(1500.0) + offset(&selection.difficulty);
             self.call = Some(Call {
-                method: "localPuzzles",
-                args: json!({
-                    "theme": selection.angle,
-                    "minRating": (centre - 150.0).max(0.0),
-                    "maxRating": centre + 150.0,
-                    "count": 1,
+                request: Request::LocalPuzzles(LocalQuery {
+                    theme: selection.angle.clone(),
+                    min_rating: (centre - 150.0).max(0.0),
+                    max_rating: centre + 150.0,
+                    count: 1,
                 }),
                 resume: resume("offline", generation, selection),
             });
@@ -368,8 +404,7 @@ impl Session<'_> {
             return;
         }
         self.call = Some(Call {
-            method: "puzzleNext",
-            args: draw_args(&selection.account, selection),
+            request: draw_args(&selection.account, selection),
             resume: resume("draw", generation, selection),
         });
     }
@@ -397,8 +432,7 @@ impl Session<'_> {
                     }
                     // Practice does not need the permission: take a puzzle without the account.
                     self.call = Some(Call {
-                        method: "puzzleNext",
-                        args: draw_args("", &selection),
+                        request: draw_args("", &selection),
                         resume: resume("anonymous", token.generation, &selection),
                     });
                     return;
@@ -533,25 +567,20 @@ impl Session<'_> {
             return;
         }
         let puzzle_id = puzzle.get("id").cloned().unwrap_or(Value::Null);
-        let mut args = Map::new();
-        args.insert("account".into(), json!(started.account));
-        args.insert("angle".into(), json!(started.angle));
-        if let Some(id) = puzzle.get("id") {
-            args.insert("id".into(), id.clone());
-        }
-        args.insert("win".into(), json!(win));
-        args.insert(
-            "rated".into(),
-            json!(counts_for_rating(&started.mode, detail.hinted)),
-        );
+        let solve = Solve {
+            account: started.account.clone(),
+            angle: started.angle.clone(),
+            id: puzzle.get("id").cloned(),
+            win,
+            rated: counts_for_rating(&started.mode, detail.hinted),
+        };
         let mut token = resume("solve", self.internal.load_gen, selection);
         token.version = self.internal.session_version;
         token.key = started.key;
         token.win = win;
         token.puzzle_id = puzzle_id;
         self.call = Some(Call {
-            method: "puzzleSolve",
-            args: Value::Object(args),
+            request: Request::PuzzleSolve(solve),
             resume: token,
         });
     }

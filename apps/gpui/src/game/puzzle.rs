@@ -27,6 +27,11 @@ mod tests {
         };
         let step = session.load_begin(&selection, true, &local_day());
         assert_eq!(session.phase(), "loading");
-        assert_eq!(step.call.map(|call| call.method), Some("puzzleNext"));
+        assert!(matches!(
+            step.call.map(|call| call.request),
+            Some(kchess_domain::trainer::puzzle_session::Request::PuzzleNext(
+                _
+            ))
+        ));
     }
 }

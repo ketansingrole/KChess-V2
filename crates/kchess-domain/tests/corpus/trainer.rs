@@ -104,11 +104,28 @@ fn step(
     let day = arg.get("day").and_then(Value::as_str).unwrap_or_default();
     let step = body(&mut session, arg, day)?;
     let mut out = serde_json::to_value(&session).map_err(|e| e.to_string())?;
-    let step = serde_json::to_value(step).map_err(|e| e.to_string())?;
+    let step = step_json(step)?;
     if let (Some(out), Some(step)) = (out.as_object_mut(), step.as_object()) {
         out.extend(step.clone());
     }
     Ok(out)
+}
+
+/// A step as the recorded suites wrote it: its call by method name and argument.
+fn step_json(step: Step) -> Result<Value, String> {
+    let call = match step.call {
+        None => Value::Null,
+        Some(call) => {
+            let (method, args) = match &call.request {
+                session::Request::LocalPuzzles(query) => ("localPuzzles", json!(query)),
+                session::Request::PuzzleNext(draw) => ("puzzleNext", json!(draw)),
+                session::Request::PuzzleSolve(solve) => ("puzzleSolve", json!(solve)),
+            };
+            let resume = serde_json::to_value(&call.resume).map_err(|e| e.to_string())?;
+            json!({ "method": method, "args": args, "resume": resume })
+        }
+    };
+    Ok(json!({ "call": call, "record": step.record, "warn": step.warn }))
 }
 
 fn number(value: Option<&Value>) -> Option<f64> {

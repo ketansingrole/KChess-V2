@@ -27,7 +27,7 @@ use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
 use crate::puzzle_db::PuzzleDbHandle;
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii, tint};
-use kchess_domain::trainer::puzzle_session::{Detail, Resume};
+use kchess_domain::trainer::puzzle_session::{Detail, Request, Resume};
 mod daily;
 mod history;
 mod rush;
@@ -530,15 +530,13 @@ impl PuzzlesPage {
         let Some(call) = step.call else {
             return;
         };
-        let request = cx
-            .global::<AppCore>()
-            .call(call.method, vec![call.args.clone()]);
+        let (method, request) = puzzle_request(cx.global::<AppCore>(), &call.request);
         cx.spawn(async move |this, cx| {
             let reply = request.await.map_err(|cause| {
                 crate::log::write(
                     Level::Warn,
                     "puzzles",
-                    &format!("{} failed: {}", call.method, cause.message),
+                    &format!("{method} failed: {}", cause.message),
                 );
                 cause.message
             });
@@ -551,7 +549,39 @@ impl PuzzlesPage {
         })
         .detach();
     }
+}
 
+/// A core call's answer, on its way.
+type Answer = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Value, kchess_contracts::CoreError>>>,
+>;
+
+/// A puzzle step's core call, sent, and its method's name.
+fn puzzle_request(core: &AppCore, request: &Request) -> (&'static str, Answer) {
+    use kchess_contracts::calls::CoreCall;
+    match request {
+        Request::LocalPuzzles(query) => (
+            calls::LocalPuzzles::METHOD,
+            Box::pin(core.request(calls::LocalPuzzles {
+                query: json!(query),
+            })),
+        ),
+        Request::PuzzleNext(draw) => (
+            calls::PuzzleNext::METHOD,
+            Box::pin(core.request(calls::PuzzleNext {
+                request: json!(draw),
+            })),
+        ),
+        Request::PuzzleSolve(solve) => (
+            calls::PuzzleSolve::METHOD,
+            Box::pin(core.request(calls::PuzzleSolve {
+                request: json!(solve),
+            })),
+        ),
+    }
+}
+
+impl PuzzlesPage {
     /// Keep an attempt in the local log; a failed write never interrupts training.
     fn record(&mut self, attempt: Value, cx: &mut Context<Self>) {
         let save = cx
