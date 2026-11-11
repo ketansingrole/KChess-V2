@@ -1,11 +1,13 @@
 //! A plan that refuses the chosen effort, after the explanation's access renewed the tokens: the
 //! refusal is recorded without bringing back the refresh token the renewal used up, and only for
-//! the effort it refused.
+//! the effort it refused; once refused, the effort is no longer sent. A wrong puzzle move is
+//! explained with the engine's reply to it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::fixtures::{Recording, Reply, default_answers, http_client, serve};
+use crate::fixtures::{Fixture, Recording, Reply, Request, default_answers, http_client, serve};
+use crate::support;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use kchess_core::{Config, Core, TestSwitches};
@@ -43,21 +45,25 @@ fn field(body: &str, name: &str) -> Option<String> {
         .map(|(_, value)| value.into_owned())
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_refused_effort_keeps_the_renewed_tokens() {
+/// A profile signed in to the plan at a local fixture, whose `/v1/responses` answers come from
+/// `responses`; every access renews the tokens, and `renewals` is the refresh token each renewal
+/// sent, in order.
+struct Plan {
+    fixture: Fixture,
+    core: Arc<Core>,
+    renewals: Arc<Mutex<Vec<String>>>,
+    dir: tempfile::TempDir,
+}
+
+async fn signed_in_plan(responses: impl Fn(&Request) -> Reply + Send + 'static) -> Plan {
     let nonce = Arc::new(Mutex::new(String::new()));
     let origin = Arc::new(Mutex::new(String::new()));
-    // The refresh token each renewal sent, in order.
     let renewals = Arc::new(Mutex::new(Vec::<String>::new()));
-    // While set, a refusal waits for the gate to open.
-    let hold = Arc::new(AtomicBool::new(false));
-    let (gate, gated) = watch::channel(false);
     let fixture = {
-        let (nonce, origin, renewals, hold) = (
+        let (nonce, origin, renewals) = (
             Arc::clone(&nonce),
             Arc::clone(&origin),
             Arc::clone(&renewals),
-            Arc::clone(&hold),
         );
         serve(move |seen| match seen.path() {
             "/api/accounts/oauth/token" => {
@@ -94,23 +100,7 @@ async fn a_refused_effort_keeps_the_renewed_tokens() {
                     .to_string(),
                 )
             }
-            "/v1/responses" => {
-                let sent: Value = serde_json::from_str(&seen.body).unwrap_or_default();
-                if sent["reasoning"]["effort"].is_string() {
-                    let refusal = Reply::Json(
-                        400,
-                        json!({ "error": {
-                            "code": "subscription_sharing_unsupported_capability"
-                        }})
-                        .to_string(),
-                    );
-                    if hold.load(Ordering::SeqCst) {
-                        return Reply::Gated(gated.clone(), Box::new(refusal));
-                    }
-                    return refusal;
-                }
-                stream("You missed Nc7+, forking the Ke8 and the Ra8.")
-            }
+            "/v1/responses" => responses(seen),
             _ => Reply::Json(404, "{}".into()),
         })
         .await
@@ -151,6 +141,47 @@ async fn a_refused_effort_keeps_the_renewed_tokens() {
     let core =
         Arc::new(Core::open(config, Arc::clone(&host) as Arc<dyn kchess_core::Host>).unwrap());
     *host.capabilities.lock().unwrap() = Some(core.capabilities());
+    Plan {
+        fixture,
+        core,
+        renewals,
+        dir,
+    }
+}
+
+/// The plan refuses any request that names an effort.
+fn refusing_effort(seen: &Request, hold: &AtomicBool, gated: &watch::Receiver<bool>) -> Reply {
+    let sent: Value = serde_json::from_str(&seen.body).unwrap_or_default();
+    if sent["reasoning"]["effort"].is_string() {
+        let refusal = Reply::Json(
+            400,
+            json!({ "error": {
+                "code": "subscription_sharing_unsupported_capability"
+            }})
+            .to_string(),
+        );
+        if hold.load(Ordering::SeqCst) {
+            return Reply::Gated(gated.clone(), Box::new(refusal));
+        }
+        return refusal;
+    }
+    stream("You missed Nc7+, forking the Ke8 and the Ra8.")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_effort_keeps_the_renewed_tokens() {
+    // While set, a refusal waits for the gate to open.
+    let hold = Arc::new(AtomicBool::new(false));
+    let (gate, gated) = watch::channel(false);
+    let Plan {
+        fixture,
+        core,
+        renewals,
+        dir: _dir,
+    } = {
+        let hold = Arc::clone(&hold);
+        signed_in_plan(move |seen| refusing_effort(seen, &hold, &gated)).await
+    };
     core.call("resumeOnline", vec![]).await.unwrap();
     let status = core.call("aiConnect", vec![]).await.unwrap();
     assert_eq!(status["connected"], true);
@@ -163,9 +194,20 @@ async fn a_refused_effort_keeps_the_renewed_tokens() {
     let status = core.call("aiStatus", vec![]).await.unwrap();
     assert_eq!(status["effortRefused"], true);
     assert_eq!(status["connected"], true);
+    // Choosing the same model and effort again keeps them refused.
+    let status = core
+        .call("aiSetOptions", vec![json!("gpt-a"), json!("low")])
+        .await
+        .unwrap();
+    assert_eq!(status["effortRefused"], true);
     // The next access renews refresh-2: refresh-1 was used up, and sending it again would end
-    // the sign-in.
+    // the sign-in. The refused effort is not sent again: one request, without it.
+    let asked = fixture.to("/v1/responses").len();
     core.call("aiExplain", vec![request("e1d1")]).await.unwrap();
+    let sent = fixture.to("/v1/responses");
+    assert_eq!(sent.len(), asked + 1);
+    let body: Value = serde_json::from_str(&sent[asked].body).unwrap();
+    assert!(body["reasoning"]["effort"].is_null(), "{body}");
     assert_eq!(*renewals.lock().unwrap(), ["refresh-1", "refresh-2"]);
 
     // A refusal that arrives after another effort was chosen leaves the new one alone.
@@ -187,4 +229,46 @@ async fn a_refused_effort_keeps_the_renewed_tokens() {
     let status = core.call("aiStatus", vec![]).await.unwrap();
     assert_eq!(status["effort"], "high");
     assert_eq!(status["effortRefused"], false);
+}
+
+/// A wrong puzzle move is explained with the engine's reply to it: the engine is asked about the
+/// position after the move, briefly, and its mate goes to the plan with the facts.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wrong_move_is_explained_with_the_engines_reply() {
+    let Plan {
+        fixture, core, dir, ..
+    } = signed_in_plan(|_| stream("That bishop move leaves your back rank open.")).await;
+    let engine = support::engine_copy(dir.path(), "search");
+    support::save_engine_path(&core, &engine);
+    core.call("resumeOnline", vec![]).await.unwrap();
+    core.call("aiConnect", vec![]).await.unwrap();
+    core.call("aiSetOptions", vec![json!("gpt-a"), json!("auto")])
+        .await
+        .unwrap();
+    // Black to move; after Bc3 White mates with Ra8 (the scripted engine's move here).
+    let wrong = json!({
+        "kind": "wrong",
+        "fen": "6k1/5ppp/8/8/8/8/1b6/R5K1 b - - 0 1",
+        "played": "b2c3",
+        "moves": ["h7h6"],
+    });
+    let told = core.call("aiExplain", vec![wrong]).await.unwrap();
+    assert_eq!(
+        told["text"],
+        json!("That bishop move leaves your back rank open.")
+    );
+    let asked = support::received(&support::copy_log(&engine));
+    assert!(
+        asked
+            .iter()
+            .any(|line| line.starts_with("position fen 6k1/5ppp/8/8/8/2b5/8/R5K1 w ")),
+        "{asked:?}"
+    );
+    assert!(
+        asked.iter().any(|line| line == "go movetime 500"),
+        "{asked:?}"
+    );
+    let sent = fixture.to("/v1/responses");
+    assert!(sent[0].body.contains("Ra8"), "{}", sent[0].body);
+    core.close().await;
 }
