@@ -16,14 +16,16 @@ use gpui_kit::component::{Disableable as _, Icon, IndexPath, Sizable as _, h_fle
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use kchess_contracts::Level;
-use kchess_contracts::types::{PuzzleAttempt, PuzzleProgress, PuzzleProgressQuery};
+use kchess_contracts::types::{
+    PuzzleAttempt, PuzzleAttemptOutcome, PuzzleProgress, PuzzleProgressQuery,
+};
 use kchess_domain::records::accounts::{ListedAccount, connected_account_index};
 use serde_json::{Value, json};
 use shakmaty::Color;
 
 use crate::assets::icon;
 use crate::core::AppCore;
-use crate::game::puzzle::{PuzzleSession, Selection, Step, local_day};
+use crate::game::puzzle::{PuzzleSession, PuzzleStatus, Selection, Step, local_day};
 use crate::game::surface::TakesKeys as _;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout, side_padding};
 use crate::puzzle_board::{Feedback, PuzzleBoard, PuzzleBoardEvent};
@@ -665,7 +667,7 @@ impl PuzzlesPage {
     fn done(&mut self, cx: &mut Context<Self>) {
         let step = self.session.end(&local_day());
         self.follow(step, Settle::Load, cx);
-        let solved = self.puzzle.read(cx).status() == "solved";
+        let solved = self.puzzle.read(cx).status() == PuzzleStatus::Solved;
         let auto_next = cx
             .global::<SettingsHandle>()
             .0
@@ -834,15 +836,15 @@ fn clue(puzzle: &Value) -> Option<AnyElement> {
 
 /// Whether a coach may speak: outside help on a puzzle that counts for a rating is cheating, so a
 /// rated attempt has none until it is over.
-fn coach_allowed(rated: bool, status: &str) -> bool {
-    !rated || status != "playing"
+fn coach_allowed(rated: bool, status: PuzzleStatus) -> bool {
+    !rated || status.is_over()
 }
 
 /// What a coach can add: a nudge while solving, why a wrong move fails, why the solution works.
 fn coach_block(
     board_entity: &Entity<PuzzleBoard>,
     puzzle: &Value,
-    status: &str,
+    status: PuzzleStatus,
     playing: bool,
     rated: bool,
     cx: &App,
@@ -896,7 +898,7 @@ fn coach_block(
                 merged(&current, AiKind::Nudge, None),
                 Some(nudged),
             )
-        } else if status != "playing" {
+        } else if status.is_over() {
             (
                 "puzzle-why",
                 "Explain",
@@ -931,29 +933,28 @@ pub(crate) fn status_panel(
     };
     let puzzle = board.puzzle.clone();
     let player = board.player_color();
-    let status = shown.status().to_string();
+    let status = shown.status();
     let (outcome, feedback, waiting, hinted) = (
         shown.outcome(),
         shown.feedback(),
         shown.waiting(),
         shown.hinted(),
     );
-    let status = status.as_str();
     let color = if player == Color::White {
         "white"
     } else {
         "black"
     };
     let (tone, glyph, title) = match status {
-        "revealed" => (
+        PuzzleStatus::Revealed => (
             Tone::Loss,
             icon("eye"),
             "Solution shown — not counted as solved".to_string(),
         ),
-        "solved" if outcome == Some(true) => {
+        PuzzleStatus::Solved if outcome == Some(true) => {
             (Tone::Win, icon("trophy"), "Puzzle solved".to_string())
         }
-        "solved" => (
+        PuzzleStatus::Solved => (
             Tone::Plain,
             icon("check"),
             if shown.was_nudged() {
@@ -962,7 +963,7 @@ pub(crate) fn status_panel(
                 "Solved after a mistake — not counted".to_string()
             },
         ),
-        "failed" => (
+        PuzzleStatus::Failed => (
             Tone::Loss,
             icon("x"),
             "Not the move — puzzle over".to_string(),
@@ -979,8 +980,8 @@ pub(crate) fn status_panel(
             format!("Find the best move for {color}"),
         ),
     };
-    let playing = status == "playing";
-    let finished = matches!(status, "solved" | "revealed" | "failed");
+    let playing = status == PuzzleStatus::Playing;
+    let finished = status.is_over();
     let facts = finished.then(|| {
         v_flex()
             .gap(px(8.))
@@ -1404,26 +1405,33 @@ impl PuzzlesPage {
         let strip = (!recent.is_empty()).then(|| {
             h_flex().flex_wrap().gap(px(4.)).mt(px(8.)).children(
                 recent.into_iter().enumerate().map(|(index, attempt)| {
-                    let outcome = attempt.outcome.as_str().to_string();
-                    let (glyph, fg, bg) = match outcome.as_str() {
-                        "solved" => (icon("check"), palette.success, tint(palette.success, 10.)),
-                        "hinted" => (icon("lightbulb"), palette.success, palette.bg),
-                        "partial" => (
+                    let (glyph, fg, bg) = match attempt.outcome {
+                        PuzzleAttemptOutcome::Solved => {
+                            (icon("check"), palette.success, tint(palette.success, 10.))
+                        }
+                        PuzzleAttemptOutcome::Hinted => {
+                            (icon("lightbulb"), palette.success, palette.bg)
+                        }
+                        PuzzleAttemptOutcome::Partial => (
                             icon("chart-no-axes-column"),
                             palette.info,
                             tint(palette.info, 10.),
                         ),
-                        "revealed" => (icon("eye"), palette.toned, palette.elevated),
-                        _ => (icon("x"), palette.error, tint(palette.error, 10.)),
+                        PuzzleAttemptOutcome::Revealed => {
+                            (icon("eye"), palette.toned, palette.elevated)
+                        }
+                        PuzzleAttemptOutcome::Missed => {
+                            (icon("x"), palette.error, tint(palette.error, 10.))
+                        }
                     };
                     let label = format!(
                         "{}, {}/{} moves{}, rated {}",
-                        match outcome.as_str() {
-                            "solved" => "Solved",
-                            "hinted" => "With hint",
-                            "partial" => "Partial",
-                            "revealed" => "Revealed",
-                            _ => "Missed",
+                        match attempt.outcome {
+                            PuzzleAttemptOutcome::Solved => "Solved",
+                            PuzzleAttemptOutcome::Hinted => "With hint",
+                            PuzzleAttemptOutcome::Partial => "Partial",
+                            PuzzleAttemptOutcome::Revealed => "Revealed",
+                            PuzzleAttemptOutcome::Missed => "Missed",
                         },
                         attempt.found,
                         attempt.total,
@@ -1769,7 +1777,7 @@ impl PuzzlesPage {
             actions.extend([Action::Hint, Action::Solution]);
         }
         actions.push(Action::Flip);
-        if matches!(board.read(cx).status(), "solved" | "revealed" | "failed") {
+        if board.read(cx).status().is_over() {
             actions.push(Action::Analyse);
         }
         if train {
@@ -1975,7 +1983,7 @@ impl Render for PuzzlesPage {
 
 #[cfg(test)]
 mod tests {
-    use super::{as_contract, coach_allowed, theme_groups, theme_name, themes};
+    use super::{PuzzleStatus, as_contract, coach_allowed, theme_groups, theme_name, themes};
     use crate::widgets::{self, format_bytes};
     use kchess_contracts::types::LocalLadderQuery;
 
@@ -2001,11 +2009,15 @@ mod tests {
 
     #[test]
     fn a_rated_attempt_has_no_coach_until_it_is_over() {
-        assert!(!coach_allowed(true, "playing"));
-        for over in ["solved", "failed", "revealed"] {
+        assert!(!coach_allowed(true, PuzzleStatus::Playing));
+        for over in [
+            PuzzleStatus::Solved,
+            PuzzleStatus::Failed,
+            PuzzleStatus::Revealed,
+        ] {
             assert!(coach_allowed(true, over));
         }
-        assert!(coach_allowed(false, "playing"));
+        assert!(coach_allowed(false, PuzzleStatus::Playing));
     }
 
     #[test]

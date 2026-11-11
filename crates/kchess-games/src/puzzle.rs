@@ -3,7 +3,7 @@
 //! whether it is solved. The app's Puzzles page and the CLI's `puzzle` both play puzzles through
 //! it, so a move counts the same in each (any checkmate solves, as on Lichess).
 
-use kchess_domain::training::puzzle::{self, PuzzleState};
+use kchess_domain::training::puzzle::{self, PuzzleState, PuzzleStatus};
 use serde_json::Value;
 
 /// One puzzle on the board: the position, the next solution move to find, and whether it is
@@ -30,18 +30,17 @@ impl OnBoard {
         self.state.variant
     }
 
-    /// `playing`, `solved` or `failed`.
-    pub fn status(&self) -> &str {
-        &self.state.status
+    pub fn status(&self) -> PuzzleStatus {
+        self.state.status
     }
 
     /// Whether the solution is still being looked for.
     pub fn playing(&self) -> bool {
-        self.status() == "playing"
+        self.status() == PuzzleStatus::Playing
     }
 
     pub fn solved(&self) -> bool {
-        self.status() == "solved"
+        self.status() == PuzzleStatus::Solved
     }
 
     /// The index in the solution of the move the player must make next.
@@ -140,16 +139,16 @@ mod tests {
     #[test]
     fn the_solution_is_checked_by_the_rules() {
         let mut board = OnBoard::start(&puzzle());
-        assert_eq!(board.status(), "playing");
+        assert_eq!(board.status(), PuzzleStatus::Playing);
         assert_eq!(board.player_color(), shakmaty::Color::White);
         assert_eq!(
             board.next_squares().map(|(from, _)| from.to_string()),
             Some("h5".into())
         );
         assert!(!board.player_move("c4f7").0);
-        assert_eq!(board.status(), "playing");
+        assert_eq!(board.status(), PuzzleStatus::Playing);
         assert!(board.player_move("h5f7").0);
-        assert_eq!(board.status(), "solved");
+        assert_eq!(board.status(), PuzzleStatus::Solved);
         assert_eq!(board.last_san(), "Qxf7#");
     }
 
@@ -200,7 +199,7 @@ mod tests {
         assert_eq!(board.player_moves(), 1);
         // A move that is no move at all leaves the puzzle as it was.
         assert_eq!(board.player_move("h5h9"), (false, None));
-        assert_eq!(board.status(), "playing");
+        assert_eq!(board.status(), PuzzleStatus::Playing);
         assert!(board.player_move("h5f7").0);
         assert_eq!(
             board.last_move(),
@@ -235,9 +234,9 @@ mod tests {
             board.next_squares(),
             Some((shakmaty::Square::B8, shakmaty::Square::C6))
         );
-        assert_eq!(board.status(), "playing");
+        assert_eq!(board.status(), PuzzleStatus::Playing);
         assert!(board.player_move("b8c6").0);
-        assert_eq!(board.status(), "solved");
+        assert_eq!(board.status(), PuzzleStatus::Solved);
 
         let mut drill = line.clone();
         drill["variant"] = json!("chess960");
@@ -251,7 +250,7 @@ mod tests {
     fn a_puzzle_the_rules_cannot_set_up_shows_nothing() {
         let board = OnBoard::start(&json!({ "id": "broken" }));
         assert_eq!(board.fen(), "");
-        assert_eq!(board.status(), "playing");
+        assert_eq!(board.status(), PuzzleStatus::Playing);
         assert_eq!(board.index(), 0);
         assert_eq!(board.last_move(), None);
         assert_eq!(board.last_san(), "");

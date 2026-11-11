@@ -297,7 +297,10 @@ impl Run<'_> {
             self.effect(Effect::Moved { san: san.clone() });
             // A move by the other colour than ours is the opponent's.
             if turn_of(&replayed.setup.fen) == self.m.online_color {
-                let body = format!("{}. Your move.", san.as_deref().unwrap_or("undefined"));
+                let body = match &san {
+                    Some(san) => format!("{san}. Your move."),
+                    None => "Your move.".to_string(),
+                };
                 let title = format!("{} moved", self.m.online_opponent);
                 self.notify(NotificationKind::OpponentMove, &title, body);
                 // A new move answers any takeback request.
@@ -366,8 +369,7 @@ impl Run<'_> {
             if !self.m.opponent_gone {
                 self.m.online_status = "Game in progress".into();
             }
-        } else {
-            let reason = state.status.as_deref().unwrap_or("undefined");
+        } else if let Some(reason) = state.status.as_deref() {
             self.finish(state.winner.as_deref(), reason, true);
         }
     }

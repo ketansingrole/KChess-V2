@@ -1,6 +1,7 @@
 //! Practice, offline: the board-vision drills and the trainers that need no account.
 
 use super::Harness;
+use crate::game::puzzle::PuzzleStatus;
 use crate::pages::Page;
 
 fn practice(cx: &mut gpui_kit::TestAppContext) -> Harness {
@@ -348,7 +349,7 @@ fn a_crazyhouse_mistake_is_solved_with_a_drop(cx: &mut gpui_kit::TestAppContext)
     app.click("pocket-White-Pawn");
     app.click_square("d4", true);
     app.wait_for("the drop to solve the drill", |_, cx| {
-        mistakes.read(cx).board().read(cx).status() == "solved"
+        mistakes.read(cx).board().read(cx).status() == PuzzleStatus::Solved
     });
 }
 
@@ -435,7 +436,7 @@ fn a_solved_mistake_is_stepped_through_and_turned(cx: &mut gpui_kit::TestAppCont
     app.click_square("h5", true);
     app.click_square("f7", true);
     app.wait_for("the mate to solve the drill", |_, cx| {
-        mistakes.read(cx).board().read(cx).status() == "solved"
+        mistakes.read(cx).board().read(cx).status() == PuzzleStatus::Solved
     });
     app.click("chess-board");
     app.press("left");
@@ -478,13 +479,13 @@ fn return_goes_on_to_the_next_due_mistake(cx: &mut gpui_kit::TestAppContext) {
     app.press("enter");
     assert_eq!(
         app.cx
-            .update(|cx| mistakes.read(cx).board().read(cx).status().to_string()),
-        "playing"
+            .update(|cx| mistakes.read(cx).board().read(cx).status()),
+        PuzzleStatus::Playing
     );
     app.click_square("h5", true);
     app.click_square("f7", true);
     app.wait_for("the mate to solve the drill", |_, cx| {
-        mistakes.read(cx).board().read(cx).status() == "solved"
+        mistakes.read(cx).board().read(cx).status() == PuzzleStatus::Solved
     });
     // The answer is saved in the core, whose drills (none: these were seeded here) come back;
     // seed the other one again once they have.
@@ -499,7 +500,7 @@ fn return_goes_on_to_the_next_due_mistake(cx: &mut gpui_kit::TestAppContext) {
     app.click("chess-board");
     app.press("enter");
     app.wait_for("the next mistake", |_, cx| {
-        mistakes.read(cx).board().read(cx).status() == "playing"
+        mistakes.read(cx).board().read(cx).status() == PuzzleStatus::Playing
     });
 }
 

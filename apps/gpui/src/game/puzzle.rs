@@ -3,6 +3,7 @@
 //! attempt to log. A single puzzle on the board is `OnBoard`, moved on by the rules too.
 
 pub use kchess_domain::trainer::puzzle_session::{PuzzleSession, Selection, Step};
+pub use kchess_domain::training::puzzle::PuzzleStatus;
 pub use kchess_games::puzzle::OnBoard;
 
 /// The local calendar day, `YYYY-MM-DD`, which the day streak counts.

@@ -119,7 +119,7 @@ fn review_input(review: &Value) -> Result<Value> {
     let evals = review
         .get("evals")
         .and_then(Value::as_array)
-        .ok_or_else(|| CoreError::new("Cannot read properties of undefined (reading 'map')"))?;
+        .ok_or_else(|| cannot_analyse("it has no scores".into()))?;
     let scores: Vec<Value> = evals
         .iter()
         .map(|e| {

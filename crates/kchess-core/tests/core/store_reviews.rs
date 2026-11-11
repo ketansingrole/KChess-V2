@@ -388,3 +388,48 @@ fn time_use_counts_blunders_made_short_of_time() {
         })
     );
 }
+
+/// A stored review without scores is refused in plain words, not the TypeScript TypeError the
+/// first port copied.
+#[test]
+fn a_review_without_scores_cannot_be_analysed_in_plain_words() {
+    let mut review = review(None, &[]);
+    review.as_object_mut().expect("an object").remove("evals");
+    let refused = reviews::summarize_stored(&review).expect_err("no scores to summarise");
+    assert_eq!(
+        refused.message,
+        "This review cannot be analysed: it has no scores."
+    );
+}
+
+/// A complete review whose summary is empty is left out of the accuracy report, as an unreadable
+/// one is, instead of failing all of Insights.
+#[test]
+fn an_empty_review_summary_leaves_insights_working() {
+    let profile = fresh();
+    profile.game("Reviewed", "Alice");
+    profile.write_review(&review(Some("Reviewed"), &[]));
+    profile.exec("UPDATE reviews SET summary = 'null'");
+    let report = profile.insights("Alice");
+    assert_eq!(report["total"], json!(1));
+}
+
+/// A saved game on neither side is named in the error.
+#[test]
+fn insights_name_a_saved_game_on_neither_side() {
+    let profile = fresh();
+    profile.exec(
+        "INSERT INTO games (account,id,createdAt,lastMoveAt,rated,speed,perf,status,color,opponent,moves) \
+         VALUES ('Alice','Sideless',1,1,0,'blitz','blitz','resign','green','Bob','e4 e5')",
+    );
+    let query = support::store::insights_query(&json!({ "account": "Alice" }));
+    let refused = profile
+        .core
+        .database_for_tests()
+        .read(|c| insights::insights(c.host, c.db, &query, kchess_core::time::now_ms() as f64))
+        .expect_err("a game on neither side");
+    assert_eq!(
+        refused.message,
+        "A saved game was played as \"green\", which is neither white nor black."
+    );
+}

@@ -213,9 +213,10 @@ pub fn insights(
             "white" => 0,
             "black" => 1,
             _ => {
-                return Err(CoreError::new(
-                    "Cannot read properties of undefined (reading 'record')",
-                ));
+                return Err(CoreError::new(format!(
+                    "A saved game was played as \"{}\", which is neither white nor black.",
+                    row.color
+                )));
             }
         };
         add(&mut by_color[side], &row.result);
@@ -386,8 +387,12 @@ fn accuracy_report(
     let mut acpl_games = 0;
     let (mut inaccuracy, mut mistake, mut blunder) = (0.0, 0.0, 0.0);
     for (color, text) in &reviewed {
-        // A summary that is not JSON is left out; one that is null fails the side lookup.
+        // A summary that is not JSON, or is empty, is left out.
         let summary = match serde_json::from_str::<Value>(text) {
+            Ok(Value::Null) => {
+                host.log(Level::Debug, "insights", "Review summary is empty");
+                continue;
+            }
             Ok(summary) => summary,
             Err(cause) => {
                 host.log(
@@ -398,11 +403,6 @@ fn accuracy_report(
                 continue;
             }
         };
-        if summary.is_null() {
-            return Err(CoreError::new(format!(
-                "Cannot read properties of null (reading '{color}')"
-            )));
-        }
         let Some(side) = summary.get(color.as_str()).filter(|s| truthy(Some(s))) else {
             continue;
         };

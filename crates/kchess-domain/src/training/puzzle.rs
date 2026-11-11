@@ -9,13 +9,31 @@ use shakmaty::{Position as _, Role};
 use crate::variant::Variant;
 use crate::{js, position, rules};
 
+/// How a solve stands: still being played, solved, failed, or given up with its solution shown.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PuzzleStatus {
+    #[default]
+    Playing,
+    Solved,
+    Failed,
+    Revealed,
+}
+
+impl PuzzleStatus {
+    /// Solved, failed or revealed: what is left is the next puzzle.
+    pub fn is_over(self) -> bool {
+        self != PuzzleStatus::Playing
+    }
+}
+
 /// Where a solve stands. `index` is the solution move the player must make next.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PuzzleState {
     pub fen: String,
     pub index: f64,
-    pub status: String,
+    pub status: PuzzleStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_move: Option<Vec<String>>,
     pub sans: Vec<String>,
@@ -217,7 +235,7 @@ pub fn start_puzzle(puzzle: &Value) -> PuzzleState {
     PuzzleState {
         fen,
         index: 0.0,
-        status: "playing".into(),
+        status: PuzzleStatus::Playing,
         last_move,
         sans: Vec::new(),
         variant,
@@ -240,7 +258,7 @@ fn apply_move_at(pos: &VariantPosition, state: &PuzzleState, uci: &str) -> Optio
         last_move: drill_squares(state, Some(pos), uci),
         sans,
         index: state.index,
-        status: state.status.clone(),
+        status: state.status,
         variant: state.variant,
     })
 }
@@ -258,7 +276,7 @@ pub fn player_move(solution: &[String], state: PuzzleState, uci: &str) -> Player
     };
     // The player moves first, so theirs are the solution's even moves: at an odd one the
     // opponent's scripted reply is due (or could not be played), and typing it is no answer.
-    if state.status != "playing" || state.index % 2.0 != 0.0 {
+    if state.status != PuzzleStatus::Playing || state.index % 2.0 != 0.0 {
         return wrong(state);
     }
     let Some(pos) = position_of(&state) else {
@@ -280,7 +298,7 @@ pub fn player_move(solution: &[String], state: PuzzleState, uci: &str) -> Player
         return PlayerMove {
             state: PuzzleState {
                 index,
-                status: "solved".into(),
+                status: PuzzleStatus::Solved,
                 ..next
             },
             correct: true,
@@ -385,7 +403,7 @@ mod tests {
         assert_eq!(squares, Some(vec!["d4".to_string(), "d4".to_string()]));
         let played = player_move(&["P@d4".to_string()], state.clone(), "P@d4");
         assert!(played.correct);
-        assert_eq!(played.state.status, "solved");
+        assert_eq!(played.state.status, PuzzleStatus::Solved);
         assert_eq!(played.state.sans, ["P@d4"]);
         assert_eq!(played.state.last_move, Some(vec!["d4".into(), "d4".into()]));
         let standard = PuzzleState {

@@ -15,7 +15,7 @@ use serde_json::Value;
 use shakmaty::Color;
 
 use crate::board::{Arrow, BoardEvent, BoardState, ChessBoard};
-use crate::game::puzzle::OnBoard;
+use crate::game::puzzle::{OnBoard, PuzzleStatus};
 use crate::game::{STANDARD_FEN, view};
 use crate::settings::SettingsHandle;
 use crate::theme::{Palette, radii, tint};
@@ -213,12 +213,12 @@ impl PuzzleBoard {
         self.on_board.as_ref()
     }
 
-    /// `playing`, `solved`, `failed`, or `revealed` once the solution was shown.
-    pub fn status(&self) -> &str {
+    /// The board's status, `Revealed` once the solution was shown.
+    pub fn status(&self) -> PuzzleStatus {
         match &self.on_board {
-            Some(_) if self.revealed => "revealed",
+            Some(_) if self.revealed => PuzzleStatus::Revealed,
             Some(board) => board.status(),
-            None => "playing",
+            None => PuzzleStatus::Playing,
         }
     }
 
@@ -268,9 +268,7 @@ impl PuzzleBoard {
 
     /// The player may move: not while the opponent replies or the solution plays itself out.
     pub fn playing(&self) -> bool {
-        self.on_board
-            .as_ref()
-            .is_some_and(|board| board.status() == "playing")
+        self.on_board.as_ref().is_some_and(OnBoard::playing)
             && !self.waiting
             && !self.revealed
             && !self.frozen
@@ -283,7 +281,7 @@ impl PuzzleBoard {
 
     /// Solved, failed or its solution shown: what is left is the next puzzle.
     pub fn over(&self) -> bool {
-        self.on_board.is_some() && matches!(self.status(), "solved" | "failed" | "revealed")
+        self.on_board.is_some() && self.status().is_over()
     }
 
     /// Once the puzzle is over, step through its moves as on any board: `left`, `right`, `home` or
@@ -362,7 +360,7 @@ impl PuzzleBoard {
             kchess_domain::rules::setup_start(on_board.variant(), &fen).unwrap_or_default();
         let movable = self.playing().then(|| on_board.player_color());
         let mut state = BoardState::of(&position, self.orientation(), movable, last_move);
-        if on_board.status() == "playing"
+        if on_board.playing()
             && let Some((from, to)) = on_board.next_squares()
         {
             if self.revealed {
@@ -432,7 +430,7 @@ impl PuzzleBoard {
             self.decide(false, cx);
             if !self.retry {
                 if let Some(board) = &mut self.on_board {
-                    board.state.status = "failed".into();
+                    board.state.status = PuzzleStatus::Failed;
                 }
                 cx.emit(PuzzleBoardEvent::Done);
             }
@@ -442,7 +440,7 @@ impl PuzzleBoard {
         self.feedback = Feedback::Good;
         self.hinted = false;
         crate::sound::move_sound(&board.last_san(), cx);
-        let solved = board.status() == "solved";
+        let solved = board.solved();
         cx.emit(PuzzleBoardEvent::Move {
             index,
             correct: true,
@@ -481,7 +479,7 @@ impl PuzzleBoard {
 
     /// Light up the piece to move, or hide it again.
     pub fn hint(&mut self, cx: &mut Context<Self>) {
-        if self.status() != "playing" {
+        if self.status() != PuzzleStatus::Playing {
             return;
         }
         self.hinted = !self.hinted;
@@ -493,7 +491,7 @@ impl PuzzleBoard {
 
     /// Play out the rest of the solution; the puzzle then counts as failed.
     pub fn show_solution(&mut self, cx: &mut Context<Self>) {
-        if self.status() != "playing" {
+        if self.status() != PuzzleStatus::Playing {
             return;
         }
         self.revealed = true;

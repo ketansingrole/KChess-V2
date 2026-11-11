@@ -46,7 +46,7 @@ impl Secrets {
 pub struct Store {
     dir: TempDir,
     legacy: Option<PathBuf>,
-    host: Arc<Recording>,
+    pub host: Arc<Recording>,
     pub db: Database,
     pub secrets: Secrets,
 }

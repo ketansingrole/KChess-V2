@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use super::stats::PuzzleStats;
 use crate::assets::icon;
 use crate::core::AppCore;
+use crate::game::puzzle::PuzzleStatus;
 use crate::play_layout::{PANEL_MAX, PANEL_MIN, PlayLayout};
 use crate::puzzle_board::{PuzzleBoard, PuzzleBoardEvent};
 use crate::theme::{Palette, radii, tint};
@@ -333,7 +334,7 @@ impl PuzzleRush {
         if self.stage != Stage::Running || self.over() {
             return;
         }
-        let solved = self.board.read(cx).status() == "solved";
+        let solved = self.board.read(cx).status() == PuzzleStatus::Solved;
         if solved
             && let Some(rating) = self
                 .ladder
