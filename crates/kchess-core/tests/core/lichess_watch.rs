@@ -18,7 +18,9 @@ use kchess_core::lichess::watch::{
     WatchTarget, align_tv_moves, broadcast_game, broadcast_summaries, parse_game_details,
     parse_tv_game,
 };
-use kchess_domain::{misc, replay};
+use kchess_domain::misc::checks;
+use kchess_domain::misc::value::J;
+use kchess_domain::replay;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
@@ -450,9 +452,7 @@ async fn broadcast_search_lists_recent_official_broadcasts() {
 
 #[test]
 fn validates_watch_targets_and_broadcast_queries() {
-    let channels = json!(["rapid"]);
-    let target =
-        |value: Value| misc::validate_values("assertWatchTarget", &[value, channels.clone()]);
+    let target = |value: Value| checks::watch_target(J::from(&value));
     assert_eq!(
         target(json!({ "channel": "rapid" })).unwrap(),
         json!({ "channel": "rapid" })
@@ -462,14 +462,12 @@ fn validates_watch_targets_and_broadcast_queries() {
         json!({ "gameId": "AbCd1234" })
     );
     assert!(target(json!({ "channel": "../x" })).is_err());
-    let query = |value: Option<Value>| {
-        let args: Vec<Value> = value.into_iter().collect();
-        misc::validate_values("assertBroadcastQuery", &args)
-    };
+    let query =
+        |value: Option<Value>| checks::broadcast_query(value.map_or(J::Undef, |v| J::from(&v)));
     assert!(query(None).is_ok());
     assert_eq!(query(Some(json!(" Open "))).unwrap(), json!("Open"));
     assert!(query(Some(json!("x".repeat(101)))).is_err());
-    let session = |value: Value| misc::validate_values("assertWatchSession", &[value]);
+    let session = |value: Value| checks::watch_session(J::from(&value));
     assert_eq!(session(json!(3)).unwrap(), json!(3));
     assert!(session(json!(0)).is_err());
     assert!(session(json!("3")).is_err());
@@ -760,9 +758,10 @@ async fn a_stop_for_an_earlier_watch_leaves_the_newer_one_running() {
 #[test]
 fn every_listed_tv_channel_is_a_valid_watch_target() {
     // Atomic, Horde and Racing Kings were listed but refused by the watch validator.
-    let listed: Vec<&str> = kchess_core::lichess::watch::TV_CHANNELS
-        .iter()
-        .map(|(key, _)| *key)
-        .collect();
-    assert_eq!(listed, kchess_domain::misc::TV_CHANNEL_KEYS);
+    for (channel, _) in kchess_core::lichess::watch::TV_CHANNELS {
+        assert!(
+            checks::watch_target(J::from(&json!({ "channel": channel }))).is_ok(),
+            "{channel}"
+        );
+    }
 }

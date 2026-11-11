@@ -48,7 +48,7 @@ async fn a_disconnect_keeps_the_session_another_client_started_since() {
         .await
         .expect("B is still listening");
     assert_eq!(heard["partial"], "e");
-    core.call("close", vec![]).await.expect("close");
+    core.close().await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -68,7 +68,7 @@ async fn a_suspension_keeps_the_session_another_client_started_since() {
     core.call_as(b, "voiceAccept", vec![json!(SILENCE)])
         .await
         .expect("B is still listening");
-    core.call("close", vec![]).await.expect("close");
+    core.close().await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -88,7 +88,7 @@ async fn a_disconnect_still_stops_its_own_session() {
         .await
         .expect_err("A's session is stopped");
     assert_eq!(refused.message, "Voice input isn’t listening.");
-    core.call("close", vec![]).await.expect("close");
+    core.close().await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -122,5 +122,5 @@ async fn another_clients_audio_finish_and_stop_leave_the_owner_listening() {
     core.call_as(b, "voiceAccept", vec![json!(SILENCE)])
         .await
         .expect("B is still listening");
-    core.call("close", vec![]).await.expect("close");
+    core.close().await;
 }

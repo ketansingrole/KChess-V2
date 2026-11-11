@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use kchess_domain::misc::constants::SESSION_KINDS;
 use kchess_domain::misc::value::J;
-use kchess_domain::misc::{self, documents};
+use kchess_domain::misc::{self, checks, documents};
 
 use super::Out;
 
@@ -17,11 +17,73 @@ const DOCUMENTS: &[&str] = &[
     "isSessionKind",
     "decodeJoinedTournaments",
     "decodeRepertoireMisses",
+    "assertSession",
+    "assertWatchTarget",
 ];
+
+/// A validator of one argument, by the name the recorded suites called it.
+fn validator(method: &str) -> Option<fn(J) -> Out> {
+    Some(match method {
+        "assertAction" => checks::action,
+        "assertActivityMax" => checks::activity_max,
+        "assertAnalysisRequest" => checks::analysis_request,
+        "assertArchivedGameShape" => checks::archived_game_shape,
+        "assertBestMoveOptions" => checks::best_move_options,
+        "assertBroadcastQuery" => checks::broadcast_query,
+        "assertChatRoom" => checks::chat_room,
+        "assertChatText" => checks::chat_text,
+        "assertCoreSettings" => checks::core_settings,
+        "assertDays" => checks::days,
+        "assertDeclineReason" => checks::decline_reason,
+        "assertFriendList" => checks::friend_list,
+        "assertGameId" => checks::game_id,
+        "assertGameIds" => checks::game_ids,
+        "assertGamePageQuery" => checks::game_page_query,
+        "assertInsightsQuery" => checks::insights_query,
+        "assertLadderQuery" => checks::ladder_query,
+        "assertLevel" => checks::level,
+        "assertLibraryId" => checks::library_id,
+        "assertLichessId" => checks::lichess_id,
+        "assertLocalQuery" => checks::local_query,
+        "assertLookupOptions" => checks::lookup_options,
+        "assertMessageText" => checks::message_text,
+        "assertMoves" => checks::moves,
+        "assertNewArena" => checks::new_arena,
+        "assertOnlineOptions" => checks::online_options,
+        "assertOptionalAccount" => checks::optional_account,
+        "assertPerfType" => checks::perf_type,
+        "assertPuzzleAttempt" => checks::puzzle_attempt,
+        "assertPuzzleProgressQuery" => checks::puzzle_progress_query,
+        "assertPuzzleRequest" => checks::puzzle_request,
+        "assertPuzzleSolve" => checks::puzzle_solve,
+        "assertRepertoireKey" => checks::repertoire_key,
+        "assertReviewKey" => checks::review_key,
+        "assertReviewRequest" => checks::review_request,
+        "assertRunInput" => checks::run_input,
+        "assertRunKind" => checks::run_kind,
+        "assertSessionKind" => checks::session_kind,
+        "assertSettings" => checks::settings,
+        "assertSide" => checks::side,
+        "assertStudyCommandShape" => checks::study_command_shape,
+        "assertStudySyncRequest" => checks::study_sync_request,
+        "assertTheme" => checks::theme,
+        "assertTournamentId" => checks::tournament_id,
+        "assertTournamentPassword" => checks::tournament_password,
+        "assertTournamentSystem" => checks::tournament_system,
+        "assertUci" => checks::uci,
+        "assertUsername" => checks::username,
+        "assertUsernames" => checks::usernames,
+        "assertVoiceAttempt" => checks::voice_attempt,
+        "assertVoiceId" => checks::voice_id,
+        "assertVoiceLimit" => checks::voice_limit,
+        "assertVoiceUpdate" => checks::voice_update,
+        _ => return None,
+    })
+}
 
 /// Each method's first argument is the sidecar of the values JSON cannot carry.
 pub fn call(method: &str, args: &[Value]) -> Option<Out> {
-    if !DOCUMENTS.contains(&method) && !misc::is_validator(method) {
+    if !DOCUMENTS.contains(&method) && validator(method).is_none() {
         return None;
     }
     let Some((sidecar, user)) = args.split_first() else {
@@ -39,9 +101,12 @@ fn answer(method: &str, values: Vec<J>) -> Out {
         Ok(documents::decode_stored(kind, raw)?.map_or(Value::Null, J::into_value))
     };
     match method {
+        // The core's argument check, as its method table declares it.
         "validateCoreArguments" => match values.as_slice() {
             [J::Str(name), J::Arr(list)] => {
-                misc::contracts::check(name, list).map(|()| Value::Null)
+                kchess_contracts::core_api::check_arguments(name, list.clone())
+                    .unwrap_or_else(|| Err(format!("Invalid argument count for {name}.")))
+                    .map(|_| Value::Null)
             }
             _ => Err("The arguments of an argument check are a method name and a list.".into()),
         },
@@ -56,6 +121,15 @@ fn answer(method: &str, values: Vec<J>) -> Out {
         )),
         "decodeJoinedTournaments" => Ok(documents::decode_joined_tournaments(arg(0)).into_value()),
         "decodeRepertoireMisses" => Ok(documents::decode_repertoire_misses(arg(0)).into_value()),
-        _ => misc::validate(method, values),
+        "assertSession" => documents::assert_session(values).map(J::into_value),
+        "assertWatchTarget" => {
+            let mut values = values.into_iter();
+            let value = values.next().unwrap_or(J::Undef);
+            misc::validate::assert_watch_target(value, values.next().unwrap_or(J::Undef))
+        }
+        _ => match validator(method) {
+            Some(check) => check(values.into_iter().next().unwrap_or(J::Undef)),
+            None => Err(format!("unknown rules method {method}")),
+        },
     }
 }

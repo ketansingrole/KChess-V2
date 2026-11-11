@@ -39,10 +39,8 @@ fn open(dir: &Path, host: &Arc<Wire>) -> Arc<Core> {
     Arc::new(Core::open(Config::new(dir.to_path_buf()), host.clone()).expect("the profile opens"))
 }
 
-/// Trusts `path` as the engine and saves it as the configured executable.
+/// Saves `path` as the configured executable.
 fn configure_engine(core: &Core, path: &str) {
-    core.call_sync("engine.trust", vec![json!(path)])
-        .expect("trusted engine");
     support::save_engine_path(core, path);
 }
 
@@ -105,7 +103,7 @@ async fn closing_ends_a_puzzle_download_in_flight() {
 
     let install = {
         let core = Arc::clone(&core);
-        tokio::spawn(async move { core.call("puzzles.install", vec![json!(url)]).await })
+        tokio::spawn(async move { core.install_puzzles_for_tests(&url).await })
     };
     let_work_start().await;
 
@@ -149,9 +147,8 @@ async fn closing_twice_is_harmless_and_frees_the_profile() {
 }
 
 #[tokio::test]
-async fn a_closed_core_refuses_internal_calls() {
-    // Only facade methods checked the closed state: a late internal call could start the
-    // battery and review services again, or reach an engine or Lichess after shutdown.
+async fn a_closed_core_refuses_later_calls() {
+    // A late call must not start the battery and review services again, or reopen the database.
     let dir = tempfile::tempdir().expect("profile");
     let host = Arc::new(Wire::default());
     let core = open(dir.path(), &host);
@@ -164,10 +161,6 @@ async fn a_closed_core_refuses_internal_calls() {
         .await
         .expect_err("a closed core refuses");
     assert_eq!(later.message, CLOSED);
-    // Synchronous calls only read state; a closed core still answers them.
-    assert_eq!(
-        core.call_sync("analysis.running", vec![]).expect("running"),
-        json!(false)
-    );
+    assert!(!core.analysis_running_for_tests());
     assert!(!db.exists(), "the database was not opened again");
 }

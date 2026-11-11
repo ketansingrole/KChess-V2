@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use kchess_core::store::{Database, StoreContext, games, import};
 use kchess_core::{Config, CoreError};
-use kchess_domain::misc::validate_arguments;
+use kchess_domain::misc::checks;
+use kchess_domain::misc::value::J;
 use rusqlite::Connection;
 use rusqlite::types::ValueRef;
 use serde::Serialize;
@@ -258,18 +259,12 @@ pub fn encrypt(plain: &str) -> String {
 
 /// The facade's username check (`assertUsername`).
 pub fn check_username(name: &str) -> Result<(), String> {
-    match validate_arguments("addAccount", &[json!(name)]) {
-        Some(Err(message)) => Err(message),
-        _ => Ok(()),
-    }
+    checks::username(J::Str(name.into())).map(|_| ())
 }
 
 /// `assertGamePageQuery`: the facade's check of a page query.
 pub fn check_page_query(query: &Value) -> Result<(), String> {
-    match validate_arguments("gamePage", std::slice::from_ref(query)) {
-        Some(Err(message)) => Err(message),
-        _ => Ok(()),
-    }
+    checks::game_page_query(J::from(query)).map(|_| ())
 }
 
 /// A played game as the TypeScript tests built it: an ordinary blitz win as White against Bob.

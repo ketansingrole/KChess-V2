@@ -1,12 +1,11 @@
 //! The core as hosts drive it: one asynchronous `call(method, args)` with JSON arguments
-//! and results, and events through the host.
+//! and results, run by the `CoreApi` dispatch, and events through the host.
 //!
 //! `Core` owns one engine context (the host, the process registry, the engine budget and where
 //! engines are found) and the three engine services built on it: computer moves (`search`),
 //! analysis and game review. They share the one database (`store::Database`) and the battery
 //! reading the scheduler consults.
 
-use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -20,17 +19,15 @@ use tokio_util::task::TaskTracker;
 use crate::capabilities::Capabilities;
 use crate::connection::{APP, ClientInfo, Connections};
 use crate::engine::EngineContext;
-use crate::engine::analysis::{ANALYSIS_EVENT, Analysis, AnalysisSink, AnalysisUpdate};
+use crate::engine::analysis::Analysis;
 use crate::engine::bridge::{Battery, EngineOwners, ReviewBridge, ReviewRecords};
 use crate::engine::managed::{
     ManagedLocation, Target, default_dir, delete_managed_engine, install_managed_engine,
 };
-use crate::engine::review::{ReviewRequest, Reviews};
+use crate::engine::review::Reviews;
 use crate::engine::scheduler::Scheduler;
 use crate::engine::search::Search;
-use crate::engine::status::{
-    EngineLocations, EngineStatus, engine_identity, engine_status, variant_engine_status,
-};
+use crate::engine::status::EngineLocations;
 use crate::engine::uci::EngineHub;
 use crate::error::{CoreError, Result};
 use crate::facade::{GatedHost, ProfileClaim};
@@ -45,7 +42,7 @@ use crate::voice::recognizer::VoiceRecognizer;
 
 /// A managed engine change that replaces or removes the downloaded executable.
 #[derive(Clone, Copy)]
-enum Mutation {
+pub(crate) enum Mutation {
     Install,
     Delete,
 }
@@ -107,52 +104,26 @@ pub struct Core {
     pub(crate) settings_writes: AsyncMutex<()>,
 }
 
-fn arg<T: DeserializeOwned>(args: &[Value], i: usize, name: &str) -> Result<T> {
-    serde_json::from_value(args.get(i).cloned().unwrap_or(Value::Null))
-        .map_err(|e| CoreError::new(format!("Invalid {name}: {e}")))
-}
-
-/// An optional argument: absent or null is the default.
-fn optional<T: DeserializeOwned + Default>(args: &[Value], i: usize, name: &str) -> Result<T> {
-    match args.get(i) {
-        None | Some(Value::Null) => Ok(T::default()),
-        Some(value) => serde_json::from_value(value.clone())
-            .map_err(|e| CoreError::new(format!("Invalid {name}: {e}"))),
-    }
-}
-
-/// An argument that is passed through as JSON (moves, options, validated by the service).
-fn raw(args: &[Value], i: usize) -> Value {
-    args.get(i).cloned().unwrap_or(Value::Null)
-}
-
 fn json<T: serde::Serialize>(value: T) -> Result<Value> {
     serde_json::to_value(value).map_err(|e| CoreError::wrap("core result encoding", e))
 }
 
-/// Where a managed engine call works, for tests only: a directory and a release endpoint. The
-/// frontends never send these; they are honoured only when the store's test switch is on
-/// (`KCHESS_STORE_DEBUG=1`), and otherwise refused.
-#[derive(Default, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct LocationOverride {
-    #[serde(default)]
+/// Where a managed engine change works: a test's directory and release endpoint, or the core's.
+#[derive(Default)]
+pub(crate) struct LocationOverride {
     dir: Option<PathBuf>,
-    #[serde(default)]
     release_url: Option<String>,
 }
 
-fn location_override(args: &[Value], i: usize) -> Result<LocationOverride> {
-    match args.get(i) {
-        None | Some(Value::Null) => Ok(LocationOverride::default()),
-        Some(value) => {
-            if !debug::enabled() {
-                return Err(CoreError::new("Engine locations are only set by tests."));
-            }
-            serde_json::from_value(value.clone())
-                .map_err(|e| CoreError::new(format!("Invalid location: {e}")))
-        }
-    }
+/// Runs a call of client `connection`; a panic in it is an error that names `method`.
+async fn caught_as(
+    connection: u64,
+    method: &str,
+    call: impl std::future::Future<Output = Result<Value>>,
+) -> Result<Value> {
+    crate::tasks::caught(crate::connection::scope(connection, call))
+        .await
+        .unwrap_or_else(|_| Err(CoreError::new(format!("KChess could not finish {method}."))))
 }
 
 /// A test-only Lichess origin (`KCHESS_TEST_LICHESS_BASE`), honoured only when the test switch
@@ -308,8 +279,8 @@ impl Core {
         self.data_dir.clone()
     }
 
-    /// Run one method: a facade method (`CoreApi`) or an internal service method. Unknown
-    /// methods and malformed arguments are errors.
+    /// Run one method of `CoreApi`, or `host.reply` (a host's answer to a capability request).
+    /// Unknown methods and malformed arguments are errors.
     pub async fn call(&self, method: &str, args: Vec<Value>) -> Result<Value> {
         self.call_as(APP, method, args).await
     }
@@ -321,26 +292,7 @@ impl Core {
     /// socket client whose call has no deadline) is answered rather than left waiting forever.
     /// The panic hook has logged where.
     pub async fn call_as(&self, connection: u64, method: &str, args: Vec<Value>) -> Result<Value> {
-        crate::tasks::caught(crate::connection::scope(
-            connection,
-            self.call_unscoped(method, args),
-        ))
-        .await
-        .unwrap_or_else(|_| Err(CoreError::new(format!("KChess could not finish {method}."))))
-    }
-
-    /// Run one method a socket client sent: only `CoreApi` methods and `host.reply`. The internal
-    /// service methods skip the facade's validation and its live-game assistance checks.
-    pub async fn call_client(
-        &self,
-        connection: u64,
-        method: &str,
-        args: Vec<Value>,
-    ) -> Result<Value> {
-        if !crate::facade::is_facade_method(method) && method != "host.reply" {
-            return Err(CoreError::new(format!("Unknown core method {method}.")));
-        }
-        self.call_as(connection, method, args).await
+        caught_as(connection, method, self.call_unscoped(method, args)).await
     }
 
     /// A new client of this core (the shared service's socket connections); its connection id.
@@ -407,152 +359,85 @@ impl Core {
     }
 
     async fn call_unscoped(&self, method: &str, args: Vec<Value>) -> Result<Value> {
-        if crate::facade::is_facade_method(method) {
-            self.start_unless_closed();
-            return Box::pin(self.facade(method, args)).await;
-        }
-        // The services were stopped and the profile released: a late internal call must not
-        // restart them or reopen the database.
-        self.refuse_closed()?;
-        self.start();
-        Box::pin(self.dispatch(method, args)).await
-    }
-
-    /// The internal service methods, by their service names.
-    /// `dispatch` routes async methods by owner: puzzles, engines,
-    /// then services/sync. Each owner below is one function so `core.rs` stays
-    /// composition plus lifecycle instead of one large match.
-    pub(crate) async fn dispatch(&self, method: &str, args: Vec<Value>) -> Result<Value> {
-        if method.starts_with("puzzles.") {
-            return self.puzzles_dispatch(method, &args).await;
-        }
-        if method.starts_with("engine.")
-            || method.starts_with("analysis.")
-            || method.starts_with("reviews.")
-            || method.starts_with("managedEngine.")
-            || method.starts_with("engines.")
-        {
-            return self.engines_dispatch(method, &args).await;
-        }
         if method == "host.reply" {
-            let id: u64 = arg(&args, 0, "id")?;
+            // The services were stopped and the profile released: a late reply must not
+            // restart them.
+            self.refuse_closed()?;
+            self.start();
+            let id = args
+                .first()
+                .and_then(Value::as_u64)
+                .ok_or_else(|| CoreError::new("Invalid id."))?;
             self.capabilities
                 .reply(id, args.get(1).unwrap_or(&Value::Null));
             return Ok(Value::Null);
         }
-        // Test-only: a method that panics, as a defect would.
-        if method == "debug.panic" && debug::enabled() {
-            panic!("debug.panic");
+        if !self.closed.load(Ordering::SeqCst) {
+            self.start();
         }
-        // Test-only: ask the host for a capability and return its answer.
-        if method == "host.ask" && debug::enabled() {
-            let kind: String = arg(&args, 0, "kind")?;
-            return self
-                .capabilities
-                .request(&kind, args.get(1).cloned().unwrap_or(Value::Null))
-                .await;
-        }
-        if let Some(result) = Box::pin(self.services.call(method, &args)).await {
-            return result;
-        }
-        self.call_sync(method, args)
+        // Tracked before the closed check: closing waits for every call that got this far.
+        let _in_flight = self.tracker.token();
+        self.refuse_closed()?;
+        // Boxed: the method table is one large future, too big to lay out on a worker's stack.
+        Box::pin(kchess_contracts::core_api::dispatch(self, method, args)).await
     }
 
-    /// Puzzle service arms of `dispatch` (the sole owner of `puzzles.db`).
-    async fn puzzles_dispatch(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "puzzles.status" => json(self.puzzles.status().await?),
-            "puzzles.install" => {
-                let url: String = arg(args, 0, "url")?;
-                json(self.puzzles.install(url).await?)
-            }
-            "puzzles.cancel" => {
-                self.puzzles.cancel();
-                Ok(Value::Null)
-            }
-            "puzzles.delete" => json(self.puzzles.delete().await?),
-            "puzzles.query" => json(self.puzzles.query(arg(args, 0, "query")?).await?),
-            "puzzles.ladder" => json(self.puzzles.ladder(arg(args, 0, "query")?).await?),
-            "puzzles.recordAttempt" => json(
-                self.puzzles
-                    .record_attempt(arg(args, 0, "attempt")?)
-                    .await?,
-            ),
-            "puzzles.progress" => json(self.puzzles.progress(arg(args, 0, "query")?).await?),
-            _ => self.call_sync(method, args.to_vec()),
-        }
+    /// Tests only: a call of client `connection` that panics, as a defect would.
+    #[doc(hidden)]
+    pub async fn panic_for_tests(&self, connection: u64) -> Result<Value> {
+        caught_as(connection, "a panicking call", async {
+            panic!("a panicking call")
+        })
+        .await
     }
 
-    /// Engine arms of `dispatch`: computer search, analysis, reviews and managed engines.
-    async fn engines_dispatch(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "engine.bestMove" => {
-                let level: String = arg(args, 1, "level")?;
-                let configured: String = optional(args, 2, "configured")?;
-                let mv = self
-                    .search
-                    .best_move(raw(args, 0), &level, &configured, raw(args, 3))
-                    .await?;
-                json(mv)
-            }
-            "engine.status" => {
-                let configured: String = optional(args, 0, "configured")?;
-                json(engine_status(self.host.as_ref(), &self.ctx.locations, &configured).await)
-            }
-            "engine.variantStatus" => {
-                json(variant_engine_status(self.host.as_ref(), &self.ctx.locations).await)
-            }
-            "engine.identity" => {
-                let status: EngineStatus = arg(args, 0, "status")?;
-                json(engine_identity(&status).await?)
-            }
-            "analysis.start" => {
-                let configured: String = optional(args, 1, "configured")?;
-                let host = Arc::clone(&self.host);
-                let connection = crate::connection::current_or_app();
-                let sink: AnalysisSink = Arc::new(move |update: AnalysisUpdate| {
-                    host.emit_to(connection, ANALYSIS_EVENT, json!(update));
-                });
-                json(
-                    self.analysis
-                        .start_analysis(raw(args, 0), &configured, sink)?,
-                )
-            }
-            "reviews.get" => {
-                let fen: String = arg(args, 0, "fen")?;
-                let moves: Vec<String> = optional(args, 1, "moves")?;
-                let variant: Option<String> = optional(args, 2, "variant")?;
-                json(
-                    self.reviews
-                        .get_review(&fen, &moves, variant.as_deref())
-                        .await?,
-                )
-            }
-            "reviews.setup" => {
-                self.reviews.setup_reviews(Arc::new(self.review_bridge()));
-                Ok(Value::Null)
-            }
-            "reviews.request" => json(
-                self.reviews
-                    .request_review(arg::<ReviewRequest>(args, 0, "request")?)
-                    .await?,
-            ),
-            "reviews.changed" => {
-                self.reviews.reviews_changed();
-                Ok(Value::Null)
-            }
-            "managedEngine.install" => {
-                let id: u64 = arg(args, 0, "requestId")?;
-                let location = location_override(args, 1)?;
-                self.managed_request(id, Mutation::Install, &location).await
-            }
-            "managedEngine.delete" => {
-                let id: u64 = arg(args, 0, "requestId")?;
-                let location = location_override(args, 1)?;
-                self.managed_request(id, Mutation::Delete, &location).await
-            }
-            _ => self.call_sync(method, args.to_vec()),
-        }
+    /// Tests only: a live online game blocks the engines, as `online:state` sets it.
+    #[doc(hidden)]
+    pub fn set_engines_busy_for_tests(&self, online: bool) {
+        self.busy.store(online, Ordering::SeqCst);
+    }
+
+    /// Tests only: the automatic reviews look for work again.
+    #[doc(hidden)]
+    pub fn reviews_changed_for_tests(&self) {
+        self.reviews.reviews_changed();
+    }
+
+    /// Tests only: the search threads the engines may use now.
+    #[doc(hidden)]
+    pub fn engine_threads_for_tests(&self) -> usize {
+        self.search.engine_threads()
+    }
+
+    /// Tests only: whether an analysis is running.
+    #[doc(hidden)]
+    pub fn analysis_running_for_tests(&self) -> bool {
+        self.analysis.analysis_running()
+    }
+
+    /// Tests only: installs (or deletes) the managed engine under request `id`, in `dir` and
+    /// from `release_url` when given.
+    #[doc(hidden)]
+    pub async fn managed_engine_for_tests(
+        &self,
+        install: bool,
+        id: u64,
+        dir: Option<PathBuf>,
+        release_url: Option<String>,
+    ) -> Result<Value> {
+        let mutation = if install {
+            Mutation::Install
+        } else {
+            Mutation::Delete
+        };
+        let location = LocationOverride { dir, release_url };
+        self.managed_request(id, mutation, &location).await
+    }
+
+    /// Tests only: installs the puzzle database from `url`.
+    #[doc(hidden)]
+    pub async fn install_puzzles_for_tests(&self, url: &str) -> Result<Value> {
+        json(self.puzzles.install(url.into()).await?)
     }
 
     /// Tests only: asynchronous storage calls queue behind the returned guard until it drops, so
@@ -568,50 +453,6 @@ impl Core {
         &self.database
     }
 
-    /// Run one synchronous method: the engine state that a synchronous caller reads
-    /// or changes without starting work (`engine.threads`, `analysis.running`,
-    /// `reviews.status`, ...). Unknown methods and malformed arguments are errors.
-    pub fn call_sync(&self, method: &str, args: Vec<Value>) -> Result<Value> {
-        if let Some(result) = self.engine_sync(method, &args) {
-            return result;
-        }
-        if let Some(result) = self.services.call_sync(method, &args) {
-            return result;
-        }
-        if let Some(result) = self.facade_sync(method, &args) {
-            return result;
-        }
-        Err(CoreError::new(format!("Unknown core method {method}.")))
-    }
-
-    /// The engine methods that start no work and need no runtime: safe from a synchronous caller.
-    fn engine_sync(&self, method: &str, args: &[Value]) -> Option<Result<Value>> {
-        let result = match method {
-            "engine.threads" => json(self.search.engine_threads()),
-            "engine.trust" => arg::<String>(args, 0, "path").map(|path| {
-                self.search.trust_engine_path(&PathBuf::from(path));
-                Value::Null
-            }),
-            "analysis.running" => json(self.analysis.analysis_running()),
-            "analysis.stop" => optional::<bool>(args, 0, "kill").map(|kill| {
-                self.analysis.stop_mine(kill);
-                Value::Null
-            }),
-            // Test-only: a live online game blocks the engines (`online:state` sets it in service).
-            "engine.setBusy" if debug::enabled() => arg::<bool>(args, 0, "online").map(|online| {
-                self.busy.store(online, Ordering::SeqCst);
-                Value::Null
-            }),
-            "reviews.status" => json(self.reviews.review_status()),
-            "reviews.cancel" => arg::<String>(args, 0, "key").map(|key| {
-                self.reviews.cancel_review(&key);
-                Value::Null
-            }),
-            _ => return None,
-        };
-        Some(result)
-    }
-
     /// Starts the background work once, on the first call (which is always in a runtime): the
     /// battery refresh, and the review queue, which looks for work as soon as it starts.
     /// `The KChess core is closed.` once `close` has begun.
@@ -620,12 +461,6 @@ impl Core {
             return Err(CoreError::new(crate::facade::CLOSED));
         }
         Ok(())
-    }
-
-    fn start_unless_closed(&self) {
-        if !self.closed.load(Ordering::SeqCst) {
-            self.start();
-        }
     }
 
     fn start(&self) {
@@ -660,10 +495,9 @@ impl Core {
             .unwrap_or_else(|| self.ctx.locations.managed_dir.clone())
     }
 
-    /// `managedEngine.install` / `managedEngine.delete`: runs under a request id so closing
-    /// the core cancels it (`cancel_installs`), and suspends the engines while the executable is
-    /// replaced.
-    async fn managed_request(
+    /// Installs or deletes the managed engine under a request id, so closing the core cancels it
+    /// (`cancel_installs`), and suspends the engines while the executable is replaced.
+    pub(crate) async fn managed_request(
         &self,
         id: u64,
         mutation: Mutation,

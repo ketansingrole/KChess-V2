@@ -1,8 +1,5 @@
 //! The contract shapes as frontends rely on them: wire values, defaults and the method table.
 
-use std::collections::HashSet;
-
-use kchess_contracts::core_api::methods;
 use kchess_contracts::defaults::default_settings;
 use kchess_contracts::types::*;
 use kchess_contracts::variant::{VARIANTS, Variant};
@@ -81,39 +78,6 @@ fn the_default_settings_round_trip_through_json() {
     assert!(wire.get("engineLevels").is_some() && wire.get("appearance").is_some());
     let back: Settings = serde_json::from_value(wire).expect("settings read back");
     assert_eq!(back, settings);
-}
-
-#[test]
-fn every_method_names_its_arguments_once_and_required_ones_first() {
-    let table = methods();
-    assert!(!table.is_empty());
-    for method in &table {
-        assert!(!method.name.is_empty());
-        assert!(
-            method.name.chars().all(|c| c.is_ascii_alphanumeric()),
-            "{} is not a plain camelCase name",
-            method.name
-        );
-        let mut names = HashSet::new();
-        for param in &method.params {
-            assert!(
-                names.insert(param.name),
-                "{} repeats {}",
-                method.name,
-                param.name
-            );
-        }
-        let first_optional = method.params.iter().position(|param| param.optional);
-        if let Some(first_optional) = first_optional {
-            assert!(
-                method.params[first_optional..]
-                    .iter()
-                    .all(|param| param.optional),
-                "{}: a required argument follows an optional one",
-                method.name
-            );
-        }
-    }
 }
 
 #[test]

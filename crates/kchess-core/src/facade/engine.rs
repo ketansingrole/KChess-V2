@@ -1,168 +1,162 @@
-//! The facade's the computer's engine, analysis and game review (`run_facade` arms, moved without changes).
+//! The computer's engine, analysis and game review.
 
-use super::args::{arg, normal};
-use crate::core::Core;
-use crate::error::{CoreError, Result};
-use serde_json::{Value, json};
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use kchess_contracts::core_api::{Assist, EngineApi};
+use kchess_domain::misc::checks;
+use serde_json::{Value, json};
+
+use super::args::{normal, text, to_json};
+use crate::core::{Core, LocationOverride, Mutation};
+use crate::engine::review::ReviewRequest;
+use crate::engine::status::{engine_identity, engine_status, fairy_variant, variant_engine_status};
+use crate::error::{CoreError, Result};
+use crate::store::games::as_json;
+
 impl Core {
-    /// Answers the facade's engine methods.
-    pub(crate) async fn run_engine(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "engineStatus" => {
-                let variant = args.first().and_then(Value::as_str).unwrap_or("standard");
-                let mut status = if crate::engine::status::fairy_variant(variant).is_some() {
-                    self.inner("engine.variantStatus", vec![]).await?
-                } else {
-                    let configured = self.get_settings().await?["enginePath"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string();
-                    self.inner("engine.status", vec![json!(configured)]).await?
-                };
-                if status["ready"].as_bool() == Some(true) {
-                    let identity = self.inner("engine.identity", vec![status.clone()]).await?;
-                    status["identity"] = identity;
-                }
-                Ok(status)
-            }
-            "installEngine" => {
-                let id = self.next_request();
-                let installed = self
-                    .inner("managedEngine.install", vec![json!(id), Value::Null])
-                    .await?;
-                Ok(json!({
-                    "path": installed["path"],
-                    "version": installed["version"],
-                    "updated": installed["updated"],
-                }))
-            }
-            "deleteEngine" => {
-                let id = self.next_request();
-                self.inner("managedEngine.delete", vec![json!(id), Value::Null])
-                    .await
-            }
-            // A window stops its own computer search, not another window's game.
-            "stopEngine" => {
-                self.search
-                    .stop_connection(crate::connection::current_or_app());
-                Ok(Value::Null)
-            }
-            "bestMove" => {
-                self.assistance_allowed(
-                    "Engine assistance is unavailable during a live Lichess game.",
-                )?;
-                let moves = normal("assertMoves", &arg(args, 0))?;
-                let level = normal("assertLevel", &arg(args, 1))?;
-                let options = normal("assertBestMoveOptions", &arg(args, 2))?;
-                let configured = async {
-                    let settings = self.get_settings().await?;
-                    self.assistance_allowed(
-                        "Engine assistance is unavailable during a live Lichess game.",
-                    )?;
-                    Ok(settings["enginePath"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string())
-                };
-                self.search
-                    .best_move_with_settings(
-                        moves,
-                        level.as_str().unwrap_or_default(),
-                        options,
-                        configured,
-                    )
-                    .await
-                    .map(|value| json!(value))
-            }
-            "startAnalysis" => {
-                self.assistance_allowed("Analysis is unavailable during a live Lichess game.")?;
-                let configured = async {
-                    let settings = self.get_settings().await?;
-                    self.assistance_allowed("Analysis is unavailable during a live Lichess game.")?;
-                    Ok(settings["enginePath"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string())
-                };
-                let host = Arc::clone(&self.host);
-                // Its updates go to the window that asked, not to every window.
-                let connection = crate::connection::current_or_app();
-                self.analysis
-                    .start_analysis_with_settings(
-                        arg(args, 0),
-                        configured,
-                        Arc::new(move |update| {
-                            host.emit_to(
-                                connection,
-                                crate::engine::analysis::ANALYSIS_EVENT,
-                                json!(update),
-                            )
-                        }),
-                    )
-                    .await
-                    .map(|id| json!(id))
-            }
-            "stopAnalysis" => {
-                let kill = match args.first() {
-                    None | Some(Value::Null) => false,
-                    Some(value) => normal("assertBoolean", value)?.as_bool() == Some(true),
-                };
-                self.analysis.stop_mine(kill);
-                Ok(Value::Null)
-            }
-            "reviewGet" => {
-                self.assistance_allowed(
-                    "Review is unavailable until your Lichess game status is verified.",
-                )?;
-                let mut asked = json!({ "fen": arg(args, 0), "moves": arg(args, 1) });
-                // Standard chess has no variant; `null` is not one.
-                if !arg(args, 2).is_null() {
-                    asked["variant"] = arg(args, 2);
-                }
-                let request = normal("assertReviewRequest", &asked)?;
-                let review = self
-                    .inner(
-                        "reviews.get",
-                        vec![
-                            request["fen"].clone(),
-                            request["moves"].clone(),
-                            request["variant"].clone(),
-                        ],
-                    )
-                    .await?;
-                // A game can start while the review was read.
-                self.assistance_allowed("Review is unavailable during a live Lichess game.")?;
-                Ok(review)
-            }
-            "reviewRequest" => {
-                self.assistance_allowed("Review is unavailable during a live Lichess game.")?;
-                let request = normal("assertReviewRequest", &arg(args, 0))?;
-                let review = self.inner("reviews.request", vec![request]).await?;
-                self.assistance_allowed("Review is unavailable during a live Lichess game.")?;
-                Ok(review)
-            }
-            "reviewCancel" => {
-                let key = normal("assertReviewKey", &arg(args, 0))?;
-                self.inner("reviews.cancel", vec![key]).await
-            }
-            "reviewStatus" => self.inner("reviews.status", vec![]).await,
-            "reviewSummaries" => {
-                let ids: Vec<String> = normal("assertGameIds", &arg(args, 0))?
-                    .as_array()
-                    .map(Vec::as_slice)
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|id| id.as_str().unwrap_or_default().to_string())
-                    .collect();
-                self.database
-                    .read_async(move |ctx| {
-                        crate::store::reviews::review_summaries(ctx.host, ctx.db, &ids)
-                    })
-                    .await
-            }
-            _ => Err(CoreError::new(format!("Unknown core method {method}."))),
+    /// The engine path the settings name.
+    async fn configured_engine(&self, gate: Assist) -> Result<String> {
+        let settings = self.get_settings().await?;
+        // A game can start while the settings were read.
+        self.assistance_allowed(gate.refusal_after())?;
+        Ok(text(&settings["enginePath"]))
+    }
+}
+
+impl EngineApi for Core {
+    async fn engine_status(&self, variant: Option<Value>) -> Result<Value> {
+        let variant = variant
+            .as_ref()
+            .and_then(Value::as_str)
+            .unwrap_or("standard");
+        let host = self.host.as_ref();
+        let mut status = if fairy_variant(variant).is_some() {
+            as_json(variant_engine_status(host, &self.ctx.locations).await)?
+        } else {
+            let configured = text(&self.get_settings().await?["enginePath"]);
+            as_json(engine_status(host, &self.ctx.locations, &configured).await)?
+        };
+        if status["ready"].as_bool() == Some(true) {
+            let read = serde_json::from_value(status.clone())
+                .map_err(|e| CoreError::new(format!("Invalid status: {e}")))?;
+            status["identity"] = to_json(engine_identity(&read).await)?;
         }
+        Ok(status)
+    }
+
+    async fn install_engine(&self) -> Result<Value> {
+        let id = self.next_request();
+        let installed = self
+            .managed_request(id, Mutation::Install, &LocationOverride::default())
+            .await?;
+        Ok(json!({
+            "path": installed["path"],
+            "version": installed["version"],
+            "updated": installed["updated"],
+        }))
+    }
+
+    async fn delete_engine(&self) -> Result<Value> {
+        let id = self.next_request();
+        self.managed_request(id, Mutation::Delete, &LocationOverride::default())
+            .await
+    }
+
+    // A window stops its own computer search, not another window's game.
+    async fn stop_engine(&self) -> Result<Value> {
+        self.search
+            .stop_connection(crate::connection::current_or_app());
+        Ok(Value::Null)
+    }
+
+    async fn best_move(&self, moves: Value, level: Value, options: Option<Value>) -> Result<Value> {
+        let configured = self.configured_engine(Assist::Engine);
+        self.search
+            .best_move_with_settings(
+                moves,
+                level.as_str().unwrap_or_default(),
+                options.unwrap_or(Value::Null),
+                configured,
+            )
+            .await
+            .map(|value| json!(value))
+    }
+
+    async fn start_analysis(&self, request: Value) -> Result<Value> {
+        let configured = self.configured_engine(Assist::Analysis);
+        let host = Arc::clone(&self.host);
+        // Its updates go to the window that asked, not to every window.
+        let connection = crate::connection::current_or_app();
+        self.analysis
+            .start_analysis_with_settings(
+                request,
+                configured,
+                Arc::new(move |update| {
+                    host.emit_to(
+                        connection,
+                        crate::engine::analysis::ANALYSIS_EVENT,
+                        json!(update),
+                    )
+                }),
+            )
+            .await
+            .map(|id| json!(id))
+    }
+
+    async fn stop_analysis(&self, kill: Option<Value>) -> Result<Value> {
+        self.analysis
+            .stop_mine(kill.is_some_and(|kill| kill.as_bool() == Some(true)));
+        Ok(Value::Null)
+    }
+
+    async fn review_get(&self, fen: Value, moves: Value, variant: Option<Value>) -> Result<Value> {
+        let mut asked = json!({ "fen": fen, "moves": moves });
+        // Standard chess has no variant; `null` is not one.
+        if let Some(variant) = variant {
+            asked["variant"] = variant;
+        }
+        let request = normal(checks::review_request, &asked)?;
+        let moves: Vec<String> = match &request["moves"] {
+            Value::Null => Vec::new(),
+            moves => serde_json::from_value(moves.clone())
+                .map_err(|e| CoreError::new(format!("Invalid moves: {e}")))?,
+        };
+        let variant = request["variant"].as_str();
+        let fen = text(&request["fen"]);
+        to_json(self.reviews.get_review(&fen, &moves, variant).await)
+    }
+
+    async fn review_request(&self, request: Value) -> Result<Value> {
+        let request: ReviewRequest = serde_json::from_value(request)
+            .map_err(|e| CoreError::new(format!("Invalid request: {e}")))?;
+        to_json(self.reviews.request_review(request).await)
+    }
+
+    async fn review_cancel(&self, key: Value) -> Result<Value> {
+        self.reviews.cancel_review(&text(&key));
+        Ok(Value::Null)
+    }
+
+    async fn review_status(&self) -> Result<Value> {
+        as_json(self.reviews.review_status())
+    }
+
+    async fn review_summaries(&self, ids: Value) -> Result<Value> {
+        let ids: Vec<String> = ids
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .map(text)
+            .collect();
+        self.database
+            .read_async(move |ctx| crate::store::reviews::review_summaries(ctx.host, ctx.db, &ids))
+            .await
+    }
+
+    async fn trust_engine_path(&self, path: Value) -> Result<Value> {
+        self.search.trust_engine_path(&PathBuf::from(text(&path)));
+        Ok(Value::Null)
     }
 }

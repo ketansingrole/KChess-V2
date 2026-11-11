@@ -1,10 +1,8 @@
-//! Validation and library documents. Validators are found by the name the core's contracts give
-//! them (`assertX`), and see JavaScript-like values (`J`): JSON arguments, or JSON with a sidecar
-//! listing where `undefined`, NaN, the infinities and binary data sat (`inputs`), since JSON
-//! cannot carry them.
+//! Validation and library documents. Validators (`checks`) see JavaScript-like values (`J`):
+//! JSON arguments, or JSON with a sidecar listing where `undefined`, NaN, the infinities and
+//! binary data sat (`inputs`), since JSON cannot carry them.
 
 pub mod constants;
-pub mod contracts;
 pub mod documents;
 pub mod patterns;
 pub mod unicode_tables;
@@ -12,52 +10,10 @@ pub mod validate;
 pub mod value;
 
 pub use constants::MAX_DOCUMENT;
-pub use contracts::{ASSISTANCE_METHODS, TV_CHANNEL_KEYS, arities, normalize, validate_arguments};
+pub use validate::checks;
 
 use serde_json::Value;
 use value::J;
-
-/// The normalized value validator `name` gives for `args`, or the message it rejected them with.
-pub fn validate(name: &str, args: Vec<J>) -> Result<Value, String> {
-    match Run::find(name) {
-        Some(run) => run.call(args),
-        None => Err(format!("Unknown validator {name}.")),
-    }
-}
-
-/// Whether `name` is a validator or a document check.
-pub fn is_validator(name: &str) -> bool {
-    Run::find(name).is_some()
-}
-
-/// `validate` of JSON arguments, a JSON `null` being `null`.
-pub fn validate_values(name: &str, args: &[Value]) -> Result<Value, String> {
-    validate(name, args.iter().map(J::from).collect())
-}
-
-/// A value validator or a document check.
-#[derive(Clone, Copy)]
-pub(crate) enum Run {
-    Validate(validate::Validator),
-    Check(documents::Check),
-}
-
-impl Run {
-    /// The validator or document check by the name the contracts give it.
-    pub(crate) fn find(name: &str) -> Option<Run> {
-        validate::validator(name)
-            .map(Run::Validate)
-            .or_else(|| documents::check(name).map(Run::Check))
-    }
-
-    /// Its normalized value for `args`, or the message it rejected them with.
-    pub(crate) fn call(self, args: Vec<J>) -> Result<Value, String> {
-        match self {
-            Run::Validate(validate) => validate(args),
-            Run::Check(check) => check(args).map(J::into_value),
-        }
-    }
-}
 
 /// The arguments as values, with the sidecar's `undefined`, NaN, infinite and binary entries.
 pub fn inputs(user: &[Value], sidecar: &Value) -> Result<Vec<J>, String> {

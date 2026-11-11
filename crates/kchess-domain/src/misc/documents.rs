@@ -494,14 +494,6 @@ pub fn assert_archived_game_shape(args: Vec<J>) -> Result<J, String> {
 }
 
 /// A document check by the name the core's contracts give it.
-pub(crate) fn check(name: &str) -> Option<Check> {
-    Some(match name {
-        "assertSession" => assert_session,
-        "assertArchivedGameShape" => assert_archived_game_shape,
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

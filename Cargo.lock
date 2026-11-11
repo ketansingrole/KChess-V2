@@ -4306,6 +4306,7 @@ name = "kchess-domain"
 version = "2026.11.7"
 dependencies = [
  "flate2",
+ "kchess-contracts",
  "kchess-hack",
  "memchr",
  "regex",

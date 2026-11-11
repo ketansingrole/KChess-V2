@@ -5,6 +5,7 @@ mod fixtures;
 mod signed_in;
 
 use fixtures::{Reply, serve};
+use kchess_contracts::core_api::CoreApi;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{sync::Arc, time::Duration};
@@ -47,10 +48,7 @@ async fn a_game_starting_mid_lookup_blocks_the_explorer_answer() {
     let core = &profile.core;
     // Startup leaves assistance blocked until recovery verifies no game is in progress.
     core.call("resumeOnline", vec![]).await.unwrap();
-    assert_eq!(
-        core.call_sync("online.assistanceBlocked", vec![]).unwrap(),
-        json!(false)
-    );
+    assert_eq!(json!(core.assistance_blocked()), json!(false));
     let lookup = tokio::spawn({
         let core = Arc::clone(core);
         async move {
@@ -76,7 +74,7 @@ async fn a_game_starting_mid_lookup_blocks_the_explorer_answer() {
     fixture.requested(PLAYING, 2).await;
     assert!(!recovery.is_finished(), "the gated fixture holds recovery");
     assert_eq!(
-        core.call_sync("online.assistanceBlocked", vec![]).unwrap(),
+        json!(core.assistance_blocked()),
         json!(true),
         "recovery is verifying and assistance is blocked mid-lookup"
     );
@@ -97,7 +95,7 @@ async fn a_game_starting_mid_lookup_blocks_the_explorer_answer() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        core.call_sync("online.assistanceBlocked", vec![]).unwrap(),
+        json!(core.assistance_blocked()),
         json!(false),
         "recovery that finds no game unblocks assistance again"
     );

@@ -301,8 +301,6 @@ impl CoreBridge {
         };
         let core = Arc::clone(core);
         let closing = self.runtime.spawn(async move {
-            // The facade's own close (`close`) stops the services; then the files are released.
-            let _ = core.call("close", Vec::new()).await;
             core.close().await;
         });
         let _ = self.runtime.block_on(async {

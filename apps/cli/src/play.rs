@@ -592,9 +592,11 @@ async fn computer_game(
 ) -> Result<Game, String> {
     let mut saved = saved.clone();
     if let Some(level) = level {
-        let checked =
-            kchess_domain::misc::validate_arguments("bestMove", &[json!([]), json!(level)]);
-        if !matches!(checked, Some(Ok(()))) {
+        let checked = kchess_contracts::core_api::check_arguments(
+            "bestMove",
+            kchess_contracts::core_api::as_checked(vec![json!([]), json!(level)]),
+        );
+        if !matches!(checked, Some(Ok(_))) {
             return Err(format!("Unknown level {level}."));
         }
         if !saved.is_object() {

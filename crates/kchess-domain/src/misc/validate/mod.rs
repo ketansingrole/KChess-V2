@@ -15,19 +15,12 @@ use super::patterns;
 use super::value::{self, J};
 use crate::{js, replay};
 
-pub type Validator = fn(Vec<J>) -> Result<Value, String>;
-
 /// A custom message, as the TypeScript source wrote it.
 type Msg = Option<&'static str>;
 
 type Checked<T> = Result<T, String>;
 
 /* ── Decoding and checks ── */
-
-/// The first argument, moved out of the list (`undefined` when it is absent).
-fn first(args: Vec<J>) -> J {
-    args.into_iter().next().unwrap_or(J::Undef)
-}
 
 /// Decodes `value` as `T`. A rejection takes the message `messages` names for the keys of the
 /// rejected value's path (`[]` for a list position), else the decoder's own text.
@@ -242,111 +235,197 @@ use values::*;
 
 pub use requests::{
     AnalysisRequest, BestMoveOptions, GamePageQuery, LookupOptions, assert_analysis_request,
-    assert_best_move_options, assert_game_page_query, assert_lookup_options,
+    assert_best_move_options, assert_game_page_query, assert_lookup_options, assert_watch_target,
 };
 pub use values::{assert_moves, assert_username};
 
-/* ── The table ── */
+/* ── One check per argument ── */
 
-macro_rules! validators {
-    ($($name:literal => $check:path,)*) => {
-        /// The validators by their TypeScript names.
-        pub fn validator(method: &str) -> Option<Validator> {
-            Some(match method {
-                $($name => {
-                    let run: Validator = |args| out(&$check(first(args))?);
-                    run
-                })*
-                "assertWatchTarget" => {
-                    let run: Validator = |args| {
-                        let mut args = args.into_iter();
-                        let value = args.next().unwrap_or(J::Undef);
-                        assert_watch_target(value, args.next().unwrap_or(J::Undef))
-                    };
-                    run
+macro_rules! checks {
+    ($($name:ident => $check:path,)*) => {
+        /// One function per validator, named for what it checks: the normalized value of one
+        /// argument (`J::Undef` when it is absent), or the message it was refused with. The core's
+        /// method table (`kchess_contracts::core_api`) names one per argument.
+        pub mod checks {
+            use super::*;
+
+            $(pub fn $name(value: J) -> Checked<Value> {
+                out(&$check(value)?)
+            })*
+
+            /// A game to watch: a TV channel (`TV_CHANNELS`) or a game id.
+            pub fn watch_target(value: J) -> Checked<Value> {
+                let channels = TV_CHANNELS
+                    .iter()
+                    .map(|(key, _)| J::Str((*key).into()))
+                    .collect();
+                assert_watch_target(value, J::Arr(channels))
+            }
+
+            /// A position alone (`assertAnalysisRequest({ fen, lines: 1 })`): its FEN.
+            pub fn position(value: J) -> Checked<Value> {
+                position_of(value, None)
+            }
+
+            /// A position of `variant` (standard chess without one): its FEN.
+            fn position_of(fen: J, variant: Option<&str>) -> Checked<Value> {
+                let mut fields = vec![("fen".into(), fen), ("lines".into(), J::Num(1.0))];
+                if let Some(variant) = variant {
+                    fields.push(("variant".into(), J::Str(variant.into())));
                 }
-                _ => return None,
-            })
+                Ok(Value::String(assert_analysis_request(J::Obj(fields))?.fen))
+            }
+
+            /// `positionLookup`'s position: a variant's (`options.variant`) by its own rules,
+            /// once the options that name it pass. As sent.
+            pub fn lookup_fen(value: J, args: &[J]) -> Checked<Value> {
+                let options = args.get(2).unwrap_or(&J::Undef);
+                match options.get("variant").and_then(J::str) {
+                    Some(variant) if variant != "standard" => {
+                        assert_lookup_options(options.clone())?;
+                        position_of(value.clone(), Some(variant))?;
+                    }
+                    _ => {
+                        position_of(value.clone(), None)?;
+                    }
+                }
+                Ok(value.into_value())
+            }
+
+            /// `reviewGet`'s variant, when it names one.
+            fn review_variant_of(args: &[J]) -> Option<&str> {
+                args.get(2).and_then(J::str)
+            }
+
+            /// The review request `reviewGet(fen, moves, variant)` makes, checked.
+            fn review_of(args: &[J], variant: Option<&str>) -> Checked<()> {
+                let at = |i: usize| args.get(i).cloned().unwrap_or(J::Undef);
+                let mut fields = vec![("fen".into(), at(0)), ("moves".into(), at(1))];
+                if let Some(variant) = variant {
+                    fields.push(("variant".into(), J::Str(variant.into())));
+                }
+                assert_review_request(J::Obj(fields)).map(|_| ())
+            }
+
+            /// `reviewGet`'s position: a variant game's is checked with its moves by the
+            /// variant's rules. As sent.
+            pub fn review_fen(value: J, args: &[J]) -> Checked<Value> {
+                match review_variant_of(args) {
+                    Some(variant) => review_of(args, Some(variant))?,
+                    None => {
+                        position_of(value.clone(), None)?;
+                    }
+                }
+                Ok(value.into_value())
+            }
+
+            /// `reviewGet`'s moves (checked with the position for a variant game). As sent.
+            pub fn review_moves(value: J, args: &[J]) -> Checked<Value> {
+                if review_variant_of(args).is_none() {
+                    assert_moves(value.clone())?;
+                }
+                Ok(value.into_value())
+            }
+
+            /// `reviewGet`'s variant: anything; without one, the position and moves must make a
+            /// review of standard chess. As sent.
+            pub fn review_variant(value: J, args: &[J]) -> Checked<Value> {
+                if review_variant_of(args).is_none() {
+                    review_of(args, None)?;
+                }
+                Ok(value.into_value())
+            }
+
+            /// A played game to save: an object (`assertArchivedGameShape`).
+            pub fn archived_game_shape(value: J) -> Checked<Value> {
+                crate::misc::documents::assert_archived_game_shape(vec![value])
+                    .map(J::into_value)
+            }
+
+            /// Anything: the method reads it itself.
+            pub fn any(value: J) -> Checked<Value> {
+                Ok(value.into_value())
+            }
         }
     };
 }
 
-validators! {
-    "assertVoiceGrammar" => assert_voice_grammar,
-    "assertSampleRate" => assert_sample_rate,
-    "assertVoiceAudio" => assert_voice_audio,
-    "assertUsername" => assert_username,
-    "assertGameId" => assert_game_id,
-    "assertGameAccount" => assert_game_account,
-    "assertChesscomUsername" => assert_chesscom_username,
-    "assertGameIds" => assert_game_ids,
-    "assertUci" => assert_uci,
-    "assertFen" => assert_fen,
-    "assertMoves" => assert_moves,
-    "assertLevel" => assert_level,
-    "assertUsernames" => assert_usernames,
-    "assertFriendList" => assert_friend_list,
-    "assertAction" => assert_action,
-    "assertChatRoom" => assert_chat_room,
-    "assertRelationAction" => assert_relation_action,
-    "assertChatText" => assert_chat_text,
-    "assertNewArena" => assert_new_arena,
-    "assertMessageText" => assert_message_text,
-    "assertDeclineReason" => assert_decline_reason,
-    "assertTournamentSystem" => assert_tournament_system,
-    "assertTournamentId" => assert_tournament_id,
-    "assertTournamentPassword" => assert_tournament_password,
-    "assertInsightsQuery" => assert_insights_query,
-    "assertPerfType" => assert_perf_type,
-    "assertVariant" => assert_variant,
-    "assertLichessId" => assert_lichess_id,
-    "assertPuzzleId" => assert_puzzle_id,
-    "assertOptionalAccount" => assert_optional_account,
-    "assertOnlineOptions" => assert_online_options,
-    "assertTheme" => assert_theme,
-    "assertCoreSettings" => assert_core_settings,
-    "assertSettings" => assert_settings,
-    "assertPuzzleRequest" => assert_puzzle_request,
-    "assertPuzzleSolve" => assert_puzzle_solve,
-    "assertDays" => assert_days,
-    "assertActivityMax" => assert_activity_max,
-    "assertLocalQuery" => assert_local_query,
-    "assertLadderQuery" => assert_ladder_query,
-    "assertRunKind" => assert_run_kind,
-    "assertRunInput" => assert_run_input,
-    "assertPuzzleAttempt" => assert_puzzle_attempt,
-    "assertPuzzleProgressQuery" => assert_puzzle_progress_query,
-    "assertBestMoveOptions" => assert_best_move_options,
-    "assertAnalysisRequest" => assert_analysis_request,
-    "assertReviewRequest" => assert_review_request,
-    "assertReviewKey" => assert_review_key,
-    "assertAiModel" => assert_ai_model,
-    "assertAiEffort" => assert_ai_effort,
-    "assertAiRequest" => assert_ai_request,
-    "assertVoiceAttempt" => assert_voice_attempt,
-    "assertVoiceUpdate" => assert_voice_update,
-    "assertVoiceId" => assert_voice_id,
-    "assertVoiceLimit" => assert_voice_limit,
-    "assertGamePageQuery" => assert_game_page_query,
-    "assertStudySyncRequest" => assert_study_sync_request,
-    "assertBroadcastQuery" => assert_broadcast_query,
-    "assertLookupOptions" => assert_lookup_options,
-    "assertLines" => assert_lines,
-    "assertLookupKind" => assert_lookup_kind,
-    "assertOptionalPage" => assert_optional_page,
-    "assertBoolean" => assert_boolean,
-    "assertWatchSession" => assert_watch_session,
-    "assertChapterName" => assert_chapter_name,
-    "assertPgnText" => assert_pgn_text,
-    "assertSessionObject" => assert_session_object,
-    "assertStudyId" => assert_study_id,
-    "assertStudyCommandShape" => assert_study_command_shape,
-    "assertLibraryId" => assert_library_id,
-    "assertRepertoireKey" => assert_repertoire_key,
-    "assertRepertoireLine" => assert_repertoire_line,
-    "assertViewPreferenceKey" => assert_view_preference_key,
-    "assertSessionKind" => assert_session_kind,
-    "assertSide" => assert_side,
+checks! {
+    voice_grammar => assert_voice_grammar,
+    sample_rate => assert_sample_rate,
+    voice_audio => assert_voice_audio,
+    username => assert_username,
+    game_id => assert_game_id,
+    game_account => assert_game_account,
+    chesscom_username => assert_chesscom_username,
+    game_ids => assert_game_ids,
+    uci => assert_uci,
+    fen => assert_fen,
+    moves => assert_moves,
+    level => assert_level,
+    usernames => assert_usernames,
+    friend_list => assert_friend_list,
+    action => assert_action,
+    chat_room => assert_chat_room,
+    relation_action => assert_relation_action,
+    chat_text => assert_chat_text,
+    new_arena => assert_new_arena,
+    message_text => assert_message_text,
+    decline_reason => assert_decline_reason,
+    tournament_system => assert_tournament_system,
+    tournament_id => assert_tournament_id,
+    tournament_password => assert_tournament_password,
+    insights_query => assert_insights_query,
+    perf_type => assert_perf_type,
+    variant => assert_variant,
+    lichess_id => assert_lichess_id,
+    puzzle_id => assert_puzzle_id,
+    optional_account => assert_optional_account,
+    online_options => assert_online_options,
+    theme => assert_theme,
+    core_settings => assert_core_settings,
+    settings => assert_settings,
+    puzzle_request => assert_puzzle_request,
+    puzzle_solve => assert_puzzle_solve,
+    days => assert_days,
+    activity_max => assert_activity_max,
+    local_query => assert_local_query,
+    ladder_query => assert_ladder_query,
+    run_kind => assert_run_kind,
+    run_input => assert_run_input,
+    puzzle_attempt => assert_puzzle_attempt,
+    puzzle_progress_query => assert_puzzle_progress_query,
+    best_move_options => assert_best_move_options,
+    analysis_request => assert_analysis_request,
+    review_request => assert_review_request,
+    review_key => assert_review_key,
+    ai_model => assert_ai_model,
+    ai_effort => assert_ai_effort,
+    ai_request => assert_ai_request,
+    voice_attempt => assert_voice_attempt,
+    voice_update => assert_voice_update,
+    voice_id => assert_voice_id,
+    voice_limit => assert_voice_limit,
+    game_page_query => assert_game_page_query,
+    study_sync_request => assert_study_sync_request,
+    broadcast_query => assert_broadcast_query,
+    lookup_options => assert_lookup_options,
+    lines => assert_lines,
+    lookup_kind => assert_lookup_kind,
+    optional_page => assert_optional_page,
+    boolean => assert_boolean,
+    watch_session => assert_watch_session,
+    chapter_name => assert_chapter_name,
+    pgn_text => assert_pgn_text,
+    session_object => assert_session_object,
+    study_id => assert_study_id,
+    study_command_shape => assert_study_command_shape,
+    library_id => assert_library_id,
+    repertoire_key => assert_repertoire_key,
+    repertoire_line => assert_repertoire_line,
+    view_preference_key => assert_view_preference_key,
+    session_kind => assert_session_kind,
+    side => assert_side,
 }
 
 #[cfg(test)]
@@ -356,10 +435,6 @@ mod tests {
 
     fn obj(fields: Vec<(&str, J)>) -> J {
         J::Obj(fields.into_iter().map(|(k, v)| (k.into(), v)).collect())
-    }
-
-    fn run(method: &str, value: J) -> Checked<Value> {
-        validator(method).expect(method)(vec![value])
     }
 
     fn restore_chapter(pgn: &str) -> J {
@@ -381,7 +456,7 @@ mod tests {
     #[test]
     fn a_chapter_to_restore_is_checked() {
         assert_eq!(
-            run("assertStudyCommandShape", restore_chapter("1. e4 *")),
+            checks::study_command_shape(restore_chapter("1. e4 *")),
             Ok(json!({
                 "op": "restoreChapter",
                 "id": "s1",
@@ -394,7 +469,7 @@ mod tests {
             ("id", J::Str("s1".into())),
             ("index", J::Num(0.0)),
         ]);
-        assert!(run("assertStudyCommandShape", without_chapter).is_err());
+        assert!(checks::study_command_shape(without_chapter).is_err());
     }
 
     /// `moveChapter` takes a chapter and its new place.
@@ -408,7 +483,7 @@ mod tests {
             ("extra", J::Str("dropped".into())),
         ]);
         assert_eq!(
-            run("assertStudyCommandShape", moved),
+            checks::study_command_shape(moved),
             Ok(json!({ "op": "moveChapter", "id": "s1", "chapterId": "c1", "index": 2 }))
         );
         let without_place = obj(vec![
@@ -416,7 +491,7 @@ mod tests {
             ("id", J::Str("s1".into())),
             ("chapterId", J::Str("c1".into())),
         ]);
-        assert!(run("assertStudyCommandShape", without_place).is_err());
+        assert!(checks::study_command_shape(without_place).is_err());
     }
 
     fn settings() -> Vec<(&'static str, J)> {
@@ -477,7 +552,7 @@ mod tests {
 
     #[test]
     fn settings_normalize_in_the_renderers_order() {
-        let normalized = run("assertSettings", obj(settings())).unwrap();
+        let normalized = checks::settings(obj(settings())).unwrap();
         assert_eq!(normalized["soundVolume"], json!(1));
         assert_eq!(normalized["engineLevels"], json!(["club", "gm"]));
         let keys: Vec<&String> = normalized.as_object().unwrap().keys().collect();
@@ -492,18 +567,18 @@ mod tests {
             .into_iter()
             .filter(|(key, _)| *key != "confirmCorrespondence")
             .collect();
-        let normalized = run("assertSettings", obj(older)).unwrap();
+        let normalized = checks::settings(obj(older)).unwrap();
         assert_eq!(normalized["confirmCorrespondence"], json!(true));
         let mut off = settings();
         off.retain(|(key, _)| *key != "confirmCorrespondence");
         off.push(("confirmCorrespondence", J::Bool(false)));
-        let normalized = run("assertSettings", obj(off)).unwrap();
+        let normalized = checks::settings(obj(off)).unwrap();
         assert_eq!(normalized["confirmCorrespondence"], json!(false));
         let mut wrong = settings();
         wrong.retain(|(key, _)| *key != "confirmCorrespondence");
         wrong.push(("confirmCorrespondence", J::Num(1.0)));
         assert_eq!(
-            run("assertSettings", obj(wrong)).unwrap_err(),
+            checks::settings(obj(wrong)).unwrap_err(),
             "Invalid move confirmation setting."
         );
     }
@@ -538,16 +613,12 @@ mod tests {
         ] {
             let mut fields = settings();
             fields.iter_mut().find(|(k, _)| *k == key).unwrap().1 = value;
-            assert_eq!(
-                run("assertSettings", obj(fields)),
-                Err(message.into()),
-                "{key}"
-            );
+            assert_eq!(checks::settings(obj(fields)), Err(message.into()), "{key}");
         }
         let mut missing = settings();
         missing.retain(|(k, _)| *k != "zenMode");
         assert_eq!(
-            run("assertSettings", obj(missing)),
+            checks::settings(obj(missing)),
             Err("Invalid settings.".into())
         );
     }
@@ -564,15 +635,12 @@ mod tests {
             ("name", J::Str("Night".into())),
             ("dark", palette),
         ]);
-        assert_eq!(run("assertTheme", theme), Err(HEX.into()));
+        assert_eq!(checks::theme(theme), Err(HEX.into()));
         let moves = obj(vec![
             ("fen", J::Str("x".into())),
             ("moves", J::Arr(vec![J::Num(1.0)])),
         ]);
-        assert_eq!(
-            run("assertReviewRequest", moves),
-            Err("Invalid move.".into())
-        );
+        assert_eq!(checks::review_request(moves), Err("Invalid move.".into()));
     }
 
     #[test]
@@ -584,9 +652,9 @@ mod tests {
             ("fen", J::Str(crowded.into())),
             ("lines", J::Num(3.0)),
         ]);
-        assert_eq!(run("assertAnalysisRequest", analysis), refused);
+        assert_eq!(checks::analysis_request(analysis), refused);
         let search = obj(vec![("fen", J::Str(crowded.into()))]);
-        assert_eq!(run("assertBestMoveOptions", search), refused);
+        assert_eq!(checks::best_move_options(search), refused);
         // Horde's thirty-six pawns are Horde's: Fairy-Stockfish plays them.
         let horde = "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1";
         let search = obj(vec![
@@ -594,7 +662,7 @@ mod tests {
             ("variant", J::Str("horde".into())),
         ]);
         assert_eq!(
-            run("assertBestMoveOptions", search),
+            checks::best_move_options(search),
             Ok(json!({ "fen": horde, "variant": "horde" }))
         );
         let search = obj(vec![
@@ -602,41 +670,41 @@ mod tests {
             ("variant", J::Str("crazyhouse".into())),
         ]);
         assert_eq!(
-            run("assertBestMoveOptions", search),
+            checks::best_move_options(search),
             Err("Invalid position.".into())
         );
         let search = obj(vec![("variant", J::Str("bughouse".into()))]);
         assert_eq!(
-            run("assertBestMoveOptions", search),
+            checks::best_move_options(search),
             Err("Invalid variant.".into())
         );
         let review = obj(vec![
             ("fen", J::Str(crowded.into())),
             ("moves", J::Arr(vec![])),
         ]);
-        assert_eq!(run("assertReviewRequest", review), refused);
+        assert_eq!(checks::review_request(review), refused);
     }
 
     #[test]
     fn lists_are_objects_of_their_indices_and_binary_data_is_not_text() {
-        assert_eq!(run("assertBestMoveOptions", J::Arr(vec![])), Ok(json!({})));
-        assert_eq!(run("assertBestMoveOptions", J::Undef), Ok(json!({})));
+        assert_eq!(checks::best_move_options(J::Arr(vec![])), Ok(json!({})));
+        assert_eq!(checks::best_move_options(J::Undef), Ok(json!({})));
         let bytes = J::Bytes {
             len: 2,
             head: b"hi".to_vec(),
         };
-        assert_eq!(run("assertChatText", bytes), Err("Invalid message.".into()));
+        assert_eq!(checks::chat_text(bytes), Err("Invalid message.".into()));
     }
 
     #[test]
     fn default_messages_name_the_rejected_value() {
         assert_eq!(
-            run("assertNewArena", obj(vec![])),
+            checks::new_arena(obj(vec![])),
             Err("missing field `clockTime`".into())
         );
         let speeds = obj(vec![("speeds", J::Arr(vec![J::Str("bogus".into())]))]);
         assert!(
-            run("assertLookupOptions", speeds)
+            checks::lookup_options(speeds)
                 .unwrap_err()
                 .starts_with("speeds: invalid value, expected one of ultraBullet")
         );
@@ -653,7 +721,7 @@ mod tests {
                 obj(vec![("z", J::Num(1.0)), ("a", J::Str("x".into()))]),
             ),
         ]);
-        let normalized = run("assertRunInput", run_input).unwrap();
+        let normalized = checks::run_input(run_input).unwrap();
         assert_eq!(normalized["score"], json!(12));
         assert_eq!(
             serde_json::to_string(&normalized["detail"]).unwrap(),

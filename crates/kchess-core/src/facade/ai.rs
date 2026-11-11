@@ -7,7 +7,11 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tokio::net::TcpListener;
 
-use super::args::{arg, normal};
+use kchess_contracts::core_api::{AiApi, Assist, EngineApi};
+use kchess_domain::misc::checks;
+
+use super::args::normal;
+
 use crate::ai::{
     Attempt, CALLBACK_PATH, FIRST_PORT, Model, Problem, Refusal, Tokens, new_host_id, valid_host_id,
 };
@@ -22,7 +26,6 @@ use kchess_domain::tactics::Mates;
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 /// How long the engine looks for the answer to a wrong puzzle move, in milliseconds.
 const REFUTATION_TIME: u64 = 500;
-const LIVE_GAME: &str = "Explanations are unavailable during a live Lichess game.";
 
 /// The connection document.
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
@@ -160,7 +163,7 @@ impl Core {
     }
 
     /// Signs a ChatGPT account in through the browser.
-    async fn ai_connect(&self) -> Result<Value> {
+    async fn ai_sign_in(&self) -> Result<Value> {
         let mut connection = self.ai_connection().await?;
         if !valid_host_id(&connection.host_id) {
             connection.host_id = new_host_id()?;
@@ -253,15 +256,15 @@ impl Core {
         saved.email = signed.identity.email;
         self.save_ai_connection(&saved).await?;
         drop(renewing);
-        self.ai_status().await
+        self.ai_state().await
     }
 
-    async fn ai_models(&self) -> std::result::Result<Vec<Model>, Refusal> {
+    async fn ai_model_list(&self) -> std::result::Result<Vec<Model>, Refusal> {
         let access = self.ai_access().await?;
         self.ai.models(&access).await
     }
 
-    async fn ai_status(&self) -> Result<Value> {
+    async fn ai_state(&self) -> Result<Value> {
         let connection = self.ai_connection().await?;
         Ok(json!({
             "connected": connection.sealed.is_some(),
@@ -355,10 +358,12 @@ impl Core {
             "fen": kchess_domain::rules::make_fen(&after),
             "movetime": REFUTATION_TIME,
         });
-        match self
-            .run_engine("bestMove", &[json!([]), json!("club"), options])
-            .await
-        {
+        let reply = async {
+            self.assistance_allowed(Assist::Engine.refusal())?;
+            let options = normal(checks::best_move_options, &options)?;
+            EngineApi::best_move(self, json!([]), json!("club"), Some(options)).await
+        };
+        match reply.await {
             Ok(Value::String(reply)) => vec![reply],
             Ok(_) => Vec::new(),
             Err(cause) => {
@@ -396,9 +401,8 @@ impl Core {
         .ok_or_else(invalid)
     }
 
-    async fn ai_explain(&self, raw: &Value) -> Result<Value> {
-        self.assistance_allowed(LIVE_GAME)?;
-        let request: Request = serde_json::from_value(raw.clone())
+    async fn explain(&self, raw: Value) -> Result<Value> {
+        let request: Request = serde_json::from_value(raw)
             .map_err(|_| CoreError::new("That position cannot be explained."))?;
         let brief = self.ai_brief(&request).await?;
         let mut connection = self.ai_connection().await?;
@@ -407,7 +411,7 @@ impl Core {
         }
         let model = match connection.model.clone() {
             Some(model) => model,
-            None => match self.ai_models().await {
+            None => match self.ai_model_list().await {
                 Ok(models) => match models.into_iter().next() {
                     Some(first) => first.slug,
                     None => return Ok(problem(Problem::Ineligible)),
@@ -422,8 +426,6 @@ impl Core {
             .read_async(move |ctx| crate::store::ai::explanation(ctx, &lookup))
             .await?;
         if cached.is_string() {
-            // A game can start while the brief and the saved answer were read.
-            self.assistance_allowed(LIVE_GAME)?;
             return Ok(json!({ "text": cached }));
         }
         match self.ai_answer(&mut connection, &model, &brief).await {
@@ -437,8 +439,6 @@ impl Core {
                     self.host
                         .log(Level::Warn, "ai", &format!("Not saved: {}", cause.message));
                 }
-                // A game can start while the answer was on its way, or being saved.
-                self.assistance_allowed(LIVE_GAME)?;
                 Ok(json!({ "text": text }))
             }
             Err(refusal) => {
@@ -448,48 +448,52 @@ impl Core {
             }
         }
     }
+}
 
-    /// Answers the facade's ChatGPT methods.
-    pub(crate) async fn run_ai(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "aiStatus" => self.ai_status().await,
-            "aiConnect" => self.ai_connect().await,
-            "aiDisconnect" => {
-                let _renewing = self.ai.refreshing.lock().await;
-                let mut connection = self.ai_connection().await?;
-                connection.sealed = None;
-                connection.email = None;
-                self.save_ai_connection(&connection).await?;
-                self.ai_status().await
+impl AiApi for Core {
+    async fn ai_status(&self) -> Result<Value> {
+        self.ai_state().await
+    }
+
+    async fn ai_connect(&self) -> Result<Value> {
+        self.ai_sign_in().await
+    }
+
+    async fn ai_disconnect(&self) -> Result<Value> {
+        let _renewing = self.ai.refreshing.lock().await;
+        let mut connection = self.ai_connection().await?;
+        connection.sealed = None;
+        connection.email = None;
+        self.save_ai_connection(&connection).await?;
+        self.ai_state().await
+    }
+
+    async fn ai_models(&self) -> Result<Value> {
+        match self.ai_model_list().await {
+            Ok(models) => Ok(json!({ "models": models })),
+            Err(refusal) => {
+                self.host
+                    .log(Level::Warn, "ai", &format!("Refused: {}", refusal.detail));
+                Ok(problem(refusal.problem))
             }
-            "aiModels" => match self.ai_models().await {
-                Ok(models) => Ok(json!({ "models": models })),
-                Err(refusal) => {
-                    self.host
-                        .log(Level::Warn, "ai", &format!("Refused: {}", refusal.detail));
-                    Ok(problem(refusal.problem))
-                }
-            },
-            "aiSetOptions" => {
-                let model = normal("assertAiModel", &arg(args, 0))?;
-                let effort = normal("assertAiEffort", &arg(args, 1))?;
-                let _renewing = self.ai.refreshing.lock().await;
-                let mut connection = self.ai_connection().await?;
-                let model = model.as_str().map(str::to_string);
-                let effort = effort.as_str().map(str::to_string);
-                connection.effort_refused &=
-                    connection.model == model && connection.effort == effort;
-                connection.model = model;
-                connection.effort = effort;
-                self.save_ai_connection(&connection).await?;
-                self.ai_status().await
-            }
-            "aiExplain" => {
-                let request = normal("assertAiRequest", &arg(args, 0))?;
-                self.ai_explain(&request).await
-            }
-            _ => Err(CoreError::new(format!("Unknown core method {method}."))),
         }
+    }
+
+    async fn ai_set_options(&self, model: Value, effort: Value) -> Result<Value> {
+        let _renewing = self.ai.refreshing.lock().await;
+        let mut connection = self.ai_connection().await?;
+        let model = model.as_str().map(str::to_string);
+        let effort = effort.as_str().map(str::to_string);
+        connection.effort_refused &= connection.model == model && connection.effort == effort;
+        connection.model = model;
+        connection.effort = effort;
+        self.save_ai_connection(&connection).await?;
+        self.ai_state().await
+    }
+
+    // Assistance: the dispatch refuses it during a live game, before and after.
+    async fn ai_explain(&self, request: Value) -> Result<Value> {
+        self.explain(request).await
     }
 }
 

@@ -1,6 +1,8 @@
 //! The user's own app themes: `*.json` files in the profile's `themes` folder, each checked by
 //! the theme validator (`assertTheme`). Every KChess app on the profile reads the same files.
 
+use kchess_domain::misc::checks;
+use kchess_domain::misc::value::J;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -98,7 +100,7 @@ fn read_theme(path: &Path) -> Result<Value> {
     let text = std::fs::read_to_string(path).map_err(|_| CoreError::new("unreadable"))?;
     let value: Value =
         serde_json::from_str(&text).map_err(|_| CoreError::new("The file is not valid JSON."))?;
-    kchess_domain::misc::normalize("assertTheme", &[value]).map_err(CoreError::new)
+    checks::theme(J::from(&value)).map_err(CoreError::new)
 }
 
 #[cfg(test)]
@@ -135,6 +137,6 @@ mod tests {
         // The template is written once and never loaded.
         assert!(folder.join("_template.json").exists());
         let template: Value = serde_json::from_str(TEMPLATE).unwrap();
-        assert!(kchess_domain::misc::normalize("assertTheme", &[template]).is_ok());
+        assert!(checks::theme(J::from(&template)).is_ok());
     }
 }

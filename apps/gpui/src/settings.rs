@@ -193,7 +193,7 @@ fn write_in_order(
                         let saved = core
                             .request(SaveDesktopSettings {
                                 settings: sent.clone(),
-                                base: base.clone(),
+                                base: Some(base.clone()),
                             })
                             .await;
                         failed = saved

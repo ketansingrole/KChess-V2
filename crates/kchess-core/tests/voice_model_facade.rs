@@ -138,6 +138,6 @@ async fn the_core_downloads_the_model_and_reports_its_progress() {
             .expect("status")["installed"],
         json!(false)
     );
-    core.call("close", vec![]).await.expect("close");
-    core_elsewhere.call("close", vec![]).await.expect("close");
+    core.close().await;
+    core_elsewhere.close().await;
 }

@@ -45,6 +45,17 @@ pub enum ErrorKind {
 }
 
 impl ErrorKind {
+    /// Every kind, as `parse` reads them.
+    pub const ALL: [ErrorKind; 7] = [
+        ErrorKind::Offline,
+        ErrorKind::TimedOut,
+        ErrorKind::RateLimited,
+        ErrorKind::Login,
+        ErrorKind::Refused,
+        ErrorKind::NotFound,
+        ErrorKind::Unavailable,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             ErrorKind::Offline => "offline",
@@ -58,17 +69,9 @@ impl ErrorKind {
     }
 
     pub fn parse(text: &str) -> Option<ErrorKind> {
-        [
-            ErrorKind::Offline,
-            ErrorKind::TimedOut,
-            ErrorKind::RateLimited,
-            ErrorKind::Login,
-            ErrorKind::Refused,
-            ErrorKind::NotFound,
-            ErrorKind::Unavailable,
-        ]
-        .into_iter()
-        .find(|kind| kind.as_str() == text)
+        ErrorKind::ALL
+            .into_iter()
+            .find(|kind| kind.as_str() == text)
     }
 
     /// Whether the same request may work if made again later.

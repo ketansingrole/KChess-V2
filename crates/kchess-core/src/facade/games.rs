@@ -1,122 +1,161 @@
-//! The facade's synced games, profiles and friends.
+//! Synced games, profiles and friends.
 
-use super::args::{arg, normal, now_ms, text};
-use crate::core::Core;
-use crate::error::{CoreError, Result};
-use crate::store::games::{self, as_json};
-use crate::store::insights;
+use std::sync::Arc;
+
+use kchess_contracts::core_api::GamesApi;
 use serde_json::{Value, json};
 
-impl Core {
-    /// Answers the facade's games methods.
-    pub(crate) async fn run_games(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "syncGames" => {
-                let username = match args.first() {
-                    None | Some(Value::Null) => Value::Null,
-                    Some(value) => normal("assertUsername", value)?,
-                };
-                let data = self.inner("lichess.syncGames", vec![username]).await?;
-                self.reviews.reviews_changed();
-                Ok(data)
-            }
-            "gamePage" => {
-                let query = normal("assertGamePageQuery", &arg(args, 0))?;
-                self.ensure_migrated().await?;
-                self.database
-                    .read_async(move |ctx| games::game_page(ctx, query))
-                    .await
-            }
-            "gameLibraryOverview" => {
-                self.ensure_migrated().await?;
-                self.database.read_async(games::game_library_overview).await
-            }
-            "insights" => {
-                let query = normal("assertInsightsQuery", &arg(args, 0))?;
-                let now = now_ms() as f64;
-                self.database
-                    .read_async(move |ctx| insights::insights(ctx.host, ctx.db, &query, now))
-                    .await
-            }
-            "gameRatingHistory" => {
-                let account = text(&normal("assertGameAccount", &arg(args, 0))?);
-                self.ensure_migrated().await?;
-                self.database
-                    .read_async(move |ctx| as_json(games::rating_history(ctx.db, &account)?))
-                    .await
-            }
-            "gamePgn" => {
-                let account = text(&normal("assertGameAccount", &arg(args, 0))?);
-                let id = text(&normal("assertGameId", &arg(args, 1))?);
-                self.ensure_migrated().await?;
-                self.database
-                    .read_async(move |ctx| Ok(json!(games::game_pgn(ctx.db, &account, &id)?)))
-                    .await
-            }
-            _ => self.run_game_accounts(method, args).await,
-        }
+use super::args::{now_ms, text, to_json};
+use super::core_data;
+use crate::core::Core;
+use crate::error::Result;
+use crate::store::games::{self, as_json};
+use crate::store::insights;
+
+impl GamesApi for Core {
+    async fn sync_games(&self, username: Option<Value>) -> Result<Value> {
+        let username = username.as_ref().map(text);
+        self.services
+            .lichess()
+            .sync_games(username.as_deref())
+            .await?;
+        let data = self.stored_app_data().await?;
+        self.reviews.reviews_changed();
+        core_data(&data)
     }
 
-    /// Answers the facade's Lichess profile and account methods.
-    async fn run_game_accounts(&self, method: &str, args: &[Value]) -> Result<Value> {
-        match method {
-            "cachedProfile" => {
-                let name = normal("assertUsername", &arg(args, 0))?;
-                self.inner("lichess.cachedProfile", vec![name]).await
+    async fn game_page(&self, query: Value) -> Result<Value> {
+        self.ensure_migrated().await?;
+        self.database
+            .read_async(move |ctx| games::game_page(ctx, query))
+            .await
+    }
+
+    async fn game_library_overview(&self) -> Result<Value> {
+        self.ensure_migrated().await?;
+        self.database.read_async(games::game_library_overview).await
+    }
+
+    async fn insights(&self, query: Value) -> Result<Value> {
+        let now = now_ms() as f64;
+        self.database
+            .read_async(move |ctx| insights::insights(ctx.host, ctx.db, &query, now))
+            .await
+    }
+
+    async fn game_rating_history(&self, account: Value) -> Result<Value> {
+        let account = text(&account);
+        self.ensure_migrated().await?;
+        self.database
+            .read_async(move |ctx| as_json(games::rating_history(ctx.db, &account)?))
+            .await
+    }
+
+    async fn game_pgn(&self, account: Value, id: Value) -> Result<Value> {
+        let (account, id) = (text(&account), text(&id));
+        self.ensure_migrated().await?;
+        self.database
+            .read_async(move |ctx| Ok(json!(games::game_pgn(ctx.db, &account, &id)?)))
+            .await
+    }
+
+    async fn cached_profile(&self, username: Value) -> Result<Value> {
+        let cached = self
+            .services
+            .lichess()
+            .cached_profile(&text(&username))
+            .await;
+        to_json(cached.map(|cached| {
+            let mut object = serde_json::Map::new();
+            object.insert("profile".into(), cached.profile.unwrap_or(Value::Null));
+            object.insert(
+                "ratingHistory".into(),
+                cached.rating_history.unwrap_or(Value::Null),
+            );
+            if let Some(at) = cached.profile_fetched_at {
+                object.insert("profileFetchedAt".into(), json!(at));
             }
-            "profile" => {
-                let name = normal("assertUsername", &arg(args, 0))?;
-                self.inner("lichess.profile", vec![name]).await
-            }
-            "ratingHistory" => {
-                let name = normal("assertUsername", &arg(args, 0))?;
-                self.inner("lichess.ratingHistory", vec![name]).await
-            }
-            "connectLichess" => {
-                // An unreadable look falls back to the safe default colours.
-                let look =
-                    kchess_domain::records::oauth::look(&arg(args, 0)).unwrap_or(Value::Null);
-                self.inner("lichess.connectLichess", vec![look]).await
-            }
-            "stayConnected" => {
-                let name = normal("assertOptionalAccount", &arg(args, 0))?;
-                let wanted = name.as_str().unwrap_or_default().to_string();
-                let connected = self.is_connected(&wanted).await?;
-                self.inner(
-                    "online.stayConnected",
-                    vec![json!(if connected { wanted } else { String::new() })],
-                )
-                .await
-            }
-            "clearAccountData" => {
-                let name = normal("assertUsername", &arg(args, 0))?;
-                self.inner("lichess.cancelAccountSyncs", vec![json!([name])])
-                    .await?;
-                self.reviews
-                    .discard_account_reviews(&[name.as_str().unwrap_or_default().to_string()]);
-                self.ensure_migrated().await?;
-                let account = text(&name);
-                let data = self
-                    .database
-                    .write_async(move |ctx| as_json(games::clear_account_data(ctx.db, &account)?))
-                    .await?;
-                self.inner("lichess.forgetProfile", vec![name]).await?;
-                self.reviews.reviews_changed();
-                Ok(data)
-            }
-            "following" => self.inner("lichess.followedUsers", vec![]).await,
-            "addFriends" => {
-                let names = normal("assertFriendList", &arg(args, 0))?;
-                self.ensure_migrated().await?;
-                let list = names.as_array().cloned().unwrap_or_default();
-                let data = self
-                    .database
-                    .write_async(move |ctx| as_json(games::add_friends(ctx.db, &list)?))
-                    .await?;
-                self.inner("lichess.primeProfiles", vec![names]).await?;
-                Ok(data)
-            }
-            _ => Err(CoreError::new(format!("Unknown core method {method}."))),
-        }
+            Value::Object(object)
+        }))
+    }
+
+    async fn profile(&self, username: Value) -> Result<Value> {
+        self.services.lichess().profile(&text(&username)).await
+    }
+
+    async fn rating_history(&self, username: Value) -> Result<Value> {
+        self.services
+            .lichess()
+            .rating_history(&text(&username))
+            .await
+    }
+
+    async fn connect_lichess(&self, look: Option<Value>) -> Result<Value> {
+        // An unreadable look falls back to the safe default colours.
+        let look = kchess_domain::records::oauth::look(&look.unwrap_or(Value::Null))
+            .filter(|look| !look.is_null());
+        // The window is focused when the browser returns.
+        let capabilities = Arc::clone(&self.capabilities);
+        let focus = move || {
+            let capabilities = Arc::clone(&capabilities);
+            tokio::spawn(async move {
+                let _ = capabilities.focus().await;
+            });
+        };
+        let connected = self
+            .services
+            .lichess()
+            .connect_lichess(look.as_ref(), Some(&focus))
+            .await?;
+        let data = self.stored_app_data().await?;
+        Ok(json!({ "data": core_data(&data)?, "username": connected.username }))
+    }
+
+    async fn stay_connected(&self, account: Value) -> Result<Value> {
+        let wanted = text(&account);
+        let connected = self.is_connected(&wanted).await?;
+        self.services
+            .online()
+            .stay_connected(if connected { &wanted } else { "" });
+        Ok(Value::Null)
+    }
+
+    async fn clear_account_data(&self, username: Value) -> Result<Value> {
+        let account = text(&username);
+        let lichess = self.services.lichess();
+        lichess.cancel_account_syncs(std::slice::from_ref(&account));
+        self.reviews
+            .discard_account_reviews(std::slice::from_ref(&account));
+        self.ensure_migrated().await?;
+        let cleared = account.clone();
+        let data = self
+            .database
+            .write_async(move |ctx| as_json(games::clear_account_data(ctx.db, &cleared)?))
+            .await?;
+        lichess.forget_profile(&account);
+        self.reviews.reviews_changed();
+        core_data(&data)
+    }
+
+    async fn following(&self) -> Result<Value> {
+        to_json(self.services.lichess().followed_users().await)
+    }
+
+    async fn add_friends(&self, usernames: Value) -> Result<Value> {
+        self.ensure_migrated().await?;
+        let list = usernames.as_array().cloned().unwrap_or_default();
+        let data = self
+            .database
+            .write_async(move |ctx| as_json(games::add_friends(ctx.db, &list)?))
+            .await?;
+        let names: Vec<String> = usernames
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .map(text)
+            .collect();
+        self.services.lichess().prime_profiles(&names).await?;
+        core_data(&data)
     }
 }

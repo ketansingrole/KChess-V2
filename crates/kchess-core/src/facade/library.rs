@@ -1,157 +1,164 @@
-//! The facade's library methods: studies, played games, drills, sessions and repertoire notes.
+//! The library: studies, played games, drills, sessions and repertoire notes.
 
-use super::args::{arg, normal, normal_args, now_ms, text};
+use kchess_contracts::core_api::LibraryApi;
+use kchess_domain::misc::documents;
+use kchess_domain::misc::value::J;
+use serde_json::Value;
+
+use super::args::{now_ms, text};
 use super::{archived_game, study_command};
 use crate::core::Core;
 use crate::error::{CoreError, Result};
 use crate::store::{library, library_import, view_preferences};
-use serde_json::{Value, json};
 
-impl Core {
-    /// Answers the facade's library methods.
-    pub(crate) async fn run_library(&self, method: &str, args: &[Value]) -> Result<Value> {
-        let now = now_ms() as f64;
-        let database = &self.database;
-        match method {
-            "library" => {
-                database
-                    .read_async(move |ctx| library_import::cached_library(ctx, now))
-                    .await
-            }
-            "studyCommand" => {
-                let shape = normal("assertStudyCommandShape", &arg(args, 0))?;
-                let command = study_command(&shape)?;
-                let incremental = arg(args, 1) == Value::Bool(true);
-                let based_on = arg(args, 2).as_str().map(str::to_string);
-                database
-                    .write_async(move |ctx| {
-                        library::run_study_command(
-                            ctx.db,
-                            command,
-                            now,
-                            incremental,
-                            based_on.as_deref(),
-                        )
-                    })
-                    .await
-            }
-            "saveArchivedGame" => {
-                let shape = normal("assertArchivedGameShape", &arg(args, 0))?;
-                let game = archived_game(&shape)?;
-                database
-                    .write_async(move |ctx| library::write_game(ctx.db, &game))
-                    .await?;
-                Ok(Value::Null)
-            }
-            "removeArchivedGame" => {
-                let id = text(&normal("assertLibraryId", &arg(args, 0))?);
-                database
-                    .write_async(move |ctx| library::remove_archived_game(ctx.db, &id))
-                    .await?;
-                Ok(Value::Null)
-            }
-            "addMistakes" => {
-                let key = text(&normal("assertReviewKey", &arg(args, 0))?);
-                let color = match args.get(1) {
-                    None | Some(Value::Null) => None,
-                    Some(value) => normal("assertSide", value)?.as_str().map(str::to_string),
-                };
-                database
-                    .write_async(move |ctx| {
-                        library::add_mistakes(ctx.host, ctx.db, &key, color.as_deref(), now)
-                    })
-                    .await
-            }
-            "answerMistake" => {
-                let id = text(&normal("assertLibraryId", &arg(args, 0))?);
-                let solved = normal("assertBoolean", &arg(args, 1))? == Value::Bool(true);
-                database
-                    .write_async(move |ctx| library::answer_mistake(ctx.db, &id, solved, now))
-                    .await
-            }
-            "mistakeGames" => {
-                database
-                    .read_async(|ctx| library::mistake_games(ctx.host, ctx.db))
-                    .await
-            }
-            "saveSession" => {
-                let kind = normal("assertSessionKind", &arg(args, 0))?;
-                let value = normal_args("assertSession", &[kind.clone(), arg(args, 1)])?;
-                let kind = text(&kind);
-                database
-                    .write_async(move |ctx| library::save_session(ctx.db, &kind, value))
-                    .await
-            }
-            "session" => {
-                let kind = text(&normal("assertSessionKind", &arg(args, 0))?);
-                database
-                    .read_async(move |ctx| library::session(ctx.host, ctx.db, &kind))
-                    .await
-            }
-            "mistakes" => {
-                database
-                    .read_async(|ctx| library_import::read_mistakes(ctx.db).map(Value::Array))
-                    .await
-            }
-            "joinedTournaments" => {
-                database
-                    .read_async(move |ctx| library::joined_tournaments(ctx.host, ctx.db, now))
-                    .await
-            }
-            "recordRepertoireMiss" => {
-                let key = text(&normal("assertRepertoireKey", &arg(args, 0))?);
-                let fen = normal(
-                    "assertAnalysisRequest",
-                    &json!({ "fen": arg(args, 1), "lines": 1 }),
-                )?;
-                let fen = text(&fen["fen"]);
-                database
-                    .write_async(move |ctx| {
-                        library::record_repertoire_miss(ctx.host, ctx.db, &key, &fen)
-                    })
-                    .await
-            }
-            "clearRepertoireMisses" => {
-                let key = text(&normal("assertRepertoireKey", &arg(args, 0))?);
-                database
-                    .write_async(move |ctx| {
-                        library::clear_repertoire_misses(ctx.host, ctx.db, &key)
-                    })
-                    .await
-            }
-            "restoreRepertoireMisses" => {
-                let key = text(&normal("assertRepertoireKey", &arg(args, 0))?);
-                let misses = arg(args, 1);
-                database
-                    .write_async(move |ctx| {
-                        library::restore_repertoire_misses(ctx.host, ctx.db, &key, &misses)
-                    })
-                    .await
-            }
-            "reviewRepertoireLine" => {
-                let key = text(&normal("assertRepertoireKey", &arg(args, 0))?);
-                let line = text(&normal("assertRepertoireLine", &arg(args, 1))?);
-                let correct = normal("assertBoolean", &arg(args, 2))? == Value::Bool(true);
-                database
-                    .write_async(move |ctx| {
-                        library::review_repertoire_line(ctx.host, ctx.db, &key, &line, correct, now)
-                    })
-                    .await
-            }
-            "viewPreferences" => {
-                database
-                    .read_async(|ctx| view_preferences::all(ctx).map(Value::Object))
-                    .await
-            }
-            "setViewPreference" => {
-                let key = text(&normal("assertViewPreferenceKey", &arg(args, 0))?);
-                let value = arg(args, 1);
-                database
-                    .write_async(move |ctx| view_preferences::set(ctx, &key, &value))
-                    .await?;
-                Ok(Value::Null)
-            }
-            _ => Err(CoreError::new(format!("Unknown core method {method}."))),
-        }
+fn now() -> f64 {
+    now_ms() as f64
+}
+
+impl LibraryApi for Core {
+    async fn library(&self) -> Result<Value> {
+        let now = now();
+        self.database
+            .read_async(move |ctx| library_import::cached_library(ctx, now))
+            .await
+    }
+
+    async fn study_command(
+        &self,
+        command: Value,
+        incremental: Option<Value>,
+        based_on: Option<Value>,
+    ) -> Result<Value> {
+        let (command, now) = (study_command(&command)?, now());
+        let incremental = incremental == Some(Value::Bool(true));
+        let based_on = based_on
+            .as_ref()
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        self.database
+            .write_async(move |ctx| {
+                library::run_study_command(ctx.db, command, now, incremental, based_on.as_deref())
+            })
+            .await
+    }
+
+    async fn save_archived_game(&self, game: Value) -> Result<Value> {
+        let game = archived_game(&game)?;
+        self.database
+            .write_async(move |ctx| library::write_game(ctx.db, &game))
+            .await?;
+        Ok(Value::Null)
+    }
+
+    async fn remove_archived_game(&self, id: Value) -> Result<Value> {
+        let id = text(&id);
+        self.database
+            .write_async(move |ctx| library::remove_archived_game(ctx.db, &id))
+            .await?;
+        Ok(Value::Null)
+    }
+
+    async fn add_mistakes(&self, review_key: Value, color: Option<Value>) -> Result<Value> {
+        let (key, now) = (text(&review_key), now());
+        let color = color.as_ref().and_then(Value::as_str).map(str::to_string);
+        self.database
+            .write_async(move |ctx| {
+                library::add_mistakes(ctx.host, ctx.db, &key, color.as_deref(), now)
+            })
+            .await
+    }
+
+    async fn answer_mistake(&self, id: Value, solved: Value) -> Result<Value> {
+        let (id, solved, now) = (text(&id), solved == Value::Bool(true), now());
+        self.database
+            .write_async(move |ctx| library::answer_mistake(ctx.db, &id, solved, now))
+            .await
+    }
+
+    async fn mistake_games(&self) -> Result<Value> {
+        self.database
+            .read_async(|ctx| library::mistake_games(ctx.host, ctx.db))
+            .await
+    }
+
+    async fn save_session(&self, kind: Value, session: Value) -> Result<Value> {
+        let checked = documents::assert_session(vec![J::from(&kind), J::from(&session)]);
+        let value = checked.map(J::into_value).map_err(CoreError::new)?;
+        let kind = text(&kind);
+        self.database
+            .write_async(move |ctx| library::save_session(ctx.db, &kind, value))
+            .await
+    }
+
+    async fn joined_tournaments(&self) -> Result<Value> {
+        let now = now();
+        self.database
+            .read_async(move |ctx| library::joined_tournaments(ctx.host, ctx.db, now))
+            .await
+    }
+
+    async fn session(&self, kind: Value) -> Result<Value> {
+        let kind = text(&kind);
+        self.database
+            .read_async(move |ctx| library::session(ctx.host, ctx.db, &kind))
+            .await
+    }
+
+    async fn mistakes(&self) -> Result<Value> {
+        self.database
+            .read_async(|ctx| library_import::read_mistakes(ctx.db).map(Value::Array))
+            .await
+    }
+
+    async fn record_repertoire_miss(&self, key: Value, fen: Value) -> Result<Value> {
+        let (key, fen) = (text(&key), text(&fen));
+        self.database
+            .write_async(move |ctx| library::record_repertoire_miss(ctx.host, ctx.db, &key, &fen))
+            .await
+    }
+
+    async fn clear_repertoire_misses(&self, key: Value) -> Result<Value> {
+        let key = text(&key);
+        self.database
+            .write_async(move |ctx| library::clear_repertoire_misses(ctx.host, ctx.db, &key))
+            .await
+    }
+
+    async fn restore_repertoire_misses(&self, key: Value, misses: Value) -> Result<Value> {
+        let key = text(&key);
+        self.database
+            .write_async(move |ctx| {
+                library::restore_repertoire_misses(ctx.host, ctx.db, &key, &misses)
+            })
+            .await
+    }
+
+    async fn review_repertoire_line(
+        &self,
+        key: Value,
+        line: Value,
+        correct: Value,
+    ) -> Result<Value> {
+        let (key, line) = (text(&key), text(&line));
+        let (correct, now) = (correct == Value::Bool(true), now());
+        self.database
+            .write_async(move |ctx| {
+                library::review_repertoire_line(ctx.host, ctx.db, &key, &line, correct, now)
+            })
+            .await
+    }
+
+    async fn view_preferences(&self) -> Result<Value> {
+        self.database
+            .read_async(|ctx| view_preferences::all(ctx).map(Value::Object))
+            .await
+    }
+
+    async fn set_view_preference(&self, key: Value, value: Value) -> Result<Value> {
+        let key = text(&key);
+        self.database
+            .write_async(move |ctx| view_preferences::set(ctx, &key, &value))
+            .await?;
+        Ok(Value::Null)
     }
 }

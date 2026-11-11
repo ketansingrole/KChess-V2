@@ -169,6 +169,26 @@ pub const SESSION_KINDS: &[&str] = &[
     "archive:clock",
 ];
 pub const TOURNAMENT_SYSTEMS: &[&str] = &["arena", "swiss"];
+/// The Lichess TV channels: key (as their links and the API name them) and label, in display
+/// order.
+pub const TV_CHANNELS: [(&str, &str); 16] = [
+    ("best", "Top rated"),
+    ("bullet", "Bullet"),
+    ("blitz", "Blitz"),
+    ("rapid", "Rapid"),
+    ("classical", "Classical"),
+    ("ultraBullet", "UltraBullet"),
+    ("chess960", "Chess960"),
+    ("kingOfTheHill", "King of the Hill"),
+    ("threeCheck", "Three-check"),
+    ("antichess", "Antichess"),
+    ("atomic", "Atomic"),
+    ("horde", "Horde"),
+    ("racingKings", "Racing Kings"),
+    ("crazyhouse", "Crazyhouse"),
+    ("bot", "Bots"),
+    ("computer", "Computer"),
+];
 
 /// Largest serialized document the core stores (`MAX_DOCUMENT`).
 pub const MAX_DOCUMENT: usize = 2_000_000;

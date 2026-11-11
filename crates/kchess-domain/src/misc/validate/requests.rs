@@ -110,7 +110,7 @@ pub(super) fn assert_insights_query(value: J) -> Checked<InsightsQuery> {
 
 /// `assertWatchTarget(value, channels)`: a channel from `channels`, or a game id. A valid
 /// channel wins; otherwise a game id is checked; anything else is no game to watch.
-pub(super) fn assert_watch_target(value: J, channels: J) -> Checked<Value> {
+pub fn assert_watch_target(value: J, channels: J) -> Checked<Value> {
     let invalid = || "Invalid game to watch.".to_string();
     if !value.is_object() {
         return Err(invalid());

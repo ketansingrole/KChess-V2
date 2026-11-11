@@ -226,9 +226,10 @@ fn open(dir: &Path) -> Core {
 async fn with_engine(dir: &Path) -> Core {
     let core = open(dir);
     core.call("loadData", vec![]).await.expect("load");
-    core.call("online.resume", vec![]).await.expect("resume");
+    core.call("resumeOnline", vec![]).await.expect("resume");
     let engine = support::engine_copy(dir, "search");
-    core.call_sync("engine.trust", vec![json!(engine)])
+    core.call("trustEnginePath", vec![json!(engine)])
+        .await
         .expect("trusted engine");
     support::save_engine_path(&core, &engine);
     core
@@ -243,8 +244,8 @@ async fn clients_connecting_and_leaving() {
     measure("client connect/leave", 50, 5, 200, 64, |_| async {
         let id = core.connect(ClientInfo::app());
         core.focus(id, true);
-        let _ = core.call_client(id, "loadData", vec![]).await;
-        let _ = core.call_client(id, "viewPreferences", vec![]).await;
+        let _ = core.call_as(id, "loadData", vec![]).await;
+        let _ = core.call_as(id, "viewPreferences", vec![]).await;
         core.disconnect(id);
     })
     .await;
@@ -279,7 +280,7 @@ async fn analysing_clients_leaving() {
     let core = with_engine(dir.path()).await;
     measure("analysing client leaves", 10, 5, 20, 256, |_| async {
         let id = core.connect(ClientInfo::app());
-        core.call_client(
+        core.call_as(
             id,
             "startAnalysis",
             vec![json!({"fen": START, "lines": 1, "infinite": true})],

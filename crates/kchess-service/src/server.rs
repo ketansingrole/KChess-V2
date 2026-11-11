@@ -521,7 +521,7 @@ async fn handle(state: Arc<State>, stream: Stream, same_user: bool) {
                     break;
                 };
                 let task = tokio::spawn(async move {
-                    let answer = core.call_client(connection, &method, args).await;
+                    let answer = core.call_as(connection, &method, args).await;
                     let still_ours = running
                         .lock()
                         .is_ok_and(|mut running| running.remove(&id).is_some());

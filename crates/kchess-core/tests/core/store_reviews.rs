@@ -84,11 +84,15 @@ impl Profile {
         self.read(|c| insights::insights(c.host, c.db, &query, library::now_ms()?))
     }
 
-    /// `reviews.request`, which answers from the store when a review is known and otherwise
+    /// `reviewRequest`, which answers from the store when a review is known and otherwise
     /// queues a search (there is no engine here).
     async fn request_review(&self, request: Value) -> Value {
         self.core
-            .call("reviews.request", vec![request])
+            .call("resumeOnline", vec![])
+            .await
+            .expect("no game to resume");
+        self.core
+            .call("reviewRequest", vec![request])
             .await
             .expect("the review request answers")
     }
@@ -241,11 +245,7 @@ async fn both_associations_are_retained_when_identical_searches_are_queued_befor
             .map(|map| map.len()),
         Some(2)
     );
-    profile
-        .core
-        .call("close", vec![])
-        .await
-        .expect("the core closes");
+    profile.core.close().await;
 }
 
 #[test]

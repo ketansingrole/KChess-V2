@@ -1,5 +1,5 @@
 //! The core's wiring of the engine services (`crates/kchess-core/src/core.rs`): driven through
-//! `Core::call` and `Core::call_sync` with a recording host and scripted engines. Covers the
+//! `Core::call` with a recording host and scripted engines. Covers the
 //! battery reading (never waiting on the host), the managed engine handoff, the exact event
 //! payloads, the busy state of automatic reviews, and closing the core.
 
@@ -55,16 +55,20 @@ impl Wire {
     }
 }
 
-/// A fresh profile, with the store's test switch on (the test-only location overrides,
-/// `managedEngine.*` directories, need it). Every test starts here, so all of them see the same
-/// switch whatever order they run in, and it is set once, before any test opens a core.
 fn profile() -> tempfile::TempDir {
-    kchess_core::env::set("KCHESS_STORE_DEBUG", "1");
     tempfile::tempdir().expect("temporary profile")
 }
 
 fn core(host: &Arc<Wire>, dir: &Path) -> Core {
     Core::open(Config::new(dir.to_path_buf()), host.clone()).expect("the profile opens")
+}
+
+/// `script` as the configured engine, with no live game blocking it.
+async fn with_engine(core: &Core, script: &str) {
+    support::save_engine_path(core, script);
+    core.call("resumeOnline", vec![])
+        .await
+        .expect("no game to resume");
 }
 
 fn expected_threads_on_battery() -> usize {
@@ -78,17 +82,13 @@ async fn a_lease_never_waits_on_an_unanswered_battery_request() {
     let host = Arc::new(Wire::default());
     let core = core(&host, dir.path());
     let script = support::engine_copy(dir.path(), "search");
+    with_engine(&core, &script).await;
     // The host never answers `onBattery`: the search must still start and finish.
     let answer = tokio::time::timeout(
         WAIT,
         core.call(
-            "engine.bestMove",
-            vec![
-                json!(["e2e4"]),
-                json!("max"),
-                json!(script),
-                json!({ "movetime": 100 }),
-            ],
+            "bestMove",
+            vec![json!(["e2e4"]), json!("max"), json!({ "movetime": 100 })],
         ),
     )
     .await
@@ -108,8 +108,8 @@ async fn the_hosts_battery_reading_reaches_the_thread_budget() {
     let host = Arc::new(Wire::default());
     let core = core(&host, dir.path());
     // The first call starts the battery refresh; the reading is still the default (off battery).
-    let budget = core.call("engine.threads", vec![]).await.expect("threads");
-    let off = budget.as_u64().expect("a count") as usize;
+    core.call("loadData", vec![]).await.expect("loadData");
+    let off = core.engine_threads_for_tests();
     let request = support::wait_until(WAIT, "the battery request", || {
         host.requests("onBattery").pop()
     })
@@ -121,7 +121,7 @@ async fn the_hosts_battery_reading_reaches_the_thread_budget() {
     .await
     .expect("reply");
     let on = support::wait_until(WAIT, "the battery reading", || {
-        let threads = core.call_sync("engine.threads", vec![]).ok()?.as_u64()? as usize;
+        let threads = core.engine_threads_for_tests();
         (threads == expected_threads_on_battery()).then_some(threads)
     })
     .await;
@@ -139,37 +139,27 @@ async fn managed_replacement_stops_running_engines_before_it_publishes() {
     let host = Arc::new(Wire::default());
     let core = core(&host, dir.path());
     let script = support::engine_copy(dir.path(), "search");
+    with_engine(&core, &script).await;
     let id = core
         .call(
-            "analysis.start",
-            vec![
-                json!({ "fen": START, "lines": 1, "infinite": true }),
-                json!(script),
-            ],
+            "startAnalysis",
+            vec![json!({ "fen": START, "lines": 1, "infinite": true })],
         )
         .await
         .expect("analysis started");
     support::wait_until(WAIT, "the analysis to run", || {
-        core.call_sync("analysis.running", vec![])
-            .ok()
-            .filter(|running| running == &json!(true))
+        core.analysis_running_for_tests().then_some(())
     })
     .await;
     // The engine dir the replacement removes; the owners must be stopped before it goes.
     let engine_dir = dir.path().join("managed");
     std::fs::create_dir_all(&engine_dir).expect("engine dir");
     std::fs::write(engine_dir.join("stockfish"), b"binary").expect("engine file");
-    core.call(
-        "managedEngine.delete",
-        vec![json!(1), json!({ "dir": engine_dir.display().to_string() })],
-    )
-    .await
-    .expect("delete");
+    core.managed_engine_for_tests(false, 1, Some(engine_dir.clone()), None)
+        .await
+        .expect("delete");
     assert!(!engine_dir.exists(), "the executable was replaced");
-    assert_eq!(
-        core.call_sync("analysis.running", vec![]).expect("running"),
-        json!(false)
-    );
+    assert!(!core.analysis_running_for_tests());
     let finals: Vec<Value> = host
         .named("engine:analysis")
         .into_iter()
@@ -187,13 +177,11 @@ async fn analysis_and_review_events_carry_the_contract_payloads() {
     let host = Arc::new(Wire::default());
     let core = core(&host, dir.path());
     let script = support::engine_copy(dir.path(), "search");
+    with_engine(&core, &script).await;
     let id = core
         .call(
-            "analysis.start",
-            vec![
-                json!({ "fen": START, "lines": 1, "infinite": true }),
-                json!(script),
-            ],
+            "startAnalysis",
+            vec![json!({ "fen": START, "lines": 1, "infinite": true })],
         )
         .await
         .expect("analysis started");
@@ -211,7 +199,7 @@ async fn analysis_and_review_events_carry_the_contract_payloads() {
     let line = &live["lines"][0];
     assert_eq!(line["rank"], json!(1));
     assert!(line["pv"].is_array(), "{line}");
-    core.call("analysis.stop", vec![json!(false)])
+    core.call("stopAnalysis", vec![json!(false)])
         .await
         .expect("stop");
     let last = support::wait_until(WAIT, "the final analysis update", || {
@@ -224,9 +212,9 @@ async fn analysis_and_review_events_carry_the_contract_payloads() {
     assert_eq!(last["id"], id);
 
     // Review: the default engine is missing, so the requested review fails with a status.
-    core.call("reviews.setup", vec![]).await.expect("setup");
+    support::save_engine_path(&core, "");
     core.call(
-        "reviews.request",
+        "reviewRequest",
         vec![json!({ "fen": START, "moves": ["e2e4", "e7e5"] })],
     )
     .await
@@ -253,10 +241,9 @@ async fn a_review_update_carries_the_stored_review_and_its_summary() {
     let core = core(&host, dir.path());
     let script = support::engine_copy(dir.path(), "review");
     // Point the review at the scripted engine through the settings the store keeps.
-    support::save_engine_path(&core, &script);
-    core.call("reviews.setup", vec![]).await.expect("setup");
+    with_engine(&core, &script).await;
     core.call(
-        "reviews.request",
+        "reviewRequest",
         vec![json!({ "fen": START, "moves": ["e2e4", "e7e5"] })],
     )
     .await
@@ -279,10 +266,9 @@ async fn online_play_pauses_automatic_reviews() {
     let dir = profile();
     let host = Arc::new(Wire::default());
     let core = core(&host, dir.path());
-    core.call("reviews.setup", vec![]).await.expect("setup");
-    core.call_sync("engine.setBusy", vec![json!(true)])
-        .expect("busy");
-    core.call("reviews.changed", vec![]).await.expect("changed");
+    core.call("loadData", vec![]).await.expect("loadData");
+    core.set_engines_busy_for_tests(true);
+    core.reviews_changed_for_tests();
     let status = support::wait_until(WAIT, "a paused status", || {
         host.named("review:status")
             .into_iter()
@@ -290,8 +276,7 @@ async fn online_play_pauses_automatic_reviews() {
     })
     .await;
     assert_eq!(status["paused"], json!("online"));
-    core.call_sync("engine.setBusy", vec![json!(false)])
-        .expect("idle");
+    core.set_engines_busy_for_tests(false);
     core.close().await;
 }
 
@@ -301,19 +286,15 @@ async fn closing_the_core_cancels_an_install_and_stops_engines() {
     let host = Arc::new(Wire::default());
     let core = Arc::new(core(&host, dir.path()));
     let script = support::engine_copy(dir.path(), "search");
+    with_engine(&core, &script).await;
     core.call(
-        "analysis.start",
-        vec![
-            json!({ "fen": START, "lines": 1, "infinite": true }),
-            json!(script),
-        ],
+        "startAnalysis",
+        vec![json!({ "fen": START, "lines": 1, "infinite": true })],
     )
     .await
     .expect("analysis started");
     support::wait_until(WAIT, "the analysis to run", || {
-        core.call_sync("analysis.running", vec![])
-            .ok()
-            .filter(|running| running == &json!(true))
+        core.analysis_running_for_tests().then_some(())
     })
     .await;
     // A release endpoint that accepts connections and never answers: the install waits on it.
@@ -322,9 +303,9 @@ async fn closing_the_core_cancels_an_install_and_stops_engines() {
     let engine_dir = dir.path().join("managed-install");
     let installing = {
         let core = Arc::clone(&core);
-        let location = json!({ "dir": engine_dir.display().to_string(), "releaseUrl": release });
+        let engine_dir = engine_dir.clone();
         tokio::spawn(async move {
-            core.call("managedEngine.install", vec![json!(7), location])
+            core.managed_engine_for_tests(true, 7, Some(engine_dir), Some(release))
                 .await
         })
     };
@@ -345,10 +326,7 @@ async fn closing_the_core_cancels_an_install_and_stops_engines() {
         "the install was cancelled, not failed: {}",
         error.message
     );
-    assert_eq!(
-        core.call_sync("analysis.running", vec![]).expect("running"),
-        json!(false)
-    );
+    assert!(!core.analysis_running_for_tests());
     drop(silent);
 }
 

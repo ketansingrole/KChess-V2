@@ -223,7 +223,7 @@ fn print(value: &Value) {
 }
 
 fn method_names() -> Vec<&'static str> {
-    kchess_contracts::core_api::methods()
+    kchess_contracts::core_api::METHODS
         .iter()
         .map(|method| method.name)
         .collect()
@@ -377,7 +377,9 @@ async fn with_core(
                     return Err("Unknown CoreApi method. Run methods to list them.".into());
                 }
                 let parameters = arguments(rest.get(1..).unwrap_or_default()).await?;
-                if kchess_domain::misc::ASSISTANCE_METHODS.contains(&method) {
+                let assists = kchess_contracts::core_api::method(method)
+                    .is_some_and(|method| method.assist.is_some());
+                if assists {
                     core.request(calls::ResumeOnline {}).await?;
                 }
                 // A method may ask the host meanwhile (a sign-in opens its page), as login does.
@@ -520,11 +522,11 @@ enum Watched {
 /// link or id, or a broadcast's link.
 fn watch_target(words: &[String]) -> Result<Watched, String> {
     use kchess_domain::links::{BroadcastLink, broadcast_link, game_link};
-    use kchess_domain::misc::TV_CHANNEL_KEYS;
+    use kchess_domain::misc::constants::TV_CHANNELS;
     let word = words.first().map_or("best", String::as_str);
-    if let Some(channel) = TV_CHANNEL_KEYS
+    if let Some((channel, _)) = TV_CHANNELS
         .iter()
-        .find(|channel| channel.eq_ignore_ascii_case(word))
+        .find(|(channel, _)| channel.eq_ignore_ascii_case(word))
     {
         return Ok(Watched::Feed(json!({ "channel": channel })));
     }
@@ -543,7 +545,7 @@ fn watch_target(words: &[String]) -> Result<Watched, String> {
         .ok_or_else(|| {
             format!(
                 "watch takes a TV channel ({}), or a Lichess game or broadcast link.",
-                TV_CHANNEL_KEYS.join(", ")
+                TV_CHANNELS.map(|(channel, _)| channel).join(", ")
             )
         })
 }
