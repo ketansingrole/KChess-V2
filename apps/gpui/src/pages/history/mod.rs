@@ -3,6 +3,7 @@
 //! page, each opened to go through
 //! move by move, exported as PGN or deleted.
 
+use crate::loading::Epoch;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -281,7 +282,7 @@ pub struct HistoryPage {
     bookmarks: Option<Vec<LichessGame>>,
     bookmarks_error: Option<SharedString>,
     bookmarks_reconnect: bool,
-    bookmarks_epoch: u64,
+    bookmarks_epoch: Epoch,
     area: Measured,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -346,7 +347,7 @@ impl HistoryPage {
             bookmarks: None,
             bookmarks_error: None,
             bookmarks_reconnect: false,
-            bookmarks_epoch: 0,
+            bookmarks_epoch: Epoch::default(),
             area: Measured::default(),
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -550,8 +551,7 @@ impl HistoryPage {
     }
 
     fn load_bookmarks(&mut self, cx: &mut Context<Self>) {
-        self.bookmarks_epoch += 1;
-        let epoch = self.bookmarks_epoch;
+        let epoch = self.bookmarks_epoch.next();
         self.bookmarks = None;
         self.bookmarks_error = None;
         self.bookmarks_reconnect = false;
@@ -567,7 +567,7 @@ impl HistoryPage {
         cx.spawn(async move |this, cx| {
             let answer = games.await;
             let _ = this.update(cx, |this, cx| {
-                if this.bookmarks_epoch != epoch {
+                if !this.bookmarks_epoch.is_current(epoch) {
                     return;
                 }
                 match answer {

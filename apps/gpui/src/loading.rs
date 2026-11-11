@@ -10,10 +10,43 @@ use kchess_contracts::{CoreError, Level};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Turn(u64);
 
+/// Which of a page's requests is the latest: only its answer counts.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Epoch(u64);
+
+impl Epoch {
+    /// A request goes out: answers to the ones before it no longer count.
+    pub fn next(&mut self) -> Turn {
+        self.0 += 1;
+        Turn(self.0)
+    }
+
+    /// Answers to every request so far no longer count.
+    pub fn invalidate(&mut self) {
+        self.0 += 1;
+    }
+
+    /// The latest request.
+    pub fn current(&self) -> Turn {
+        Turn(self.0)
+    }
+
+    /// Whether `turn` is the latest request.
+    pub fn is_current(&self, turn: Turn) -> bool {
+        turn == Turn(self.0)
+    }
+}
+
+impl std::fmt::Display for Turn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Where a page's loading of something is: whether it waits for an answer, and what failed.
 #[derive(Debug, Default)]
 pub struct Loading {
-    turn: u64,
+    epoch: Epoch,
     busy: bool,
     error: Option<SharedString>,
 }
@@ -21,21 +54,20 @@ pub struct Loading {
 impl Loading {
     /// A request goes out: answers to the ones before it no longer count.
     pub fn start(&mut self) -> Turn {
-        self.turn += 1;
         self.busy = true;
         self.error = None;
-        Turn(self.turn)
+        self.epoch.next()
     }
 
     /// Nothing is asked after all (no account to ask for): earlier answers no longer count.
     pub fn stop(&mut self) {
-        self.turn += 1;
+        self.epoch.invalidate();
         self.busy = false;
     }
 
     /// The answer to `turn` arrived: whether it is the latest request's, which ends the loading.
     pub fn answered(&mut self, turn: Turn) -> bool {
-        if turn != Turn(self.turn) {
+        if !self.epoch.is_current(turn) {
             return false;
         }
         self.busy = false;

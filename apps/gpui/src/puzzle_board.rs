@@ -2,6 +2,7 @@
 //! opponent's replies. It reports what happened and leaves everything else (scores, Lichess, the
 //! next puzzle) to its page: Puzzles' Train tab and Practice's mistakes.
 
+use crate::loading::Epoch;
 use std::time::Duration;
 
 use gpui_kit::component::input::{InputEvent, InputState};
@@ -87,7 +88,7 @@ pub struct PuzzleBoard {
     seen: Vec<(String, Option<(shakmaty::Square, shakmaty::Square)>)>,
     viewing: Option<usize>,
     /// Bumped when the puzzle changes, so a late timer from the old one does nothing.
-    generation: u64,
+    generation: Epoch,
     timers: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -168,7 +169,7 @@ impl PuzzleBoard {
             frozen: false,
             reply_delay: REPLY_DELAY,
             voice: VoiceMoves::new("puzzles", cx),
-            generation: 0,
+            generation: Epoch::default(),
             timers: Vec::new(),
             seen: Vec::new(),
             viewing: None,
@@ -178,7 +179,7 @@ impl PuzzleBoard {
 
     /// A puzzle, from its start; `outcome` is a verdict its page kept from before.
     pub fn start(&mut self, puzzle: &Value, outcome: Option<bool>, cx: &mut Context<Self>) {
-        self.generation += 1;
+        self.generation.invalidate();
         self.timers.clear();
         self.on_board = Some(OnBoard::start(puzzle));
         self.seen.clear();
@@ -200,7 +201,7 @@ impl PuzzleBoard {
 
     /// No puzzle on the board.
     pub fn clear(&mut self, cx: &mut Context<Self>) {
-        self.generation += 1;
+        self.generation.invalidate();
         self.timers.clear();
         self.on_board = None;
         cx.notify();
@@ -408,11 +409,11 @@ impl PuzzleBoard {
             self.feedback = Feedback::Wrong;
             self.flash = true;
             self.hinted = false;
-            let generation = self.generation;
+            let generation = self.generation.current();
             self.timers.push(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(FLASH).await;
                 let _ = this.update(cx, |this, cx| {
-                    if this.generation == generation {
+                    if this.generation.is_current(generation) {
                         this.flash = false;
                         cx.notify();
                     }
@@ -456,11 +457,11 @@ impl PuzzleBoard {
     fn reply(&mut self, uci: String, cx: &mut Context<Self>) {
         self.waiting = true;
         let delay = self.reply_delay;
-        let generation = self.generation;
+        let generation = self.generation.current();
         self.timers.push(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
             let _ = this.update(cx, |this, cx| {
-                if this.generation != generation {
+                if !this.generation.is_current(generation) {
                     return;
                 }
                 if let Some(board) = &mut this.on_board {
@@ -493,13 +494,13 @@ impl PuzzleBoard {
         self.revealed = true;
         self.decide(false, cx);
         self.redraw(cx);
-        let generation = self.generation;
+        let generation = self.generation.current();
         self.timers.push(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(SOLUTION_STEP).await;
                 let reply = this
                     .update(cx, |this, cx| {
-                        if this.generation != generation {
+                        if !this.generation.is_current(generation) {
                             return Err(());
                         }
                         let Some(board) = &mut this.on_board else {
@@ -525,7 +526,7 @@ impl PuzzleBoard {
                 if let Some(reply) = reply {
                     cx.background_executor().timer(SOLUTION_REPLY).await;
                     let _ = this.update(cx, |this, cx| {
-                        if this.generation != generation {
+                        if !this.generation.is_current(generation) {
                             return;
                         }
                         if let Some(board) = &mut this.on_board {
@@ -537,7 +538,7 @@ impl PuzzleBoard {
                 }
             }
             let _ = this.update(cx, |this, cx| {
-                if this.generation == generation {
+                if this.generation.is_current(generation) {
                     cx.emit(PuzzleBoardEvent::Done);
                     this.redraw(cx);
                 }
@@ -548,7 +549,7 @@ impl PuzzleBoard {
     /// A spoken move belongs to this puzzle at this point of it; another drops a choice waiting.
     fn sync_voice(&mut self, cx: &mut Context<Self>) {
         let index = self.on_board.as_ref().map_or(0, OnBoard::index);
-        let context = format!("{}:{index}", self.generation);
+        let context = format!("{}:{index}", self.generation.current());
         let playing = self.playing();
         self.voice.sync(
             &context,

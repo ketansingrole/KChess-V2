@@ -2,6 +2,7 @@
 //! runs over a ladder of puzzles from the database on this computer,
 //! scored and kept here; Lichess's own Storm and Streak results beside the menu.
 
+use crate::loading::{Epoch, Turn};
 use kchess_contracts::calls;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -88,7 +89,7 @@ pub struct PuzzleRush {
     locked: bool,
     warned: bool,
     /// Bumped when a run starts or ends, so timers of the last one do nothing.
-    generation: u64,
+    generation: Epoch,
     board: Entity<PuzzleBoard>,
     layout: PlayLayout,
     timers: Vec<Task<()>>,
@@ -139,7 +140,7 @@ impl PuzzleRush {
             elapsed: Duration::ZERO,
             locked: false,
             warned: false,
-            generation: 0,
+            generation: Epoch::default(),
             board,
             layout: PlayLayout::default(),
             timers: Vec::new(),
@@ -178,7 +179,7 @@ impl PuzzleRush {
     }
 
     fn stop_timers(&mut self) {
-        self.generation += 1;
+        self.generation.invalidate();
         self.timers.clear();
         self.locked = false;
         self.bonus = None;
@@ -190,7 +191,7 @@ impl PuzzleRush {
             return;
         };
         self.stop_timers();
-        let generation = self.generation;
+        let generation = self.generation.current();
         self.error = None;
         self.stage = Stage::Loading;
         cx.notify();
@@ -204,7 +205,7 @@ impl PuzzleRush {
         cx.spawn(async move |this, cx| {
             let ladder = ladder.await;
             let _ = this.update(cx, |this, cx| {
-                if generation != this.generation {
+                if !this.generation.is_current(generation) {
                     return;
                 }
                 let ladder = match ladder {
@@ -255,12 +256,12 @@ impl PuzzleRush {
     }
 
     fn run_clock(&mut self, cx: &mut Context<Self>) {
-        let generation = self.generation;
+        let generation = self.generation.current();
         self.timers.push(crate::timer::every(
             crate::timer::TICK,
             cx,
             move |this, cx| {
-                if generation != this.generation || this.stage != Stage::Running {
+                if !this.generation.is_current(generation) || this.stage != Stage::Running {
                     return false;
                 }
                 this.tick(cx);
@@ -307,11 +308,11 @@ impl PuzzleRush {
             let bonus = self.state.correct_move(config);
             if bonus > 0. {
                 self.bonus = Some(bonus);
-                let generation = self.generation;
+                let generation = self.generation.current();
                 self.timers.push(cx.spawn(async move |this, cx| {
                     cx.background_executor().timer(BONUS_SHOWN).await;
                     let _ = this.update(cx, |this, cx| {
-                        if this.generation == generation {
+                        if this.generation.is_current(generation) {
                             this.bonus = None;
                             cx.notify();
                         }
@@ -344,12 +345,12 @@ impl PuzzleRush {
         self.locked = true;
         self.board
             .update(cx, |board, cx| board.set_frozen(true, cx));
-        let generation = self.generation;
+        let generation = self.generation.current();
         let pause = if solved { AFTER_SOLVE } else { AFTER_MISS };
         self.timers.push(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(pause).await;
             let _ = this.update(cx, |this, cx| {
-                if generation != this.generation || this.stage != Stage::Running {
+                if !this.generation.is_current(generation) || this.stage != Stage::Running {
                     return;
                 }
                 this.locked = false;
@@ -389,7 +390,7 @@ impl PuzzleRush {
             return;
         }
         self.stop_timers();
-        let generation = self.generation;
+        let generation = self.generation.current();
         self.elapsed = self
             .started
             .map_or(Duration::ZERO, |started| started.elapsed());
@@ -438,12 +439,12 @@ impl PuzzleRush {
     /// showed in the next run.
     fn run_saved(
         &mut self,
-        generation: u64,
+        generation: Turn,
         mode: String,
         saved: Result<RunSaved, String>,
         cx: &mut Context<Self>,
     ) {
-        let current = generation == self.generation;
+        let current = self.generation.is_current(generation);
         match saved {
             Ok(saved) => {
                 self.summaries.insert(mode, saved.summary.clone());
@@ -974,10 +975,11 @@ mod tests {
             let stats = cx.new(|cx| super::super::stats::PuzzleStats::new(Vec::new(), window, cx));
             let rush = cx.new(|cx| super::PuzzleRush::new(stats, window, cx));
             rush.update(cx, |rush, cx| {
-                rush.generation = 2;
-                rush.run_saved(1, "storm".into(), Err("The disk is full".into()), cx);
+                let earlier = rush.generation.next();
+                let latest = rush.generation.next();
+                rush.run_saved(earlier, "storm".into(), Err("The disk is full".into()), cx);
                 let late = rush.error.clone();
-                rush.run_saved(2, "storm".into(), Err("The disk is full".into()), cx);
+                rush.run_saved(latest, "storm".into(), Err("The disk is full".into()), cx);
                 (late, rush.error.clone())
             })
         });

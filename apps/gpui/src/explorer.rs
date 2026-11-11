@@ -3,6 +3,7 @@
 //! list on the analysis board or as a grid of boards beside an opening's line. Its settings are
 //! a view preference (`kchess:explorer`).
 
+use crate::loading::Epoch;
 use futures::FutureExt as _;
 use kchess_contracts::calls;
 use kchess_contracts::check::{Fen, GameId};
@@ -243,7 +244,7 @@ pub struct PositionExplorer {
     result: Option<PositionLookup>,
     error: String,
     busy: bool,
-    epoch: u64,
+    epoch: Epoch,
     show_filters: bool,
     accounts: Vec<String>,
     player: Entity<InputState>,
@@ -308,7 +309,7 @@ impl PositionExplorer {
             result: None,
             error: String::new(),
             busy: false,
-            epoch: 0,
+            epoch: Epoch::default(),
             show_filters: false,
             accounts: Vec::new(),
             player,
@@ -431,7 +432,7 @@ impl PositionExplorer {
         self.fen = fen.to_string();
         self.moves = moves;
         self.variant = variant.map(str::to_string);
-        self.epoch += 1;
+        self.epoch.invalidate();
         self.result = None;
         self.error.clear();
         self.busy = false;
@@ -474,7 +475,7 @@ impl PositionExplorer {
         }
         if self.needs_player(cx) {
             // A lookup still on its way for another database must not land here.
-            self.epoch += 1;
+            self.epoch.invalidate();
             self.lookup_task = None;
             self.busy = false;
             self.result = None;
@@ -485,8 +486,7 @@ impl PositionExplorer {
             cx.notify();
             return;
         }
-        self.epoch += 1;
-        let request = self.epoch;
+        let request = self.epoch.next();
         let prefs = self.shown_prefs(cx);
         let call = cx.global::<AppCore>().request(calls::PositionLookup {
             kind: prefs.kind(),
@@ -499,7 +499,7 @@ impl PositionExplorer {
         self.lookup_task = Some(cx.spawn(async move |this, cx| {
             let outcome = call.await;
             let _ = this.update(cx, |this, cx| {
-                if request != this.epoch {
+                if !this.epoch.is_current(request) {
                     return;
                 }
                 this.busy = false;
@@ -1254,9 +1254,9 @@ mod tests {
             let explorer = cx.new(|cx| PositionExplorer::new(false, window, cx));
             explorer.update(cx, |explorer, cx| {
                 explorer.lookup(Some("masters"), false, None, cx);
-                let asked = explorer.epoch;
+                let asked = explorer.epoch.current();
                 explorer.lookup(Some("player"), false, None, cx);
-                (explorer.busy, explorer.epoch == asked)
+                (explorer.busy, explorer.epoch.is_current(asked))
             })
         });
         assert!(!busy && !stale);

@@ -2,6 +2,7 @@
 //! from a start FEN and the moves played since. `cancel` (a restart, a takeback, another position)
 //! stops the search this helper started and drops its move.
 
+use crate::loading::Epoch;
 use gpui_kit::*;
 use kchess_contracts::Level;
 use kchess_contracts::calls;
@@ -18,7 +19,7 @@ pub struct EngineMove {
     /// Whether Stockfish is installed: unknown until asked.
     pub ready: Option<bool>,
     /// Bumped by each search and by `cancel`, so a late answer from an old search is dropped.
-    generation: u64,
+    generation: Epoch,
     /// This helper's search is still running in the core.
     running: bool,
     search: Option<Task<()>>,
@@ -56,8 +57,7 @@ impl EngineMove {
         cx: &mut Context<V>,
     ) {
         let engine = view.engine();
-        engine.generation += 1;
-        let mine = engine.generation;
+        let mine = engine.generation.next();
         engine.running = true;
         // This search replaces any before it: whether one is thinking, and an earlier failure,
         // are its own. A quiet search after a busy one left `thinking` on for good.
@@ -76,7 +76,7 @@ impl EngineMove {
             let reply = search.await;
             let _ = this.update(cx, |view, cx| {
                 let engine = view.engine();
-                if engine.generation != mine {
+                if !engine.generation.is_current(mine) {
                     return;
                 }
                 engine.running = false;
@@ -104,7 +104,7 @@ impl EngineMove {
 
     /// Stop this helper's search, if it is still running, and forget its answer.
     pub fn cancel(&mut self, cx: &mut App) {
-        self.generation += 1;
+        self.generation.invalidate();
         self.search = None;
         self.thinking = false;
         self.error = None;
