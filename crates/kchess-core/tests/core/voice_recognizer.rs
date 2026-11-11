@@ -11,7 +11,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use kchess_core::host::{Host, Level};
-use kchess_core::voice::recognizer::{Heard, Recognized, VoiceRecognizer, Word};
+use kchess_core::voice::recognizer::{Heard, Utterance, VoiceRecognizer, VoiceWord};
 
 #[derive(Default)]
 struct Logs(Mutex<Vec<String>>);
@@ -71,25 +71,29 @@ async fn recognizes_in_order_and_reuses_one_helper() {
     let folder = model("normal");
     let (voice, _) = recognizer(folder.path());
     voice.start(&grammar(), 16_000.0).await.expect("start");
+    let silence = voice.accept(&pcm(&[0; 160])).await.expect("silence");
+    crate::support::wire::assert_wire("voiceAccept.partial", &silence);
     assert_eq!(
-        voice.accept(&pcm(&[0; 160])).await.expect("silence"),
+        silence,
         Heard {
             partial: Some("e".into()),
             result: None
         }
     );
+    let speech = voice.accept(&pcm(&[0, 1200, -800])).await.expect("speech");
+    crate::support::wire::assert_wire("voiceAccept.result", &speech);
     assert_eq!(
-        voice.accept(&pcm(&[0, 1200, -800])).await.expect("speech"),
+        speech,
         Heard {
             partial: None,
-            result: Some(Recognized {
+            result: Some(Utterance {
                 text: "e four".into(),
                 words: vec![
-                    Word {
+                    VoiceWord {
                         word: "e".into(),
                         conf: 0.9
                     },
-                    Word {
+                    VoiceWord {
                         word: "four".into(),
                         conf: 0.8
                     },
@@ -98,6 +102,7 @@ async fn recognizes_in_order_and_reuses_one_helper() {
         }
     );
     let finished = voice.finish().await.expect("finish");
+    crate::support::wire::assert_wire("voiceFinish.empty", &finished);
     assert_eq!(
         finished.result.map(|result| result.text),
         Some(String::new())

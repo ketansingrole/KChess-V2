@@ -12,6 +12,8 @@ use std::time::Duration;
 
 use fixtures::{MemoryStore, Recording, Reply, Seen, capabilities_for, http_client, serve};
 use futures_util::future::BoxFuture;
+use kchess_contracts::Variant;
+use kchess_contracts::types::{ChallengeColor, ChatRoom, TournamentSystem};
 use kchess_core::error::{CoreError, Result as CoreResult};
 use kchess_core::host::Host;
 use kchess_core::lichess::accounts::Lichess;
@@ -202,12 +204,12 @@ fn incoming(overrides: Value) -> ChallengeInfo {
 
 fn seek_options(target: Option<&str>) -> OnlineOptions {
     OnlineOptions {
-        minutes: 10.0,
-        increment: 0.0,
+        minutes: 10,
+        increment: 0,
         days: None,
         variant: None,
         fen: None,
-        color: "random".into(),
+        color: ChallengeColor::Random,
         rated: false,
         target: target.map(str::to_string),
         account: None,
@@ -444,6 +446,7 @@ async fn a_refused_public_seek_explains_the_board_api_limits() {
     let online = session(&fixture.base, &host, &store, &tokens);
     let started = online.start(&seek_options(None)).await.unwrap();
     assert_eq!(started.seeking, Some(true));
+    crate::support::wire::assert_wire("startOnline.seeking", &started);
     until("the refusal is explained", || {
         emitted(&host, "online:error").iter().any(|message| {
             message
@@ -505,7 +508,7 @@ async fn a_refused_start_leaves_the_pending_challenge_running() {
     let result = tokio::spawn(async move { starting.start(&seek_options(Some("Bob"))).await });
     fixture.requested("/api/challenge/Bob", 1).await;
     let mut bullet = seek_options(Some("Carol"));
-    bullet.minutes = 1.0;
+    bullet.minutes = 1;
     let refused = online.start(&bullet).await;
     assert!(refused.is_err_and(|cause| !cause.aborted));
     let _ = gate_tx.send(true);
@@ -937,8 +940,10 @@ async fn playing(
     let store = MemoryStore::with_accounts(&[("Alice", true)]);
     let tokens = Arc::new(ScriptedTokens::default());
     let online = session(&fixture.base, &host, &store, &tokens);
+    let resumed = online.resume().await.unwrap();
+    crate::support::wire::assert_wire("resumeOnline.live", &resumed);
     assert_eq!(
-        online.resume().await.unwrap(),
+        resumed,
         Some(Resumed {
             id: "AbCd1234".into(),
             account: "Alice".into()
@@ -1044,10 +1049,11 @@ async fn sends_and_reads_the_player_chat_of_the_live_game() {
     assert_eq!(field(post, "room").as_deref(), Some("player"));
     assert_eq!(field(post, "text").as_deref(), Some("Good luck"));
     let lines = online.chat("AbCd1234").await.unwrap();
+    crate::support::wire::assert_wire("onlineChat.lines", &lines);
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0].user, "Bob");
     assert_eq!(lines[0].text, "You too");
-    assert_eq!(lines[0].room, "player");
+    assert_eq!(lines[0].room, ChatRoom::Player);
     online.cancel();
     online.close();
 }
@@ -1237,10 +1243,11 @@ async fn creates_correspondence_challenges_without_waiting_on_a_stream() {
     let (host, store, tokens) = rig(&[("Alice", true)]);
     let online = session(&fixture.base, &host, &store, &tokens);
     let mut options = seek_options(Some("Bob"));
-    options.minutes = 0.0;
-    options.days = Some(3.0);
-    options.variant = Some("chess960".into());
+    options.minutes = 0;
+    options.days = Some(3);
+    options.variant = Some(Variant::Chess960);
     let result = online.start(&options).await.unwrap();
+    crate::support::wire::assert_wire("startOnline.correspondence", &result);
     assert_eq!(result.id.as_deref(), Some("Corr5678"));
     assert_eq!(result.correspondence, Some(true));
     let posted = fixture.to("/api/challenge/Bob");
@@ -1256,13 +1263,13 @@ async fn refuses_a_rated_or_public_game_from_a_set_up_position() {
     let online = session(&fixture.base, &host, &store, &tokens);
     let fen = "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1";
     let rated = OnlineOptions {
-        color: "white".into(),
+        color: ChallengeColor::White,
         rated: true,
         fen: Some(fen.into()),
         ..seek_options(Some("Bob"))
     };
     let casual_public = OnlineOptions {
-        color: "white".into(),
+        color: ChallengeColor::White,
         fen: Some(fen.into()),
         ..seek_options(None)
     };
@@ -1425,7 +1432,7 @@ async fn a_tournament_join_and_withdrawal_use_the_accounts_login() {
     };
     let joined = kchess_core::lichess::tournaments::join_tournament(
         &lichess,
-        "arena",
+        TournamentSystem::Arena,
         "Abcd1234",
         "Alice",
         Some("secret"),
@@ -1443,10 +1450,14 @@ async fn a_tournament_join_and_withdrawal_use_the_accounts_login() {
         posted[0].header("Authorization"),
         Some("Bearer Alice-token")
     );
-    let left =
-        kchess_core::lichess::tournaments::leave_tournament(&lichess, "arena", "Abcd1234", "Alice")
-            .await
-            .unwrap();
+    let left = kchess_core::lichess::tournaments::leave_tournament(
+        &lichess,
+        TournamentSystem::Arena,
+        "Abcd1234",
+        "Alice",
+    )
+    .await
+    .unwrap();
     assert!(matches!(
         left,
         kchess_core::lichess::accounts::Reply::Done(())
@@ -1561,6 +1572,11 @@ async fn lists_the_challenges_of_accounts_without_an_open_event_stream() {
     );
     assert_eq!(calls[0].header("Authorization"), Some("Bearer Bob-token"));
     let inbox = online.challenges().list();
+    // The time it arrived is the clock's: an integer, recorded as 0.
+    let mut shown = serde_json::to_value(&inbox).unwrap();
+    assert!(shown[0]["receivedAt"].is_i64());
+    shown[0]["receivedAt"] = json!(0);
+    crate::support::wire::assert_wire("challenges.listed", &shown);
     assert_eq!(inbox.len(), 1);
     assert_eq!(inbox[0].account, "Bob");
     assert_eq!(inbox[0].opponent.name, "Carol");

@@ -4,19 +4,20 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
-    BroadcastRoundRef, BroadcastSummary, BroadcastTourDetail, TV_CHANNELS, TvChannel, WatchPlayer,
+    BroadcastRoundPlace, BroadcastRoundRef, BroadcastSummary, BroadcastTourDetail, TV_CHANNELS,
+    TvChannel, WatchPlayer,
 };
 use crate::error::{CoreError, Result as CoreResult};
 use crate::lichess::accounts::{Lichess, path_segment};
 use crate::lichess::decode::{Loose, Millis, Text, read};
-use kchess_contracts::types::UsageKind;
+use kchess_contracts::types::{BroadcastSection, UsageKind};
 use kchess_domain::js;
 
 /* ── Broadcast listings (pure) ── */
 
 /// `broadcastSummaries(entries, section)`: the listing's entries that have a readable tournament;
 /// only Lichess's own images are kept. A round's section follows its state.
-pub fn broadcast_summaries(entries: &[Value], section: &'static str) -> Vec<BroadcastSummary> {
+pub fn broadcast_summaries(entries: &[Value], section: BroadcastSection) -> Vec<BroadcastSummary> {
     entries
         .iter()
         .take(30)
@@ -27,9 +28,9 @@ pub fn broadcast_summaries(entries: &[Value], section: &'static str) -> Vec<Broa
                 !ongoing && !round.finished && round.finished_at.is_none_or(|at| at == 0.0)
             });
             let section = if ongoing {
-                "active"
+                BroadcastSection::Active
             } else if upcoming {
-                "upcoming"
+                BroadcastSection::Upcoming
             } else {
                 section
             };
@@ -148,8 +149,8 @@ pub async fn tv_channels(lichess: &Lichess) -> CoreResult<Vec<TvChannel>> {
                 })
             });
             TvChannel {
-                key,
-                label,
+                key: (*key).to_owned(),
+                label: (*label).to_owned(),
                 game_id,
                 player,
             }
@@ -179,7 +180,7 @@ pub async fn broadcasts(
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        return Ok(broadcast_summaries(&entries, "past"));
+        return Ok(broadcast_summaries(&entries, BroadcastSection::Past));
     }
     let raw: Value = lichess
         .client()
@@ -198,15 +199,18 @@ pub async fn broadcasts(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let mut all = broadcast_summaries(&list("active"), "active");
-    all.extend(broadcast_summaries(&list("upcoming"), "upcoming"));
-    all.extend(broadcast_summaries(&past, "past"));
+    let mut all = broadcast_summaries(&list("active"), BroadcastSection::Active);
+    all.extend(broadcast_summaries(
+        &list("upcoming"),
+        BroadcastSection::Upcoming,
+    ));
+    all.extend(broadcast_summaries(&past, BroadcastSection::Past));
     Ok(all)
 }
 
 /// `broadcastRound(id)`: the tournament a broadcast round is in, as a round's link names only
-/// the round (`{ tourId, roundId }`).
-pub async fn broadcast_round(lichess: &Lichess, id: &str) -> CoreResult<Value> {
+/// the round.
+pub async fn broadcast_round(lichess: &Lichess, id: &str) -> CoreResult<BroadcastRoundPlace> {
     let path = format!("/api/broadcast/-/-/{}", path_segment(id));
     let raw: Value = lichess
         .client()
@@ -217,7 +221,10 @@ pub async fn broadcast_round(lichess: &Lichess, id: &str) -> CoreResult<Value> {
         .as_str()
         .filter(|tour| !tour.is_empty())
         .ok_or_else(|| CoreError::new("Lichess sent an unreadable broadcast."))?;
-    Ok(serde_json::json!({ "tourId": tour, "roundId": id }))
+    Ok(BroadcastRoundPlace {
+        tour_id: tour.to_owned(),
+        round_id: id.to_owned(),
+    })
 }
 
 /// `broadcastTour(id)`: a broadcast tournament and its rounds (at most 100).

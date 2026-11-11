@@ -13,7 +13,6 @@ use serde_json::Value;
 use super::constants::*;
 use super::patterns;
 use super::value::{self, J};
-use crate::variant::VARIANTS;
 use crate::{js, replay};
 
 /// A custom message, as the TypeScript source wrote it.
@@ -117,13 +116,6 @@ fn one_of(text: &str, options: &[&str], msg: Msg, path: &str) -> Checked<()> {
     })
 }
 
-fn one_of_numbers(n: f64, options: &[f64], msg: Msg, path: &str) -> Checked<()> {
-    ensure(options.contains(&n), msg, path, || {
-        let listed: Vec<String> = options.iter().map(f64::to_string).collect();
-        format!("one of {}", listed.join(", "))
-    })
-}
-
 fn matches(text: &str, test: fn(&str) -> bool, msg: Msg, path: &str, what: &str) -> Checked<()> {
     ensure(test(text), msg, path, || what.to_owned())
 }
@@ -213,7 +205,6 @@ use requests::*;
 use values::*;
 
 use requests::assert_analysis_request;
-pub use requests::assert_watch_target;
 
 /* ── One check per argument ── */
 
@@ -228,15 +219,6 @@ macro_rules! checks {
             $(pub fn $name(value: J) -> Checked<Value> {
                 out(&$check(value)?)
             })*
-
-            /// A game to watch: a TV channel (`TV_CHANNELS`) or a game id.
-            pub fn watch_target(value: J) -> Checked<Value> {
-                let channels = TV_CHANNELS
-                    .iter()
-                    .map(|(key, _)| J::Str((*key).into()))
-                    .collect();
-                assert_watch_target(value, J::Arr(channels))
-            }
 
             /// A position alone (`assertAnalysisRequest({ fen, lines: 1 })`): its FEN.
             pub fn position(value: J) -> Checked<Value> {
@@ -267,27 +249,12 @@ macro_rules! checks {
 }
 
 checks! {
-    voice_grammar => assert_voice_grammar,
-    sample_rate => assert_sample_rate,
-    voice_audio => assert_voice_audio,
     username => assert_username,
     game_id => assert_game_id,
-    uci => assert_uci,
-    fen => assert_fen,
-    usernames => assert_usernames,
-    action => assert_action,
-    chat_room => assert_chat_room,
-    chat_text => assert_chat_text,
-    new_arena => assert_new_arena,
-    decline_reason => assert_decline_reason,
-    tournament_system => assert_tournament_system,
-    tournament_id => assert_tournament_id,
-    tournament_password => assert_tournament_password,
     perf_type => assert_perf_type,
     lichess_id => assert_lichess_id,
     puzzle_id => assert_puzzle_id,
     optional_account => assert_optional_account,
-    online_options => assert_online_options,
     theme => assert_theme,
     puzzle_request => assert_puzzle_request,
     puzzle_solve => assert_puzzle_solve,
@@ -304,10 +271,7 @@ checks! {
     voice_update => assert_voice_update,
     voice_id => assert_voice_id,
     voice_limit => assert_voice_limit,
-    broadcast_query => assert_broadcast_query,
-    optional_page => assert_optional_page,
     boolean => assert_boolean,
-    watch_session => assert_watch_session,
     pgn_text => assert_pgn_text,
     session_object => assert_session_object,
     study_command_shape => assert_study_command_shape,
@@ -398,23 +362,6 @@ mod tests {
             ("dark", palette),
         ]);
         assert_eq!(checks::theme(theme), Err(HEX.into()));
-    }
-
-    #[test]
-    fn lists_are_objects_of_their_indices_and_binary_data_is_not_text() {
-        let bytes = J::Bytes {
-            len: 2,
-            head: b"hi".to_vec(),
-        };
-        assert_eq!(checks::chat_text(bytes), Err("Invalid message.".into()));
-    }
-
-    #[test]
-    fn default_messages_name_the_rejected_value() {
-        assert_eq!(
-            checks::new_arena(obj(vec![])),
-            Err("missing field `clockTime`".into())
-        );
     }
 
     #[test]

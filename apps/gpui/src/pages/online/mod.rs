@@ -18,6 +18,7 @@ use crate::play_layout::{PAGE_BOTTOM, PAGE_TOP, PlayLayout, side_padding};
 use crate::theme::{Palette, radii};
 use crate::widgets::Pressable as _;
 use crate::widgets::{self, Choice, KeyboardFocus as _, Pill};
+use kchess_contracts::types::ChatRoom;
 use kchess_domain::misc::constants::CORRESPONDENCE_DAYS;
 use kchess_domain::records::time_control::{
     can_direct_challenge, can_play_online, perf_for, total_seconds,
@@ -414,8 +415,9 @@ impl OnlinePage {
         if text.trim().is_empty() {
             return;
         }
-        let sent =
-            crate::online::handle(cx).update(cx, |online, cx| online.send_chat(text, "player", cx));
+        let sent = crate::online::handle(cx).update(cx, |online, cx| {
+            online.send_chat(text, ChatRoom::Player, cx)
+        });
         let input = self.chat_input.clone();
         cx.spawn_in(window, async move |_, cx| {
             if sent.await && typed {

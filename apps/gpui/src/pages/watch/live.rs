@@ -111,7 +111,7 @@ pub fn result_line(frame: &Value) -> String {
 }
 
 /// "1+0 · Rated · Bullet", the line Lichess shows above a TV game (`frameInfo`).
-pub fn info_line(frame: &Value, channels: &[Value]) -> String {
+pub fn info_line(frame: &Value, channels: &[kchess_contracts::types::TvChannel]) -> String {
     let speed = frame["speed"].as_str().unwrap_or_default();
     let variant = if frame["source"] == json!("tv") {
         frame["channel"]
@@ -122,8 +122,8 @@ pub fn info_line(frame: &Value, channels: &[Value]) -> String {
             .and_then(|channel| {
                 channels
                     .iter()
-                    .find(|c| c["key"] == json!(channel))
-                    .and_then(|c| c["label"].as_str().map(str::to_string))
+                    .find(|c| c.key == channel)
+                    .map(|c| c.label.clone())
             })
     } else {
         // A game's variant comes as Lichess's key ("kingOfTheHill"): shown by its name.
@@ -1098,7 +1098,12 @@ mod tests {
             "source": "tv", "channel": "atomic", "speed": "blitz", "rated": true,
             "clock": { "initial": 180, "increment": 2 },
         });
-        let channels = vec![json!({ "key": "atomic", "label": "Atomic" })];
+        let channels = vec![kchess_contracts::types::TvChannel {
+            key: "atomic".into(),
+            label: "Atomic".into(),
+            game_id: None,
+            player: None,
+        }];
         assert_eq!(info_line(&frame, &channels), "3+2 · Rated · Blitz · Atomic");
         // A watched game (not TV) names its variant, not Lichess's key for it.
         let game = json!({

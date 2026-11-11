@@ -658,7 +658,7 @@ fn a_correspondence_move_is_played_from_its_notification(cx: &mut gpui_kit::Test
             .read(cx)
             .ongoing
             .iter()
-            .any(|game| game["gameId"] == serde_json::json!("E2eCorr1"))
+            .any(|game| game.game_id == "E2eCorr1")
     });
     gpui_kit::VisualTestContext::from_window(app.window, &app.cx).deactivate_window();
     app.with_window(|_, cx| {
@@ -666,7 +666,7 @@ fn a_correspondence_move_is_played_from_its_notification(cx: &mut gpui_kit::Test
             .read(cx)
             .ongoing
             .iter()
-            .find(|game| game["gameId"] == serde_json::json!("E2eCorr1"))
+            .find(|game| game.game_id == "E2eCorr1")
             .cloned()
             .expect("the game");
         crate::notifications::your_move(&game, cx);

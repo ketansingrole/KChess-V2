@@ -32,20 +32,38 @@ fn typed<T: check::Validate + serde::Serialize>(value: J) -> Out {
         .map_err(|error| error.to_string())
 }
 
+/// An optional argument's check as the suites called it: absent passes, null does not.
+fn optional<T: check::Validate + serde::Serialize>(value: J) -> Out {
+    match value {
+        J::Undef => Ok(Value::Null),
+        value => typed::<T>(value),
+    }
+}
+
+fn broadcast_query(value: J) -> Out {
+    optional::<check::BroadcastQuery>(value)
+}
+
+/// An entry code: an empty one is none.
+fn tournament_password(value: J) -> Out {
+    optional::<check::TournamentPassword>(value)
+        .map(|code| if code == "" { Value::Null } else { code })
+}
+
 /// A validator of one argument, by the name the recorded suites called it.
 fn validator(method: &str) -> Option<fn(J) -> Out> {
     Some(match method {
-        "assertAction" => checks::action,
+        "assertAction" => typed::<types::OnlineAction>,
         "assertActivityMax" => checks::activity_max,
         "assertAnalysisRequest" => typed::<types::AnalysisRequest>,
         "assertArchivedGameShape" => checks::archived_game_shape,
         "assertBestMoveOptions" => typed::<types::BestMoveOptions>,
-        "assertBroadcastQuery" => checks::broadcast_query,
-        "assertChatRoom" => checks::chat_room,
-        "assertChatText" => checks::chat_text,
+        "assertBroadcastQuery" => broadcast_query,
+        "assertChatRoom" => typed::<types::ChatRoom>,
+        "assertChatText" => typed::<check::ChatText>,
         "assertCoreSettings" => typed::<types::CoreSettings>,
         "assertDays" => checks::days,
-        "assertDeclineReason" => checks::decline_reason,
+        "assertDeclineReason" => typed::<types::DeclineReason>,
         "assertFriendList" => typed::<check::FriendList>,
         "assertGameId" => typed::<check::GameId>,
         "assertGameIds" => typed::<check::GameIds>,
@@ -59,8 +77,8 @@ fn validator(method: &str) -> Option<fn(J) -> Out> {
         "assertLookupOptions" => typed::<types::LookupOptions>,
         "assertMessageText" => typed::<check::MessageText>,
         "assertMoves" => typed::<check::Moves>,
-        "assertNewArena" => checks::new_arena,
-        "assertOnlineOptions" => checks::online_options,
+        "assertNewArena" => typed::<types::NewArena>,
+        "assertOnlineOptions" => typed::<types::OnlineOptions>,
         "assertOptionalAccount" => typed::<check::OptionalAccount>,
         "assertPerfType" => typed::<types::PerfType>,
         "assertPuzzleAttempt" => checks::puzzle_attempt,
@@ -78,12 +96,12 @@ fn validator(method: &str) -> Option<fn(J) -> Out> {
         "assertStudyCommandShape" => checks::study_command_shape,
         "assertStudySyncRequest" => typed::<types::StudySyncRequest>,
         "assertTheme" => checks::theme,
-        "assertTournamentId" => checks::tournament_id,
-        "assertTournamentPassword" => checks::tournament_password,
-        "assertTournamentSystem" => checks::tournament_system,
-        "assertUci" => checks::uci,
+        "assertTournamentId" => typed::<check::TournamentId>,
+        "assertTournamentPassword" => tournament_password,
+        "assertTournamentSystem" => typed::<types::TournamentSystem>,
+        "assertUci" => typed::<check::Uci>,
         "assertUsername" => typed::<check::Username>,
-        "assertUsernames" => checks::usernames,
+        "assertUsernames" => typed::<check::PresenceUsers>,
         "assertVoiceAttempt" => checks::voice_attempt,
         "assertVoiceId" => checks::voice_id,
         "assertVoiceLimit" => checks::voice_limit,
@@ -136,7 +154,11 @@ fn answer(method: &str, values: Vec<J>) -> Out {
         "assertWatchTarget" => {
             let mut values = values.into_iter();
             let value = values.next().unwrap_or(J::Undef);
-            misc::validate::assert_watch_target(value, values.next().unwrap_or(J::Undef))
+            let channels = values.next().map(J::into_value).unwrap_or_default();
+            let channels: Vec<String> = serde_json::from_value(channels).unwrap_or_default();
+            let channels: Vec<&str> = channels.iter().map(String::as_str).collect();
+            let target = check::watch_target(value, &channels)?;
+            serde_json::to_value(target).map_err(|error| error.to_string())
         }
         _ => match validator(method) {
             Some(check) => check(values.into_iter().next().unwrap_or(J::Undef)),

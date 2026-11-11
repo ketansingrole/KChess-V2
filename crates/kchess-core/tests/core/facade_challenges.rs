@@ -57,6 +57,11 @@ async fn a_declined_challenge_is_answered_and_leaves_the_inbox() {
     })
     .await
     .expect("the challenge reaches the inbox");
+    // The time it arrived is the clock's: an integer, recorded as 0.
+    let mut listed = core.call("challenges", vec![]).await.unwrap();
+    assert!(listed[0]["receivedAt"].is_i64());
+    listed[0]["receivedAt"] = json!(0);
+    crate::support::wire::assert_wire("challenges.facade", &listed);
 
     core.call(
         "declineChallenge",

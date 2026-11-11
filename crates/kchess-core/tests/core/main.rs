@@ -64,3 +64,4 @@ mod voice_model_facade;
 mod voice_ownership;
 mod voice_recognizer;
 mod wire_accounts;
+mod wire_play;

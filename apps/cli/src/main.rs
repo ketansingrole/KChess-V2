@@ -8,7 +8,7 @@ mod wait;
 
 use kchess_contracts::calls;
 use kchess_contracts::check::{Fen, GameId, LichessId, StudyId, check};
-use kchess_contracts::types::{AnalysisRequest, LookupOptions, PositionLookupKind};
+use kchess_contracts::types::{AnalysisRequest, LookupOptions, PositionLookupKind, WatchTarget};
 use kchess_domain::misc::value::J;
 use kchess_domain::variant::Variant;
 use std::path::PathBuf;
@@ -380,19 +380,16 @@ async fn with_core(
                 match target {
                     Watched::Feed(target) => core.request(calls::Watch { target }).await?,
                     Watched::Round(round) => {
-                        core.request(calls::WatchBroadcast {
-                            round_id: json!(round),
-                        })
-                        .await?
+                        let round_id = LichessId(round);
+                        core.request(calls::WatchBroadcast { round_id }).await?
                     }
                     Watched::Tour(id) => {
-                        let tour = core.request(calls::BroadcastTour { id: json!(id) }).await?;
+                        let id = LichessId(id);
+                        let tour = core.request(calls::BroadcastTour { id }).await?;
                         let round = kchess_games::broadcast::opening_round(&tour)
                             .ok_or("That broadcast has no rounds yet.")?;
-                        core.request(calls::WatchBroadcast {
-                            round_id: round["id"].clone(),
-                        })
-                        .await?
+                        let round_id = LichessId(round.id.clone());
+                        core.request(calls::WatchBroadcast { round_id }).await?
                     }
                 };
                 let watched = watch_frames(&mut events).await;
@@ -457,8 +454,8 @@ async fn linked_pgn(core: &CoreClient, link: &str) -> Result<String, String> {
 /// What `watch` follows.
 #[derive(Debug, PartialEq)]
 enum Watched {
-    /// A TV channel or a game: `{ channel }` or `{ gameId }`.
-    Feed(Value),
+    /// A TV channel or a game.
+    Feed(WatchTarget),
     /// A broadcast round, by id.
     Round(String),
     /// A broadcast tournament, at its live round.
@@ -475,7 +472,7 @@ fn watch_target(words: &[String]) -> Result<Watched, String> {
         .iter()
         .find(|(channel, _)| channel.eq_ignore_ascii_case(word))
     {
-        return Ok(Watched::Feed(json!({ "channel": channel })));
+        return Ok(Watched::Feed(WatchTarget::Channel((*channel).to_owned())));
     }
     match broadcast_link(word) {
         Some(BroadcastLink::Tour(tour)) => return Ok(Watched::Tour(tour)),
@@ -488,7 +485,7 @@ fn watch_target(words: &[String]) -> Result<Watched, String> {
         format!("https://lichess.org/{word}")
     };
     game_link(&link)
-        .map(|game| Watched::Feed(json!({ "gameId": game.id })))
+        .map(|game| Watched::Feed(WatchTarget::Game(game.id)))
         .ok_or_else(|| {
             format!(
                 "watch takes a TV channel ({}), or a Lichess game or broadcast link.",
@@ -819,20 +816,23 @@ mod tests {
     #[test]
     fn watch_follows_a_channel_a_game_or_a_broadcast() {
         use super::Watched::{Feed, Round, Tour};
-        use serde_json::json;
+        use kchess_contracts::types::WatchTarget;
         let words = |text: &str| {
             text.split_whitespace()
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         };
         let target = |text: &str| super::watch_target(&words(text));
-        assert_eq!(target(""), Ok(Feed(json!({ "channel": "best" }))));
-        assert_eq!(target("Blitz"), Ok(Feed(json!({ "channel": "blitz" }))));
+        assert_eq!(target(""), Ok(Feed(WatchTarget::Channel("best".into()))));
+        assert_eq!(
+            target("Blitz"),
+            Ok(Feed(WatchTarget::Channel("blitz".into())))
+        );
         assert_eq!(
             target("ultrabullet"),
-            Ok(Feed(json!({ "channel": "ultraBullet" })))
+            Ok(Feed(WatchTarget::Channel("ultraBullet".into())))
         );
-        let game = Ok(Feed(json!({ "gameId": "q7ZvsdUF" })));
+        let game = Ok(Feed(WatchTarget::Game("q7ZvsdUF".into())));
         assert_eq!(target("https://lichess.org/q7ZvsdUF/black"), game);
         assert_eq!(target("q7ZvsdUF"), game);
         assert_eq!(

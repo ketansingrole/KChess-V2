@@ -44,13 +44,3 @@ pub(crate) fn reply_json<T: serde::Serialize, E: Into<CoreError>>(
         Reply::NeedsReconnect => Ok(json!({ "needsReconnect": true })),
     }
 }
-
-/// An action's answer: `true` when it went through, or `{ needsReconnect: true }`.
-pub(crate) fn reply_true<E: Into<CoreError>>(
-    result: std::result::Result<Reply<()>, E>,
-) -> Result<Value> {
-    match result.map_err(Into::into)? {
-        Reply::Done(()) => Ok(json!(true)),
-        Reply::NeedsReconnect => Ok(json!({ "needsReconnect": true })),
-    }
-}

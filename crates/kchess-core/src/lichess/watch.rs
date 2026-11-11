@@ -11,6 +11,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kchess_contracts::types::WatchPhase;
+pub use kchess_contracts::types::{
+    BroadcastRoundPlace, BroadcastRoundRef, BroadcastSummary, BroadcastTourDetail, TvChannel,
+    WatchPlayer, WatchTarget,
+};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -37,16 +41,6 @@ const MAX_BROADCAST_PGN: usize = 200_000;
 const MAX_PGN: usize = 2_000_000;
 
 /* ── Wire shapes ── */
-
-/// A player of a watched game (`WatchPlayer`).
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct WatchPlayer {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rating: Option<f64>,
-}
 
 /// A time control in seconds (`clock` of `WatchFrame`).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -122,64 +116,6 @@ pub struct WatchFrame {
     pub moves: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous: Option<Vec<TvPastGame>>,
-}
-
-/// A TV channel with who is playing on it (`TvChannel`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct TvChannel {
-    pub key: &'static str,
-    pub label: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub game_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub player: Option<WatchPlayer>,
-}
-
-/// A broadcast's listing entry (`BroadcastSummary`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BroadcastSummary {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub players: Option<String>,
-    pub tour_id: String,
-    pub tour_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub image: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub round_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub round_name: Option<String>,
-    pub ongoing: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub starts_at: Option<i64>,
-    pub section: &'static str,
-}
-
-/// A round of a broadcast tournament (`BroadcastRoundRef`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BroadcastRoundRef {
-    pub id: String,
-    pub name: String,
-    pub ongoing: bool,
-    pub finished: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub starts_at: Option<i64>,
-}
-
-/// A broadcast tournament with its rounds (`BroadcastTourDetail`).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BroadcastTourDetail {
-    pub id: String,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub rounds: Vec<BroadcastRoundRef>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_round_id: Option<String>,
 }
 
 /// One board of a broadcast round (`BroadcastGame`).
@@ -351,13 +287,6 @@ impl Spectators {
             spectator.stop();
         }
     }
-}
-
-/// What a watch follows.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum WatchTarget {
-    Channel(String),
-    Game(String),
 }
 
 /// How a TV game is lined up with its delayed export (`LINE_UP_DELAY_MS`, `LINE_UP_ATTEMPTS`).

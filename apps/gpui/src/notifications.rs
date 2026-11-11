@@ -106,11 +106,17 @@ fn answer_challenge(id: &str, action: Option<&str>, cx: &mut App) {
         .read(cx)
         .challenges
         .iter()
-        .find(|challenge| challenge["id"].as_str() == Some(id))
+        .find(|challenge| challenge.id == id)
         .cloned();
     match (action, challenge) {
         (Some("decline"), Some(challenge)) => {
-            online.update(cx, |online, cx| online.decline(&challenge, "generic", cx));
+            online.update(cx, |online, cx| {
+                online.decline(
+                    &challenge,
+                    kchess_contracts::types::DeclineReason::Generic,
+                    cx,
+                )
+            });
         }
         (Some("accept"), Some(challenge)) => {
             show_page(Some(Page::Online), cx);
@@ -139,10 +145,10 @@ fn move_actions() -> Vec<gpui_kit::SystemNotificationAction> {
 
 /// Alert the player that it is their move in correspondence `game`, which they can answer from
 /// the notification where the system takes typed text (Windows, macOS).
-pub fn your_move(game: &serde_json::Value, cx: &mut App) -> Outcome {
-    let account = game["account"].as_str().unwrap_or_default();
-    let id = game["gameId"].as_str().unwrap_or_default();
-    let opponent = game["opponent"]["name"].as_str().unwrap_or("your opponent");
+pub fn your_move(game: &kchess_contracts::types::OngoingGame, cx: &mut App) -> Outcome {
+    let account = &game.account;
+    let id = &game.game_id;
+    let opponent = &game.opponent.name;
     alert(
         "opponentMove",
         Some((format!("{MOVE_TAG}{account}/{id}"), move_actions())),
@@ -178,9 +184,9 @@ fn answer_move(game: &str, action: Option<&str>, cx: &mut App) {
         .read(cx)
         .ongoing
         .iter()
-        .find(|listed| listed["gameId"].as_str() == Some(id))
+        .find(|listed| listed.game_id == id)
         .cloned();
-    let Some(listed) = listed.filter(|listed| listed["isMyTurn"] == serde_json::json!(true)) else {
+    let Some(listed) = listed.filter(|listed| listed.is_my_turn) else {
         return post_tagged(
             format!("{MOVE_TAG}{game}"),
             "That game has moved on",
@@ -211,12 +217,7 @@ fn answer_move(game: &str, action: Option<&str>, cx: &mut App) {
         None => post_tagged(
             format!("{MOVE_TAG}{game}"),
             &format!("{text} is not a legal move"),
-            &format!(
-                "Your move against {}",
-                listed["opponent"]["name"]
-                    .as_str()
-                    .unwrap_or("your opponent")
-            ),
+            &format!("Your move against {}", listed.opponent.name),
             move_actions(),
             false,
             cx,

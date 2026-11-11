@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Number, Value};
 
 use crate::Variant;
 use kchess_domain::color::Color;
@@ -649,57 +649,6 @@ pub struct OnlineConnection {
     pub message: Option<String>,
 }
 
-/// A player as a challenge or ongoing game names them.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct PlayerRef {
-    pub name: String,
-    pub rating: Option<f64>,
-    pub title: Option<String>,
-    pub provisional: Option<bool>,
-    pub online: Option<bool>,
-}
-
-/// Time control of a challenge.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum ChallengeTimeControl {
-    #[serde(rename = "clock")]
-    Clock { limit: f64, increment: f64 },
-    #[serde(rename = "correspondence")]
-    Correspondence { days: f64 },
-    #[serde(rename = "unlimited")]
-    Unlimited,
-}
-
-/// A pending challenge to or from one of the connected accounts.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChallengeInfo {
-    pub id: String,
-    /// The connected account it was sent to (incoming) or from (outgoing).
-    pub account: String,
-    pub direction: ChallengeDirection,
-    /// The other player.
-    pub opponent: PlayerRef,
-    /// Lichess variant key (`standard`, `chess960`, `crazyhouse`…).
-    pub variant: String,
-    pub variant_name: String,
-    pub rated: bool,
-    pub speed: String,
-    pub time_control: ChallengeTimeControl,
-    /// The colour the challenger asked for.
-    pub color: ChallengeColor,
-    /// A rematch offer for this game.
-    pub rematch_of: Option<String>,
-    pub initial_fen: Option<String>,
-    /// Lichess says KChess (a Board API client) can play this game, and KChess knows its variant.
-    pub playable: bool,
-    /// Why it cannot be accepted here, when it cannot.
-    pub problem: Option<String>,
-    pub received_at: f64,
-}
-
 /// Health of the idle event stream that waits for challenges and pairings.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -715,230 +664,6 @@ pub struct ChatLine {
     pub user: String,
     pub text: String,
     pub room: ChatRoom,
-}
-
-/// A game a connected account is playing, real-time or correspondence.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct OngoingGame {
-    pub game_id: String,
-    pub account: String,
-    pub opponent: PlayerRef,
-    #[serde(with = "kchess_domain::color::by_name")]
-    pub color: Color,
-    pub fen: String,
-    pub last_move: Option<String>,
-    pub is_my_turn: bool,
-    /// Seconds left on your clock (or for your correspondence move), when Lichess says.
-    pub seconds_left: Option<f64>,
-    pub variant: String,
-    pub speed: String,
-    pub rated: bool,
-    pub tournament_id: Option<String>,
-    /// Whether the Board API can play it (`compat.board`); a game it cannot is watched instead.
-    #[serde(default = "playable_by_default")]
-    pub playable: bool,
-}
-
-fn playable_by_default() -> bool {
-    true
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentClock {
-    /// Seconds and seconds per move.
-    pub limit: f64,
-    pub increment: f64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentTeam {
-    pub id: String,
-    pub name: String,
-}
-
-/// An arena or Swiss tournament in a list.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentSummary {
-    pub id: String,
-    pub system: TournamentSystem,
-    pub name: String,
-    pub status: TournamentStatus,
-    pub variant: String,
-    pub variant_name: String,
-    pub rated: bool,
-    pub clock: TournamentClock,
-    /// Length of an arena in minutes; Swiss events have rounds instead.
-    pub minutes: Option<f64>,
-    pub round: Option<f64>,
-    pub nb_rounds: Option<f64>,
-    pub nb_players: f64,
-    pub starts_at: f64,
-    pub finishes_at: Option<f64>,
-    /// The team a Swiss event belongs to.
-    pub team: Option<TournamentTeam>,
-    /// The Board API can play its games and KChess knows its variant.
-    pub playable: bool,
-    pub problem: Option<String>,
-    pub perf: Option<String>,
-    /// How often Lichess runs it (`hourly`, `eastern`, `weekly`…); absent for player-made events.
-    pub freq: Option<String>,
-    /// Only players rated at most this may join.
-    pub max_rating: Option<f64>,
-}
-
-/// An arena to create on Lichess.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct NewArena {
-    /// Empty for a random Grandmaster name.
-    pub name: Option<String>,
-    pub clock_time: f64,
-    pub clock_increment: f64,
-    pub minutes: f64,
-    /// Minutes from now, unless `startDate` is set.
-    pub wait_minutes: Option<f64>,
-    pub start_date: Option<f64>,
-    pub variant: String,
-    pub rated: bool,
-    /// An entry code players must type to join.
-    pub password: Option<String>,
-    pub description: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentStanding {
-    pub rank: f64,
-    pub name: String,
-    pub title: Option<String>,
-    pub rating: Option<f64>,
-    pub score: Option<f64>,
-    /// Arena score sheet: one digit per game, newest last.
-    pub sheet: Option<String>,
-    pub fire: Option<bool>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentPlayer {
-    pub name: String,
-    pub rating: Option<f64>,
-    pub rank: Option<f64>,
-}
-
-/// A game between two tournament players, with their current ranks.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentGame {
-    pub id: String,
-    pub white: TournamentPlayer,
-    pub black: TournamentPlayer,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentMe {
-    pub rank: Option<f64>,
-    pub withdraw: Option<bool>,
-    pub game_id: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentCondition {
-    pub condition: String,
-    pub verdict: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentVerdicts {
-    pub accepted: bool,
-    pub list: Vec<TournamentCondition>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentClocks {
-    pub white: f64,
-    pub black: f64,
-}
-
-/// The top game being played now in an arena.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentFeatured {
-    #[serde(flatten)]
-    pub game: TournamentGame,
-    pub fen: String,
-    #[serde(with = "kchess_domain::color::by_name")]
-    pub orientation: Color,
-    pub last_move: Option<String>,
-    /// Seconds left on each clock when Lichess sent it.
-    pub clocks: Option<TournamentClocks>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentPodium {
-    pub name: String,
-    pub rank: f64,
-    pub rating: Option<f64>,
-    pub score: Option<f64>,
-    pub performance: Option<f64>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentStats {
-    pub games: f64,
-    pub white_wins: f64,
-    pub black_wins: f64,
-    pub draws: f64,
-    pub berserks: f64,
-    pub average_rating: f64,
-}
-
-/// One tournament, with the leaderboard, the games being played and (when finished) its results.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentDetail {
-    #[serde(flatten)]
-    pub summary: TournamentSummary,
-    pub description: Option<String>,
-    pub seconds_to_start: Option<f64>,
-    pub seconds_to_finish: Option<f64>,
-    pub berserkable: Option<bool>,
-    pub standing: Vec<TournamentStanding>,
-    /// You, when the account you asked as has joined.
-    pub me: Option<TournamentMe>,
-    /// Entry conditions and whether the account meets them.
-    pub verdicts: Option<TournamentVerdicts>,
-    /// Swiss: when the next round starts.
-    pub next_round_in: Option<f64>,
-    /// The leaderboard page shown (10 players each).
-    pub standing_page: Option<f64>,
-    /// Arena: the top game being played now.
-    pub featured: Option<TournamentFeatured>,
-    /// Arena: games being played now.
-    pub duels: Option<Vec<TournamentGame>>,
-    /// Arena: the top three once it has finished.
-    pub podium: Option<Vec<TournamentPodium>>,
-    /// Arena: totals once it has finished.
-    pub stats: Option<TournamentStats>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TournamentList {
-    pub arenas: Vec<TournamentSummary>,
-    pub swiss: Vec<TournamentSummary>,
-    /// Teams of the account whose Swiss events could not be read, and other notes.
-    pub problems: Vec<String>,
 }
 
 /* ── Players ──────────────────────────────────────────────────────────── */
@@ -1108,14 +833,6 @@ pub struct ImportedGame {
 
 /* ── Watching games ─────────────────────────────────────────────────── */
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct WatchPlayer {
-    pub name: String,
-    pub title: Option<String>,
-    pub rating: Option<f64>,
-}
-
 /// Connection health of the TV/game feed, scoped to its watch session.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -1189,50 +906,6 @@ pub struct WatchFrame {
     pub previous: Option<Vec<TvPastGame>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TvChannel {
-    pub key: String,
-    pub label: String,
-    pub game_id: Option<String>,
-    pub player: Option<WatchPlayer>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct BroadcastSummary {
-    pub players: Option<String>,
-    pub tour_id: String,
-    pub tour_name: String,
-    pub description: Option<String>,
-    pub image: Option<String>,
-    pub round_id: Option<String>,
-    pub round_name: Option<String>,
-    pub ongoing: bool,
-    pub starts_at: Option<f64>,
-    pub section: BroadcastSection,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct BroadcastRoundRef {
-    pub id: String,
-    pub name: String,
-    pub ongoing: bool,
-    pub finished: bool,
-    pub starts_at: Option<f64>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct BroadcastTourDetail {
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub rounds: Vec<BroadcastRoundRef>,
-    pub default_round_id: Option<String>,
-}
-
 /// One board of a broadcast round, as the live PGN feed last described it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -1304,26 +977,6 @@ pub struct EngineInstalled {
     pub path: String,
     pub version: String,
     pub updated: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct OnlineOptions {
-    /// Ignored for correspondence games (`days`).
-    pub minutes: f64,
-    pub increment: f64,
-    /// Correspondence: days per move instead of a clock.
-    pub days: Option<f64>,
-    /// Lichess variant; standard when omitted.
-    pub variant: Option<Variant>,
-    /// Start a direct challenge from this position (standard or Chess960 rules).
-    pub fen: Option<String>,
-    pub color: ChallengeColor,
-    /// Rated games change the Lichess rating; casual ones do not.
-    pub rated: bool,
-    pub target: Option<String>,
-    /// Which connected account plays; defaults to the first connected one.
-    pub account: Option<String>,
 }
 
 /// A followed player's Lichess ratings, of the categories they have one in.
@@ -1408,26 +1061,6 @@ pub struct UsageReport {
     pub storage: BTreeMap<String, AccountStorage>,
     /// Size of the database file.
     pub db_bytes: f64,
-}
-
-/// Lichess's view of one user's connection. `signal` runs 1 (poor, lag > 500 ms) to 4 (great, lag < 150 ms).
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct UserPresence {
-    pub online: bool,
-    pub playing: bool,
-    pub signal: Option<f64>,
-    /// The game they are playing, when Lichess says (watchable from the Watch page).
-    pub playing_id: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct PresenceReport {
-    /// Lower-cased username → status; users Lichess did not report are absent.
-    pub users: BTreeMap<String, UserPresence>,
-    /// Round trip of the status request itself, i.e. this computer's latency to Lichess.
-    pub latency_ms: f64,
 }
 
 /// One puzzle, whichever source it came from.
@@ -1773,22 +1406,6 @@ pub struct RunSaved {
 pub struct VoiceWord {
     pub word: String,
     pub conf: f64,
-}
-
-/// A finished utterance: its text and each word heard.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct VoiceRecognized {
-    pub text: String,
-    pub words: Vec<VoiceWord>,
-}
-
-/// What a chunk of audio produced: the words heard so far, or a finished utterance.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct VoiceHeard {
-    pub partial: Option<String>,
-    pub result: Option<VoiceRecognized>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
@@ -2451,6 +2068,448 @@ pub struct PopularityMonth {
     pub month: String,
     pub share: f64,
     pub games: i64,
+}
+
+/* ── Online play, watching and tournaments, as the core answers them ────── */
+
+pub use kchess_domain::records::challenge::{
+    ChallengeInfo, PlayerRef, TimeControl as ChallengeTimeControl,
+};
+
+/// What to play online and how: a public seek, or a challenge to `target`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineOptions {
+    /// Minutes on the clock; ignored for correspondence games (`days`).
+    pub minutes: u32,
+    /// Seconds added per move.
+    pub increment: u32,
+    /// Correspondence: days per move instead of a clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub days: Option<u32>,
+    /// Standard when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<Variant>,
+    /// A direct challenge from this position (standard or Chess960 rules).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fen: Option<String>,
+    pub color: ChallengeColor,
+    /// Rated games change the Lichess rating; casual ones do not.
+    pub rated: bool,
+    /// The player challenged; a public seek without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// Which connected account plays; the first connected one without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+}
+
+/// What `startOnline` began: a challenge (its id and address), a public seek, or a
+/// correspondence game.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StartResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seeking: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correspondence: Option<bool>,
+}
+
+/// The game in progress `resumeOnline` put back on the board, and its account.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Resumed {
+    pub id: String,
+    pub account: String,
+}
+
+/// A game a connected account is playing, real-time or correspondence.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OngoingGame {
+    pub game_id: String,
+    pub account: String,
+    pub opponent: PlayerRef,
+    /// `white` or `black`, as Lichess says (empty when it does not).
+    pub color: String,
+    pub fen: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_move: Option<String>,
+    pub is_my_turn: bool,
+    /// Seconds left on your clock (or for your correspondence move), when Lichess says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seconds_left: Option<Number>,
+    pub variant: String,
+    pub speed: String,
+    pub rated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tournament_id: Option<String>,
+    /// Whether the Board API can play it (`compat.board`); a game it cannot is watched instead.
+    #[serde(default = "playable_by_default")]
+    pub playable: bool,
+}
+
+fn playable_by_default() -> bool {
+    true
+}
+
+/// Lichess's view of one user's connection. `signal` runs 1 (poor, lag > 500 ms) to 4 (great,
+/// lag < 150 ms).
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UserPresence {
+    pub online: bool,
+    pub playing: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<Number>,
+    /// The game they are playing, when Lichess says (watchable from the Watch page).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playing_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PresenceReport {
+    /// Lower-cased username → status; users Lichess did not report are absent.
+    pub users: BTreeMap<String, UserPresence>,
+    /// Round trip of the status request itself, i.e. this computer's latency to Lichess.
+    pub latency_ms: u64,
+}
+
+/// A game to watch: a TV channel (`{ channel }`) or any game by its id (`{ gameId }`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum WatchTarget {
+    #[serde(rename = "channel")]
+    Channel(String),
+    #[serde(rename = "gameId")]
+    Game(String),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchPlayer {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<f64>,
+}
+
+/// A Lichess TV channel and who is on it now.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TvChannel {
+    pub key: String,
+    pub label: String,
+    /// Sent as `game_id`, unlike every other key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub player: Option<WatchPlayer>,
+}
+
+/// A broadcast in a listing, with its current round.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastSummary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub players: Option<String>,
+    pub tour_id: String,
+    pub tour_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub round_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub round_name: Option<String>,
+    pub ongoing: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starts_at: Option<i64>,
+    pub section: BroadcastSection,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastRoundRef {
+    pub id: String,
+    pub name: String,
+    pub ongoing: bool,
+    pub finished: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starts_at: Option<i64>,
+}
+
+/// A broadcast tournament with its rounds.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastTourDetail {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub rounds: Vec<BroadcastRoundRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_round_id: Option<String>,
+}
+
+/// The tournament a broadcast round is in, as a round's link names only the round.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastRoundPlace {
+    pub tour_id: String,
+    pub round_id: String,
+}
+
+/// A tournament's clock: seconds and seconds per move.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TournamentClock {
+    pub limit: Number,
+    pub increment: Number,
+}
+
+/// The team a Swiss event belongs to.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TournamentTeam {
+    pub id: String,
+    pub name: String,
+}
+
+/// An arena or Swiss tournament in a list.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TournamentSummary {
+    pub id: String,
+    pub system: TournamentSystem,
+    pub name: String,
+    pub status: TournamentStatus,
+    pub variant: String,
+    pub variant_name: String,
+    pub rated: bool,
+    pub clock: TournamentClock,
+    /// Length of an arena in minutes; Swiss events have rounds instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minutes: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub round: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nb_rounds: Option<Number>,
+    pub nb_players: Number,
+    pub starts_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finishes_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<TournamentTeam>,
+    /// The Board API can play its games and KChess knows its variant.
+    pub playable: bool,
+    /// Why it cannot be played here, when it cannot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub perf: Option<String>,
+    /// How often Lichess runs it (`hourly`, `eastern`, `weekly`…); absent for player-made events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freq: Option<String>,
+    /// Only players rated at most this may join.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_rating: Option<Number>,
+}
+
+/// The tournaments of the timeline, and notes about what could not be read.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TournamentList {
+    pub arenas: Vec<TournamentSummary>,
+    pub swiss: Vec<TournamentSummary>,
+    /// Teams of the account whose Swiss events could not be read, and other notes.
+    pub problems: Vec<String>,
+}
+
+/// One row of a leaderboard.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TournamentStanding {
+    pub rank: Number,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<Number>,
+    /// Arena score sheet: one digit per game, newest last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fire: Option<bool>,
+}
+
+/// A player of an arena's featured game or of a game in progress.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TournamentPlayer {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<Number>,
+}
+
+/// A game between two tournament players, with their current ranks.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TournamentGame {
+    pub id: String,
+    pub white: TournamentPlayer,
+    pub black: TournamentPlayer,
+}
+
+/// Seconds left on each clock.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TournamentClocks {
+    pub white: Number,
+    pub black: Number,
+}
+
+/// The top game being played now in an arena.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TournamentFeatured {
+    pub id: String,
+    pub fen: String,
+    #[serde(with = "kchess_domain::color::by_name")]
+    pub orientation: Color,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_move: Option<String>,
+    pub white: TournamentPlayer,
+    pub black: TournamentPlayer,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clocks: Option<TournamentClocks>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TournamentPodium {
+    pub name: String,
+    pub rank: Number,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub performance: Option<Number>,
+}
+
+/// An arena's totals once it has finished.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TournamentStats {
+    pub games: Number,
+    pub white_wins: Number,
+    pub black_wins: Number,
+    pub draws: Number,
+    pub berserks: Number,
+    pub average_rating: Number,
+}
+
+/// What an arena's detail adds: the games being played and, once it has finished, its results.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TournamentExtras {
+    /// The top game being played now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub featured: Option<TournamentFeatured>,
+    /// Games being played now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duels: Option<Vec<TournamentGame>>,
+    /// The top three once it has finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub podium: Option<Vec<TournamentPodium>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stats: Option<TournamentStats>,
+}
+
+/// The account's entry in a tournament.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TournamentMe {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<Number>,
+    pub withdraw: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_id: Option<String>,
+}
+
+/// One entry condition and whether the account meets it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TournamentCondition {
+    pub condition: String,
+    pub verdict: String,
+}
+
+/// Entry conditions and whether the account meets them.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TournamentVerdicts {
+    pub accepted: bool,
+    pub list: Vec<TournamentCondition>,
+}
+
+/// One tournament, with the leaderboard, the games being played and (when finished) its results.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TournamentDetail {
+    #[serde(flatten)]
+    pub summary: TournamentSummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seconds_to_start: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seconds_to_finish: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub berserkable: Option<bool>,
+    pub standing: Vec<TournamentStanding>,
+    /// The leaderboard page shown (10 players each).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standing_page: Option<Number>,
+    /// You, when the account you asked as has joined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub me: Option<TournamentMe>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdicts: Option<TournamentVerdicts>,
+    /// Swiss: when the next round starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_round_in: Option<Number>,
+    #[serde(flatten)]
+    pub extras: TournamentExtras,
+}
+
+/// An arena to create on Lichess.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NewArena {
+    /// Empty for a random Grandmaster name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Minutes on each clock.
+    pub clock_time: f64,
+    pub clock_increment: f64,
+    pub minutes: f64,
+    /// Minutes from now, unless `startDate` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_minutes: Option<f64>,
+    /// Milliseconds since the Unix epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_date: Option<i64>,
+    pub variant: Variant,
+    pub rated: bool,
+    /// An entry code players must type to join.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[cfg(test)]

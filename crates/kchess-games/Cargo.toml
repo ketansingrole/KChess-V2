@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+kchess-contracts = { path = "../kchess-contracts" }
 kchess-domain = { path = "../kchess-domain" }
 serde.workspace = true
 shakmaty.workspace = true

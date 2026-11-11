@@ -7,10 +7,12 @@
 //! move at the position the reply was typed for, and only once.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::{FullFen, GameId, Uci, Username};
+use kchess_contracts::types::OngoingGame;
 use std::collections::HashMap;
 
 use gpui_kit::{App, Global};
-use serde_json::{Value, json};
+use serde_json::json;
 use shakmaty::Square;
 
 use crate::core::AppCore;
@@ -36,14 +38,10 @@ impl Global for Pending {}
 /// The position of an ongoing correspondence game on your move, as a full FEN: Lichess lists only
 /// its placement, so the side is yours and castling is allowed where king and rook still stand on
 /// their squares. Lichess refuses a castling the game no longer allows, which the reply reports.
-pub fn position(game: &Value) -> Option<String> {
-    let placement = game["fen"].as_str()?.split_whitespace().next()?;
+pub fn position(game: &OngoingGame) -> Option<String> {
+    let placement = game.fen.split_whitespace().next()?;
     let board: shakmaty::Board = placement.parse().ok()?;
-    let side = if game["color"] == json!("black") {
-        "b"
-    } else {
-        "w"
-    };
+    let side = if game.color == "black" { "b" } else { "w" };
     let piece = |square: Square, letter: char| {
         board
             .piece_at(square)
@@ -67,20 +65,17 @@ pub fn position(game: &Value) -> Option<String> {
 }
 
 /// `text` as a legal move of `game` on your move: SAN or UCI, as the move box takes it.
-pub fn read(game: &Value, text: &str) -> Option<Reply> {
+pub fn read(game: &OngoingGame, text: &str) -> Option<Reply> {
     let fen = position(game)?;
-    let variant = game["variant"].as_str().unwrap_or("standard");
+    let variant = game.variant.as_str();
     let start = crate::game::setup_position(variant, &fen)?;
     let text = text.trim();
     let uci = crate::game::view::typed_uci(&json!({ "variant": variant }), &start, text)?;
     let played = kchess_domain::position::play_uci(&start, &uci)?;
     Some(Reply {
-        account: game["account"].as_str()?.to_string(),
-        id: game["gameId"].as_str()?.to_string(),
-        opponent: game["opponent"]["name"]
-            .as_str()
-            .unwrap_or("your opponent")
-            .to_string(),
+        account: game.account.clone(),
+        id: game.game_id.clone(),
+        opponent: game.opponent.name.clone(),
         fen,
         uci: played.uci,
         san: played.san,
@@ -100,12 +95,12 @@ pub fn take(tag: &str, cx: &mut App) -> Option<Reply> {
 }
 
 /// Send `reply`; the answer is the core's, an error naming why it was not played.
-pub fn send(reply: &Reply, cx: &mut App) -> gpui_kit::Task<Result<Value, String>> {
+pub fn send(reply: &Reply, cx: &mut App) -> gpui_kit::Task<Result<(), String>> {
     let call = cx.global::<AppCore>().request(calls::PlayCorrespondence {
-        account: json!(reply.account),
-        id: json!(reply.id),
-        fen: json!(reply.fen),
-        r#move: json!(reply.uci),
+        account: Username(reply.account.clone()),
+        id: GameId(reply.id.clone()),
+        fen: FullFen(reply.fen.clone()),
+        r#move: Uci(reply.uci.clone()),
     });
     cx.background_executor()
         .spawn(async move { call.await.map_err(|cause| cause.message) })
@@ -116,8 +111,8 @@ mod tests {
     use super::{position, read};
     use serde_json::json;
 
-    fn game(fen: &str, color: &str) -> serde_json::Value {
-        json!({
+    fn game(fen: &str, color: &str) -> kchess_contracts::types::OngoingGame {
+        serde_json::from_value(json!({
             "gameId": "Corr1234",
             "account": "Tester",
             "opponent": { "name": "Bob" },
@@ -125,8 +120,10 @@ mod tests {
             "fen": fen,
             "variant": "standard",
             "speed": "correspondence",
+            "rated": false,
             "isMyTurn": true,
-        })
+        }))
+        .expect("a game in progress")
     }
 
     /// Lichess lists only the placement: the side is the player's, castling where king and

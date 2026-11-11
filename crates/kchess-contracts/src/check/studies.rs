@@ -11,20 +11,6 @@ use kchess_domain::misc::value::J;
 use super::*;
 use crate::types::StudySyncRequest;
 
-/// The id of a Lichess study, chapter or broadcast.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
-#[serde(transparent)]
-pub struct LichessId(pub String);
-
-impl Validate for LichessId {
-    fn validate(value: J) -> Result<Self, Refusal> {
-        const INVALID: &str = "Invalid id.";
-        let text: String = decode(value, |_| Some(INVALID))?;
-        matches(&text, patterns::lichess_id, Some(INVALID), "", "")?;
-        Ok(LichessId(text))
-    }
-}
-
 /// A Lichess study's id, or empty for a new study (or a study's first chapter).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[serde(transparent)]
@@ -52,11 +38,6 @@ impl Validate for ChapterName {
         max_chars(text, 100, None, "")?;
         Ok(ChapterName(text.to_owned()))
     }
-}
-
-/// One UCI move.
-pub fn uci(text: &str) -> Result<(), Refusal> {
-    matches(text, patterns::uci_move, Some("Invalid move."), "", "")
 }
 
 /// The messages of a move list as sent: the list's own, and `Invalid move.` for an item.

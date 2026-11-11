@@ -3,6 +3,10 @@
 //! totals), and creating an arena.
 
 use kchess_contracts::calls::{self, CoreCall};
+use kchess_contracts::check::{
+    Bounded, OptionalAccount, TournamentId, TournamentPassword, Username,
+};
+use kchess_contracts::types::{Reply, TournamentSummary, TournamentSystem};
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -39,6 +43,15 @@ fn refresh_due(status: &Value, since: Duration) -> bool {
         Some("started") => since + SLACK >= REFRESH_EVERY,
         Some("created") => since + SLACK >= WAITING_REFRESH_EVERY,
         _ => false,
+    }
+}
+
+/// The pairing system Lichess names `name` ("arena", "swiss").
+fn system_named(name: &str) -> TournamentSystem {
+    if name == TournamentSystem::Swiss.as_str() {
+        TournamentSystem::Swiss
+    } else {
+        TournamentSystem::Arena
     }
 }
 
@@ -191,8 +204,8 @@ impl TournamentsPage {
     }
 
     /// The account's argument: its name, or empty for anonymous lookups.
-    fn account_arg(cx: &App) -> Value {
-        json!(Self::account(cx).unwrap_or_default())
+    fn account_arg(cx: &App) -> OptionalAccount {
+        OptionalAccount(Self::account(cx).unwrap_or_default())
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -209,7 +222,7 @@ impl TournamentsPage {
                     return;
                 }
                 match answer {
-                    Ok(list) => this.list = Some(list),
+                    Ok(list) => this.list = serde_json::to_value(list).ok(),
                     Err(cause) => this.loading.failed("tournaments", &cause),
                 }
                 cx.notify();
@@ -315,10 +328,10 @@ impl TournamentsPage {
         let epoch = open.epoch;
         let (system, id, page) = (open.system.clone(), open.id.clone(), open.page);
         let call = cx.global::<AppCore>().request(calls::Tournament {
-            system: json!(system),
-            id: json!(id),
+            system: system_named(&system),
+            id: TournamentId(id.clone()),
             account,
-            page: Some(json!(page)),
+            page: Some(Bounded(page as u64)),
         });
         cx.spawn(async move |this, cx| {
             let answer = call.await;
@@ -333,7 +346,7 @@ impl TournamentsPage {
                     };
                     match answer {
                         Ok(detail) => {
-                            open.detail = Some(detail);
+                            open.detail = serde_json::to_value(detail).ok();
                             open.received = Instant::now();
                             open.error = None;
                         }
@@ -378,11 +391,10 @@ impl TournamentsPage {
         };
         let password = self.password.read(cx).value().trim().to_string();
         let join = calls::JoinTournament {
-            system: detail["system"].clone(),
-            id: detail["id"].clone(),
-            account: json!(account),
-            // An unset code is left out: the validators reject null.
-            password: (!password.is_empty()).then(|| json!(password)),
+            system: system_named(detail["system"].as_str().unwrap_or_default()),
+            id: TournamentId(detail["id"].as_str().unwrap_or_default().to_string()),
+            account: Username(account),
+            password: (!password.is_empty()).then_some(TournamentPassword(password)),
         };
         self.act(
             join,
@@ -411,9 +423,9 @@ impl TournamentsPage {
         };
         self.act(
             calls::LeaveTournament {
-                system: detail["system"].clone(),
-                id: detail["id"].clone(),
-                account: json!(account),
+                system: system_named(detail["system"].as_str().unwrap_or_default()),
+                id: TournamentId(detail["id"].as_str().unwrap_or_default().to_string()),
+                account: Username(account),
             },
             None,
             window,
@@ -422,7 +434,7 @@ impl TournamentsPage {
     }
 
     /// Join or leave, then read the tournament again.
-    fn act<C: CoreCall<Answer = Value> + Send + 'static>(
+    fn act<C: CoreCall<Answer = Reply<bool>> + Send + 'static>(
         &mut self,
         call: C,
         done: Option<String>,
@@ -441,10 +453,8 @@ impl TournamentsPage {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match answer {
-                    Ok(result) if result.get("needsReconnect").is_some() => {
-                        this.needs_reconnect = true
-                    }
-                    Ok(_) => {
+                    Ok(Reply::NeedsReconnect) => this.needs_reconnect = true,
+                    Ok(Reply::Done(_)) => {
                         this.password
                             .update(cx, |input, cx| input.set_value("", window, cx));
                         if let Some(done) = done {
@@ -557,18 +567,15 @@ impl TournamentsPage {
     }
 
     /// An arena was made: show it.
-    fn created(&mut self, created: &Value, window: &mut Window, cx: &mut Context<Self>) {
-        window.push_notification(
-            format!(
-                "Created {}",
-                created["name"].as_str().unwrap_or("the arena")
-            ),
-            cx,
-        );
+    fn created(
+        &mut self,
+        created: &TournamentSummary,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.push_notification(format!("Created {}", created.name), cx);
         self.refresh(cx);
-        if let Some(id) = created["id"].as_str() {
-            self.show_event("arena", id, cx);
-        }
+        self.show_event("arena", &created.id, cx);
     }
 
     fn reconnect_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

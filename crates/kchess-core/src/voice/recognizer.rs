@@ -14,10 +14,10 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+pub use kchess_contracts::types::VoiceWord;
+pub use kchess_contracts::voice::{Heard, Utterance};
+use kchess_voice::protocol::Recognized;
 use kchess_voice::protocol::{self, Answer, Grammar, MAX_LINE, MAX_PAYLOAD, Tag};
-pub use kchess_voice::protocol::{Recognized, Word};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
@@ -34,16 +34,6 @@ const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
 const UNAVAILABLE: &str = "Voice input isn’t available in this build.";
 const NOT_INSTALLED: &str = "The offline voice model isn’t installed. Download it and try again.";
 const STOPPED: &str = "Speech recognition stopped. Try again.";
-
-/// What one request produced: words so far, or a finished utterance (`VoiceHeard`).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Heard {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub partial: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Recognized>,
-}
 
 struct Helper {
     // Held for `kill_on_drop`: dropping the helper ends the process.
@@ -271,7 +261,7 @@ fn heard(answer: Answer) -> Result<Heard> {
     match answer {
         Answer::Result(result) => Ok(Heard {
             partial: None,
-            result: Some(result),
+            result: Some(utterance(result)),
         }),
         Answer::Partial(partial) => Ok(Heard {
             partial: Some(partial),
@@ -281,7 +271,15 @@ fn heard(answer: Answer) -> Result<Heard> {
     }
 }
 
-/// `Heard` as the facade returns it.
-pub fn heard_value(heard: &Heard) -> Value {
-    serde_json::to_value(heard).unwrap_or(Value::Null)
+fn utterance(recognized: Recognized) -> Utterance {
+    let words = recognized.words.into_iter();
+    Utterance {
+        text: recognized.text,
+        words: words
+            .map(|word| VoiceWord {
+                word: word.word,
+                conf: word.conf,
+            })
+            .collect(),
+    }
 }

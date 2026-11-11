@@ -255,51 +255,43 @@ core_api! {
 
     /// Online play and challenges.
     trait OnlineApi {
-        StartOnline = "startOnline" fn start_online(options: Value = c::online_options) -> Value;
+        StartOnline = "startOnline" fn start_online(
+            options: crate::types::OnlineOptions
+        ) -> StartResult;
         /// Reattach to a game in progress on any connected account.
-        ResumeOnline = "resumeOnline" fn resume_online() -> Value;
-        CancelOnline = "cancelOnline" fn cancel_online() -> Value;
-        PlayOnline = "playOnline" fn play_online(
-            id: Value = c::game_id,
-            r#move: Value = c::uci
-        ) -> Value;
+        ResumeOnline = "resumeOnline" fn resume_online() -> Option<Resumed>;
+        CancelOnline = "cancelOnline" fn cancel_online() -> ();
+        PlayOnline = "playOnline" fn play_online(id: GameId, r#move: Uci) -> ();
         /// Send a move to a correspondence game that is not on the board (a reply from its
         /// notification): only while it is still this account's move at `fen`, and only once.
         PlayCorrespondence = "playCorrespondence" fn play_correspondence(
-            account: Value = c::username,
-            id: Value = c::game_id,
-            fen: Value = c::fen,
-            r#move: Value = c::uci
-        ) -> Value;
+            account: Username,
+            id: GameId,
+            fen: FullFen,
+            r#move: Uci
+        ) -> ();
         OnlineAction = "onlineAction" fn online_action(
-            id: Value = c::game_id,
-            action: Value = c::action
-        ) -> Value;
+            id: GameId,
+            action: crate::types::OnlineAction
+        ) -> ();
         /// The private player chat of the game being played (needs the setting on).
-        OnlineChat = "onlineChat" fn online_chat(id: Value = c::game_id) -> Value;
-        SendChat = "sendChat" fn send_chat(
-            id: Value = c::game_id,
-            room: Value = c::chat_room,
-            text: Value = c::chat_text
-        ) -> Value;
+        OnlineChat = "onlineChat" fn online_chat(id: GameId) -> Vec<ChatLine>;
+        SendChat = "sendChat" fn send_chat(id: GameId, room: ChatRoom, text: ChatText) -> ();
         /// Online/playing/signal of the given users, for the game in progress.
-        Presence = "presence" fn presence(usernames: Value = c::usernames) -> Value;
+        Presence = "presence" fn presence(usernames: PresenceUsers) -> PresenceReport;
         /// Pending challenges to and from the connected accounts.
-        Challenges = "challenges" fn challenges() -> Value;
-        AcceptChallenge = "acceptChallenge" fn accept_challenge(id: Value = c::game_id) -> Value;
+        Challenges = "challenges" fn challenges() -> Vec<ChallengeInfo>;
+        AcceptChallenge = "acceptChallenge" fn accept_challenge(id: GameId) -> ();
         DeclineChallenge = "declineChallenge" fn decline_challenge(
-            id: Value = c::game_id,
-            reason: Value = c::decline_reason
-        ) -> Value;
+            id: GameId,
+            reason: DeclineReason
+        ) -> ();
         /// Withdraw a challenge you sent.
-        CancelChallenge = "cancelChallenge" fn cancel_challenge(id: Value = c::game_id) -> Value;
+        CancelChallenge = "cancelChallenge" fn cancel_challenge(id: GameId) -> ();
         /// Games the connected accounts are playing, most urgent first.
-        OngoingGames = "ongoingGames" fn ongoing_games() -> Value;
+        OngoingGames = "ongoingGames" fn ongoing_games() -> Vec<OngoingGame>;
         /// Open one of those games on the online board (a correspondence game, or a live one).
-        OpenGame = "openGame" fn open_game(
-            account: Value = c::username,
-            id: Value = c::game_id
-        ) -> Value;
+        OpenGame = "openGame" fn open_game(account: Username, id: GameId) -> ();
     }
 
     /// Lichess players: profiles, ratings, messages and relations.
@@ -360,52 +352,55 @@ core_api! {
     /// Lichess TV and broadcasts.
     trait SpectateApi {
         /// Lichess TV channels and who is on each.
-        TvChannels = "tvChannels" fn tv_channels() -> Value;
+        TvChannels = "tvChannels" fn tv_channels() -> Vec<TvChannel>;
         /// Watch a TV channel or any game by id (replacing what was watched); frames on
-        /// `watch:frame`.
-        Watch = "watch" fn watch(target: Value = c::watch_target) -> Value;
-        /// Follow a broadcast round's live PGN; updates on `watch:broadcast`.
-        WatchBroadcast = "watchBroadcast" fn watch_broadcast(round_id: Value = c::lichess_id) -> Value;
+        /// `watch:frame`. Answers the watch's session.
+        Watch = "watch" fn watch(target: WatchTarget) -> u64;
+        /// Follow a broadcast round's live PGN; updates on `watch:broadcast`. Answers the watch's
+        /// session.
+        WatchBroadcast = "watchBroadcast" fn watch_broadcast(round_id: LichessId) -> u64;
         /// Stop watching; with `session`, only that watch, never one begun after it.
-        StopWatching = "stopWatching" fn stop_watching(;
-            session: Option<Value> = Optional(c::watch_session)
-        ) -> Value;
-        Broadcasts = "broadcasts" fn broadcasts(; query: Option<Value> = c::broadcast_query) -> Value;
-        BroadcastTour = "broadcastTour" fn broadcast_tour(id: Value = c::lichess_id) -> Value;
-        /// The tournament a broadcast round is in: { tourId, roundId }.
-        BroadcastRound = "broadcastRound" fn broadcast_round(id: Value = c::lichess_id) -> Value;
+        StopWatching = "stopWatching" fn stop_watching(; session: Option<WatchSession>) -> ();
+        Broadcasts = "broadcasts" fn broadcasts(
+            ; query: Option<BroadcastQuery>
+        ) -> Vec<BroadcastSummary>;
+        BroadcastTour = "broadcastTour" fn broadcast_tour(id: LichessId) -> BroadcastTourDetail;
+        /// The tournament a broadcast round is in.
+        BroadcastRound = "broadcastRound" fn broadcast_round(id: LichessId) -> BroadcastRoundPlace;
     }
 
     /// Lichess tournaments.
     trait TournamentsApi {
         /// Current arenas, and the Swiss events of the account's teams.
-        Tournaments = "tournaments" fn tournaments(account: Value = c::optional_account) -> Value;
+        Tournaments = "tournaments" fn tournaments(account: OptionalAccount) -> TournamentList;
         /// One tournament; `page` picks the leaderboard page (10 players each, arenas only).
         Tournament = "tournament" fn tournament(
-            system: Value = c::tournament_system,
-            id: Value = c::tournament_id,
-            account: Value = c::optional_account;
-            page: Option<Value> = Raw(c::optional_page)
-        ) -> Value;
+            system: TournamentSystem,
+            id: TournamentId,
+            account: OptionalAccount;
+            page: Option<StandingPage>
+        ) -> TournamentDetail;
+        /// Answers `true` once joined.
         #[writes(Tournaments)]
         JoinTournament = "joinTournament" fn join_tournament(
-            system: Value = c::tournament_system,
-            id: Value = c::tournament_id,
-            account: Value = c::username;
-            password: Option<Value> = c::tournament_password
-        ) -> Value;
+            system: TournamentSystem,
+            id: TournamentId,
+            account: Username;
+            password: Option<TournamentPassword>
+        ) -> Reply<bool>;
+        /// Answers `true` once left.
         #[writes(Tournaments)]
         LeaveTournament = "leaveTournament" fn leave_tournament(
-            system: Value = c::tournament_system,
-            id: Value = c::tournament_id,
-            account: Value = c::username
-        ) -> Value;
+            system: TournamentSystem,
+            id: TournamentId,
+            account: Username
+        ) -> Reply<bool>;
         /// Creates an arena on Lichess run by the account.
         #[writes(Tournaments)]
         CreateTournament = "createTournament" fn create_tournament(
-            account: Value = c::username,
-            arena: Value = c::new_arena
-        ) -> Value;
+            account: Username,
+            arena: NewArena
+        ) -> Reply<TournamentSummary>;
     }
 
     /// Puzzles, the puzzle database, training runs and the voice input log.
@@ -484,19 +479,19 @@ core_api! {
         /// Offline speech recognition: listens for these phrases, discarding any utterance in
         /// progress.
         VoiceStart = "voiceStart" fn voice_start(
-            grammar: Value = Raw(c::voice_grammar),
-            sample_rate: Value = Raw(c::sample_rate)
-        ) -> Value;
+            grammar: VoiceGrammar,
+            sample_rate: SampleRate
+        ) -> ();
         /// Base64 16-bit little-endian mono PCM at the started sample rate.
-        VoiceAccept = "voiceAccept" fn voice_accept(audio: Value = Raw(c::voice_audio)) -> Value;
+        VoiceAccept = "voiceAccept" fn voice_accept(audio: VoiceAudio) -> crate::voice::Heard;
         /// Ends the utterance (push-to-talk released).
-        VoiceFinish = "voiceFinish" fn voice_finish() -> Value;
+        VoiceFinish = "voiceFinish" fn voice_finish() -> crate::voice::Heard;
         /// Releases the recognizer and its model.
-        VoiceStop = "voiceStop" fn voice_stop() -> Value;
+        VoiceStop = "voiceStop" fn voice_stop() -> ();
         /// Whether the offline speech model is installed, or being prepared.
-        VoiceModelStatus = "voiceModelStatus" fn voice_model_status() -> Value;
+        VoiceModelStatus = "voiceModelStatus" fn voice_model_status() -> crate::voice::Status;
         /// Downloads, verifies and unpacks the speech model, reporting `voicemodel:progress`.
-        VoiceModelInstall = "voiceModelInstall" fn voice_model_install() -> Value;
+        VoiceModelInstall = "voiceModelInstall" fn voice_model_install() -> ();
     }
 
     /// The local library: studies, played games, drills, sessions and repertoire notes.

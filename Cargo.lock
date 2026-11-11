@@ -4324,6 +4324,7 @@ name = "kchess-games"
 version = "2026.11.7"
 dependencies = [
  "getrandom 0.4.3",
+ "kchess-contracts",
  "kchess-domain",
  "kchess-hack",
  "serde",

@@ -57,21 +57,6 @@ impl Validate for ChesscomUsername {
     }
 }
 
-/// A connected account, or empty for none; a name is trimmed.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
-#[serde(transparent)]
-pub struct OptionalAccount(pub String);
-
-impl Validate for OptionalAccount {
-    fn validate(value: J) -> Result<Self, Refusal> {
-        let text: String = decode(value, |_| Some("Invalid account."))?;
-        if text.is_empty() {
-            return Ok(OptionalAccount(text));
-        }
-        Username::validate(J::Str(text)).map(|Username(name)| OptionalAccount(name))
-    }
-}
-
 /// Players to add or look up at once: 1 to 1,000 Lichess usernames, each trimmed.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[serde(transparent)]

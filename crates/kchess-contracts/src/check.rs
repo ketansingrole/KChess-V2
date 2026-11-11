@@ -22,12 +22,14 @@ mod accounts;
 mod ai;
 mod engine;
 mod lookups;
+mod online;
 mod reviews;
 mod studies;
 
 pub use accounts::*;
 pub use ai::*;
 pub use lookups::*;
+pub use online::*;
 pub use reviews::*;
 pub use studies::*;
 
@@ -266,7 +268,56 @@ impl Validate for Username {
     }
 }
 
+/// A connected account, or empty for none; a name is trimmed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct OptionalAccount(pub String);
+
+impl Validate for OptionalAccount {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        let text: String = decode(value, |_| Some("Invalid account."))?;
+        if text.is_empty() {
+            return Ok(OptionalAccount(text));
+        }
+        Username::validate(J::Str(text)).map(|Username(name)| OptionalAccount(name))
+    }
+}
+
+/* ── Ids ── */
+
+/// The id of a Lichess study, chapter, broadcast or round.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct LichessId(pub String);
+
+impl Validate for LichessId {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        const INVALID: &str = "Invalid id.";
+        let text: String = decode(value, |_| Some(INVALID))?;
+        matches(&text, patterns::lichess_id, Some(INVALID), "", "")?;
+        Ok(LichessId(text))
+    }
+}
+
 /* ── Games ── */
+
+/// One UCI move (`e2e4`, `e7e8q`).
+pub fn uci(text: &str) -> Result<(), Refusal> {
+    matches(text, patterns::uci_move, Some("Invalid move."), "", "")
+}
+
+/// A move in UCI notation (`e2e4`, `e7e8q`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[serde(transparent)]
+pub struct Uci(pub String);
+
+impl Validate for Uci {
+    fn validate(value: J) -> Result<Self, Refusal> {
+        let text: String = decode(value, |_| Some("Invalid move."))?;
+        uci(&text)?;
+        Ok(Uci(text))
+    }
+}
 
 const GAME_ID: &str = "Invalid game id.";
 

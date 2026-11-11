@@ -288,7 +288,7 @@ impl OnlineSession {
                 Some(ChatLine {
                     user: kchess_domain::js::slice_utf16(user, 40).to_string(),
                     text: kchess_domain::js::slice_utf16(text, 400).to_string(),
-                    room: "player".to_string(),
+                    room: kchess_contracts::types::ChatRoom::Player,
                 })
             })
             .collect())

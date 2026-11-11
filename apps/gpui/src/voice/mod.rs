@@ -4,6 +4,7 @@
 //! `voiceAccept`, `voiceFinish`, `voiceStop`) in order, and hands each phrase heard to its owner.
 
 use kchess_contracts::calls;
+use kchess_contracts::check::{SampleRate, VoiceAudio, VoiceGrammar};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -126,7 +127,7 @@ pub type Listener = Arc<dyn Fn(&model::Progress) + Send + Sync>;
 /// Whether the offline model is installed, or being prepared (`voiceModelStatus`).
 pub fn model_status(cx: &App) -> impl Future<Output = Option<model::Status>> + 'static + use<> {
     let status = cx.global::<AppCore>().request(calls::VoiceModelStatus {});
-    async move { serde_json::from_value(status.await.ok()?).ok() }
+    async move { status.await.ok() }
 }
 
 /// Have the core download and prepare the model (`voiceModelInstall`); `progress` hears its
@@ -179,21 +180,18 @@ pub fn download_model(
 
 /// The real words' average confidence: noise markers would sink a clearly heard command, and a
 /// homophone in the grammar splits a word's confidence even when it was heard perfectly.
-pub fn heard_of(result: &Value) -> Option<Heard> {
-    let raw = result["text"].as_str()?.trim().to_string();
+pub fn heard_of(result: &model::Utterance) -> Option<Heard> {
+    let raw = result.text.trim().to_string();
     if raw.is_empty() {
         return None;
     }
-    let words: Vec<Word> = result["words"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|word| {
-            let text = word["word"].as_str()?;
-            (text != "[unk]").then(|| Word {
-                word: text.to_string(),
-                conf: (word["conf"].as_f64().unwrap_or_default() * 1000.).round() / 1000.,
-            })
+    let words: Vec<Word> = result
+        .words
+        .iter()
+        .filter(|word| word.word != "[unk]")
+        .map(|word| Word {
+            word: word.word.clone(),
+            conf: (word.conf * 1000.).round() / 1000.,
         })
         .collect();
     let confidence = if words.is_empty() {
@@ -490,24 +488,33 @@ impl Voice {
                         epoch,
                     } => (
                         core.request(calls::VoiceStart {
-                            grammar: json!(grammar),
-                            sample_rate: json!(rate),
+                            grammar: VoiceGrammar(grammar),
+                            sample_rate: SampleRate(rate),
                         })
+                        .map(|started| started.map(|()| None))
                         .boxed_local(),
                         Some(epoch),
                     ),
                     Request::Accept { audio, epoch } => (
                         core.request(calls::VoiceAccept {
-                            audio: json!(audio),
+                            audio: VoiceAudio(audio),
                         })
+                        .map(|heard| heard.map(Some))
                         .boxed_local(),
                         Some(epoch),
                     ),
                     Request::Finish { epoch } => (
-                        core.request(calls::VoiceFinish {}).boxed_local(),
+                        core.request(calls::VoiceFinish {})
+                            .map(|heard| heard.map(Some))
+                            .boxed_local(),
                         Some(epoch),
                     ),
-                    Request::Stop => (core.request(calls::VoiceStop {}).boxed_local(), None),
+                    Request::Stop => (
+                        core.request(calls::VoiceStop {})
+                            .map(|stopped| stopped.map(|()| None))
+                            .boxed_local(),
+                        None,
+                    ),
                 };
                 let answer = call.await;
                 let Some(epoch) = epoch else {
@@ -526,17 +533,17 @@ impl Voice {
     fn answered(
         &mut self,
         epoch: u64,
-        answer: Result<Value, kchess_contracts::CoreError>,
+        answer: Result<Option<model::Heard>, kchess_contracts::CoreError>,
         cx: &mut Context<Self>,
     ) {
         if epoch != self.epoch || self.owner.is_none() {
             return;
         }
         let heard = match answer {
-            Ok(heard) => heard,
+            Ok(heard) => heard.unwrap_or_default(),
             Err(cause) => return self.fail(cause.message, ErrorKind::Model, cx),
         };
-        if let Some(result) = heard.get("result").filter(|result| result.is_object()) {
+        if let Some(result) = &heard.result {
             self.partial.clear();
             if let (Some(heard), Some(owner)) = (heard_of(result), self.owner) {
                 let event = if heard.text.is_empty() {
@@ -550,8 +557,8 @@ impl Voice {
             if self.epoch == epoch {
                 self.reset(cx);
             }
-        } else if let Some(partial) = heard["partial"].as_str() {
-            self.partial = partial.to_string();
+        } else if let Some(partial) = heard.partial {
+            self.partial = partial;
             cx.notify();
         }
     }
@@ -783,26 +790,31 @@ mod tests {
         );
     }
 
+    fn utterance(value: serde_json::Value) -> model::Utterance {
+        serde_json::from_value(value).expect("an utterance")
+    }
+
     #[test]
     fn confidence_ignores_noise_markers() {
-        let heard = heard_of(&json!({
+        let heard = heard_of(&utterance(json!({
             "text": "[unk] e four",
             "words": [
                 { "word": "[unk]", "conf": 0.1 },
                 { "word": "e", "conf": 0.9 },
                 { "word": "four", "conf": 0.7 },
             ],
-        }))
+        })))
         .unwrap();
         assert_eq!(heard.text, "e four");
         assert_eq!(heard.raw, "[unk] e four");
         assert!((heard.confidence - 0.8).abs() < 1e-9);
         assert!(!heard.unclear);
-        let noise =
-            heard_of(&json!({ "text": "[unk]", "words": [{ "word": "[unk]", "conf": 1 }] }))
-                .unwrap();
+        let noise = heard_of(&utterance(
+            json!({ "text": "[unk]", "words": [{ "word": "[unk]", "conf": 1 }] }),
+        ))
+        .unwrap();
         assert!(noise.text.is_empty() && noise.unclear);
-        assert!(heard_of(&json!({ "text": " ", "words": [] })).is_none());
+        assert!(heard_of(&utterance(json!({ "text": " ", "words": [] }))).is_none());
     }
 
     #[test]

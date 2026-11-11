@@ -710,10 +710,14 @@ fn a_tv_channel_is_chosen_from_quick_pick(cx: &mut gpui_kit::TestAppContext) {
         let page = crate::shell::view::<WatchPage>(cx).expect("Watch");
         page.update(cx, |page, cx| {
             page.show_channels(
-                vec![
-                    serde_json::json!({ "key": "best", "label": "Top rated" }),
-                    serde_json::json!({ "key": "blitz", "label": "Blitz" }),
-                ],
+                [("best", "Top rated"), ("blitz", "Blitz")]
+                    .map(|(key, label)| kchess_contracts::types::TvChannel {
+                        key: key.into(),
+                        label: label.into(),
+                        game_id: None,
+                        player: None,
+                    })
+                    .to_vec(),
                 cx,
             )
         });
