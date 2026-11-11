@@ -592,7 +592,6 @@ async fn swiss_of_teams(
             name: raw_team["name"].as_str().unwrap_or("").to_string(),
         };
         let path = format!("/api/team/{}/swiss", path_segment(&team.id));
-        let mut lines: Vec<Value> = Vec::new();
         // A malformed line fails the team's read as it arrives.
         let outcome = lichess
             .client()
@@ -601,26 +600,13 @@ async fn swiss_of_teams(
                 &lichess.client().counted(account, UsageKind::Tournament),
             )
             .query(&[("max", "10")])
-            .lines(
-                || {},
-                |line| {
-                    let value = serde_json::from_str::<Value>(line)
-                        .map_err(|cause| CoreError::new(cause.to_string()))?;
-                    lines.push(value);
-                    Ok(())
-                },
-            )
+            .records("tournament", usize::MAX, |raw: Value| {
+                swiss_summary(&raw, Some(team.clone()))
+                    .filter(|summary| summary.status != TournamentStatus::Finished)
+            })
             .await;
         match outcome {
-            Ok(()) => {
-                for raw in &lines {
-                    if let Some(summary) = swiss_summary(raw, Some(team.clone()))
-                        .filter(|summary| summary.status != TournamentStatus::Finished)
-                    {
-                        swiss.push(summary);
-                    }
-                }
-            }
+            Ok(summaries) => swiss.extend(summaries),
             Err(cause) => {
                 lichess.host().log(
                     Level::Warn,
@@ -791,23 +777,12 @@ async fn swiss_detail(lichess: &Lichess, id: &str, auth: &Auth) -> CoreResult<To
     let raw: Value = lichess.client().get(&path, auth).read_json().await?;
     let (summary, swiss) = swiss_read(&raw, None)
         .ok_or_else(|| CoreError::new("Lichess sent details KChess could not read."))?;
-    let mut standing: Vec<TournamentStanding> = Vec::new();
     let results = format!("/api/swiss/{}/results", path_segment(id));
-    lichess
+    let standing = lichess
         .client()
         .get(&results, auth)
         .query(&[("nb", "50")])
-        .lines(
-            || {},
-            |line| {
-                let value = serde_json::from_str::<Value>(line)
-                    .map_err(|cause| CoreError::new(cause.to_string()))?;
-                if let Some(row) = standing_of(&value) {
-                    standing.push(row);
-                }
-                Ok(())
-            },
-        )
+        .records("standing", usize::MAX, |raw: Value| standing_of(&raw))
         .await?;
     Ok(TournamentDetail {
         summary,

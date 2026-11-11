@@ -6,7 +6,7 @@
 use serde_json::Value;
 
 use super::accounts::{
-    Lichess, Reply, no_such_user, normalize_game, parse_game, path_segment, profile_key,
+    GameJson, Lichess, Reply, no_such_user, normalize_game, path_segment, profile_key,
 };
 use super::client::Lane;
 use kchess_contracts::error::{CoreError, ErrorKind, Result as CoreResult};
@@ -216,7 +216,6 @@ impl Lichess {
     pub async fn bookmarked_games(&self, account: &str) -> CoreResult<Reply<Vec<LichessGame>>> {
         let reply = self
             .as_account(account, UsageKind::Profile, |auth| async move {
-                let mut lines = Vec::new();
                 self.client()
                     .get("/api/games/export/bookmarks", &auth)
                     .query(&[
@@ -225,27 +224,13 @@ impl Lichess {
                         ("opening", "true".to_string()),
                     ])
                     .lane(Lane::Export)
-                    .lines(
-                        || {},
-                        |line| {
-                            lines.push(line.to_string());
-                            Ok(())
-                        },
-                    )
-                    .await?;
-                Ok(lines)
+                    .records("game", BOOKMARKS_MAX, |raw: GameJson| {
+                        Some(normalize_game(&raw, account))
+                    })
+                    .await
             })
             .await?;
-        Ok(match reply {
-            Reply::Done(lines) => {
-                let mut games = Vec::new();
-                for line in lines.iter().take(BOOKMARKS_MAX) {
-                    games.push(normalize_game(&parse_game(line)?, account));
-                }
-                Reply::Done(games)
-            }
-            Reply::NeedsReconnect => Reply::NeedsReconnect,
-        })
+        Ok(reply)
     }
 }
 

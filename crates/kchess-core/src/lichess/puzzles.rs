@@ -269,14 +269,11 @@ pub async fn puzzle_activity(
                 .get("/api/puzzle/activity", &auth)
                 .query(&[("max", max.to_string())])
                 .lane(Lane::Feed)
-                .read_lines()
+                .records("puzzle", usize::MAX, Some::<Value>)
                 .await?;
             let mut entries = Vec::new();
-            for line in &lines {
-                let raw: Value = serde_json::from_str(line).map_err(|cause| {
-                    CoreError::new(format!("Lichess sent an unreadable puzzle record: {cause}"))
-                })?;
-                let activity: ActivityEntry = read(&raw).unwrap_or_default();
+            for raw in &lines {
+                let activity: ActivityEntry = read(raw).unwrap_or_default();
                 let mut puzzle = activity.puzzle.unwrap_or_else(|| json!({}));
                 if let Some(object) = puzzle.as_object_mut() {
                     object.insert("initialPly".into(), json!(0));

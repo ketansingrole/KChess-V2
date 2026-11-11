@@ -827,23 +827,14 @@ impl Lichess {
                 });
                 continue;
             };
-            let mut lines = Vec::new();
             let outcome = self
                 .client
                 .get("/api/rel/following", &auth)
-                .lines(
-                    || {},
-                    |line| {
-                        lines.push(line.to_string());
-                        Ok(())
-                    },
-                )
+                .records("player", usize::MAX, Some::<Value>)
                 .await;
             match outcome {
-                Ok(()) => {
-                    for line in &lines {
-                        let user: Value = serde_json::from_str(line)
-                            .map_err(|cause| CoreError::new(cause.to_string()))?;
+                Ok(users) => {
+                    for user in users {
                         let name = user["username"].as_str().unwrap_or_default().to_string();
                         let key = name.to_lowercase();
                         let entry = by_name.entry(key.clone()).or_insert_with(|| FollowedUser {
@@ -1032,7 +1023,6 @@ impl Lichess {
             if rated {
                 query.push(("rated", "true".to_string()));
             }
-            let mut lines = Vec::new();
             self.client
                 .get(
                     &format!("/api/games/user/{}", path_segment(username)),
@@ -1040,28 +1030,12 @@ impl Lichess {
                 )
                 .query(&query)
                 .lane(Lane::Export)
-                .lines(
-                    || {},
-                    |line| {
-                        lines.push(line.to_string());
-                        Ok(())
-                    },
-                )
-                .await?;
-            Ok(lines)
+                .records("game", max, |raw: GameJson| {
+                    Some(normalize_game(&raw, username))
+                })
+                .await
         })
         .await
-        .and_then(|lines| {
-            let mut games = Vec::new();
-            for line in lines {
-                if games.len() >= max {
-                    break;
-                }
-                let raw: GameJson = parse_game(&line)?;
-                games.push(normalize_game(&raw, username));
-            }
-            Ok(games)
-        })
     }
 
     /// A private message from `account`. A login made before messaging was
@@ -1314,19 +1288,18 @@ impl Lichess {
             query.push((flag, "true".to_string()));
         }
         let path = format!("/api/games/user/{}", path_segment(account));
-        let (lines, downgraded) = self
-            .collect_lines(account, reqwest::Method::GET, &path, &query, None)
+        let (records, downgraded) = self
+            .collect_records(account, reqwest::Method::GET, &path, &query, None)
             .await?;
-        let mut games = Vec::with_capacity(lines.len());
+        let mut games = Vec::with_capacity(records.len());
         let mut reviews = Vec::new();
         let mut settled = Vec::new();
         let now = now_ms();
-        for line in &lines {
-            let raw = parse_game(line)?;
+        for value in &records {
+            let raw = read_game(value)?;
             games.push(normalize_game(&raw, account));
-            let value: Value = serde_json::from_str(line).unwrap_or(Value::Null);
-            let review = review_from_lichess(&value);
-            if !is_game_in_progress(&value)
+            let review = review_from_lichess(value);
+            if !is_game_in_progress(value)
                 && (review.is_some() || now - raw.last_move_at > ANALYSIS_SETTLED_MS)
             {
                 settled.push(raw.id.clone());
@@ -1357,8 +1330,8 @@ impl Lichess {
         for chunk in ids.chunks(300) {
             let requested: std::collections::HashSet<&str> =
                 chunk.iter().map(String::as_str).collect();
-            let (lines, _) = self
-                .collect_lines(
+            let (records, _) = self
+                .collect_records(
                     account,
                     reqwest::Method::POST,
                     "/api/games/export/_ids",
@@ -1368,12 +1341,11 @@ impl Lichess {
                 .await?;
             let mut games = Vec::new();
             let mut reviews = Vec::new();
-            for line in &lines {
-                let raw = parse_game(line)?;
+            for value in &records {
+                let raw = read_game(value)?;
                 if requested.contains(raw.id.as_str()) {
                     games.push(normalize_game(&raw, account));
-                    let value: Value = serde_json::from_str(line).unwrap_or(Value::Null);
-                    reviews.extend(review_from_lichess(&value));
+                    reviews.extend(review_from_lichess(value));
                 }
             }
             // A missing ID stays pending; a failed request never moves the cursor.
@@ -1384,16 +1356,17 @@ impl Lichess {
         Ok(())
     }
 
-    /// The lines of an NDJSON response for `account`, read with its own token when it has one.
-    /// Returns whether the request was downgraded to anonymous (missing/refused login).
-    async fn collect_lines(
+    /// The game records of an NDJSON response for `account`, read with its own token when it
+    /// has one. Returns whether the request was downgraded to
+    /// anonymous (missing/refused login).
+    async fn collect_records(
         &self,
         account: &str,
         method: reqwest::Method,
         path: &str,
         query: &[(&str, String)],
         body: Option<String>,
-    ) -> CoreResult<(Vec<String>, bool)> {
+    ) -> CoreResult<(Vec<Value>, bool)> {
         let (lines, downgraded) = self
             .as_owner_downgraded(account, UsageKind::Games, |auth| {
                 let method = method.clone();
@@ -1407,7 +1380,7 @@ impl Lichess {
                     if let Some(body) = body {
                         request = request.text(body);
                     }
-                    request.read_lines().await
+                    request.records("game", usize::MAX, Some::<Value>).await
                 }
             })
             .await?;
@@ -1431,8 +1404,9 @@ async fn wait_for(mut outcome: SyncOutcome) -> CoreResult<usize> {
     }
 }
 
-pub(crate) fn parse_game(line: &str) -> CoreResult<GameJson> {
-    serde_json::from_str(line)
+/// A game record Lichess sent, read as a game.
+pub(crate) fn read_game(value: &Value) -> CoreResult<GameJson> {
+    GameJson::deserialize(value)
         .map_err(|cause| CoreError::new(format!("Lichess sent an unreadable game record: {cause}")))
 }
 
