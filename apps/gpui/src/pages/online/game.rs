@@ -76,7 +76,7 @@ pub(crate) fn live_actions(online: &OnlineState) -> Vec<LiveAction> {
 fn playing_actions(online: &OnlineState) -> Vec<LiveAction> {
     let model = online.model();
     // Before each side has moved the game is aborted, not resigned.
-    let started = view::sans(&online.setup(), &online.moves()).len() >= 2;
+    let started = view::sans(online.setup(), &online.moves()).len() >= 2;
     let berserk = !model.online_tournament.is_empty()
         && model.online_clock_config.is_some()
         && !model.berserked
@@ -494,8 +494,8 @@ impl OnlinePage {
         let playing = online.phase == Phase::Playing;
         let correspondence = online.correspondence();
         let has_clock = model.online_clock_config.is_some() || correspondence;
-        let position = view::position_at(&setup, &moves, ply);
-        let live_turn = view::turn(view::position_at(&setup, &moves, moves.len()).as_ref());
+        let position = view::position_at(setup, &moves, ply);
+        let live_turn = view::turn(view::position_at(setup, &moves, moves.len()).as_ref());
         let fen = position
             .as_ref()
             .map(kchess_domain::rules::make_fen)
@@ -745,7 +745,7 @@ impl OnlinePage {
         if let Some(pending) = self.pending() {
             let mut shown = moves.clone();
             shown.push(pending.uci.clone());
-            let san = view::sans(&setup, &shown).pop().unwrap_or_default();
+            let san = view::sans(setup, &shown).pop().unwrap_or_default();
             let (confirm, cancel) = (page.clone(), page);
             notices.push(
                 offer(
@@ -1103,7 +1103,7 @@ impl OnlinePage {
                 widgets::MoveSheet {
                     sans: &sans,
                     shown: ply,
-                    first: view::first_move(&setup),
+                    first: view::first_move(setup),
                 },
                 "No moves yet".into(),
                 select,

@@ -1434,9 +1434,8 @@ fn game_mark(cx: &App) -> Option<GameMark> {
     let my_turn = live && {
         let moves = online.moves();
         let setup = online.setup();
-        crate::game::view::turn(
-            crate::game::view::position_at(&setup, &moves, moves.len()).as_ref(),
-        ) == online.color()
+        crate::game::view::turn(crate::game::view::position_at(setup, &moves, moves.len()).as_ref())
+            == online.color()
     };
     let correspondence_turn = online
         .ongoing

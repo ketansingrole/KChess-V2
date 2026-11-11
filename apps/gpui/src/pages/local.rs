@@ -1891,7 +1891,7 @@ impl NewGame {
             return self
                 .fen_problem(cx)
                 .is_none()
-                .then(|| Setup { variant, fen: text });
+                .then_some(Setup { variant, fen: text });
         }
         Some(Setup::of(variant))
     }

@@ -465,7 +465,7 @@ mod variant_tests {
             None
         );
         assert_eq!(
-            super::setup_problem(Variant::Horde, super::STANDARD_FEN),
+            super::setup_problem(Variant::Horde, &Variant::Horde.default_fen()),
             None
         );
         assert_eq!(
